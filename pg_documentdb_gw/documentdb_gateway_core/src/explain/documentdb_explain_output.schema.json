@@ -26,6 +26,10 @@
       "type": "string",
       "description": "Total size of tuple data received from distributed worker nodes, as reported by Citus. Only present for distributed (sharded) queries."
     },
+    "instanceName": {
+      "type": "string",
+      "description": "Identifier of the DocumentDB instance that produced the explain output. Sourced from the gateway configuration. Omitted when not configured."
+    },
     "queryPlanner": {
       "$ref": "#/$defs/QueryPlanner",
       "description": "Query planner information for non-aggregation commands (find, count, distinct). Present at the top level for simple cursor-based explains."
@@ -114,9 +118,23 @@
           "type": "string",
           "description": "Name of the index used by this stage. Present for IXSCAN and other index-based stages, but omitted for FETCH stages."
         },
+        "cursorScanType": {
+          "type": "string",
+          "description": "The type of cursor scan used by the streaming or dynamic cursor custom scan. Values include 'streaming' (streaming continuation scan), 'streamingPrimaryKey' (streaming scan using primary key continuation), 'Primary Key Scan', 'Secondary Index Scan', 'Secondary Index Only Scan', 'Secondary Index Bitmap Scan', 'Secondary Index Bitmap AND Scan', 'Secondary Index Bitmap OR Scan', 'TID Range Scan'. Present when the plan uses a cursor-based scan."
+        },
         "direction": {
           "type": "string",
           "description": "The scan direction of the index scan (e.g. 'Forward' or 'Backward'). Only present for index scan stages."
+        },
+        "hasDistinctDedup": {
+          "type": "boolean",
+          "const": true,
+          "description": "Indicates this stage absorbed a collapsed distinct-pushdown scan (an index skip scan that materializes distinct keys). The dedicated scan node is an internal wrapper and is not surfaced separately; this flag (present and true) preserves that a distinct pushdown was used."
+        },
+        "hasMultiKeyRowDedup": {
+          "type": "boolean",
+          "const": true,
+          "description": "Indicates this stage absorbed a collapsed TID de-duplicating scan that drops duplicate documents produced by a sort-merge over a multi-key index. The dedicated scan node is an internal wrapper and is not surfaced separately; this flag (present and true) preserves that TID de-duplication was applied."
         },
         "isBitmap": {
           "type": "boolean",
@@ -129,8 +147,13 @@
           "description": "Indicates the index scan can satisfy the query without fetching the heap tuple. Present (and true) for 'Index Only Scan' node types."
         },
         "indexUsage": {
+          "type": "object",
+          "description": "Detailed information about how the index is used in this stage. Present when exactly one matching index entry exists (single index scan). A document with indexKeyString, isMultiKey, bounds, etc.",
+          "$ref": "#/$defs/QueryPlanIndexUsage"
+        },
+        "indexUsages": {
           "type": "array",
-          "description": "Detailed information about how indexes are used in this stage. Only includes entries whose indexName matches the stage's indexName.",
+          "description": "Detailed information about how indexes are used in this stage when multiple matching index entries exist (e.g. BitmapOr with the same index). Each element is a document with indexKeyString, isMultiKey, bounds, etc.",
           "items": {
             "$ref": "#/$defs/QueryPlanIndexUsage"
           }
@@ -138,6 +161,22 @@
         "pageSize": {
           "type": "number",
           "description": "The page size used for batched index lookups. Only present when the PostgreSQL plan reports a non-zero page size."
+        },
+        "sampleSize": {
+          "type": "number",
+          "description": "The requested sample size for a $sample stage. Only present when the PostgreSQL plan reports a non-zero sample size."
+        },
+        "sampleReservoirMethod": {
+          "type": "string",
+          "description": "The reservoir sampling method chosen for a $sample stage. Either 'Materialize' (every matching row is read from the heap) or 'Heap Skip' (unsampled rows are passed over via the index without a heap read). Only present when the plan uses reservoir sampling."
+        },
+        "sampleRowsSkipped": {
+          "type": "number",
+          "description": "The number of matching rows passed over without entering the reservoir during heap skip sampling. Only present under executionStats verbosity when the plan uses heap skip sampling."
+        },
+        "sampleHeapFetches": {
+          "type": "number",
+          "description": "The number of skipped rows that still required a heap read (page not all-visible or a lossy index match); the rest were counted from the visibility map. Only present under executionStats verbosity when the plan uses heap skip sampling."
         },
         "startupCost": {
           "type": "number",
@@ -147,24 +186,28 @@
           "type": "number",
           "description": "PostgreSQL estimated total cost for this plan node. Represents the cost to return all rows. Only present when greater than zero."
         },
+        "workersPlanned": {
+          "type": "integer",
+          "description": "Number of parallel workers planned for this stage. Derived from PostgreSQL's 'Workers Planned'. Omitted if zero. Present in queryPlanner output."
+        },
         "cosmosSearchCustomParams": {
           "$ref": "#/$defs/VectorSearchCustomParams",
           "description": "Custom parameters for Cosmos DB vector search operations. Only present when the plan involves a vector similarity search."
         },
         "runtimeFilterSet": {
           "type": "array",
-          "description": "Array of runtime filter conditions applied after the index scan. Each element is a document mapping an operator (e.g. '$eq', '$gt', '$in') to its operand BSON value. Derived from PostgreSQL 'Filter' expressions. Truncated if total size exceeds 100KB.",
+          "description": "Array of runtime filter conditions applied after the index scan. Each element is a document mapping a field path to a nested document containing the operator and operand, e.g. { 'a.b': { '$gt': 500 } }. When the field path can't be explicitly inferred or when collation is enabled, the element is a flat document mapping the operator to its operand BSON value. Supported operators include '$eq', '$gt', '$gte', '$lt', '$lte', '$in', '$ne', '$nin', '$regExp', '$exists', '$size', '$type'. Derived from PostgreSQL 'Filter' expressions. Truncated if needed.",
           "items": {
             "type": "object",
-            "description": "A single runtime filter condition. Key is the query operator, value is the BSON operand."
+            "description": "A single runtime filter condition. Typically { fieldPath: { operator: operand } }, or { operator: operand } when the field path can't be explicitly inferred or when collation is enabled."
           }
         },
         "indexFilterSet": {
           "type": "array",
-          "description": "Array of index filter conditions pushed down to the index scan. Each element maps a operator to its operand BSON value. Derived from PostgreSQL 'Index Cond' expressions. Truncated if total size exceeds 100KB.",
+          "description": "Array of index filter conditions pushed down to the index scan. Each element is a document mapping a field path to a nested document containing the operator and operand, e.g. { 'a.b': { '$gt': 500 } }. When the field path can't be explicitly inferred or when collation is enabled, the element is a flat document mapping the operator to its operand BSON value. Supported operators include '$eq', '$gt', '$gte', '$lt', '$lte', '$in', '$ne', '$nin', '$regExp', '$exists', '$size', '$type'. Derived from PostgreSQL 'Index Cond' expressions. Truncated if needed.",
           "items": {
             "type": "object",
-            "description": "A single index filter condition. Key is the query operator, value is the BSON operand."
+            "description": "A single index filter condition. Typically { fieldPath: { operator: operand } }, or { operator: operand } when the field path can't be explicitly inferred or when collation is enabled."
           }
         },
         "sortKeysCount": {
@@ -173,7 +216,18 @@
         },
         "sortKey": {
           "type": "array",
-          "description": "Array of BSON documents representing the sort key specification. Each element is a BSON document extracted from the PostgreSQL sort key expressions. Present when sort keys can be parsed into BSON form.",
+          "description": "Array of BSON documents representing the sort key specification. Each element is extracted from the PostgreSQL sort key expression.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "collation": {
+          "type": "string",
+          "description": "Normalized collation string applied by this sort stage. Kept separate from sortKey so a user field named 'collation' remains unambiguous."
+        },
+        "groupKey": {
+          "type": "array",
+          "description": "Array of BSON projection documents representing the expressions used as group keys. Collation is not included because it does not change the projected group-key expression.",
           "items": {
             "type": "object"
           }
@@ -249,32 +303,46 @@
       "type": "object",
       "description": "Detailed index usage information for a query plan stage.",
       "properties": {
-        "indexName": {
+        "indexKeyString": {
           "type": "string",
-          "description": "Name of the index being used."
+          "description": "The index key document rendered as a string."
+        },
+        "indexCollation": {
+          "type": "string",
+          "description": "Normalized collation configured on the index. Present only for collated indexes."
         },
         "isMultiKey": {
           "type": "boolean",
           "description": "Whether the index is a multikey index (indexes on array fields). Null/omitted if not applicable."
         },
+        "multiKeyPaths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "For a composite index with per-path multikey tracking, the list of index paths observed to be multikey (indexed on array values). Null/omitted if not applicable."
+        },
         "hasTruncation": {
           "type": "boolean",
           "description": "Whether the composite index has truncated terms due to exceeding maximum term size. Null/omitted if not applicable."
         },
+        "truncatedPaths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "For a composite index with per-path truncation tracking, the list of index paths observed to have truncated terms (capped at the first 6 paths; truncation on later paths is reflected only by hasTruncation). Null/omitted if not applicable."
+        },
         "bounds": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Index scan bounds as string representations. Describes the range of keys scanned. e.g. { $eq: 5 } would be shown as [5, 5]; while { $gt: 5, $lte: 10 } would be shown as (5, 10]."
+          "description": "Index scan bounds as string representations. Describes the range of keys scanned. e.g. { $eq: 5 } would be shown as [5, 5]; while { $gt: 5, $lte: 10 } would be shown as (5, 10]. Individual entries and the overall array are truncated if needed."
         },
         "startBounds": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Starting bounds for the index scan range. Present for range-based index scans where the index chooses to do delayed expansion of bounds. The remainingbounds are present in rawBounds."
+          "description": "Starting bounds for the index scan range. Present for range-based index scans where the index chooses to do delayed expansion of bounds. The remaining bounds are present in rawBounds. Truncated if needed."
         },
         "rawBounds": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Raw (unprocessed) index bounds. Present when the index chooses to do delayed expansion of bounds. The first processed bounds are present in startBounds."
+          "description": "Raw (unprocessed) index bounds. Present when the index chooses to do delayed expansion of bounds. The first processed bounds are present in startBounds. Truncated if needed."
         }
       }
     },
@@ -351,6 +419,14 @@
           "type": "integer",
           "description": "Documents examined by this stage (actual rows + rows removed by filter). Present when the stage has no index or has a filter or has rows removed by filter."
         },
+        "skippedTuples": {
+          "type": "number",
+          "description": "Number of tuples skipped by the cursor scan during execution. Only present when greater than zero."
+        },
+        "duplicateRowsRemoved": {
+          "type": "number",
+          "description": "Per-loop average number of duplicate rows removed by the de-duplicating scan, inlined onto the surviving child stage. Only present when greater than zero."
+        },
         "totalKeysExamined": {
           "type": "integer",
           "description": "Index keys examined by this stage (actual rows + rows removed by index recheck)."
@@ -364,8 +440,13 @@
           "description": "Number of heap fetches (documents fetched from the heap after an index-only scan had to recheck visibility). Derived from PostgreSQL's 'Heap Fetches'. Omitted for FETCH stages."
         },
         "indexUsage": {
+          "type": "object",
+          "description": "Index usage details for execution stats when exactly one matching index entry exists. Contains scan loop counts, scan type, and duplicate information.",
+          "$ref": "#/$defs/ExecutionStatsIndexUsage"
+        },
+        "indexUsages": {
           "type": "array",
-          "description": "Index usage details for execution stats. Contains scan loop counts, scan type, and duplicate information.",
+          "description": "Index usage details for execution stats when multiple matching index entries exist. Each element contains scan loop counts, scan type, and duplicate information.",
           "items": {
             "$ref": "#/$defs/ExecutionStatsIndexUsage"
           }
@@ -383,6 +464,14 @@
         "sortMethod": {
           "type": "string",
           "description": "The sort algorithm used (e.g. 'quicksort', 'top-N heapsort', 'external merge'). Derived from PostgreSQL's 'Sort Method'."
+        },
+        "aggStrategy": {
+          "type": "string",
+          "description": "The aggregation strategy used by the Aggregate node (e.g. 'Plain', 'Sorted', 'Hashed', 'Mixed'). Derived from PostgreSQL's 'Strategy' field."
+        },
+        "joinType": {
+          "type": "string",
+          "description": "The join type used by a $lookup-like node (e.g. 'Inner', 'Left', 'Semi', 'Anti'). Derived from PostgreSQL's 'Join Type' field. Only present for join stages."
         },
         "exactBlocksRead": {
           "type": "integer",
@@ -420,6 +509,13 @@
           "type": "integer",
           "description": "Number of parallel workers launched for this stage. Derived from PostgreSQL's 'Workers Launched'. Omitted if zero."
         },
+        "stageWorkerData": {
+          "type": "array",
+          "description": "Per-worker execution details reported by PostgreSQL for a parallel plan stage. Present only when PostgreSQL includes a Workers array.",
+          "items": {
+            "$ref": "#/$defs/ExplainWorker"
+          }
+        },
         "inputStage": {
           "$ref": "#/$defs/ExecutionStatsStage",
           "description": "The single child input stage. Present when there is exactly one child plan node."
@@ -433,6 +529,84 @@
         }
       },
       "required": ["stage", "nReturned", "executionTimeMillis", "totalKeysExamined"]
+    },
+    "ExplainWorker": {
+      "type": "object",
+      "description": "Execution details for one PostgreSQL parallel worker. Fields are included when reported by PostgreSQL, including zero-valued counters.",
+      "properties": {
+        "workerNumber": {
+          "type": "integer",
+          "description": "Zero-based PostgreSQL worker number."
+        },
+        "actualStartupTime": {
+          "type": "number",
+          "description": "Worker startup time in milliseconds."
+        },
+        "actualTotalTime": {
+          "type": "number",
+          "description": "Worker total execution time in milliseconds."
+        },
+        "actualRows": {
+          "type": "number",
+          "description": "Rows produced by the worker."
+        },
+        "actualLoops": {
+          "type": "number",
+          "description": "Number of times the worker executed the plan node."
+        },
+        "sortMethod": {
+          "type": "string",
+          "description": "Sort algorithm used by the worker."
+        },
+        "sortSpaceUsed": {
+          "type": "integer",
+          "description": "Sort space used by the worker, in the unit reported by PostgreSQL."
+        },
+        "sortSpaceType": {
+          "type": "string",
+          "description": "Storage type used for worker sort space, such as Memory or Disk."
+        },
+        "sharedHitBlocks": {
+          "type": "integer",
+          "description": "Shared buffer blocks found in cache by the worker."
+        },
+        "sharedReadBlocks": {
+          "type": "integer",
+          "description": "Shared buffer blocks read by the worker."
+        },
+        "sharedDirtiedBlocks": {
+          "type": "integer",
+          "description": "Shared buffer blocks dirtied by the worker."
+        },
+        "sharedWrittenBlocks": {
+          "type": "integer",
+          "description": "Shared buffer blocks written by the worker."
+        },
+        "localHitBlocks": {
+          "type": "integer",
+          "description": "Local buffer blocks found in cache by the worker."
+        },
+        "localReadBlocks": {
+          "type": "integer",
+          "description": "Local buffer blocks read by the worker."
+        },
+        "localDirtiedBlocks": {
+          "type": "integer",
+          "description": "Local buffer blocks dirtied by the worker."
+        },
+        "localWrittenBlocks": {
+          "type": "integer",
+          "description": "Local buffer blocks written by the worker."
+        },
+        "tempReadBlocks": {
+          "type": "integer",
+          "description": "Temporary blocks read by the worker."
+        },
+        "tempWrittenBlocks": {
+          "type": "integer",
+          "description": "Temporary blocks written by the worker."
+        }
+      }
     },
     "ExecutionStatsIndexUsage": {
       "type": "object",
@@ -459,9 +633,21 @@
           "type": "number",
           "description": "Number of dead index entries or pages skipped during the index scan (see LP_DEAD). Written as the smallest numeric type (int32 if integral). Omitted if not reported by the index."
         },
+        "eligibleDeadItems": {
+          "type": "number",
+          "description": "Number of index entries eligible for cleanup as dead items encountered during the index scan. Written as the smallest numeric type (int32 if integral). Omitted if zero or not reported by the index."
+        },
+        "highKeyEligiblePages": {
+          "type": "number",
+          "description": "Number of index pages eligible for the high key optimization (where the page's high key already satisfied the scan condition, allowing per-item comparisons to be skipped) during an ordered index scan. Written as the smallest numeric type (int32 if integral). Omitted if zero or not reported by the index."
+        },
         "parallelScanCapable": {
           "type": "boolean",
           "description": "Indicates whether the index scan is capable of parallel execution in the current execution. Omitted if not reported by the index."
+        },
+        "parallelScanLoops": {
+          "type": "integer",
+          "description": "Number of inner scan loop iterations observed by the reporting backend from participating parallel index scan workers. This is a backend-local snapshot and may not represent the finalized global total because shared parallel scan state may no longer be available when explain output is produced. Omitted for non-parallel scans."
         },
         "isBackwardScan": {
           "type": "boolean",
@@ -485,6 +671,10 @@
         "indexName": {
           "type": "string",
           "description": "Name of the index these cost estimates apply to."
+        },
+        "indexKeyString": {
+          "type": "string",
+          "description": "The index key document for the index these cost estimates apply to, rendered as a string (e.g. '{ \"a\" : 1 }'). Present when the index key can be resolved."
         },
         "startupCost": {
           "type": "number",

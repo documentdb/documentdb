@@ -11,7 +11,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use bson::{rawdoc, RawDocumentBuf};
+use bson::{rawdoc, RawArrayBuf, RawDocumentBuf};
 
 use crate::{
     configuration::DynamicConfiguration,
@@ -22,14 +22,21 @@ use crate::{
 };
 
 pub fn ok_response() -> Response {
-    Response::Raw(RawResponse(rawdoc! {
+    Response::Raw(RawResponse::new(rawdoc! {
         "ok": OK_SUCCEEDED
     }))
 }
 
+pub fn plan_cache_list_filters_response() -> Response {
+    let mut doc = RawDocumentBuf::new();
+    doc.append("filters", RawArrayBuf::new());
+    doc.append("ok", OK_SUCCEEDED);
+    Response::Raw(RawResponse::new(doc))
+}
+
 pub fn process_build_info(dynamic_config: &Arc<dyn DynamicConfiguration>) -> Response {
     let version = dynamic_config.server_version();
-    Response::Raw(RawResponse(rawdoc! {
+    Response::Raw(RawResponse::new(rawdoc! {
         "version": version.as_str(),
         "versionArray": version.as_bson_array(),
         "bits": 64,
@@ -39,14 +46,14 @@ pub fn process_build_info(dynamic_config: &Arc<dyn DynamicConfiguration>) -> Res
 }
 
 pub fn process_get_cmd_line_opts() -> Response {
-    Response::Raw(RawResponse(rawdoc! {
+    Response::Raw(RawResponse::new(rawdoc! {
         "argv": [],
         "ok":OK_SUCCEEDED,
     }))
 }
 
 pub fn process_is_db_grid(context: &ConnectionContext) -> Response {
-    Response::Raw(RawResponse(rawdoc! {
+    Response::Raw(RawResponse::new(rawdoc! {
         "isdbgrid":1.0,
         "hostname":context.service_context.setup_configuration().node_host_name(),
         "ok":OK_SUCCEEDED,
@@ -54,8 +61,7 @@ pub fn process_is_db_grid(context: &ConnectionContext) -> Response {
 }
 
 pub fn process_get_rw_concern(request_context: &RequestContext<'_>) -> Result<Response> {
-    let request = request_context.payload;
-    let request_info = request_context.info;
+    let request = request_context.request();
 
     request.extract_fields(|k, _| match k {
         "getDefaultRWConcern" | "inMemory" | "comment" | "lsid" | "$db" => Ok(()),
@@ -65,14 +71,14 @@ pub fn process_get_rw_concern(request_context: &RequestContext<'_>) -> Result<Re
         )),
     })?;
 
-    if request_info.db()? != "admin" {
+    if request.db() != "admin" {
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::Unauthorized,
             "Only the admin database can process getDefaultRWConcern.".to_owned(),
         ));
     }
 
-    Ok(Response::Raw(RawResponse(rawdoc! {
+    Ok(Response::Raw(RawResponse::new(rawdoc! {
         "defaultReadConcern": {
             "level":"majority",
         },
@@ -87,7 +93,7 @@ pub fn process_get_rw_concern(request_context: &RequestContext<'_>) -> Result<Re
 }
 
 pub fn process_get_log() -> Response {
-    Response::Raw(RawResponse(rawdoc! {
+    Response::Raw(RawResponse::new(rawdoc! {
         "log":[],
         "totalLinesWritten":0,
         "ok":OK_SUCCEEDED,
@@ -95,7 +101,7 @@ pub fn process_get_log() -> Response {
 }
 
 pub fn process_connection_status() -> Response {
-    Response::Raw(RawResponse(rawdoc! {
+    Response::Raw(RawResponse::new(rawdoc! {
         "authInfo": {
             "authenticatedUsers": [],
             "authenticatedUserRoles": [],
@@ -122,7 +128,7 @@ fn local_time() -> Result<u32> {
 }
 
 pub fn process_host_info() -> Result<Response> {
-    Ok(Response::Raw(RawResponse(rawdoc! {
+    Ok(Response::Raw(RawResponse::new(rawdoc! {
         "system": {
             "currentTime": bson::Timestamp{ time: local_time()?, increment: 0},
             "memSizeMB": 0,
@@ -139,14 +145,14 @@ pub fn process_host_info() -> Result<Response> {
 }
 
 pub fn process_prepare_transaction() -> Result<Response> {
-    Ok(Response::Raw(RawResponse(rawdoc! {
+    Ok(Response::Raw(RawResponse::new(rawdoc! {
         "prepareTimestamp":  bson::Timestamp{ time: local_time()?, increment: 0 },
         "ok": OK_SUCCEEDED,
     })))
 }
 
 pub fn process_whats_my_uri() -> Response {
-    Response::Raw(RawResponse(rawdoc! {
+    Response::Raw(RawResponse::new(rawdoc! {
         "ok": OK_SUCCEEDED,
     }))
 }
@@ -160,7 +166,7 @@ struct CommandInfo {
     secondary_override_ok: Option<bool>,
 }
 
-static SUPPORTED_COMMANDS : [CommandInfo; 62] = [
+static SUPPORTED_COMMANDS : [CommandInfo; 69] = [
 	CommandInfo {
 		command_name: "abortTransaction",
 		admin_only: true,
@@ -482,6 +488,22 @@ static SUPPORTED_COMMANDS : [CommandInfo; 62] = [
 		secondary_override_ok: None,
 	},
 	CommandInfo {
+		command_name: "killAllSessions",
+		admin_only: false,
+		help: "kill all logical sessions",
+		secondary_ok: false,
+		requires_auth: true,
+		secondary_override_ok: None,
+	},
+	CommandInfo {
+		command_name: "killAllSessionsByPattern",
+		admin_only: false,
+		help: "kill logical sessions by pattern",
+		secondary_ok: false,
+		requires_auth: true,
+		secondary_override_ok: None,
+	},
+	CommandInfo {
 		command_name: "killCursors",
 		admin_only: false,
 		help: "Stop a set of cursors.",
@@ -562,9 +584,49 @@ static SUPPORTED_COMMANDS : [CommandInfo; 62] = [
 		secondary_override_ok: None,
 	},
 	CommandInfo {
+		command_name: "planCacheClear",
+		admin_only: false,
+		help: "clear the plan cache",
+		secondary_ok: false,
+		requires_auth: true,
+		secondary_override_ok: None,
+	},
+	CommandInfo {
+		command_name: "planCacheClearFilters",
+		admin_only: false,
+		help: "clear plan cache index filters",
+		secondary_ok: false,
+		requires_auth: true,
+		secondary_override_ok: None,
+	},
+	CommandInfo {
+		command_name: "planCacheListFilters",
+		admin_only: false,
+		help: "list plan cache index filters",
+		secondary_ok: false,
+		requires_auth: true,
+		secondary_override_ok: None,
+	},
+	CommandInfo {
+		command_name: "planCacheSetFilter",
+		admin_only: false,
+		help: "set a plan cache index filter",
+		secondary_ok: false,
+		requires_auth: true,
+		secondary_override_ok: None,
+	},
+	CommandInfo {
 		command_name: "reIndex",
 		admin_only: false,
 		help: "Rebuild an index.",
+		secondary_ok: false,
+		requires_auth: true,
+		secondary_override_ok: None,
+	},
+	CommandInfo {
+		command_name: "refreshSessions",
+		admin_only: false,
+		help: "refresh logical session records",
 		secondary_ok: false,
 		requires_auth: true,
 		secondary_override_ok: None,
@@ -676,7 +738,7 @@ pub fn list_commands() -> Response {
         commands_doc.append(command.command_name, doc);
     }
 
-    Response::Raw(RawResponse(rawdoc! {
+    Response::Raw(RawResponse::new(rawdoc! {
         "commands": commands_doc,
         "ok": OK_SUCCEEDED,
     }))

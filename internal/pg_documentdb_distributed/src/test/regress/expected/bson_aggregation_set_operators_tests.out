@@ -584,6 +584,44 @@ select bson_dollar_project('{"_id":"1" }', '{"union" : { "$setUnion" : [[{ "$cod
  { "_id" : "1", "union" : [ { "$code" : "var a = 1;" }, { "$code" : "var b = 1;" } ] }
 (1 row)
 
+-- CodeWScope: identical (code + scope) dedupe; differing scope stays distinct; plain Code (different type) stays distinct:
+select bson_dollar_project('{"_id":"1" }', '{"union" : { "$setUnion" : [[{ "$code": "var a = 1;", "$scope" : { "k" : 1 } }],[{ "$code": "var a = 1;", "$scope" : { "k" : 1 } }]]} }');
+                                          bson_dollar_project                                           
+---------------------------------------------------------------------
+ { "_id" : "1", "union" : [ { "$code" : "var a = 1;", "$scope" : { "k" : { "$numberInt" : "1" } } } ] }
+(1 row)
+
+select bson_dollar_project('{"_id":"1" }', '{"union" : { "$setUnion" : [[{ "$code": "var a = 1;", "$scope" : { "k" : 1 } }],[{ "$code": "var a = 1;", "$scope" : { "k" : 2 } }]]} }');
+                                                                               bson_dollar_project                                                                               
+---------------------------------------------------------------------
+ { "_id" : "1", "union" : [ { "$code" : "var a = 1;", "$scope" : { "k" : { "$numberInt" : "1" } } }, { "$code" : "var a = 1;", "$scope" : { "k" : { "$numberInt" : "2" } } } ] }
+(1 row)
+
+select bson_dollar_project('{"_id":"1" }', '{"union" : { "$setUnion" : [[{ "$code": "var a = 1;", "$scope" : { "k" : 1 } }],[{ "$code": "var a = 1;"}]]} }');
+                                                        bson_dollar_project                                                         
+---------------------------------------------------------------------
+ { "_id" : "1", "union" : [ { "$code" : "var a = 1;", "$scope" : { "k" : { "$numberInt" : "1" } } }, { "$code" : "var a = 1;" } ] }
+(1 row)
+
+-- Regex: identical pattern+options dedupe; distinct pattern/options stay separate; long pattern (longer than a pointer) must not over-read:
+select bson_dollar_project('{"_id":"1" }', '{"union" : { "$setUnion" : [[{ "$regularExpression" : { "pattern" : "abc", "options" : "i" } }],[{ "$regularExpression" : { "pattern" : "abc", "options" : "i" } }]]} }');
+                                       bson_dollar_project                                        
+---------------------------------------------------------------------
+ { "_id" : "1", "union" : [ { "$regularExpression" : { "pattern" : "abc", "options" : "i" } } ] }
+(1 row)
+
+select bson_dollar_project('{"_id":"1" }', '{"union" : { "$setUnion" : [[{ "$regularExpression" : { "pattern" : "abc", "options" : "i" } }],[{ "$regularExpression" : { "pattern" : "abc", "options" : "" } }]]} }');
+                                                                        bson_dollar_project                                                                         
+---------------------------------------------------------------------
+ { "_id" : "1", "union" : [ { "$regularExpression" : { "pattern" : "abc", "options" : "i" } }, { "$regularExpression" : { "pattern" : "abc", "options" : "" } } ] }
+(1 row)
+
+select bson_dollar_project('{"_id":"1" }', '{"union" : { "$setUnion" : [[{ "$regularExpression" : { "pattern" : "a_very_long_regex_pattern_exceeding_pointer_size", "options" : "" } }],[{ "$regularExpression" : { "pattern" : "a_very_long_regex_pattern_exceeding_pointer_size", "options" : "" } }]]} }');
+                                                             bson_dollar_project                                                              
+---------------------------------------------------------------------
+ { "_id" : "1", "union" : [ { "$regularExpression" : { "pattern" : "a_very_long_regex_pattern_exceeding_pointer_size", "options" : "" } } ] }
+(1 row)
+
 select bson_dollar_project('{"_id":"1" }', '{"union" : { "$setUnion" : [[{ "$dbPointer" : { "$ref" : "db.test", "$id" : { "$oid" : "347f000000c1de008ec19ceb" }}}],[{ "$dbPointer" : { "$ref" : "db.test", "$id" : { "$oid" : "347f000000c1de008ec19ceb" }}}]]} }');
                                                     bson_dollar_project                                                    
 ---------------------------------------------------------------------

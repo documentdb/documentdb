@@ -1,0 +1,8 @@
+[Unit]
+Description=DocumentDB Local Appliance (PostgreSQL %i)
+Documentation=https://github.com/documentdb/documentdb
+Wants=documentdb-postgresql@%i.service documentdb-gateway-local@%i.service
+After=documentdb-postgresql@%i.service
+
+[Install]
+WantedBy=multi-user.target

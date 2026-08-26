@@ -1,0 +1,1 @@
+\i sql/bson_composite_or_group_count_tests.sql

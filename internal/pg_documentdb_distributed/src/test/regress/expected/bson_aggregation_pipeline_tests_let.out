@@ -2,6 +2,8 @@ SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documen
 SET citus.next_shard_id TO 4173000;
 SET documentdb.next_collection_id TO 41730;
 SET documentdb.next_collection_index_id TO 41730;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT documentdb_api.insert_one('db','aggregation_pipeline_let','{"_id":"1", "int": 10, "a" : { "b" : [ "x", 1, 2.0, true ] } }', NULL);
 NOTICE:  creating collection
                               insert_one                              
@@ -1383,10 +1385,10 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document from bson_aggregation_pipeline('
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 434_1
+   ->  Distributed Subplan 470_1
          ->  Custom Scan (Citus Adaptive)
                Output: remote_scan."left", remote_scan."right", remote_scan.let
-               ->  Distributed Subplan 437_1
+               ->  Distributed Subplan 473_1
                      ->  Custom Scan (Citus Adaptive)
                            Output: remote_scan.document, remote_scan.let
                            Task Count: 2
@@ -1401,7 +1403,7 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document from bson_aggregation_pipeline('
                                  Node: host=localhost port=58070 dbname=regression
                                  ->  Seq Scan on documentdb_data.documents_41740_4173233 collection
                                        Output: document, documentdb_api_internal.bson_dollar_lookup_expression_eval_merge(document, '{ "item_name" : "$item" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
-               ->  Distributed Subplan 437_2
+               ->  Distributed Subplan 473_2
                      ->  Custom Scan (Citus Adaptive)
                            Output: remote_scan.document
                            Task Count: 1
@@ -1417,27 +1419,27 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document from bson_aggregation_pipeline('
                Task Count: 1
                Tasks Shown: All
                ->  Task
-                     Query: SELECT lookup_stage_1.document AS "left", "lookupRight_stage_1".document AS "right", documentdb_api_internal.bson_dollar_lookup_expression_eval_merge(lookup_stage_1.document, '{ "item_name" : "$item" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS let FROM ((SELECT intermediate_result.document, intermediate_result.let FROM read_intermediate_result('437_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, let documentdb_core.bson)) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_0.document, 'myMatch'::text), '{ "myMatch" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('437_2'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) lookup_right_query_stage_0 WHERE documentdb_api_internal.bson_dollar_expr(lookup_right_query_stage_0.document, '{ "" : { "$eq" : [ "$name", "$$item_name" ] } }'::documentdb_core.bson, lookup_stage_1.let)) "lookupRight_stage_1" ON (true))
+                     Query: SELECT lookup_stage_1.document AS "left", "lookupRight_stage_1".document AS "right", documentdb_api_internal.bson_dollar_lookup_expression_eval_merge(lookup_stage_1.document, '{ "item_name" : "$item" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS let FROM ((SELECT intermediate_result.document, intermediate_result.let FROM read_intermediate_result('473_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, let documentdb_core.bson)) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_0.document, 'myMatch'::text), '{ "myMatch" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('473_2'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) lookup_right_query_stage_0 WHERE documentdb_api_internal.bson_dollar_expr(lookup_right_query_stage_0.document, '{ "" : { "$eq" : [ "$name", "$$item_name" ] } }'::documentdb_core.bson, lookup_stage_1.let)) "lookupRight_stage_1" ON (true))
                      Node: host=localhost port=58070 dbname=regression
                      ->  Nested Loop
                            Output: intermediate_result.document, (COALESCE(documentdb_api_catalog.bson_array_agg(intermediate_result_1.document, 'myMatch'::text), '{ "myMatch" : [  ] }'::documentdb_core.bson)), documentdb_api_internal.bson_dollar_lookup_expression_eval_merge(intermediate_result.document, '{ "item_name" : "$item" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
                            ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                                  Output: intermediate_result.document, intermediate_result.let
-                                 Function Call: read_intermediate_result('437_1'::text, 'binary'::citus_copy_format)
+                                 Function Call: read_intermediate_result('473_1'::text, 'binary'::citus_copy_format)
                            ->  Aggregate
                                  Output: COALESCE(documentdb_api_catalog.bson_array_agg(intermediate_result_1.document, 'myMatch'::text), '{ "myMatch" : [  ] }'::documentdb_core.bson)
                                  ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result_1
                                        Output: intermediate_result_1.document
-                                       Function Call: read_intermediate_result('437_2'::text, 'binary'::citus_copy_format)
+                                       Function Call: read_intermediate_result('473_2'::text, 'binary'::citus_copy_format)
                                        Filter: documentdb_api_internal.bson_dollar_expr(intermediate_result_1.document, '{ "" : { "$eq" : [ "$name", "$$item_name" ] } }'::documentdb_core.bson, intermediate_result.let)
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents("left", (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(lookup_subpipeline_substage_0.lookup_unwind, '{ "c" : { "$numberInt" : "0" } }'::documentdb_core.bson, lookup_non_inlined_stage_1.let), 'myMatch'::text), '{ "myMatch" : [  ] }'::documentdb_core.bson) AS "funcName" FROM documentdb_api_catalog.bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'myMatch'::text) lookup_subpipeline_substage_0(lookup_unwind)), true) AS document FROM (SELECT intermediate_result."left", intermediate_result."right", intermediate_result.let FROM read_intermediate_result('434_1'::text, 'binary'::citus_copy_format) intermediate_result("left" documentdb_core.bson, "right" documentdb_core.bson, let documentdb_core.bson)) lookup_non_inlined_stage_1
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents("left", (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(lookup_subpipeline_substage_0.lookup_unwind, '{ "c" : { "$numberInt" : "0" } }'::documentdb_core.bson, lookup_non_inlined_stage_1.let), 'myMatch'::text), '{ "myMatch" : [  ] }'::documentdb_core.bson) AS "funcName" FROM documentdb_api_catalog.bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'myMatch'::text) lookup_subpipeline_substage_0(lookup_unwind)), true) AS document FROM (SELECT intermediate_result."left", intermediate_result."right", intermediate_result.let FROM read_intermediate_result('470_1'::text, 'binary'::citus_copy_format) intermediate_result("left" documentdb_core.bson, "right" documentdb_core.bson, let documentdb_core.bson)) lookup_non_inlined_stage_1
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                Output: documentdb_api_internal.bson_dollar_merge_documents(intermediate_result."left", (SubPlan 1), true)
-               Function Call: read_intermediate_result('434_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('470_1'::text, 'binary'::citus_copy_format)
                SubPlan 1
                  ->  Aggregate
                        Output: COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(lookup_subpipeline_substage_0.lookup_unwind, '{ "c" : { "$numberInt" : "0" } }'::documentdb_core.bson, intermediate_result.let), 'myMatch'::text), '{ "myMatch" : [  ] }'::documentdb_core.bson)
@@ -1496,10 +1498,10 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document from bson_aggregation_pipeline('
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 465_1
+   ->  Distributed Subplan 507_1
          ->  Custom Scan (Citus Adaptive)
                Output: remote_scan."left", remote_scan."right", remote_scan.let
-               ->  Distributed Subplan 468_1
+               ->  Distributed Subplan 510_1
                      ->  Custom Scan (Citus Adaptive)
                            Output: remote_scan.document, remote_scan.let
                            Task Count: 2
@@ -1514,7 +1516,7 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document from bson_aggregation_pipeline('
                                  Node: host=localhost port=58070 dbname=regression
                                  ->  Seq Scan on documentdb_data.documents_41740_4173233 collection
                                        Output: document, documentdb_api_internal.bson_dollar_lookup_expression_eval_merge(document, '{ "item_name" : "$item" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
-               ->  Distributed Subplan 468_2
+               ->  Distributed Subplan 510_2
                      ->  Custom Scan (Citus Adaptive)
                            Output: remote_scan.document
                            Task Count: 2
@@ -1532,27 +1534,27 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document from bson_aggregation_pipeline('
                Task Count: 1
                Tasks Shown: All
                ->  Task
-                     Query: SELECT lookup_stage_1.document AS "left", "lookupRight_stage_1".document AS "right", documentdb_api_internal.bson_dollar_lookup_expression_eval_merge(lookup_stage_1.document, '{ "item_name" : "$item" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS let FROM ((SELECT intermediate_result.document, intermediate_result.let FROM read_intermediate_result('468_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, let documentdb_core.bson)) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_0.document, 'myMatch'::text), '{ "myMatch" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('468_2'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) lookup_right_query_stage_0 WHERE documentdb_api_internal.bson_dollar_expr(lookup_right_query_stage_0.document, '{ "" : { "$eq" : [ "$name", "$$item_name" ] } }'::documentdb_core.bson, lookup_stage_1.let)) "lookupRight_stage_1" ON (true))
+                     Query: SELECT lookup_stage_1.document AS "left", "lookupRight_stage_1".document AS "right", documentdb_api_internal.bson_dollar_lookup_expression_eval_merge(lookup_stage_1.document, '{ "item_name" : "$item" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS let FROM ((SELECT intermediate_result.document, intermediate_result.let FROM read_intermediate_result('510_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, let documentdb_core.bson)) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_0.document, 'myMatch'::text), '{ "myMatch" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('510_2'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) lookup_right_query_stage_0 WHERE documentdb_api_internal.bson_dollar_expr(lookup_right_query_stage_0.document, '{ "" : { "$eq" : [ "$name", "$$item_name" ] } }'::documentdb_core.bson, lookup_stage_1.let)) "lookupRight_stage_1" ON (true))
                      Node: host=localhost port=58070 dbname=regression
                      ->  Nested Loop
                            Output: intermediate_result.document, (COALESCE(documentdb_api_catalog.bson_array_agg(intermediate_result_1.document, 'myMatch'::text), '{ "myMatch" : [  ] }'::documentdb_core.bson)), documentdb_api_internal.bson_dollar_lookup_expression_eval_merge(intermediate_result.document, '{ "item_name" : "$item" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
                            ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                                  Output: intermediate_result.document, intermediate_result.let
-                                 Function Call: read_intermediate_result('468_1'::text, 'binary'::citus_copy_format)
+                                 Function Call: read_intermediate_result('510_1'::text, 'binary'::citus_copy_format)
                            ->  Aggregate
                                  Output: COALESCE(documentdb_api_catalog.bson_array_agg(intermediate_result_1.document, 'myMatch'::text), '{ "myMatch" : [  ] }'::documentdb_core.bson)
                                  ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result_1
                                        Output: intermediate_result_1.document
-                                       Function Call: read_intermediate_result('468_2'::text, 'binary'::citus_copy_format)
+                                       Function Call: read_intermediate_result('510_2'::text, 'binary'::citus_copy_format)
                                        Filter: documentdb_api_internal.bson_dollar_expr(intermediate_result_1.document, '{ "" : { "$eq" : [ "$name", "$$item_name" ] } }'::documentdb_core.bson, intermediate_result.let)
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents("left", (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(lookup_subpipeline_substage_0.lookup_unwind, '{ "c" : { "$numberInt" : "0" } }'::documentdb_core.bson, lookup_non_inlined_stage_1.let), 'myMatch'::text), '{ "myMatch" : [  ] }'::documentdb_core.bson) AS "funcName" FROM documentdb_api_catalog.bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'myMatch'::text) lookup_subpipeline_substage_0(lookup_unwind)), true) AS document FROM (SELECT intermediate_result."left", intermediate_result."right", intermediate_result.let FROM read_intermediate_result('465_1'::text, 'binary'::citus_copy_format) intermediate_result("left" documentdb_core.bson, "right" documentdb_core.bson, let documentdb_core.bson)) lookup_non_inlined_stage_1
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents("left", (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(lookup_subpipeline_substage_0.lookup_unwind, '{ "c" : { "$numberInt" : "0" } }'::documentdb_core.bson, lookup_non_inlined_stage_1.let), 'myMatch'::text), '{ "myMatch" : [  ] }'::documentdb_core.bson) AS "funcName" FROM documentdb_api_catalog.bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'myMatch'::text) lookup_subpipeline_substage_0(lookup_unwind)), true) AS document FROM (SELECT intermediate_result."left", intermediate_result."right", intermediate_result.let FROM read_intermediate_result('507_1'::text, 'binary'::citus_copy_format) intermediate_result("left" documentdb_core.bson, "right" documentdb_core.bson, let documentdb_core.bson)) lookup_non_inlined_stage_1
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                Output: documentdb_api_internal.bson_dollar_merge_documents(intermediate_result."left", (SubPlan 1), true)
-               Function Call: read_intermediate_result('465_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('507_1'::text, 'binary'::citus_copy_format)
                SubPlan 1
                  ->  Aggregate
                        Output: COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(lookup_subpipeline_substage_0.lookup_unwind, '{ "c" : { "$numberInt" : "0" } }'::documentdb_core.bson, intermediate_result.let), 'myMatch'::text), '{ "myMatch" : [  ] }'::documentdb_core.bson)
@@ -1882,8 +1884,7 @@ SELECT documentdb_api.insert_one('db','courses','{ "_id": 201, "name": "Calculus
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
--- error; disable GUC EnableOperatorVariablesInLookup
-SET documentdb.EnableOperatorVariablesInLookup TO off;
+-- implicit $$this operator variable
 SELECT document FROM bson_aggregation_pipeline(
   'db',
   '{
@@ -1918,8 +1919,14 @@ SELECT document FROM bson_aggregation_pipeline(
     ]
   }'
 );
-ERROR:  Attempting to use an undefined variable: this._id
-SET documentdb.EnableOperatorVariablesInLookup TO on;
+                                                                                                                                                                                      document
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "101" }, "name" : "Distributed Systems", "school" : "School A", "SharedFieldRefs" : [ { "_id" : { "$numberInt" : "1" } }, { "_id" : { "$numberInt" : "2" } } ], "SharedFields" : [ { "_id" : { "$numberInt" : "1" }, "name" : "Computer Science", "IsActive" : true }, { "_id" : { "$numberInt" : "2" }, "name" : "Algorithms", "IsActive" : true } ] }
+ { "_id" : { "$numberInt" : "102" }, "name" : "Data Structures", "school" : "School A", "SharedFieldRefs" : [ { "_id" : { "$numberInt" : "2" } }, { "_id" : { "$numberInt" : "3" } } ], "SharedFields" : [ { "_id" : { "$numberInt" : "2" }, "name" : "Algorithms", "IsActive" : true } ] }
+ { "_id" : { "$numberInt" : "201" }, "name" : "Calculus I", "school" : "School B", "SharedFieldRefs" : [ { "_id" : { "$numberInt" : "3" } }, { "_id" : { "$numberInt" : "4" } } ], "SharedFields" : [ { "_id" : { "$numberInt" : "4" }, "name" : "STEM Core", "IsActive" : true } ] }
+(3 rows)
+
+-- explicit operator variable alias
 SELECT document FROM bson_aggregation_pipeline(
   'db',
   '{
@@ -2289,8 +2296,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{
 (2 rows)
 
 -- $lookup with nested $map in let: complex `in` expression
--- error: disable GUC EnableOperatorVariablesInLookup
-SET documentdb.EnableOperatorVariablesInLookup TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{
   "aggregate": "courses",
   "pipeline": [
@@ -2343,9 +2348,13 @@ SELECT document FROM bson_aggregation_pipeline('db', '{
     }
   ]
 }');
-ERROR:  Attempting to use an undefined variable: topic.id
--- enable GUC EnableOperatorVariablesInLookup
-SET documentdb.EnableOperatorVariablesInLookup TO on;
+                                                                                                 document
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "name" : "Physics", "topics" : [ { "_id" : { "$numberInt" : "101" }, "name" : "Motion & Force" }, { "_id" : { "$numberInt" : "102" }, "name" : "Atomic Structure" } ] }
+ { "_id" : { "$numberInt" : "2" }, "name" : "Chemistry", "topics" : [ { "_id" : { "$numberInt" : "103" }, "name" : "Chemical Bonds" } ] }
+(2 rows)
+
+-- nested aliases with a projected scalar value
 SELECT document FROM bson_aggregation_pipeline('db', '{
   "aggregate": "courses",
   "pipeline": [
@@ -2874,8 +2883,6 @@ SELECT documentdb_api.drop_collection('db', 'tags1');
 (1 row)
 
 -- $lookup with let with $filter and $map
--- error: disable GUC EnableOperatorVariablesInLookup
-SET documentdb.EnableOperatorVariablesInLookup TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '
 {
   "aggregate": "orders",
@@ -2927,9 +2934,12 @@ SELECT document FROM bson_aggregation_pipeline('db', '
     }
   ]
 }');
-ERROR:  Attempting to use an undefined variable: flag
--- enable GUC EnableOperatorVariablesInLookup
-SET documentdb.EnableOperatorVariablesInLookup TO on;
+                                                                                                 document
+---------------------------------------------------------------------
+ { "customer" : "Alice", "matchedProducts" : [ { "_id" : { "$numberInt" : "101" }, "name" : "Red Shirt", "tag" : "new" }, { "_id" : { "$numberInt" : "102" }, "name" : "Blue Jeans", "tag" : "sale" } ] }
+(1 row)
+
+-- map alias with a scalar filter result
 SELECT document FROM bson_aggregation_pipeline('db', '
 {
   "aggregate": "orders",
@@ -3250,8 +3260,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '
 (1 row)
 
 -- $lookup with let with $reduce, $map and $filter
--- error: disable GUC EnableOperatorVariablesInLookup
-SET documentdb.EnableOperatorVariablesInLookup TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '
 {
   "aggregate": "orders",
@@ -3307,9 +3315,12 @@ SELECT document FROM bson_aggregation_pipeline('db', '
     }
   ]
 }');
-ERROR:  Attempting to use an undefined variable: flag
--- enable GUC EnableOperatorVariablesInLookup
-SET documentdb.EnableOperatorVariablesInLookup TO on;
+                                                                                                 document
+---------------------------------------------------------------------
+ { "customer" : "Alice", "matchedProducts" : [ { "_id" : { "$numberInt" : "101" }, "name" : "Red Shirt", "tag" : "new" }, { "_id" : { "$numberInt" : "102" }, "name" : "Blue Jeans", "tag" : "sale" } ] }
+(1 row)
+
+-- reduce over values produced by nested aliases
 SELECT document FROM bson_aggregation_pipeline('db', '
 {
   "aggregate": "orders",
@@ -3407,5 +3418,4 @@ SELECT documentdb_api.drop_collection('db', 'products');
  t
 (1 row)
 
---disable GUC EnableOperatorVariablesInLookup
-SET documentdb.EnableOperatorVariablesInLookup TO off;
+-- End operator-variable lookup tests.

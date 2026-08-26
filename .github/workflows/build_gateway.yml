@@ -4,14 +4,18 @@ on:
   workflow_call:
     inputs:
       push_images:
-        description: 'if true, push images to GHCR (default: false) otherwise only build'
+        description: >-
+          Publish the built images to GHCR. Leave unchecked to build and smoke
+          test only — nothing is pushed. (A tag push publishes regardless.)
         default: false
         required: false
         type: boolean
   workflow_dispatch:
     inputs:
       push_images:
-        description: 'if true, push images to GHCR (default: false) otherwise only build'
+        description: >-
+          Publish the built images to GHCR. Leave unchecked to build and smoke
+          test only — nothing is pushed. (A tag push publishes regardless.)
         default: false
         required: false
         type: boolean
@@ -37,6 +41,7 @@ jobs:
   build-and-push:
     name: Build and Push Images
     strategy:
+      fail-fast: false
       matrix:
         arch: [amd64, arm64]
         include:
@@ -50,19 +55,18 @@ jobs:
           - 15
           - 16
           - 17
+          - 18
     runs-on: ${{ matrix.runner }}
     outputs:
-      documentdb_version: ${{ steps.extract_version.outputs.documentdb_version }}
+      # The shared action names its dotted output `version`; the job output
+      # keeps its original name so downstream consumers are unchanged.
+      documentdb_version: ${{ steps.extract_version.outputs.version }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v5
     - name: Extract and Format Default Version
       id: extract_version
-      run: |
-        DOCUMENTDB_VERSION=$(grep -E "^default_version" pg_documentdb_core/documentdb_core.control | sed -E "s/.*'([0-9]+\.[0-9]+-[0-9]+)'.*/\1/")
-        DOCUMENTDB_VERSION=$(echo $DOCUMENTDB_VERSION | sed "s/-/./g")
-        echo "Extracted Version: $DOCUMENTDB_VERSION"
-        echo "documentdb_version=$DOCUMENTDB_VERSION" >> $GITHUB_OUTPUT
+      uses: ./.github/actions/resolve-documentdb-version
     - name: Build Debian Package
       run: |
         ./packaging/build_packages.sh --os deb13 --pg ${{ matrix.pg_version }} --output-dir downloaded-artifacts
@@ -72,15 +76,124 @@ jobs:
     - name: Build ${{ matrix.arch }} Image
       run: |
         TAG=${{ env.IMAGE_TAG }}-pg${{ matrix.pg_version }}-${{ matrix.arch }}
+        mapfile -t EXT_DEBS < <(find downloaded-artifacts -maxdepth 1 -type f -name 'deb13-postgresql-*-documentdb_*.deb' ! -name '*dbgsym*' | sort)
+        [ "${#EXT_DEBS[@]}" -eq 1 ] || { echo 'Expected exactly one extension DEB artifact'; exit 1; }
+        EXT_DEB=$(basename "${EXT_DEBS[0]}")
+        # Dockerfile_documentdb_local builds the gateway from source (see its
+        # `stage` build stage); it does not consume a prebuilt gateway .deb, so
+        # none is built or passed here. The gateway *package* is built and
+        # clean-install tested separately in build_deb_packages.yml.
         docker build \
           --platform linux/${{ matrix.arch }} \
           --build-arg BASE_IMAGE=debian:trixie-slim \
           --build-arg POSTGRES_VERSION=${{ matrix.pg_version }} \
-          --build-arg DEB_PACKAGE_REL_PATH=downloaded-artifacts/$(ls downloaded-artifacts | grep -v 'dbgsym')  \
+          --build-arg DEB_PACKAGE_REL_PATH=downloaded-artifacts/$EXT_DEB \
+          --build-arg DOCUMENTDB_VERSION="${{ steps.extract_version.outputs.version }}" \
+          --build-arg GIT_COMMIT="${{ github.sha }}" \
+          --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          --build-arg IMAGE_SOURCE="${{ github.server_url }}/${{ github.repository }}" \
           -t ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:$TAG \
           -f packaging/gateway/docker/Dockerfile_documentdb_local .
+    - name: Smoke test ${{ matrix.arch }} Image
+      run: |
+        set -euo pipefail
+        TAG=${{ env.IMAGE_TAG }}-pg${{ matrix.pg_version }}-${{ matrix.arch }}
+        IMAGE=ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:$TAG
+        CONTAINER_NAME=documentdb-local-smoke-pg${{ matrix.pg_version }}-${{ matrix.arch }}
+
+        rev=$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE")
+        ver=$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.version"}}' "$IMAGE")
+        created=$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.created"}}' "$IMAGE")
+        [ "$rev" = "${{ github.sha }}" ] || { echo "org.opencontainers.image.revision is '$rev', expected build sha '${{ github.sha }}'" >&2; exit 1; }
+        [ "$ver" = "${{ steps.extract_version.outputs.version }}" ] || { echo "org.opencontainers.image.version is '$ver', expected '${{ steps.extract_version.outputs.version }}'" >&2; exit 1; }
+        [ -n "$created" ] || { echo "org.opencontainers.image.created is empty; BUILD_DATE was not passed or the label was dropped" >&2; exit 1; }
+        vtxt=$(docker run --rm --entrypoint /bin/cat "$IMAGE" /version.txt)
+        case "$vtxt" in
+          ""|unknown*) echo "/version.txt is not stamped (got '$vtxt')" >&2; exit 1 ;;
+        esac
+        echo "Provenance OK: $vtxt"
+        SMOKE_DIR=$(mktemp -d)
+        chmod 755 "$SMOKE_DIR"
+        dump_logs=true
+        cleanup() {
+          if [ "$dump_logs" = "true" ]; then
+            docker logs "$CONTAINER_NAME" || true
+          fi
+          docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+          rm -rf "$SMOKE_DIR"
+        }
+        wait_for_log() {
+          local pattern="$1"
+          local timeout_seconds="$2"
+          local waited=0
+
+          while ! docker logs "$CONTAINER_NAME" 2>&1 | grep -Fq "$pattern"; do
+            running=$(docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null || echo false)
+            if [ "$running" != "true" ]; then
+              echo "Container exited before log pattern appeared: $pattern" >&2
+              return 1
+            fi
+
+            sleep 2
+            waited=$((waited + 2))
+            if [ "$waited" -ge "$timeout_seconds" ]; then
+              echo "Timed out waiting for log pattern: $pattern" >&2
+              return 1
+            fi
+          done
+        }
+        trap cleanup EXIT
+
+        cat > "$SMOKE_DIR/001-gateway-smoke-init.js" <<'EOF'
+        const smokeDb = db.getSiblingDB('gateway_smoke');
+        smokeDb.image_smoke.deleteMany({});
+        smokeDb.image_smoke.insertOne({ name: 'documentdb-local-smoke', ok: true });
+        EOF
+
+        # Runtime-generated smoke credential so no password literal lives in source.
+        SMOKE_PW="$(openssl rand -hex 12)Aa1!"
+        docker run -d --name "$CONTAINER_NAME" --mount "type=bind,source=$SMOKE_DIR,target=/init_doc_db.d,readonly" "$IMAGE" --username docdb_admin --password "$SMOKE_PW" --init-data-path /init_doc_db.d
+
+        wait_for_log "=== DocumentDB is ready ===" 240
+        wait_for_log "Custom data initialization completed." 180
+
+        docker exec "$CONTAINER_NAME" mongosh "localhost:10260" -u docdb_admin -p "$SMOKE_PW" --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --quiet --eval 'const count = db.getSiblingDB("gateway_smoke").image_smoke.countDocuments({ name: "documentdb-local-smoke", ok: true }); if (count !== 1) { print(`expected 1 document, found ${count}`); quit(1); }'
+
+        # Backend-contract gate (issue #650). The smoke above drives the gateway
+        # end to end, including the getParameter discovery probe mongosh issues
+        # on connect, whose backend-contract failure clients silently tolerate --
+        # exactly how #650 shipped past a green CRUD assertion. The scan is
+        # delegated to the shared, unit-tested, ANSI-aware detector so this
+        # release smoke and the pre-merge image test enforce the identical
+        # contract; see documentdb-local/scripts/documentdb_local_tests/
+        # backend_contract.py for the SQLSTATE deny-list and the report mode.
+        # --report-unexpected prints (report-only, no failure) any non-empty
+        # sub_status SQLSTATE outside the deny-list for triage; the deny-list
+        # itself still hard-fails. A short sleep lets late teardown-path logging
+        # land before the snapshot.
+        echo "Checking gateway logs for backend-contract errors (issue #650)..."
+        sleep 2
+        if ! smoke_logs=$(docker logs "$CONTAINER_NAME" 2>&1); then
+          echo "Failed to read container logs for the backend-contract gate." >&2
+          exit 1
+        fi
+        if ! printf '%s\n' "$smoke_logs" \
+            | python3 documentdb-local/scripts/documentdb_local_tests/backend_contract.py --report-unexpected -; then
+          exit 1
+        fi
+
+        dump_logs=false
+    # Publish only when a release asked for it (tag push, or an explicit
+    # push_images request). `inputs` — unlike `github.event.inputs`, which is
+    # populated for workflow_dispatch ONLY — carries the value for both
+    # workflow_dispatch and workflow_call, so a caller passing
+    # push_images: false is now honoured. The old trailing
+    # `github.event_name == 'workflow_dispatch'` clause overrode the input
+    # entirely: it published on every manual run (even with the box unchecked)
+    # and on any workflow_call whose top-level event was a dispatch, which is
+    # what made a release dry run publish images as a side effect.
     - name: Push ${{ matrix.arch }} Image
-      if: github.event.inputs.push_images == 'true' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+      if: inputs.push_images || startsWith(github.ref, 'refs/tags/')
       run: |
         TAG=${{ env.IMAGE_TAG }}-pg${{ matrix.pg_version }}-${{ matrix.arch }}
         echo "Pushing image ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:$TAG"
@@ -88,20 +201,23 @@ jobs:
     
   create-manifest:
     name: Create, Push, Sign & Verify Manifest
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    # Must match the per-arch push gate above: a manifest can only reference
+    # images that were actually published.
+    if: inputs.push_images || startsWith(github.ref, 'refs/tags/')
     strategy:
       matrix:
         pg_version:
           - 15
           - 16
           - 17
+          - 18
     runs-on: ubuntu-22.04
     needs: build-and-push
     steps:
     - name: Login to GHCR
       run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
     - name: Show version
-      run: echo "Using DOCUMENTDB_VERSION=${{ needs.prepare.outputs.documentdb_version }}"
+      run: echo "Using DOCUMENTDB_VERSION=${{ needs.build-and-push.outputs.documentdb_version }}"
     - name: Set Default Values
       run: |
         echo "MANIFEST_TAG=pg${{ matrix.pg_version }}-${{ needs.build-and-push.outputs.documentdb_version }}" >> $GITHUB_ENV
@@ -128,9 +244,11 @@ jobs:
           --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
           ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}@${DIGEST}
 
-  create-manifest-latest:  
+  create-manifest-latest:
     name: Create & push 'latest' manifest
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    # Must match the per-arch push gate above: a manifest can only reference
+    # images that were actually published.
+    if: inputs.push_images || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-22.04
     needs: build-and-push
     steps:
@@ -141,6 +259,7 @@ jobs:
         echo "MANIFEST_TAG=latest" >> $GITHUB_ENV
     - name: Create and Push Manifest
       run: |
+        # Keep the floating latest tag on PG17 for compatibility; PG18 is published via explicit pg18-* tags.
         docker manifest create ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.MANIFEST_TAG }} \
           --amend ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}-pg17-amd64 \
           --amend ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}-pg17-arm64

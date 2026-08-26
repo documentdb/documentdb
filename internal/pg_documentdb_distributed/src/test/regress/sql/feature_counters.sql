@@ -71,17 +71,24 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_co
 -- sortByCount
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$sortByCount": { "$eq": [ { "$mod": [ { "$toInt": "$_id" }, 2 ] }, 0  ] } }, { "$sort": { "_id": 1 } }], "cursor": {} }');
 -- $group
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
 
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- $group with $count with non-empty arg (tracks group_count_with_arg feature counter)
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": null, "e": { "$count": 1 } } }], "cursor": {} }');
 
+-- $group scalar aggregate: constant _id with a simple $field accumulator (tracks group_scalar_agg_index_pushdown feature counter)
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col", "pipeline": [ { "$group": { "_id": null, "m": { "$max": "$a" } } }], "cursor": {} }');
+
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$sum": "$_id" }, "e": { "$count": 1 } } }], "cursor": {} }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- $group with first/last
@@ -94,6 +101,16 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_co
 SET documentdb_core.enablecollation TO on;
 SELECT document FROM bson_aggregation_find('db', '{ "find": "feature_counter_col2", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "a": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1} }');
 SELECT document FROM bson_aggregation_find('db', '{ "find": "feature_counter_col2", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 10, "collation": { "locale": "fr_CA", "strength" : 3 } }');
+-- $group accumulator that cannot honor the collation. The WithExpr accumulators
+-- must be on to get past the stage check, and skipFailOnCollation lets the
+-- accumulator run so the counter is reported without the error.
+SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
+SET documentdb.skipFailOnCollation TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": null, "a": { "$addToSet": "$a" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+RESET documentdb.skipFailOnCollation;
+RESET documentdb.enableNewMinMaxAccumulators;
+RESET documentdb.enableNewWithExprAccumulators;
 RESET documentdb_core.enablecollation;
 
 
@@ -284,8 +301,22 @@ SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id
 SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$unset": { "tags": "" }},"multi":false}]}');
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 
--- Test: Feature counter for list_databases command
+CALL documentdb_api.delete_txn_proc('db', '{"delete":"writeFC", "deletes":[{"q":{"_id":{"$eq":4}},"limit":0}]}');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 
+-- Test delete batch size feature counters.
+SELECT documentdb_api.delete(
+    'db',
+    FORMAT(
+        '{"delete":"missingDeleteBatchCounter","deletes":[%s]}',
+        (SELECT string_agg('{"q":{},"limit":0}', ',') FROM generate_series(1, batch_size))
+    )::documentdb_core.bson
+)
+FROM unnest(ARRAY[1, 2, 101, 501, 1001]) AS batch_size;
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Test: Feature counter for list_databases command
 -- Reset feature counters
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 
@@ -311,3 +342,142 @@ SELECT document FROM bson_aggregation_pipeline('saop_feature', '{ "aggregate": "
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 
 SELECT documentdb_api.drop_database('saop_feature');
+
+-- Test: Feature counter for cursor topology
+
+-- Reset feature counters
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Local unsharded: find on an unsharded collection (first page)
+SELECT documentdb_api.insert_one('topo_db', 'unshard_coll', '{"_id": 1, "a": 1}');
+SELECT documentdb_api.insert_one('topo_db', 'unshard_coll', '{"_id": 2, "a": 2}');
+SELECT document FROM bson_aggregation_find('topo_db', '{"find": "unshard_coll", "filter": {}}');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Local unsharded: getMore path
+CREATE TEMP TABLE topo_first_page AS
+SELECT continuation FROM find_cursor_first_page(database => 'topo_db',
+    commandSpec => '{"find": "unshard_coll", "filter": {}, "batchSize": 1}', cursorId => 4294967294);
+SELECT continuation AS r1_continuation FROM topo_first_page \gset
+SELECT cursorPage FROM cursor_get_more(database => 'topo_db',
+    getMoreSpec => '{"getMore": {"$numberLong": "4294967294"}, "collection": "unshard_coll"}'::bson,
+    continuationSpec => :'r1_continuation');
+DROP TABLE topo_first_page;
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Sharded with shard key equality (first page)
+SELECT documentdb_api.shard_collection('topo_db', 'shard_coll', '{"sk": "hashed"}', false);
+SELECT documentdb_api.insert_one('topo_db', 'shard_coll', '{"_id": 1, "sk": "val1", "a": 1}');
+SELECT documentdb_api.insert_one('topo_db', 'shard_coll', '{"_id": 2, "sk": "val1", "a": 2}');
+SELECT document FROM bson_aggregation_find('topo_db', '{"find": "shard_coll", "filter": {"sk": "val1"}}');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Sharded with shard key equality: getMore path
+CREATE TEMP TABLE topo_first_page AS
+SELECT continuation FROM find_cursor_first_page(database => 'topo_db',
+    commandSpec => '{"find": "shard_coll", "filter": {"sk": "val1"}, "batchSize": 1}', cursorId => 4294967294);
+SELECT continuation AS r1_continuation FROM topo_first_page \gset
+SELECT cursorPage FROM cursor_get_more(database => 'topo_db',
+    getMoreSpec => '{"getMore": {"$numberLong": "4294967294"}, "collection": "shard_coll"}'::bson,
+    continuationSpec => :'r1_continuation');
+DROP TABLE topo_first_page;
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Sharded with $in on shard key (first page and getMore)
+SELECT document FROM bson_aggregation_find('topo_db', '{"find": "shard_coll", "filter": {"sk": {"$in": ["val1", "val2"]}}}');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+CREATE TEMP TABLE topo_first_page AS
+SELECT continuation FROM find_cursor_first_page(database => 'topo_db',
+    commandSpec => '{"find": "shard_coll", "filter": {"sk": {"$in": ["val1", "val2"]}}, "batchSize": 1}', cursorId => 4294967294);
+SELECT continuation AS r1_continuation FROM topo_first_page \gset
+SELECT cursorPage FROM cursor_get_more(database => 'topo_db',
+    getMoreSpec => '{"getMore": {"$numberLong": "4294967294"}, "collection": "shard_coll"}'::bson,
+    continuationSpec => :'r1_continuation');
+DROP TABLE topo_first_page;
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- General sharded (no shard key in filter) first page and getMore
+SELECT document FROM bson_aggregation_find('topo_db', '{"find": "shard_coll", "filter": {"a": 1}}');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+CREATE TEMP TABLE topo_first_page AS
+SELECT continuation FROM find_cursor_first_page(database => 'topo_db',
+    commandSpec => '{"find": "shard_coll", "filter": {}, "batchSize": 1}', cursorId => 4294967294);
+SELECT continuation AS r1_continuation FROM topo_first_page \gset
+SELECT cursorPage FROM cursor_get_more(database => 'topo_db',
+    getMoreSpec => '{"getMore": {"$numberLong": "4294967294"}, "collection": "shard_coll"}'::bson,
+    continuationSpec => :'r1_continuation');
+DROP TABLE topo_first_page;
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+SELECT documentdb_api.drop_database('topo_db');
+
+-- $sample heap skip feature counter: an Index Scan child with no residual filter engages heap
+-- skip, recording sample_heap_skip. Oversampling then sorting keeps the output deterministic.
+SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('feature_counter_hs_db', 'sampleHeapSkipColl', FORMAT('{ "_id": %s, "a": %s }', g, g)::documentdb_core.bson) FROM generate_series(1, 40) g) ig;
+-- Reset the counters by making a call to the counter and discarding the results
+SELECT count(*) * 0 AS count FROM documentdb_api_internal.command_feature_counter_stats(true);
+SET documentdb.enableDollarSampleReservoirScan TO on;
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
+SELECT document FROM bson_aggregation_pipeline('feature_counter_hs_db', '{ "aggregate": "sampleHeapSkipColl", "pipeline": [ { "$match": { "_id": { "$gte": 0 } } }, { "$sample": { "size": 40 } }, { "$sort": { "_id": 1 } }, { "$limit": 3 }, { "$project": { "_id": 1 } } ], "cursor": {} }');
+RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
+RESET documentdb.enableDollarSampleReservoirScan;
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- $sample heap skip eligibility counter: when the heap skip flag is off but the plan is
+-- structurally heap skip capable (a plain Index Scan child with no residual filter),
+-- sample_heap_skip_eligible records the query as a candidate for turning the flag on.
+-- Reset the counters by making a call to the counter and discarding the results
+SELECT count(*) * 0 AS count FROM documentdb_api_internal.command_feature_counter_stats(true);
+SET documentdb.enableDollarSampleReservoirScan TO on;
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO off;
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+SELECT document FROM bson_aggregation_pipeline('feature_counter_hs_db', '{ "aggregate": "sampleHeapSkipColl", "pipeline": [ { "$match": { "_id": { "$gte": 0 } } }, { "$sample": { "size": 40 } }, { "$sort": { "_id": 1 } }, { "$limit": 3 }, { "$project": { "_id": 1 } } ], "cursor": {} }');
+RESET enable_bitmapscan;
+RESET enable_seqscan;
+RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
+RESET documentdb.enableDollarSampleReservoirScan;
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+SELECT documentdb_api.drop_database('feature_counter_hs_db');
+
+
+-- Update many noop feature flags
+
+SELECT documentdb_api.insert('db', '{"insert":"updateMany", "documents":[
+    { "_id" : 1, "a": 1, "b": "noChange", "c": 1 },
+    { "_id" : 2, "a": 1, "b": "noChange", "c": 2 },
+    { "_id" : 3, "a": 1, "b": "noChange", "c": 3 },
+    { "_id" : 4, "a": 1, "b": "noChange", "c": 4 },
+    { "_id" : 5, "a": 1, "b": "noChange", "c": 5 },
+    { "_id" : 6, "a": 1, "b": "noChange", "c": 6 },
+    { "_id" : 7, "a": 1, "b": "noChange", "c": 7 },
+    { "_id" : 8, "a": 1, "b": "noChange", "c": 8 },
+    { "_id" : 9, "a": 1, "b": "noChange", "c": 9 },
+    { "_id" : 10, "a": 1, "b": "noChange", "c": 10 },
+    { "_id" : 11, "a": 1, "b": "noChange", "c": 11 },
+    { "_id" : 12, "a": 1, "b": "noChange", "c": 12 },
+    { "_id" : 13, "a": 1, "b": "noChange", "c": 13 },
+    { "_id" : 14, "a": 1, "b": "noChange", "c": 14 },
+    { "_id" : 15, "a": 1, "b": "noChange", "c": 15 }
+]}');
+
+SELECT documentdb_api.update('db', '{"update": "updateMany", "updates":[{"q": {"_id": {"$lte": 10}},"u":{"$set":{"b": "noChange" }},"multi":true}]}');
+SELECT documentdb_api.update('db', '{"update": "updateMany", "updates":[{"q": {"_id": {"$lte": 11}},"u":{"$set":{"b": "noChange" }},"multi":true}]}');
+SELECT documentdb_api.update('db', '{"update": "updateMany", "updates":[{"q": {"_id": {"$lte": 11}},"u":{"$set":{"b": "change" }},"multi":true}]}');
+
+-- index_only_scan_for_find_project_candidate: with enableIndexOnlyScanForFindProject
+-- disabled (default) a find with a covered projection over an ordered index is
+-- recorded as a candidate so accounts that would benefit can be identified.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "updateMany", "indexes": [ { "key": { "c": 1 }, "storageEngine": { "enableOrderedIndex": true }, "name": "iosfp_c_1" } ] }', true);
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+SELECT document FROM bson_aggregation_find('db', '{ "find": "updateMany", "filter": { "c": { "$gte": 1 } }, "projection": { "c": 1, "_id": 0 } }');
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+SELECT documentdb_api.drop_collection('db', 'updateMany');

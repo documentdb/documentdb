@@ -60,6 +60,7 @@
 #include "utils/hashset_utils.h"
 #include "utils/list_utils.h"
 #include "collation/collation.h"
+#include "utils/docdb_make_funcs.h"
 #include "jsonschema/bson_json_schema_tree.h"
 
 
@@ -109,6 +110,9 @@ typedef struct IdFilterWalkerContext
 
 	/* Whether or not the _id filter is an equality (point read) */
 	bool isPointReadQuery;
+
+	/* Whether we generated object_id func exprs or not for new Id filter pushdown. */
+	bool hasObjectIdFuncExprs;
 } IdFilterWalkerContext;
 
 
@@ -140,15 +144,13 @@ typedef struct MatchNamespaceFiltersContext
 	bool isInvalidNSFilters;
 } MatchNamespaceFiltersContext;
 
-extern bool EnableCollation;
-extern bool EnableIdIndexPushdown;
-extern bool EnableDollarInToScalarArrayOpExprConversion;
-extern bool EnableIdIndexPushdownForQueryOp;
+extern bool EnableObjectIdFuncExprConversion;
+extern bool EnablePartialFilterEvalOnPlanner;
+extern bool EnableSupportFunctionIdPushdown;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
 /* --------------------------------------------------------- */
-static Const * MakeBsonConst(pgbson *pgbson);
 static Node * ReplaceBsonQueryOperatorsMutator(Node *node,
 											   ReplaceBsonQueryOperatorsContext *context);
 static Expr * ExpandBsonQueryOperator(OpExpr *queryOpExpr, Node *queryNode,
@@ -187,10 +189,6 @@ static Expr * ExpandExprForDollarAll(const char *path,
 									 bson_iter_t *operatorDocIterator,
 									 BsonQueryOperatorContext *context,
 									 const MongoQueryOperator *operator);
-static MongoCollection * GetCollectionByDocumentVarLegacy(Expr *documentExpr,
-														  Query *currentQuery,
-														  Index *collectionVarno,
-														  ParamListInfo boundParams);
 static MongoCollection * GetCollectionByDocumentVar(Expr *documentExpr,
 													Query *currentQuery,
 													Index *collectionVarno,
@@ -257,12 +255,29 @@ static pgbson * HandleEqualityNamespaceFilter(bson_iter_t *iter, bool *nsInlined
 static inline bool
 IsDoubleAFixedInteger(double value)
 {
-	return floor(value) == value;
+	/* Infinity satisfies floor(value) == value but has no integer
+	 * representation; narrowing it silently saturates to INT64_MAX. */
+	return isfinite(value) && floor(value) == value;
 }
 
 
+/* Throws for a non-finite numeric $type code, spelled the way MongoDB
+ * spells it (inf/-inf/nan) rather than the generic
+ * "Unsupported or invalid numerical type code" message.
+ */
 static inline void
-pg_attribute_noreturn()
+EnsureTypeCodeIsFinite(double value)
+{
+	if (isnan(value) || isinf(value))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
+							"Invalid numerical type code: %s",
+							isnan(value) ? "nan" : (value > 0 ? "inf" : "-inf"))));
+	}
+}
+
+
+pg_noreturn static inline void
 ThrowInvalidRegexOptions(char c)
 {
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION51108), errmsg(
@@ -271,6 +286,7 @@ ThrowInvalidRegexOptions(char c)
 						"Invalid flag detected within the specified regex options %c",
 						c)));
 }
+
 
 /* --------------------------------------------------------- */
 /* Top level exports */
@@ -389,77 +405,88 @@ Datum
 query_match_support(PG_FUNCTION_ARGS)
 {
 	Node *supportRequest = (Node *) PG_GETARG_POINTER(0);
-	if (IsA(supportRequest, SupportRequestSimplify))
+	if (!IsA(supportRequest, SupportRequestSimplify))
 	{
-		/* Try to convert operator/function call to index conditions */
-		SupportRequestSimplify *req =
-			(SupportRequestSimplify *) supportRequest;
-		FuncExpr *funcExpr = req->fcall;
+		PG_RETURN_POINTER(NULL);
+	}
 
-		if (funcExpr->funcid == BsonQueryMatchFunctionId() &&
-			list_length(funcExpr->args) == 2)
+	/* Try to convert operator/function call to index conditions */
+	SupportRequestSimplify *req = (SupportRequestSimplify *) supportRequest;
+	FuncExpr *funcExpr = req->fcall;
+
+	bool hasLetAndCollation =
+		funcExpr->funcid == BsonQueryMatchWithLetAndCollationFunctionId();
+	if (!hasLetAndCollation && funcExpr->funcid != BsonQueryMatchFunctionId())
+	{
+		PG_RETURN_POINTER(NULL);
+	}
+
+	Expr *queryArg = lsecond(funcExpr->args);
+	if (!IsA(queryArg, Const))
+	{
+		PG_RETURN_POINTER(NULL);
+	}
+
+	Const *queryConst = (Const *) queryArg;
+	if (queryConst->constisnull)
+	{
+		PG_RETURN_POINTER(NULL);
+	}
+
+	BsonQueryOperatorContext context = { 0 };
+	context.documentExpr = linitial(funcExpr->args);
+	context.inputType = MongoQueryOperatorInputType_Bson;
+	context.simplifyOperators = true;
+	context.coerceOperatorExprIfApplicable = true;
+	context.requiredFilterPathNameHashSet = NULL;
+	context.variableContext = NULL;
+
+	if (hasLetAndCollation)
+	{
+		Expr *variableSpecArg = lthird(funcExpr->args);
+		Expr *collationArg = lfourth(funcExpr->args);
+
+		if (!IsA(variableSpecArg, Const) || !IsA(collationArg, Const))
 		{
-			Expr *firstArg = linitial(funcExpr->args);
-			Expr *secondArg = lsecond(funcExpr->args);
+			PG_RETURN_POINTER(NULL);
+		}
 
-			if (!IsA(secondArg, Const))
+		Const *variableSpecConst = (Const *) variableSpecArg;
+		if (!variableSpecConst->constisnull)
+		{
+			context.variableContext = (Expr *) variableSpecConst;
+		}
+
+		Const *collationConst = (Const *) collationArg;
+		if (!collationConst->constisnull)
+		{
+			char *collationString =
+				TextDatumGetCString(collationConst->constvalue);
+			if (IsCollationApplicable(collationString))
 			{
-				PG_RETURN_POINTER(NULL);
-			}
-
-			Const *constValue = (Const *) secondArg;
-			if (constValue->constisnull)
-			{
-				PG_RETURN_POINTER(NULL);
-			}
-
-			pgbson *queryDocument = DatumGetPgBson(constValue->constvalue);
-
-			/* open the Mongo query document */
-			bson_iter_t queryDocIter;
-			PgbsonInitIterator(queryDocument, &queryDocIter);
-
-			BsonQueryOperatorContext context = { 0 };
-			context.documentExpr = firstArg;
-			context.inputType = MongoQueryOperatorInputType_Bson;
-			context.simplifyOperators = true;
-			context.coerceOperatorExprIfApplicable = true;
-			context.requiredFilterPathNameHashSet = NULL;
-			context.variableContext = NULL;
-
-			/* convert the Mongo query to a list of Postgres quals */
-			List *quals = CreateQualsFromQueryDocIterator(&queryDocIter, &context);
-			UpdateQueryOperatorContextSortList(req->root->parse,
-											   context.targetEntries,
-											   context.sortClauses);
-
-			if (quals != NIL)
-			{
-				PG_RETURN_POINTER(make_ands_explicit(quals));
+				context.collationString = collationString;
 			}
 		}
 	}
 
+	pgbson *queryDocument = DatumGetPgBson(queryConst->constvalue);
+
+	/* open the Mongo query document */
+	bson_iter_t queryDocIter;
+	PgbsonInitIterator(queryDocument, &queryDocIter);
+
+	/* convert the Mongo query to a list of Postgres quals */
+	List *quals = CreateQualsFromQueryDocIterator(&queryDocIter, &context);
+	UpdateQueryOperatorContextSortList(req->root->parse,
+									   context.targetEntries,
+									   context.sortClauses);
+
+	if (quals != NIL)
+	{
+		PG_RETURN_POINTER(make_ands_explicit(quals));
+	}
+
 	PG_RETURN_POINTER(NULL);
-}
-
-
-/*
- * MakeBsonConst creates a Const expression for a given bson.
- */
-static Const *
-MakeBsonConst(pgbson *pgbson)
-{
-	Const *bsonConst = makeNode(Const);
-	bsonConst->consttype = BsonTypeId();
-	bsonConst->consttypmod = -1;
-	bsonConst->constlen = -1;
-	bsonConst->constvalue = PointerGetDatum(pgbson);
-	bsonConst->constbyval = false;
-	bsonConst->constisnull = false;
-	bsonConst->location = -1;
-
-	return bsonConst;
 }
 
 
@@ -512,7 +539,8 @@ ReplaceBsonQueryOperators(Query *node, ParamListInfo boundParams)
  */
 Expr *
 CreateQualForBsonValueExpression(const bson_value_t *expression, const
-								 char *collationString)
+								 char *collationString,
+								 bool skipObjectArrayFilter)
 {
 	if (expression->value_type != BSON_TYPE_DOCUMENT)
 	{
@@ -529,6 +557,7 @@ CreateQualForBsonValueExpression(const bson_value_t *expression, const
 	context.requiredFilterPathNameHashSet = NULL;
 	context.variableContext = NULL;
 	context.collationString = collationString;
+	context.skipObjectArrayFilter = skipObjectArrayFilter;
 
 	const char *traversedPath = NULL;
 	const char *basePath = "";
@@ -772,7 +801,7 @@ CreateQualForBsonValueExpressionCore(const bson_value_t *expression,
 		}
 	}
 
-	if (addObjectArrayFilter &&
+	if (addObjectArrayFilter && !context->skipObjectArrayFilter &&
 		context->inputType == MongoQueryOperatorInputType_BsonValue)
 	{
 		/*
@@ -1433,12 +1462,28 @@ ReplaceBsonQueryOperatorsMutator(Node *node, ReplaceBsonQueryOperatorsContext *c
 				queryNode = EvaluateBoundParameters(queryNode,
 													context->boundParams);
 			}
+			if (IsA(queryNode, RelabelType))
+			{
+				RelabelType *relabeled = (RelabelType *) queryNode;
+				if (relabeled->relabelformat == COERCE_IMPLICIT_CAST)
+				{
+					queryNode = (Node *) relabeled->arg;
+				}
+			}
 
 			Node *variableSpecNode = lthird(funcExpr->args);
 			if (IsA(variableSpecNode, Param))
 			{
 				variableSpecNode = EvaluateBoundParameters(variableSpecNode,
 														   context->boundParams);
+			}
+			if (IsA(variableSpecNode, RelabelType))
+			{
+				RelabelType *relabeled = (RelabelType *) variableSpecNode;
+				if (relabeled->relabelformat == COERCE_IMPLICIT_CAST)
+				{
+					variableSpecNode = (Node *) relabeled->arg;
+				}
 			}
 
 			Node *collationStringNode = lfourth(funcExpr->args);
@@ -1567,7 +1612,16 @@ ExpandBsonQueryOperator(OpExpr *queryOpExpr, Node *queryNode,
 	context.inputType = MongoQueryOperatorInputType_Bson;
 	context.simplifyOperators = true;
 	context.coerceOperatorExprIfApplicable = true;
+	context.skipIdBtreeCoercion = EnableSupportFunctionIdPushdown &&
+								  IsClusterVersionAtleast(DocDB_V0, 112, 1);
 	context.requiredFilterPathNameHashSet = NULL;
+
+	/* Resolve the collection early only when the GUC is enabled so we can
+	 * gate _id coercion before qual generation. Otherwise the lookup is
+	 * deferred until after quals are generated (and skipped entirely when
+	 * there are no quals). */
+	Index collectionVarno = 0;
+	bool isCollectionBasedRTE = false;
 
 	context.variableContext = NULL;
 	if (variableSpec != NULL && !variableSpec->constisnull)
@@ -1618,33 +1672,18 @@ ExpandBsonQueryOperator(OpExpr *queryOpExpr, Node *queryNode,
 	/* extract the collection via the document Var */
 	if (quals != NIL)
 	{
-		Index collectionVarno;
-		MongoCollection *collection = NULL;
-		bool isCollectionBasedRTE = false;
-		if (EnableIdIndexPushdownForQueryOp)
-		{
-			/* if query is on a collection, get the collection metadata */
-			collection = GetCollectionByDocumentVar(context.documentExpr,
-													currentQuery,
-													&collectionVarno, boundParams,
-													&isCollectionBasedRTE);
-		}
-		else
-		{
-			/* if query is on a collection, get the collection metadata */
-			collection = GetCollectionByDocumentVarLegacy(context.documentExpr,
-														  currentQuery,
-														  &collectionVarno,
-														  boundParams);
-		}
+		MongoCollection *collection = GetCollectionByDocumentVar(context.documentExpr,
+																 currentQuery,
+																 &collectionVarno,
+																 boundParams,
+																 &isCollectionBasedRTE);
 
 		if (collection != NULL)
 		{
 			bool hasShardKeyFilters = false;
 
-			/* TODO: Remove this condition once the GUC is deprecated, as shard key constant filters can always be appended for non-sharded collections */
 			/* For collection-based RTE on unsharded collections, shard_key_value is already appended, so skip here */
-			if ((EnableIdIndexPushdownForQueryOp && !isCollectionBasedRTE) ||
+			if (!isCollectionBasedRTE ||
 				collection->shardKey != NULL)
 			{
 				/* Retrieve the shard_key_value filter applicable to the specified collection */
@@ -1672,16 +1711,23 @@ ExpandBsonQueryOperator(OpExpr *queryOpExpr, Node *queryNode,
 				hasShardKeyFilters = true;
 			}
 
-			if (hasShardKeyFilters)
+			/* When support function Id Pushdown is enable, we want to unify qual generation for _id even if there is no shard key filter so that we
+			 * update the old func exprs to the new object_id funcexprs. That way queries on _id remain consistent when there is no shard key filter.
+			 */
+			if (hasShardKeyFilters ||
+				(EnableSupportFunctionIdPushdown &&
+				 IsClusterVersionAtleast(DocDB_V0, 112, 1)))
 			{
 				/* Mongo allows collation on _id field. We need to make sure we do that as well. We can't
 				 * push the Id filter to primary key index if the type needs to be collation aware (e.g., _id contains UTF8 )*/
 				bool isCollationAware;
 				bool isPointRead;
+				bool hasObjectIdFuncExprs;
 				Expr *idFilter = CreateIdFilterForQuery(quals,
 														collectionVarno,
 														&isCollationAware,
-														&isPointRead);
+														&isPointRead,
+														&hasObjectIdFuncExprs);
 
 				/* include _id filter in quals */
 				if (idFilter != NULL &&
@@ -2433,6 +2479,47 @@ CreateOpExprFromOperatorDocIterator(const char *path,
 }
 
 
+Expr *
+CreateScalarArrayOpExprForInWithBsonIndexBounds(Expr *documentExpr, const char *path,
+												const char *collationString,
+												bson_iter_t *arrayIter)
+{
+	List *inArgsList = NIL;
+	while (bson_iter_next(arrayIter))
+	{
+		const bson_value_t *currentValue = bson_iter_value(arrayIter);
+		Const *bsonConst = CreateConstFromBsonValue(
+			path, currentValue, collationString);
+		bsonConst->consttype = BsonIndexBoundsTypeId();
+		inArgsList = lappend(inArgsList, bsonConst);
+	}
+
+	/*
+	 * In the case where we're operating with a $in and indexes with
+	 * PFE we need to coerce the expression to the type of the index
+	 */
+	if (inArgsList != NIL)
+	{
+		ScalarArrayOpExpr *inOperator = makeNode(ScalarArrayOpExpr);
+		inOperator->useOr = true;
+		inOperator->opno = BsonIndexBoundsEqualOperatorId();
+		inOperator->opfuncid = BsonIndexBoundsEqualOperatorFuncId();
+
+		/* Second arg is an ArrayExpr containing the documents */
+		ArrayExpr *arrayExpr = makeNode(ArrayExpr);
+		arrayExpr->array_typeid = GetBsonIndexBoundsArrayTypeOid();
+		arrayExpr->element_typeid = BsonIndexBoundsTypeId();
+		arrayExpr->multidims = false;
+		arrayExpr->elements = inArgsList;
+		inOperator->args = list_make2(documentExpr, arrayExpr);
+
+		return (Expr *) inOperator;
+	}
+
+	return NULL;
+}
+
+
 static Expr *
 CreateOpExprFromOperatorDocIteratorCore(bson_iter_t *operatorDocIterator,
 										BsonQueryOperatorContext *context,
@@ -2517,8 +2604,7 @@ CreateOpExprFromOperatorDocIteratorCore(bson_iter_t *operatorDocIterator,
 				return CreateFuncExprForQueryOperator(context, path, actualOperator,
 													  &currentValue);
 			}
-			else if (EnableDollarInToScalarArrayOpExprConversion &&
-					 context->convertSupportedInToScalarArrayOp &&
+			else if (context->convertSupportedInToScalarArrayOp &&
 					 context->coerceOperatorExprIfApplicable &&
 					 context->inputType == MongoQueryOperatorInputType_Bson &&
 					 numValues >= 1 &&
@@ -2571,43 +2657,21 @@ CreateOpExprFromOperatorDocIteratorCore(bson_iter_t *operatorDocIterator,
 					context->coerceOperatorExprIfApplicable &&
 					context->inputType == MongoQueryOperatorInputType_Bson &&
 					operator->operatorType == QUERY_OPERATOR_IN &&
-					!hasRegex)
+					!hasRegex && !EnablePartialFilterEvalOnPlanner)
 				{
-					List *inArgsList = NIL;
 					if (bson_iter_recurse(operatorDocIterator, &arrayIterator))
 					{
-						while (bson_iter_next(&arrayIterator))
+						Expr *inOperator =
+							CreateScalarArrayOpExprForInWithBsonIndexBounds(
+								context->documentExpr, path,
+								context->
+								collationString, &arrayIterator);
+
+						if (inOperator != NULL)
 						{
-							currentValue = *bson_iter_value(&arrayIterator);
-							Const *bsonConst = CreateConstFromBsonValue(
-								path, &currentValue,
-								context->collationString);
-							bsonConst->consttype = BsonIndexBoundsTypeId();
-							inArgsList = lappend(inArgsList, bsonConst);
+							inExpr = (Expr *) make_and_qual((Node *) inExpr,
+															(Node *) inOperator);
 						}
-					}
-
-					/*
-					 * In the case where we're operating with a $in and indexes with
-					 * PFE we need to coerce the expression to the type of the index
-					 */
-					if (inArgsList != NIL)
-					{
-						ScalarArrayOpExpr *inOperator = makeNode(ScalarArrayOpExpr);
-						inOperator->useOr = true;
-						inOperator->opno = BsonIndexBoundsEqualOperatorId();
-						inOperator->opfuncid = BsonIndexBoundsEqualOperatorFuncId();
-
-						/* Second arg is an ArrayExpr containing the documents */
-						ArrayExpr *arrayExpr = makeNode(ArrayExpr);
-						arrayExpr->array_typeid = GetBsonIndexBoundsArrayTypeOid();
-						arrayExpr->element_typeid = BsonIndexBoundsTypeId();
-						arrayExpr->multidims = false;
-						arrayExpr->elements = inArgsList;
-						inOperator->args = list_make2(context->documentExpr, arrayExpr);
-
-						inExpr = (Expr *) make_and_qual((Node *) inExpr,
-														(Node *) inOperator);
 					}
 				}
 
@@ -2714,6 +2778,7 @@ CreateOpExprFromOperatorDocIteratorCore(bson_iter_t *operatorDocIterator,
 			else if (BSON_ITER_HOLDS_NUMBER(operatorDocIterator))
 			{
 				double doubleValue = BsonValueAsDouble(typeIdValue);
+				EnsureTypeCodeIsFinite(doubleValue);
 				if (!IsDoubleAFixedInteger(doubleValue))
 				{
 					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
@@ -2745,6 +2810,7 @@ CreateOpExprFromOperatorDocIteratorCore(bson_iter_t *operatorDocIterator,
 					else if (BSON_ITER_HOLDS_NUMBER(&arrayIterator))
 					{
 						double doubleValue = BsonValueAsDouble(typeIdArrayValue);
+						EnsureTypeCodeIsFinite(doubleValue);
 						if (!IsDoubleAFixedInteger(doubleValue))
 						{
 							ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
@@ -2971,6 +3037,15 @@ CreateOpExprFromOperatorDocIteratorCore(bson_iter_t *operatorDocIterator,
 										bson_iter_type(operatorDocIterator)))));
 			}
 
+			bool isBsonValueInput =
+				context->inputType == MongoQueryOperatorInputType_BsonValue;
+			if (isBsonValueInput &&
+				!IsClusterVersionAtleast(DocDB_V0, 117, 0))
+			{
+				ereport(ERROR, (errmsg(
+									"BSON value geospatial queries require cluster version at least 0.117.0")));
+			}
+
 			const bson_value_t *value = bson_iter_value(operatorDocIterator);
 			bson_value_t shapesValue;
 			const ShapeOperator *shapeOperator = GetShapeOperatorByValue(value,
@@ -2985,6 +3060,11 @@ CreateOpExprFromOperatorDocIteratorCore(bson_iter_t *operatorDocIterator,
 
 			Expr *geoWithinFuncExpr = CreateFuncExprForSimpleQueryOperator(
 				operatorDocIterator, context, operator, path);
+			if (isBsonValueInput)
+			{
+				return geoWithinFuncExpr;
+			}
+
 			return WithIndexSupportExpression(context->documentExpr, geoWithinFuncExpr,
 											  path, shapeOperator->isSpherical);
 		}
@@ -3026,8 +3106,22 @@ CreateOpExprFromOperatorDocIteratorCore(bson_iter_t *operatorDocIterator,
 			/* Validate the query at planning */
 			shapeOperator->getShapeDatum(&shapesValue, opInfo);
 
+			bool isBsonValueInput =
+				context->inputType == MongoQueryOperatorInputType_BsonValue;
+			if (isBsonValueInput &&
+				!IsClusterVersionAtleast(DocDB_V0, 117, 0))
+			{
+				ereport(ERROR, (errmsg(
+									"BSON value geospatial queries require cluster version at least 0.117.0")));
+			}
+
 			Expr *geoIntersectsFuncExpr = CreateFuncExprForSimpleQueryOperator(
 				operatorDocIterator, context, operator, path);
+			if (isBsonValueInput)
+			{
+				return geoIntersectsFuncExpr;
+			}
+
 			return WithIndexSupportExpression(context->documentExpr,
 											  geoIntersectsFuncExpr,
 											  path, shapeOperator->isSpherical);
@@ -3327,7 +3421,7 @@ CreateExprForBitwiseQueryOperators(bson_iter_t *operatorDocIterator,
 
 		default:
 		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 							errmsg(
 								"%s takes an Array, a number, or a BinData but received: %s: \\%s\\",
 								path,
@@ -3393,7 +3487,6 @@ CreateFuncExprForQueryOperator(BsonQueryOperatorContext *context, const char *pa
 	/* construct left and right side of the comparison */
 	Const *constValue = CreateConstFromBsonValue(path, value, context->collationString);
 
-
 	Oid functionOid = operator->postgresRuntimeFunctionOidLookup();
 	if (!OidIsValid(functionOid))
 	{
@@ -3401,9 +3494,15 @@ CreateFuncExprForQueryOperator(BsonQueryOperatorContext *context, const char *pa
 							   operator->mongoOperatorName)));
 	}
 
+	/* If we're doing object_id support functions we skip coercion as we use the original funcExpr to replace the pointer to the new
+	 * object_id funcExpr. PFE index pushdown will be handled at the get_relation_info hook. */
+	bool skipCoercionForId = context->skipIdBtreeCoercion &&
+							 strcmp(path, "_id") == 0;
+
 	constValue->consttype = operator->operandTypeOid();
 
 	if (context->coerceOperatorExprIfApplicable &&
+		!skipCoercionForId &&
 		operator->postgresRuntimeOperatorOidLookup != NULL)
 	{
 		/* First try to see if the Oid exists */
@@ -3766,41 +3865,6 @@ CreateShardKeyFiltersForQuery(const bson_value_t *queryDocument, pgbson *shardKe
 
 
 /*
- * GetCollectionByDocumentVarLegacy finds the collection referenced by
- * documentExpr if it contains a single Var, or NULL if it not a single Var,
- * or the FROM clause entry is not a ApiSchema.collection call.
- */
-static MongoCollection *
-GetCollectionByDocumentVarLegacy(Expr *documentExpr,
-								 Query *currentQuery,
-								 Index *collectionVarno,
-								 ParamListInfo boundParams)
-{
-	List *documentVars = pull_var_clause((Node *) documentExpr, 0);
-	if (list_length(documentVars) != 1)
-	{
-		return NULL;
-	}
-
-	Var *documentVar = linitial(documentVars);
-
-	/* find the FROM ApiSchema.collection(...) clause to which document refers */
-	RangeTblEntry *rte = rt_fetch(documentVar->varno, currentQuery->rtable);
-	if (!IsResolvableDocumentDbCollectionBasedRTE(rte, boundParams))
-	{
-		return NULL;
-	}
-
-	if (collectionVarno != NULL)
-	{
-		*collectionVarno = documentVar->varno;
-	}
-
-	return GetCollectionForRTE(rte, boundParams);
-}
-
-
-/*
  * GetCollectionByDocumentVar finds the collection referenced by
  * documentExpr if it contains a single Var, or NULL if it not a single Var.
  * First tries to get the collection from a DocumentDb relation (RTE_RELATION with
@@ -3952,6 +4016,168 @@ MakeUpperBoundIdExpr(const bson_value_t *filterValue, Index collectionVarno)
 }
 
 
+static bool
+ValidateAndGetObjectIdQual(List *opArgs, IdFilterWalkerContext *context,
+						   pgbsonelement *qualElement, const char **collationString)
+{
+	Expr *firstArg = linitial(opArgs);
+	Expr *secondArg = lsecond(opArgs);
+
+	if (!IsA(firstArg, Var))
+	{
+		return false;
+	}
+
+	/* Skip if the qual is not against the document column */
+	Var *firstVar = (Var *) firstArg;
+	if (firstVar->varattno != DOCUMENT_DATA_TABLE_DOCUMENT_VAR_ATTR_NUMBER ||
+		((Index) firstVar->varno) != context->collectionVarno)
+	{
+		return false;
+	}
+
+	if (!IsA(secondArg, Const))
+	{
+		return false;
+	}
+
+	/* We know it's a filter on the document column */
+	Const *secondConst = (Const *) secondArg;
+	Assert(secondConst->consttype == BsonTypeId() ||
+		   secondConst->consttype == BsonQueryTypeId());
+
+	pgbson *qual = DatumGetPgBson(secondConst->constvalue);
+
+	*collationString = PgbsonToSinglePgbsonElementWithCollation(qual,
+																qualElement);
+
+	return qualElement->pathLength == IdFieldStringView.length &&
+		   strncmp(qualElement->path, IdFieldStringView.string,
+				   IdFieldStringView.length) == 0;
+}
+
+
+static void
+ConvertQuerySpecToBsonQuery(Expr *querySpec)
+{
+	if (IsA(querySpec, Const))
+	{
+		Const *constExpr = (Const *) querySpec;
+		constExpr->consttype = BsonQueryTypeId();
+	}
+	else if (IsA(querySpec, Var))
+	{
+		Var *varExpr = (Var *) querySpec;
+		varExpr->vartype = BsonQueryTypeId();
+	}
+	else if (IsA(querySpec, Param))
+	{
+		Param *paramExpr = (Param *) querySpec;
+		paramExpr->paramtype = BsonQueryTypeId();
+	}
+}
+
+
+static bool
+TryConvertExistingExpression(FuncExpr *expr, IdFilterWalkerContext *context,
+							 const MongoIndexOperatorInfo *operator)
+{
+	switch (operator->indexStrategy)
+	{
+		case BSON_INDEX_STRATEGY_DOLLAR_REGEX:
+		{
+			if (!IsClusterVersionAtleast(DocDB_V0, 112, 1))
+			{
+				return false;
+			}
+
+			pgbsonelement qualElement = { 0 };
+			const char *collationString;
+			if (!ValidateAndGetObjectIdQual(expr->args, context, &qualElement,
+											&collationString))
+			{
+				return false;
+			}
+
+			/* Update args to point to the object_id variant and return true*/
+			Var *objectIdVar = makeVar(context->collectionVarno,
+									   DOCUMENT_DATA_TABLE_OBJECT_ID_VAR_ATTR_NUMBER,
+									   BsonTypeId(), -1, InvalidOid, 0);
+			expr->funcid = BsonRegexObjectIdMatchFunctionId();
+
+			Expr *querySpec = lsecond(expr->args);
+			ConvertQuerySpecToBsonQuery(querySpec);
+			expr->args = list_make3(linitial(expr->args), objectIdVar, querySpec);
+
+			return true;
+		}
+
+		default:
+		{
+			return false;
+		}
+	}
+}
+
+
+static void
+GenerateObjectIdFiltersFromQueryOperator(const ObjectIdMongoOperatorInfo *objectIdOp,
+										 FuncExpr *expr, IdFilterWalkerContext *context)
+{
+	pgbsonelement qualElement = { 0 };
+	const char *collationString;
+	if (!ValidateAndGetObjectIdQual(expr->args, context, &qualElement,
+									&collationString))
+	{
+		return;
+	}
+
+	if (qualElement.bsonValue.value_type == BSON_TYPE_UTF8 ||
+		qualElement.bsonValue.value_type == BSON_TYPE_DOCUMENT ||
+		qualElement.bsonValue.value_type == BSON_TYPE_ARRAY)
+	{
+		context->isCollationAware = IsCollationApplicable(collationString);
+	}
+
+	switch (objectIdOp->queryOperator.operatorType)
+	{
+		case QUERY_OPERATOR_EQ:
+		{
+			context->isPointReadQuery = true;
+			break;
+		}
+
+		case QUERY_OPERATOR_GT:
+		case QUERY_OPERATOR_GTE:
+		case QUERY_OPERATOR_LT:
+		case QUERY_OPERATOR_LTE:
+		case QUERY_OPERATOR_IN:
+		case QUERY_OPERATOR_REGEX:
+		{
+			break;
+		}
+
+		default:
+		{
+			ereport(ERROR, (errmsg(
+								"Unexpected query operator type for object id filter conversion.")));
+		}
+	}
+
+	/* Update args to point to the object_id variant and return true*/
+	Var *objectIdVar = makeVar(context->collectionVarno,
+							   DOCUMENT_DATA_TABLE_OBJECT_ID_VAR_ATTR_NUMBER,
+							   BsonTypeId(), -1, InvalidOid, 0);
+
+	Expr *querySpec = lsecond(expr->args);
+	ConvertQuerySpecToBsonQuery(querySpec);
+	expr->args = list_make3(linitial(expr->args), objectIdVar, querySpec);
+	expr->funcid = objectIdOp->queryOperator.postgresRuntimeFunctionOidLookup();
+
+	context->hasObjectIdFuncExprs = true;
+}
+
+
 /*
  * Given the binary arguments of a FuncExpr or OpExpr,
  * A specified Collection Var index in a RangeTable,
@@ -3969,36 +4195,13 @@ static void
 CheckAndAddIdFilter(List *opArgs, IdFilterWalkerContext *context,
 					const MongoIndexOperatorInfo *operator)
 {
-	Expr *firstArg = linitial(opArgs);
-	Expr *secondArg = lsecond(opArgs);
-
-	if (!IsA(firstArg, Var))
+	pgbsonelement qualElement = { 0 };
+	const char *collationString;
+	if (!ValidateAndGetObjectIdQual(opArgs, context, &qualElement,
+									&collationString))
 	{
 		return;
 	}
-
-	/* Skip if the qual is not against the document column */
-	Var *firstVar = (Var *) firstArg;
-	if (firstVar->varattno != DOCUMENT_DATA_TABLE_DOCUMENT_VAR_ATTR_NUMBER ||
-		((Index) firstVar->varno) != context->collectionVarno)
-	{
-		return;
-	}
-
-	if (!IsA(secondArg, Const))
-	{
-		return;
-	}
-
-	/* We know it's a filter on the document column */
-	Const *secondConst = (Const *) secondArg;
-	Assert(secondConst->consttype == BsonTypeId() ||
-		   secondConst->consttype == BsonQueryTypeId());
-
-	pgbson *qual = DatumGetPgBson(secondConst->constvalue);
-	pgbsonelement qualElement;
-	const char *collationString = PgbsonToSinglePgbsonElementWithCollation(qual,
-																		   &qualElement);
 
 	/*  regex. _id can take Code, but Code is agnostic to collation
 	 * _id can't be array accrording to mongo senmantics, but it can
@@ -4010,151 +4213,24 @@ CheckAndAddIdFilter(List *opArgs, IdFilterWalkerContext *context,
 		context->isCollationAware = IsCollationApplicable(collationString);
 	}
 
-	if (qualElement.pathLength == IdFieldStringView.length &&
-		strncmp(qualElement.path, IdFieldStringView.string, IdFieldStringView.length) ==
-		0)
+	Expr *lowerBound = NULL;
+	Expr *upperBound = NULL;
+	if (GetBtreeIndexBoundQuals(operator->indexStrategy, &qualElement.bsonValue,
+								context->collectionVarno, &lowerBound, &upperBound))
 	{
-		switch (operator->indexStrategy)
+		/* Add the bounds to the list of ID filters */
+		if (lowerBound)
 		{
-			case BSON_INDEX_STRATEGY_DOLLAR_EQUAL:
-			{
-				Expr *documentIdFilter = MakeSimpleIdExpr(&qualElement.bsonValue,
-														  context->collectionVarno,
-														  BsonEqualOperatorId());
-				context->isPointReadQuery = true;
-				context->idQuals = lappend(context->idQuals, documentIdFilter);
-				return;
-			}
+			context->idQuals = lappend(context->idQuals, lowerBound);
+		}
+		if (upperBound)
+		{
+			context->idQuals = lappend(context->idQuals, upperBound);
+		}
 
-			case BSON_INDEX_STRATEGY_DOLLAR_GREATER:
-			{
-				Expr *documentIdFilter = MakeSimpleIdExpr(&qualElement.bsonValue,
-														  context->collectionVarno,
-														  BsonGreaterThanOperatorId());
-				context->idQuals = lappend(context->idQuals, documentIdFilter);
-
-				/* Since btree doesn't do type bracketing - apply type bracketing here */
-				if (EnableIdIndexPushdown)
-				{
-					documentIdFilter =
-						MakeUpperBoundIdExpr(&qualElement.bsonValue,
-											 context->collectionVarno);
-					context->idQuals = lappend(context->idQuals, documentIdFilter);
-				}
-
-				return;
-			}
-
-			case BSON_INDEX_STRATEGY_DOLLAR_LESS:
-			{
-				Expr *documentIdFilter = MakeSimpleIdExpr(&qualElement.bsonValue,
-														  context->collectionVarno,
-														  BsonLessThanOperatorId());
-				context->idQuals = lappend(context->idQuals, documentIdFilter);
-
-				/* Since btree doesn't do type bracketing - apply type bracketing here */
-				if (EnableIdIndexPushdown)
-				{
-					documentIdFilter = MakeLowerBoundIdExpr(&qualElement.bsonValue,
-															context->collectionVarno);
-					context->idQuals = lappend(context->idQuals, documentIdFilter);
-				}
-				return;
-			}
-
-
-			case BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL:
-			{
-				Expr *documentIdFilter = MakeSimpleIdExpr(&qualElement.bsonValue,
-														  context->collectionVarno,
-														  BsonGreaterThanEqualOperatorId());
-				context->idQuals = lappend(context->idQuals, documentIdFilter);
-
-				/* Since btree doesn't do type bracketing - apply type bracketing here */
-				if (EnableIdIndexPushdown)
-				{
-					documentIdFilter =
-						MakeUpperBoundIdExpr(&qualElement.bsonValue,
-											 context->collectionVarno);
-					context->idQuals = lappend(context->idQuals, documentIdFilter);
-				}
-
-				return;
-			}
-
-			case BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL:
-			{
-				Expr *documentIdFilter = MakeSimpleIdExpr(&qualElement.bsonValue,
-														  context->collectionVarno,
-														  BsonLessThanEqualOperatorId());
-				context->idQuals = lappend(context->idQuals, documentIdFilter);
-
-				/* Since btree doesn't do type bracketing - apply type bracketing here */
-				if (EnableIdIndexPushdown)
-				{
-					documentIdFilter = MakeLowerBoundIdExpr(&qualElement.bsonValue,
-															context->collectionVarno);
-					context->idQuals = lappend(context->idQuals, documentIdFilter);
-				}
-
-				return;
-			}
-
-			case BSON_INDEX_STRATEGY_DOLLAR_IN:
-			{
-				if (qualElement.bsonValue.value_type != BSON_TYPE_ARRAY)
-				{
-					return;
-				}
-
-				List *inArgs = NIL;
-				bson_iter_t inQualsIter;
-				BsonValueInitIterator(&qualElement.bsonValue, &inQualsIter);
-
-
-				/* Get the $in values */
-				while (bson_iter_next(&inQualsIter))
-				{
-					inArgs = lappend(inArgs, MakeBsonConst(BsonValueToDocumentPgbson(
-															   bson_iter_value(
-																   &inQualsIter))));
-				}
-
-				if (inArgs != NIL)
-				{
-					/* Create an IN clause, in SQL this is
-					 * a "ANY ( bson[] )" expression.
-					 */
-					ScalarArrayOpExpr *inOperator = makeNode(ScalarArrayOpExpr);
-					inOperator->useOr = true;
-					inOperator->opno = BsonEqualOperatorId();
-					inOperator->opfuncid = BsonEqualFunctionOid();
-
-					/* First arg is the object_id var */
-					AttrNumber documentIdAttnum = 2;
-					Var *documentIdVar = makeVar(context->collectionVarno,
-												 documentIdAttnum,
-												 BsonTypeId(), -1,
-												 InvalidOid, 0);
-
-					/* Second arg is an ArrayExpr containing the documents */
-					ArrayExpr *arrayExpr = makeNode(ArrayExpr);
-					arrayExpr->array_typeid = GetBsonArrayTypeOid();
-					arrayExpr->element_typeid = BsonTypeId();
-					arrayExpr->multidims = false;
-					arrayExpr->elements = inArgs;
-					inOperator->args = list_make2(documentIdVar, arrayExpr);
-
-					context->idQuals = lappend(context->idQuals, inOperator);
-				}
-
-				return;
-			}
-
-			default:
-			{
-				return;
-			}
+		if (operator->indexStrategy == BSON_INDEX_STRATEGY_DOLLAR_EQUAL)
+		{
+			context->isPointReadQuery = true;
 		}
 	}
 }
@@ -4203,12 +4279,37 @@ VisitIdFilterExpression(Node *node, IdFilterWalkerContext *context)
 	else if (IsA(node, FuncExpr))
 	{
 		FuncExpr *funcExpr = (FuncExpr *) node;
-		const MongoIndexOperatorInfo *indexOp =
-			GetMongoIndexOperatorInfoByPostgresFuncId(funcExpr->funcid);
-		if (indexOp->indexStrategy != BSON_INDEX_STRATEGY_INVALID &&
-			list_length(funcExpr->args) == 2)
+
+		if (!EnableSupportFunctionIdPushdown)
 		{
-			CheckAndAddIdFilter(funcExpr->args, context, indexOp);
+			const MongoIndexOperatorInfo *indexOp =
+				GetMongoIndexOperatorInfoByPostgresFuncId(funcExpr->funcid);
+
+			if (indexOp->indexStrategy != BSON_INDEX_STRATEGY_INVALID &&
+				list_length(funcExpr->args) == 2)
+			{
+				/* For $regex on _id, we can mutate the existing expression if applicable
+				 * TODO: Expand this to more scenarios and operators.
+				 */
+				if (EnableObjectIdFuncExprConversion &&
+					TryConvertExistingExpression(funcExpr, context, indexOp))
+				{
+					return false;
+				}
+
+				CheckAndAddIdFilter(funcExpr->args, context, indexOp);
+			}
+		}
+		else
+		{
+			const ObjectIdMongoOperatorInfo *objectIdOp =
+				GetObjectIdMongoQueryOperatorByNonObjectIdFuncId(funcExpr->funcid);
+
+			if (objectIdOp->queryOperator.operatorType != QUERY_OPERATOR_UNKNOWN &&
+				list_length(funcExpr->args) == 2)
+			{
+				GenerateObjectIdFiltersFromQueryOperator(objectIdOp, funcExpr, context);
+			}
 		}
 
 		return false;
@@ -4235,7 +4336,8 @@ Expr *
 CreateIdFilterForQuery(List *existingQuals,
 					   Index collectionVarno,
 					   bool *isCollationAware,
-					   bool *isPointRead)
+					   bool *isPointRead,
+					   bool *hasObjectIdFuncExprs)
 {
 	IdFilterWalkerContext walkerContext = { 0 };
 	walkerContext.idQuals = NIL;
@@ -4245,6 +4347,7 @@ CreateIdFilterForQuery(List *existingQuals,
 
 	*isCollationAware = walkerContext.isCollationAware;
 	*isPointRead = walkerContext.isPointReadQuery;
+	*hasObjectIdFuncExprs = walkerContext.hasObjectIdFuncExprs;
 	if (walkerContext.idQuals == NIL)
 	{
 		return NULL;
@@ -4291,7 +4394,16 @@ ValidateOrderbyExpressionAndGetIsAscending(pgbson *orderby)
 
 	if (!BsonValueIsNumber(&orderingElement.bsonValue))
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION15974),
+						errmsg("Sort direction value %s is not valid",
+							   BsonValueToJsonForLogging(
+								   &orderingElement.bsonValue))));
+	}
+
+	double sortOrderDouble = BsonValueAsDouble(&orderingElement.bsonValue);
+	if (isnan(sortOrderDouble) || isinf(sortOrderDouble))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION15975),
 						errmsg("Sort direction value %s is not valid",
 							   BsonValueToJsonForLogging(
 								   &orderingElement.bsonValue))));
@@ -4300,7 +4412,7 @@ ValidateOrderbyExpressionAndGetIsAscending(pgbson *orderby)
 	int64_t sortOrder = BsonValueAsInt64(&orderingElement.bsonValue);
 	if (sortOrder != 1 && sortOrder != -1)
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION15975),
 						errmsg("Sort direction value %s is not valid",
 							   BsonValueToJsonForLogging(
 								   &orderingElement.bsonValue))));
@@ -4574,7 +4686,7 @@ SortAndWriteInt32BsonTypeArray(const bson_value_t *bsonArray, pgbson_writer *wri
 			{
 				case BSON_TYPE_DOUBLE:
 				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 									errmsg(
 										"Expected value of integer type: %s: %s", opName,
 										BsonValueToJsonForLogging(element)),
@@ -4588,7 +4700,7 @@ SortAndWriteInt32BsonTypeArray(const bson_value_t *bsonArray, pgbson_writer *wri
 				case BSON_TYPE_DECIMAL128:
 				case BSON_TYPE_INT64:
 				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 									errmsg(
 										"Expected an integer but got '%s' type for element %s.0",
 										BsonTypeName(element->value_type),
@@ -4601,7 +4713,7 @@ SortAndWriteInt32BsonTypeArray(const bson_value_t *bsonArray, pgbson_writer *wri
 
 				default:
 				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 									errmsg(
 										"bit positions must be an integer but got: %d: \\%s\\",
 										arrayLength, BsonValueToJsonForLogging(element)),
@@ -4621,7 +4733,7 @@ SortAndWriteInt32BsonTypeArray(const bson_value_t *bsonArray, pgbson_writer *wri
 
 		if (elementValue < 0)
 		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE), errmsg(
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
 								"bit positions must be >= 0 but got: %d: \\%s\\",
 								arrayLength, BsonValueToJsonForLogging(element))));
 		}
@@ -5027,18 +5139,25 @@ WithIndexSupportExpression(Expr *docExpr, Expr *geoOperatorExpr,
 {
 	FuncExpr *geoOperatorFuncExpr = (FuncExpr *) geoOperatorExpr;
 
-	Const *pathConst = makeConst(TEXTOID, -1, InvalidOid, -1, CStringGetTextDatum(path),
-								 false, false);
+	Const *pathConst = MakeTextConst(path, strlen(path));
 
 	Oid bsonValidateFunctionId = isSpherical ? BsonValidateGeographyFunctionId() :
 								 BsonValidateGeometryFunctionId();
-	Oid typeId = isSpherical ? GeographyTypeId() : GeometryTypeId();
+
+	/*
+	 * bson_validate_geography/bson_validate_geometry both return bson, so the
+	 * FuncExpr result type must be bson. Using the geography/geometry type here
+	 * makes the node differ from the one parsed for the index's partial filter
+	 * expression, so predicate_implied_by() fails to prove index eligibility on
+	 * the local (non-deparsed) execution path and the geospatial index is not used.
+	 */
+	Oid typeId = BsonTypeId();
 	Expr *validateExpr = (Expr *) makeFuncExpr(bsonValidateFunctionId,
 											   typeId,
 											   list_make2(docExpr,
 														  pathConst),
 											   InvalidOid,
-											   InvalidOid,
+											   DEFAULT_COLLATION_OID,
 											   COERCE_EXPLICIT_CALL);
 	List *argsList = list_make2(validateExpr, lsecond(geoOperatorFuncExpr->args));
 	geoOperatorFuncExpr->args = argsList;

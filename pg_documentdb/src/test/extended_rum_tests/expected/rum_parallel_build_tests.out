@@ -14,8 +14,8 @@ set client_min_messages to DEBUG1;
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'pinsert_db',
     '{ "createIndexes": "pbuild", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "enableCompositeTerm": true } ] }', TRUE);
-DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND (index_spec).index_name = $2 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
-DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id)FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND documentdb_api_internal.index_spec_options_are_equivalent(index_spec, $2) AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id), index_is_valid FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND (index_spec).index_name = $2 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id), index_is_valid FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND documentdb_api_internal.index_spec_options_are_equivalent(index_spec, $2) AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
 DEBUG:  executing "SELECT COUNT(*) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 1401 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
 DEBUG:  executing "INSERT INTO documentdb_api_catalog.collection_indexes (collection_id, index_spec, index_is_valid) VALUES ($1, $2, $3) RETURNING index_id" via SPI
 DEBUG:  executing "CREATE INDEX  documents_rum_index_1402 ON documentdb_data.documents_1401 USING documentdb_extended_rum ( document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops(pathspec='[ "a" ]',tl=2691)) " via SPI
@@ -117,8 +117,8 @@ set client_min_messages to DEBUG1;
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'pinsert_db',
     '{ "createIndexes": "pbuild", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "enableCompositeTerm": true } ] }', TRUE);
-DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND (index_spec).index_name = $2 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
-DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id)FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND documentdb_api_internal.index_spec_options_are_equivalent(index_spec, $2) AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id), index_is_valid FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND (index_spec).index_name = $2 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id), index_is_valid FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND documentdb_api_internal.index_spec_options_are_equivalent(index_spec, $2) AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
 DEBUG:  executing "SELECT COUNT(*) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 1401 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
 DEBUG:  executing "INSERT INTO documentdb_api_catalog.collection_indexes (collection_id, index_spec, index_is_valid) VALUES ($1, $2, $3) RETURNING index_id" via SPI
 DEBUG:  executing "CREATE INDEX  documents_rum_index_1404 ON documentdb_data.documents_1401 USING documentdb_extended_rum ( document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops(pathspec='[ "a" ]',tl=2691)) " via SPI
@@ -182,22 +182,26 @@ set documentdb.enableExtendedExplainPlans to on;
 SELECT documentdb_test_helpers.run_explain_and_trim($$
     EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pinsert_db', '{ "count": "pbuild", "query": { "a": { "$gt": 500 } } }');
 $$);
-                           run_explain_and_trim                           
---------------------------------------------------------------------------
+                              run_explain_and_trim                              
+--------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
-   ->  Seq Scan on documents_1401 collection (actual rows=1500 loops=1)
-         Filter: (document @> '{ "a" : { "$numberInt" : "500" } }'::bson)
-         Rows Removed by Filter: 1500
-(4 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1500 loops=1)
+         namespaceName: pinsert_db.pbuild
+         ->  Seq Scan on documents_1401 collection (actual rows=1500 loops=1)
+               Filter: (document @> '{ "a" : { "$numberInt" : "500" } }'::bson)
+               Rows Removed by Filter: 1500
+(6 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim($$
     EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pinsert_db', '{ "count": "pbuild", "query": { "a": { "$eq": 500 } } }');
 $$);
-                           run_explain_and_trim                           
---------------------------------------------------------------------------
+                              run_explain_and_trim                              
+--------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
-   ->  Seq Scan on documents_1401 collection (actual rows=3 loops=1)
-         Filter: (document @= '{ "a" : { "$numberInt" : "500" } }'::bson)
-         Rows Removed by Filter: 2997
-(4 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+         namespaceName: pinsert_db.pbuild
+         ->  Seq Scan on documents_1401 collection (actual rows=3 loops=1)
+               Filter: (document @= '{ "a" : { "$numberInt" : "500" } }'::bson)
+               Rows Removed by Filter: 2997
+(6 rows)
 

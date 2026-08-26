@@ -13,8 +13,17 @@ RUN dnf install -y epel-release && \
     dnf config-manager --set-enabled powertools && \
     dnf clean all
 
+# glibc-langpack-en provides en_US.UTF-8; localedef stays best-effort because
+# it exits nonzero on this base even when the locale is fine (charmap not
+# shipped). The `locale -a` check is the real gate: the old trailing
+# `|| true` bound to the WHOLE && chain, so a transient dnf/mirror failure
+# built a locale-less image that only failed ~30 min later inside initdb
+# ("invalid locale settings") - and the poisoned cached layer then defeated
+# the workflow-level retry. Failing here leaves no layer to cache, so a
+# retry rebuilds cleanly.
 RUN dnf -y install glibc-langpack-en glibc-common && \
-    localedef -i en_US -f UTF-8 en_US.UTF-8 || true
+    (localedef -i en_US -f UTF-8 en_US.UTF-8 || true) && \
+    locale -a | grep -qiE '^en_US\.utf-?8$'
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 
@@ -22,6 +31,8 @@ RUN dnf -y swap curl-minimal curl && \
     dnf -y install \
     make \
     ca-certificates \
+    diffutils \
+    python3 \
     gcc \
     gcc-c++ \
     pkg-config \
@@ -31,26 +42,30 @@ RUN dnf -y swap curl-minimal curl && \
     zlib-devel \
     libuuid-devel \
     libicu-devel \
-    krb5-devel
+    krb5-devel \
+    perl-IPC-Run \
+    perl-Test-Harness \
+    perl-Test-Simple
 
 RUN echo "Detected architecture: ${TARGETARCH}"
 
-# PostgreSQL yum repo setup for RHEL 8
 RUN if [ -n "${TARGETARCH}" ] && ( [ "${TARGETARCH}" = "arm64" ] || [ "${TARGETARCH}" = "arm64v8" ] ); then ARCH=aarch64; else ARCH=x86_64; fi; \
     echo "Setting up PGDG repo for RHEL 8 (arch=${ARCH})" && \
     dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-${ARCH}/pgdg-redhat-repo-latest.noarch.rpm && \
     dnf -qy module disable postgresql && \
-    for i in 1 2 3; do \
-        dnf -y install --allowerasing --nobest --skip-broken postgresql${POSTGRES_VERSION} \
+    PKGS="postgresql${POSTGRES_VERSION} \
         postgresql${POSTGRES_VERSION}-devel \
         postgresql${POSTGRES_VERSION}-server \
         postgresql${POSTGRES_VERSION}-contrib \
         pgvector_${POSTGRES_VERSION} \
         pg_cron_${POSTGRES_VERSION} \
         postgis36_${POSTGRES_VERSION} \
-        $(if [ "${POSTGRES_VERSION}" -lt 18 ]; then echo "rum_${POSTGRES_VERSION}"; else echo ""; fi) && break || \
+        $(if [ "${POSTGRES_VERSION}" -lt 18 ]; then echo "rum_${POSTGRES_VERSION}"; else echo ""; fi)"; \
+    for i in 1 2 3; do \
+        dnf -y install --allowerasing --nobest ${PKGS} && break || \
         { echo "Attempt $i failed, retrying in 5 seconds..." && sleep 5; }; \
-    done
+    done; \
+    rpm -q ${PKGS}
 
 RUN mkdir -p /usr/src/documentdb
 WORKDIR /usr/src/documentdb

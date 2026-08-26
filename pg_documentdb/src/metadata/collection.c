@@ -108,7 +108,7 @@ extern bool UseLocalExecutionShardQueries;
 extern bool ForceLocalExecutionShardQueries;
 extern bool EnableSchemaValidation;
 extern int MaxSchemaValidatorSize;
-extern bool EnableOnlyCollectionCacheInvalidateOnCollectionChanges;
+extern bool EnableNewNamespaceValidation;
 
 /* user-defined functions */
 PG_FUNCTION_INFO_V1(command_collection_table);
@@ -118,6 +118,8 @@ PG_FUNCTION_INFO_V1(command_ensure_valid_db_coll);
 PG_FUNCTION_INFO_V1(validate_dbname);
 PG_FUNCTION_INFO_V1(command_get_collection);
 PG_FUNCTION_INFO_V1(command_get_collection_or_view);
+PG_FUNCTION_INFO_V1(validate_collection_cache_entry);
+PG_FUNCTION_INFO_V1(validate_try_copy_collection_by_id);
 
 /* forward declarations */
 static void InitializeCollectionsHash(void);
@@ -139,6 +141,9 @@ static void UpdateCollectionOptions(MongoCollection *collection, const
 									pgbson *updateSpec);
 static void RemoveCollectionOptions(MongoCollection *collection, const
 									pgbson *removeSpec);
+static void ValidateSystemNamespace(const char *databaseName, const char *collectionName);
+static void CopyMongoCollectionInto(const MongoCollection *source, MongoCollection *dest,
+									bool copyByRefFields);
 
 
 /*
@@ -280,6 +285,38 @@ InvalidateCollectionByRelationId(Oid relationId)
 
 
 /*
+ * CopyMongoCollectionInto copies a collection into the specified destination.
+ * copyByRefFields determines if nested BSON fields need to be deep copied.
+ */
+static void
+CopyMongoCollectionInto(const MongoCollection *source, MongoCollection *dest,
+						bool copyByRefFields)
+{
+	*dest = *source;
+	if (copyByRefFields)
+	{
+		dest->shardKey = !dest->shardKey ? NULL :
+						 CopyPgbsonIntoMemoryContext(dest->shardKey,
+													 CurrentMemoryContext);
+		dest->viewDefinition = !dest->viewDefinition ? NULL :
+							   CopyPgbsonIntoMemoryContext(dest->viewDefinition,
+														   CurrentMemoryContext);
+
+		dest->schemaValidator.validator =
+			!dest->schemaValidator.validator ? NULL :
+			CopyPgbsonIntoMemoryContext(dest->schemaValidator.validator,
+										CurrentMemoryContext);
+	}
+	else
+	{
+		dest->shardKey = NULL;
+		dest->viewDefinition = NULL;
+		dest->schemaValidator.validator = NULL;
+	}
+}
+
+
+/*
  * CopyMongoCollection returns a copy of given MongoCollection.
  */
 MongoCollection *
@@ -287,30 +324,16 @@ CopyMongoCollection(const MongoCollection *collection)
 {
 	MongoCollection *copiedCollection = palloc0(sizeof(MongoCollection));
 
-	*copiedCollection = *collection;
-	copiedCollection->shardKey = !copiedCollection->shardKey ? NULL :
-								 CopyPgbsonIntoMemoryContext(copiedCollection->shardKey,
-															 CurrentMemoryContext);
-	copiedCollection->viewDefinition = !copiedCollection->viewDefinition ? NULL :
-									   CopyPgbsonIntoMemoryContext(
-		copiedCollection->viewDefinition,
-		CurrentMemoryContext);
-
-	copiedCollection->schemaValidator.validator =
-		!copiedCollection->schemaValidator.validator ? NULL :
-		CopyPgbsonIntoMemoryContext(
-			copiedCollection->schemaValidator.validator,
-			CurrentMemoryContext);
-
+	bool copyByRefFields = true;
+	CopyMongoCollectionInto(collection, copiedCollection, copyByRefFields);
 	return copiedCollection;
 }
 
 
-/*
- * GetMongoCollectionByColId() gets the MongoCollection metadata by collectionId.
- */
-MongoCollection *
-GetMongoCollectionByColId(uint64 collectionId, LOCKMODE lockMode)
+/* Copies collection metadata by ID and reports whether the collection exists. */
+bool
+TryCopyMongoCollectionByCollectionId(MongoCollection *collection, uint64 collectionId,
+									 LOCKMODE lockMode, bool copyByRefFields)
 {
 	/* make sure hashes exist */
 	InitializeCollectionsHash();
@@ -320,7 +343,7 @@ GetMongoCollectionByColId(uint64 collectionId, LOCKMODE lockMode)
 	if (!OidIsValid(documentsTableOid))
 	{
 		/* table was dropped */
-		return NULL;
+		return false;
 	}
 
 	bool foundInCache = false;
@@ -346,12 +369,14 @@ GetMongoCollectionByColId(uint64 collectionId, LOCKMODE lockMode)
 		}
 		else if (entryByRelId->isValid)
 		{
-			return CopyMongoCollection(&(entryByRelId->collection));
+			CopyMongoCollectionInto(&(entryByRelId->collection), collection,
+									copyByRefFields);
+			return true;
 		}
 	}
 
-	MongoCollection collection;
-	memset(&collection, 0, sizeof(collection));
+	MongoCollection catalogCollection;
+	memset(&catalogCollection, 0, sizeof(catalogCollection));
 
 	/*
 	 * Temporarily disable unimportant logs related to collection catalog lookup
@@ -364,7 +389,7 @@ GetMongoCollectionByColId(uint64 collectionId, LOCKMODE lockMode)
 	/* Read the collection metadata from ApiCatalogSchemaName.collections */
 	bool collectionExists =
 		GetMongoCollectionFromCatalogById(collectionId, documentsTableOid,
-										  &collection);
+										  &catalogCollection);
 
 	/* rollback the GUC change that we made for client_min_messages */
 	RollbackGUCChange(savedGUCLevel);
@@ -372,56 +397,80 @@ GetMongoCollectionByColId(uint64 collectionId, LOCKMODE lockMode)
 	if (!collectionExists)
 	{
 		/* no collection record with this id */
-		return NULL;
+		return false;
 	}
 
 	/* get the relation ID and lock the table */
-	if (collection.viewDefinition != NULL)
+	if (catalogCollection.viewDefinition != NULL)
 	{
 		/* Views not supported in this path */
-		return NULL;
+		return false;
 	}
 
-	collection.relationId = GetRelationIdForCollectionTableName(collection.tableName,
-																lockMode);
+	catalogCollection.relationId = GetRelationIdForCollectionTableName(
+		catalogCollection.tableName,
+		lockMode);
 
-	if (!OidIsValid(collection.relationId))
+	if (!OidIsValid(catalogCollection.relationId))
 	{
 		/* record exists, but table was dropped (maybe just after reading the record) */
-		return NULL;
+		return false;
 	}
 
 	/* if we experience OOM below, reset the cache to prevent corruption */
 	CollectionCacheIsValid = false;
 
 	/* copy the shard key BSON into the cache memory context */
-	if (collection.shardKey != NULL)
+	if (catalogCollection.shardKey != NULL)
 	{
-		collection.shardKey = CopyPgbsonIntoMemoryContext(collection.shardKey,
-														  CollectionsCacheContext);
+		catalogCollection.shardKey = CopyPgbsonIntoMemoryContext(
+			catalogCollection.shardKey,
+			CollectionsCacheContext);
 	}
 
-	collection.mongoDataCreationTimeVarAttrNumber =
-		GetMongoDataCreationTimeVarAttrNumber(collection.relationId);
+	catalogCollection.mongoDataCreationTimeVarAttrNumber =
+		GetMongoDataCreationTimeVarAttrNumber(catalogCollection.relationId);
 
-	if (collection.schemaValidator.validator != NULL)
+	if (catalogCollection.schemaValidator.validator != NULL)
 	{
-		collection.schemaValidator.validator =
-			CopyPgbsonIntoMemoryContext(collection.schemaValidator.validator,
+		catalogCollection.schemaValidator.validator =
+			CopyPgbsonIntoMemoryContext(catalogCollection.schemaValidator.validator,
 										CollectionsCacheContext);
 	}
 
 	/* add to relation ID -> collection hash */
-	entryByRelId = hash_search(RelationIdToCollectionHash, &(collection.relationId),
+	entryByRelId = hash_search(RelationIdToCollectionHash,
+							   &(catalogCollection.relationId),
 							   HASH_ENTER, &foundInCache);
 
-	entryByRelId->collection = collection;
+	entryByRelId->collection = catalogCollection;
 	entryByRelId->isValid = true;
 
 	/* no OOMs, keep the cache */
 	CollectionCacheIsValid = true;
 
-	return CopyMongoCollection(&(entryByRelId->collection));
+	memset(collection, 0, sizeof(*collection));
+	CopyMongoCollectionInto(&(entryByRelId->collection), collection, copyByRefFields);
+	return true;
+}
+
+
+/*
+ * GetMongoCollectionByColId() gets the MongoCollection metadata by collectionId.
+ */
+MongoCollection *
+GetMongoCollectionByColId(uint64 collectionId, LOCKMODE lockMode)
+{
+	MongoCollection *collection = palloc(sizeof(MongoCollection));
+	bool copyByRefFields = true;
+	if (TryCopyMongoCollectionByCollectionId(collection, collectionId, lockMode,
+											 copyByRefFields))
+	{
+		return collection;
+	}
+
+	pfree(collection);
+	return NULL;
 }
 
 
@@ -607,7 +656,8 @@ TrySetCollectionShard(MongoCollection *collection)
 
 	/* Get shard table name (distributed) or original tableName (single node) */
 	const char *shardName = TryGetShardNameForUnshardedCollection(
-		collection->relationId, collection->collectionId, collection->tableName);
+		collection->relationId, collection->collectionId, collection->tableName,
+		&collection->isSingleShardTable);
 	RollbackGUCChange(savedGUCLevel);
 	if (shardName != NULL)
 	{
@@ -641,14 +691,16 @@ GetMongoCollectionByNameDatumCore(Datum databaseNameDatum, Datum collectionNameD
 	/* make sure hashes exist */
 	InitializeCollectionsHash();
 
-	int databaseNameLength = VARSIZE_ANY_EXHDR(databaseNameDatum);
+	text *databaseNameText = DatumGetTextPP(databaseNameDatum);
+	text *collectionNameText = DatumGetTextPP(collectionNameDatum);
+	int databaseNameLength = VARSIZE_ANY_EXHDR(databaseNameText);
 	if (databaseNameLength >= MAX_DATABASE_NAME_LENGTH)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE), errmsg(
 							"The provided database name exceeds the permitted length")));
 	}
 
-	int collectionNameLength = VARSIZE_ANY_EXHDR(collectionNameDatum);
+	int collectionNameLength = VARSIZE_ANY_EXHDR(collectionNameText);
 	if (collectionNameLength >= MAX_COLLECTION_NAME_LENGTH)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE), errmsg(
@@ -659,9 +711,9 @@ GetMongoCollectionByNameDatumCore(Datum databaseNameDatum, Datum collectionNameD
 	memset(&qualifiedName, 0, sizeof(qualifiedName));
 
 	/* copy text bytes directly, buffers are already 0-initialized above */
-	memcpy(qualifiedName.databaseName, VARDATA_ANY(databaseNameDatum),
+	memcpy(qualifiedName.databaseName, VARDATA_ANY(databaseNameText),
 		   databaseNameLength);
-	memcpy(qualifiedName.collectionName, VARDATA_ANY(collectionNameDatum),
+	memcpy(qualifiedName.collectionName, VARDATA_ANY(collectionNameText),
 		   collectionNameLength);
 
 	bool foundInCache = false;
@@ -822,14 +874,16 @@ GetTempMongoCollectionByNameDatum(Datum databaseNameDatum, Datum collectionNameD
 {
 	MongoCollection *collection = palloc0(sizeof(MongoCollection));
 
-	int databaseNameLength = VARSIZE_ANY_EXHDR(databaseNameDatum);
+	text *databaseNameText = DatumGetTextPP(databaseNameDatum);
+	text *collectionNameText = DatumGetTextPP(collectionNameDatum);
+	int databaseNameLength = VARSIZE_ANY_EXHDR(databaseNameText);
 	if (databaseNameLength >= MAX_DATABASE_NAME_LENGTH)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
 							"The provided database name exceeds the permitted length")));
 	}
 
-	int collectionNameLength = VARSIZE_ANY_EXHDR(collectionNameDatum);
+	int collectionNameLength = VARSIZE_ANY_EXHDR(collectionNameText);
 	if (collectionNameLength >= MAX_COLLECTION_NAME_LENGTH)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
@@ -837,9 +891,9 @@ GetTempMongoCollectionByNameDatum(Datum databaseNameDatum, Datum collectionNameD
 	}
 
 	/* copy text bytes directly, buffers are already 0-initialized above */
-	memcpy(collection->name.databaseName, VARDATA_ANY(databaseNameDatum),
+	memcpy(collection->name.databaseName, VARDATA_ANY(databaseNameText),
 		   databaseNameLength);
-	memcpy(collection->name.collectionName, VARDATA_ANY(collectionNameDatum),
+	memcpy(collection->name.collectionName, VARDATA_ANY(collectionNameText),
 		   collectionNameLength);
 
 	collection->shardKey = NULL;
@@ -921,8 +975,9 @@ GetMongoCollectionFromCatalogById(uint64 collectionId, Oid relationId,
 			ereport(ERROR, (errmsg("database_name should not be NULL in catalog")));
 		}
 
-		memcpy(collection->name.databaseName, VARDATA_ANY(databaseNameDatum),
-			   VARSIZE_ANY_EXHDR(databaseNameDatum));
+		text *databaseNameText = DatumGetTextPP(databaseNameDatum);
+		memcpy(collection->name.databaseName, VARDATA_ANY(databaseNameText),
+			   VARSIZE_ANY_EXHDR(databaseNameText));
 
 		Datum collectionNameDatum = heap_getattr(tuple, 2, tupleDescriptor, &isNull);
 		if (isNull)
@@ -930,8 +985,9 @@ GetMongoCollectionFromCatalogById(uint64 collectionId, Oid relationId,
 			ereport(ERROR, (errmsg("collection name must not be NULL")));
 		}
 
-		memcpy(collection->name.collectionName, VARDATA_ANY(collectionNameDatum),
-			   VARSIZE_ANY_EXHDR(collectionNameDatum));
+		text *collectionNameText = DatumGetTextPP(collectionNameDatum);
+		memcpy(collection->name.collectionName, VARDATA_ANY(collectionNameText),
+			   VARSIZE_ANY_EXHDR(collectionNameText));
 
 		/* Attribute 3 refers to the collection_id */
 		collection->collectionId = collectionId;
@@ -1089,10 +1145,12 @@ GetMongoCollectionFromCatalogByNameDatum(Datum databaseNameDatum,
 		collection->collectionId = Int64GetDatum(collectionIdDatum);
 
 		/* copy text bytes, buffers are already 0-initialized by memset above */
-		memcpy(collection->name.databaseName, VARDATA_ANY(databaseNameDatum),
-			   VARSIZE_ANY_EXHDR(databaseNameDatum));
-		memcpy(collection->name.collectionName, VARDATA_ANY(collectionNameDatum),
-			   VARSIZE_ANY_EXHDR(collectionNameDatum));
+		text *databaseNameText = DatumGetTextPP(databaseNameDatum);
+		text *collectionNameText = DatumGetTextPP(collectionNameDatum);
+		memcpy(collection->name.databaseName, VARDATA_ANY(databaseNameText),
+			   VARSIZE_ANY_EXHDR(databaseNameText));
+		memcpy(collection->name.collectionName, VARDATA_ANY(collectionNameText),
+			   VARSIZE_ANY_EXHDR(collectionNameText));
 
 		/* table name is: documents_<collection id> */
 		snprintf(collection->tableName, NAMEDATALEN, DOCUMENT_DATA_TABLE_NAME_FORMAT,
@@ -1161,6 +1219,18 @@ GetMongoCollectionFromCatalogByNameDatum(Datum databaseNameDatum,
 					strcmp(validationActionText, "warn") == 0 ? ValidationAction_Warn :
 					strcmp(validationActionText, "error") == 0 ? ValidationAction_Error :
 					ValidationAction_Invalid;
+			}
+		}
+
+		/* 10 is collection options */
+		if (tupleDescriptor->natts >= 10)
+		{
+			/* options stored as pgbson */
+			Datum optionsDatum = heap_getattr(tuple, 10, tupleDescriptor, &isNull);
+			if (!isNull)
+			{
+				pgbson *options = DatumGetPgBson(optionsDatum);
+				CopyCollectionOptions(options, collection);
 			}
 		}
 
@@ -1268,8 +1338,9 @@ TryGetDBNameByDatum(Datum databaseNameDatum, char *dbNameInTable)
 			ereport(ERROR, (errmsg("database_name should not be NULL in catalog")));
 		}
 
-		memcpy(dbNameInTable, VARDATA_ANY(databaseNameDatumInt),
-			   VARSIZE_ANY_EXHDR(databaseNameDatumInt));
+		text *databaseNameText = DatumGetTextPP(databaseNameDatumInt);
+		memcpy(dbNameInTable, VARDATA_ANY(databaseNameText),
+			   VARSIZE_ANY_EXHDR(databaseNameText));
 		dbExists = true;
 	}
 
@@ -1299,9 +1370,10 @@ ValidateCollectionNameForUnauthorizedSystemNs(const char *collectionName,
 	{
 		if (strcmp(collectionName, NonWritableSystemCollectionNames[i]) == 0)
 		{
+			text *databaseNameText = DatumGetTextPP(databaseNameDatum);
 			StringView databaseView = {
-				.length = VARSIZE_ANY_EXHDR(databaseNameDatum),
-				.string = VARDATA_ANY(databaseNameDatum)
+				.length = VARSIZE_ANY_EXHDR(databaseNameText),
+				.string = VARDATA_ANY(databaseNameText)
 			};
 
 			/* Need to disallow user writes on NonWritableSystemCollectionNames */
@@ -1321,12 +1393,12 @@ void
 ValidateCollectionNameForValidSystemNamespace(StringView *collectionView,
 											  Datum databaseNameDatum)
 {
+	char *collectionName = CreateStringFromStringView(collectionView);
 	if (StringViewStartsWithStringView(collectionView, &SystemPrefix))
 	{
 		bool found = false;
 		for (int i = 0; i < ValidSystemCollectionNamesLength; i++)
 		{
-			char *collectionName = CreateStringFromStringView(collectionView);
 			if (strcmp(collectionName, ValidSystemCollectionNames[i]) == 0)
 			{
 				found = true;
@@ -1338,15 +1410,103 @@ ValidateCollectionNameForValidSystemNamespace(StringView *collectionView,
 
 		if (!found)
 		{
+			text *databaseNameText = DatumGetTextPP(databaseNameDatum);
 			StringView databaseView = {
-				.length = VARSIZE_ANY_EXHDR(databaseNameDatum),
-				.string = VARDATA_ANY(databaseNameDatum)
+				.length = VARSIZE_ANY_EXHDR(databaseNameText),
+				.string = VARDATA_ANY(databaseNameText)
 			};
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
 							errmsg("System namespace provided is invalid: %.*s.%.*s",
 								   databaseView.length, databaseView.string,
 								   collectionView->length, collectionView->string)));
 		}
+	}
+
+	if (EnableNewNamespaceValidation)
+	{
+		ValidateSystemNamespace(text_to_cstring(DatumGetTextP(databaseNameDatum)),
+								collectionName);
+	}
+}
+
+
+static int
+CompareStringPointers(const void *a, const void *b)
+{
+	const char *key = *(const char **) a;
+	const char *elem = *(const char **) b;
+	return strcmp(key, elem);
+}
+
+
+/*
+ * this function restricts the usage of certain namespaces that are reserved
+ * for internal use in the 'config' and 'local' built-in databases. Reserved
+ * 'admin' names (and any 'local' names beginning with 'system.') are already
+ * blocked earlier in ValidateCollectionNameForValidSystemNamespace via the
+ * system.* allowlist + NonWritable checks, so they are not duplicated here.
+ * Gated by the EnableNewNamespaceValidation GUC.
+ */
+static void
+ValidateSystemNamespace(const char *databaseName, const char *collectionName)
+{
+	/* Each list MUST stay sorted (bsearch). */
+	static const char *limitedConfigCollections[] = {
+		"_shards",
+		"cache.collections",
+		"cache.databases",
+		"changelog",
+		"chunks",
+		"collections",
+		"databases",
+		"lockpings",
+		"locks",
+		"migrationCoordinators",
+		"migrations",
+		"mongos",
+		"placementHistory",
+		"rangeDeletions",
+		"reshardingOperations",
+		"settings",
+		"shards",
+		"tags",
+		"transactions",
+		"version"
+	};
+	static const char *limitedLocalCollections[] = {
+		"oplog.rs",
+		"replset.election",
+		"replset.initialSyncId",
+		"replset.minvalid",
+		"replset.oplogTruncateAfterPoint",
+		"startup_log"
+	};
+
+	const char **list = NULL;
+	int listLen = 0;
+
+	if (strcmp(databaseName, "config") == 0)
+	{
+		list = limitedConfigCollections;
+		listLen = lengthof(limitedConfigCollections);
+	}
+	else if (strcmp(databaseName, "local") == 0)
+	{
+		list = limitedLocalCollections;
+		listLen = lengthof(limitedLocalCollections);
+	}
+	else
+	{
+		return;
+	}
+
+	if (bsearch(&collectionName, list, listLen, sizeof(const char *),
+				CompareStringPointers) != NULL)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_ILLEGALOPERATION),
+						errmsg(
+							"The namespace %s.%s is reserved and cannot be used",
+							databaseName, collectionName)));
 	}
 }
 
@@ -1380,14 +1540,7 @@ command_collection_table(PG_FUNCTION_ARGS)
 Datum
 command_invalidate_collection_cache(PG_FUNCTION_ARGS)
 {
-	if (EnableOnlyCollectionCacheInvalidateOnCollectionChanges)
-	{
-		InvalidateCollectionsCache();
-	}
-	else
-	{
-		CacheInvalidateRelcacheAll();
-	}
+	InvalidateCollectionsCache();
 
 	PG_RETURN_VOID();
 }
@@ -1404,6 +1557,140 @@ command_get_collection_or_view(PG_FUNCTION_ARGS)
 	bool allowViews = true;
 	Datum returnedDatum = GetCollectionOrViewCore(fcinfo, allowViews);
 	PG_RETURN_DATUM(returnedDatum);
+}
+
+
+/*
+ * validate_collection_cache_entry is a C function used in regression tests to validate
+ * that the collection cache is properly populated. It retrieves the same collection
+ * metadata from the cache by both name and id and compares the results to ensure they match.
+ * There are two ways to get collections today one is by name and the other is by id, if any new access method is
+ * added it should be added to the function as well, so that we can ensure that all the access methods are properly populating the cache.
+ */
+Datum
+validate_collection_cache_entry(PG_FUNCTION_ARGS)
+{
+	Datum databaseNameDatum = PG_GETARG_DATUM(0);
+	Datum collectionNameDatum = PG_GETARG_DATUM(1);
+
+	MongoCollection *collectionByName = GetMongoCollectionByNameDatum(databaseNameDatum,
+																	  collectionNameDatum,
+																	  AccessShareLock);
+
+	/* Invalidate collection cache, to fetch a new entry by id */
+	InvalidateCollectionsCache();
+
+	MongoCollection *collectionById = GetMongoCollectionByColId(
+		collectionByName->collectionId,
+		AccessShareLock);
+
+	int comparisonResult = memcmp(collectionByName, collectionById,
+								  sizeof(MongoCollection));
+
+	PG_RETURN_BOOL(comparisonResult == 0);
+}
+
+
+/*
+ * validate_try_copy_collection_by_id is a regression-test helper for
+ * TryCopyMongoCollectionByCollectionId. With copyByRefFields=true it checks the
+ * by-ref BSON fields are deep-copied into independently owned memory - a distinct
+ * pointer whose content stays valid and equal after the cache is invalidated and
+ * rebuilt - with copyByRefFields=false they are left NULL, and a missing collection
+ * id returns false. The caller passes a collection with a by-ref field set (e.g. a
+ * shard key) so these cases are observable.
+ */
+Datum
+validate_try_copy_collection_by_id(PG_FUNCTION_ARGS)
+{
+	Datum databaseNameDatum = PG_GETARG_DATUM(0);
+	Datum collectionNameDatum = PG_GETARG_DATUM(1);
+
+	/* Ground truth: the by-name lookup returns a private copy that survives cache
+	 * invalidation, so we can compare the by-id copies against it. */
+	MongoCollection *expected = GetMongoCollectionByNameDatum(databaseNameDatum,
+															  collectionNameDatum,
+															  AccessShareLock);
+	if (expected == NULL)
+	{
+		ereport(ERROR, (errmsg("collection does not exist")));
+	}
+
+	/* Case 1: copyByRefFields = true gives the caller an independently owned deep
+	 * copy of the by-ref BSON fields, not a pointer into the cache. */
+	InvalidateCollectionsCache();
+	MongoCollection deepCopy;
+	memset(&deepCopy, 0, sizeof(deepCopy));
+	bool copyByRefFields = true;
+	bool deepCopyExists =
+		TryCopyMongoCollectionByCollectionId(&deepCopy, expected->collectionId,
+											 AccessShareLock, copyByRefFields);
+
+	/* A second copy from the now-cached entry must allocate its own shardKey. If the
+	 * code handed out the cached pointer instead of deep-copying, both copies would
+	 * share it. */
+	MongoCollection deepCopy2;
+	memset(&deepCopy2, 0, sizeof(deepCopy2));
+	bool deepCopy2Exists =
+		TryCopyMongoCollectionByCollectionId(&deepCopy2, expected->collectionId,
+											 AccessShareLock, copyByRefFields);
+
+	bool ownsIndependentShardKey =
+		expected->shardKey != NULL &&
+		deepCopy.shardKey != NULL &&
+		deepCopy2.shardKey != NULL &&
+		deepCopy.shardKey != deepCopy2.shardKey &&
+		PgbsonEquals(deepCopy.shardKey, expected->shardKey);
+
+	/* Invalidate and rebuild the cache, which resets the cache memory context. The
+	 * deep copy must stay valid and equal; a shared cache pointer would now dangle. */
+	InvalidateCollectionsCache();
+	MongoCollection *rebuilt = GetMongoCollectionByColId(expected->collectionId,
+														 AccessShareLock);
+	bool shardKeySurvivesInvalidation =
+		rebuilt != NULL &&
+		expected->shardKey != NULL &&
+		deepCopy.shardKey != NULL &&
+		PgbsonEquals(deepCopy.shardKey, expected->shardKey);
+
+	bool deepCopyOk = deepCopyExists && deepCopy2Exists &&
+					  deepCopy.collectionId == expected->collectionId &&
+					  deepCopy.relationId == expected->relationId &&
+					  memcmp(&deepCopy.name, &expected->name,
+							 sizeof(MongoCollectionName)) == 0 &&
+					  (deepCopy.viewDefinition == NULL) == (expected->viewDefinition ==
+															NULL) &&
+					  (deepCopy.schemaValidator.validator == NULL) ==
+					  (expected->schemaValidator.validator == NULL) &&
+					  ownsIndependentShardKey &&
+					  shardKeySurvivesInvalidation;
+
+	/* Case 2: copyByRefFields = false copies scalar metadata but leaves the by-ref
+	 * BSON fields NULL. */
+	InvalidateCollectionsCache();
+	MongoCollection shallowCopy;
+	memset(&shallowCopy, 0, sizeof(shallowCopy));
+	copyByRefFields = false;
+	bool shallowCopyExists =
+		TryCopyMongoCollectionByCollectionId(&shallowCopy, expected->collectionId,
+											 AccessShareLock, copyByRefFields);
+
+	bool shallowCopyOk = shallowCopyExists &&
+						 shallowCopy.collectionId == expected->collectionId &&
+						 shallowCopy.relationId == expected->relationId &&
+						 shallowCopy.shardKey == NULL &&
+						 shallowCopy.viewDefinition == NULL &&
+						 shallowCopy.schemaValidator.validator == NULL;
+
+	/* Case 3: a non-existent collection id reports false. */
+	MongoCollection missingCopy;
+	memset(&missingCopy, 0, sizeof(missingCopy));
+	copyByRefFields = true;
+	bool missingExists =
+		TryCopyMongoCollectionByCollectionId(&missingCopy, UINT64_MAX,
+											 AccessShareLock, copyByRefFields);
+
+	PG_RETURN_BOOL(deepCopyOk && shallowCopyOk && !missingExists);
 }
 
 
@@ -2192,6 +2479,81 @@ UpdateChangeStreamPreAndPostImages(MongoCollection *collection,
 }
 
 
+/*
+ * UpdateEnableUpdateDescription stores or removes the enableUpdateDescription
+ * option in the collection's options column. Unlike changeStreamPreAndPostImages,
+ * this is a plain boolean value (not a nested document).
+ */
+void
+UpdateEnableUpdateDescription(MongoCollection *collection, bool enabled)
+{
+	if (collection == NULL)
+	{
+		return;
+	}
+
+	pgbson_writer optionWriter;
+	PgbsonWriterInit(&optionWriter);
+	if (enabled)
+	{
+		PgbsonWriterAppendBool(&optionWriter,
+							   "enableUpdateDescription",
+							   strlen("enableUpdateDescription"),
+							   enabled);
+	}
+	else
+	{
+		/* Create the bson_dollar_unset spec to remove the option. */
+		PgbsonWriterAppendUtf8(&optionWriter,
+							   "", 0, "enableUpdateDescription");
+	}
+	pgbson *optionBson = PgbsonWriterGetPgbson(&optionWriter);
+
+	if (enabled)
+	{
+		UpdateCollectionOptions(collection, optionBson);
+	}
+	else
+	{
+		RemoveCollectionOptions(collection, optionBson);
+	}
+}
+
+
+/*
+ * UpdateCollectionStatsEnabledOption stores or removes the statsEnabled
+ * option in the collection's options column. This is used to track whether
+ * planner statistics are enabled for the collection without requiring a
+ * FOR UPDATE lock on collection_indexes.
+ */
+void
+UpdateCollectionStatsEnabledOption(uint64 collectionId, bool enabled)
+{
+	MongoCollection *collection = GetMongoCollectionByColId(collectionId, NoLock);
+	if (collection == NULL)
+	{
+		return;
+	}
+
+	pgbson_writer optionWriter;
+	PgbsonWriterInit(&optionWriter);
+
+	if (enabled)
+	{
+		PgbsonWriterAppendBool(&optionWriter, "statsEnabled",
+							   strlen("statsEnabled"), true);
+		pgbson *updateSpec = PgbsonWriterGetPgbson(&optionWriter);
+		UpdateCollectionOptions(collection, updateSpec);
+	}
+	else
+	{
+		PgbsonWriterAppendUtf8(&optionWriter, "", 0, "statsEnabled");
+		pgbson *removeSpec = PgbsonWriterGetPgbson(&optionWriter);
+		RemoveCollectionOptions(collection, removeSpec);
+	}
+}
+
+
 static void
 UpdateCollectionOptions(MongoCollection *collection, const pgbson *updateSpec)
 {
@@ -2228,7 +2590,7 @@ UpdateCollectionOptions(MongoCollection *collection, const pgbson *updateSpec)
 					 ApiCatalogSchemaName, CoreSchemaName,
 					 CoreSchemaName,
 					 ApiCatalogSchemaName, collection->collectionId,
-					 ApiCatalogSchemaName, ApiCatalogSchemaName,
+					 ApiCatalogSchemaName, CoreSchemaName,
 					 CoreSchemaName, collection->collectionId);
 
 	ExtensionExecuteQueryWithArgsViaSPI(updateOptionQuery->data, numArgs,
@@ -2278,7 +2640,7 @@ RemoveCollectionOptions(MongoCollection *collection, const pgbson *removeArraySp
 					 ApiCatalogSchemaName, CoreSchemaName,
 					 CoreSchemaName,
 					 ApiCatalogSchemaName, collection->collectionId,
-					 ApiCatalogSchemaName, ApiCatalogSchemaName,
+					 ApiCatalogSchemaName, CoreSchemaName,
 					 CoreSchemaName, collection->collectionId);
 
 	ExtensionExecuteQueryWithArgsViaSPI(updateOptionQuery->data, numArgs,
@@ -2289,6 +2651,8 @@ RemoveCollectionOptions(MongoCollection *collection, const pgbson *removeArraySp
 
 /*
  * Copies all the required options from collection to in memory MongoCollection struct.
+ *
+ * See also sql/collection_cache_validity_test.sql to add options for cache validation
  */
 static void
 CopyCollectionOptions(const pgbson *options, MongoCollection *collection)
@@ -2310,6 +2674,21 @@ CopyCollectionOptions(const pgbson *options, MongoCollection *collection)
 			 * so we can infer that pre and post images are enabled.
 			 */
 			collection->options.changeStreamPreAndPostImagesEnabled = true;
+		}
+		else if (strcmp(key, "enableUpdateDescription") == 0)
+		{
+			/*
+			 * enableUpdateDescription is a plain boolean in the options column.
+			 * Its presence with value true means update descriptions are enabled
+			 * for this collection.
+			 */
+			collection->options.updateDescriptionEnabled =
+				BsonValueAsBool(bson_iter_value(&optionsIter));
+		}
+		else if (strcmp(key, "statsEnabled") == 0)
+		{
+			collection->options.statsEnabled =
+				BsonValueAsBool(bson_iter_value(&optionsIter));
 		}
 	}
 }

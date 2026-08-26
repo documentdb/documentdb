@@ -18,6 +18,7 @@
 #include "infrastructure/documentdb_plan_cache.h"
 #include "commands/retryable_writes.h"
 #include "metadata/metadata_cache.h"
+#include "utils/version_utils.h"
 
 
 /*
@@ -33,9 +34,6 @@ FindRetryRecordInAnyShard(uint64 collectionId, text *transactionId,
 						  RetryableWriteResult *writeResult)
 {
 	StringInfoData query;
-	const int argCount = 1;
-	Oid argTypes[1];
-	Datum argValues[1];
 	MemoryContext originalContext = CurrentMemoryContext;
 	int spiStatus PG_USED_FOR_ASSERTS_ONLY = 0;
 
@@ -44,25 +42,78 @@ FindRetryRecordInAnyShard(uint64 collectionId, text *transactionId,
 
 	SPI_connect();
 
-	initStringInfo(&query);
-	appendStringInfo(&query,
-					 "SELECT object_id, rows_affected, shard_key_value "
-					 " FROM %s.retry_" UINT64_FORMAT
-					 " WHERE transaction_id = $1",
-					 ApiDataSchemaName, collectionId);
+	if (UseLocalRetryTable())
+	{
+		const int argCount = 2;
+		Oid argTypes[2];
+		Datum argValues[2];
 
-	argTypes[0] = TEXTOID;
-	argValues[0] = PointerGetDatum(transactionId);
+		initStringInfo(&query);
 
-	char *argNulls = NULL;
-	bool readOnly = false;
-	long maxTupleCount = 0;
+		/*
+		 * This query performs a prefix scan on collection_id because the PK index
+		 * on the retryable_writes table is (collection_id, shard_key_value,
+		 * transaction_id). Without an exact shard_key_value predicate, the index
+		 * scan must visit all entries for this collection_id. This is acceptable
+		 * today because retryable write entries are short-lived (cleaned up after
+		 * retry or TTL), but a future optimization could add a secondary index on
+		 * (collection_id, transaction_id) if this becomes a bottleneck.
+		 *
+		 * Note: This function is in the hot path for retryable writes on
+		 * collections not sharded by _id.
+		 */
+		appendStringInfo(&query,
+						 "SELECT object_id, rows_affected, shard_key_value "
+						 " FROM %s.retryable_writes"
+						 " WHERE collection_id = $1 AND transaction_id = $2",
+						 ApiDataSchemaName);
 
-	SPIPlanPtr plan = GetSPIQueryPlan(collectionId, QUERY_ID_RETRY_RECORD_SELECT,
-									  query.data, argTypes, argCount);
+		argTypes[0] = INT8OID;
+		argValues[0] = Int64GetDatum((int64) collectionId);
 
-	spiStatus = SPI_execute_plan(plan, argValues, argNulls, readOnly, maxTupleCount);
-	Assert(spiStatus == SPI_OK_SELECT);
+		argTypes[1] = TEXTOID;
+		argValues[1] = PointerGetDatum(transactionId);
+
+		char *argNulls = NULL;
+		bool readOnly = false;
+		long maxTupleCount = 0;
+
+		SPIPlanPtr plan = GetSPIQueryPlan(collectionId,
+										  QUERY_ID_GLOBAL_RETRY_RECORD_SELECT,
+										  query.data, argTypes, argCount);
+
+		spiStatus = SPI_execute_plan(plan, argValues, argNulls, readOnly,
+									 maxTupleCount);
+		Assert(spiStatus == SPI_OK_SELECT);
+	}
+	else
+	{
+		const int argCount = 1;
+		Oid argTypes[1];
+		Datum argValues[1];
+
+		initStringInfo(&query);
+		appendStringInfo(&query,
+						 "SELECT object_id, rows_affected, shard_key_value "
+						 " FROM %s.retry_" UINT64_FORMAT
+						 " WHERE transaction_id = $1",
+						 ApiDataSchemaName, collectionId);
+
+		argTypes[0] = TEXTOID;
+		argValues[0] = PointerGetDatum(transactionId);
+
+		char *argNulls = NULL;
+		bool readOnly = false;
+		long maxTupleCount = 0;
+
+		SPIPlanPtr plan = GetSPIQueryPlan(collectionId,
+										  QUERY_ID_RETRY_RECORD_SELECT,
+										  query.data, argTypes, argCount);
+
+		spiStatus = SPI_execute_plan(plan, argValues, argNulls, readOnly,
+									 maxTupleCount);
+		Assert(spiStatus == SPI_OK_SELECT);
+	}
 
 	if (SPI_processed > 0)
 	{
@@ -125,9 +176,6 @@ DeleteRetryRecord(uint64 collectionId, int64 shardKeyValue,
 				  text *transactionId, RetryableWriteResult *writeResult)
 {
 	StringInfoData query;
-	const int argCount = 2;
-	Oid argTypes[2];
-	Datum argValues[2];
 	int spiStatus PG_USED_FOR_ASSERTS_ONLY = 0;
 	bool foundRetryRecord = false;
 
@@ -135,28 +183,72 @@ DeleteRetryRecord(uint64 collectionId, int64 shardKeyValue,
 
 	SPI_connect();
 
-	initStringInfo(&query);
-	appendStringInfo(&query,
-					 "DELETE FROM %s.retry_" UINT64_FORMAT
-					 " WHERE shard_key_value = $1 AND transaction_id = $2"
-					 " RETURNING object_id, rows_affected, result_document",
-					 ApiDataSchemaName, collectionId);
+	if (UseLocalRetryTable())
+	{
+		const int argCount = 3;
+		Oid argTypes[3];
+		Datum argValues[3];
 
-	argTypes[0] = INT8OID;
-	argValues[0] = Int64GetDatum(shardKeyValue);
+		initStringInfo(&query);
+		appendStringInfo(&query,
+						 "DELETE FROM %s.retryable_writes"
+						 " WHERE collection_id = $1 AND shard_key_value = $2"
+						 " AND transaction_id = $3"
+						 " RETURNING object_id, rows_affected, result_document",
+						 ApiDataSchemaName);
 
-	argTypes[1] = TEXTOID;
-	argValues[1] = PointerGetDatum(transactionId);
+		argTypes[0] = INT8OID;
+		argValues[0] = Int64GetDatum((int64) collectionId);
 
-	char *argNulls = NULL;
-	bool readOnly = false;
-	long maxTupleCount = 0;
+		argTypes[1] = INT8OID;
+		argValues[1] = Int64GetDatum(shardKeyValue);
 
-	SPIPlanPtr plan = GetSPIQueryPlan(collectionId, QUERY_ID_RETRY_RECORD_DELETE,
-									  query.data, argTypes, argCount);
+		argTypes[2] = TEXTOID;
+		argValues[2] = PointerGetDatum(transactionId);
 
-	spiStatus = SPI_execute_plan(plan, argValues, argNulls, readOnly, maxTupleCount);
-	Assert(spiStatus == SPI_OK_DELETE_RETURNING);
+		char *argNulls = NULL;
+		bool readOnly = false;
+		long maxTupleCount = 0;
+
+		SPIPlanPtr plan = GetSPIQueryPlan(collectionId,
+										  QUERY_ID_GLOBAL_RETRY_RECORD_DELETE,
+										  query.data, argTypes, argCount);
+
+		spiStatus = SPI_execute_plan(plan, argValues, argNulls, readOnly,
+									 maxTupleCount);
+		Assert(spiStatus == SPI_OK_DELETE_RETURNING);
+	}
+	else
+	{
+		const int argCount = 2;
+		Oid argTypes[2];
+		Datum argValues[2];
+
+		initStringInfo(&query);
+		appendStringInfo(&query,
+						 "DELETE FROM %s.retry_" UINT64_FORMAT
+						 " WHERE shard_key_value = $1 AND transaction_id = $2"
+						 " RETURNING object_id, rows_affected, result_document",
+						 ApiDataSchemaName, collectionId);
+
+		argTypes[0] = INT8OID;
+		argValues[0] = Int64GetDatum(shardKeyValue);
+
+		argTypes[1] = TEXTOID;
+		argValues[1] = PointerGetDatum(transactionId);
+
+		char *argNulls = NULL;
+		bool readOnly = false;
+		long maxTupleCount = 0;
+
+		SPIPlanPtr plan = GetSPIQueryPlan(collectionId,
+										  QUERY_ID_RETRY_RECORD_DELETE,
+										  query.data, argTypes, argCount);
+
+		spiStatus = SPI_execute_plan(plan, argValues, argNulls, readOnly,
+									 maxTupleCount);
+		Assert(spiStatus == SPI_OK_DELETE_RETURNING);
+	}
 
 	if (SPI_processed > 0)
 	{
@@ -222,65 +314,141 @@ InsertRetryRecord(uint64 collectionId, int64 shardKeyValue, text *transactionId,
 				  pgbson *objectId, bool rowsAffected, pgbson *resultDocument)
 {
 	StringInfoData query;
-	const int argCount = 5;
-	Oid argTypes[5];
-	Datum argValues[5];
-	char argNulls[] = { ' ', ' ', ' ', ' ', ' ' };
 	int spiStatus PG_USED_FOR_ASSERTS_ONLY = 0;
 
 	SPI_connect();
 
-	initStringInfo(&query);
-	appendStringInfo(&query,
-					 "INSERT INTO %s.retry_" UINT64_FORMAT
-					 " (shard_key_value, transaction_id, object_id, "
-					 "  rows_affected, result_document) "
-					 " VALUES ($1, $2, $3::%s, $4, $5::%s)",
-					 ApiDataSchemaName, collectionId,
-					 FullBsonTypeName, FullBsonTypeName);
-
-	argTypes[0] = INT8OID;
-	argValues[0] = Int64GetDatum(shardKeyValue);
-
-	argTypes[1] = TEXTOID;
-	argValues[1] = PointerGetDatum(transactionId);
-
-	argTypes[2] = BYTEAOID;
-
-	if (objectId != NULL)
+	if (UseLocalRetryTable())
 	{
-		argValues[2] = PointerGetDatum(objectId);
-		argNulls[2] = ' ';
+		const int argCount = 6;
+		Oid argTypes[6];
+		Datum argValues[6];
+		char argNulls[] = { ' ', ' ', ' ', ' ', ' ', ' ' };
+
+		/*
+		 * With a single shared retry table, all collections' retry records
+		 * share the same index pages, which may cause buffer contention under
+		 * heavy concurrent write workloads compared to per-collection retry
+		 * tables. In practice this is expected to be low severity since retry
+		 * records are short-lived.
+		 */
+		initStringInfo(&query);
+		appendStringInfo(&query,
+						 "INSERT INTO %s.retryable_writes"
+						 " (collection_id, shard_key_value, transaction_id, object_id, "
+						 "  rows_affected, result_document) "
+						 " VALUES ($1, $2, $3, $4::%s, $5, $6::%s)",
+						 ApiDataSchemaName, FullBsonTypeName, FullBsonTypeName);
+
+		argTypes[0] = INT8OID;
+		argValues[0] = Int64GetDatum((int64) collectionId);
+
+		argTypes[1] = INT8OID;
+		argValues[1] = Int64GetDatum(shardKeyValue);
+
+		argTypes[2] = TEXTOID;
+		argValues[2] = PointerGetDatum(transactionId);
+
+		argTypes[3] = BYTEAOID;
+
+		if (objectId != NULL)
+		{
+			argValues[3] = PointerGetDatum(objectId);
+			argNulls[3] = ' ';
+		}
+		else
+		{
+			argNulls[3] = 'n';
+		}
+
+		argTypes[4] = BOOLOID;
+		argValues[4] = BoolGetDatum(rowsAffected);
+
+		argTypes[5] = BYTEAOID;
+
+		if (resultDocument != NULL)
+		{
+			argValues[5] = PointerGetDatum(resultDocument);
+			argNulls[5] = ' ';
+		}
+		else
+		{
+			argNulls[5] = 'n';
+		}
+
+		bool readOnly = false;
+		long maxTupleCount = 0;
+
+		SPIPlanPtr plan = GetSPIQueryPlan(collectionId,
+										  QUERY_ID_GLOBAL_RETRY_RECORD_INSERT,
+										  query.data, argTypes, argCount);
+
+		spiStatus = SPI_execute_plan(plan, argValues, argNulls, readOnly,
+									 maxTupleCount);
+		Assert(spiStatus == SPI_OK_INSERT);
+		Assert(SPI_processed == 1);
 	}
 	else
 	{
-		argNulls[2] = 'n';
+		const int argCount = 5;
+		Oid argTypes[5];
+		Datum argValues[5];
+		char argNulls[] = { ' ', ' ', ' ', ' ', ' ' };
+
+		initStringInfo(&query);
+		appendStringInfo(&query,
+						 "INSERT INTO %s.retry_" UINT64_FORMAT
+						 " (shard_key_value, transaction_id, object_id, "
+						 "  rows_affected, result_document) "
+						 " VALUES ($1, $2, $3::%s, $4, $5::%s)",
+						 ApiDataSchemaName, collectionId,
+						 FullBsonTypeName, FullBsonTypeName);
+
+		argTypes[0] = INT8OID;
+		argValues[0] = Int64GetDatum(shardKeyValue);
+
+		argTypes[1] = TEXTOID;
+		argValues[1] = PointerGetDatum(transactionId);
+
+		argTypes[2] = BYTEAOID;
+
+		if (objectId != NULL)
+		{
+			argValues[2] = PointerGetDatum(objectId);
+			argNulls[2] = ' ';
+		}
+		else
+		{
+			argNulls[2] = 'n';
+		}
+
+		argTypes[3] = BOOLOID;
+		argValues[3] = BoolGetDatum(rowsAffected);
+
+		argTypes[4] = BYTEAOID;
+
+		if (resultDocument != NULL)
+		{
+			argValues[4] = PointerGetDatum(resultDocument);
+			argNulls[4] = ' ';
+		}
+		else
+		{
+			argNulls[4] = 'n';
+		}
+
+		bool readOnly = false;
+		long maxTupleCount = 0;
+
+		SPIPlanPtr plan = GetSPIQueryPlan(collectionId,
+										  QUERY_ID_RETRY_RECORD_INSERT,
+										  query.data, argTypes, argCount);
+
+		spiStatus = SPI_execute_plan(plan, argValues, argNulls, readOnly,
+									 maxTupleCount);
+		Assert(spiStatus == SPI_OK_INSERT);
+		Assert(SPI_processed == 1);
 	}
-
-	argTypes[3] = BOOLOID;
-	argValues[3] = BoolGetDatum(rowsAffected);
-
-	argTypes[4] = BYTEAOID;
-
-	if (resultDocument != NULL)
-	{
-		argValues[4] = PointerGetDatum(resultDocument);
-		argNulls[4] = ' ';
-	}
-	else
-	{
-		argNulls[4] = 'n';
-	}
-
-	bool readOnly = false;
-	long maxTupleCount = 0;
-
-	SPIPlanPtr plan = GetSPIQueryPlan(collectionId, QUERY_ID_RETRY_RECORD_INSERT,
-									  query.data, argTypes, argCount);
-
-	spiStatus = SPI_execute_plan(plan, argValues, argNulls, readOnly, maxTupleCount);
-	Assert(spiStatus == SPI_OK_INSERT);
-	Assert(SPI_processed == 1);
 
 	pfree(query.data);
 

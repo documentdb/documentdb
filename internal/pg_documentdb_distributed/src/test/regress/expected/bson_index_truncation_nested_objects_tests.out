@@ -639,10 +639,17 @@ SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documen
       7 | { "" : { "$maxKey" : 1 }, "t" : true }
 (6 rows)
 
-SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documentdb_distributed_test_helpers.gin_bson_get_single_path_generated_terms('{"_id": 3, "ikey" : { "a" : [{ "$numberDecimal" : "1234567891011" }]]}}', 'ikey', true, true, true, 50) term;
-ERROR:  invalid input syntax JSON for BSON: Code: '1', Message 'Got parse error at "]", position 68: "BRACKET_MISMATCH"'
-LINE 1: ..._helpers.gin_bson_get_single_path_generated_terms('{"_id": 3...
-                                                             ^
+SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documentdb_distributed_test_helpers.gin_bson_get_single_path_generated_terms('{"_id": 3, "ikey" : { "a" : [{ "$numberDecimal" : "1234567891011" }]}}', 'ikey', true, true, true, 50) term;
+ length |                                  term                                   
+---------------------------------------------------------------------
+     32 | { "$" : { "a" : [ { "$numberLong" : "1234567891011" } ] }, "t" : true }
+     26 | { "$.a" : [ { "$numberLong" : "1234567891011" } ], "t" : false }
+     28 | { "$.a.0" : { "$numberDecimal" : "1234567891011" }, "t" : false }
+     26 | { "$.a" : { "$numberDecimal" : "1234567891011" }, "t" : false }
+      8 | { "" : true, "t" : false }
+      7 | { "" : { "$maxKey" : 1 }, "t" : true }
+(6 rows)
+
 SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documentdb_distributed_test_helpers.gin_bson_get_single_path_generated_terms('{"_id": 3, "ikey" : { "a" : [true]}}', 'ikey', true, true, true, 50) term;
  length |                   term                    
 ---------------------------------------------------------------------
@@ -751,10 +758,12 @@ SELECT documentdb_api.insert_one('db', 'index_truncation_tests_nested_documents'
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
-SELECT documentdb_api.insert_one('db', 'index_truncation_tests_nested_documents', '{ "_id": 5, "ikey": { "a" : [[]}] }');
-ERROR:  invalid input syntax JSON for BSON: Code: '1', Message 'Got parse error at "}", position 31: "BRACKET_MISMATCH"'
-LINE 1: ...('db', 'index_truncation_tests_nested_documents', '{ "_id": ...
-                                                             ^
+SELECT documentdb_api.insert_one('db', 'index_truncation_tests_nested_documents', '{ "_id": 5, "ikey": { "a" : [[]]} }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
 SELECT documentdb_api.insert_one('db', 'index_truncation_tests_nested_documents', '{ "_id": 6, "ikey": { "a" : [{}]} }');
                               insert_one                              
 ---------------------------------------------------------------------
@@ -767,8 +776,9 @@ SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests_nes
  { "_id" : { "$numberInt" : "1" }, "ikey" : { "a" : [ "abcdefghijklmonpqrstuvwsyz" ] } }
  { "_id" : { "$numberInt" : "3" }, "ikey" : { "a" : [ { "$numberDecimal" : "1234567891011" } ] } }
  { "_id" : { "$numberInt" : "4" }, "ikey" : { "a" : [ true ] } }
+ { "_id" : { "$numberInt" : "5" }, "ikey" : { "a" : [ [  ] ] } }
  { "_id" : { "$numberInt" : "6" }, "ikey" : { "a" : [ {  } ] } }
-(4 rows)
+(5 rows)
 
 SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests_nested_documents') WHERE document @@ '{ "ikey.a": { "$gt": [false] } }';
                             document                             
@@ -914,6 +924,7 @@ SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests_nes
  { "_id" : { "$numberInt" : "2" }, "ikey" : { "a" : [ { "$numberInt" : "1" } ] } }
  { "_id" : { "$numberInt" : "3" }, "ikey" : { "a" : [ { "$numberDecimal" : "1234567891011" } ] } }
  { "_id" : { "$numberInt" : "4" }, "ikey" : { "a" : [ true ] } }
+ { "_id" : { "$numberInt" : "5" }, "ikey" : { "a" : [ [  ] ] } }
  { "_id" : { "$numberInt" : "6" }, "ikey" : { "a" : [ {  } ] } }
  { "_id" : { "$numberInt" : "7" }, "ikey" : { "a" : [ [ "abcdefghijklmonpqrstuvwsyz" ] ] } }
  { "_id" : { "$numberInt" : "8" }, "ikey" : { "a" : [ [ { "$numberInt" : "1" } ] ] } }
@@ -921,7 +932,7 @@ SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests_nes
  { "_id" : { "$numberInt" : "10" }, "ikey" : { "a" : [ [ true ] ] } }
  { "_id" : { "$numberInt" : "11" }, "ikey" : { "a" : [ [ [  ] ] ] } }
  { "_id" : { "$numberInt" : "12" }, "ikey" : { "a" : [ [ {  } ] ] } }
-(11 rows)
+(12 rows)
 
 SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests_nested_documents') WHERE document @@ '{ "ikey.a": { "$in": [1, true] } }';
                                      document                                      
@@ -935,6 +946,7 @@ SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests_nes
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "ikey" : { "a" : [ "abcdefghijklmonpqrstuvwsyz" ] } }
  { "_id" : { "$numberInt" : "3" }, "ikey" : { "a" : [ { "$numberDecimal" : "1234567891011" } ] } }
+ { "_id" : { "$numberInt" : "5" }, "ikey" : { "a" : [ [  ] ] } }
  { "_id" : { "$numberInt" : "6" }, "ikey" : { "a" : [ {  } ] } }
  { "_id" : { "$numberInt" : "7" }, "ikey" : { "a" : [ [ "abcdefghijklmonpqrstuvwsyz" ] ] } }
  { "_id" : { "$numberInt" : "8" }, "ikey" : { "a" : [ [ { "$numberInt" : "1" } ] ] } }
@@ -948,7 +960,7 @@ SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests_nes
  { "_id" : { "$numberInt" : "16" }, "ikey" : true }
  { "_id" : { "$numberInt" : "17" }, "ikey" : [  ] }
  { "_id" : { "$numberInt" : "18" }, "ikey" : {  } }
-(15 rows)
+(16 rows)
 
 SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests_nested_documents') WHERE document @@ '{ "ikey.a": { "$elemMatch": { "$in": [1, true] } } }'; 
                                      document                                      
@@ -994,8 +1006,9 @@ SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests_nes
 SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests_nested_documents') WHERE document @@ '{ "ikey.a": { "$all": [[[]]] } }'; 
                                document                               
 ---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "ikey" : { "a" : [ [  ] ] } }
  { "_id" : { "$numberInt" : "11" }, "ikey" : { "a" : [ [ [  ] ] ] } }
-(1 row)
+(2 rows)
 
 SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests_nested_documents') WHERE document @@ '{ "ikey.a": { "$ne": { "$numberDecimal" : "1234567891011" } } }';
                                                document                                                
@@ -1003,6 +1016,7 @@ SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests_nes
  { "_id" : { "$numberInt" : "1" }, "ikey" : { "a" : [ "abcdefghijklmonpqrstuvwsyz" ] } }
  { "_id" : { "$numberInt" : "2" }, "ikey" : { "a" : [ { "$numberInt" : "1" } ] } }
  { "_id" : { "$numberInt" : "4" }, "ikey" : { "a" : [ true ] } }
+ { "_id" : { "$numberInt" : "5" }, "ikey" : { "a" : [ [  ] ] } }
  { "_id" : { "$numberInt" : "6" }, "ikey" : { "a" : [ {  } ] } }
  { "_id" : { "$numberInt" : "7" }, "ikey" : { "a" : [ [ "abcdefghijklmonpqrstuvwsyz" ] ] } }
  { "_id" : { "$numberInt" : "8" }, "ikey" : { "a" : [ [ { "$numberInt" : "1" } ] ] } }
@@ -1016,7 +1030,7 @@ SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests_nes
  { "_id" : { "$numberInt" : "16" }, "ikey" : true }
  { "_id" : { "$numberInt" : "17" }, "ikey" : [  ] }
  { "_id" : { "$numberInt" : "18" }, "ikey" : {  } }
-(16 rows)
+(17 rows)
 
 SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests_nested_documents') WHERE document @@ '{ "ikey.a": { "$in": [[1], [true]] } }';
                                        document                                        
@@ -1032,6 +1046,7 @@ SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests_nes
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "ikey" : { "a" : [ "abcdefghijklmonpqrstuvwsyz" ] } }
  { "_id" : { "$numberInt" : "3" }, "ikey" : { "a" : [ { "$numberDecimal" : "1234567891011" } ] } }
+ { "_id" : { "$numberInt" : "5" }, "ikey" : { "a" : [ [  ] ] } }
  { "_id" : { "$numberInt" : "6" }, "ikey" : { "a" : [ {  } ] } }
  { "_id" : { "$numberInt" : "7" }, "ikey" : { "a" : [ [ "abcdefghijklmonpqrstuvwsyz" ] ] } }
  { "_id" : { "$numberInt" : "9" }, "ikey" : { "a" : [ [ { "$numberDecimal" : "1234567891011" } ] ] } }
@@ -1043,7 +1058,7 @@ SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests_nes
  { "_id" : { "$numberInt" : "16" }, "ikey" : true }
  { "_id" : { "$numberInt" : "17" }, "ikey" : [  ] }
  { "_id" : { "$numberInt" : "18" }, "ikey" : {  } }
-(13 rows)
+(14 rows)
 
 SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests_nested_documents') WHERE document @@ '{ "ikey.a": { "$ne": [{ "$numberDecimal" : "1234567891011" }] } }';
                                           document                                           
@@ -1051,6 +1066,7 @@ SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests_nes
  { "_id" : { "$numberInt" : "1" }, "ikey" : { "a" : [ "abcdefghijklmonpqrstuvwsyz" ] } }
  { "_id" : { "$numberInt" : "2" }, "ikey" : { "a" : [ { "$numberInt" : "1" } ] } }
  { "_id" : { "$numberInt" : "4" }, "ikey" : { "a" : [ true ] } }
+ { "_id" : { "$numberInt" : "5" }, "ikey" : { "a" : [ [  ] ] } }
  { "_id" : { "$numberInt" : "6" }, "ikey" : { "a" : [ {  } ] } }
  { "_id" : { "$numberInt" : "7" }, "ikey" : { "a" : [ [ "abcdefghijklmonpqrstuvwsyz" ] ] } }
  { "_id" : { "$numberInt" : "8" }, "ikey" : { "a" : [ [ { "$numberInt" : "1" } ] ] } }
@@ -1063,7 +1079,7 @@ SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests_nes
  { "_id" : { "$numberInt" : "16" }, "ikey" : true }
  { "_id" : { "$numberInt" : "17" }, "ikey" : [  ] }
  { "_id" : { "$numberInt" : "18" }, "ikey" : {  } }
-(15 rows)
+(16 rows)
 
 -- term generation tests
 set documentdb.indexTermLimitOverride to 100;
@@ -16174,6 +16190,7 @@ SELECT document FROM bson_aggregation_find('db', '{ "find": "index_truncation_te
 (2 rows)
 
 -- 5. Index usage explain
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN(ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('db', '{ "find": "index_truncation_tests_nested", "filter": { "itemData": { "$eq": 
 
     {
@@ -16197,8 +16214,9 @@ EXPLAIN(ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT docu
         }
     }
 
-} }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "skip": 0, "limit": 5 }');
-                                                                                                                                                                                                                                                                                                                QUERY PLAN                                                                                                                                                                                                                                                                                                                
+} }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "skip": 0, "limit": 5 }')
+$cmd$);
+                                                                                                                                                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                                                                                                                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
    Task Count: 1
@@ -16210,7 +16228,7 @@ EXPLAIN(ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT docu
          ->  Limit (actual rows=2 loops=1)
                ->  Sort (actual rows=2 loops=1)
                      Sort Key: (documentdb_api_catalog.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
-                     Sort Method: quicksort  Memory: 25kB
+                     Sort Method: quicksort  Memory: xxxkB
                      ->  Bitmap Heap Scan on documents_10405_1040081 collection (actual rows=2 loops=1)
                            Recheck Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "itemData" : { "attribute" : "1234", "cb" : { "$numberInt" : "12431" }, "dx" : "test", "el" : { "$code" : "eyAiZXhhbXBsZSI6IDEyMywgInZhbHVlIjogImFib2JvcmEiIH0=" }, "first" : null, "greaterThan" : null, "shortPath" : "aas", "i" : null, "largePathWithObject" : { "option1" : null, "option2" : "small-string1", "option3" : null, "option4" : { "$numberInt" : "123" }, "onlyPathWithLargeString" : "aassadasdasdsdasdasdsadsa-test-data-with-large-string", "prior" : { "$numberLong" : "123123213213" } } } }'::documentdb_core.bson)
                            Heap Blocks: exact=1
@@ -16229,12 +16247,14 @@ SELECT document FROM bson_aggregation_find('db', '{ "find": "index_truncation_te
  { "_id" : { "$numberInt" : "2" } }
 (2 rows)
 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN(ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('db', '{ "find": "index_truncation_tests_nested", "filter": { "itemData.largePathWithObject.option2": { "$eq": 
 
 "small-string1"
 
-} }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "skip": 0, "limit": 5 }');
-                                                                                   QUERY PLAN                                                                                    
+} }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "skip": 0, "limit": 5 }')
+$cmd$);
+                                                                              run_explain_and_trim                                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
    Task Count: 1
@@ -16246,7 +16266,7 @@ EXPLAIN(ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT docu
          ->  Limit (actual rows=2 loops=1)
                ->  Sort (actual rows=2 loops=1)
                      Sort Key: (documentdb_api_catalog.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
-                     Sort Method: quicksort  Memory: 25kB
+                     Sort Method: quicksort  Memory: xxxkB
                      ->  Bitmap Heap Scan on documents_10405_1040081 collection (actual rows=2 loops=1)
                            Recheck Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "itemData.largePathWithObject.option2" : "small-string1" }'::documentdb_core.bson)
                            Heap Blocks: exact=1

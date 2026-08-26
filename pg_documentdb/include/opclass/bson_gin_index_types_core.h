@@ -16,4 +16,7 @@ bson_value_t GetLowerBound(bson_type_t type);
 
 bson_type_t GetBsonTypeNameFromStringForDollarType(const char *typeNameStr);
 
+void GetBoundsForRegex(const char *regexString, const char *regexOptions,
+					   bson_value_t *lowerBound, bool *lowerBoundInclusive,
+					   bson_value_t *upperBound, bool *upperBoundInclusive);
 #endif

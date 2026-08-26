@@ -6,87 +6,146 @@
  *-------------------------------------------------------------------------
  */
 
-use dashmap::DashMap;
 use std::sync::Arc;
-use tokio::{
-    task::JoinHandle,
-    time::{Duration, Instant},
-};
+
+use dashmap::DashMap;
+use tokio::time::Duration;
 use tokio_postgres::IsolationLevel;
 
-use crate::context::transaction::{GatewayTransaction, RequestTransactionInfo, TransactionNumber};
 use crate::{
-    context::{ConnectionContext, SessionId},
+    collections::cache::{AsyncCache, CacheConfiguration, TtlCache},
+    context::{
+        session::SessionKey,
+        transaction::{
+            transaction_error::map_transaction_error, GatewayTransaction, RequestTransactionInfo,
+            TransactionError,
+        },
+        ConnectionContext, LogicalSessionId, TransactionNumber,
+    },
     error::{DocumentDBError, ErrorCode, Result},
     postgres::{conn_mgmt::Connection, PgDataClient},
+    security::principal::Principal,
+    time::EpochClock,
 };
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 enum TransactionState {
     Started,
     Committed,
     Aborted,
 }
 
-#[derive(Debug)]
-struct LastSeenTransaction {
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+pub struct LastSeenTransaction {
     transaction_number: TransactionNumber,
     state: TransactionState,
 }
 
 impl LastSeenTransaction {
-    pub const fn new(transaction_number: TransactionNumber) -> Self {
+    const fn with_state(transaction_number: TransactionNumber, state: TransactionState) -> Self {
         Self {
             transaction_number,
-            state: TransactionState::Started,
+            state,
         }
+    }
+
+    pub const fn started(transaction_number: TransactionNumber) -> Self {
+        Self::with_state(transaction_number, TransactionState::Started)
+    }
+
+    pub const fn committed(transaction_number: TransactionNumber) -> Self {
+        Self::with_state(transaction_number, TransactionState::Committed)
+    }
+
+    pub const fn aborted(transaction_number: TransactionNumber) -> Self {
+        Self::with_state(transaction_number, TransactionState::Aborted)
     }
 }
 
-type TransactionEntry = (Instant, GatewayTransaction);
+type TransactionEntry = (u64, GatewayTransaction);
 
 #[derive(Debug)]
 pub struct TransactionStore {
-    pub transactions: Arc<DashMap<SessionId, TransactionEntry>>,
-    last_seen_transactions: DashMap<SessionId, LastSeenTransaction>,
-    _reaper: JoinHandle<()>,
+    pub transactions: Arc<DashMap<SessionKey, TransactionEntry>>,
+    last_seen_transactions: Arc<TtlCache<SessionKey, LastSeenTransaction>>,
+    default_ttl: Duration,
 }
 
 impl TransactionStore {
     #[must_use]
-    pub fn new(expiration: Duration) -> Self {
+    pub fn new(default_ttl: Duration) -> Self {
         let transactions = Arc::new(DashMap::new());
+        let last_seen_transactions =
+            Arc::new(TtlCache::new(CacheConfiguration::with_ttl(default_ttl)));
+
         Self {
+            default_ttl,
             transactions: Arc::clone(&transactions),
-            last_seen_transactions: DashMap::new(),
-            _reaper: tokio::spawn(async move {
-                let mut interval = tokio::time::interval(expiration / 2);
-                loop {
-                    interval.tick().await;
-                    transactions.retain(|_, (time, _)| time.elapsed() < expiration);
-                }
-            }),
+            last_seen_transactions: Arc::clone(&last_seen_transactions),
         }
     }
 
+    /// Removes every transaction whose lease has elapsed and hands ownership
+    /// of them to the caller, which is responsible for rolling them back.
+    pub async fn evict_expired(&self) -> Vec<GatewayTransaction> {
+        let mut evicted = Vec::new();
+
+        let expired_keys: Vec<SessionKey> = self
+            .transactions
+            .iter()
+            .filter_map(|entry| {
+                (EpochClock::almost_now_timestamp() >= entry.value().0).then(|| entry.key().clone())
+            })
+            .collect();
+
+        for key in expired_keys {
+            // Re-check under the shard lock: the key is the session, so a
+            // client that started a fresh transaction must not be evicted live.
+            let removed = self.transactions.remove_if(&key, |_, (expires_at, _)| {
+                EpochClock::almost_now_timestamp() >= *expires_at
+            });
+
+            if let Some((_, (_, transaction))) = removed {
+                evicted.push(transaction);
+            }
+        }
+
+        let _ = self.last_seen_transactions.evict_expired_async().await;
+
+        evicted
+    }
+
     #[must_use]
-    pub fn get_connection(&self, session_id: &SessionId) -> Option<Arc<Connection>> {
+    pub fn get_connection(
+        &self,
+        lsid: &LogicalSessionId,
+        caller: &Principal,
+    ) -> Option<Arc<Connection>> {
+        let key = SessionKey::new(lsid.clone(), caller.clone());
+
         self.transactions
-            .get(session_id)
+            .get(&key)
             .and_then(|entry| entry.value().1.get_connection())
     }
 
     /// # Errors
     ///
     /// Returns an error if the operation fails.
-    #[expect(clippy::too_many_lines, reason = "complex transaction logic")]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "This function is long due to the number of checks and operations required to create a transaction."
+    )]
     pub async fn create(
         &self,
         connection_context: &ConnectionContext,
         transaction_info: &RequestTransactionInfo,
-        session_id: SessionId,
+        lsid: LogicalSessionId,
         pg_data_client: &impl PgDataClient,
+        caller: &Principal,
+        activity_id: &str,
     ) -> Result<()> {
+        let key = SessionKey::new(lsid.clone(), caller.clone());
+
         if let Some((_, transaction_number)) = connection_context.transaction.as_ref() {
             if transaction_number > &transaction_info.transaction_number {
                 return Err(DocumentDBError::documentdb_error(
@@ -97,30 +156,32 @@ impl TransactionStore {
         }
 
         if transaction_info.start_transaction && !transaction_info.auto_commit {
-            if let Some(last_transaction) = self.last_seen_transactions.get(&session_id) {
-                if last_transaction.transaction_number == transaction_info.transaction_number {
+            if let Some(last_transaction) = self.last_seen_transactions.get_async(&key).await {
+                if let Some(error_message) = (last_transaction.transaction_number
+                    == transaction_info.transaction_number)
+                    .then(|| match last_transaction.state {
+                        TransactionState::Committed => format!(
+                            "Transaction {} is already committed.",
+                            transaction_info.transaction_number
+                        ),
+                        TransactionState::Aborted => format!(
+                            "Transaction {} is already aborted.",
+                            transaction_info.transaction_number
+                        ),
+                        TransactionState::Started => format!(
+                            "Transaction {} is already started.",
+                            transaction_info.transaction_number
+                        ),
+                    })
+                {
                     return Err(DocumentDBError::documentdb_error(
                         ErrorCode::ConflictingOperationInProgress,
-                        match last_transaction.state {
-                            TransactionState::Committed => format!(
-                                "Transaction {} is already committed.",
-                                transaction_info.transaction_number
-                            ),
-                            TransactionState::Aborted => format!(
-                                "Transaction {} is already aborted.",
-                                transaction_info.transaction_number
-                            ),
-                            TransactionState::Started => format!(
-                                "Transaction {} is already started.",
-                                transaction_info.transaction_number
-                            ),
-                        },
+                        error_message,
                     ));
                 }
             }
 
-            // Remove any existing transaction from this session
-            if let Some((_, mut old_transaction)) = self.transactions.remove(&session_id) {
+            if let Some((_, mut old_transaction)) = self.transactions.remove(&key) {
                 if old_transaction.1.transaction_number == transaction_info.transaction_number {
                     return Err(DocumentDBError::documentdb_error(
                         ErrorCode::ConflictingOperationInProgress,
@@ -128,11 +189,22 @@ impl TransactionStore {
                     ));
                 }
 
-                old_transaction.1.abort().await?;
+                old_transaction.1.abort().await.map_err(|e| {
+                    map_transaction_error(
+                        e,
+                        connection_context
+                            .dynamic_configuration()
+                            .is_replica_cluster(),
+                        activity_id,
+                    )
+                })?;
             }
 
+            let is_replica_cluster = connection_context
+                .dynamic_configuration()
+                .is_replica_cluster();
+
             let transaction = GatewayTransaction::start(
-                connection_context.service_context.dynamic_configuration(),
                 transaction_info,
                 Arc::new(
                     pg_data_client
@@ -142,21 +214,28 @@ impl TransactionStore {
                 transaction_info
                     .isolation_level
                     .unwrap_or(IsolationLevel::ReadCommitted),
-                session_id.clone(),
+                lsid.clone(),
+                caller.clone(),
             )
-            .await?;
+            .await
+            .map_err(|e| map_transaction_error(e, is_replica_cluster, activity_id))?;
 
-            self.last_seen_transactions.insert(
-                session_id.clone(),
-                LastSeenTransaction::new(transaction.transaction_number()),
-            );
-            self.transactions
-                .insert(session_id, (Instant::now(), transaction));
+            let _ = self
+                .last_seen_transactions
+                .upsert_async(
+                    key.clone(),
+                    LastSeenTransaction::started(transaction.transaction_number()),
+                )
+                .await;
+
+            let expires_at = EpochClock::almost_now_timestamp() + self.default_ttl.as_secs();
+
+            self.transactions.insert(key, (expires_at, transaction));
 
             return Ok(());
         }
 
-        if let Some(transaction_entry) = self.transactions.get(&session_id) {
+        if let Some(transaction_entry) = self.transactions.get(&key) {
             let transaction = &transaction_entry.value().1;
             return if transaction.transaction_number() == transaction_info.transaction_number {
                 Ok(())
@@ -171,33 +250,31 @@ impl TransactionStore {
             };
         }
 
-        if self
-            .last_seen_transactions
-            .get(&session_id)
-            .is_some_and(|s| {
-                s.transaction_number == transaction_info.transaction_number
-                    && s.state == TransactionState::Committed
-            })
-        {
-            Err(DocumentDBError::documentdb_error(
-                ErrorCode::TransactionCommitted,
-                format!(
-                    "Transaction {} already committed",
-                    transaction_info.transaction_number
-                ),
-            ))
-        } else {
-            Err(DocumentDBError::documentdb_error(
-                ErrorCode::NoSuchTransaction,
-                format!(
-                    "Cannot continue transaction {}",
-                    transaction_info.transaction_number
-                ),
-            ))
+        if let Some(last_seen) = self.last_seen_transactions.get_async(&key).await {
+            if last_seen.transaction_number == transaction_info.transaction_number
+                && last_seen.state == TransactionState::Committed
+            {
+                return Err(DocumentDBError::documentdb_error(
+                    ErrorCode::TransactionCommitted,
+                    format!(
+                        "Transaction {} already committed",
+                        transaction_info.transaction_number
+                    ),
+                ));
+            }
         }
+
+        // Return an error since the request is trying to continue a transaction that doesn't exist.
+        Err(DocumentDBError::documentdb_error(
+            ErrorCode::NoSuchTransaction,
+            format!(
+                "Cannot continue transaction {}",
+                transaction_info.transaction_number
+            ),
+        ))
     }
 
-    /// Removes the active transaction for `session_id`, aborts it, and marks the
+    /// Removes the active transaction for `lsid`, aborts it, and marks the
     /// last-seen transaction as aborted.
     ///
     /// Returns `Ok(None)` when there is no active transaction for the session.
@@ -208,44 +285,44 @@ impl TransactionStore {
     /// last-seen record is missing, or if aborting the transaction fails.
     pub async fn remove_transaction_by_session(
         &self,
-        session_id: &SessionId,
-    ) -> Result<Option<(SessionId, TransactionEntry)>> {
-        let Some((deleted_sessions_id, mut transaction_entry)) =
-            self.transactions.remove(session_id)
-        else {
+        lsid: &LogicalSessionId,
+        caller: &Principal,
+    ) -> std::result::Result<Option<(LogicalSessionId, TransactionEntry)>, TransactionError> {
+        let key = SessionKey::new(lsid.clone(), caller.clone());
+
+        let Some((deleted_lsid, mut transaction_entry)) = self.transactions.remove(&key) else {
             return Ok(None);
         };
 
         transaction_entry.1.abort().await?;
-        self.last_seen_transactions
-            .get_mut(session_id)
-            .map(|mut last_seen| last_seen.state = TransactionState::Aborted)
-            .ok_or_else(|| {
-                DocumentDBError::documentdb_error(
-                    ErrorCode::NoSuchTransaction,
-                    "Last seen transaction should always exist for an existing transaction"
-                        .to_owned(),
-                )
-            })?;
 
-        Ok(Some((deleted_sessions_id, transaction_entry)))
+        let last_seen_transaction =
+            LastSeenTransaction::aborted(transaction_entry.1.transaction_number());
+
+        let _ = self
+            .last_seen_transactions
+            .upsert_async(deleted_lsid.clone(), last_seen_transaction)
+            .await;
+
+        Ok(Some((transaction_entry.1.lsid.clone(), transaction_entry)))
     }
 
-    /// Aborts and removes the active transaction for `session_id`.
+    /// Aborts and removes the active transaction for `lsid`.
     ///
     /// # Errors
     ///
     /// Returns `ErrorCode::NoSuchTransaction` when there is no active
     /// transaction for the session or when the removal fails.
-    /// # Errors
-    ///
-    /// Returns an error if the operation fails.
-    pub async fn abort(&self, session_id: &SessionId) -> Result<()> {
-        self.remove_transaction_by_session(session_id)
+    pub async fn abort(
+        &self,
+        lsid: &LogicalSessionId,
+        caller: &Principal,
+    ) -> std::result::Result<(), TransactionError> {
+        self.remove_transaction_by_session(lsid, caller)
             .await?
             .map(|_| ())
             .ok_or_else(|| {
-                DocumentDBError::documentdb_error(
+                TransactionError::SimpleError(
                     ErrorCode::NoSuchTransaction,
                     "No such transaction to abort".to_owned(),
                 )
@@ -257,21 +334,27 @@ impl TransactionStore {
     /// # Errors
     ///
     /// Returns an error if the operation fails.
-    pub async fn commit(&self, session_id: &SessionId) -> Result<()> {
-        if let Some((_, (_, mut transaction))) = self.transactions.remove(session_id) {
+    pub async fn commit(
+        &self,
+        lsid: &LogicalSessionId,
+        caller: &Principal,
+    ) -> std::result::Result<(), TransactionError> {
+        let key = SessionKey::new(lsid.clone(), caller.clone());
+
+        if let Some((_, (_, mut transaction))) = self.transactions.remove(&key) {
             transaction.commit().await?;
-            if let Some(mut last_seen) = self.last_seen_transactions.get_mut(session_id) {
-                last_seen.state = TransactionState::Committed;
-            } else {
-                return Err(DocumentDBError::documentdb_error(
-                    ErrorCode::NoSuchTransaction,
-                    "Last seen transaction should always exist for an existing transaction"
-                        .to_owned(),
-                ));
-            }
+
+            let _ = self
+                .last_seen_transactions
+                .upsert_async(
+                    key,
+                    LastSeenTransaction::committed(transaction.transaction_number()),
+                )
+                .await;
+
             Ok(())
         } else {
-            Err(DocumentDBError::documentdb_error(
+            Err(TransactionError::SimpleError(
                 ErrorCode::NoSuchTransaction,
                 "No such transaction to commit".to_owned(),
             ))

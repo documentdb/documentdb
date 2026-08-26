@@ -7,26 +7,52 @@
  */
 
 use std::{
-    future::{poll_fn, Future},
+    future::{poll_fn, Future, IntoFuture},
     pin::Pin,
     task::Poll,
 };
 
-use tokio::io::AsyncRead;
+use tokio::{io::AsyncRead, time::Duration};
 
 use crate::{
     error::Result,
     protocol::{self, header::Header},
 };
 
-pub(super) type PendingHeaderRead<'a> =
-    Pin<Box<dyn Future<Output = Result<Option<Header>>> + Send + 'a>>;
+type BoxedHeaderRead<'a> = Pin<Box<dyn Future<Output = Result<Option<Header>>> + Send + 'a>>;
 
-pub(super) async fn start_next_header_read<'a, R>(reader: &'a mut R) -> PendingHeaderRead<'a>
+/// A pending read of the next request header.
+///
+/// This wraps the in-flight read-ahead future rather than being a `Future` itself. The
+/// instrumented request hot path returns this to the caller so the next header read can be
+/// awaited on the following loop iteration. Callers `.await` it directly via the [`IntoFuture`]
+/// implementation.
+pub(super) struct PendingHeaderRead<'a>(BoxedHeaderRead<'a>);
+
+impl<'a> IntoFuture for PendingHeaderRead<'a> {
+    type Output = Result<Option<Header>>;
+    type IntoFuture = BoxedHeaderRead<'a>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        self.0
+    }
+}
+
+pub(super) fn closed_header_read<'a>() -> PendingHeaderRead<'a> {
+    PendingHeaderRead(Box::pin(async { Ok(None) }))
+}
+
+pub(super) async fn start_next_header_read<'a, R>(
+    reader: &'a mut R,
+    idle_timeout: Duration,
+) -> PendingHeaderRead<'a>
 where
     R: AsyncRead + Unpin + Send + 'a,
 {
-    let mut future: PendingHeaderRead<'a> = Box::pin(protocol::reader::read_header(reader));
+    let mut future: BoxedHeaderRead<'a> = Box::pin(protocol::reader::read_header_with_timeout(
+        reader,
+        idle_timeout,
+    ));
     let mut ready_result = None;
     poll_fn(|cx| {
         if let Poll::Ready(result) = future.as_mut().poll(cx) {
@@ -37,21 +63,22 @@ where
     .await;
 
     if let Some(result) = ready_result {
-        Box::pin(async move { result })
+        PendingHeaderRead(Box::pin(async move { result }))
     } else {
-        future
+        PendingHeaderRead(future)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::task::Context;
 
     use tokio::io::{AsyncWriteExt, ReadBuf};
 
+    use super::*;
     use crate::protocol::opcode::OpCode;
+
+    const NON_EXPIRING_IDLE_TIMEOUT: Duration = Duration::from_mins(1);
 
     fn assert_header_matches(
         header: &Header,
@@ -60,10 +87,10 @@ mod tests {
         response_to: i32,
         op_code: OpCode,
     ) {
-        assert_eq!(header.length, length);
-        assert_eq!(header.request_id, request_id);
-        assert_eq!(header.response_to, response_to);
-        assert_eq!(header.op_code, op_code);
+        assert_eq!(header.message_length(), length);
+        assert_eq!(header.request_id(), request_id);
+        assert_eq!(header.response_to(), response_to);
+        assert_eq!(header.op_code(), op_code);
     }
 
     fn encode_header(length: i32, request_id: i32, response_to: i32, op_code: OpCode) -> Vec<u8> {
@@ -109,7 +136,7 @@ mod tests {
     async fn start_next_header_read_reuses_immediate_result_without_rereading() {
         let mut reader = ReadyHeaderReader::new(encode_header(16, 42, 7, OpCode::Msg));
 
-        let next_header = start_next_header_read(&mut reader).await;
+        let next_header = start_next_header_read(&mut reader, NON_EXPIRING_IDLE_TIMEOUT).await;
         let header = next_header
             .await
             .expect("header read should succeed")
@@ -121,7 +148,7 @@ mod tests {
     #[tokio::test]
     async fn start_next_header_read_waits_for_pending_header_bytes() {
         let (mut reader, mut writer) = tokio::io::duplex(64);
-        let next_header = start_next_header_read(&mut reader).await;
+        let next_header = start_next_header_read(&mut reader, NON_EXPIRING_IDLE_TIMEOUT).await;
 
         writer
             .write_all(&encode_header(16, 99, 3, OpCode::Msg))
@@ -143,7 +170,7 @@ mod tests {
     #[tokio::test]
     async fn start_next_header_read_returns_none_on_clean_eof() {
         let mut reader = tokio::io::empty();
-        let next_header = start_next_header_read(&mut reader).await;
+        let next_header = start_next_header_read(&mut reader, NON_EXPIRING_IDLE_TIMEOUT).await;
 
         assert!(
             next_header

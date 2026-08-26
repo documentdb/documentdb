@@ -37,18 +37,27 @@ extern PGDLLIMPORT char *ExtensionObjectPrefixV2;
 extern PGDLLIMPORT char *FullBsonTypeName;
 extern PGDLLIMPORT char *PostgisSchemaName;
 
-/* Roles */
+/*
+ * Roles.
+ *
+ * The V3 entries are never remapped by layers built on top of this extension,
+ * so they always name this extension's own roles.
+ */
 extern PGDLLIMPORT char *ApiAdminRole;
 extern PGDLLIMPORT char *ApiAdminRoleV2;
-extern PGDLLIMPORT char *ApiBgWorkerRole;
+extern PGDLLEXPORT char *ApiAdminRoleV3;
 extern PGDLLEXPORT char *ApiClusterAdminRole;
 extern PGDLLIMPORT char *ApiReadOnlyRole;
 extern PGDLLEXPORT char *ApiReadWriteRole;
-extern PGDLLEXPORT char *ApiReplicationRole;
 extern PGDLLEXPORT char *ApiRootInternalRole;
 extern PGDLLIMPORT char *ApiRootRole;
-extern PGDLLEXPORT char *ApiSettingsManagerRole;
 extern PGDLLEXPORT char *ApiUserAdminRole;
+
+/* System Roles */
+extern PGDLLIMPORT char *ApiBgWorkerRole;
+extern PGDLLEXPORT char *ApiBgWorkerRoleV3;
+extern PGDLLEXPORT char *ApiReplicationRole;
+extern PGDLLEXPORT char *ApiSettingsManagerRole;
 
 /* Privileged Action System Roles */
 extern PGDLLEXPORT char *ApiCollectionFindRole;
@@ -71,25 +80,32 @@ Oid DocumentDBApiCollectionFunctionId(void);
 Oid ApiCreateIndexesProcedureId(void);
 Oid ApiReIndexProcedureId(void);
 Oid BsonEqualMatchRuntimeFunctionId(void);
+Oid BsonEqualMatchObjectIdRuntimeFunctionId(void);
 Oid BsonEqualMatchRuntimeOperatorId(void);
 Oid BsonEqualMatchIndexFunctionId(void);
 Oid BsonGreaterThanMatchRuntimeFunctionId(void);
+Oid BsonGreaterThanMatchObjectIdRuntimeFunctionId(void);
 Oid BsonGreaterThanMatchRuntimeOperatorId(void);
 Oid BsonGreaterThanMatchIndexFunctionId(void);
 Oid BsonGreaterThanEqualMatchRuntimeFunctionId(void);
+Oid BsonGreaterThanEqualMatchObjectIdRuntimeFunctionId(void);
 Oid BsonGreaterThanEqualMatchRuntimeOperatorId(void);
 Oid BsonGreaterThanEqualMatchIndexFunctionId(void);
 Oid BsonLessThanMatchRuntimeFunctionId(void);
+Oid BsonLessThanMatchObjectIdRuntimeFunctionId(void);
 Oid BsonLessThanMatchRuntimeOperatorId(void);
 Oid BsonLessThanMatchIndexFunctionId(void);
 Oid BsonLessThanEqualMatchRuntimeFunctionId(void);
+Oid BsonLessThanEqualMatchObjectIdRuntimeFunctionId(void);
 Oid BsonLessThanEqualMatchRuntimeOperatorId(void);
 Oid BsonLessThanEqualMatchIndexFunctionId(void);
 Oid BsonRangeMatchFunctionId(void);
 Oid BsonRangeMatchOperatorOid(void);
 Oid BsonFullScanFunctionOid(void);
+Oid BsonDollarDistinctExistsFunctionOid(void);
 Oid BsonIndexHintFunctionOid(void);
 Oid BsonInMatchFunctionId(void);
+Oid BsonInObjectIdMatchFunctionId(void);
 Oid BsonNinMatchFunctionId(void);
 Oid BsonNotEqualMatchFunctionId(void);
 Oid BsonElemMatchMatchFunctionId(void);
@@ -112,10 +128,15 @@ Oid IndexSpecAsBsonFunctionId(void);
 Oid IndexBuildIsInProgressFunctionId(void);
 Oid ApiCursorStateFunctionId(void);
 Oid ApiCurrentCursorStateFunctionId(void);
+Oid ApiCursorTrackerFunctionId(void);
+Oid ApiCursorDynamicDrainPageFunctionId(void);
 Oid ExtensionTableSampleSystemRowsFunctionId(void);
 Oid BsonInRangeNumericFunctionId(void);
 Oid BsonInRangeIntervalFunctionId(void);
 Oid BsonQueryMatchWithLetAndCollationFunctionId(void);
+
+/* object_id functions */
+Oid BsonRegexObjectIdMatchFunctionId(void);
 
 /* bson_value functions */
 Oid BsonValueEqualMatchFunctionId(void);
@@ -137,6 +158,8 @@ Oid BsonValueBitsAllClearFunctionId(void);
 Oid BsonValueBitsAnyClearFunctionId(void);
 Oid BsonValueBitsAllSetFunctionId(void);
 Oid BsonValueBitsAnySetFunctionId(void);
+Oid BsonValueGeoIntersectsFunctionId(void);
+Oid BsonValueGeoWithinFunctionId(void);
 Oid BsonNotLessThanEqualFunctionId(void);
 Oid BsonNotLessThanFunctionId(void);
 Oid BsonNotGreaterThanFunctionId(void);
@@ -147,6 +170,9 @@ Oid BsonIndexBoundsEqualOperatorFuncId(void);
 /* operators */
 Oid BigintEqualOperatorId(void);
 Oid BigIntGreaterOperatorId(void);
+Oid BigIntGreaterEqualOperatorId(void);
+Oid BigIntLessOperatorId(void);
+Oid BigIntLessEqualOperatorId(void);
 Oid TextEqualOperatorId(void);
 Oid TextNotEqualOperatorId(void);
 Oid TextLessOperatorId(void);
@@ -163,6 +189,11 @@ Oid BsonGreaterThanOperatorId(void);
 Oid BsonLessThanOperatorId(void);
 Oid BsonGreaterThanEqualOperatorId(void);
 Oid BsonLessThanEqualOperatorId(void);
+Oid BsonNativeStatsBtreeEqualOperatorId(void);
+Oid BsonNativeStatsBtreeGreaterThanOperatorId(void);
+Oid BsonNativeStatsBtreeGreaterThanEqualOperatorId(void);
+Oid BsonNativeStatsBtreeLessThanOperatorId(void);
+Oid BsonNativeStatsBtreeLessThanEqualOperatorId(void);
 Oid BsonGetValueFunctionOid(void);
 Oid BsonUniqueIndexEqualOperatorId(void);
 Oid BsonUniqueShardPathEqualOperatorId(void);
@@ -212,6 +243,7 @@ Oid BsonOrderyByGtOperatorId(void);
 Oid BsonOrderByIndexOperatorId(void);
 Oid BsonOrderByReverseIndexOperatorId(void);
 Oid BsonOrderByBsonIndexTypeOperatorId(void);
+Oid BsonOrderByCompareOperatorFamilyId(void);
 
 /* Postgres internal functions */
 Oid PostgresDrandomFunctionId(void);
@@ -225,6 +257,7 @@ Oid PostgresToDateFunctionId(void);
 Oid Float8EqualOperatorId(void);
 Oid Float8LessThanEqualOperatorId(void);
 Oid Float8GreaterThanEqualOperatorId(void);
+Oid Float4ToFloat8FunctionOid(void);
 Oid PostgresArrayAppendFunctionOid(void);
 Oid PostgresMakeIntervalFunctionId(void);
 Oid PostgresDateBinFunctionId(void);
@@ -380,6 +413,7 @@ Oid BsonIntegralAggregateFunctionOid(void);
 Oid BsonDerivativeAggregateFunctionOid(void);
 Oid BsonAvgAggregateFunctionOid(void);
 Oid BsonRepathAndBuildFunctionOid(void);
+Oid BsonBuildDocumentFunctionOid(void);
 Oid BsonExpressionGetFunctionOid(void);
 Oid BsonExpressionGetWithLetFunctionOid(void);
 Oid BsonExpressionGetWithLetAndCollationFunctionOid(void);
@@ -392,10 +426,14 @@ Oid BsonExpressionMapWithLetFunctionOid(void);
 Oid BsonExpressionAppendCollationFunctionOid(void);
 Oid BsonMaxAggregateFunctionOid(void);
 Oid BsonMaxWithExprAggregateFunctionOid(void);
+Oid BsonMaxWithExprInternalAggregateFunctionOid(void);
 Oid BsonMinAggregateFunctionOid(void);
 Oid BsonMinWithExprAggregateFunctionOid(void);
+Oid BsonMinWithExprInternalAggregateFunctionOid(void);
 Oid BsonFirstWithExprAggregateFunctionOid(void);
+Oid BsonFirstWithExprInternalAggregateFunctionOid(void);
 Oid BsonLastWithExprAggregateFunctionOid(void);
+Oid BsonLastWithExprInternalAggregateFunctionOid(void);
 Oid BsonSumWithExprAggregateFunctionOid(void);
 Oid BsonAvgWithExprAggregateFunctionOid(void);
 Oid PgRandomFunctionOid(void);

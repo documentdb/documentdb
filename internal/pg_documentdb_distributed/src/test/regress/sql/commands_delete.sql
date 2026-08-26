@@ -544,14 +544,19 @@ ROLLBACK;
 -- 5. Now shard collection and run all again to make sure we get index scan with delete pushdown on sharded collection as well
 select documentdb_api.shard_collection('db', 'deleteIndex', '{"_id":"hashed"}', false);
 
-BEGIN;
+-- Populate the sharded collection outside the explain transaction so its metadata/data
+-- writes run with local execution. The explain transaction below then disables local
+-- execution as its first statement, so it never has a local-execution-required op to
+-- conflict with (which would otherwise flakily fail with "cannot switch local
+-- execution status from local execution required to local execution disabled").
 select  documentdb_api.insert('db', '{"insert":"deleteIndex", "documents":[{"_id":1}]}');
 select  documentdb_api.insert('db', '{"insert":"deleteIndex", "documents":[{"_id":2}]}');
-
+select  documentdb_api.insert('db', '{"insert":"deleteIndex", "documents":[{"_id":3}]}');
+BEGIN;
+SET LOCAL citus.enable_local_execution TO off;
 SET LOCAL citus.log_remote_commands TO ON;
 SET local client_min_messages TO ERROR;
 SET LOCAL enable_seqscan TO OFF;
-SELECT  documentdb_api.insert('db', '{"insert":"deleteIndex", "documents":[{"_id":3}]}');
 SET LOCAL documentdb.useLocalExecutionShardQueries to off;
 SET LOCAL citus.log_remote_commands TO OFF;
 -- 6. bson_query_match with $lt, $lte, $gt, $gte, $eq and $in
@@ -572,13 +577,89 @@ EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397 WHER
 -- 9. with collation 
 EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq" : 10}}', NULL, 'en-u-ks-level1');
 
--- explain plan should show seq scan without delete pushdown
-SET LOCAL documentdb.enableIdIndexPushdownForQueryOp to OFF;
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE document @@ '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}';
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq" : 10}}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : 10}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lt" : 10}}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gte" : 10}}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lte" : 10}}', NULL, NULL::text);
 ROLLBACK;
+
+select 1 from documentdb_api.insert_one('db', 'removeme', '{"a":1,"_id":1}');
+select 1 from documentdb_api.insert_one('db', 'removeme', '{"a":2,"_id":2}');
+select 1 from documentdb_api.insert_one('db', 'removeme', '{"a":3,"_id":3}');
+select 1 from documentdb_api.insert_one('db', 'removeme', '{"a":4,"_id":4}');
+select 1 from documentdb_api.insert_one('db', 'removeme', '{"a":5,"_id":5}');
+select 1 from documentdb_api.insert_one('db', 'removeme', '{"a":6,"_id":6}');
+select 1 from documentdb_api.insert_one('db', 'removeme', '{"a":7,"_id":7}');
+select 1 from documentdb_api.insert_one('db', 'removeme', '{"a":8,"_id":8}');
+select 1 from documentdb_api.insert_one('db', 'removeme', '{"a":9,"_id":9}');
+select 1 from documentdb_api.insert_one('db', 'removeme', '{"a":10,"_id":10}');
+
+-- validate _id-only delete_one generates optimized SQL (no @@ operator)
+begin;
+set local citus.log_remote_commands to on;
+set local documentdb.enableDeleteOnePlanCacheOptimization to true;
+-- _id-only filter: should NOT have @@ operator, should have object_id = $2
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6},"limit":1}]}');
+-- _id with other filters: should STILL have @@ operator AND object_id
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6, "a":5},"limit":1}]}');
+-- empty query: should have only shard_key_value filter (no @@ or object_id)
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{},"limit":1}]}');
+reset citus.log_remote_commands;
+rollback;
+
+-- validate legacy _id-only delete_one generates SQL with @@ operator
+begin;
+set local citus.log_remote_commands to on;
+set local documentdb.enableDeleteOnePlanCacheOptimization to false;
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6},"limit":1}]}');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6, "a":5},"limit":1}]}');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{},"limit":1}]}');
+reset citus.log_remote_commands;
+rollback;
+
+begin;
+-- delete_one with after 5 attempts should use generic plans, we can't enforce generic plan for all in sharded collection
+select count(*) from documentdb_api.collection('db', 'removeme');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":1},"limit":1}]}');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":2},"limit":1}]}');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":3},"limit":1}]}');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":4},"limit":1}]}');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":5},"limit":1}]}');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6},"limit":1}]}');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":7},"limit":1}]}');
+select count(*) from documentdb_api.collection('db', 'removeme');
+rollback;
+
+-- test sharded deleteOne cache plans
+select documentdb_api.shard_collection('db', 'removeme', '{"_id":"hashed"}', false);
+
+-- validate _id-only delete_one generates optimized SQL (no @@ operator)
+begin;
+set local citus.log_remote_commands to on;
+set local documentdb.enableDeleteOnePlanCacheOptimization to true;
+-- _id-only filter: should NOT have @@ operator, should have object_id = $2
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6},"limit":1}]}');
+-- _id with other filters: should STILL have @@ operator AND object_id
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6, "a":6},"limit":1}]}');
+reset citus.log_remote_commands;
+rollback;
+
+-- validate legacy _id-only delete_one generates SQL with @@ operator
+begin;
+set local citus.log_remote_commands to on;
+set local documentdb.enableDeleteOnePlanCacheOptimization to false;
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6},"limit":1}]}');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6, "a":6},"limit":1}]}');
+reset citus.log_remote_commands;
+rollback;
+
+begin;
+-- delete_one with after 5 attempts should use generic plans, we can't enforce generic plan for all in sharded collection
+select count(*) from documentdb_api.collection('db', 'removeme');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":1},"limit":1}]}');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":2},"limit":1}]}');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":3},"limit":1}]}');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":4},"limit":1}]}');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":5},"limit":1}]}');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6},"limit":1}]}');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":7},"limit":1}]}');
+select count(*) from documentdb_api.collection('db', 'removeme');
+rollback;
+
+select documentdb_api.drop_collection('db','removeme');

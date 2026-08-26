@@ -455,7 +455,6 @@ SELECT documentdb_api.db_stats('db1');
 -- Drop one view
 SELECT documentdb_api.drop_collection('db1', 'col5_view1');
 NOTICE:  table "documents_6310" does not exist, skipping
-NOTICE:  table "retry_6310" does not exist, skipping
  drop_collection 
 ---------------------------------------------------------------------
  t

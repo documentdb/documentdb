@@ -14,14 +14,16 @@
 #include "schema_validation/schema_validation.h"
 #include "metadata/collection.h"
 #include "utils/documentdb_errors.h"
+#include "utils/fmgr_utils.h"
+#include "utils/version_utils.h"
 
 extern bool EnableSchemaValidation;
 PG_FUNCTION_INFO_V1(command_schema_validation_against_update);
 
 /*
  * command_schema_validation_against_update validates source_document/target_document against a schema validator while updating
- * select __API_SCHEMA_INTERNAL__.schema_validation_against_update(expr_eval_state, target_document, source_document, is_moderate);
- * @param expr_eval_state: The expression evaluation state for the schema validator passed in as a bytea.
+ * select __API_SCHEMA_INTERNAL__.schema_validation_against_update(validator, target_document, source_document, is_moderate);
+ * @param validator: The schema validator BSON document.
  * @param target_document: Updated document.
  * @param source_document: The document to be updated.
  * @param is_moderate: If false, only validate newDocument against the schema validator. if true, validate document if newDocument does not match the schema validator.
@@ -35,14 +37,38 @@ command_schema_validation_against_update(PG_FUNCTION_ARGS)
 		PG_RETURN_BOOL(true);
 	}
 
-	bytea *evalStateBytea = PG_GETARG_BYTEA_P(0);
-	if (evalStateBytea == NULL)
+	pgbson *validator = NULL;
+
+	if (IsClusterVersionAtleast(DocDB_V0, 114, 0))
+	{
+		/* New version: directly get pgbson */
+		validator = PG_GETARG_MAYBE_NULL_PGBSON(0);
+	}
+	else
+	{
+		/* Old version: convert bytea to pgbson */
+		bytea *byteaValidator = PG_GETARG_BYTEA_P(0);
+		validator = CastByteaToPgbson(byteaValidator);
+	}
+
+	if (validator == NULL)
 	{
 		PG_RETURN_BOOL(true);
 	}
 
-	ExprEvalState *evalState = (ExprEvalState *) VARDATA(evalStateBytea);
-	if (evalState == NULL)
+
+	SchemaValidationCache *cache = NULL;
+	int argPosition = 0;
+	SetCachedFunctionState(cache, SchemaValidationCache, argPosition,
+						   PopulateSchemaValidationCache, validator);
+
+	if (cache == NULL)
+	{
+		cache = palloc0(sizeof(SchemaValidationCache));
+		PopulateSchemaValidationCache(cache, validator);
+	}
+
+	if (cache->evalState == NULL)
 	{
 		PG_RETURN_BOOL(true);
 	}
@@ -53,18 +79,36 @@ command_schema_validation_against_update(PG_FUNCTION_ARGS)
 	if (!isModerate)
 	{
 		bson_value_t newDocumentValue = ConvertPgbsonToBsonValue(targetDocument);
-		ValidateSchemaOnDocumentInsert(evalState, &newDocumentValue,
+		ValidateSchemaOnDocumentInsert(cache->evalState, &newDocumentValue,
 									   FAILED_VALIDATION_ERROR_MSG);
 	}
 	else
 	{
 		pgbson *sourceDocument = PG_GETARG_MAYBE_NULL_PGBSON(2);
-		ValidateSchemaOnDocumentUpdate(ValidationLevel_Moderate, evalState,
+		ValidateSchemaOnDocumentUpdate(ValidationLevel_Moderate, cache->evalState,
 									   sourceDocument, targetDocument,
 									   FAILED_VALIDATION_ERROR_MSG);
 	}
 
 	PG_RETURN_BOOL(true);
+}
+
+
+/*
+ * PopulateSchemaValidationCache - Initializes a schema validation cache entry.
+ *
+ * Designed to be used as the populate callback for SetCachedFunctionState.
+ * All allocations are made in CurrentMemoryContext, which the macro sets to
+ * fn_mcxt before invoking this function. Do not call directly unless the
+ * appropriate memory context is already active.
+ *
+ * @param cache: The cache entry to populate (already allocated by the caller)
+ * @param validator: The schema validator BSON document
+ */
+void
+PopulateSchemaValidationCache(SchemaValidationCache *cache, pgbson *validator)
+{
+	cache->evalState = PrepareForSchemaValidation(validator, CurrentMemoryContext);
 }
 
 
@@ -89,16 +133,6 @@ PrepareForSchemaValidation(pgbson *schemaValidationInfo, MemoryContext memoryCon
 	return GetExpressionEvalStateForBsonInput(
 		&validatorBsonValue,
 		memoryContext, hasOperatorRestrictions);
-}
-
-
-void
-AssignSchemaValidationState(ExprEvalState *stateForSchemaValidation,
-							pgbson *schemaValidationInfo, MemoryContext memoryContext)
-{
-	ExprEvalState *state = PrepareForSchemaValidation(schemaValidationInfo,
-													  memoryContext);
-	memcpy(stateForSchemaValidation, state, sizeof(ExprEvalState));
 }
 
 

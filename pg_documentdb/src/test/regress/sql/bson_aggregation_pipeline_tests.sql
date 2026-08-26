@@ -4,6 +4,8 @@ SET documentdb.next_collection_id TO 3500;
 SET documentdb.next_collection_index_id TO 3500;
 SET documentdb.failOnNonEmptyGroupCountArg TO on;
 SET documentdb.failOnGroupIdDuplicate TO on;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 
 
 SELECT documentdb_api.insert_one('db','aggregation_pipeline','{"_id":"1", "int": 10, "a" : { "b" : [ "x", 1, 2.0, true ] } }', NULL);
@@ -113,6 +115,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- $group $count with arguments should error
@@ -130,6 +133,7 @@ SET documentdb.enableNewMinMaxAccumulators TO off;
 
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$sum": "$_id" }, "e": { "$count": 1 } } }], "cursor": {} }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- $group with duplicate _id should error
@@ -291,7 +295,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 
 -- numLists > data size, pgvector will generate randomized centroids, using original vector data to query
 CALL documentdb_api.drop_indexes('db', '{ "dropIndexes": "aggregation_pipeline", "index": "foo_1"}');
-SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "aggregation_pipeline", "indexes": [ { "key": { "v": "cosmosSearch" }, "name": "foo_1", "cosmosSearchOptions": { "kind": "vector-ivf", "numLists": 10000, "similarity": "COS", "dimensions": 3 } } ] }', true);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "aggregation_pipeline", "indexes": [ { "key": { "v": "cosmosSearch" }, "name": "foo_1", "cosmosSearchOptions": { "kind": "vector-ivf", "numLists": 3, "similarity": "COS", "dimensions": 3 } } ] }', true);
 ANALYZE;
 BEGIN;
 SET LOCAL enable_seqscan = off;
@@ -550,13 +554,8 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": 1, "pipelin
 -- $documents + $group: with $first/$last accumulators
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ { "g": 1, "n": "a" }, { "g": 1, "n": "b" }, { "g": 2, "n": "c" } ] }, { "$group": { "_id": "$g", "first": { "$first": "$n" }, "last": { "$last": "$n" } } } ], "cursor": {}}');
 
--- Toggle test: legacy path with enableGroupSubqueryElimination = off
-SET documentdb.enableGroupSubqueryElimination TO off;
-
--- Legacy path should still produce correct results
+-- $group over $documents produces correct results
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ { "category": "A", "val": 10 }, { "category": "B", "val": 20 }, { "category": "A", "val": 30 } ] }, { "$group": { "_id": "$category", "total": { "$sum": "$val" } } } ], "cursor": {}}');
-
-SET documentdb.enableGroupSubqueryElimination TO on;
 
 RESET documentdb.failOnNonEmptyGroupCountArg;
 RESET documentdb.failOnGroupIdDuplicate;

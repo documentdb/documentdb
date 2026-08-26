@@ -6,8 +6,9 @@
  *-------------------------------------------------------------------------
  */
 
-use bson::{spec::ElementType, RawBsonRef};
 use std::sync::Arc;
+
+use bson::{spec::ElementType, RawBsonRef};
 
 use crate::{
     bson::convert_to_bool,
@@ -23,6 +24,7 @@ pub async fn process_delete(
     connection_context: &ConnectionContext,
     dynamic_config: &Arc<dyn DynamicConfiguration>,
     pg_data_client: &impl PgDataClient,
+    enable_write_procedures: bool,
 ) -> Result<Response> {
     // Nested transactions not allowed when database is in read-only mode
     let is_read_only_for_disk_full =
@@ -34,7 +36,7 @@ pub async fn process_delete(
             .await?
     } else {
         pg_data_client
-            .execute_delete(request_context, connection_context)
+            .execute_delete(request_context, connection_context, enable_write_procedures)
             .await?
     };
 
@@ -158,7 +160,7 @@ pub async fn process_count(
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
     // we need to ensure that the collection is correctly set up before we can execute the count query
-    request_context.info.collection()?;
+    request_context.request().collection()?;
 
     pg_data_client
         .execute_count_query(request_context, connection_context)
@@ -194,7 +196,7 @@ pub async fn process_coll_stats(
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
     // allow floats and ints, the backend will truncate
-    let scale = if let Some(scale) = request_context.payload.document().get("scale")? {
+    let scale = if let Some(scale) = request_context.request().document().get("scale")? {
         convert_to_scale(scale)?
     } else {
         1.0
@@ -211,7 +213,7 @@ pub async fn process_db_stats(
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
     // allow floats and ints, the backend will truncate
-    let scale = if let Some(scale) = request_context.payload.document().get("scale")? {
+    let scale = if let Some(scale) = request_context.request().document().get("scale")? {
         convert_to_scale(scale)?
     } else {
         1.0
@@ -237,7 +239,7 @@ pub async fn process_kill_op(
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let (request, request_info, _) = request_context.get_components();
+    let request = request_context.request();
 
     let mut operation_id: Option<String> = None;
     request.extract_fields(|key, value| {
@@ -259,7 +261,7 @@ pub async fn process_kill_op(
         .ok_or_else(|| DocumentDBError::bad_value("Did not provide \"op\" field".to_owned()))?;
 
     // Validate that the command is run against the admin database
-    if request_info.db()? != "admin" {
+    if request.db() != "admin" {
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::Unauthorized,
             "killOp may only be run against the admin database.".to_owned(),
@@ -295,7 +297,7 @@ pub async fn process_get_parameter(
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let (request, request_info, _) = request_context.get_components();
+    let request = request_context.request();
 
     let mut all_parameters = false;
     let mut show_details = false;
@@ -331,7 +333,7 @@ pub async fn process_get_parameter(
         }
         Ok(())
     })?;
-    if request_info.db()? != "admin" {
+    if request.db() != "admin" {
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::Unauthorized,
             "getParameter may only be run against the admin database.".to_owned(),

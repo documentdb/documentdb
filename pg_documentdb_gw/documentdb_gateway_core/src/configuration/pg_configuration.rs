@@ -17,7 +17,10 @@ use tokio::{
 };
 
 use crate::{
-    configuration::{dynamic::POSTGRES_RECOVERY_KEY, DynamicConfiguration, SetupConfiguration},
+    configuration::{
+        dynamic::{parse_cluster_version, ClusterVersion, POSTGRES_RECOVERY_KEY},
+        DynamicConfiguration, SetupConfiguration,
+    },
     error::{DocumentDBError, Result},
     postgres::{conn_mgmt::PoolManager, PgDocument},
 };
@@ -38,6 +41,7 @@ struct PgConfigurationInner {
     settings_prefixes: Vec<String>,
     pool_manager: Arc<PoolManager>,
     instance_kind: String,
+    enable_pg_file_settings_refresh: bool,
 }
 
 impl PgConfigurationInner {
@@ -59,14 +63,49 @@ impl PgConfigurationInner {
             Err(e) => tracing::warn!("Host Config file not able to be loaded: {e}"),
         }
 
-        let pg_config_rows = self
-            .pool_manager
-            .system_requests_connection()
-            .await?
-            .query(self.pool_manager.query_catalog().pg_settings(), &[], &[])
-            .await?;
+        let pg_config_rows = match self.pool_manager.system_requests_connection().await {
+            Ok(conn) => conn
+                .query(self.pool_manager.query_catalog().pg_settings(), &[], &[])
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!("Failed to query pg_settings: {e}");
+                    Vec::new()
+                }),
+            Err(e) => {
+                tracing::warn!("Failed to get connection for pg_settings: {e}");
+                Vec::new()
+            }
+        };
 
-        for pg_config in pg_config_rows {
+        // Fetch most up-to-date switch-related values from pg_file_settings for settings that are set there. pg_settings may have stale
+        // values if pg_reload_conf() failed or if 030-user-supplied-server-parameters.conf was updated after the gateway started. Then
+        // upsert them into the HashSet. This ensures that we have the most accurate settings without relying on pg_reload_conf() succeeding.
+        let pg_file_settings_query = self.pool_manager.query_catalog().pg_file_settings();
+        let pg_file_settings_rows =
+            if !self.enable_pg_file_settings_refresh || pg_file_settings_query.is_empty() {
+                Vec::new()
+            } else {
+                match self.pool_manager.system_requests_connection().await {
+                    Ok(conn) => conn
+                        .query(pg_file_settings_query, &[], &[])
+                        .await
+                        .unwrap_or_else(|e| {
+                            tracing::warn!("Failed to query pg_file_settings: {e}");
+                            Vec::new()
+                        }),
+                    Err(e) => {
+                        tracing::warn!("Failed to get connection for pg_file_settings: {e}");
+                        Vec::new()
+                    }
+                }
+            };
+
+        let all_config_rows: Vec<_> = pg_config_rows
+            .into_iter()
+            .chain(pg_file_settings_rows)
+            .collect();
+
+        for pg_config in all_config_rows {
             let mut key = pg_config.get::<_, String>(0);
 
             for settings_prefix in &self.settings_prefixes {
@@ -77,24 +116,31 @@ impl PgConfigurationInner {
             }
 
             let mut value: String = pg_config.get(1);
-            if value == "on" {
+            if value == "on" || value.eq_ignore_ascii_case("true") {
                 "true".clone_into(&mut value);
-            } else if value == "off" {
+            } else if value == "off" || value.eq_ignore_ascii_case("false") {
                 "false".clone_into(&mut value);
             }
             configs.insert(key.clone(), value);
         }
 
-        let pg_is_in_recovery_row = self
-            .pool_manager
-            .system_requests_connection()
-            .await?
-            .query(
-                self.pool_manager.query_catalog().pg_is_in_recovery(),
-                &[],
-                &[],
-            )
-            .await?;
+        let pg_is_in_recovery_row = match self.pool_manager.system_requests_connection().await {
+            Ok(conn) => conn
+                .query(
+                    self.pool_manager.query_catalog().pg_is_in_recovery(),
+                    &[],
+                    &[],
+                )
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!("Failed to query pg_is_in_recovery: {e}");
+                    Vec::new()
+                }),
+            Err(e) => {
+                tracing::warn!("Failed to get connection for pg_is_in_recovery: {e}");
+                Vec::new()
+            }
+        };
 
         let in_recovery: bool = pg_is_in_recovery_row.first().is_some_and(|row| row.get(0));
         configs.insert(POSTGRES_RECOVERY_KEY.to_owned(), in_recovery.to_string());
@@ -118,6 +164,7 @@ pub struct PgConfiguration {
     values: ArcSwap<HashMap<String, String>>,
     last_update_at: ArcSwap<Instant>,
     topology_bson: ArcSwap<RawBson>,
+    cluster_version: ArcSwap<Option<ClusterVersion>>,
     refresh_task: Option<JoinHandle<()>>,
     watch_task: Option<JoinHandle<()>>,
 }
@@ -181,6 +228,9 @@ impl PgConfiguration {
             settings_prefixes,
             pool_manager,
             instance_kind: setup_configuration.instance_kind().to_owned(),
+            enable_pg_file_settings_refresh: setup_configuration
+                .enable_pg_file_settings_refresh()
+                .unwrap_or(false),
         };
 
         let values = ArcSwap::from_pointee(inner.load_configurations().await?);
@@ -188,12 +238,15 @@ impl PgConfiguration {
         let topology_bson = ArcSwap::from_pointee(
             Self::load_topology(&inner.pool_manager, &inner.instance_kind).await,
         );
+        let cluster_version =
+            ArcSwap::from_pointee(parse_cluster_version(&topology_bson.load_full()));
 
         let mut configuration = Arc::new(Self {
             inner,
             values,
             last_update_at,
             topology_bson,
+            cluster_version,
             refresh_task: None,
             watch_task: None,
         });
@@ -232,9 +285,11 @@ impl PgConfiguration {
         };
 
         self.values.store(Arc::new(new_config));
-        self.topology_bson.store(Arc::new(
-            Self::load_topology(&self.inner.pool_manager, &self.inner.instance_kind).await,
-        ));
+        let new_topology =
+            Self::load_topology(&self.inner.pool_manager, &self.inner.instance_kind).await;
+        let parsed_version = parse_cluster_version(&new_topology);
+        self.topology_bson.store(Arc::new(new_topology));
+        self.cluster_version.store(Arc::new(parsed_version));
         self.last_update_at.store(Arc::new(Instant::now()));
 
         Ok(())
@@ -345,6 +400,10 @@ impl DynamicConfiguration for PgConfiguration {
 
     fn topology(&self) -> RawBson {
         self.topology_bson.load_full().as_ref().clone()
+    }
+
+    fn cluster_version(&self) -> Option<ClusterVersion> {
+        *self.cluster_version.load_full().as_ref()
     }
 
     fn enable_developer_explain(&self) -> bool {

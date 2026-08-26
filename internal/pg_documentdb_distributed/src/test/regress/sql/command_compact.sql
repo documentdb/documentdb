@@ -17,6 +17,9 @@ SELECT documentdb_api.compact('{"compact": "compact_test", "dryRun": "invalid"}'
 SELECT documentdb_api.compact('{"compact": "compact_test", "comment": "test comment"}');
 SELECT documentdb_api.compact('{"compact": "compact_test", "force": false}');
 
+-- Enable the GUC so that compact actually performs VACUUM FULL
+SET documentdb.enableCompactVacuumFull TO on;
+
 -- Insert a single document
 SELECT documentdb_api.insert_one('commands_compact_db', 'compact_test', FORMAT('{ "_id": 1, "a": "%s", "c": [ %s "d" ] }', repeat('Sample', 100000), repeat('"' || repeat('a', 1000) || '", ', 5000))::documentdb_core.bson);
 
@@ -40,7 +43,7 @@ SELECT documentdb_api.coll_stats('commands_compact_db','compact_test')->>'storag
 -- TODO: even after analyze it seems like pg_class stats for toast tables are not updated for test run.
 -- Need to investigate this further for test, for live servers this should be okay because the analyze thereshold is set to 0.
 SELECT documentdb_api.compact('{"compact": "compact_test", "$db": "commands_compact_db", "dryRun": true}');
-SELECT documentdb_api.compact('{"compact": "compact_test", "$db": "commands_compact_db", "dryRun": false}');
+SELECT documentdb_api.compact('{"compact": "compact_test", "$db": "commands_compact_db", "dryRun": false, "mode": "full"}');
 SELECT documentdb_api.coll_stats('commands_compact_db','compact_test')->>'storageSize' as after_compact_size \gset
 
 SELECT :after_compact_size::bigint < :before_compact_size::bigint as is_compacted;
@@ -80,7 +83,7 @@ SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->
 -- TODO: even after analyze it seems like pg_class stats for toast tables are not updated for test run.
 -- Need to investigate this further for test, for live servers this should be okay because the analyze thereshold is set to 0.
 SELECT documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": true}');
-SELECT documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": false}');
+SELECT documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": false, "mode": "full"}');
 SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->>'storageSize' AS sharded_after_compact_size \gset
 
 SELECT :sharded_after_compact_size::bigint < :sharded_before_compact_size::bigint as is_sharded_compacted;
@@ -131,7 +134,7 @@ SELECT (2147483640::bigint * 8 * 1024) as base_estimated_size \gset
 
 -- These tests can produce different size, so a better way to check would be to assume the estimated size is very high
 SELECT (documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": true}')->>'estimatedBytesFreed')::bigint as big_free_estimated_size \gset
-SELECT (documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": false}')->>'bytesFreed')::bigint as big_free_byte_size \gset
+SELECT (documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": false, "mode": "full"}')->>'bytesFreed')::bigint as big_free_byte_size \gset
 
 SELECT :big_free_estimated_size::bigint > :base_estimated_size::bigint as estimated_is_valid,
        :big_free_byte_size::bigint > :base_estimated_size::bigint as actual_is_valid;
@@ -141,3 +144,5 @@ SELECT :big_relpages_after_compact::bigint < :big_relpages_before_compact::bigin
 
 RESET citus.show_shards_for_app_name_prefixes;
 SELECT documentdb_api.drop_collection('commands_compact_db','compact_test_sharded');
+
+RESET documentdb.enableCompactVacuumFull;

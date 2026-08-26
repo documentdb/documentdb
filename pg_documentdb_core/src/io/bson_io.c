@@ -9,6 +9,7 @@
  */
 
 #include <postgres.h>
+#include <access/htup_details.h>
 #include <fmgr.h>
 #include <executor/executor.h>
 #include <utils/builtins.h>
@@ -81,7 +82,7 @@ PG_FUNCTION_INFO_V1(bson_to_json_string);
 Datum
 bson_out(PG_FUNCTION_ARGS)
 {
-	pgbson *arg = PG_GETARG_PGBSON(0);
+	pgbson *arg = PG_GETARG_PGBSON_PACKED(0);
 
 	const char *jsonString;
 	if (BsonTextUseJsonRepresentation)
@@ -536,7 +537,11 @@ BsonRepathAndBuildCore(PG_FUNCTION_ARGS, bool isBuildDocument)
 
 				if (EnableWriteDocumentsInRepath)
 				{
-					if (TryGetSinglePgbsonElementFromPgbson(pbson, &elem) &&
+					const char *collationStringIgnore = NULL;
+					if (TryGetSinglePgbsonElementFromPgbsonWithCollation(pbson, &elem,
+																		 &
+																		 collationStringIgnore)
+						&&
 						elem.pathLength == 0)
 					{
 						PgbsonWriterAppendValue(&writer, path, len, &elem.bsonValue);
@@ -630,6 +635,21 @@ void
 PgbsonElementWriterWriteSQLValue(pgbson_element_writer *writer,
 								 bool isNull, Datum fieldValue, Oid fieldTypeId)
 {
+	if (isNull)
+	{
+		/*
+		 * A SQL NULL value (e.g. a NULL element of a SQL array) must be written
+		 * as a BSON null. We cannot fall through to the type-specific handling
+		 * below because for by-reference types (text, numeric, bson, arrays, ...)
+		 * fieldValue is a 0 Datum and any DatumGetXxx detoast would dereference a
+		 * NULL pointer and crash the backend.
+		 */
+		bson_value_t nullValue = { 0 };
+		nullValue.value_type = BSON_TYPE_NULL;
+		PgbsonElementWriterWriteValue(writer, &nullValue);
+		return;
+	}
+
 	if (type_is_array(fieldTypeId))
 	{
 		/* array type */

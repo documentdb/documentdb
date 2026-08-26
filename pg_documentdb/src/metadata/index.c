@@ -10,6 +10,8 @@
 #include <postgres.h>
 
 #include <catalog/namespace.h>
+#include <access/table.h>
+#include <miscadmin.h>
 #include <commands/sequence.h>
 #include <executor/spi.h>
 #include <utils/array.h>
@@ -43,10 +45,13 @@
 #include "utils/hashset_utils.h"
 #include "infrastructure/job_management.h"
 #include "utils/error_utils.h"
-#include "index_am/index_am_extend.h"
+#include "index_am/index_am_extend_create.h"
+#include "metadata/collection.h"
 
 extern int MaxNumActiveUsersIndexBuilds;
 extern int IndexBuildScheduleInSec;
+extern bool EmitEnableOrderedIndexFalseInResponse;
+extern bool SkipLegacyIdIndexStatsCheck;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -64,6 +69,7 @@ static IndexOptionsEquivalency GetOptionsEquivalencyFromIndexOptions(
 	pgbson *leftIndexSpec,
 	pgbson *
 	rightIndexSpec);
+static CustomIndexOption BsonValueToCustomIndexOption(const bson_value_t *value);
 
 
 /* Supported index types
@@ -244,7 +250,7 @@ IndexDetails *
 FindIndexWithSpecOptions(uint64 collectionId, const IndexSpec *targetIndexSpec)
 {
 	const char *cmdStr = FormatSqlQuery(
-		"SELECT index_id, index_spec, %s.index_build_is_in_progress(index_id)"
+		"SELECT index_id, index_spec, %s.index_build_is_in_progress(index_id), index_is_valid "
 		"FROM %s.collection_indexes "
 		"WHERE collection_id = $1 AND %s.index_spec_options_are_equivalent(index_spec, $2) AND"
 		" (index_is_valid OR %s.index_build_is_in_progress(index_id))",
@@ -266,9 +272,9 @@ FindIndexWithSpecOptions(uint64 collectionId, const IndexSpec *targetIndexSpec)
 
 	bool readOnly = true;
 
-	int numValues = 3;
-	bool isNull[3];
-	Datum results[3];
+	int numValues = 4;
+	bool isNull[4];
+	Datum results[4];
 	ExtensionExecuteMultiValueQueryWithArgsViaSPI(cmdStr, argCount, argTypes,
 												  argValues, argNulls, readOnly,
 												  SPI_OK_SELECT, results, isNull,
@@ -283,6 +289,7 @@ FindIndexWithSpecOptions(uint64 collectionId, const IndexSpec *targetIndexSpec)
 	indexDetails->indexSpec = *DatumGetIndexSpec(results[1]);
 	indexDetails->collectionId = collectionId;
 	indexDetails->isIndexBuildInProgress = DatumGetBool(results[2]);
+	indexDetails->isIndexValid = DatumGetBool(results[3]);
 
 	return indexDetails;
 }
@@ -298,7 +305,7 @@ IndexIdGetIndexDetailsCore(int indexId, bool includeCurrentTransactions)
 {
 	const char *cmdStr =
 		FormatSqlQuery(
-			"SELECT collection_id, index_spec, %s.index_build_is_in_progress(index_id)"
+			"SELECT collection_id, index_spec, %s.index_build_is_in_progress(index_id), index_is_valid"
 			" FROM %s.collection_indexes WHERE index_id = $1",
 			ApiInternalSchemaName, ApiCatalogSchemaName);
 
@@ -317,9 +324,9 @@ IndexIdGetIndexDetailsCore(int indexId, bool includeCurrentTransactions)
 	 */
 	bool readOnly = !includeCurrentTransactions;
 
-	int numValues = 3;
-	bool isNull[3];
-	Datum results[3];
+	int numValues = 4;
+	bool isNull[4];
+	Datum results[4];
 	ExtensionExecuteMultiValueQueryWithArgsViaSPI(cmdStr, argCount, argTypes,
 												  argValues, argNulls, readOnly,
 												  SPI_OK_SELECT, results, isNull,
@@ -334,6 +341,7 @@ IndexIdGetIndexDetailsCore(int indexId, bool includeCurrentTransactions)
 	indexDetails->collectionId = DatumGetInt64(results[0]);
 	indexDetails->indexSpec = *DatumGetIndexSpec(results[1]);
 	indexDetails->isIndexBuildInProgress = DatumGetBool(results[2]);
+	indexDetails->isIndexValid = DatumGetBool(results[3]);
 
 	return indexDetails;
 }
@@ -343,6 +351,20 @@ IndexDetails *
 IndexIdGetIndexDetails(int indexId)
 {
 	bool includeCurrentTransactions = false;
+	return IndexIdGetIndexDetailsCore(indexId, includeCurrentTransactions);
+}
+
+
+/*
+ * IndexIdGetIndexDetailsWithCurrentTxns is the same as IndexIdGetIndexDetails
+ * but pushes a fresh snapshot to see all recently committed data. Use this in
+ * background worker contexts where the transaction snapshot may be stale relative
+ * to data found via a readOnly=false queue query.
+ */
+IndexDetails *
+IndexIdGetIndexDetailsWithCurrentTxns(int indexId)
+{
+	bool includeCurrentTransactions = true;
 	return IndexIdGetIndexDetailsCore(indexId, includeCurrentTransactions);
 }
 
@@ -362,11 +384,6 @@ IndexOptionsEquivalency
 IndexSpecOptionsAreEquivalent(const IndexSpec *leftIndexSpec,
 							  const IndexSpec *rightIndexSpec)
 {
-	if (leftIndexSpec->indexVersion != rightIndexSpec->indexVersion)
-	{
-		return IndexOptionsEquivalency_NotEquivalent;
-	}
-
 	bool sparseMatches = (leftIndexSpec->indexSparse == BoolIndexOption_True) ==
 						 (rightIndexSpec->indexSparse == BoolIndexOption_True);
 	if (!sparseMatches)
@@ -380,6 +397,16 @@ IndexSpecOptionsAreEquivalent(const IndexSpec *leftIndexSpec,
 	{
 		return IndexOptionsEquivalency_NotEquivalent;
 	}
+
+	/*
+	 * We intentionally do NOT compare indexVersion ("v") here. Indexes with
+	 * different `v` values are treated as equivalent for the purpose of
+	 * conflict / idempotency checks (including for text indexes); the version
+	 * is a server-internal representation detail. Comparing it strictly caused
+	 * spurious IndexKeySpecsConflict errors when re-issuing createIndexes with
+	 * the driver default `v` against an existing index that was created with a
+	 * different `v` (e.g. v:1 vs v:2).
+	 */
 
 	IndexOptionsEquivalency equivalency = IndexKeyDocumentEquivalent(
 		leftIndexSpec->indexKeyDocument,
@@ -471,7 +498,8 @@ IndexSpecOptionsAreEquivalent(const IndexSpec *leftIndexSpec,
 												  rightIndexSpec->indexOptions);
 		hash_destroy(bsonElementHash);
 
-		if (optionsEquivalency == IndexOptionsEquivalency_NotEquivalent)
+		if (optionsEquivalency == IndexOptionsEquivalency_NotEquivalent ||
+			optionsEquivalency == IndexOptionsEquivalency_CompatEqual)
 		{
 			return optionsEquivalency;
 		}
@@ -668,14 +696,15 @@ CollectionIdGetIndexNames(uint64 collectionId, bool excludeIdIndex, bool inProgr
 
 static List *
 CollectionIdGetIndexesCore(uint64 collectionId, bool excludeIdIndex,
-						   bool enableNestedDistribution, bool includeIndexBuilds)
+						   bool enableNestedDistribution, bool includeIndexBuilds,
+						   bool includeCurrentTransaction)
 {
 	StringInfo cmdStr = makeStringInfo();
 	appendStringInfo(cmdStr,
 					 "SELECT array_agg(a.index_id), array_agg(a.index_spec), "
-					 " array_agg(a.index_build_in_progress) FROM (");
+					 " array_agg(a.index_build_in_progress), array_agg(a.index_is_valid) FROM (");
 
-	appendStringInfo(cmdStr, " SELECT index_id, index_spec");
+	appendStringInfo(cmdStr, " SELECT index_id, index_spec, index_is_valid");
 	if (includeIndexBuilds)
 	{
 		appendStringInfo(cmdStr,
@@ -711,10 +740,11 @@ CollectionIdGetIndexesCore(uint64 collectionId, bool excludeIdIndex,
 	/* Closed the inner query */
 	appendStringInfo(cmdStr, " ORDER BY index_id) a");
 
-	bool readOnly = true;
-	int numValues = 3;
-	bool isNull[3];
-	Datum results[3];
+	/* readonly gives only durable commits. */
+	bool readOnly = !includeCurrentTransaction;
+	int numValues = 4;
+	bool isNull[4];
+	Datum results[4];
 	if (enableNestedDistribution)
 	{
 		int nArgs = 0;
@@ -759,6 +789,11 @@ CollectionIdGetIndexesCore(uint64 collectionId, bool excludeIdIndex,
 	ArrayExtractDatums(indexBuildInProgressArray, BOOLOID, &buildProgressElems, nulls,
 					   &nProgressElems);
 
+	ArrayType *indexIsValidArray = DatumGetArrayTypeP(results[3]);
+	Datum *isValidElems = NULL;
+	int nValidElems = 0;
+	ArrayExtractDatums(indexIsValidArray, BOOLOID, &isValidElems, nulls, &nValidElems);
+
 	List *indexesList = NIL;
 
 	for (int i = 0; i < nelems; i++)
@@ -769,6 +804,7 @@ CollectionIdGetIndexesCore(uint64 collectionId, bool excludeIdIndex,
 		indexDetail->indexSpec = *DatumGetIndexSpec(elems[i]);
 		indexDetail->collectionId = collectionId;
 		indexDetail->isIndexBuildInProgress = DatumGetBool(buildProgressElems[i]);
+		indexDetail->isIndexValid = DatumGetBool(isValidElems[i]);
 		indexesList = lappend(indexesList, (void *) indexDetail);
 	}
 
@@ -791,8 +827,10 @@ CollectionIdGetIndexes(uint64 collectionId, bool excludeIdIndex,
 					   bool enableNestedDistribution)
 {
 	bool includeIndexBuilds = true;
+	bool includeCurrentTransaction = false;
 	return CollectionIdGetIndexesCore(collectionId, excludeIdIndex,
-									  enableNestedDistribution, includeIndexBuilds);
+									  enableNestedDistribution, includeIndexBuilds,
+									  includeCurrentTransaction);
 }
 
 
@@ -804,8 +842,10 @@ CollectionIdGetValidIndexes(uint64 collectionId, bool excludeIdIndex,
 							bool enableNestedDistribution)
 {
 	bool includeIndexBuilds = false;
+	bool includeCurrentTransaction = false;
 	return CollectionIdGetIndexesCore(collectionId, excludeIdIndex,
-									  enableNestedDistribution, includeIndexBuilds);
+									  enableNestedDistribution, includeIndexBuilds,
+									  includeCurrentTransaction);
 }
 
 
@@ -996,7 +1036,7 @@ IndexDetails *
 IndexNameGetIndexDetails(uint64 collectionId, const char *indexName)
 {
 	const char *cmdStr = FormatSqlQuery(
-		"SELECT index_id, index_spec, %s.index_build_is_in_progress(index_id) "
+		"SELECT index_id, index_spec, %s.index_build_is_in_progress(index_id), index_is_valid "
 		"FROM %s.collection_indexes WHERE collection_id = $1 AND"
 		" (index_spec).index_name = $2 AND"
 		" (index_is_valid OR %s.index_build_is_in_progress(index_id))",
@@ -1072,6 +1112,7 @@ IndexKeyGetMatchingIndexesCore(const char *cmdStr, uint64 collectionId, const
 		indexDetails->indexSpec = *DatumGetIndexSpec(indexSpecArrayElems[i]);
 		indexDetails->collectionId = collectionId;
 		indexDetails->isIndexBuildInProgress = indexBuildProgressArrayElems[i];
+		indexDetails->isIndexValid = !indexBuildProgressArrayElems[i];
 
 		keyMatchedIndexDetailsList = lappend(keyMatchedIndexDetailsList, indexDetails);
 	}
@@ -2162,6 +2203,7 @@ RegisterIndexBuildBackgroundWorkerJobs(void)
 	BackgroundWorkerJob indexBuildJob1 = {
 		.jobId = DOCUMENTDB_INDEX_BUILD_JOB1_JOBID,
 		.jobName = "documentdb_index_build_background_job_1",
+		.roleExecutionProfile = BackgroundWorkerJobRoleExecutionProfile_PrimaryOnly,
 		.command = {
 			.schema = ApiInternalSchemaName,
 			.name = "build_index_background"
@@ -2179,6 +2221,7 @@ RegisterIndexBuildBackgroundWorkerJobs(void)
 	BackgroundWorkerJob indexBuildJob2 = {
 		.jobId = DOCUMENTDB_INDEX_BUILD_JOB2_JOBID,
 		.jobName = "documentdb_index_build_background_job_2",
+		.roleExecutionProfile = BackgroundWorkerJobRoleExecutionProfile_PrimaryOnly,
 		.command = {
 			.schema = ApiInternalSchemaName,
 			.name = "build_index_background"
@@ -2406,6 +2449,10 @@ IndexSpecIsWildcardIndex(const IndexSpec *indexSpec)
 }
 
 
+/*
+ * Returns true if the index spec has options that sets the enableCompositeTerm or enableOrderedIndex
+ * option. The option value can still be -1 (explicit false), 1 (default true), 2 (explicit true).
+ */
 inline static bool
 IsOptionsKeyOrderedIndex(const char *key)
 {
@@ -2718,10 +2765,27 @@ SerializeIndexSpec(const IndexSpec *indexSpec, bool isGetIndexes,
 					/* TODO: We should just write this if the value is != ShouldUseCompositeOpClassByDefault
 					 * but we're leaving it here during the transition period of this being enabled by default in
 					 * some cases.*/
-					bool value = BsonValueAsBool(bson_iter_value(&optionsIter));
-					PgbsonWriterAppendBool(&storageEngineOptionsWriter,
-										   "enableOrderedIndex", 18,
-										   value);
+					CustomIndexOption option = BsonValueToCustomIndexOption(
+						bson_iter_value(&optionsIter));
+
+					if (option == CustomIndexOption_False)
+					{
+						/* Only emit "enableOrderedIndex": false when the GUC is on. When
+						 * disabled, omit the field so callers don't see an explicit false. */
+						if (EmitEnableOrderedIndexFalseInResponse)
+						{
+							PgbsonWriterAppendBool(&storageEngineOptionsWriter,
+												   "enableOrderedIndex", 18,
+												   false);
+						}
+					}
+					else if (option == CustomIndexOption_True ||
+							 option == CustomIndexOption_DefaultTrue)
+					{
+						PgbsonWriterAppendBool(&storageEngineOptionsWriter,
+											   "enableOrderedIndex", 18,
+											   true);
+					}
 				}
 				else if (StringViewEqualsCString(&keyView,
 												 EXTENDED_INDEX_SPEC_FLAG_FIELD_NAME))
@@ -2785,60 +2849,155 @@ SerializeIndexSpec(const IndexSpec *indexSpec, bool isGetIndexes,
 }
 
 
+/*
+ * Converts a bson_value_t (as persisted in index options or provided by user)
+ * into the CustomIndexOption enum.
+ *
+ * NULL      → Undefined  (option not present)
+ * INT32     → cast directly (persisted enum values: False=-1, True=1, DefaultTrue=2)
+ * bool/other→ True or False based on BsonValueAsBool
+ */
+static CustomIndexOption
+BsonValueToCustomIndexOption(const bson_value_t *value)
+{
+	if (value == NULL)
+	{
+		return CustomIndexOption_Undefined;
+	}
+
+	if (value->value_type == BSON_TYPE_INT32)
+	{
+		return (CustomIndexOption) value->value.v_int32;
+	}
+
+	return BsonValueAsBool(value) ? CustomIndexOption_True : CustomIndexOption_False;
+}
+
+
+/*
+ * Checks whether a specific index option field is still equivalent between
+ * an existing (source) index and an incoming (target) index request.
+ *
+ * src is the option value from the existing index in the catalog (NULL if absent).
+ * target is the option value from the incoming create index request (NULL if absent).
+ */
 static bool
-AreIndexOptionsStillEquivalent(const char *path, const bson_value_t *left,
-							   const bson_value_t *right)
+AreIndexOptionsStillEquivalent(const char *path, const bson_value_t *src,
+							   const bson_value_t *target,
+							   bool *treatEquivalentAsEqual)
 {
 	bool areEquivalent = true;
+
 	if (IsOptionsKeyOrderedIndex(path))
 	{
-		if (left != NULL || right != NULL)
+		CustomIndexOption srcOption = BsonValueToCustomIndexOption(src);
+		CustomIndexOption targetOption = BsonValueToCustomIndexOption(target);
+
+		switch (srcOption)
 		{
-			bool enableCompositeTermLeft = false;
-			bool enableCompositeTermRight = false;
-
-			if (left != NULL)
+			case CustomIndexOption_DefaultTrue:
 			{
-				enableCompositeTermLeft = BsonValueAsBool(left);
-			}
-			if (right != NULL)
-			{
-				enableCompositeTermRight = BsonValueAsBool(right);
+				/* System-defaulted source: equivalent if target is unspecified
+				 * (system will re-apply the default) or explicitly true. */
+				areEquivalent = (targetOption == CustomIndexOption_Undefined ||
+								 targetOption == CustomIndexOption_True ||
+								 targetOption == CustomIndexOption_DefaultTrue);
+
+				break;
 			}
 
-			areEquivalent = enableCompositeTermLeft == enableCompositeTermRight;
+			case CustomIndexOption_True:
+			{
+				/* System-defaulted source: equivalent if target is unspecified
+				 * (system will re-apply the default) or explicitly true. */
+				areEquivalent = (targetOption == CustomIndexOption_True ||
+								 targetOption == CustomIndexOption_DefaultTrue);
+
+				break;
+			}
+
+			case CustomIndexOption_False:
+			{
+				/* False matches False and Undefined.
+				 *
+				 * False and Undefined both represent non-composite indexes (only
+				 * True and DefaultTrue produce composite indexes). When the stored
+				 * value is False (-1) and the incoming request carries no option
+				 * (Undefined - key absent), the physical index is the same.
+				 *
+				 * DefaultTrue is excluded: a GUC-promoted DefaultTrue means a
+				 * composite index was requested, which is a genuinely different
+				 * physical index. The same-name idempotency case is handled
+				 * separately in CheckIndexSpecConflictWithExistingIndexes. */
+				areEquivalent = (targetOption == CustomIndexOption_False ||
+								 targetOption == CustomIndexOption_Undefined);
+				break;
+			}
+
+			case CustomIndexOption_Undefined:
+			{
+				/* Undefined matches False (both mean "option is off"), Undefined
+				 * (identical), and DefaultTrue (system-applied default).
+				 *
+				 * Matching DefaultTrue ensures that createIndex remains idempotent:
+				 * if a user created an index before the GUC was enabled (persisted
+				 * as Undefined), re-issuing the same createIndex command after the
+				 * GUC is turned on (which transforms undefined → DefaultTrue) will
+				 * correctly recognize it as the same index rather than erroring with
+				 * a spurious conflict. The tradeoff is that the old non-composite
+				 * index won't be automatically upgraded to composite — the user
+				 * must drop and recreate to get composite behavior. */
+				areEquivalent = (targetOption == CustomIndexOption_False ||
+								 targetOption == CustomIndexOption_DefaultTrue ||
+								 targetOption == CustomIndexOption_Undefined);
+
+				/* This is to make sure we treat the indexes as equal for error reporting.
+				 * As the system option should not be part of option difference calculation. */
+				if (targetOption == CustomIndexOption_DefaultTrue)
+				{
+					*treatEquivalentAsEqual = true;
+				}
+				break;
+			}
+
+			default:
+			{
+				/* Unknown/corrupted value — treat as not equivalent to be safe. */
+				areEquivalent = false;
+				break;
+			}
 		}
 	}
 
 	if (areEquivalent && strcmp(path, "buildAsUnique") == 0)
 	{
-		if (left != NULL || right != NULL)
+		if (src != NULL || target != NULL)
 		{
-			bool buildAsUniqueLeft = false;
-			bool buildAsUniqueRight = false;
+			bool buildAsUniqueSrc = false;
+			bool buildAsUniqueTarget = false;
 
-			if (left != NULL)
+			if (src != NULL)
 			{
-				buildAsUniqueLeft = BsonValueAsBool(left);
+				buildAsUniqueSrc = BsonValueAsBool(src);
 			}
-			if (right != NULL)
+			if (target != NULL)
 			{
-				buildAsUniqueRight = BsonValueAsBool(right);
+				buildAsUniqueTarget = BsonValueAsBool(target);
 			}
 
-			areEquivalent = buildAsUniqueLeft == buildAsUniqueRight;
+			areEquivalent = buildAsUniqueSrc == buildAsUniqueTarget;
 		}
 	}
 
 	if (areEquivalent && strcmp(path, "collation") == 0)
 	{
-		if (left == NULL || right == NULL)
+		if (src == NULL || target == NULL)
 		{
-			areEquivalent = left == right;
+			areEquivalent = src == target;
 		}
 		else
 		{
-			areEquivalent = BsonValueEquals(left, right);
+			areEquivalent = BsonValueEquals(src, target);
 		}
 	}
 
@@ -2874,6 +3033,7 @@ GetOptionsEquivalencyFromIndexOptions(HTAB *bsonElementHash,
 	}
 
 	/* Now check the right options against the hash */
+	bool treatEquivalentAsEqual = false;
 	if (rightIndexSpec != NULL)
 	{
 		bson_iter_t rightOptionsIter;
@@ -2890,7 +3050,8 @@ GetOptionsEquivalencyFromIndexOptions(HTAB *bsonElementHash,
 			{
 				/* right has a key and left doesn't - call compare function to see what to do */
 				if (!AreIndexOptionsStillEquivalent(element.path, NULL,
-													&element.bsonValue))
+													&element.bsonValue,
+													&treatEquivalentAsEqual))
 				{
 					return IndexOptionsEquivalency_NotEquivalent;
 				}
@@ -2900,7 +3061,8 @@ GetOptionsEquivalencyFromIndexOptions(HTAB *bsonElementHash,
 				/* They both exist, compare by value */
 				if (!AreIndexOptionsStillEquivalent(element.path,
 													&foundElement->bsonValue,
-													&element.bsonValue))
+													&element.bsonValue,
+													&treatEquivalentAsEqual))
 				{
 					return IndexOptionsEquivalency_NotEquivalent;
 				}
@@ -2914,14 +3076,16 @@ GetOptionsEquivalencyFromIndexOptions(HTAB *bsonElementHash,
 	hash_seq_init(&status, bsonElementHash);
 	while ((entry = (pgbsonelement *) hash_seq_search(&status)) != NULL)
 	{
-		if (!AreIndexOptionsStillEquivalent(entry->path, &entry->bsonValue, NULL))
+		if (!AreIndexOptionsStillEquivalent(entry->path, &entry->bsonValue, NULL,
+											&treatEquivalentAsEqual))
 		{
 			hash_seq_term(&status);
 			return IndexOptionsEquivalency_NotEquivalent;
 		}
 	}
 
-	return IndexOptionsEquivalency_Equivalent;
+	return (treatEquivalentAsEqual) ? IndexOptionsEquivalency_CompatEqual :
+		   IndexOptionsEquivalency_Equivalent;
 }
 
 
@@ -2932,7 +3096,36 @@ GetOptionsEquivalencyFromIndexOptions(HTAB *bsonElementHash,
 bool
 CollectionHasStatisticsEnabled(uint64 collectionId)
 {
-	/* Find the _id index (the primary key index for the collection) */
+	/* Check the cached collection options, which are the source of truth for
+	 * whether planner statistics are enabled for a collection.
+	 */
+	MongoCollection *collection = GetMongoCollectionByColId(collectionId, NoLock);
+
+	/* Return false if the collection is not found, let the caller handle non existent collections. */
+	if (collection == NULL)
+	{
+		return false;
+	}
+
+	if (collection->options.statsEnabled)
+	{
+		return true;
+	}
+
+	/*
+	 * Legacy fallback: older collections tracked stats via the _id_ index
+	 * options before the collections.options column was used. Skipping this
+	 * check is the default because querying the index catalog here runs
+	 * index_build_is_in_progress against the index queue, which cannot be
+	 * executed from within a nested distributed context (e.g. shard_collection).
+	 * This fallback is retained only for backward compatibility and will be
+	 * retired.
+	 */
+	if (SkipLegacyIdIndexStatsCheck)
+	{
+		return false;
+	}
+
 	IndexDetails *details = IndexNameGetIndexDetails(collectionId, "_id_");
 	if (details == NULL)
 	{
@@ -2961,6 +3154,43 @@ UpdateIndexStatisticsForPlannerStatisticsCore(uint64 collectionId, List *indexId
 {
 	StringInfoData indexExprStringInfo;
 	initStringInfo(&indexExprStringInfo);
+
+	Oid ownerOid = InvalidOid;
+	appendStringInfo(&indexExprStringInfo,
+					 DOCUMENT_DATA_TABLE_NAME_FORMAT, collectionId);
+
+	char *ownerName = NULL;
+
+	/* Get table owner once to use as the owner for the statistics. */
+	if (list_length(indexIdList) > 0)
+	{
+		Oid tableOid = get_relname_relid(indexExprStringInfo.data, ApiDataNamespaceOid());
+		if (!OidIsValid(tableOid))
+		{
+			ereport(ERROR, (errmsg(
+								"Could not find table oid for collection while adding custom stats. This is unexpected.")));
+		}
+
+		HeapTuple classTuple = SearchSysCache1(RELOID, ObjectIdGetDatum(tableOid));
+		if (!HeapTupleIsValid(classTuple))
+		{
+			ereport(ERROR, (errmsg(
+								"Could not find table from syscachefor collection while adding custom stats. This is unexpected")));
+		}
+
+		Form_pg_class classForm = (Form_pg_class) GETSTRUCT(classTuple);
+		ownerOid = classForm->relowner;
+		ReleaseSysCache(classTuple);
+		ownerName = GetUserNameFromId(ownerOid, false);
+
+		if (!ownerName)
+		{
+			ereport(ERROR, (errmsg(
+								"Could not find owner name for collection while adding custom stats. This is unexpected.")));
+		}
+	}
+
+
 	ListCell *cell;
 	foreach(cell, indexIdList)
 	{
@@ -3087,6 +3317,18 @@ UpdateIndexStatisticsForPlannerStatisticsCore(uint64 collectionId, List *indexId
 		ObjectAddressSet(statsAddr, StatisticExtRelationId, statOid);
 		ObjectAddressSet(indexAddr, RelationRelationId, indexOid);
 		recordDependencyOn(&statsAddr, &indexAddr, DEPENDENCY_AUTO);
+
+		resetStringInfo(&indexExprStringInfo);
+		appendStringInfo(&indexExprStringInfo,
+						 "ALTER STATISTICS %s." DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT
+						 "_stats OWNER TO %s;",
+						 ApiDataSchemaName,
+						 details->indexId,
+						 quote_identifier(ownerName));
+
+		isNull = false;
+		ExtensionExecuteQueryViaSPI(indexExprStringInfo.data, readOnly, SPI_OK_UTILITY,
+									&isNull);
 	}
 }
 
@@ -3143,99 +3385,6 @@ DropIndexStatisticsForPlannerStatistics(uint64 collectionId, List *indexIdList)
 }
 
 
-static void
-UpdateIdIndexToSetStatsState(uint64 collectionId, bool enableStats)
-{
-	StringInfoData queryStringInfo;
-	initStringInfo(&queryStringInfo);
-
-	appendStringInfo(&queryStringInfo,
-					 "SELECT index_id, index_spec FROM %s.collection_indexes"
-					 " WHERE collection_id = %lu AND (index_spec).index_name = '_id_' LIMIT 1 FOR UPDATE",
-					 ApiCatalogSchemaName, collectionId);
-
-	/* all args are non-null */
-	bool readOnly = false;
-	int numValues = 2;
-	bool isNull[2];
-	Datum results[2];
-	ExtensionExecuteMultiValueQueryViaSPI(queryStringInfo.data, readOnly,
-										  SPI_OK_SELECT, results, isNull,
-										  numValues);
-
-	if (isNull[0] || isNull[1])
-	{
-		ereport(ERROR, (errmsg(
-							"Could not find primary key index for collection. This is unexpected")));
-	}
-
-	IndexDetails indexDetails = { 0 };
-	indexDetails.indexId = DatumGetInt32(results[0]);
-	indexDetails.indexSpec = *DatumGetIndexSpec(results[1]);
-	indexDetails.collectionId = collectionId;
-
-	pgbson *indexOptions = indexDetails.indexSpec.indexOptions;
-	if (indexOptions == NULL)
-	{
-		indexOptions = PgbsonInitEmpty();
-	}
-
-	bson_iter_t iter;
-	pgbson_writer optionsWriter;
-	PgbsonWriterInit(&optionsWriter);
-	PgbsonInitIterator(indexOptions, &iter);
-	bool foundStatsEnabled = false;
-	while (bson_iter_next(&iter))
-	{
-		const char *key = bson_iter_key(&iter);
-		const bson_value_t *value = bson_iter_value(&iter);
-		if (strcmp(key, "statsEnabled") == 0)
-		{
-			foundStatsEnabled = true;
-
-			/* Skip writing the field if it's false (disabled) */
-			if (enableStats)
-			{
-				PgbsonWriterAppendBool(&optionsWriter, key, -1, true);
-			}
-		}
-		else
-		{
-			PgbsonWriterAppendValue(&optionsWriter, key, -1, value);
-		}
-	}
-
-	if (!foundStatsEnabled && enableStats)
-	{
-		PgbsonWriterAppendBool(&optionsWriter, "statsEnabled", -1, true);
-	}
-
-	if (IsPgbsonWriterEmptyDocument(&optionsWriter))
-	{
-		/* Handle empty document case */
-		indexDetails.indexSpec.indexOptions = NULL;
-	}
-	else
-	{
-		indexDetails.indexSpec.indexOptions = PgbsonWriterGetPgbson(&optionsWriter);
-	}
-
-	Datum indexSpecDatum = IndexSpecGetDatum(&indexDetails.indexSpec);
-	resetStringInfo(&queryStringInfo);
-	appendStringInfo(&queryStringInfo,
-					 "UPDATE %s.collection_indexes SET index_spec = $1"
-					 " WHERE index_id = %d",
-					 ApiCatalogSchemaName, indexDetails.indexId);
-
-	Oid argTypes[1] = { IndexSpecTypeId() };
-	Datum argValues[1] = { indexSpecDatum };
-	char argNulls[1] = { ' ' };
-	ExtensionExecuteQueryWithArgsViaSPI(queryStringInfo.data, 1, argTypes, argValues,
-										argNulls,
-										readOnly, SPI_OK_UPDATE, &isNull[0]);
-}
-
-
 void
 UpdateIndexStatisticsForPlannerStatistics(uint64 collectionId, List *indexIdList)
 {
@@ -3256,18 +3405,20 @@ UpdateIndexStatisticsForPlannerStatistics(uint64 collectionId, List *indexIdList
 static void
 EnableCollectionPlannerStatistics(uint64 collectionId)
 {
-	/* First set the collection as being stats enabled. This involves setting
-	 * a flag in the index options of the _id index for the collection. We use the
-	 * presence of this flag to determine whether to update stats for this collection or not.
-	 */
+	/* Set the collection as being stats enabled via the collections.options column. */
 	bool enabled = true;
-	UpdateIdIndexToSetStatsState(collectionId, enabled);
+	UpdateCollectionStatsEnabledOption(collectionId, enabled);
 
 	/* Next add stats for all indexes added to the collection */
-	bool includeIdIndex = false;
+	bool excludeIdIndex = true;
 	bool enableNestedDistribution = false;
-	List *indexIdList = CollectionIdGetIndexes(collectionId, includeIdIndex,
-											   enableNestedDistribution);
+	bool includeIndexBuilds = true;
+	bool includeCurrentTransaction = true;
+	List *indexIdList = CollectionIdGetIndexesCore(collectionId, excludeIdIndex,
+												   enableNestedDistribution,
+												   includeIndexBuilds,
+												   includeCurrentTransaction);
+
 	bool isIndexIdList = false;
 	UpdateIndexStatisticsForPlannerStatisticsCore(collectionId, indexIdList,
 												  isIndexIdList);
@@ -3278,18 +3429,19 @@ EnableCollectionPlannerStatistics(uint64 collectionId)
 static void
 DisableCollectionPlannerStatistics(uint64 collectionId)
 {
-	/* First set the collection as being stats disabled. This involves setting
-	 * a flag in the index options of the _id index for the collection. We use the
-	 * presence of this flag to determine whether to update stats for this collection or not.
-	 */
+	/* Set the collection as being stats disabled via the collections.options column. */
 	bool enabled = false;
-	UpdateIdIndexToSetStatsState(collectionId, enabled);
+	UpdateCollectionStatsEnabledOption(collectionId, enabled);
 
-	/* Next add stats for all indexes added to the collection */
-	bool includeIdIndex = false;
+	/* Next drop stats for all indexes added to the collection */
+	bool excludeIdIndex = true;
 	bool enableNestedDistribution = false;
-	List *indexDetailsList = CollectionIdGetIndexes(collectionId, includeIdIndex,
-													enableNestedDistribution);
+	bool includeIndexBuilds = true;
+	bool includeCurrentTransaction = true;
+	List *indexDetailsList = CollectionIdGetIndexesCore(collectionId, excludeIdIndex,
+														enableNestedDistribution,
+														includeIndexBuilds,
+														includeCurrentTransaction);
 	DropIndexStatisticsForPlannerStatisticsWithIndexDetails(collectionId,
 															indexDetailsList);
 	list_free_deep(indexDetailsList);

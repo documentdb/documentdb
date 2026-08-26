@@ -13,6 +13,7 @@
 #include <fmgr.h>
 #include <funcapi.h>
 #include <utils/builtins.h>
+#include <utils/tuplestore.h>
 #include <catalog/namespace.h>
 #include <catalog/pg_am_d.h>
 
@@ -56,6 +57,29 @@ typedef struct
 	/* Show ops from only current node */
 	bool localOps;
 } CurrentOpOptions;
+
+typedef enum
+{
+	MAINTENANCE_PROGRESS_NONE = 0,
+	MAINTENANCE_PROGRESS_VACUUM,
+	MAINTENANCE_PROGRESS_ANALYZE
+} MaintenanceProgressType;
+
+typedef enum
+{
+	CURRENT_OP_COMMAND_VALUE_COLLECTION = 0,
+	CURRENT_OP_COMMAND_VALUE_DATABASE,
+	CURRENT_OP_COMMAND_VALUE_ONE,
+	CURRENT_OP_COMMAND_VALUE_ZERO
+} CurrentOpCommandValueType;
+
+typedef struct
+{
+	const char *queryPrefix;
+	const char *commandName;
+	const char *queryType;
+	CurrentOpCommandValueType valueType;
+} CurrentOpCommandMapping;
 
 
 /*
@@ -111,6 +135,18 @@ typedef struct
 	/* During processing, whether or not to add index build stats */
 	bool processedBuildIndexStatProgress;
 
+	/* Progress type for a raw table maintenance command. */
+	MaintenanceProgressType maintenanceProgressType;
+
+	/* Progress phase reported by PostgreSQL. */
+	const char *maintenanceProgressPhase;
+
+	/* Number of heap or sample blocks processed. */
+	int64 maintenanceBlocksDone;
+
+	/* Total number of heap or sample blocks. */
+	int64 maintenanceBlocksTotal;
+
 	/* Index spec for running create Index */
 	IndexSpec *indexSpec;
 } SingleWorkerActivity;
@@ -134,17 +170,109 @@ static void WriteOneActivityToDocument(SingleWorkerActivity *activity,
 static const char * WriteCommandAndGetQueryType(const char *query,
 												SingleWorkerActivity *activity,
 												pgbson_writer *commandWriter);
+static const char * WriteMappedCommand(const char *query,
+									   SingleWorkerActivity *activity,
+									   pgbson_writer *commandWriter,
+									   const CurrentOpCommandMapping *mappings,
+									   int mappingCount);
 static void DetectMongoCollection(SingleWorkerActivity *activity);
 static IndexSpec * GetIndexSpecForShardedCreateIndexQuery(SingleWorkerActivity *activity);
 static void AddIndexBuilds(TupleDesc descriptor, Tuplestorestate *tupleStore);
 static const char * WriteIndexBuildProgressAndGetMessage(SingleWorkerActivity *activity,
 														 pgbson_writer *writer);
+static const char * WriteMaintenanceProgressAndGetMessage(SingleWorkerActivity *activity,
+														  pgbson_writer *writer);
 static void WriteGlobalPidOfLockingProcess(SingleWorkerActivity *activity,
 										   pgbson_writer *writer);
 static void WriteIndexSpec(SingleWorkerActivity *activity, pgbson_writer *commandWriter);
 
 extern char *CurrentOpApplicationName;
 extern bool CurrentOpAddSqlCommand;
+
+static const CurrentOpCommandMapping ApiCommandMappings[] = {
+	{ ".update(", "update", "update", CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".insert(", "insert", "insert", CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".delete(", "delete", "remove", CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".cursor_get_more(", "getMore", "getmore", CURRENT_OP_COMMAND_VALUE_ZERO },
+	{ ".find_cursor_first_page(", "find", "query",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".find_and_modify(", "findAndModify", "command",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".aggregate_cursor_first_page(", "aggregate", "command",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ "_catalog.bson_aggregation_pipeline(", "aggregate", "command",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".count_query(", "count", "command", CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".distinct_query(", "distinct", "command",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".list_collections_cursor_first_page(", "listCollections", "command",
+	  CURRENT_OP_COMMAND_VALUE_ONE },
+	{ ".list_indexes_cursor_first_page(", "listIndexes", "command",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".create_indexes(", "createIndexes", "command",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".drop_indexes(", "dropIndexes", "command",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".drop_indexes_concurrently(", "dropIndexes", "command",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".coll_stats(", "collStats", "command",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".create_collection_view(", "create", "command",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".coll_mod(", "collMod", "command", CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".shard_collection(", "shardCollection", "command",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".drop_collection(", "drop", "command",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".drop_database(", "dropDatabase", "command",
+	  CURRENT_OP_COMMAND_VALUE_DATABASE },
+	{ ".compact(", "compact", "command", CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".validate(", "validate", "command", CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".list_databases(", "listDatabases", "command", CURRENT_OP_COMMAND_VALUE_ONE },
+	{ ".insert_txn_proc(", "insert", "insert", CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".update_txn_proc(", "update", "update", CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".delete_txn_proc(", "delete", "remove", CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".insert_bulk(", "insert", "insert", CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".update_bulk(", "update", "update", CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".get_more(", "getMore", "getmore", CURRENT_OP_COMMAND_VALUE_ZERO },
+	{ ".command_list_indexes_cursor_first_page(", "listIndexes", "command",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".create_indexes_background(", "createIndexes", "command",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".check_build_index_status(", "createIndexes", "command",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".create_user(", "createUser", "command", CURRENT_OP_COMMAND_VALUE_ONE },
+	{ ".update_user(", "updateUser", "command", CURRENT_OP_COMMAND_VALUE_ONE },
+	{ ".drop_user(", "dropUser", "command", CURRENT_OP_COMMAND_VALUE_ONE },
+	{ ".users_info(", "usersInfo", "command", CURRENT_OP_COMMAND_VALUE_ONE },
+	{ ".reshard_collection(", "reshardCollection", "command",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".unshard_collection(", "unshardCollection", "command",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".rename_collection(", "renameCollection", "command",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".kill_op(", "killOp", "command", CURRENT_OP_COMMAND_VALUE_ONE },
+	{ ".db_stats(", "dbStats", "command", CURRENT_OP_COMMAND_VALUE_DATABASE },
+	{ ".connection_status(", "connectionStatus", "command",
+	  CURRENT_OP_COMMAND_VALUE_ONE },
+	{ ".create_role(", "createRole", "command", CURRENT_OP_COMMAND_VALUE_ONE },
+	{ ".update_role(", "updateRole", "command", CURRENT_OP_COMMAND_VALUE_ONE },
+	{ ".drop_role(", "dropRole", "command", CURRENT_OP_COMMAND_VALUE_ONE },
+	{ ".roles_info(", "rolesInfo", "command", CURRENT_OP_COMMAND_VALUE_ONE },
+	{ ".re_index(", "reIndex", "command", CURRENT_OP_COMMAND_VALUE_COLLECTION },
+};
+
+static const CurrentOpCommandMapping ApiInternalCommandMappings[] = {
+	{ ".update_one(", "update", "workerCommand",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".insert_one(", "insert", "workerCommand",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".delete_one(", "delete", "workerCommand",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".create_indexes_non_concurrently(", "createIndexes", "command",
+	  CURRENT_OP_COMMAND_VALUE_COLLECTION },
+	{ ".delete_cursors(", "killCursors", "command", CURRENT_OP_COMMAND_VALUE_ONE },
+};
 
 
 /* Single node scenario - the global_pid can be assumed to be just the one for the coordinator */
@@ -156,6 +284,22 @@ char *DistributedOperationsQuery =
 const char *FirstLockingPidQuery =
 	"SELECT array_agg( (($2 / " SINGLE_NODE_ID_STR ") * " SINGLE_NODE_ID_STR
 	") + pid::integer) FROM unnest(pg_blocking_pids($1::integer)) pid LIMIT 1";
+
+static const char *MaintenanceProgressQuery =
+	"SELECT maintenance_type, phase, blocks_done, blocks_total FROM ("
+	" SELECT 'vacuum'::text AS maintenance_type, phase,"
+	" heap_blks_scanned::bigint AS blocks_done,"
+	" heap_blks_total::bigint AS blocks_total"
+	" FROM pg_catalog.pg_stat_progress_vacuum WHERE pid = $1"
+	" UNION ALL"
+	" SELECT 'analyze'::text, phase, sample_blks_scanned::bigint,"
+	" sample_blks_total::bigint"
+	" FROM pg_catalog.pg_stat_progress_analyze WHERE pid = $1"
+	" UNION ALL"
+	" SELECT 'vacuum'::text, phase, heap_blks_scanned::bigint,"
+	" heap_blks_total::bigint"
+	" FROM pg_catalog.pg_stat_progress_cluster WHERE pid = $1"
+	") progress LIMIT 1";
 
 
 /* Application name of any distributed operation schedulers. */
@@ -467,7 +611,7 @@ CurrentOpWorkerCore(void *specPointer)
  * later in the WriteOneActivityToDocument function
  */
 static List *
-WorkerGetBaseActivities()
+WorkerGetBaseActivities(void)
 {
 	/* Now that we're on the worker node, first get the query of operations */
 
@@ -506,7 +650,8 @@ WorkerGetBaseActivities()
 					 ApiDataSchemaName);
 
 	appendStringInfo(queryInfo,
-					 " ) e2 ON true WHERE (NOT query LIKE '%%%s.current_op%%') ",
+					 " ) e2 ON true "
+					 " WHERE (NOT query LIKE '%%%s.current_op%%') ",
 					 ApiToApiInternalSchemaName);
 
 	if (CurrentOpApplicationName != NULL &&
@@ -859,6 +1004,15 @@ WriteOneActivityToDocument(SingleWorkerActivity *workerActivity,
 			PgbsonWriterAppendUtf8(singleActivityWriter, "msg", 3, message);
 		}
 	}
+	else if (workerActivity->maintenanceProgressType != MAINTENANCE_PROGRESS_NONE)
+	{
+		pgbson_writer progressWriter;
+		PgbsonWriterStartDocument(singleActivityWriter, "progress", 8, &progressWriter);
+		const char *message = WriteMaintenanceProgressAndGetMessage(workerActivity,
+																	&progressWriter);
+		PgbsonWriterEndDocument(singleActivityWriter, &progressWriter);
+		PgbsonWriterAppendUtf8(singleActivityWriter, "msg", 3, message);
+	}
 }
 
 
@@ -878,132 +1032,8 @@ DetectApiSchemaCommand(const char *topLevelQuery, const char *schemaName,
 	}
 
 	const char *query = namespaceQuery + strlen(schemaName);
-	if (strstr(query, ".update(") == query)
-	{
-		PgbsonWriterAppendUtf8(commandWriter, "update", 6,
-							   activity->processedMongoCollection);
-		return "update";
-	}
-	else if (strstr(query, ".insert(") == query)
-	{
-		PgbsonWriterAppendUtf8(commandWriter, "insert", 6,
-							   activity->processedMongoCollection);
-		return "insert";
-	}
-	else if (strstr(query, ".delete(") == query)
-	{
-		PgbsonWriterAppendUtf8(commandWriter, "delete", 6,
-							   activity->processedMongoCollection);
-		return "remove";
-	}
-	else if (strstr(query, ".cursor_get_more(") == query)
-	{
-		PgbsonWriterAppendInt64(commandWriter, "getMore", 6, 0);
-		return "getmore";
-	}
-	else if (strstr(query, ".find_cursor_first_page(") == query)
-	{
-		PgbsonWriterAppendUtf8(commandWriter, "find", 4,
-							   activity->processedMongoCollection);
-		return "query";
-	}
-	else if (strstr(query, ".find_and_modify(") == query)
-	{
-		PgbsonWriterAppendUtf8(commandWriter, "findAndModify", 13,
-							   activity->processedMongoCollection);
-		return "command";
-	}
-	else if (strstr(query, ".aggregate_cursor_first_page(") == query)
-	{
-		PgbsonWriterAppendUtf8(commandWriter, "aggregate", 9,
-							   activity->processedMongoCollection);
-		return "command";
-	}
-	else if (strstr(query, "_catalog.bson_aggregation_pipeline(") == query)
-	{
-		PgbsonWriterAppendUtf8(commandWriter, "aggregate", 9,
-							   activity->processedMongoCollection);
-		return "command";
-	}
-	else if (strstr(query, ".count_query(") == query)
-	{
-		PgbsonWriterAppendUtf8(commandWriter, "count", 5,
-							   activity->processedMongoCollection);
-		return "command";
-	}
-	else if (strstr(query, ".distinct_query(") == query)
-	{
-		PgbsonWriterAppendUtf8(commandWriter, "distinct", 8,
-							   activity->processedMongoCollection);
-		return "command";
-	}
-	else if (strstr(query, ".list_collections_cursor_first_page(") == query)
-	{
-		PgbsonWriterAppendInt64(commandWriter, "listCollections", 15, 1);
-		return "command";
-	}
-	else if (strstr(query, ".list_indexes_cursor_first_page(") == query)
-	{
-		PgbsonWriterAppendUtf8(commandWriter, "listIndexes", 11,
-							   activity->processedMongoCollection);
-		return "command";
-	}
-	else if (strstr(query, ".create_indexes(") == query)
-	{
-		PgbsonWriterAppendUtf8(commandWriter, "createIndexes", 13,
-							   activity->processedMongoCollection);
-		return "command";
-	}
-	else if (strstr(query, ".drop_indexes(") == query)
-	{
-		PgbsonWriterAppendUtf8(commandWriter, "dropIndexes", 11,
-							   activity->processedMongoCollection);
-		return "command";
-	}
-	else if (strstr(query, ".coll_stats(") == query)
-	{
-		PgbsonWriterAppendUtf8(commandWriter, "collStats", 9,
-							   activity->processedMongoCollection);
-		return "command";
-	}
-	else if (strstr(query, ".create_collection_view(") == query)
-	{
-		PgbsonWriterAppendUtf8(commandWriter, "create", 6,
-							   activity->processedMongoCollection);
-		return "command";
-	}
-	else if (strstr(query, ".coll_mod(") == query)
-	{
-		PgbsonWriterAppendUtf8(commandWriter, "collMod", 7,
-							   activity->processedMongoCollection);
-		return "command";
-	}
-	else if (strstr(query, ".shard_collection(") == query)
-	{
-		PgbsonWriterAppendUtf8(commandWriter, "shardCollection", 15,
-							   activity->processedMongoCollection);
-		return "command";
-	}
-	else if (strstr(query, ".drop_collection(") == query)
-	{
-		PgbsonWriterAppendUtf8(commandWriter, "drop", 4,
-							   activity->processedMongoCollection);
-		return "command";
-	}
-	else if (strstr(query, ".drop_database(") == query)
-	{
-		PgbsonWriterAppendUtf8(commandWriter, "dropDatabase", 12,
-							   activity->processedMongoDatabase);
-		return "command";
-	}
-	else if (strstr(query, ".compact(") == query)
-	{
-		PgbsonWriterAppendUtf8(commandWriter, "compact", 7,
-							   activity->processedMongoCollection);
-		return "command";
-	}
-
-	return NULL;
+	return WriteMappedCommand(query, activity, commandWriter, ApiCommandMappings,
+							  lengthof(ApiCommandMappings));
 }
 
 
@@ -1023,29 +1053,59 @@ DetectApiInternalSchemaCommand(const char *topLevelQuery, const char *schemaName
 	}
 
 	const char *query = namespaceQuery + strlen(schemaName);
-	if (strstr(query, ".update_one(") == query)
+	return WriteMappedCommand(query, activity, commandWriter,
+							  ApiInternalCommandMappings,
+							  lengthof(ApiInternalCommandMappings));
+}
+
+
+static const char *
+WriteMappedCommand(const char *query, SingleWorkerActivity *activity,
+				   pgbson_writer *commandWriter,
+				   const CurrentOpCommandMapping *mappings, int mappingCount)
+{
+	for (int index = 0; index < mappingCount; index++)
 	{
-		PgbsonWriterAppendUtf8(commandWriter, "update", 6,
-							   activity->processedMongoCollection);
-		return "workerCommand";
-	}
-	else if (strstr(query, ".insert_one(") == query)
-	{
-		PgbsonWriterAppendUtf8(commandWriter, "insert", 6,
-							   activity->processedMongoCollection);
-		return "workerCommand";
-	}
-	else if (strstr(query, ".delete_one(") == query)
-	{
-		PgbsonWriterAppendUtf8(commandWriter, "delete", 6,
-							   activity->processedMongoCollection);
-		return "workerCommand";
-	}
-	else if (strstr(query, ".create_indexes_non_concurrently(") == query)
-	{
-		PgbsonWriterAppendUtf8(commandWriter, "createIndexes", 13,
-							   activity->processedMongoCollection);
-		return "command";
+		const CurrentOpCommandMapping *mapping = &mappings[index];
+		if (strncmp(query, mapping->queryPrefix, strlen(mapping->queryPrefix)) != 0)
+		{
+			continue;
+		}
+
+		switch (mapping->valueType)
+		{
+			case CURRENT_OP_COMMAND_VALUE_COLLECTION:
+			{
+				PgbsonWriterAppendUtf8(commandWriter, mapping->commandName,
+									   strlen(mapping->commandName),
+									   activity->processedMongoCollection);
+				break;
+			}
+
+			case CURRENT_OP_COMMAND_VALUE_DATABASE:
+			{
+				PgbsonWriterAppendUtf8(commandWriter, mapping->commandName,
+									   strlen(mapping->commandName),
+									   activity->processedMongoDatabase);
+				break;
+			}
+
+			case CURRENT_OP_COMMAND_VALUE_ONE:
+			{
+				PgbsonWriterAppendInt64(commandWriter, mapping->commandName,
+										strlen(mapping->commandName), 1);
+				break;
+			}
+
+			case CURRENT_OP_COMMAND_VALUE_ZERO:
+			{
+				PgbsonWriterAppendInt64(commandWriter, mapping->commandName,
+										strlen(mapping->commandName), 0);
+				break;
+			}
+		}
+
+		return mapping->queryType;
 	}
 
 	return NULL;
@@ -1064,6 +1124,17 @@ static const char *
 WriteCommandAndGetQueryType(const char *query, SingleWorkerActivity *activity,
 							pgbson_writer *commandWriter)
 {
+	if (strncmp(query, "EXPLAIN ", 8) == 0 &&
+		(strstr(query, "_catalog.bson_aggregation_find") != NULL ||
+		 strstr(query, "_catalog.bson_aggregation_pipeline") != NULL ||
+		 strstr(query, "_catalog.bson_aggregation_count") != NULL ||
+		 strstr(query, "_catalog.bson_aggregation_distinct") != NULL))
+	{
+		PgbsonWriterAppendUtf8(commandWriter, "explain", 7,
+							   activity->processedMongoCollection);
+		return "command";
+	}
+
 	/* Check for a command on the top level API namespace */
 	const char *commandName = DetectApiSchemaCommand(query, ApiSchemaName, activity,
 													 commandWriter);
@@ -1093,21 +1164,30 @@ WriteCommandAndGetQueryType(const char *query, SingleWorkerActivity *activity,
 	/* Also check for ApiSchemaNameV2 explicitly */
 	if (strcmp(ApiInternalSchemaName, DocumentDBApiInternalSchemaName) != 0)
 	{
-		commandName = DetectApiSchemaCommand(query, DocumentDBApiInternalSchemaName,
-											 activity,
-											 commandWriter);
+		commandName = DetectApiInternalSchemaCommand(query,
+													 DocumentDBApiInternalSchemaName,
+													 activity,
+													 commandWriter);
 		if (commandName != NULL)
 		{
 			return commandName;
 		}
 	}
 
-	if (strstr(query, "CREATE INDEX") != NULL || strstr(query, "CREATE  INDEX") != NULL)
+	if (strstr(query, "CREATE INDEX") != NULL ||
+		strstr(query, "CREATE  INDEX") != NULL)
 	{
 		PgbsonWriterAppendUtf8(commandWriter, "createIndexes", 13,
 							   activity->processedMongoCollection);
 		WriteIndexSpec(activity, commandWriter);
 		activity->processedBuildIndexStatProgress = true;
+		return "workerCommand";
+	}
+	else if (strstr(query, "DROP INDEX") != NULL ||
+			 strstr(query, "DROP  INDEX") != NULL)
+	{
+		PgbsonWriterAppendUtf8(commandWriter, "dropIndexes", 11,
+							   activity->processedMongoCollection);
 		return "workerCommand";
 	}
 	else if (strstr(query, "ALTER TABLE") != NULL &&
@@ -1125,6 +1205,34 @@ WriteCommandAndGetQueryType(const char *query, SingleWorkerActivity *activity,
 		PgbsonWriterAppendUtf8(commandWriter, "reIndex", 7,
 							   activity->processedMongoCollection);
 		activity->processedBuildIndexStatProgress = true;
+		return "workerCommand";
+	}
+	else if (strstr(query, "VACUUM") != NULL)
+	{
+		PgbsonWriterAppendUtf8(commandWriter, "compact", 7,
+							   activity->processedMongoCollection);
+		if (strstr(query, "VACUUM FULL") != NULL)
+		{
+			PgbsonWriterAppendUtf8(commandWriter, "mode", 4, "full");
+		}
+		else if (strstr(query, "ANALYZE") != NULL)
+		{
+			PgbsonWriterAppendUtf8(commandWriter, "mode", 4, "updateStats");
+			activity->maintenanceProgressType = MAINTENANCE_PROGRESS_ANALYZE;
+		}
+
+		if (activity->maintenanceProgressType == MAINTENANCE_PROGRESS_NONE)
+		{
+			activity->maintenanceProgressType = MAINTENANCE_PROGRESS_VACUUM;
+		}
+		return "workerCommand";
+	}
+	else if (strstr(query, "ANALYZE") != NULL)
+	{
+		PgbsonWriterAppendUtf8(commandWriter, "compact", 7,
+							   activity->processedMongoCollection);
+		PgbsonWriterAppendUtf8(commandWriter, "mode", 4, "updateStats");
+		activity->maintenanceProgressType = MAINTENANCE_PROGRESS_ANALYZE;
 		return "workerCommand";
 	}
 	else
@@ -1480,6 +1588,10 @@ PhaseToUserMessage(const char *phaseString)
 	{
 		return "Writing WAL files (building index).";
 	}
+	else if (strstr(phaseString, "finalizing index") != NULL)
+	{
+		return "Finalizing index build.";
+	}
 	else if (strcmp(phaseString, "cleaning up") == 0)
 	{
 		return "Cleaning up.";
@@ -1639,6 +1751,84 @@ WriteIndexBuildProgressAndGetMessage(SingleWorkerActivity *activity,
 	PgbsonWriterEndArray(writer, &progress_elem_writer);
 
 	return messageInfo->data;
+}
+
+
+static const char *
+WriteMaintenanceProgressAndGetMessage(SingleWorkerActivity *activity,
+									  pgbson_writer *writer)
+{
+	Oid argTypes[1] = { INT4OID };
+	Datum argValues[1] = { Int32GetDatum(activity->statPid) };
+	char argNulls[1] = { ' ' };
+	MemoryContext priorMemoryContext = CurrentMemoryContext;
+
+	SPI_connect();
+	int spiResult = SPI_execute_with_args(MaintenanceProgressQuery, 1, argTypes,
+										  argValues, argNulls, true, 1);
+	if (spiResult != SPI_OK_SELECT)
+	{
+		ereport(ERROR, (errmsg("Failed to get maintenance progress")));
+	}
+
+	if (SPI_processed > 0)
+	{
+		bool isNull;
+		Datum resultDatum = SPI_getbinval(SPI_tuptable->vals[0],
+										  SPI_tuptable->tupdesc, 1, &isNull);
+		if (!isNull)
+		{
+			MemoryContext spiContext = MemoryContextSwitchTo(priorMemoryContext);
+			char *maintenanceType = TextDatumGetCString(resultDatum);
+			MemoryContextSwitchTo(spiContext);
+			activity->maintenanceProgressType = strcmp(maintenanceType, "vacuum") == 0 ?
+												MAINTENANCE_PROGRESS_VACUUM :
+												MAINTENANCE_PROGRESS_ANALYZE;
+		}
+
+		resultDatum = SPI_getbinval(SPI_tuptable->vals[0],
+									SPI_tuptable->tupdesc, 2, &isNull);
+		if (!isNull)
+		{
+			MemoryContext spiContext = MemoryContextSwitchTo(priorMemoryContext);
+			activity->maintenanceProgressPhase = TextDatumGetCString(resultDatum);
+			MemoryContextSwitchTo(spiContext);
+		}
+
+		resultDatum = SPI_getbinval(SPI_tuptable->vals[0],
+									SPI_tuptable->tupdesc, 3, &isNull);
+		if (!isNull)
+		{
+			activity->maintenanceBlocksDone = DatumGetInt64(resultDatum);
+		}
+
+		resultDatum = SPI_getbinval(SPI_tuptable->vals[0],
+									SPI_tuptable->tupdesc, 4, &isNull);
+		if (!isNull)
+		{
+			activity->maintenanceBlocksTotal = DatumGetInt64(resultDatum);
+		}
+	}
+	SPI_finish();
+
+	const char *operationName =
+		activity->maintenanceProgressType == MAINTENANCE_PROGRESS_VACUUM ?
+		"Vacuum" : "Analyze";
+	const char *phase = activity->maintenanceProgressPhase == NULL ?
+						"waiting to start" : activity->maintenanceProgressPhase;
+
+	PgbsonWriterAppendUtf8(writer, "phase", 5, phase);
+	PgbsonWriterAppendInt64(writer, "blocks_done", 11, activity->maintenanceBlocksDone);
+	PgbsonWriterAppendInt64(writer, "blocks_total", 12,
+							activity->maintenanceBlocksTotal);
+	if (activity->maintenanceBlocksTotal > 0)
+	{
+		double progress = activity->maintenanceBlocksDone * 100.0 /
+						  activity->maintenanceBlocksTotal;
+		PgbsonWriterAppendDouble(writer, "Progress", 8, progress);
+	}
+
+	return psprintf("%s progress: %s.", operationName, phase);
 }
 
 

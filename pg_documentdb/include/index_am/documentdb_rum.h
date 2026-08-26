@@ -16,29 +16,6 @@
 #include <nodes/pathnodes.h>
 #include "index_am/index_am_exports.h"
 
-typedef void *(*CreateIndexArrayTrackerState)(void);
-typedef bool (*IndexArrayTrackerAdd)(void *state, ItemPointer item);
-typedef void (*FreeIndexArrayTrackerState)(void *);
-typedef void (*UpdateMultikeyStatusFunc)(Relation index);
-
-/*
- * Adapter struct that provides function pointers to allow
- * for extensibility in managing index array state for index scans.
- * The current requirements on the interface is to provide an abstraction
- * that can be used to deduplicate array entries in the index scan.
- */
-typedef struct RumIndexArrayStateFuncs
-{
-	/* Create opaque state to manage entries in this specific index scan */
-	CreateIndexArrayTrackerState createState;
-
-	/* Add an item to the index scan and return whether or not it is new or existing */
-	IndexArrayTrackerAdd addItem;
-
-	/* Frees the temporary state used for the adding of items */
-	FreeIndexArrayTrackerState freeState;
-} RumIndexArrayStateFuncs;
-
 
 /* How to load the RUM library into the process */
 typedef enum RumLibraryLoadOptions
@@ -56,60 +33,6 @@ typedef enum RumLibraryLoadOptions
 extern RumLibraryLoadOptions DocumentDBRumLibraryLoadOption;
 void LoadRumRoutine(void);
 
-IndexScanDesc extension_rumbeginscan_core(Relation rel, int nkeys, int norderbys,
-										  IndexAmRoutine *coreRoutine);
-void extension_rumendscan_core(IndexScanDesc scan, IndexAmRoutine *coreRoutine);
-void extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
-							  ScanKey orderbys, int norderbys,
-							  IndexAmRoutine *coreRoutine);
-int64 extension_rumgetbitmap_core(IndexScanDesc scan, TIDBitmap *tbm,
-								  IndexAmRoutine *coreRoutine);
-bool extension_rumgettuple_core(IndexScanDesc scan, ScanDirection direction,
-								IndexAmRoutine *coreRoutine);
-
-typedef List *(*BoundaryQualsSelectorFunc)(IndexPath *indexPath, int32_t *num_sa_scans);
-
-typedef void (*OrderedCostEstimateCoreFunc)(PlannerInfo *root, IndexPath *path, double
-											loop_count,
-											Cost *indexStartupCost, Cost *indexTotalCost,
-											Selectivity *indexSelectivity,
-											double *indexCorrelation,
-											double *indexPages,
-											double *totalNumTuples,
-											Selectivity *boundarySelectivity,
-											int *numBoundaryQuals,
-											double *dataPagesProportionFetched,
-											BoundaryQualsSelectorFunc
-											boundaryQualsSelector);
-void extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double
-									loop_count,
-									Cost *indexStartupCost, Cost *indexTotalCost,
-									Selectivity *indexSelectivity,
-									double *indexCorrelation,
-									double *indexPages, IndexAmRoutine *coreRoutine,
-									bool forceIndexPushdownCostToZero,
-									bool enableCompositePlannerCosts,
-									OrderedCostEstimateCoreFunc
-									orderedCostEstimateCoreFunc);
-
-IndexBuildResult * extension_rumbuild_core(Relation heapRelation, Relation indexRelation,
-										   struct IndexInfo *indexInfo,
-										   IndexAmRoutine *coreRoutine,
-										   UpdateMultikeyStatusFunc updateMultikeyStatus,
-										   bool amCanBuildParallel);
-
-bool extension_ruminsert_core(Relation indexRelation,
-							  Datum *values,
-							  bool *isnull,
-							  ItemPointer heap_tid,
-							  Relation heapRelation,
-							  IndexUniqueCheck checkUnique,
-							  bool indexUnchanged,
-							  struct IndexInfo *indexInfo,
-							  IndexAmRoutine *coreRoutine,
-							  UpdateMultikeyStatusFunc updateMultikeyStatus);
-
-bool RumGetTruncationStatus(Relation indexRelation);
 
 struct ExplainState;
 typedef struct pgbson_writer pgbson_writer;
@@ -133,4 +56,15 @@ void RecordCostEstimateForIndex(Oid indexOid, Oid relOid, Cost indexStartupCost,
 								double boundarySelectivity,
 								int numBoundaryQuals, double
 								dataPagesProportionFetched);
+
+Datum DocumentDBRumGetCurrentIndexKey(IndexScanDesc scan, bytea **dedupState);
+
+void DocumentDBRumSkipTidsForCurrentEntry(IndexScanDesc scan, PGFunction
+										  skipTidsFunc, ItemPointer
+										  userContinuationState);
+
+
+bool DocumentDBRumSkipTidsForCurrentEntryWithSkipScan(IndexScanDesc scan, PGFunction
+													  skipTidsFunc, ItemPointer
+													  userContinuationState);
 #endif

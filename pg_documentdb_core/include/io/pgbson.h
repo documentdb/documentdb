@@ -152,7 +152,7 @@ PgbsonFreeIfNotNull(pgbson *value)
  * e.g, { "" : ObjectId("5f3e3b3b1d9f3b0001f3b3b1")}
  */
 static inline pgbson *
-PgbsonGenerateOidDocument()
+PgbsonGenerateOidDocument(void)
 {
 	bson_value_t objectidValue;
 	objectidValue.value_type = BSON_TYPE_OID;

@@ -20,6 +20,19 @@ $$;
 
 CREATE TYPE aggregation_cursor_test_file.drain_result AS (filteredDoc bson, docSize int, continuationFiltered bson, persistConnection bool);
 
+-- A file-based persisted cursor continuation embeds per-run volatile serialized
+-- file state ("qf") that differs on every run. Replace it with a constant so the
+-- continuation is deterministic, while leaving every other field intact. The
+-- "$type" guard makes this a no-op for continuations that have no "qf".
+CREATE FUNCTION aggregation_cursor_test_file.mask_continuation(cont bson)
+    RETURNS bson
+    LANGUAGE sql
+AS $fn$
+    SELECT documentdb_api_catalog.bson_dollar_add_fields(
+        documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson),
+        '{ "qf": { "$cond": [ { "$eq": [ { "$type": "$qf" }, "missing" ] }, "$$REMOVE", "XXX" ] } }'::documentdb_core.bson);
+$fn$;
+
 
 CREATE FUNCTION aggregation_cursor_test_file.drain_find_query(
     loopCount int, pageSize int, project bson DEFAULT NULL, skipVal int4 DEFAULT NULL, limitVal int4 DEFAULT NULL,
@@ -53,7 +66,7 @@ $$
         SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
     END IF;
     
-    SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+    SELECT aggregation_cursor_test_file.mask_continuation(cont) INTO STRICT contProcessed;
     RETURN NEXT ROW(doc, docSize, contProcessed, persistConn)::aggregation_cursor_test_file.drain_result;
 
     FOR i IN 1..loopCount LOOP
@@ -67,7 +80,7 @@ $$
             SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
         END IF;
 
-        SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+        SELECT aggregation_cursor_test_file.mask_continuation(cont) INTO STRICT contProcessed;
         RETURN NEXT ROW(doc, docSize, contProcessed, FALSE)::aggregation_cursor_test_file.drain_result;
     END LOOP;
 END;
@@ -108,7 +121,7 @@ $$
         SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
     END IF;
     
-    SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+    SELECT aggregation_cursor_test_file.mask_continuation(cont) INTO STRICT contProcessed;
     RETURN NEXT ROW(doc, docSize, contProcessed, persistConn)::aggregation_cursor_test_file.drain_result;
 
     FOR i IN 1..loopCount LOOP
@@ -122,7 +135,7 @@ $$
             SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
         END IF;
 
-        SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+        SELECT aggregation_cursor_test_file.mask_continuation(cont) INTO STRICT contProcessed;
         RETURN NEXT ROW(doc, docSize, contProcessed, FALSE)::aggregation_cursor_test_file.drain_result;
     END LOOP;
 END;
@@ -183,6 +196,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
@@ -190,6 +204,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 -- $max with file cursor - test with new aggregate implementation
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 1, pageSize => 100000, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }, { "$limit": 1 }]}');
@@ -221,6 +236,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
@@ -228,6 +244,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 -- $max with local execution off - test with new aggregate implementation
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 RESET citus.enable_local_execution;
@@ -260,6 +277,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
@@ -267,6 +285,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 -- $max with sharded file cursor - test with new aggregate implementation
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- With local execution off.
@@ -291,6 +310,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }', obfuscate_id => true);
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }', obfuscate_id => true);
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }', obfuscate_id => true);
@@ -298,6 +318,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 -- $max with file cursor sharded - test with new aggregate implementation
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }', obfuscate_id => true);
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 RESET citus.enable_local_execution;
@@ -383,3 +404,46 @@ SELECT cursorPage, continuation FROM documentdb_api.cursor_get_more(database => 
 -- now it's been at least 3 seconds, if we prune with a 2 second timeout, it should still not be pruned since getMore updated modified time.
 SELECT documentdb_api_internal.cursor_directory_cleanup(2);
 SELECT * FROM pg_ls_dir('pg_documentdb_cursor_files') f WHERE f LIKE '%4294967280%' ORDER BY 1;
+-- ===========================================================================
+-- killCursors (delete_cursors) and the cursor file name.
+-- ===========================================================================
+set documentdb.useFileBasedPersistedCursors to on;
+
+-- Case 1: caller supplies an explicit cursor id. The on-disk file is named
+-- after that id, so killCursors keyed by the same id unlinks the file.
+SELECT cursorPage, persistConnection FROM
+    documentdb_api.find_cursor_first_page(database => 'db', commandSpec => '{ "find": "get_aggregation_cursor_test_file", "skip": 1, "batchSize": 2, "projection": { "_id": 1 } }', cursorId => 4294967270);
+-- the file exists and is named after the supplied id
+SELECT * FROM pg_ls_dir('pg_documentdb_cursor_files') f WHERE f LIKE '%4294967270%' ORDER BY 1;
+-- killCursors keyed by the supplied id removes it
+SELECT documentdb_api_internal.delete_cursors(ARRAY[4294967270::int8]);
+SELECT * FROM pg_ls_dir('pg_documentdb_cursor_files') f WHERE f LIKE '%4294967270%' ORDER BY 1;
+
+-- Case 2: server generated cursor id (cursorId => 0) with the delayed hold
+-- portal path. The on-disk file is named after the client-facing cursor id
+-- ("qi" in the continuation, which also equals "qn"), so killCursors
+-- (delete_cursors) keyed by that id unlinks the file. Output is reduced to
+-- stable booleans because the id is non-deterministic.
+SELECT continuation AS dlh_cont FROM
+    documentdb_api.find_cursor_first_page(database => 'db', commandSpec => '{ "find": "get_aggregation_cursor_test_file", "skip": 1, "batchSize": 2, "projection": { "_id": 1 } }', cursorId => 0) \gset
+SELECT documentdb_core.bson_get_value_text(:'dlh_cont'::documentdb_core.bson, 'qi') AS dlh_qi,
+       documentdb_core.bson_get_value_text(:'dlh_cont'::documentdb_core.bson, 'qn') AS dlh_qn \gset
+
+-- the on-disk file name ("qn") matches "cursor_<client cursor id>" ("qi").
+SELECT :'dlh_qn' = ('cursor_' || :'dlh_qi') AS file_named_after_client_id;
+-- the file named after the client id exists before killCursors.
+SELECT EXISTS(SELECT 1 FROM pg_ls_dir('pg_documentdb_cursor_files') f WHERE f = ('cursor_' || :'dlh_qi')) AS file_exists_before_kill;
+
+-- killCursors keyed by the client cursor id unlinks the file.
+SELECT documentdb_api_internal.delete_cursors(ARRAY[ :'dlh_qi'::int8 ]);
+SELECT EXISTS(SELECT 1 FROM pg_ls_dir('pg_documentdb_cursor_files') f WHERE f = ('cursor_' || :'dlh_qi')) AS file_exists_after_kill;
+
+-- a query that fully drains on the first page reports a closed cursor (id 0)
+-- and leaves no new cursor file behind.
+CREATE TEMP TABLE dlh_files_pre AS SELECT f FROM pg_ls_dir('pg_documentdb_cursor_files') f;
+SELECT documentdb_core.bson_get_value_text(cursorPage, 'cursor.id') AS reported_cursor_id
+FROM documentdb_api.find_cursor_first_page(database => 'db', commandSpec => '{ "find": "get_aggregation_cursor_test_file", "filter": { "_id": 1 }, "batchSize": 100, "projection": { "_id": 1 } }', cursorId => 0);
+SELECT count(*) AS new_cursor_files_after_full_drain FROM (
+    SELECT f FROM pg_ls_dir('pg_documentdb_cursor_files') f
+    EXCEPT SELECT f FROM dlh_files_pre) s;
+DROP TABLE dlh_files_pre;

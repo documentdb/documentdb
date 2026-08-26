@@ -20,6 +20,7 @@
 #include <tsearch/ts_type.h>
 #include <tsearch/ts_cache.h>
 #include <catalog/namespace.h>
+#include <catalog/pg_type.h>
 #include <utils/array.h>
 #include <nodes/makefuncs.h>
 
@@ -102,6 +103,32 @@ GetDefaultLanguage(BsonGinTextPathOptions *options)
 	}
 
 	return getTSCurrentConfig(true);
+}
+
+
+/*
+ * Replace dots with spaces so that dotted values like "foo.0.bat" are
+ * tokenized as separate search terms ("foo", "0", "bar") rather than
+ * being classified as a single host-type token by the PG parser.
+ * This matches the index side where dotted values are indexed as sub-terms.
+ */
+inline static char *
+SanitizeDotsForTextSearch(char *str, BsonGinTextPathOptions *indexOptions)
+{
+	bool dottedTermsEnabled = indexOptions != NULL &&
+							  indexOptions->enableDottedTerms;
+	if (dottedTermsEnabled && strchr(str, '.') != NULL)
+	{
+		char *sanitizedStr = pstrdup(str);
+		char *p = sanitizedStr;
+		while ((p = strchr(p, '.')) != NULL)
+		{
+			*p++ = ' ';
+		}
+		return sanitizedStr;
+	}
+
+	return str;
 }
 
 
@@ -240,6 +267,10 @@ rum_bson_text_path_options(PG_FUNCTION_ARGS)
 	add_local_bool_reloption(relopts, "iswildcard",
 							 "Whether the path is a wildcard", isWildcardDefault,
 							 offsetof(BsonGinTextPathOptions, isWildcard));
+	add_local_bool_reloption(relopts, "enabledottedterms",
+							 "Whether to split dotted values into sub-terms",
+							 false,
+							 offsetof(BsonGinTextPathOptions, enableDottedTerms));
 	add_local_string_reloption(relopts, "weights",
 							   "The Paths and Weights for the index",
 							   NULL, &ValidateWeightsSpec, &FillWeightsSpec,
@@ -516,6 +547,8 @@ BsonTextGenerateTSQueryCore(const bson_value_t *queryValue, bytea *indexOptions,
 	BsonValidateAndExtractTextQuery(queryValue, &searchValue,
 									&languageOid, &caseSensitive, &diacriticSensitive);
 
+	BsonGinTextPathOptions *options = (BsonGinTextPathOptions *) indexOptions;
+
 	/* If language is provided, extract it */
 	if (languageOid != InvalidOid)
 	{
@@ -523,7 +556,6 @@ BsonTextGenerateTSQueryCore(const bson_value_t *queryValue, bytea *indexOptions,
 	}
 	else if (indexOptions != NULL)
 	{
-		BsonGinTextPathOptions *options = (BsonGinTextPathOptions *) indexOptions;
 		tsConfigOid = GetDefaultLanguage(options);
 	}
 	else
@@ -531,9 +563,13 @@ BsonTextGenerateTSQueryCore(const bson_value_t *queryValue, bytea *indexOptions,
 		tsConfigOid = getTSCurrentConfig(true);
 	}
 
+	char *searchStr = SanitizeDotsForTextSearch(searchValue.value.v_utf8.str,
+												options);
+
 	/* we have a valid ts_query string. */
 	/* first pass: we use the websearch_to_tsquery as it has the closest rules to native mongo; */
-	Datum textDatum = CStringGetTextDatum(searchValue.value.v_utf8.str);
+
+	Datum textDatum = CStringGetTextDatum(searchStr);
 
 	Datum result;
 	if (tsConfigOid != InvalidOid)
@@ -577,6 +613,10 @@ BsonTextGenerateTSQueryCore(const bson_value_t *queryValue, bytea *indexOptions,
 	}
 
 	QTNFree(node);
+	if (searchStr != searchValue.value.v_utf8.str)
+	{
+		pfree(searchStr);
+	}
 	return PointerGetDatum(query);
 }
 
@@ -965,7 +1005,7 @@ BsonValidateAndExtractTextQuery(const bson_value_t *queryValue,
 
 	if (searchValue->value_type != BSON_TYPE_UTF8)
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
 						errmsg(
 							"The $search was given a value of the wrong type; a string was expected, but instead a %s was provided.",
 							BsonTypeName(searchValue->value_type))));
@@ -974,7 +1014,7 @@ BsonValidateAndExtractTextQuery(const bson_value_t *queryValue,
 	if (languageValue.value_type != BSON_TYPE_EOD &&
 		languageValue.value_type != BSON_TYPE_UTF8)
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
 						errmsg(
 							"Expected 'string' type for $language but found '%s' type",
 							BsonTypeName(languageValue.value_type))));
@@ -983,7 +1023,7 @@ BsonValidateAndExtractTextQuery(const bson_value_t *queryValue,
 	if (caseSensitive->value_type != BSON_TYPE_EOD &&
 		caseSensitive->value_type != BSON_TYPE_BOOL)
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
 						errmsg(
 							"Expected 'bool' type for $caseSensitive but found '%s' type",
 							BsonTypeName(caseSensitive->value_type))));
@@ -992,7 +1032,7 @@ BsonValidateAndExtractTextQuery(const bson_value_t *queryValue,
 	if (diacriticSensitive->value_type != BSON_TYPE_EOD &&
 		diacriticSensitive->value_type != BSON_TYPE_BOOL)
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
 						errmsg(
 							"Expected 'bool' type for $diacriticSensitivebut found '%s' type",
 							BsonTypeName(diacriticSensitive->value_type))));
@@ -1389,17 +1429,20 @@ GenerateTsVectorWithOptions(pgbson *document,
 
 			/* Generate text words */
 			ParsedText text = { 0 };
+			char *indexStr = term.element.bsonValue.value.v_utf8.str;
+			uint32 indexStrLen = term.element.bsonValue.value.v_utf8.len;
+			indexStr = SanitizeDotsForTextSearch(indexStr, options);
 
 			/* Random estimate of word count (see to_tsvector) */
-			text.lenwords = Max(term.element.bsonValue.value.v_utf8.len / 6, 2);
+			text.lenwords = Max(indexStrLen / 6, 2);
 			text.curwords = 0;
 			text.pos = 0;
 			text.words = (ParsedWord *) palloc(sizeof(ParsedWord) * text.lenwords);
 			parsetext(
 				languageOid,
 				&text,
-				term.element.bsonValue.value.v_utf8.str,
-				term.element.bsonValue.value.v_utf8.len);
+				indexStr,
+				indexStrLen);
 
 			/* make the tsvector from it */
 			TSVector vector = make_tsvector(&text);
@@ -1462,6 +1505,12 @@ GenerateTsVectorWithOptions(pgbson *document,
 					DatumGetTSVector(OidFunctionCall2(TsVectorConcatFunctionId(),
 													  PointerGetDatum(vector),
 													  PointerGetDatum(overallVector)));
+			}
+
+			if (indexStr != term.element.bsonValue.value.v_utf8.str)
+			{
+				pfree(indexStr);
+				indexStr = NULL;
 			}
 		}
 	}

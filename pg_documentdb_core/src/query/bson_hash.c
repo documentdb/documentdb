@@ -404,16 +404,22 @@ BsonValueHashUint32(const bson_value_t *bsonValue)
 		case BSON_TYPE_REGEX:
 		{
 			return hash_bytes((const unsigned char *)
-							  &bsonValue->value.v_regex.regex,
+							  bsonValue->value.v_regex.regex,
 							  strlen(bsonValue->value.v_regex.regex));
 		}
 
 		case BSON_TYPE_CODE:
-		case BSON_TYPE_CODEWSCOPE:
 		{
 			return hash_bytes((const unsigned char *)
 							  bsonValue->value.v_code.code,
 							  bsonValue->value.v_code.code_len);
+		}
+
+		case BSON_TYPE_CODEWSCOPE:
+		{
+			return hash_bytes((const unsigned char *)
+							  bsonValue->value.v_codewscope.code,
+							  bsonValue->value.v_codewscope.code_len);
 		}
 
 		case BSON_TYPE_SYMBOL:
@@ -485,6 +491,8 @@ BsonHashCompare(bson_iter_t *bsonIterValue,
 	uint64_t hashValue = 0;
 	while (bson_iter_next(bsonIterValue))
 	{
+		CHECK_FOR_INTERRUPTS();
+
 		pgbsonelement leftElement;
 
 		BsonIterToPgbsonElement(bsonIterValue, &leftElement);
@@ -511,6 +519,31 @@ static uint64
 HashNumber(double number, int64 seed)
 {
 	return BSON_FIXED_LENGTH_FIELD_HASH(number, seed);
+}
+
+
+/*
+ * Hashes a string under a non-simple collation by hashing its ICU sort key.
+ * pg_noinline keeps the scratch out of the recursive caller's stack frame.
+ */
+static pg_noinline uint64
+HashStringSortKey(const char *collationString, const char *string, int32_t stringLength,
+				  uint64 (*hash_bytes_func)(const uint8_t *bytes, uint32_t bytesLength,
+											int64 seed),
+				  int64 seed)
+{
+	uint8_t sortKeyScratch[COLLATION_SORT_KEY_SCRATCH_BYTES];
+	uint8_t *sortKey;
+	int32_t sortKeyLength = GetCollationSortKey(collationString, string, stringLength,
+												sortKeyScratch, sizeof(sortKeyScratch),
+												&sortKey);
+
+	uint64 hashValue = hash_bytes_func(sortKey, sortKeyLength, seed);
+	if (sortKey != sortKeyScratch)
+	{
+		pfree(sortKey);
+	}
+	return hashValue;
 }
 
 
@@ -582,25 +615,27 @@ HashBsonValueCompare(const bson_value_t *value,
 		{
 			typeCodeInt = (int) BSON_TYPE_UTF8;
 
-			/* Apply collation sort key for strings if collation is applicable */
-			if (value->value_type == BSON_TYPE_UTF8 &&
-				IsCollationApplicable(collationString))
+			/*
+			 * Collate the whole string family, matching CompareBsonValue. The simple
+			 * locale is binary comparison, so it keeps the raw-byte hash.
+			 */
+			uint64 stringHash;
+			if (!IsCollationApplicable(collationString) ||
+				IsSimpleCollation(collationString))
 			{
-				char *sortKey = GetCollationSortKey(collationString,
-													value->value.v_utf8.str,
-													value->value.v_utf8.len);
-				int sortKeyLength = strlen(sortKey);
-				uint64 hashValue = hash_combine_func(
-					hash_bytes_func((uint8_t *) &typeCodeInt, sizeof(int), seed),
-					hash_bytes_func((uint8_t *) sortKey, sortKeyLength, seed));
-				pfree(sortKey);
-				return hashValue;
+				stringHash = hash_bytes_func((uint8_t *) value->value.v_utf8.str,
+											 value->value.v_utf8.len, seed);
+			}
+			else
+			{
+				stringHash = HashStringSortKey(collationString, value->value.v_utf8.str,
+											   value->value.v_utf8.len, hash_bytes_func,
+											   seed);
 			}
 
 			return hash_combine_func(
 				hash_bytes_func((uint8_t *) &typeCodeInt, sizeof(int), seed),
-				hash_bytes_func((uint8_t *) value->value.v_utf8.str,
-								value->value.v_utf8.len, seed));
+				stringHash);
 		}
 
 		case BSON_TYPE_DOCUMENT:
@@ -701,7 +736,6 @@ HashBsonValueCompare(const bson_value_t *value,
 				hash_bytes_func((uint8_t *) value->value.v_dbpointer.collection,
 								value->value.v_dbpointer.collection_len, seed));
 
-
 			return hash_combine_func(
 				codeHash,
 				hash_bytes_func((uint8_t *) &value->value.v_dbpointer.oid.bytes, 12,
@@ -720,8 +754,8 @@ HashBsonValueCompare(const bson_value_t *value,
 		{
 			uint64 codeHash = hash_combine_func(
 				hash_bytes_func((uint8_t *) &typeCodeInt, sizeof(int), seed),
-				hash_bytes_func((uint8_t *) value->value.v_code.code,
-								value->value.v_code.code_len, seed));
+				hash_bytes_func((uint8_t *) value->value.v_codewscope.code,
+								value->value.v_codewscope.code_len, seed));
 
 			bson_iter_t leftInnerIt;
 			if (!bson_iter_init_from_data(
@@ -733,10 +767,11 @@ HashBsonValueCompare(const bson_value_t *value,
 							"Could not initialize nested iterator for scope"));
 			}
 
+			const char *scopeCollationString = NULL;
 			return hash_combine_func(
 				codeHash,
 				BsonHashCompare(&leftInnerIt, hash_bytes_func, hash_combine_func, seed,
-								collationString));
+								scopeCollationString));
 		}
 
 		case BSON_TYPE_MAXKEY:

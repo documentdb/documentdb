@@ -8,6 +8,10 @@ set -e
 # declare all the versions of dependencies
 LIBBSON_VERSION=1.28.0
 
+# This maps to REL_19_0:fd90c3221850d9ee1d05f4ce3f5420a54b3e471c
+#TODO(PG19): Move this to a release version.
+POSTGRES_19_REF="REL_19_STABLE"
+
 # This maps to REL_18_0:3d6a828938a5fa0444275d3d2f67b64ec3199eb7
 POSTGRES_18_REF="REL_18_0"
 
@@ -21,16 +25,25 @@ POSTGRES_16_REF="REL_16_10"
 POSTGRES_15_REF="REL_15_14"
 
 # This contains the fix for supporting extended stats on expressions.
-CITUS_12_VERSION=ea7e5fc860b0693e19fb172f55c8b4303803c4cd
+CITUS_12_VERSION=cf0e6c359c07a0273e3946fadaed170e77fa5eea
 CITUS_14_VERSION=fe25f68a96c2d76bffce246b4ce0306f765332b4
 
 # This is commit 6a065fd8dfb280680304991aa30d7f72787fdb04
 RUM_VERSION=1.3.14
 # This is commit 465b38c737f584d520229f5a1d69d1d44649e4e5
 PG_CRON_VERSION=v1.6.7
+
+#TODO(PG19): Move this to a stable version.
+PG_CRON_PG19_VERSION=16618e69cb38f69abd6512b90e8c742010582e0e
+
 # This is commit 778dacf20c07caf904557a88705142631818d8cb
 PGVECTOR_VERSION=v0.8.1
 
+# This is commit 8ee86c96f0fd72390f890aa8a336fda6d3ab4c6c
+PGVECTOR_PG19_VERSION=v0.8.6
+
+#TODO(PG19): Move this to a stable version.
+POSTGIS_PG19_VERSION=3.7.0beta1
 POSTGIS_VERSION=3.6.0
 INTEL_DECIMAL_MATH_LIB_VERSION=applied/2.0u3-1
 PCRE2_VERSION=10.40
@@ -39,7 +52,9 @@ UNCRUSTIFY_VERSION=uncrustify-0.68.1
 function GetPostgresSourceRef()
 {
   local pgVersion=$1
-  if [ "$pgVersion" == "18" ]; then
+  if [ "$pgVersion" == "19" ]; then
+    echo $POSTGRES_19_REF
+  elif [ "$pgVersion" == "18" ]; then
     echo $POSTGRES_18_REF
   elif [ "$pgVersion" == "17" ]; then
     echo $POSTGRES_17_REF
@@ -60,7 +75,7 @@ function GetCitusVersion()
     echo $CITUS_14_VERSION
   elif [ "$PGVERSION" == "17" ]; then
     echo $CITUS_14_VERSION
-  # allow the caller to specify the version as 12 or v12.1 or v12.1.6
+  # allow the caller to specify the version as 12 or v12.1 or v12.1.6 or v12.1.14
   elif [ "$citusVersion" == "12" ] || [ "$citusVersion" == "v12.1" ] || [ "$citusVersion" == "$CITUS_12_VERSION" ]; then
     echo $CITUS_12_VERSION
   else
@@ -81,12 +96,20 @@ function GetLibbsonVersion()
 
 function GetPgCronVersion()
 {
-  echo $PG_CRON_VERSION
+  if [ "$PGVERSION" == "19" ]; then
+    echo $PG_CRON_PG19_VERSION
+  else
+    echo $PG_CRON_VERSION
+  fi
 }
 
 function GetPgVectorVersion()
 {
-  echo $PGVECTOR_VERSION
+  if [ "$PGVERSION" == "19" ]; then
+    echo $PGVECTOR_PG19_VERSION
+  else
+    echo $PGVECTOR_VERSION
+  fi
 }
 
 function GetIntelDecimalMathLibVersion()
@@ -101,7 +124,11 @@ function GetPcre2Version()
 
 function GetPostgisVersion()
 {
-  echo $POSTGIS_VERSION
+  if [ "$PGVERSION" == "19" ]; then
+    echo $POSTGIS_PG19_VERSION
+  else
+    echo $POSTGIS_VERSION
+  fi
 }
 
 function GetUncrustifyVersion()

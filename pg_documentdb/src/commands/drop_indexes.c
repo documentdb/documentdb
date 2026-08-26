@@ -10,6 +10,7 @@
 #include <postgres.h>
 #include <access/xact.h>
 #include <catalog/namespace.h>
+#include <catalog/dependency.h>
 #include <commands/sequence.h>
 #include <executor/spi.h>
 #include <fmgr.h>
@@ -589,6 +590,8 @@ ParseDropIndexesArg(pgbson *arg, Datum *databaseNameDatum)
 			EnsureTopLevelFieldType("dropIndexes.dropIndexes", &argIter, BSON_TYPE_UTF8);
 
 			const bson_value_t *dropIndexesVal = bson_iter_value(&argIter);
+			ValidateNamespaceStringForEmbeddedNull(dropIndexesVal->value.v_utf8.str,
+												   dropIndexesVal->value.v_utf8.len);
 			dropIndexesArg.collectionName = pstrdup(dropIndexesVal->value.v_utf8.str);
 		}
 		else if (strcmp(argKey, "index") == 0)
@@ -713,20 +716,59 @@ DropIndexesArgExpandIndexNameList(uint64 collectionId, DropIndexesArg *dropIndex
 
 
 /*
- * DropPostgresIndex drops GIN index with indexId.
+ * DropPostgresIndex drops the index with indexId.
+ *
+ * If `unique` is true, we check whether the physical index is actually backed
+ * by a constraint (exclusion or primary key). If it is, we use ALTER TABLE
+ * DROP CONSTRAINT via SPI. If not (e.g., a background unique index build that
+ * failed before registering the constraint), we use DROP INDEX via the same
+ * path as non-unique indexes.
+ *
+ * This mirrors the logic in DropPostgresIndexWithSuffix.
  */
 void
 DropPostgresIndex(uint64 collectionId, int indexId, bool unique, bool concurrently,
 				  bool forceReadWrite, bool missingOk)
 {
-	char *cmd = CreateDropIndexCommand(collectionId, indexId, unique, concurrently,
-									   missingOk);
-	ExecuteDropIndexCommand(cmd, unique, concurrently, forceReadWrite);
+	bool isConstraint = false;
 
-	if (concurrently)
+	if (unique)
 	{
-		DropIndexStatisticsForPlannerStatistics(collectionId, list_make1_int(indexId));
+		char indexName[NAMEDATALEN] = { 0 };
+		pg_sprintf(indexName, DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT, indexId);
+		Oid indexOid = get_relname_relid(indexName, ApiDataNamespaceOid());
+
+		if (OidIsValid(indexOid))
+		{
+			isConstraint = OidIsValid(get_index_constraint(indexOid));
+		}
+		else
+		{
+			if (missingOk)
+			{
+				/* Index doesn't exist — nothing to drop */
+				return;
+			}
+
+			ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
+							errmsg("index with id %d does not exist for "
+								   "collection " UINT64_FORMAT, indexId, collectionId)));
+		}
 	}
+
+	char *cmd = CreateDropIndexCommand(collectionId, indexId, isConstraint,
+									   concurrently, missingOk);
+
+	/*
+	 * Drop statistics before the index so that the stats object still exists on
+	 * the coordinator when the DROP STATISTICS command runs. This lets Citus
+	 * propagate the drop to shard tables. If we dropped after the index,
+	 * DEPENDENCY_AUTO would silently remove the coordinator stats first, making
+	 * the explicit DROP STATISTICS a no-op that Citus cannot map to shards.
+	 */
+	DropIndexStatisticsForPlannerStatistics(collectionId, list_make1_int(indexId));
+
+	ExecuteDropIndexCommand(cmd, isConstraint, concurrently, forceReadWrite);
 }
 
 
@@ -745,27 +787,57 @@ DropPostgresIndexWithSuffix(uint64 collectionId, IndexDetails *index, bool concu
 	Assert(suffix != NULL);
 
 	StringInfo cmdStr = makeStringInfo();
-	bool isUnique = GetBoolFromBoolIndexOptionDefaultFalse(index->indexSpec.indexUnique);
-	if (isUnique || (strncmp(index->indexSpec.indexName,
-							 ID_INDEX_NAME, strlen(ID_INDEX_NAME)) == 0))
+
+	/*
+	 * Determine the physical index name based on whether this is the _id index
+	 * or a regular index. We use the index spec name rather than probing the
+	 * catalog to avoid a race where a concurrent drop could cause us to
+	 * accidentally resolve and drop the real primary key constraint of another
+	 * collection's _id index.
+	 */
+	bool isIdIndex = (strncmp(index->indexSpec.indexName,
+							  ID_INDEX_NAME, strlen(ID_INDEX_NAME)) == 0);
+
+	char indexName[NAMEDATALEN] = { 0 };
+	if (isIdIndex)
 	{
-		/* These are constraints */
+		pg_sprintf(indexName, DOCUMENT_DATA_PRIMARY_KEY_FORMAT_PREFIX UINT64_FORMAT "%s",
+				   collectionId, suffix);
+	}
+	else
+	{
+		pg_sprintf(indexName, DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "%s",
+				   index->indexId, suffix);
+	}
+
+	Oid indexOid = get_relname_relid(indexName, ApiDataNamespaceOid());
+	if (!OidIsValid(indexOid))
+	{
+		if (!missingOk)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg(
+								"Unexpected index \"%s\" does not exist when trying to drop it.",
+								indexName)));
+		}
+
+		return;
+	}
+
+	/*
+	 * Check whether the physical index is backed by a constraint. This is
+	 * always true for _id indexes and can also be true for unique indexes
+	 * (including background unique index builds that failed validation but
+	 * already registered the constraint).
+	 */
+	bool isConstraint = isIdIndex || OidIsValid(get_index_constraint(indexOid));
+
+	if (isConstraint)
+	{
 		appendStringInfo(cmdStr,
 						 "ALTER TABLE %s." DOCUMENT_DATA_TABLE_NAME_FORMAT
-						 " DROP CONSTRAINT %s ", ApiDataSchemaName, collectionId,
-						 missingOk ? "IF EXISTS" : "");
-		if (isUnique)
-		{
-			appendStringInfo(cmdStr,
-							 DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "%s",
-							 index->indexId, suffix);
-		}
-		else
-		{
-			appendStringInfo(cmdStr,
-							 DOCUMENT_DATA_PRIMARY_KEY_FORMAT_PREFIX UINT64_FORMAT "%s",
-							 collectionId, suffix);
-		}
+						 " DROP CONSTRAINT %s %s", ApiDataSchemaName, collectionId,
+						 missingOk ? "IF EXISTS" : "", indexName);
 
 		bool isNull = true;
 		bool readOnly = false;
@@ -776,11 +848,10 @@ DropPostgresIndexWithSuffix(uint64 collectionId, IndexDetails *index, bool concu
 	{
 		/* These are indexes */
 		appendStringInfo(cmdStr,
-						 "DROP INDEX %s %s %s."
-						 DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "%s%s",
+						 "DROP INDEX %s %s %s.%s%s",
 						 concurrently ? "CONCURRENTLY" : "",
-						 missingOk ? "IF EXISTS" : "", ApiDataSchemaName, index->indexId,
-						 suffix, concurrently ? "" : " CASCADE");
+						 missingOk ? "IF EXISTS" : "", ApiDataSchemaName, indexName,
+						 concurrently ? "" : " CASCADE");
 
 		if (concurrently)
 		{
@@ -911,17 +982,61 @@ HandleDropIndexConcurrently(uint64 collectionId, int indexId, bool unique, bool
 
 	/* declared volatile because of the longjmp in PG_CATCH */
 	volatile bool indexDropped = false;
+
+	/*
+	 * Drop statistics before the index so that the stats object still
+	 * exists on the coordinator when the DROP STATISTICS command runs.
+	 * This lets Citus propagate the drop to shard tables.
+	 *
+	 * We must commit after dropping stats so that the locks acquired by
+	 * the DROP STATISTICS (and its Citus propagation to shards) are
+	 * released before the DROP INDEX CONCURRENTLY runs via a separate
+	 * libpq connection. Otherwise the libpq connection blocks waiting
+	 * for the locks held by this transaction, causing a hang.
+	 *
+	 * If the stats drop fails we must NOT proceed with the index drop,
+	 * otherwise the index would be removed while its statistics remain,
+	 * leaving stale stats behind.
+	 */
+	volatile bool statsDropped = false;
+	PG_TRY();
+	{
+		DropIndexStatisticsForPlannerStatistics(collectionId, list_make1_int(indexId));
+		PopAllActiveSnapshots();
+		CommitTransactionCommand();
+		StartTransactionCommand();
+		statsDropped = true;
+	}
+	PG_CATCH();
+	{
+		MemoryContextSwitchTo(oldMemContext);
+		ErrorData *edata = CopyErrorDataAndFlush();
+		result->errcode = edata->sqlerrcode;
+		result->errmsg = edata->message;
+		result->ok = false;
+
+		ereport(DEBUG1, (errmsg(
+							 "Failed to drop statistics for index %d on collection "
+							 UINT64_FORMAT, indexId, collectionId)));
+
+		PopAllActiveSnapshots();
+		AbortCurrentTransaction();
+		StartTransactionCommand();
+	}
+	PG_END_TRY();
+
+	if (!statsDropped)
+	{
+		return;
+	}
+
 	PG_TRY();
 	{
 		char *cmd = CreateDropIndexCommand(collectionId, indexId, unique, concurrently,
 										   missingOk);
+
 		bool forceReadWrite = false;
 		ExecuteDropIndexCommand(cmd, unique, concurrently, forceReadWrite);
-		if (concurrently)
-		{
-			DropIndexStatisticsForPlannerStatistics(collectionId, list_make1_int(
-														indexId));
-		}
 
 		indexDropped = true;
 	}

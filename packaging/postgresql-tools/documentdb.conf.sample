@@ -1,0 +1,32 @@
+# DocumentDB PostgreSQL configuration sample.
+#
+# Recommended:
+#   sudo documentdb-tune --pg-version N --cluster C --yes
+#
+# Manual setup:
+#   1. Copy this file to an existing PostgreSQL include directory and give it a
+#      .conf filename.
+#   2. Review the settings below for the target cluster.
+#   3. Restart PostgreSQL.
+
+# >>> documentdb-setup managed configuration >>>
+
+# Required libraries. PostgreSQL loads these at startup. Preserve existing
+# entries when applying this manually.
+shared_preload_libraries = 'pg_cron, pg_documentdb_core, pg_documentdb'
+
+# Scheduled and background work.
+# Store pg_cron job metadata in the postgres database.
+cron.database_name = 'postgres'
+# Enable DocumentDB background workers and their jobs.
+documentdb.enableBackgroundWorker = true
+documentdb.enableBackgroundWorkerJobs = true
+# Keep index builds off the DocumentDB background-worker queue.
+documentdb.indexBuildsScheduledOnBgWorker = false
+
+# Compression for newly written TOAST values. lz4 requires an lz4-enabled
+# PostgreSQL build and applies instance-wide. On a shared cluster, omit this
+# line or pass --toast-compression default to documentdb-tune.
+default_toast_compression = 'lz4'
+
+# <<< documentdb-setup managed configuration <<<

@@ -1,11 +1,16 @@
+# `imports_granularity`, `group_imports`, and `format_code_in_doc_comments` are
+# nightly-gated when set in a `rustfmt.toml`, but rustfmt accepts them on a
+# stable toolchain when they are passed as command-line `--config` flags. These
+# aliases are the single source of truth for that formatting; the `format` and
+# `format-check` tasks in `Makefile.toml` invoke them.
+#   cargo gwfmt        - apply the formatting
+#   cargo gwfmt-check  - verify without writing (what CI runs)
+[alias]
+gwfmt = "fmt --all -- --config imports_granularity=Crate --config group_imports=StdExternalCrate --config format_code_in_doc_comments=true"
+gwfmt-check = "fmt --all --check -- --config imports_granularity=Crate --config group_imports=StdExternalCrate --config format_code_in_doc_comments=true"
+
 [unstable]
 registry-auth = false
 
-[registries]
-crates_io = { index = "https://github.com/rust-lang/crates.io-index" }
-
-[source.crates-io]
-replace-with = "crates_io"
-
 [target.'cfg(target_arch = "x86_64")']
-rustflags = ["-C", "target-cpu=x86-64-v3", "-C", "force-frame-pointers=yes"]
+rustflags = ["-C", "target-cpu=x86-64-v3", "-C", "force-frame-pointers=yes", "-C", "target_feature=+avx2"]

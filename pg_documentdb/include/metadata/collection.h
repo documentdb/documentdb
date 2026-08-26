@@ -87,6 +87,12 @@ typedef struct MongoCollectionOptions
 {
 	/* Whether changeStreamPreAndPostImages is enabled for this collection */
 	bool changeStreamPreAndPostImagesEnabled;
+
+	/* Whether updateDescription is enabled for this collection */
+	bool updateDescriptionEnabled;
+
+	/* Whether planner statistics are enabled for this collection */
+	bool statsEnabled;
 } MongoCollectionOptions;
 
 
@@ -127,6 +133,9 @@ typedef struct
 
 	/* Whether or not the shard for the shardTableName is remote */
 	bool isShardRemote;
+
+	/* Whether the collection is a single-shard table */
+	bool isSingleShardTable;
 
 	/* Schema Validator if applicable */
 	SchemaValidatorInfo schemaValidator;
@@ -214,6 +223,12 @@ bool IsDataTableCreatedWithinCurrentXact(const MongoCollection *collection);
 /* make a copy of given MongoCollection */
 MongoCollection * CopyMongoCollection(const MongoCollection *collection);
 
+
+/* Copies collection metadata by ID and reports whether the collection exists. */
+bool TryCopyMongoCollectionByCollectionId(MongoCollection *collection,
+										  uint64 collectionId, LOCKMODE lockMode,
+										  bool copyByRefFields);
+
 /* get Mongo collection metadata by collection id */
 MongoCollection * GetMongoCollectionByColId(uint64 collectionId, LOCKMODE lockMode);
 
@@ -270,4 +285,6 @@ bool CheckRelNameValidity(const char *relName, uint64_t *collectionId,
 bool ParseChangeStreamPreAndPostImageOption(const bson_value_t *optionValue,
 											const char *commandPrefix);
 void UpdateChangeStreamPreAndPostImages(MongoCollection *collection, bool enabled);
+void UpdateEnableUpdateDescription(MongoCollection *collection, bool enabled);
+void UpdateCollectionStatsEnabledOption(uint64 collectionId, bool enabled);
 #endif

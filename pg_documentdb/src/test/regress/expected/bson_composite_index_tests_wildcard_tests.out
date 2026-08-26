@@ -11,35 +11,6 @@ NOTICE:  creating collection
  t
 (1 row)
 
--- Simple failure paths:
-set documentdb.enableCompositeWildcardIndex to off;
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "a.$**": 1 }, "name": "a_1", "enableOrderedIndex": true }]}', TRUE);
-ERROR:  Error in specification { "key" : { "a.$**" : 1 }, "name" : "a_1", "enableOrderedIndex" : true }:enableOrderedIndex is not supported with wildcard indexes.
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "$**": 1 }, "name": "$**_1", "enableOrderedIndex": true }]}', TRUE);
-ERROR:  Error in specification { "key" : { "$**" : 1 }, "name" : "$**_1", "enableOrderedIndex" : true }:enableOrderedIndex is not supported with wildcard indexes.
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "$**": -1 }, "name": "$**_-1", "enableOrderedIndex": true }]}', TRUE);
-ERROR:  Error in specification { "key" : { "$**" : -1 }, "name" : "$**_-1", "enableOrderedIndex" : true }:A numeric value in a $** index key pattern must be positive.
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "a.$**": -1 }, "name": "a_-1", "enableOrderedIndex": true }]}', TRUE);
-ERROR:  Error in specification { "key" : { "a.$**" : -1 }, "name" : "a_-1", "enableOrderedIndex" : true }:A numeric value in a $** index key pattern must be positive.
--- with unique
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "a.$**": 1 }, "name": "a_1", "enableOrderedIndex": true, "unique": true }]}', TRUE);
-ERROR:  Error in specification { "key" : { "a.$**" : 1 }, "name" : "a_1", "enableOrderedIndex" : true, "unique" : true }:enableOrderedIndex is not supported with wildcard indexes.
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "$**": 1 }, "name": "$**_1", "enableOrderedIndex": true, "unique": true }]}', TRUE);
-ERROR:  Error in specification { "key" : { "$**" : 1 }, "name" : "$**_1", "enableOrderedIndex" : true, "unique" : true }:enableOrderedIndex is not supported with wildcard indexes.
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "$**": -1 }, "name": "$**_-1", "enableOrderedIndex": true, "unique": true }]}', TRUE);
-ERROR:  Error in specification { "key" : { "$**" : -1 }, "name" : "$**_-1", "enableOrderedIndex" : true, "unique" : true }:A numeric value in a $** index key pattern must be positive.
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "a.$**": -1 }, "name": "a_-1", "enableOrderedIndex": true, "unique": true }]}', TRUE);
-ERROR:  Error in specification { "key" : { "a.$**" : -1 }, "name" : "a_-1", "enableOrderedIndex" : true, "unique" : true }:A numeric value in a $** index key pattern must be positive.
--- with composite
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "a.$**": 1, "b": 1 }, "name": "a_1", "enableOrderedIndex": true }]}', TRUE);
-ERROR:  Error in specification { "key" : { "a.$**" : 1, "b" : 1 }, "name" : "a_1", "enableOrderedIndex" : true }:wildcard indexes do not allow compounding
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "a.$**": 1, "b.$**": 1 }, "name": "a_1", "enableOrderedIndex": true }]}', TRUE);
-ERROR:  Error in specification { "key" : { "a.$**" : 1, "b.$**" : 1 }, "name" : "a_1", "enableOrderedIndex" : true }:wildcard indexes do not allow compounding
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "$**": 1, "b": 1 }, "name": "a_1", "enableOrderedIndex": true }]}', TRUE);
-ERROR:  Error in specification { "key" : { "$**" : 1, "b" : 1 }, "name" : "a_1", "enableOrderedIndex" : true }:wildcard indexes do not allow compounding
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "$**": 1, "b.$**": 1 }, "name": "a_1", "enableOrderedIndex": true }]}', TRUE);
-ERROR:  Error in specification { "key" : { "$**" : 1, "b.$**" : 1 }, "name" : "a_1", "enableOrderedIndex" : true }:wildcard indexes do not allow compounding
-set documentdb.enableCompositeWildcardIndex to on;
 set documentdb.enableExtendedExplainPlans to on;
 -- now we can create the ones that are valid - invalid cases still fail
 SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "a.$**": 1 }, "name": "a_1", "enableOrderedIndex": true }]}', TRUE);
@@ -171,7 +142,8 @@ SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_wildcard_gener
  gin_bson_get_composite_path_wildcard_generated_terms 
 ------------------------------------------------------
  { "$" : { "$undefined" : true }, "t" : false }
-(1 row)
+ { "" : [  ], "t" : false }
+(2 rows)
 
 SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_wildcard_generated_terms('{ "a": { "c": { "d": 1 } }, "b": "foo" }', '[ "a" ]', 2600, true, 0);
  gin_bson_get_composite_path_wildcard_generated_terms 
@@ -279,7 +251,8 @@ SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_wildcard_gener
 ------------------------------------------------------
  { "a" : { "$undefined" : true }, "t" : false }
  { "b" : { "$undefined" : true }, "t" : false }
-(2 rows)
+ { "" : [  ], "t" : false }
+(3 rows)
 
 SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_wildcard_generated_terms('{ "a": { "c": { "d": 1 } }, "b": { "c": { "d": 1 } } }', '[ "" ]', 2600, true, 0);
  gin_bson_get_composite_path_wildcard_generated_terms 
@@ -411,47 +384,59 @@ Check constraints:
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "b": 1 }}') $cmd$);
-                       run_explain_and_trim                       
-------------------------------------------------------------------
- Bitmap Heap Scan on documents_5401 collection
-   Recheck Cond: (shard_key_value = '5401'::bigint)
-   Filter: (document @= '{ "b" : { "$numberInt" : "1" } }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '5401'::bigint)
-(5 rows)
+                          run_explain_and_trim                          
+------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   namespaceName: compdb.compwildcard
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_5401 collection
+         Recheck Cond: (shard_key_value = '5401'::bigint)
+         Filter: (document @= '{ "b" : { "$numberInt" : "1" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '5401'::bigint)
+(8 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "ab": 1 }}') $cmd$);
-                       run_explain_and_trim                        
--------------------------------------------------------------------
- Bitmap Heap Scan on documents_5401 collection
-   Recheck Cond: (shard_key_value = '5401'::bigint)
-   Filter: (document @= '{ "ab" : { "$numberInt" : "1" } }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '5401'::bigint)
-(5 rows)
+                          run_explain_and_trim                           
+-------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   namespaceName: compdb.compwildcard
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_5401 collection
+         Recheck Cond: (shard_key_value = '5401'::bigint)
+         Filter: (document @= '{ "ab" : { "$numberInt" : "1" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '5401'::bigint)
+(8 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "a/b": 1 }}') $cmd$);
-                        run_explain_and_trim                        
---------------------------------------------------------------------
- Bitmap Heap Scan on documents_5401 collection
-   Recheck Cond: (shard_key_value = '5401'::bigint)
-   Filter: (document @= '{ "a/b" : { "$numberInt" : "1" } }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '5401'::bigint)
-(5 rows)
+                           run_explain_and_trim                           
+--------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   namespaceName: compdb.compwildcard
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_5401 collection
+         Recheck Cond: (shard_key_value = '5401'::bigint)
+         Filter: (document @= '{ "a/b" : { "$numberInt" : "1" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '5401'::bigint)
+(8 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "aa": 1 }}') $cmd$);
-                       run_explain_and_trim                        
--------------------------------------------------------------------
- Bitmap Heap Scan on documents_5401 collection
-   Recheck Cond: (shard_key_value = '5401'::bigint)
-   Filter: (document @= '{ "aa" : { "$numberInt" : "1" } }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '5401'::bigint)
-(5 rows)
+                          run_explain_and_trim                           
+-------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   namespaceName: compdb.compwildcard
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_5401 collection
+         Recheck Cond: (shard_key_value = '5401'::bigint)
+         Filter: (document @= '{ "aa" : { "$numberInt" : "1" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '5401'::bigint)
+(8 rows)
 
 set documentdb.forceDisableSeqScan to on;
 SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "b": 1 }}');

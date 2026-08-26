@@ -1,0 +1,108 @@
+name: Issue triage on merge
+
+# Manually-triggered triage: analyze a merged pull request (e.g. the most recent
+# sync) against the repository's OPEN issues and produce a SHORTLIST FOR HUMAN
+# REVIEW of issues the change might close. It never closes issues; the shortlist
+# is written to the workflow run summary for visibility and saved as an artifact.
+#
+# Inference uses GitHub Models (no external secret) via the GITHUB_TOKEN with the
+# `models: read` permission. Open issues are analyzed in token-budgeted batches
+# to stay within the GitHub Models per-request input limit.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_repo:
+        description: "owner/name of the repo whose merged PR and open issues to analyze"
+        required: false
+        default: "documentdb/documentdb"
+      pr_number:
+        description: "PR number to analyze (blank = most recently merged PR on the default branch)"
+        required: false
+        default: ""
+      model:
+        description: "GitHub Models id (e.g. openai/gpt-4o, openai/gpt-5, openai/o3)"
+        required: false
+        default: "openai/gpt-4o"
+      reasoning_effort:
+        description: "Reasoning effort for reasoning models (gpt-5/o3/deepseek-r1): blank, minimal, low, medium, high"
+        required: false
+        default: ""
+      verify_model:
+        description: "Optional separate model for stage-2 verification (e.g. openai/gpt-5). Blank = same as model."
+        required: false
+        default: ""
+      verify_reasoning_effort:
+        description: "Reasoning effort for the stage-2 verify model (when verify_model is set)"
+        required: false
+        default: ""
+      request_spacing_seconds:
+        description: "Seconds to wait between batches (use ~62 for gpt-5/o3 1-request/minute limit)"
+        required: false
+        default: "0"
+      stage1_passes:
+        description: "Stage-1 self-consistency passes (2 stabilises recall with a cheap stage-1 model)"
+        required: false
+        default: "2"
+      min_confidence:
+        description: "Minimum confidence (0-100) for an issue to appear in the shortlist"
+        required: false
+        default: "30"
+      max_issues:
+        description: "Maximum number of open issues to analyze"
+        required: false
+        default: "300"
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+  models: read
+
+concurrency:
+  group: issue-triage-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  triage:
+    runs-on: ubuntu-22.04
+    name: Triage closable issues
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Triage open issues against the merged PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TARGET_REPO: ${{ inputs.target_repo }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          MODEL: ${{ inputs.model }}
+          REASONING_EFFORT: ${{ inputs.reasoning_effort }}
+          VERIFY_MODEL: ${{ inputs.verify_model }}
+          VERIFY_REASONING_EFFORT: ${{ inputs.verify_reasoning_effort }}
+          REQUEST_SPACING_SECONDS: ${{ inputs.request_spacing_seconds }}
+          STAGE1_PASSES: ${{ inputs.stage1_passes }}
+          MIN_CONFIDENCE: ${{ inputs.min_confidence }}
+          MAX_ISSUES: ${{ inputs.max_issues }}
+        run: |
+          python3 .github/scripts/issue_triage.py run \
+            --target-repo "$TARGET_REPO" \
+            --pr-number "$PR_NUMBER" \
+            --model "$MODEL" \
+            --reasoning-effort "$REASONING_EFFORT" \
+            --verify-model "$VERIFY_MODEL" \
+            --verify-reasoning-effort "$VERIFY_REASONING_EFFORT" \
+            --request-spacing-seconds "$REQUEST_SPACING_SECONDS" \
+            --stage1-passes "$STAGE1_PASSES" \
+            --min-confidence "$MIN_CONFIDENCE" \
+            --max-issues "$MAX_ISSUES" \
+            --output-dir triage
+
+      - name: Upload triage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-triage
+          path: triage/
+          if-no-files-found: warn

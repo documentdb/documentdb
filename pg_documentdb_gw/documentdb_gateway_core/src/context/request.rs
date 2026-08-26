@@ -6,29 +6,43 @@
  *-------------------------------------------------------------------------
  */
 
-use crate::requests::{request_tracker::RequestTracker, Request, RequestInfo};
+use crate::requests::{request_tracker::RequestTracker, RequestType, WireRequest};
 
 #[derive(Debug)]
 pub struct RequestContext<'a> {
     pub activity_id: &'a str,
-    pub payload: &'a Request<'a>,
-    pub info: &'a RequestInfo<'a>,
+    request: &'a WireRequest<'a>,
     pub tracker: &'a RequestTracker,
 }
 
 impl<'a> RequestContext<'a> {
     #[must_use]
-    pub const fn get_components(&self) -> (&Request<'a>, &RequestInfo<'a>, &RequestTracker) {
-        (self.payload, self.info, self.tracker)
+    pub const fn new(
+        activity_id: &'a str,
+        request: &'a WireRequest<'a>,
+        tracker: &'a RequestTracker,
+    ) -> Self {
+        Self {
+            activity_id,
+            request,
+            tracker,
+        }
     }
 
     #[must_use]
-    pub const fn payload(&self) -> &'a Request<'a> {
-        self.payload
+    pub const fn request(&self) -> &'a WireRequest<'a> {
+        self.request
     }
 
+    /// Returns the request type parsed from the command name.
     #[must_use]
-    pub const fn info(&self) -> &'a RequestInfo<'a> {
-        self.info
+    pub const fn request_type(&self) -> RequestType {
+        self.request.request_type()
+    }
+
+    /// Returns the request type to execute after applying request metadata.
+    #[must_use]
+    pub const fn execution_request_type(&self) -> RequestType {
+        self.request.execution_request_type()
     }
 }

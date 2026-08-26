@@ -1,5 +1,6 @@
 documentdb (DOCUMENTDB_VERSION) unstable; urgency=medium
 
-  * This is only a template, should be replaced at build time.
+  * This is only a template; packaging/update_spec_changelog.sh replaces it
+    at build time with entries generated from CHANGELOG.md.
 
- -- Shuai Tian <shuaitian@microsoft.com>  Fri, Mon, 29 August 2025 12:00:00 +0000
+ -- DocumentDB Packaging <documentdb-packaging-maintainers@microsoft.com>  Fri, 29 Aug 2025 12:00:00 +0000

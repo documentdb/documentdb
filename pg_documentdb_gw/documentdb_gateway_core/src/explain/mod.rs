@@ -7,23 +7,21 @@
  */
 
 use core::f64;
-use std::{cmp::Ordering, collections::HashMap, str::FromStr};
+use std::{cmp::Ordering, collections::HashMap, str::FromStr, sync::LazyLock};
 
-use async_recursion::async_recursion;
 use bson::{rawdoc, Document, RawArrayBuf, RawBson, RawDocument, RawDocumentBuf};
 use model::{
-    DistributedJob, DistributedQueryPlan, DistributedSubPlan, ExplainPlan, IndexCost, IndexDetails,
-    PostgresExplain, VectorSearchParams,
+    DistributedJob, DistributedQueryPlan, DistributedSubPlan, ExplainPlan, ExplainWorker,
+    IndexCost, IndexDetails, PostgresExplain, VectorSearchParams,
 };
 use serde_json::Value;
-use std::sync::LazyLock;
 
 use crate::{
     context::{ConnectionContext, RequestContext},
     error::{DocumentDBError, Result},
     postgres::{PgDataClient, QueryCatalog},
     protocol::OK_SUCCEEDED,
-    requests::{Request, RequestInfo, RequestType},
+    requests::{ExplainTarget, RequestType},
     responses::{RawResponse, Response},
 };
 
@@ -107,111 +105,74 @@ fn write_output_stage(
     }
 }
 
-/// Processing explain is a bit complicated because the payload can come in two forms:
-/// A command with explain:true, or an explain command wrapping a sub command
-#[async_recursion]
+/// Processing explain handles both inline `explain: true` and top-level explain wrappers.
+///
+/// # Errors
+///
+/// Returns an error if the explain target is malformed or backend explain execution fails.
 pub async fn process_explain(
     request_context: &RequestContext<'_>,
     verbosity: Option<Verbosity>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    // Extract the first command from the request document
-    let first_command = {
-        let request = request_context.payload;
-        request.document().into_iter().next()
-    };
+    let target = request_context.request().explain_target()?;
+    let request_document = request_context.request().document();
 
-    if let Some(result) = first_command {
-        let result = result?;
+    let verbosity = verbosity.unwrap_or_else(|| {
+        request_document
+            .get_str("verbosity")
+            .map_or(Verbosity::QueryPlanner, Verbosity::from_str)
+    });
 
-        // Default to QueryPlanner here, as Default tends to be too brief
-        let verbosity = verbosity.unwrap_or_else(|| {
-            let request = request_context.payload;
-            request
-                .document()
-                .get_str("verbosity")
-                .map_or(Verbosity::QueryPlanner, Verbosity::from_str)
-        });
-
-        match result.0 {
-            "explain" => {
-                if let Some(explain_doc) = result.1.as_document() {
-                    let new_request = Request::Raw(
-                        RequestType::Explain,
-                        explain_doc,
-                        request_context.payload.extra(),
-                    );
-
-                    let new_request_context = RequestContext {
-                        activity_id: request_context.activity_id,
-                        payload: &new_request,
-                        info: request_context.info,
-                        tracker: request_context.tracker,
-                    };
-
-                    // Recursive call with the unwrapped command
-                    Box::pin(process_explain(
-                        &new_request_context,
-                        Some(verbosity),
-                        connection_context,
-                        pg_data_client,
-                    ))
-                    .await
-                } else {
-                    Err(DocumentDBError::bad_value(
-                        "Explain command was not a document.".to_owned(),
-                    ))
-                }
-            }
-            "aggregate" => {
-                run_explain(
-                    request_context,
-                    "pipeline",
-                    verbosity,
-                    connection_context,
-                    pg_data_client,
-                )
-                .await
-            }
-            "find" => {
-                run_explain(
-                    request_context,
-                    "find",
-                    verbosity,
-                    connection_context,
-                    pg_data_client,
-                )
-                .await
-            }
-            "count" => {
-                run_explain(
-                    request_context,
-                    "count",
-                    verbosity,
-                    connection_context,
-                    pg_data_client,
-                )
-                .await
-            }
-            "distinct" => {
-                run_explain(
-                    request_context,
-                    "distinct",
-                    verbosity,
-                    connection_context,
-                    pg_data_client,
-                )
-                .await
-            }
-            _ => Err(DocumentDBError::bad_value(
-                "Unrecognized explain command.".to_owned(),
-            )),
+    match target.request_type() {
+        RequestType::Aggregate => {
+            run_explain(
+                request_context,
+                &target,
+                "pipeline",
+                verbosity,
+                connection_context,
+                pg_data_client,
+            )
+            .await
         }
-    } else {
-        Err(DocumentDBError::bad_value(
-            "No command was provided to explain".to_owned(),
-        ))
+        RequestType::Find => {
+            run_explain(
+                request_context,
+                &target,
+                "find",
+                verbosity,
+                connection_context,
+                pg_data_client,
+            )
+            .await
+        }
+        RequestType::Count => {
+            run_explain(
+                request_context,
+                &target,
+                "count",
+                verbosity,
+                connection_context,
+                pg_data_client,
+            )
+            .await
+        }
+        RequestType::Distinct => {
+            run_explain(
+                request_context,
+                &target,
+                "distinct",
+                verbosity,
+                connection_context,
+                pg_data_client,
+            )
+            .await
+        }
+        _ => Err(DocumentDBError::bad_value(
+            "Unrecognized explain command.".to_owned(),
+        )),
     }
 }
 
@@ -241,16 +202,22 @@ impl Verbosity {
 #[expect(clippy::expect_used, reason = "values are checked before access")]
 async fn run_explain(
     request_context: &RequestContext<'_>,
+    target: &ExplainTarget<'_>,
     query_base: &str,
     verbosity: Verbosity,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let request = request_context.payload;
-    let request_info = request_context.info;
+    let request = request_context.request();
 
     let (explain_response, query) = pg_data_client
-        .execute_explain(request_context, query_base, verbosity, connection_context)
+        .execute_explain(
+            request_context,
+            target,
+            query_base,
+            verbosity,
+            connection_context,
+        )
         .await?;
 
     let dynamic_config = connection_context.dynamic_configuration();
@@ -261,10 +228,10 @@ async fn run_explain(
                 .enable_developer_explain()
                 .then(|| convert_to_bson(content.clone()));
 
-            let (collection_name, subtype) = get_subtype_and_collection_name(request)?;
+            let (collection_name, subtype) = get_subtype_and_collection_name(target)?;
             let (body, planning_time, execution_time, data_size) = transform_explain(
                 content,
-                request_info.db()?,
+                request.db(),
                 collection_name,
                 subtype,
                 query_base,
@@ -277,7 +244,7 @@ async fn run_explain(
 
             let command_str = format!(
                 "db.runCommand({{explain: {}}})",
-                Document::try_from(request.document())?
+                Document::try_from(target.document())?
                     .to_string()
                     .replace('\"', "'")
             );
@@ -308,6 +275,12 @@ async fn run_explain(
                 explain.append("dataSize", data_size);
             }
 
+            if let Some(instance_name) = dynamic_config.instance_name() {
+                if !instance_name.is_empty() {
+                    explain.append("instanceName", instance_name);
+                }
+            }
+
             // Merge body fields into explain
             for (key, val) in body.into_iter().flatten() {
                 explain.append(key, val.to_raw_bson());
@@ -319,15 +292,15 @@ async fn run_explain(
                     developer_explain(
                         &query,
                         explain_content.expect("Set during developer explain"),
-                        request.document(),
-                        request_info,
+                        target.document(),
+                        request.db(),
                     ),
                 );
             }
 
             explain.append("ok", OK_SUCCEEDED);
 
-            Ok(Response::Raw(RawResponse(explain)))
+            Ok(Response::Raw(RawResponse::new(explain)))
         }
         None => Err(DocumentDBError::internal_error(
             "PG returned no rows in response".to_owned(),
@@ -339,31 +312,48 @@ fn developer_explain(
     query: &str,
     explain_content: RawBson,
     request: &RawDocument,
-    request_info: &RequestInfo,
+    db: &str,
 ) -> RawDocumentBuf {
     rawdoc! {
         "sql": {
             "query": query
         },
-        "query_parameters":[request_info.db().unwrap_or_default(), request.to_raw_document_buf()],
+        "query_parameters":[db, request.to_raw_document_buf()],
         "explain": explain_content
     }
 }
 
-fn get_subtype_and_collection_name<'a>(request: &'a Request<'_>) -> Result<(&'a str, RequestType)> {
+fn get_subtype_and_collection_name<'a>(
+    target: &ExplainTarget<'a>,
+) -> Result<(&'a str, RequestType)> {
+    if let Some(collection) = target.collection() {
+        return Ok((collection, target.request_type()));
+    }
+
     let (key, first_field) =
-        request
+        target
             .document()
             .into_iter()
             .next()
             .ok_or(DocumentDBError::bad_value(
                 "Explain request was empty".to_owned(),
             ))??;
-    Ok((
-        first_field.as_str().ok_or(DocumentDBError::bad_value(
-            "First field of explain document needs to be a string".to_owned(),
-        ))?,
-        RequestType::from_str(key)?,
+    let request_type = RequestType::from_str(key)?;
+
+    if let Some(collection) = first_field.as_str() {
+        return Ok((collection, request_type));
+    }
+
+    if request_type == RequestType::Aggregate
+        && (first_field.as_i32().is_some()
+            || first_field.as_i64().is_some()
+            || first_field.as_f64().is_some())
+    {
+        return Ok(("", request_type));
+    }
+
+    Err(DocumentDBError::bad_value(
+        "First field of explain document needs to be a string".to_owned(),
     ))
 }
 
@@ -411,21 +401,12 @@ fn transform_explain(
     Ok((base_result, planning_time, execution_time, data_size))
 }
 
-#[expect(clippy::expect_used, reason = "values are checked before access")]
 fn decompose_distributed_plan(mut explain_plan: ExplainPlan) -> ExplainPlan {
-    if explain_plan.distributed_plan.is_some()
-        && explain_plan
-            .distributed_plan
-            .as_ref()
-            .is_some_and(|dplan| dplan.subplans.is_some())
+    if let Some(mut subplans) = explain_plan
+        .distributed_plan
+        .as_mut()
+        .and_then(|dplan| dplan.subplans.take())
     {
-        let mut subplans = explain_plan
-            .distributed_plan
-            .as_mut()
-            .expect("Checked")
-            .subplans
-            .take()
-            .expect("Checked");
         return decompose_plan_with_subplans(explain_plan, &mut subplans);
     }
 
@@ -985,6 +966,15 @@ fn get_stage_from_plan(
                         }
                     }
                     "DocumentDBApiExplainQueryScan" => ("ExplainWrapper".to_owned(), None),
+                    "DocumentDBApiDistinctQueryScan" => ("DISTINCT_SCAN".to_owned(), None),
+                    "DocumentDBApiReservoirSample" => ("SAMPLESORT".to_owned(), None),
+                    scan_type if query_catalog.scan_type_stage_override(scan_type).is_some() => (
+                        query_catalog
+                            .scan_type_stage_override(scan_type)
+                            .expect("checked")
+                            .to_owned(),
+                        None,
+                    ),
                     scan_type if query_catalog.scan_types().contains(&scan_type.to_owned()) => {
                         ("FETCH".to_owned(), None)
                     }
@@ -1002,7 +992,7 @@ fn get_stage_from_plan(
             if let Some(function_name) = plan.function_name.as_deref() {
                 match function_name {
                     "empty_data_table" => return ("EOF".to_owned(), None),
-                    "bson_lookup_unwind" => {
+                    "bson_lookup_unwind"
                         // A lookup unwind as the base RTE
                         if (plan.inner_plans.is_none()
                             || plan
@@ -1013,10 +1003,9 @@ fn get_stage_from_plan(
                                 || plan
                                     .parent_relationship
                                     .as_ref()
-                                    .is_some_and(|pr| pr != "Outer"))
-                        {
-                            return ("DOCUMENTS_AGG".to_owned(), None);
-                        }
+                                    .is_some_and(|pr| pr != "Outer")) =>
+                    {
+                        return ("DOCUMENTS_AGG".to_owned(), None);
                     }
                     "coll_stats_aggregation" => {
                         if parent_stage.is_some_and(|x| x == "COUNT") {
@@ -1034,6 +1023,7 @@ fn get_stage_from_plan(
             ("FUNCSCAN".to_owned(), None)
         }
         "Explain_Count_Scan" => ("COUNT".to_owned(), None),
+        "Merge Append" => ("SORT_MERGE".to_owned(), None),
         "Append" => {
             // This is an estimate of the behavior - could be incorrect, but
             // as a starting point "good enough".
@@ -1225,6 +1215,17 @@ fn classify_stages(
         return None;
     }
 
+    // When SAMPLESORT comes from DocumentDBApiReservoirSample CustomScan, treat it as
+    // terminal so it stays inside $cursor. On single-node the ExplainWrapper already
+    // collapses it, but on multi-node the ExplainWrapper is on the coordinator and gets
+    // stripped during Citus subplan substitution, exposing SAMPLESORT at the top level.
+    if stage_name == "SAMPLESORT"
+        && plan.custom_plan_provider.as_deref() == Some("DocumentDBApiReservoirSample")
+    {
+        processed_stages.push(("$cursor".to_owned(), plan, stage_name, None));
+        return None;
+    }
+
     // if this is a Lookup JOIN then we automatically treat it as terminal.
     // all nested stages get placed under this one.
     // also let it parent under the root $lookup projection.
@@ -1346,10 +1347,6 @@ fn get_total_examined(plan: &ExplainPlan) -> (i64, i64) {
     clippy::too_many_lines,
     reason = "query planner output construction requires many conditional fields"
 )]
-#[expect(
-    clippy::unwrap_used,
-    reason = "values are checked for Some before unwrapping"
-)]
 #[expect(clippy::expect_used, reason = "values are checked before access")]
 fn query_planner(
     plan: ExplainPlan,
@@ -1379,6 +1376,18 @@ fn query_planner(
                 doc.append("ns", namespace_name);
             }
 
+            if let Some(cursor_scan_type) = plan.cursor_scan_type.as_deref() {
+                doc.append("cursorScanType", cursor_scan_type);
+            }
+
+            if plan.has_distinct_dedup {
+                doc.append("hasDistinctDedup", true);
+            }
+
+            if plan.has_multi_key_row_dedup {
+                doc.append("hasMultiKeyRowDedup", true);
+            }
+
             if stage_name != "FETCH" {
                 if let Some(index_name) = plan.index_name.as_deref() {
                     doc.append("indexName", index_name);
@@ -1396,60 +1405,25 @@ fn query_planner(
                     doc.append("isIndexOnlyScan", true);
                 }
 
-                if plan.index_details.is_some() {
-                    let mut arr = RawArrayBuf::new();
-                    for detail in plan.index_details.as_ref().unwrap() {
-                        if detail.index_name.as_deref() != plan.index_name.as_deref() {
-                            continue;
-                        }
+                if let Some(details) = plan.index_details.as_ref() {
+                    let matching: Vec<&IndexDetails> = details
+                        .iter()
+                        .filter(|d| d.index_name.as_deref() == plan.index_name.as_deref())
+                        .collect();
 
+                    if matching.len() == 1 {
                         let mut index_doc = rawdoc! {};
-                        if let Some(index_name) = detail.index_name.as_deref() {
-                            index_doc.append("indexName", index_name);
+                        write_query_planner_index_usage(matching[0], &mut index_doc);
+                        doc.append("indexUsage", index_doc);
+                    } else if matching.len() > 1 {
+                        let mut arr = RawArrayBuf::new();
+                        for detail in &matching {
+                            let mut index_doc = rawdoc! {};
+                            write_query_planner_index_usage(detail, &mut index_doc);
+                            arr.push(index_doc);
                         }
-
-                        if let Some(multi_key_val) = detail.is_multi_key {
-                            index_doc.append("isMultiKey", multi_key_val);
-                        }
-
-                        if let Some(has_truncation_val) = detail.has_truncation {
-                            index_doc.append("hasTruncation", has_truncation_val);
-                        }
-
-                        if let Some(index_bounds) = detail.index_bounds.as_ref() {
-                            if !index_bounds.is_empty() {
-                                let mut bounds_arr = RawArrayBuf::new();
-                                for key in index_bounds {
-                                    bounds_arr.push(key.as_str());
-                                }
-                                index_doc.append("bounds", bounds_arr);
-                            }
-                        }
-
-                        if let Some(start_bounds) = detail.start_bounds.as_ref() {
-                            if !start_bounds.is_empty() {
-                                let mut bounds_arr = RawArrayBuf::new();
-                                for key in start_bounds {
-                                    bounds_arr.push(key.as_str());
-                                }
-                                index_doc.append("startBounds", bounds_arr);
-                            }
-                        }
-
-                        if let Some(raw_bounds) = detail.raw_bounds.as_ref() {
-                            if !raw_bounds.is_empty() {
-                                let mut bounds_arr = RawArrayBuf::new();
-                                for key in raw_bounds {
-                                    bounds_arr.push(key.as_str());
-                                }
-                                index_doc.append("rawBounds", bounds_arr);
-                            }
-                        }
-
-                        arr.push(index_doc);
+                        doc.append("indexUsages", arr);
                     }
-
-                    doc.append("indexUsage", arr);
                 }
             }
 
@@ -1459,12 +1433,62 @@ fn query_planner(
                 }
             }
 
+            if let Some(sample_size) = plan.sample_size {
+                if sample_size > 0 {
+                    doc.append("sampleSize", smallest_from_i64(sample_size));
+                }
+            }
+
+            if let Some(sample_reservoir_method) = &plan.sample_reservoir_method {
+                doc.append("sampleReservoirMethod", sample_reservoir_method.as_str());
+            }
+
+            if let Some(sample_rows_skipped) = plan.sample_rows_skipped {
+                doc.append("sampleRowsSkipped", smallest_from_i64(sample_rows_skipped));
+            }
+
+            if let Some(sample_heap_fetches) = plan.sample_heap_fetches {
+                doc.append("sampleHeapFetches", smallest_from_i64(sample_heap_fetches));
+            }
+
             if let Some(startup_cost) = plan.startup_cost {
                 doc.append("startupCost", startup_cost);
             }
 
             if let Some(total_cost) = plan.total_cost {
                 doc.append("totalCost", total_cost);
+            }
+
+            if let Some(workers_planned) = plan.workers_planned {
+                if workers_planned > 0 {
+                    doc.append("workersPlanned", smallest_from_i64(workers_planned));
+                }
+            }
+
+            if let Some(strategy) = plan.strategy.as_deref() {
+                if !strategy.eq_ignore_ascii_case("Plain") {
+                    doc.append("aggStrategy", strategy);
+                }
+            }
+
+            if stage_name == "GROUP" {
+                if let Some(group_keys) = plan.group_key.as_ref() {
+                    let mut group_keys_array = RawArrayBuf::new();
+                    for group_key in group_keys {
+                        if let Some(group_key) = query_diagnostics::get_group_key(group_key) {
+                            group_keys_array.push(group_key);
+                        }
+                    }
+                    if !group_keys_array.is_empty() {
+                        doc.append("groupKey", group_keys_array);
+                    }
+                }
+            }
+
+            if let Some(join_type) = plan.join_type.as_deref() {
+                if plan.node_type == "Nested Loop" {
+                    doc.append("joinType", join_type);
+                }
             }
 
             if let Some(vector_search_params) = plan.vector_search_custom_params.as_deref() {
@@ -1516,6 +1540,11 @@ fn query_planner(
                 }
                 if !sort_keys_arr.is_empty() {
                     doc.append("sortKey", sort_keys_arr);
+                }
+                if let Some(collation) = sort_keys.iter().find_map(|sort_key| {
+                    query_diagnostics::get_sort_collation(sort_key, query_catalog)
+                }) {
+                    doc.append("collation", collation);
                 }
             }
             if let Some(presorted_keys) = plan.presorted_key.as_ref() {
@@ -1581,13 +1610,164 @@ fn query_planner(
     writer
 }
 
-fn limited_array_from_contents(contents: Vec<(&'static str, RawDocumentBuf)>) -> RawArrayBuf {
+/// Writes the index usage fields for a single `IndexDetails` entry in the
+/// query planner stage output (bounds, truncation, multi-key).
+fn write_query_planner_index_usage(detail: &IndexDetails, index_doc: &mut RawDocumentBuf) {
+    if let Some(index_key) = detail.index_key.as_deref() {
+        index_doc.append("indexKeyString", index_key);
+    }
+
+    if let Some(index_collation) = detail.index_collation.as_deref() {
+        index_doc.append("indexCollation", index_collation);
+    }
+
+    if let Some(multi_key_val) = detail.is_multi_key {
+        index_doc.append("isMultiKey", multi_key_val);
+    }
+
+    if let Some(multi_key_paths) = detail.multi_key_paths.as_ref() {
+        if !multi_key_paths.is_empty() {
+            index_doc.append("multiKeyPaths", truncated_string_array(multi_key_paths));
+        }
+    }
+
+    if let Some(has_truncation_val) = detail.has_truncation {
+        index_doc.append("hasTruncation", has_truncation_val);
+    }
+
+    if let Some(truncated_paths) = detail.truncated_paths.as_ref() {
+        if !truncated_paths.is_empty() {
+            index_doc.append("truncatedPaths", truncated_string_array(truncated_paths));
+        }
+    }
+
+    if let Some(index_bounds) = detail.index_bounds.as_ref() {
+        if !index_bounds.is_empty() {
+            index_doc.append("bounds", truncated_string_array(index_bounds));
+        }
+    }
+
+    if let Some(start_bounds) = detail.start_bounds.as_ref() {
+        if !start_bounds.is_empty() {
+            index_doc.append("startBounds", truncated_string_array(start_bounds));
+        }
+    }
+
+    if let Some(raw_bounds) = detail.raw_bounds.as_ref() {
+        if !raw_bounds.is_empty() {
+            index_doc.append("rawBounds", truncated_string_array(raw_bounds));
+        }
+    }
+}
+
+/// Writes the index usage fields for a single `IndexDetails` entry in the
+/// execution stats stage output (scan loops, scan type, duplicates, etc.).
+fn write_execution_stats_index_usage(detail: &IndexDetails, index_doc: &mut RawDocumentBuf) {
+    if let Some(inner_scan_loops) = detail.inner_scan_loops {
+        if inner_scan_loops > 0 {
+            index_doc.append("scanLoops", smallest_from_i64(inner_scan_loops));
+        }
+    }
+
+    if let Some(parallel_scan_loops) = detail.parallel_scan_loops {
+        if parallel_scan_loops > 0 {
+            index_doc.append("parallelScanLoops", smallest_from_i64(parallel_scan_loops));
+        }
+    }
+
+    if let Some(scan_type) = detail.scan_type.as_deref() {
+        if !scan_type.is_empty() {
+            index_doc.append("scanType", scan_type);
+        }
+    }
+
+    if let Some(num_duplicates) = detail.num_duplicates {
+        if num_duplicates > 0 {
+            index_doc.append("numDuplicates", smallest_from_i64(num_duplicates));
+        }
+    }
+
+    if let Some(num_dead_entries_or_pages_skipped) = detail.dead_entries_or_pages_skipped {
+        index_doc.append(
+            "deadEntriesOrPagesSkipped",
+            smallest_from_i64(num_dead_entries_or_pages_skipped),
+        );
+    }
+
+    if let Some(num_eligible_dead_items) = detail.eligible_dead_items {
+        index_doc.append(
+            "eligibleDeadItems",
+            smallest_from_i64(num_eligible_dead_items),
+        );
+    }
+
+    if let Some(num_high_key_eligible_pages) = detail.high_key_eligible_pages {
+        index_doc.append(
+            "highKeyEligiblePages",
+            smallest_from_i64(num_high_key_eligible_pages),
+        );
+    }
+
+    if let Some(parallel_scan_capable) = detail.parallel_scan_capable {
+        index_doc.append("parallelScanCapable", parallel_scan_capable);
+    }
+
+    if let Some(is_backward_scan) = detail.is_backward_scan {
+        index_doc.append("isBackwardScan", is_backward_scan);
+    }
+
+    if let Some(has_correlated_terms) = detail.has_correlated_terms {
+        index_doc.append("hasCorrelatedTerms", has_correlated_terms);
+    }
+
+    if let Some(scan_key_details) = detail.scan_key_details.as_ref() {
+        if !scan_key_details.is_empty() {
+            let mut scan_key_arr = RawArrayBuf::new();
+            for key in scan_key_details {
+                scan_key_arr.push(key.as_str());
+            }
+            index_doc.append("scanKeys", scan_key_arr);
+        }
+    }
+}
+
+/// Builds a `RawArrayBuf` from string values, truncating individual entries
+/// and stopping early when the accumulated length exceeds
+/// `MAX_EXPLAIN_BSON_COMMAND_LENGTH`. This prevents extremely large index
+/// bounds from producing oversized explain responses.
+fn truncated_string_array(values: &[String]) -> RawArrayBuf {
+    let mut arr = RawArrayBuf::new();
+    let mut accumulated_length: usize = 0;
+    for value in values {
+        if accumulated_length >= MAX_EXPLAIN_BSON_COMMAND_LENGTH {
+            arr.push("...");
+            break;
+        }
+
+        let remaining = MAX_EXPLAIN_BSON_COMMAND_LENGTH - accumulated_length;
+        if value.len() > remaining {
+            let truncate_at = value.floor_char_boundary(remaining);
+            arr.push(&value[..truncate_at]);
+            break;
+        }
+
+        arr.push(value.as_str());
+        accumulated_length += value.len();
+    }
+    arr
+}
+
+fn limited_array_from_contents(
+    contents: Vec<(&'static str, Option<String>, RawDocumentBuf)>,
+) -> RawArrayBuf {
     let mut accumulated_length = 0;
     let mut arr = RawArrayBuf::new();
-    for (expr, value) in contents {
+    for (expr, field, value) in contents {
+        let mut field_override = None;
+        let value_len = value.as_bytes().len();
         let expr_value = if accumulated_length > MAX_EXPLAIN_BSON_COMMAND_LENGTH {
             RawBson::from("...")
-        } else if value.as_bytes().len() > MAX_EXPLAIN_BSON_COMMAND_LENGTH {
+        } else if value_len > MAX_EXPLAIN_BSON_COMMAND_LENGTH {
             accumulated_length += MAX_EXPLAIN_BSON_COMMAND_LENGTH;
             RawBson::from(format!(
                 "{}...",
@@ -1595,14 +1775,41 @@ fn limited_array_from_contents(contents: Vec<(&'static str, RawDocumentBuf)>) ->
                     [0..MAX_EXPLAIN_BSON_COMMAND_LENGTH]
             ))
         } else {
-            accumulated_length += value.as_bytes().len();
-            RawBson::from(value)
+            accumulated_length += value_len;
+            let mut value_iter = value.as_ref().iter();
+            if let Some(Ok(element_ref)) = value_iter.next() {
+                if value_iter.next().is_none() {
+                    field_override = if element_ref.0.is_empty() {
+                        None
+                    } else {
+                        Some(element_ref.0.to_owned())
+                    };
+                    element_ref.1.to_raw_bson()
+                } else {
+                    RawBson::from(value)
+                }
+            } else {
+                RawBson::from(value)
+            }
         };
 
-        let doc = rawdoc! {
+        let inner_doc = rawdoc! {
             expr: expr_value
         };
-        arr.push(doc);
+
+        if let Some(field) = field {
+            let doc = rawdoc! {
+                field: inner_doc
+            };
+            arr.push(doc);
+        } else if let Some(local_field) = field_override {
+            let doc = rawdoc! {
+                local_field: inner_doc
+            };
+            arr.push(doc);
+        } else {
+            arr.push(inner_doc);
+        }
     }
     arr
 }
@@ -1611,11 +1818,8 @@ fn limited_array_from_contents(contents: Vec<(&'static str, RawDocumentBuf)>) ->
     clippy::too_many_lines,
     reason = "execution stats output requires many conditional fields"
 )]
-#[expect(
-    clippy::unwrap_used,
-    reason = "values are checked for Some before unwrapping"
-)]
 fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocumentBuf {
+    let plan = skip_stage(plan, query_catalog);
     let (total_rows_examined, total_keys_examined) = get_total_examined(&plan);
     let execution_time = smallest_from_f64(truncate_latency(plan.actual_total_time.unwrap_or(0.0)));
     let execution_start_at_time =
@@ -1646,6 +1850,21 @@ fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocume
             );
         }
 
+        if let Some(skipped_tuples) = plan.skipped_tuples {
+            if skipped_tuples > 0.0 {
+                doc.append("skippedTuples", smallest_from_f64(skipped_tuples));
+            }
+        }
+
+        if let Some(duplicate_rows_removed) = plan.duplicate_rows_removed {
+            if duplicate_rows_removed > 0.0 {
+                doc.append(
+                    "duplicateRowsRemoved",
+                    smallest_from_f64(duplicate_rows_removed),
+                );
+            }
+        }
+
         if stage_name != "FETCH" {
             if let Some(index_name) = plan.index_name.as_deref() {
                 doc.append("indexName", index_name);
@@ -1655,70 +1874,25 @@ fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocume
                 doc.append("totalDocsAnalyzed", smallest_from_i64(heap_fetches));
             }
 
-            if plan.index_details.is_some() {
-                let mut arr = RawArrayBuf::new();
-                for detail in plan.index_details.as_ref().unwrap() {
-                    if detail.index_name.as_deref() != plan.index_name.as_deref() {
-                        continue;
-                    }
+            if let Some(details) = plan.index_details.as_ref() {
+                let matching: Vec<&IndexDetails> = details
+                    .iter()
+                    .filter(|d| d.index_name.as_deref() == plan.index_name.as_deref())
+                    .collect();
+
+                if matching.len() == 1 {
                     let mut index_doc = rawdoc! {};
-                    if let Some(index_key) = detail.index_key.as_deref() {
-                        index_doc.append("indexKeyString", index_key);
+                    write_execution_stats_index_usage(matching[0], &mut index_doc);
+                    doc.append("indexUsage", index_doc);
+                } else if matching.len() > 1 {
+                    let mut arr = RawArrayBuf::new();
+                    for detail in &matching {
+                        let mut index_doc = rawdoc! {};
+                        write_execution_stats_index_usage(detail, &mut index_doc);
+                        arr.push(index_doc);
                     }
-
-                    if let Some(inner_scan_loops) = detail.inner_scan_loops {
-                        if inner_scan_loops > 0 {
-                            index_doc.append("scanLoops", smallest_from_i64(inner_scan_loops));
-                        }
-                    }
-
-                    if let Some(scan_type) = detail.scan_type.as_deref() {
-                        if !scan_type.is_empty() {
-                            index_doc.append("scanType", scan_type);
-                        }
-                    }
-
-                    if let Some(num_duplicates) = detail.num_duplicates {
-                        if num_duplicates > 0 {
-                            index_doc.append("numDuplicates", smallest_from_i64(num_duplicates));
-                        }
-                    }
-
-                    if let Some(num_dead_entries_or_pages_skipped) =
-                        detail.dead_entries_or_pages_skipped
-                    {
-                        index_doc.append(
-                            "deadEntriesOrPagesSkipped",
-                            smallest_from_i64(num_dead_entries_or_pages_skipped),
-                        );
-                    }
-
-                    if let Some(parallel_scan_capable) = detail.parallel_scan_capable {
-                        index_doc.append("parallelScanCapable", parallel_scan_capable);
-                    }
-
-                    if let Some(is_backward_scan) = detail.is_backward_scan {
-                        index_doc.append("isBackwardScan", is_backward_scan);
-                    }
-
-                    if let Some(has_correlated_terms) = detail.has_correlated_terms {
-                        index_doc.append("hasCorrelatedTerms", has_correlated_terms);
-                    }
-
-                    if let Some(scan_key_details) = detail.scan_key_details.as_ref() {
-                        if !scan_key_details.is_empty() {
-                            let mut scan_key_arr = RawArrayBuf::new();
-                            for key in scan_key_details {
-                                scan_key_arr.push(key.as_str());
-                            }
-                            index_doc.append("scanKeys", scan_key_arr);
-                        }
-                    }
-
-                    arr.push(index_doc);
+                    doc.append("indexUsages", arr);
                 }
-
-                doc.append("indexUsage", arr);
             }
         }
 
@@ -1787,6 +1961,15 @@ fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocume
                 doc.append("parallelWorkers", smallest_from_i64(v));
             }
         }
+        if let Some(workers) = plan.workers.as_ref() {
+            if !workers.is_empty() {
+                let mut worker_array = RawArrayBuf::new();
+                for worker in workers {
+                    worker_array.push(build_worker_doc(worker));
+                }
+                doc.append("stageWorkerData", worker_array);
+            }
+        }
 
         doc
     });
@@ -1811,12 +1994,64 @@ fn distribute_index_details(plan: &mut ExplainPlan, index_details: Option<Vec<In
     }
 }
 
+fn build_worker_doc(worker: &ExplainWorker) -> RawDocumentBuf {
+    let mut doc = RawDocumentBuf::new();
+
+    append_optional_i64(&mut doc, "workerNumber", worker.worker_number);
+    append_optional_f64(&mut doc, "actualStartupTime", worker.actual_startup_time);
+    append_optional_f64(&mut doc, "actualTotalTime", worker.actual_total_time);
+    append_optional_f64(&mut doc, "actualRows", worker.actual_rows);
+    append_optional_f64(&mut doc, "actualLoops", worker.actual_loops);
+    if let Some(sort_method) = worker.sort_method.as_deref() {
+        doc.append("sortMethod", sort_method);
+    }
+    append_optional_i64(&mut doc, "sortSpaceUsed", worker.sort_space_used);
+    if let Some(sort_space_type) = worker.sort_space_type.as_deref() {
+        doc.append("sortSpaceType", sort_space_type);
+    }
+    append_optional_i64(&mut doc, "sharedHitBlocks", worker.shared_hit_blocks);
+    append_optional_i64(&mut doc, "sharedReadBlocks", worker.shared_read_blocks);
+    append_optional_i64(
+        &mut doc,
+        "sharedDirtiedBlocks",
+        worker.shared_dirtied_blocks,
+    );
+    append_optional_i64(
+        &mut doc,
+        "sharedWrittenBlocks",
+        worker.shared_written_blocks,
+    );
+    append_optional_i64(&mut doc, "localHitBlocks", worker.local_hit_blocks);
+    append_optional_i64(&mut doc, "localReadBlocks", worker.local_read_blocks);
+    append_optional_i64(&mut doc, "localDirtiedBlocks", worker.local_dirtied_blocks);
+    append_optional_i64(&mut doc, "localWrittenBlocks", worker.local_written_blocks);
+    append_optional_i64(&mut doc, "tempReadBlocks", worker.temp_read_blocks);
+    append_optional_i64(&mut doc, "tempWrittenBlocks", worker.temp_written_blocks);
+
+    doc
+}
+
+fn append_optional_i64(doc: &mut RawDocumentBuf, name: &str, value: Option<i64>) {
+    if let Some(value) = value {
+        doc.append(name, smallest_from_i64(value));
+    }
+}
+
+fn append_optional_f64(doc: &mut RawDocumentBuf, name: &str, value: Option<f64>) {
+    if let Some(value) = value {
+        doc.append(name, smallest_from_f64(value));
+    }
+}
+
 fn build_index_cost_doc(cost: &IndexCost) -> RawDocumentBuf {
     let mut cost_doc = rawdoc! {};
     if let Some(index_name) = cost.index_name.as_deref() {
         cost_doc.append("indexName", index_name);
     } else {
         return cost_doc;
+    }
+    if let Some(index_key) = cost.index_key.as_deref() {
+        cost_doc.append("indexKeyString", index_key);
     }
     if let Some(v) = cost.startup_cost.filter(|v| *v != 0.0) {
         cost_doc.append("startupCost", v);
@@ -1890,35 +2125,129 @@ fn collect_index_costs(
     }
 }
 
+/// Repeatedly strips intermediate wrapper nodes from the plan tree until a
+/// non-skippable node is reached. Wrapper nodes (`Subquery Scan` with
+/// `bson_repath_and_build`, `ExplainQueryScan`, `DocumentDBApiCursorScan`,
+/// `DocumentDBApiRumIndexOnlyScan`, `DocumentDBApiScan`) are internal
+/// implementation details that should not be exposed in the wire-protocol
+/// explain output. Properties such as `cursor_scan_type`, `skipped_tuples`,
+/// `alias`, and `index_details` are propagated from skipped nodes to the
+/// surviving child.
 #[expect(clippy::expect_used, reason = "values are checked before access")]
-fn skip_stage(plan: ExplainPlan, query_catalog: &QueryCatalog) -> ExplainPlan {
-    if plan.node_type == "Subquery Scan"
-        && plan.output.as_ref().is_some_and(|o| {
-            o.len() == 1
-                && (o[0].starts_with("bson_repath_and_build")
-                    || o[0].starts_with(query_catalog.find_bson_repath_and_build()))
-        })
-        && plan.inner_plans.as_ref().is_some_and(|ip| ip.len() == 1)
-    {
-        let mut p = plan.inner_plans.expect("Checked").remove(0);
-        if p.alias.is_none() {
-            p.alias = plan.alias;
-        }
-        p
-    } else if plan.node_type == "Custom Scan"
-        && plan.custom_plan_provider.as_deref() == Some("DocumentDBApiExplainQueryScan")
-        && plan.inner_plans.as_ref().is_some_and(|ip| ip.len() == 1)
-    {
-        let mut new_plan = plan.inner_plans.expect("Checked").remove(0);
-        new_plan.output = plan.output;
-        if new_plan.namespace_name.is_none() {
-            new_plan.namespace_name = plan.namespace_name.clone();
-        }
+fn skip_stage(mut plan: ExplainPlan, query_catalog: &QueryCatalog) -> ExplainPlan {
+    loop {
+        // De-dup breadcrumbs are set on the surviving child of a collapsed
+        // wrapper; carry them across further collapses above that wrapper so the
+        // flag still surfaces on the final surviving stage. `bool` is `Copy`, so
+        // capture before `plan` is consumed and re-apply after the collapse.
+        let carried_distinct_dedup = plan.has_distinct_dedup;
+        let carried_multi_key_row_dedup = plan.has_multi_key_row_dedup;
 
-        distribute_index_details(&mut new_plan, plan.index_details);
-        new_plan
-    } else {
-        plan
+        plan = if plan.node_type == "Subquery Scan"
+            && plan.output.as_ref().is_some_and(|o| {
+                o.len() == 1
+                    && (o[0].starts_with("bson_repath_and_build")
+                        || o[0].starts_with(query_catalog.find_bson_repath_and_build()))
+            })
+            && plan.inner_plans.as_ref().is_some_and(|ip| ip.len() == 1)
+        {
+            let mut p = plan.inner_plans.expect("Checked").remove(0);
+            if p.alias.is_none() {
+                p.alias = plan.alias;
+            }
+            p
+        } else if plan.node_type == "Custom Scan"
+            && plan.custom_plan_provider.as_deref() == Some("DocumentDBApiExplainQueryScan")
+            && plan.inner_plans.as_ref().is_some_and(|ip| ip.len() == 1)
+        {
+            let mut new_plan = plan.inner_plans.expect("Checked").remove(0);
+            new_plan.output = plan.output;
+            if new_plan.namespace_name.is_none() {
+                new_plan.namespace_name = plan.namespace_name.clone();
+            }
+            if new_plan.cursor_scan_type.is_none() {
+                new_plan.cursor_scan_type = plan.cursor_scan_type;
+            }
+            if new_plan.skipped_tuples.is_none() {
+                new_plan.skipped_tuples = plan.skipped_tuples;
+            }
+
+            distribute_index_details(&mut new_plan, plan.index_details);
+            new_plan
+        } else if plan.node_type == "Custom Scan"
+            && matches!(
+                plan.custom_plan_provider.as_deref(),
+                Some(
+                    "DocumentDBApiCursorScan"
+                        | "DocumentDBApiRumIndexOnlyScan"
+                        | "DocumentDBApiScan"
+                )
+            )
+            && plan.inner_plans.as_ref().is_some_and(|ip| ip.len() == 1)
+        {
+            let mut new_plan = plan.inner_plans.expect("Checked").remove(0);
+            if new_plan.alias.is_none() {
+                new_plan.alias = plan.alias;
+            }
+            if new_plan.cursor_scan_type.is_none() {
+                new_plan.cursor_scan_type = plan.cursor_scan_type;
+            }
+            if new_plan.skipped_tuples.is_none() {
+                new_plan.skipped_tuples = plan.skipped_tuples;
+            }
+            new_plan
+        } else if plan.node_type == "Custom Scan"
+            && plan.custom_plan_provider.as_deref() == Some("DocumentDBApiTidDedup")
+            && plan.inner_plans.as_ref().is_some_and(|ip| ip.len() == 1)
+        {
+            // The de-duplicating scan is an internal wrapper over its child.
+            // Strip it and inline the "Duplicate Rows Removed" counter onto the
+            // surviving child stage, mirroring the plan explain output. Flag the
+            // surviving stage so the collapsed de-duplication remains visible in
+            // the query planner output.
+            let mut new_plan = plan.inner_plans.expect("Checked").remove(0);
+            if new_plan.alias.is_none() {
+                new_plan.alias = plan.alias;
+            }
+            if new_plan.cursor_scan_type.is_none() {
+                new_plan.cursor_scan_type = plan.cursor_scan_type;
+            }
+            if new_plan.skipped_tuples.is_none() {
+                new_plan.skipped_tuples = plan.skipped_tuples;
+            }
+            if new_plan.duplicate_rows_removed.is_none() {
+                new_plan.duplicate_rows_removed = plan.duplicate_rows_removed;
+            }
+            new_plan.has_multi_key_row_dedup = true;
+            new_plan
+        } else if plan.node_type == "Custom Scan"
+            && plan.custom_plan_provider.as_deref() == Some("DocumentDBApiDistinctQueryScan")
+            && plan.inner_plans.as_ref().is_some_and(|ip| ip.len() == 1)
+        {
+            // The distinct-pushdown scan is an internal wrapper over the index
+            // scan that materializes the distinct keys. Flag the surviving stage so the
+            // collapsed distinct pushdown remains visible in the query planner output.
+            let mut new_plan = plan.inner_plans.expect("Checked").remove(0);
+            if new_plan.alias.is_none() {
+                new_plan.alias = plan.alias;
+            }
+            if new_plan.namespace_name.is_none() {
+                new_plan.namespace_name = plan.namespace_name;
+            }
+            if new_plan.cursor_scan_type.is_none() {
+                new_plan.cursor_scan_type = plan.cursor_scan_type;
+            }
+            if new_plan.skipped_tuples.is_none() {
+                new_plan.skipped_tuples = plan.skipped_tuples;
+            }
+            new_plan.has_distinct_dedup = true;
+            new_plan
+        } else {
+            break plan;
+        };
+
+        plan.has_distinct_dedup |= carried_distinct_dedup;
+        plan.has_multi_key_row_dedup |= carried_multi_key_row_dedup;
     }
 }
 
@@ -2074,10 +2403,10 @@ fn smallest_from_i64(value: i64) -> RawBson {
 
 #[cfg(test)]
 mod tests {
-    use crate::postgres::QueryCatalog;
+    use bson::rawdoc;
 
-    use super::get_stage_from_plan;
-    use super::model::ExplainPlan;
+    use super::*;
+    use crate::postgres::create_query_catalog;
 
     /// Helper that builds a minimal [`ExplainPlan`] with the given `node_type`.
     fn plan_with_node_type(node_type: &str) -> ExplainPlan {
@@ -2110,6 +2439,92 @@ mod tests {
     }
 
     #[test]
+    fn rum_index_only_scan_is_skipped() {
+        let child = ExplainPlan {
+            node_type: "Index Only Scan".to_owned(),
+            index_name: Some("idx_a".to_owned()),
+            ..Default::default()
+        };
+        let plan = ExplainPlan {
+            node_type: "Custom Scan".to_owned(),
+            custom_plan_provider: Some("DocumentDBApiRumIndexOnlyScan".to_owned()),
+            namespace_name: Some("db.collection".to_owned()),
+            inner_plans: Some(vec![child]),
+            ..Default::default()
+        };
+
+        let result = skip_stage(plan, &QueryCatalog::default());
+
+        assert_eq!(result.node_type, "Index Only Scan");
+        assert_eq!(result.index_name.as_deref(), Some("idx_a"));
+    }
+
+    #[test]
+    fn execution_stats_include_all_parallel_worker_fields() {
+        let worker: ExplainWorker = serde_json::from_str(
+            r#"{
+                "Worker Number": 0,
+                "Actual Startup Time": 1.25,
+                "Actual Total Time": 2.5,
+                "Actual Rows": 3,
+                "Actual Loops": 4,
+                "Sort Method": "quicksort",
+                "Sort Space Used": 5,
+                "Sort Space Type": "Memory",
+                "Shared Hit Blocks": 6,
+                "Shared Read Blocks": 7,
+                "Shared Dirtied Blocks": 8,
+                "Shared Written Blocks": 9,
+                "Local Hit Blocks": 10,
+                "Local Read Blocks": 11,
+                "Local Dirtied Blocks": 12,
+                "Local Written Blocks": 13,
+                "Temp Read Blocks": 14,
+                "Temp Written Blocks": 15
+            }"#,
+        )
+        .expect("PostgreSQL worker data should deserialize");
+        let plan = ExplainPlan {
+            node_type: "Gather".to_owned(),
+            workers: Some(vec![worker]),
+            ..Default::default()
+        };
+
+        let stats = execution_stats(plan, &QueryCatalog::default());
+        let workers = stats
+            .get_document("executionStages")
+            .expect("execution stages should be present")
+            .get_array("stageWorkerData")
+            .expect("stage worker data should be present");
+        let worker = workers
+            .into_iter()
+            .next()
+            .expect("workers should not be empty")
+            .expect("worker should be valid BSON")
+            .as_document()
+            .expect("worker should be a document");
+
+        assert_eq!(worker.get_i32("workerNumber"), Ok(0));
+        assert_eq!(worker.get_f64("actualStartupTime"), Ok(1.25));
+        assert_eq!(worker.get_f64("actualTotalTime"), Ok(2.5));
+        assert_eq!(worker.get_i32("actualRows"), Ok(3));
+        assert_eq!(worker.get_i32("actualLoops"), Ok(4));
+        assert_eq!(worker.get_str("sortMethod"), Ok("quicksort"));
+        assert_eq!(worker.get_i32("sortSpaceUsed"), Ok(5));
+        assert_eq!(worker.get_str("sortSpaceType"), Ok("Memory"));
+        assert_eq!(worker.get_i32("sharedHitBlocks"), Ok(6));
+        assert_eq!(worker.get_i32("sharedReadBlocks"), Ok(7));
+        assert_eq!(worker.get_i32("sharedDirtiedBlocks"), Ok(8));
+        assert_eq!(worker.get_i32("sharedWrittenBlocks"), Ok(9));
+        assert_eq!(worker.get_i32("localHitBlocks"), Ok(10));
+        assert_eq!(worker.get_i32("localReadBlocks"), Ok(11));
+        assert_eq!(worker.get_i32("localDirtiedBlocks"), Ok(12));
+        assert_eq!(worker.get_i32("localWrittenBlocks"), Ok(13));
+        assert_eq!(worker.get_i32("tempReadBlocks"), Ok(14));
+        assert_eq!(worker.get_i32("tempWrittenBlocks"), Ok(15));
+    }
+
+    #[test]
     fn seq_scan_maps_to_collscan() {
         let plan = plan_with_node_type("Seq Scan");
         let catalog = QueryCatalog::default();
@@ -2117,5 +2532,314 @@ mod tests {
         let (stage, _) = get_stage_from_plan(&plan, None, &catalog);
 
         assert_eq!(stage, "COLLSCAN");
+    }
+
+    #[test]
+    fn merge_append_maps_to_sort_merge() {
+        let catalog = QueryCatalog::default();
+        let plan = plan_with_node_type("Merge Append");
+        let (stage, _) = get_stage_from_plan(&plan, None, &catalog);
+        assert_eq!(stage, "SORT_MERGE");
+    }
+
+    #[test]
+    fn collation_group_plan_includes_sort_and_group_metadata() {
+        let projection = "(documentdb_api_internal.bson_expression_get(collection.document, \
+             'BSONHEX0e00000002000300000024620000'::documentdb_core.bson, true))";
+        let group_sort = ExplainPlan {
+            node_type: "Sort".to_owned(),
+            sort_keys: Some(vec![projection.to_owned()]),
+            ..Default::default()
+        };
+        let group = ExplainPlan {
+            node_type: "Aggregate".to_owned(),
+            strategy: Some("Sorted".to_owned()),
+            group_key: Some(vec![projection.to_owned()]),
+            inner_plans: Some(vec![group_sort]),
+            ..Default::default()
+        };
+        let sort = ExplainPlan {
+            node_type: "Sort".to_owned(),
+            sort_keys: Some(vec![
+                "(documentdb_api_internal.bson_orderby(agg_stage.document, \
+                 'BSONHEX0c0000001063000100000000'::documentdb_core.bson, \
+                 'en-u-ks-level2'::text))"
+                    .to_owned(),
+            ]),
+            inner_plans: Some(vec![group]),
+            ..Default::default()
+        };
+
+        let planner = query_planner(sort, "db.collection", true, &create_query_catalog());
+        let winning_plan = planner
+            .get_document("winningPlan")
+            .expect("winning plan should be present");
+        let sort_keys = winning_plan
+            .get_array("sortKey")
+            .expect("sort key should be present");
+        let sort_key = sort_keys
+            .into_iter()
+            .next()
+            .expect("sort key array should not be empty")
+            .expect("sort key should be valid BSON")
+            .as_document()
+            .expect("sort key should be a document");
+        assert_eq!(sort_key.get_i32("c"), Ok(1));
+        assert_eq!(winning_plan.get_str("collation"), Ok("en-u-ks-level2"));
+
+        let group_plan = winning_plan
+            .get_document("inputStage")
+            .expect("group stage should be present");
+        let group_keys = group_plan
+            .get_array("groupKey")
+            .expect("group key should be present");
+        let group_key = group_keys
+            .into_iter()
+            .next()
+            .expect("group key array should not be empty")
+            .expect("group key should be valid BSON")
+            .as_document()
+            .expect("group key should be a document");
+        assert_eq!(group_key.get_str(""), Ok("$b"));
+
+        let group_sort_plan = group_plan
+            .get_document("inputStage")
+            .expect("group sort stage should be present");
+        let group_sort_keys = group_sort_plan
+            .get_array("sortKey")
+            .expect("group sort key should be present");
+        let group_sort_key = group_sort_keys
+            .into_iter()
+            .next()
+            .expect("group sort key array should not be empty")
+            .expect("group sort key should be valid BSON")
+            .as_document()
+            .expect("group sort key should be a document");
+        assert_eq!(group_sort_key.get_str(""), Ok("$b"));
+    }
+
+    #[test]
+    fn index_usage_includes_index_collation() {
+        let index_details = IndexDetails {
+            index_name: Some("idx_x_en".to_owned()),
+            index_key: Some(r#"{"x": 1}"#.to_owned()),
+            index_collation: Some("en-u-ks-level2".to_owned()),
+            is_multi_key: Some(false),
+            ..Default::default()
+        };
+        let plan = ExplainPlan {
+            node_type: "Index Scan".to_owned(),
+            index_name: Some("idx_x_en".to_owned()),
+            index_details: Some(vec![index_details]),
+            ..Default::default()
+        };
+
+        let planner = query_planner(plan, "db.collection", false, &create_query_catalog());
+        let winning_plan = planner
+            .get_document("winningPlan")
+            .expect("winning plan should be present");
+        let index_stage = winning_plan
+            .get_document("inputStage")
+            .expect("index stage should be present");
+        let index_usage = index_stage
+            .get_document("indexUsage")
+            .expect("index usage should be present");
+
+        assert_eq!(index_usage.get_str("indexKeyString"), Ok(r#"{"x": 1}"#));
+        assert_eq!(index_usage.get_str("indexCollation"), Ok("en-u-ks-level2"));
+    }
+
+    #[test]
+    fn tid_dedup_scan_is_inlined_and_propagates_duplicate_rows_removed() {
+        let catalog = QueryCatalog::default();
+
+        let child = ExplainPlan {
+            node_type: "Bitmap Heap Scan".to_owned(),
+            ..Default::default()
+        };
+        let plan = ExplainPlan {
+            node_type: "Custom Scan".to_owned(),
+            custom_plan_provider: Some("DocumentDBApiTidDedup".to_owned()),
+            duplicate_rows_removed: Some(7.0),
+            inner_plans: Some(vec![child]),
+            ..Default::default()
+        };
+
+        let result = super::skip_stage(plan, &catalog);
+
+        // The de-dup wrapper is stripped, surfacing the child, and the counter
+        // is inlined onto the surviving child stage.
+        assert_eq!(result.node_type, "Bitmap Heap Scan");
+        assert_eq!(result.duplicate_rows_removed, Some(7.0));
+    }
+
+    #[test]
+    fn tid_dedup_scan_does_not_overwrite_child_duplicate_rows_removed() {
+        let catalog = QueryCatalog::default();
+
+        let child = ExplainPlan {
+            node_type: "Bitmap Heap Scan".to_owned(),
+            duplicate_rows_removed: Some(3.0),
+            ..Default::default()
+        };
+        let plan = ExplainPlan {
+            node_type: "Custom Scan".to_owned(),
+            custom_plan_provider: Some("DocumentDBApiTidDedup".to_owned()),
+            duplicate_rows_removed: Some(7.0),
+            inner_plans: Some(vec![child]),
+            ..Default::default()
+        };
+
+        let result = super::skip_stage(plan, &catalog);
+
+        assert_eq!(result.duplicate_rows_removed, Some(3.0));
+    }
+
+    #[test]
+    fn tid_dedup_scan_sets_has_multi_key_row_dedup_flag_on_surviving_stage() {
+        let catalog = QueryCatalog::default();
+
+        let child = ExplainPlan {
+            node_type: "Bitmap Heap Scan".to_owned(),
+            ..Default::default()
+        };
+        let plan = ExplainPlan {
+            node_type: "Custom Scan".to_owned(),
+            custom_plan_provider: Some("DocumentDBApiTidDedup".to_owned()),
+            inner_plans: Some(vec![child]),
+            ..Default::default()
+        };
+
+        let result = super::skip_stage(plan, &catalog);
+
+        assert_eq!(result.node_type, "Bitmap Heap Scan");
+        assert!(result.has_multi_key_row_dedup);
+        assert!(!result.has_distinct_dedup);
+    }
+
+    #[test]
+    fn distinct_query_scan_is_inlined_and_sets_has_distinct_dedup_flag() {
+        let catalog = QueryCatalog::default();
+
+        let child = ExplainPlan {
+            node_type: "Index Only Scan".to_owned(),
+            ..Default::default()
+        };
+        let plan = ExplainPlan {
+            node_type: "Custom Scan".to_owned(),
+            custom_plan_provider: Some("DocumentDBApiDistinctQueryScan".to_owned()),
+            inner_plans: Some(vec![child]),
+            ..Default::default()
+        };
+
+        let result = super::skip_stage(plan, &catalog);
+
+        // The distinct-pushdown wrapper is stripped, surfacing the child index
+        // scan, and the breadcrumb flag is set on the surviving stage.
+        assert_eq!(result.node_type, "Index Only Scan");
+        assert!(result.has_distinct_dedup);
+        assert!(!result.has_multi_key_row_dedup);
+    }
+
+    #[test]
+    fn dedup_flag_propagates_through_wrapping_scan() {
+        let catalog = QueryCatalog::default();
+
+        let index_scan = ExplainPlan {
+            node_type: "Index Only Scan".to_owned(),
+            ..Default::default()
+        };
+        let distinct_scan = ExplainPlan {
+            node_type: "Custom Scan".to_owned(),
+            custom_plan_provider: Some("DocumentDBApiDistinctQueryScan".to_owned()),
+            inner_plans: Some(vec![index_scan]),
+            ..Default::default()
+        };
+        let wrapper = ExplainPlan {
+            node_type: "Custom Scan".to_owned(),
+            custom_plan_provider: Some("DocumentDBApiScan".to_owned()),
+            inner_plans: Some(vec![distinct_scan]),
+            ..Default::default()
+        };
+
+        let result = super::skip_stage(wrapper, &catalog);
+
+        // A distinct pushdown nested beneath a generic wrapper scan still
+        // surfaces the breadcrumb flag on the final surviving stage.
+        assert_eq!(result.node_type, "Index Only Scan");
+        assert!(result.has_distinct_dedup);
+    }
+
+    #[test]
+    fn dedup_flag_survives_collapse_of_the_flagged_wrapper() {
+        let catalog = QueryCatalog::default();
+
+        // Inverted nesting: the distinct pushdown sits *above* a further
+        // collapsible wrapper. The distinct branch sets the flag on that inner
+        // wrapper, which is then itself stripped, so only the carry
+        // (capture-before / re-apply-after the collapse) keeps the breadcrumb on
+        // the final surviving stage.
+        let index_scan = ExplainPlan {
+            node_type: "Index Only Scan".to_owned(),
+            ..Default::default()
+        };
+        let wrapper = ExplainPlan {
+            node_type: "Custom Scan".to_owned(),
+            custom_plan_provider: Some("DocumentDBApiScan".to_owned()),
+            inner_plans: Some(vec![index_scan]),
+            ..Default::default()
+        };
+        let distinct_scan = ExplainPlan {
+            node_type: "Custom Scan".to_owned(),
+            custom_plan_provider: Some("DocumentDBApiDistinctQueryScan".to_owned()),
+            inner_plans: Some(vec![wrapper]),
+            ..Default::default()
+        };
+
+        let result = super::skip_stage(distinct_scan, &catalog);
+
+        assert_eq!(result.node_type, "Index Only Scan");
+        assert!(result.has_distinct_dedup);
+    }
+
+    #[test]
+    fn explain_target_uses_cached_collection_when_available() {
+        let command = rawdoc! { "aggregate": 1_i32 };
+        let target = ExplainTarget::with_collection(RequestType::Aggregate, &command, "cached");
+
+        let (collection, request_type) =
+            get_subtype_and_collection_name(&target).expect("target should resolve");
+
+        assert_eq!(
+            (collection, request_type),
+            ("cached", RequestType::Aggregate)
+        );
+    }
+
+    #[test]
+    fn explain_target_accepts_numeric_aggregate_as_empty_collection() {
+        for command in [
+            rawdoc! { "aggregate": 1_i32 },
+            rawdoc! { "aggregate": 1_i64 },
+            rawdoc! { "aggregate": 1.0_f64 },
+        ] {
+            let target = ExplainTarget::new(RequestType::Aggregate, &command);
+
+            let (collection, request_type) =
+                get_subtype_and_collection_name(&target).expect("target should resolve");
+
+            assert_eq!((collection, request_type), ("", RequestType::Aggregate));
+        }
+    }
+
+    #[test]
+    fn explain_target_rejects_non_string_non_aggregate_collection() {
+        let command = rawdoc! { "find": 1_i32 };
+        let target = ExplainTarget::new(RequestType::Find, &command);
+
+        let error = get_subtype_and_collection_name(&target)
+            .expect_err("non-aggregate numeric target should reject");
+
+        assert_eq!(error.error_code(), crate::error::ErrorCode::BadValue);
     }
 }

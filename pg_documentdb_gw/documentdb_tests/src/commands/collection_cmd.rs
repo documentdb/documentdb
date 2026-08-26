@@ -52,3 +52,14 @@ pub async fn validate_shard_collections(db: &Database) -> Result<(), Error> {
 
     Ok(())
 }
+
+pub async fn validate_enable_sharding(db: &Database) -> Result<(), Error> {
+    let admin = db.client().database("admin");
+
+    let result = admin
+        .run_command(doc! {"enableSharding": db.name()})
+        .await?;
+    assert_eq!(result.get_f64("ok").unwrap(), 1.0);
+
+    Ok(())
+}

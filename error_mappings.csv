@@ -50,6 +50,8 @@ ErrorMapping,ErrorName
 165,ViewDepthLimitExceeded
 166,CommandNotSupportedOnView
 167,OptionNotSupportedOnView
+171,CannotIndexParallelArrays
+176,QueryPlanKilled
 181,AmbiguousIndexKeyPattern
 186,ClientMetadataCannotBeMutated
 197,InvalidIndexSpecificationOption
@@ -88,6 +90,8 @@ ErrorMapping,ErrorName
 15958,Location15958
 15959,Location15959
 15972,Location15972
+15974,Location15974
+15975,Location15975
 15976,Location15976
 15981,Location15981
 15998,Location15998
@@ -323,6 +327,7 @@ ErrorMapping,ErrorName
 40246,Location40246
 40257,Location40257
 40258,Location40258
+40259,Location40259
 40260,Location40260
 40261,Location40261
 40272,Location40272
@@ -534,6 +539,7 @@ ErrorMapping,ErrorName
 5860402,Location5860402
 5876900,Location5876900
 5897900,Location5897900
+5911200,Location5911200
 5946802,Location5946802
 5976500,Location5976500
 6007200,Location6007200

@@ -1,8 +1,6 @@
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 SET documentdb.next_collection_id TO 1000;
 SET documentdb.next_collection_index_id TO 1000;
-set documentdb.enableCompositeReducedCorrelatedTerms to on;
-set documentdb.enableUniqueCompositeReducedCorrelatedTerms to on;
 -- now test query path pushdown
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkey_db', '{ "createIndexes": "mkey_coll", "indexes": [ { "key": { "a.b": 1, "a.c": 1 }, "name": "a_b_c_1", "enableOrderedIndex": 1 } ] }');
 NOTICE:  creating collection

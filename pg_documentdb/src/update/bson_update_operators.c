@@ -13,6 +13,7 @@
 #include <utils/builtins.h>
 
 #include "update/bson_update_operators.h"
+#include "io/bsonvalue_utils.h"
 #include "query/bson_compare.h"
 #include "types/decimal128.h"
 #include "utils/documentdb_errors.h"
@@ -23,6 +24,8 @@
 /* --------------------------------------------------------- */
 /* Forward declaration */
 /* --------------------------------------------------------- */
+
+extern bool EnableStrictAddToSetModifierValidation;
 
 typedef enum
 {
@@ -965,6 +968,16 @@ HandleUpdateDollarPush(const bson_value_t *existingValue,
 			UpdateArrayWriterWriteModifiedValue(arrayWriter, &elementsArr[i].bsonValue);
 		}
 
+		/* When the slice range is empty (say, $slice: 0) no modified value is
+		 * written above, so the array writer would otherwise be left marked as
+		 * unchanged and the emptied array discarded as a no-op. If the source
+		 * array had any elements, emptying it is a real modification, so mark
+		 * the array writer as changed to persist the now empty array. */
+		if (pushState.sliceStart >= pushState.sliceEnd && existingArrayLength > 0)
+		{
+			UpdateArrayWriterSkipValue(arrayWriter);
+		}
+
 		/* All done with temp resources, release*/
 		pfree(elementsArr);
 	}
@@ -1220,8 +1233,10 @@ RenameSourceGetValue(const pgbson *sourceDocument, const char *sourcePathString)
 
 /*
  * For an $addToSet operator, inspects the updateSpec value
- * and validates whether it is a $each modifier or just add a single
- * value.
+ * and validates whether it is a $each modifier or just adds a single
+ * value. When the modifier doc contains $each, any non-$each sibling
+ * key is rejected as an unexpected field — the first such key
+ * encountered is reported.
  */
 static void
 ValidateAddToSetWithDollarEach(const bson_value_t *updateValue,
@@ -1229,21 +1244,55 @@ ValidateAddToSetWithDollarEach(const bson_value_t *updateValue,
 							   bson_value_t *elementsToAdd)
 {
 	*isEach = false;
-	pgbsonelement element;
-	if (TryGetBsonValueToPgbsonElement(updateValue, &element) &&
-		(strcmp(element.path, "$each") == 0))
-	{
-		*isEach = true;
 
-		/* The value provided to the $each within the $addToSet must specifically be an array, otherwise the operation will result in an error. */
-		if (element.bsonValue.value_type != BSON_TYPE_ARRAY)
+	if (updateValue->value_type != BSON_TYPE_DOCUMENT)
+	{
+		return;
+	}
+
+	bson_iter_t iter;
+	BsonValueInitIterator(updateValue, &iter);
+
+	const char *unexpectedKey = NULL;
+
+	while (bson_iter_next(&iter))
+	{
+		const char *key = bson_iter_key(&iter);
+
+		if (strcmp(key, "$each") == 0)
 		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
-							errmsg(
-								"Expected 'array' type for $each but found '%s' type",
-								BsonTypeName(element.bsonValue.value_type))));
+			*isEach = true;
+			const bson_value_t *eachValue = bson_iter_value(&iter);
+
+			/* The value provided to the $each within the $addToSet must specifically be an array, otherwise the operation will result in an error. */
+			if (eachValue->value_type != BSON_TYPE_ARRAY)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
+								errmsg(
+									"Expected 'array' type for $each but found '%s' type",
+									BsonTypeName(eachValue->value_type))));
+			}
+			*elementsToAdd = *eachValue;
 		}
-		*elementsToAdd = element.bsonValue;
+		else if (unexpectedKey == NULL)
+		{
+			unexpectedKey = key;
+		}
+
+		/* First unexpected key wins (matches MongoDB); once we have both
+		 * $each and an unexpected sibling, no further inspection is needed. */
+		if (*isEach && unexpectedKey != NULL)
+		{
+			break;
+		}
+	}
+
+	if (EnableStrictAddToSetModifierValidation && *isEach && unexpectedKey != NULL)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg(
+							"Found unexpected fields after $each in $addToSet: %s",
+							unexpectedKey)));
 	}
 }
 
@@ -1283,7 +1332,7 @@ AddToSetWriteFinalArray(UpdateOperatorWriter *writer,
 						&found);
 
 			UpdateArrayWriterWriteValueWithModifyType(arrayWriter, value,
-													  MODIFY_TYPE_ORIGINAL_REWRITE);
+													  MODIFY_TYPE_OPERATOR_WRITTEN);
 		}
 	}
 
@@ -1448,11 +1497,11 @@ ValidateUpdateSpecAndSetPushUpdateState(const bson_value_t *fieldUpdateValue,
 	}
 	else if (BsonValueIsNumber(&sliceBsonValue))
 	{
-		double sliceValue = BsonValueAsDouble(&sliceBsonValue);
-		if (floor(sliceValue) == sliceValue)
+		bool checkFixedInteger = true;
+		if (IsBsonValue64BitInteger(&sliceBsonValue, checkFixedInteger))
 		{
 			validSliceValue = true;
-			pushState->slice = (int64_t) sliceValue;
+			pushState->slice = BsonValueAsInt64(&sliceBsonValue);
 		}
 	}
 	if (!validSliceValue)
@@ -1472,11 +1521,11 @@ ValidateUpdateSpecAndSetPushUpdateState(const bson_value_t *fieldUpdateValue,
 	}
 	else if (BsonValueIsNumber(&positionBsonValue))
 	{
-		double positionValue = BsonValueAsDouble(&positionBsonValue);
-		if (floor(positionValue) == positionValue)
+		bool checkFixedInteger = true;
+		if (IsBsonValue64BitInteger(&positionBsonValue, checkFixedInteger))
 		{
 			validPositionValue = true;
-			pushState->position = (int64_t) positionValue;
+			pushState->position = BsonValueAsInt64(&positionBsonValue);
 		}
 	}
 	if (!validPositionValue)
@@ -1533,10 +1582,9 @@ ApplyDollarPushModifiers(const bson_value_t *bsonArray,
 	int64_t existingArrLen = elementsArrLen - pushState->dollarEachElementCount;
 	if (position < 0)
 	{
-		position = -position;
-		position = (position >= existingArrLen) ? 0 : existingArrLen - position;
+		position = position <= -existingArrLen ? 0 : existingArrLen + position;
 	}
-	while (index < (uint32_t) position &&
+	while ((int64_t) index < position &&
 		   bson_iter_next(&existingArrItr))
 	{
 		elementsArr[index] = *GetElementWithIndex(bson_iter_value(&existingArrItr),
@@ -1581,9 +1629,8 @@ ApplyDollarPushModifiers(const bson_value_t *bsonArray,
 	if (sliceIndex < 0)
 	{
 		/* negative slice value, skip from front*/
-		sliceIndex = -sliceIndex;
-		pushState->sliceStart = sliceIndex > elementsArrLen ? 0 :
-								elementsArrLen - sliceIndex;
+		pushState->sliceStart = sliceIndex <= -elementsArrLen ? 0 :
+								elementsArrLen + sliceIndex;
 		pushState->sliceEnd = elementsArrLen;
 	}
 	else

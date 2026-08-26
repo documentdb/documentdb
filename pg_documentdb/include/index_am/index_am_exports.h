@@ -24,15 +24,10 @@ typedef struct ExplainWriterFuncs
 						 void *writer);
 } ExplainWriterFuncs;
 
-typedef void (*TryExplainIndexFunc)(struct IndexScanDescData *scan,
-									void *writerState,
-									ExplainWriterFuncs *es);
-
-typedef bool (*GetMultikeyStatusFunc)(Relation indexRelation);
 typedef bool (*GetTruncationStatusFunc)(Relation indexRelation);
-typedef bool (*CanOrderInIndexScan)(struct IndexScanDescData *scan);
 
 typedef struct CreateIndexesSupportFuncs CreateIndexesSupportFuncs;
+typedef struct QueryIndexPathSupportFuncs QueryIndexPathSupportFuncs;
 
 /*
  * Data structure for an alternative index acess method for indexing bosn.
@@ -55,7 +50,10 @@ typedef struct
 	Oid (*get_unique_path_op_family_oid)(void);
 
 	/* optional func to add explain output */
-	TryExplainIndexFunc add_explain_output;
+	PGFunction add_explain_output;
+
+	/* Optional function to get index statistics */
+	PGFunction get_stats;
 
 	/* The am name for create indexes */
 	const char *am_name;
@@ -67,21 +65,40 @@ typedef struct
 	const char *(*get_opclass_internal_catalog_schema)(void);
 
 	/* Optional function that handles getting multi-key status for an index */
-	GetMultikeyStatusFunc get_multikey_status;
+	PGFunction get_multikey_status;
+
+	/* Optional function that handles getting per-path multi-key status for an index */
+	PGFunction get_opclass_metadata;
 
 	/* Optional function to that returns the truncation status of an index */
 	GetTruncationStatusFunc get_truncation_status;
 
-	/* An override function that helps determine whether or not the index scan
-	 * can support ordering with order by. An extension method for the indexamroutine
+	/*
+	 * Optional predicate that returns whether the index currently tracks any
+	 * correlated reduced terms via a full index check (slow path).
 	 */
-	CanOrderInIndexScan can_order_in_index_scans;
+	bool (*get_reduced_terms_status)(Relation indexRelation);
+
+	/*
+	 * Optional predicate that returns whether scans on this index perform
+	 * path-key summarization at the access-method level.
+	 */
+	bool (*is_path_key_summarization_scan)(void);
 
 	/* Indicates whether the index supports ordered operator scans */
 	bool supports_ordered_operator_scans;
 
 	/* Optional struct including create index support functions */
 	CreateIndexesSupportFuncs *create_indexes_support_funcs;
+
+	/* Optional struct including force index path support functions */
+	QueryIndexPathSupportFuncs *query_index_path_support_funcs;
+
+	/* Optional function to get the current index key */
+	PGFunction get_current_index_key;
+
+	/* Optional function to skip TIDs on the current entry */
+	PGFunction skip_tids_on_current_entry;
 } BsonIndexAmEntry;
 
 /*

@@ -2,6 +2,8 @@ SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 
 SET documentdb.next_collection_id TO 5100;
 SET documentdb.next_collection_index_id TO 5100;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 
 /* Insert data */
 SELECT documentdb_api.insert_one('db','dollarBucket',' { "_id" : 1, "product" : "apple", "pricing" : { "bulk": 10, "store": 15 }, "stock" : 2, "year": 2020 }', NULL);
@@ -41,6 +43,11 @@ SELECT documentdb_api.insert_one('db','dollarBucketGroupBy', '{ "_id" : 3, "valu
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "dollarBucketGroupBy", "pipeline": [ { "$bucket": { "groupBy": "$valueArray", "boundaries": [[0], [5], [10]] } } ] }');
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "dollarBucketGroupBy", "pipeline": [ { "$bucket": { "groupBy": "$valueDocument", "boundaries": [{"a": 0}, {"a": 5}, {"a": 10}] } } ] }');
+
+/* $bucketAuto granularity validation */
+SELECT documentdb_api.insert_one('db','dollarBucketAutoNaN', '{ "_id": 1, "value": { "$numberDouble": "NaN" } }', NULL);
+SELECT documentdb_api.insert_one('db','dollarBucketAutoNaN', '{ "_id": 2, "value": { "$numberDouble": "NaN" } }', NULL);
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "dollarBucketAutoNaN", "pipeline": [ { "$bucketAuto": { "groupBy": "$value", "buckets": 2, "granularity": "R5" } } ] }');
 
 /* negative cases, validations: */
 -- required fields

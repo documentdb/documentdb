@@ -138,7 +138,7 @@ pub async fn validate_cursor_default_batch_size(db: &Database) -> Result<(), Err
                 cmd_err.code_name
             );
             assert!(
-                cmd_err.message.contains("Provided cursor was not found."),
+                cmd_err.message.contains("Cursor not found in server"),
                 "Error message should indicate cursor not found, got: {}",
                 cmd_err.message
             );
@@ -303,7 +303,7 @@ pub async fn validate_kill_cursor(db: &Database) -> Result<(), Error> {
                 cmd_err.code_name
             );
             assert!(
-                cmd_err.message.contains("Provided cursor was not found."),
+                cmd_err.message.contains("Cursor not found in server"),
                 "Error message should indicate cursor not found, got: {}",
                 cmd_err.message
             );

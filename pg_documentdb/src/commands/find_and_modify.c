@@ -8,6 +8,7 @@
  *-------------------------------------------------------------------------
  */
 #include <postgres.h>
+#include <access/htup_details.h>
 #include <fmgr.h>
 #include <storage/lockdefs.h>
 #include <utils/builtins.h>
@@ -259,7 +260,11 @@ ParseFindAndModifyMessage(pgbson *message, Datum *databaseNameDatum)
 									   BsonIterTypeName(&messageIter))));
 			}
 
-			spec.collectionName = bson_iter_dup_utf8(&messageIter, NULL);
+			uint32_t collectionNameLength = 0;
+			spec.collectionName = bson_iter_dup_utf8(&messageIter,
+													 &collectionNameLength);
+			ValidateNamespaceStringForEmbeddedNull(spec.collectionName,
+												   collectionNameLength);
 			if (strlen(spec.collectionName) == 0)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
@@ -572,15 +577,15 @@ ProcessFindAndModifySpec(MongoCollection *collection, FindAndModifySpec *spec,
 												   CurrentMemoryContext);
 		}
 
-		UpdateOne(collection, &updateOneParams, shardKeyHash, transactionId,
-				  &updateOneResult, forceInlineWrites, evalState);
+		ExecuteUpdateOne(collection, &updateOneParams, shardKeyHash, transactionId,
+						 &updateOneResult, forceInlineWrites, evalState);
 
 		bool performedUpdateOrUpsert = updateOneResult.isRowUpdated ||
 									   updateOneResult.upsertedObjectId != NULL;
 		if (updateOneResult.isRetry)
 		{
 			/*
-			 * Cannot verify whether UpdateOne should have returned result
+			 * Cannot verify whether ExecuteUpdateOne should have returned result
 			 * document if it's a retry since the value of
 			 * UpdateOneParams.returnDocument is ignored in that case.
 			 */

@@ -1,0 +1,168 @@
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+
+SET documentdb.next_collection_id TO 21200;
+SET documentdb.next_collection_index_id TO 21200;
+
+-- Composite planner cost estimation reads the physical-order correlation of the
+-- leading index path from statistics (rather than assuming 0). This test verifies
+-- that a composite index whose leading path is inserted in ascending order is
+-- reported as highly correlated, while a composite index whose leading path is
+-- scrambled is reported as uncorrelated. The bucketed classifier keeps the
+-- assertions stable across platforms and floating point formatting differences.
+
+-- Planner statistics must be enabled before the collection and indexes are
+-- created so the composite per-path extended statistics objects are built.
+set documentdb.enablePerCollectionPlannerStatistics to on;
+set documentdb.enablePlannerStatisticsNewCollections to on;
+set documentdb.enableCompositeIndexPlanner to on;
+set documentdb.defaultUseCompositeOpClass to on;
+
+CREATE SCHEMA index_correlation_tests;
+
+-- Helper that extracts the reported correlation for a given index from the
+-- extended EXPLAIN cost line and buckets it into a coarse, stable label.
+CREATE FUNCTION index_correlation_tests.classify_index_correlation(p_query text, p_index text) RETURNS text
+ LANGUAGE plpgsql AS $$
+DECLARE
+    v_explain_row text;
+    v_correlation numeric;
+BEGIN
+    FOR v_explain_row IN EXECUTE p_query
+    LOOP
+        IF v_explain_row LIKE '%' || p_index || '%' AND v_explain_row LIKE '%correlation=%' THEN
+            v_correlation := substring(v_explain_row from 'correlation=([0-9.eE+-]+)')::numeric;
+            IF abs(v_correlation) < 0.1 THEN
+                RETURN 'uncorrelated (|correlation| < 0.1)';
+            ELSIF abs(v_correlation) >= 0.5 THEN
+                RETURN 'highly correlated (|correlation| >= 0.5)';
+            ELSE
+                RETURN 'moderately correlated (0.1 <= |correlation| < 0.5)';
+            END IF;
+        END IF;
+    END LOOP;
+    RETURN 'no cost line found for index ' || p_index;
+END;
+$$;
+
+-- Create two composite indexes: one whose leading path is inserted in ascending
+-- (perfectly correlated) order, and one whose leading path is deterministically
+-- scrambled (uncorrelated with physical order).
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'corr_idb', '{ "createIndexes": "index_correlation", "indexes": [ { "name": "seq_tag_1", "key": { "seq": 1, "tag": 1 } } ] }', TRUE);
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'corr_idb', '{ "createIndexes": "index_correlation", "indexes": [ { "name": "rnd_tag_1", "key": { "rnd": 1, "tag": 1 } } ] }', TRUE);
+
+-- seq = ascending insert order (correlation ~ 1.0)
+-- rnd = deterministic scramble via hashint4 (correlation ~ 0)
+-- padding keeps rows wide so the index scan cost path is exercised.
+SELECT COUNT(documentdb_api.insert_one('corr_idb', 'index_correlation',
+    bson_build_document(
+        '_id'::text, i,
+        'seq'::text, i,
+        'rnd'::text, (abs(hashint4(i)) % 100000),
+        'tag'::text, (i % 10),
+        'pad'::text, repeat('x', 1010))))
+FROM generate_series(1, 10000) i;
+
+ANALYZE documentdb_data.documents_21201;
+
+set documentdb.enableExplainScanIndexCosts to on;
+set documentdb.enableExtendedExplainPlans to on;
+
+-- Force the index-scan cost path: bitmap heap scans sort by page and report a
+-- correlation of 0 regardless of statistics, so disable them here.
+set enable_bitmapscan to off;
+set enable_seqscan to off;
+
+-- The correlated leading path (seq) should be reported as highly correlated.
+SELECT index_correlation_tests.classify_index_correlation(
+    $q$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('corr_idb', '{ "find": "index_correlation", "filter": { "seq": { "$gte": 100, "$lte": 300 } }}') $q$,
+    'seq_tag_1');
+
+-- The scrambled leading path (rnd) should be reported as uncorrelated.
+SELECT index_correlation_tests.classify_index_correlation(
+    $q$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('corr_idb', '{ "find": "index_correlation", "filter": { "rnd": { "$gte": 100, "$lte": 2000 } }}') $q$,
+    'rnd_tag_1');
+
+-- With the statistics-based correlation feature flag disabled, the correlated
+-- leading path falls back to the base access method estimate and is no longer
+-- reported as highly correlated.
+set documentdb.enable_index_correlation_from_statistics to off;
+SELECT index_correlation_tests.classify_index_correlation(
+    $q$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('corr_idb', '{ "find": "index_correlation", "filter": { "seq": { "$gte": 100, "$lte": 300 } }}') $q$,
+    'seq_tag_1');
+reset documentdb.enable_index_correlation_from_statistics;
+
+-- ============================================================================
+-- Sort direction and descending (backward) index correlation.
+--
+-- The physical-order correlation reported to the planner tracks the direction
+-- the index is actually scanned relative to the heap:
+--   * An ascending index over an ascending-inserted leading path is scanned
+--     forward and tracks physical order  -> positive (highly) correlated.
+--   * A descending index over the same leading path is scanned forward in the
+--     opposite direction of physical order -> negative (inversely) correlated.
+--   * Adding an ORDER BY flips the scan direction: a descending index with a
+--     matching descending sort is scanned backward and once again tracks
+--     physical order -> positive; an ascending index with a descending sort is
+--     scanned backward against physical order -> negative.
+-- ============================================================================
+
+-- A descending composite index over the same ascending-inserted leading path.
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'corr_idb', '{ "createIndexes": "index_correlation", "indexes": [ { "name": "seq_desc_tag_1", "key": { "seq": -1, "tag": 1 } } ] }', TRUE);
+
+-- Signed classifier that preserves the sign of the correlation so ascending
+-- (positive) and descending/inverted (negative) scans can be told apart.
+CREATE FUNCTION index_correlation_tests.classify_signed_index_correlation(p_query text, p_index text) RETURNS text
+ LANGUAGE plpgsql AS $$
+DECLARE
+    v_explain_row text;
+    v_correlation numeric;
+BEGIN
+    FOR v_explain_row IN EXECUTE p_query
+    LOOP
+        IF v_explain_row LIKE '%' || p_index || '%' AND v_explain_row LIKE '%correlation=%' THEN
+            v_correlation := substring(v_explain_row from 'correlation=([0-9.eE+-]+)')::numeric;
+            IF v_correlation >= 0.5 THEN
+                RETURN 'highly correlated (correlation >= 0.5)';
+            ELSIF v_correlation <= -0.5 THEN
+                RETURN 'inversely correlated (correlation <= -0.5)';
+            ELSIF abs(v_correlation) < 0.1 THEN
+                RETURN 'uncorrelated (|correlation| < 0.1)';
+            ELSE
+                RETURN 'moderately correlated (0.1 <= |correlation| < 0.5)';
+            END IF;
+        END IF;
+    END LOOP;
+    RETURN 'no cost line found for index ' || p_index;
+END;
+$$;
+
+-- Ascending index, no sort: forward scan tracks physical order -> highly correlated.
+SELECT index_correlation_tests.classify_signed_index_correlation(
+    $q$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('corr_idb', '{ "find": "index_correlation", "filter": { "seq": { "$gte": 100, "$lte": 300 } }, "hint": { "seq": 1, "tag": 1 } }') $q$,
+    'seq_tag_1');
+
+-- Descending index, no sort: forward scan runs opposite to physical order -> inversely correlated.
+SELECT index_correlation_tests.classify_signed_index_correlation(
+    $q$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('corr_idb', '{ "find": "index_correlation", "filter": { "seq": { "$gte": 100, "$lte": 300 } }, "hint": { "seq": -1, "tag": 1 } }') $q$,
+    'seq_desc_tag_1');
+
+-- Descending index with a matching descending sort: the backward scan tracks
+-- physical order again -> highly correlated.
+SELECT index_correlation_tests.classify_signed_index_correlation(
+    $q$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('corr_idb', '{ "find": "index_correlation", "filter": { "seq": { "$gte": 100, "$lte": 300 } }, "sort": { "seq": -1 }, "hint": { "seq": -1, "tag": 1 } }') $q$,
+    'seq_desc_tag_1');
+
+-- Ascending index with a descending sort: the backward scan runs against
+-- physical order -> inversely correlated.
+SELECT index_correlation_tests.classify_signed_index_correlation(
+    $q$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('corr_idb', '{ "find": "index_correlation", "filter": { "seq": { "$gte": 100, "$lte": 300 } }, "sort": { "seq": -1 }, "hint": { "seq": 1, "tag": 1 } }') $q$,
+    'seq_tag_1');
+
+reset enable_bitmapscan;
+reset enable_seqscan;
+
+SELECT documentdb_api.drop_collection('corr_idb', 'index_correlation');
+DROP SCHEMA index_correlation_tests CASCADE;

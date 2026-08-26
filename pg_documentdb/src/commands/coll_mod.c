@@ -21,8 +21,10 @@
 
 #include "commands/parse_error.h"
 #include "commands/commands_common.h"
+#include "io/bsonvalue_utils.h"
 #include "utils/documentdb_errors.h"
 #include "metadata/collection.h"
+#include "planner/documentdb_planner.h"
 #include "api_hooks.h"
 #include "metadata/index.h"
 #include "metadata/metadata_cache.h"
@@ -56,6 +58,14 @@ typedef struct
 	bool prepareUnique;
 	bool unique;
 	bool reindex;
+
+	/*
+	 * When set alongside reindex, the index is rebuilt with index option/opclass
+	 * settings regenerated from the current configuration (e.g. picking up newly
+	 * enabled opclass options) rather than recreated as-is. Only valid together
+	 * with reindex.
+	 */
+	bool updateOptions;
 	int expireAfterSeconds;
 } CollModIndexOptions;
 
@@ -87,6 +97,9 @@ typedef struct
 	/* Whether changeStreamPreAndPostImages is enabled */
 	bool changeStreamPreAndPostImagesEnabled;
 	bson_value_t plannerStatistics;
+
+	/* Whether enableUpdateDescription is enabled */
+	bool enableUpdateDescription;
 
 	/* TODO: Add more options when they are supported e.g.: Validators etc */
 } CollModOptions;
@@ -120,6 +133,12 @@ typedef enum CollModSpecFlags
 
 	/* change stream pre and post images option */
 	HAS_CHANGE_STREAM_PRE_AND_POST_IMAGES = 1 << 12,
+
+	/* change stream enable update description option */
+	HAS_ENABLE_UPDATE_DESCRIPTION = 1 << 13,
+
+	/* reindex sub-option: regenerate index options/opclass settings on rebuild */
+	HAS_INDEX_OPTION_UPDATE_OPTIONS = 1 << 14,
 
 	/* TODO: More OPTIONS to follow */
 } CollModSpecFlags;
@@ -155,7 +174,6 @@ static void UpdatePostgresIndexOverride(uint64_t collectionId, int indexId, int 
 										bool
 										value);
 static void UpdatePostgresIndexesForHide(List *indexOids, bool hidden);
-static void UpdatePostgresIndexesForPrepareUnique(List *indexOids, bool prepareUnique);
 static void UpdatePostgresIndexesForUnique(List *indexOids, bool unique);
 static void RegisterExclusionInPgIndexCatalog(Oid indexoid);
 
@@ -172,6 +190,8 @@ PG_FUNCTION_INFO_V1(command_coll_mod);
 Datum
 command_coll_mod(PG_FUNCTION_ARGS)
 {
+	ThrowIfWriteCommandNotAllowed();
+
 	if (PG_ARGISNULL(2))
 	{
 		ereport(ERROR, (errmsg("collMod spec cannot be NULL")));
@@ -292,8 +312,7 @@ command_coll_mod(PG_FUNCTION_ARGS)
 							errmsg("Cannot specify planner statistics on a view")));
 		}
 
-		if (!EnablePerCollectionPlannerStatistics ||
-			!IsClusterVersionAtleast(DocDB_V0, 111, 0))
+		if (!EnablePerCollectionPlannerStatistics)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
 							errmsg("Per-collection planner statistics is not enabled")));
@@ -343,6 +362,20 @@ command_coll_mod(PG_FUNCTION_ARGS)
 			collModOptions.changeStreamPreAndPostImagesEnabled);
 	}
 
+	if (specFlags & HAS_ENABLE_UPDATE_DESCRIPTION)
+	{
+		if (collection->viewDefinition != NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
+							errmsg(
+								"Cannot specify enableUpdateDescription on a view")));
+		}
+
+		UpdateEnableUpdateDescription(
+			collection,
+			collModOptions.enableUpdateDescription);
+	}
+
 	PG_RETURN_POINTER(PgbsonWriterGetPgbson(&writer));
 }
 
@@ -370,7 +403,11 @@ ParseSpecSetCollModOptions(const pgbson *collModSpec,
 		if (strcmp(key, "collMod") == 0)
 		{
 			EnsureTopLevelFieldType("collMod.collMod", &iter, BSON_TYPE_UTF8);
-			collModOptions->collectionName = bson_iter_utf8(&iter, NULL);
+			uint32_t collectionNameLength = 0;
+			collModOptions->collectionName = bson_iter_utf8(&iter,
+															&collectionNameLength);
+			ValidateNamespaceStringForEmbeddedNull(collModOptions->collectionName,
+												   collectionNameLength);
 		}
 		else if (strcmp(key, "index") == 0)
 		{
@@ -454,6 +491,13 @@ ParseSpecSetCollModOptions(const pgbson *collModSpec,
 				specFlags |= HAS_CHANGE_STREAM_PRE_AND_POST_IMAGES;
 			}
 		}
+		else if (strcmp(key, "enableUpdateDescription") == 0)
+		{
+			EnsureTopLevelFieldIsBooleanLike("collMod.enableUpdateDescription",
+											 &iter);
+			collModOptions->enableUpdateDescription = BsonValueAsBool(value);
+			specFlags |= HAS_ENABLE_UPDATE_DESCRIPTION;
+		}
 		else if (strcmp(key, "$db") == 0)
 		{
 			ValidateOrExtractDatabaseNameFromSpec(&iter, databaseNameDatum);
@@ -518,13 +562,25 @@ ParseSpecSetCollModOptions(const pgbson *collModSpec,
 								"collMod.unique cannot be specified with other collMod options")));
 		}
 
-		/* reindex is mutually exclusive with other index modification options */
+		/*
+		 * reindex is mutually exclusive with other index modification options,
+		 * but may be paired with its updateOptions sub-option.
+		 */
 		if ((tmpFlags & HAS_INDEX_OPTION_REINDEX) != 0 &&
-			tmpFlags != HAS_INDEX_OPTION_REINDEX)
+			(tmpFlags & ~HAS_INDEX_OPTION_UPDATE_OPTIONS) != HAS_INDEX_OPTION_REINDEX)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
 							errmsg(
 								"reindex cannot be combined with other index options")));
+		}
+
+		/* updateOptions is only meaningful as a sub-option of reindex */
+		if ((tmpFlags & HAS_INDEX_OPTION_UPDATE_OPTIONS) != 0 &&
+			(tmpFlags & HAS_INDEX_OPTION_REINDEX) == 0)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
+							errmsg(
+								"collMod.updateOptions can only be specified together with reindex")));
 		}
 	}
 
@@ -605,14 +661,14 @@ ParseIndexSpecSetCollModOptions(bson_iter_t *indexSpecIter,
 									"expected types '[long, int, decimal, double']",
 									BsonTypeName(value->value_type))));
 			}
-			int64 expireAfterSeconds = BsonValueAsInt64(value);
+			int32 expireAfterSeconds = BsonValueAsInt32Clamped(value);
 			if (expireAfterSeconds < 0)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
 								errmsg(
 									"BSON field 'collMod.index.expireAfterSeconds' cannot be less than 0.")));
 			}
-			collModIndexOptions->expireAfterSeconds = (uint64) expireAfterSeconds;
+			collModIndexOptions->expireAfterSeconds = expireAfterSeconds;
 			*specFlags |= HAS_INDEX_OPTION_EXPIRE_AFTER_SECONDS;
 		}
 		else if (strcmp(key, "reindex") == 0)
@@ -627,6 +683,13 @@ ParseIndexSpecSetCollModOptions(bson_iter_t *indexSpecIter,
 								errmsg("collMod.reindex can only be set to true")));
 			}
 			*specFlags |= HAS_INDEX_OPTION_REINDEX;
+		}
+		else if (strcmp(key, "updateOptions") == 0)
+		{
+			EnsureTopLevelFieldIsBooleanLike("collMod.index.updateOptions",
+											 indexSpecIter);
+			collModIndexOptions->updateOptions = BsonValueAsBool(value);
+			*specFlags |= HAS_INDEX_OPTION_UPDATE_OPTIONS;
 		}
 		else
 		{
@@ -784,7 +847,7 @@ ModifyIndexSpecsInCollection(const MongoCollection *collection,
 
 	if ((*specFlags & HAS_INDEX_OPTION_PREPARE_UNIQUE) == HAS_INDEX_OPTION_PREPARE_UNIQUE)
 	{
-		if (!EnablePrepareUnique || !IsClusterVersionAtleast(DocDB_V0, 109, 0))
+		if (!EnablePrepareUnique)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
 							errmsg("prepareUnique index option is not supported yet")));
@@ -844,7 +907,7 @@ ModifyIndexSpecsInCollection(const MongoCollection *collection,
 
 	if ((*specFlags & HAS_INDEX_OPTION_UNIQUE) == HAS_INDEX_OPTION_UNIQUE)
 	{
-		if (!EnableCollModUnique || !IsClusterVersionAtleast(DocDB_V0, 109, 0))
+		if (!EnableCollModUnique)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
 							errmsg("unique index option is not supported yet")));
@@ -892,6 +955,34 @@ ModifyIndexSpecsInCollection(const MongoCollection *collection,
 								"cannot reindex an invalid index")));
 		}
 
+		if (indexOption->updateOptions &&
+			strcmp(indexDetails.indexSpec.indexName, "_id_") == 0)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
+							errmsg("updateOptions is not supported for reindex of %s",
+								   indexDetails.indexSpec.indexName)));
+		}
+
+		bool isBuildAsUnique = false;
+		bool currentPrepareUnique = false;
+		GetPrepareUniqueFlagsFromOptions(
+			indexDetails.indexSpec.indexOptions, &isBuildAsUnique,
+			&currentPrepareUnique);
+
+		if (isBuildAsUnique || currentPrepareUnique)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
+							errmsg(
+								"reindex index option is not supported for prepareUnique indexes")));
+		}
+
+		if (GetHiddenFlagFromOptions(indexDetails.indexSpec.indexOptions))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
+							errmsg(
+								"reindex index option is not supported for hidden indexes")));
+		}
+
 		/* Build the reindex spec: {"collection": "<name>", "indexes": [<indexId>]} */
 		pgbson_writer reindexSpecWriter;
 		PgbsonWriterInit(&reindexSpecWriter);
@@ -907,6 +998,12 @@ ModifyIndexSpecsInCollection(const MongoCollection *collection,
 		};
 		PgbsonArrayWriterWriteValue(&indexArrayWriter, &indexIdValue);
 		PgbsonWriterEndArray(&reindexSpecWriter, &indexArrayWriter);
+
+		if (indexOption->updateOptions)
+		{
+			PgbsonWriterAppendBool(&reindexSpecWriter, "updateOptions", 13,
+								   indexOption->updateOptions);
+		}
 
 		pgbson *reindexSpec = PgbsonWriterGetPgbson(&reindexSpecWriter);
 
@@ -1257,7 +1354,7 @@ UpdatePostgresIndexCore(uint64_t collectionId, int indexId, IndexMetadataUpdateO
 
 	/* Add any additional shard OIDs needed for this */
 	indexOidList = list_concat(indexOidList,
-							   GetShardIndexOids(collectionId, indexId,
+							   GetShardIndexOids(collectionId, indexOid,
 												 ignoreMissingShards));
 
 	switch (operation)
@@ -1336,7 +1433,7 @@ UpdatePostgresIndexesForHide(List *indexOids, bool hidden)
  * This is done using the CreateConstraintEntry function which will also update the pg_depend catalog to mark the table as the owner of the constraint.
  * If this is successful, the index will be marked as an exclusion index in the pg_index catalog.
  */
-static void
+void
 UpdatePostgresIndexesForPrepareUnique(List *indexOids, bool prepareUnique)
 {
 	ListCell *cell;
@@ -1345,6 +1442,14 @@ UpdatePostgresIndexesForPrepareUnique(List *indexOids, bool prepareUnique)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
 						errmsg("prepareUnique can only be set to true")));
+	}
+
+	/* We need an active snapshot to register the constraint. */
+	bool snapshotPushed = false;
+	if (!ActiveSnapshotSet())
+	{
+		PushActiveSnapshot(GetTransactionSnapshot());
+		snapshotPushed = true;
 	}
 
 	foreach(cell, indexOids)
@@ -1384,6 +1489,11 @@ UpdatePostgresIndexesForPrepareUnique(List *indexOids, bool prepareUnique)
 		table_close(heapRelation, AccessShareLock);
 
 		RegisterExclusionInPgIndexCatalog(currentIndexOid);
+	}
+
+	if (snapshotPushed)
+	{
+		PopActiveSnapshot();
 	}
 }
 

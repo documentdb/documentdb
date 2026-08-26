@@ -27,4 +27,15 @@ void AddExtensionQueryScanForVectorQuery(PlannerInfo *root, RelOptInfo *rel,
 
 void AddExplainCustomScanWrapper(PlannerInfo *root, RelOptInfo *rel,
 								 RangeTblEntry *rte, uint64 collectionId);
+
+void AddDistinctCustomScanWrapper(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte);
+
+void AddRumIndexOnlyScanCustomScanWrapper(PlannerInfo *root, RelOptInfo *rel,
+										  RangeTblEntry *rte);
+
+void AddReservoirSampleCustomPath(PlannerInfo *root, RelOptInfo *rel,
+								  FuncExpr *sampleExpr);
+
+int64 GetMaxReservoirSampleSize(void);
+
 #endif

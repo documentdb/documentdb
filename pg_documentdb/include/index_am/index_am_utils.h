@@ -19,6 +19,30 @@
 
 #define MAX_ALTERNATE_INDEX_AMS 5
 
+typedef struct CompositeOpClassMetadataInfo
+{
+	uint64 rawBlob;
+	bool isMultiKey;
+	uint32_t multiKeyPathBitMask;
+	int multiKeyPathCount;
+	bool hasCorrelatedReducedTerms;
+	bool hasTruncation;
+	int trackedTruncatedPathCount;
+	bool isReducedCorrelatedIndex;
+} CompositeOpClassMetadataInfo;
+
+/* Result of reading composite-index opclass metadata: how much was populated. */
+typedef enum CompositeOpClassMetadataReadResult
+{
+	/* Nothing read; *info untouched. */
+	CompositeOpClassMetadataReadResult_None = 0,
+
+	/* Only info->isMultiKey set, from the index metapage. */
+	CompositeOpClassMetadataReadResult_Partial,
+
+	/* All fields set, decoded from the opclass metadata blob. */
+	CompositeOpClassMetadataReadResult_Full
+} CompositeOpClassMetadataReadResult;
 
 int SetDynamicIndexAmOidsAndGetCount(Datum *indexAmArray, int32_t indexAmArraySize);
 
@@ -59,20 +83,69 @@ bool IsHashedPathOpFamilyOid(Oid relam, Oid opFamilyOid);
 
 bool IsOrderBySupportedOnOpClass(Oid indexAm, Oid IndexPathOpFamilyAm);
 
-GetMultikeyStatusFunc GetMultiKeyStatusByRelAm(Oid relam);
 bool GetIndexSupportsBackwardsScan(Oid relam, bool *indexCanOrder);
 
 bool GetIndexAmSupportsIndexOnlyScan(Oid indexAm, Oid opFamilyOid,
-									 GetMultikeyStatusFunc *getMultiKeyStatus,
-									 GetTruncationStatusFunc *getTruncationStatus);
+									 PGFunction *getMultiKeyStatus,
+									 GetTruncationStatusFunc *getTruncationStatus,
+									 PGFunction *getOpclassMetadata);
+
+/*
+ * Returns whether the index reports its entries as truncated, dispatching to
+ * the registered access method. Returns false when the AM does not implement
+ * a truncation-status check.
+ */
+bool GetIndexTruncationStatus(Relation indexRelation);
+
+/*
+ * Returns whether the index currently tracks any correlated reduced terms via
+ * a full index check (slow path), dispatching to the registered access method.
+ * Returns false when the AM does not implement a reduced-terms check.
+ */
+bool GetIndexReducedTermsStatus(Relation indexRelation);
+
+/*
+ * Returns whether scans on this index perform path-key summarization at the
+ * access-method level, dispatching to the registered access method. Returns
+ * false when the AM does not perform path-key summarization.
+ */
+bool IsPathKeySummarizationScan(Oid relam);
 
 void TryExplainByIndexAm(struct IndexScanDescData *scan, ExplainWriterFuncs *writeFuncs,
 						 void *writerState);
 
+PGFunction GetIndexKeyCurrentKeyFunc(Oid relam, Oid opFamily);
+PGFunction GetSkipTidsOnCurrentEntryFunc(Oid relam, Oid opFamily);
+PGFunction GetIndexStatsFunc(Oid relam);
+
+bool GetCompositeOpClassPropsByOid(Oid relAm, Oid opFamilyOid,
+								   bool *supportsOrderedOperatorScans,
+								   PGFunction *multiKeyStatusFunc,
+								   PGFunction *getOpclassMetadata);
 
 bool GetCompositeOpClassWithProps(Relation indexRelation,
 								  bool *supportsOrderedOperatorScans,
-								  GetMultikeyStatusFunc *multiKeyStatusFunc,
-								  CanOrderInIndexScan *isIndexScanOrdered);
+								  PGFunction *multiKeyStatusFunc,
+								  PGFunction *getOpclassMetadata);
+
+/*
+ * Reads composite-index opclass metadata. Returns Full with *info fully
+ * populated when the metadata blob is available, Partial with only
+ * info->isMultiKey set as a fallback, or None if neither can be read.
+ */
+CompositeOpClassMetadataReadResult TryGetCompositeOpClassMetadataInfo(Oid indexOid,
+																	  LOCKMODE lockmode,
+																	  CompositeOpClassMetadataInfo
+																	  *info);
+
+
+CompositeOpClassMetadataReadResult TryGetCompositeOpClassMetadataInfoWithStats(Oid
+																			   indexOid,
+																			   LOCKMODE
+																			   lockmode,
+																			   CompositeOpClassMetadataInfo
+																			   *info,
+																			   List **
+																			   indexStats);
 
 #endif

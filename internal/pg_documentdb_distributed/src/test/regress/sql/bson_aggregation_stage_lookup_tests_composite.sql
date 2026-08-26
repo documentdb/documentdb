@@ -82,6 +82,265 @@ SELECT document FROM bson_aggregation_pipeline('compdb',
 SELECT document FROM bson_aggregation_pipeline('compdb',
     '{ "aggregate": "customer_purchases_sharded", "pipeline": [ { "$lookup": { "from": "catalog_items", "localField": "item_name", "foreignField": "item_code", "as": "matched_docs", "pipeline": [ { "$addFields": { "matched_docs.hello": "newsubpipelinefield" } } ] } } ]}');
 
+-- Flag-off controls for the three distributed topologies exercised below.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'compdb',
+    '{
+      "aggregate": "customer_purchases_sharded",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "catalog_items",
+            "localField": "item_name",
+            "foreignField": "item_code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "catalog_items",
+                  "localField": "_id",
+                  "foreignField": "_id",
+                  "as": "item_copy"
+                }
+              }
+            ],
+            "as": "matched_docs"
+          }
+        }
+      ]
+    }'
+);
+
+SELECT document
+FROM bson_aggregation_pipeline(
+    'compdb',
+    '{
+      "aggregate": "customer_purchases",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "customer_purchases_sharded",
+            "localField": "item_name",
+            "foreignField": "item_name",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "catalog_items",
+                  "localField": "item_name",
+                  "foreignField": "item_code",
+                  "as": "items"
+                }
+              }
+            ],
+            "as": "matched_docs"
+          }
+        }
+      ]
+    }'
+);
+
+SELECT document
+FROM bson_aggregation_pipeline(
+    'compdb',
+    '{
+      "aggregate": "customer_purchases",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "catalog_items",
+            "localField": "item_name",
+            "foreignField": "item_code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "customer_purchases_sharded",
+                  "localField": "item_code",
+                  "foreignField": "item_name",
+                  "as": "purchases"
+                }
+              }
+            ],
+            "as": "matched_docs"
+          }
+        }
+      ]
+    }'
+);
+
+SET documentdb.force_nested_lookup_pipeline_after_join TO on;
+
+-- Nested lookup over a sharded outer collection
+SELECT document
+FROM bson_aggregation_pipeline(
+    'compdb',
+    '{
+      "aggregate": "customer_purchases_sharded",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "catalog_items",
+            "localField": "item_name",
+            "foreignField": "item_code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "catalog_items",
+                  "localField": "_id",
+                  "foreignField": "_id",
+                  "as": "item_copy"
+                }
+              }
+            ],
+            "as": "matched_docs"
+          }
+        }
+      ]
+    }'
+);
+
+-- Nested lookup with a sharded parent foreign collection
+SELECT document
+FROM bson_aggregation_pipeline(
+    'compdb',
+    '{
+      "aggregate": "customer_purchases",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "customer_purchases_sharded",
+            "localField": "item_name",
+            "foreignField": "item_name",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "catalog_items",
+                  "localField": "item_name",
+                  "foreignField": "item_code",
+                  "as": "items"
+                }
+              }
+            ],
+            "as": "matched_docs"
+          }
+        }
+      ]
+    }'
+);
+
+-- Nested lookup with a sharded collection deeper in the lookup chain
+SELECT document
+FROM bson_aggregation_pipeline(
+    'compdb',
+    '{
+      "aggregate": "customer_purchases",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "catalog_items",
+            "localField": "item_name",
+            "foreignField": "item_code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "customer_purchases_sharded",
+                  "localField": "item_code",
+                  "foreignField": "item_name",
+                  "as": "purchases"
+                }
+              }
+            ],
+            "as": "matched_docs"
+          }
+        }
+      ]
+    }'
+);
+
+RESET documentdb.force_nested_lookup_pipeline_after_join;
+
+-- Flag-off control for the foreign _id planner issue.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'compdb',
+    '{
+      "aggregate": "customer_purchases",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "catalog_items",
+            "localField": "item_name",
+            "foreignField": "item_code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "catalog_items",
+                  "localField": "_id",
+                  "foreignField": "_id",
+                  "pipeline": [
+                    {
+                      "$lookup": {
+                        "from": "customer_purchases_sharded",
+                        "localField": "item_code",
+                        "foreignField": "item_name",
+                        "as": "purchases"
+                      }
+                    }
+                  ],
+                  "as": "item_copy"
+                }
+              }
+            ],
+            "as": "matched_docs"
+          }
+        }
+      ]
+    }'
+);
+
+SET documentdb.force_nested_lookup_pipeline_after_join TO on;
+
+-- PRE-EXISTING LIMITATION:
+-- The foreign _id path keeps its pipeline after the join and produces an
+-- unsupported correlated CTE independently of the force setting.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'compdb',
+    '{
+      "aggregate": "customer_purchases",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "catalog_items",
+            "localField": "item_name",
+            "foreignField": "item_code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "catalog_items",
+                  "localField": "_id",
+                  "foreignField": "_id",
+                  "pipeline": [
+                    {
+                      "$lookup": {
+                        "from": "customer_purchases_sharded",
+                        "localField": "item_code",
+                        "foreignField": "item_name",
+                        "as": "purchases"
+                      }
+                    }
+                  ],
+                  "as": "item_copy"
+                }
+              }
+            ],
+            "as": "matched_docs"
+          }
+        }
+      ]
+    }'
+);
+
+RESET documentdb.force_nested_lookup_pipeline_after_join;
 
 -- Test coalesce path, return empty array when no match found 
 SELECT documentdb_api.insert_one('compdb','coalesce_source','{"_id": 0, "a": 1}', NULL);

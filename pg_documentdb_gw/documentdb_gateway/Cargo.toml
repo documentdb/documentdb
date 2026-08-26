@@ -17,8 +17,21 @@ assets = [
  ["target/release-with-symbols/documentdb_gateway", "usr/bin/", "755"],
 ]
 
+[features]
+default = ["request-tracing", "postgres-sql-commenter"]
+mimalloc = ["dep:mimalloc"]
+request-tracing = ["documentdb_gateway_core/request-tracing"]
+postgres-sql-commenter = [
+ "request-tracing",
+ "documentdb_gateway_otel/postgres-sql-commenter",
+]
+
 [dependencies]
 documentdb_gateway_core.workspace = true
+documentdb_gateway_otel.workspace = true
+mimalloc = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

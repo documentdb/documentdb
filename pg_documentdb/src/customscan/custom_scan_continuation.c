@@ -26,6 +26,7 @@
 #include <catalog/pg_operator.h>
 #include <optimizer/restrictinfo.h>
 #include <optimizer/paths.h>
+#include <optimizer/tlist.h>
 
 #if PG_VERSION_NUM >= 180000
 #include <commands/explain_format.h>
@@ -181,7 +182,6 @@ const StringView PrimaryKeyShardKey =
 
 extern bool EnablePrimaryKeyCursorScan;
 extern bool EnableContinuationFastBitmapLookup;
-extern bool EnableCursorPlanBeforeRestrictionPathUpdate;
 
 #define InputContinuationNodeName "ExtensionScanInputContinuation"
 
@@ -203,13 +203,15 @@ static void ExtensionScanReScanCustomScan(CustomScanState *node);
 static void ExtensionScanExplainCustomScan(CustomScanState *node, List *ancestors,
 										   ExplainState *es);
 
-static RestrictInfo * BuildPrimaryKeyRowRestrictInfo(PlannerInfo *root, RelOptInfo *rel,
-													 const ExtensionScanState *state);
+static RestrictInfo * BuildPrimaryKeyRestrictInfo(PlannerInfo *root, RelOptInfo *rel,
+												  IndexOptInfo *indexInfo,
+												  Datum *primaryKeyDatums, bool
+												  rowCompareIsInclusive,
+												  ScanDirection scandir,
+												  bool *isObjectIdContinuation);
 static void ParseContinuationState(ExtensionScanState *scanState,
 								   InputContinuation *continuation);
 static TupleTableSlot * ExtensionScanNext(CustomScanState *node);
-static TupleTableSlot * SkipWithUserContinuation(ExtensionScanState *state,
-												 bool *shouldContinue);
 static bool ExtensionScanNextRecheck(ScanState *state, TupleTableSlot *slot);
 static void PostProcessSlot(ExtensionScanState *extensionScanState, TupleTableSlot *slot);
 
@@ -221,11 +223,6 @@ static bool EqualUnsupportedExtensionScanNode(const struct ExtensibleNode *a,
 											  const struct ExtensibleNode *b);
 static Node * ReplaceCursorParamValuesMutator(Node *node, ParamListInfo boundParams);
 static IndexOptInfo * GetPrimaryKeyIndexOpt(RelOptInfo *rel);
-static IndexPath * AddRowCompareToExistingPrimaryKeyPath(PlannerInfo *root,
-														 RelOptInfo *rel,
-														 IndexPath *existingPath,
-														 const ExtensionScanState *
-														 scanState);
 
 /* --------------------------------------------------------- */
 /* Top level exports */
@@ -531,8 +528,20 @@ CreateCustomScanPathForContinuation(PlannerInfo *root, RelOptInfo *rel, Path *in
 
 	/* move the 'projection' from the path to the custom path. */
 
-	/* Point the nested scan's projection to the base table's projection */
-	path->pathtarget = inputPath->pathtarget;
+	/* Point the nested scan's projection to the base table's projection.
+	 *
+	 * Copy the outer pathtarget instead of aliasing inputPath->pathtarget. A
+	 * single baseRelPathTarget is shared as the inner (nested-scan) projection
+	 * across every custom path built for this relation; if an earlier path
+	 * already repointed its inputPath->pathtarget at that shared
+	 * baseRelPathTarget, aliasing it here would make the (wide) baseRelPathTarget
+	 * the top-level pathtarget of a rel->pathlist custom path. The core planner
+	 * (apply_scanjoin_target_to_paths) then injects the narrower final-target
+	 * sortgrouprefs into that pathtarget in place, leaving the shared inner
+	 * projection with a sortgrouprefs array shorter than its exprs list. That
+	 * causes build_path_tlist() to read past the array end. An independent copy
+	 * keeps baseRelPathTarget off rel->pathlist so it is never relabeled. */
+	path->pathtarget = copy_pathtarget(inputPath->pathtarget);
 	inputPath->pathtarget = baseRelPathTarget;
 
 
@@ -557,19 +566,37 @@ CreateCustomScanPathForContinuation(PlannerInfo *root, RelOptInfo *rel, Path *in
 }
 
 
-static IndexPath *
+IndexPath *
 GetPrimaryKeyContinuationIndexPath(PlannerInfo *root, RelOptInfo *rel,
-								   const ExtensionScanState *scanState)
+								   Datum *primaryKeyDatums,
+								   ScanDirection scandir,
+								   bool rowCompareIsInclusive)
 {
-	IndexOptInfo *info = GetPrimaryKeyIndexOpt(rel);
+	/*
+	 * Resume must honor the scan type the continuation already committed to.
+	 * Use the GUC-independent core lookup here: once a cursor's first page was
+	 * planned as a primary-key scan (chosen via GetPrimaryKeyIndexOptCore), a
+	 * subsequent getMore must be able to resume it even if the runtime
+	 * enablePrimaryKeyCursorScan GUC has since been toggled off (e.g. a config
+	 * flight, or a worker that did not inherit the coordinator's SET). The GUC
+	 * gates selection of the primary-key scan for new cursors, not resumption of
+	 * existing ones. A NULL here now means the primary key index is genuinely
+	 * absent on the relation.
+	 */
+	IndexOptInfo *info = GetPrimaryKeyIndexOptCore(rel);
 	if (info == NULL)
 	{
 		ereport(ERROR, (errmsg(
 							"Expecting a primary key to resume the query but found none")));
 	}
 
-	RestrictInfo *rowCompareRestrictInfo = BuildPrimaryKeyRowRestrictInfo(root, rel,
-																		  scanState);
+	bool isIdContinuation = false;
+	RestrictInfo *rowCompareRestrictInfo = BuildPrimaryKeyRestrictInfo(
+		root, rel, info,
+		primaryKeyDatums,
+		rowCompareIsInclusive,
+		scandir,
+		&isIdContinuation);
 
 	List *oldIndexList = rel->indexlist;
 	List *oldPathList = rel->pathlist;
@@ -629,7 +656,7 @@ GetPrimaryKeyContinuationIndexPath(PlannerInfo *root, RelOptInfo *rel,
 	{
 		/* The first one can be shard_key_value = <value> */
 		IndexClause *secondClause = lsecond_node(IndexClause, inputPath->indexclauses);
-		if (secondClause->rinfo != rowCompareRestrictInfo)
+		if (secondClause->rinfo != rowCompareRestrictInfo && !isIdContinuation)
 		{
 			ereport(ERROR, (errmsg(
 								"Unexpected index clause found when resuming primary key scan")));
@@ -687,13 +714,18 @@ GetPrimaryKeyContinuationIndexPath(PlannerInfo *root, RelOptInfo *rel,
  * (e.g., $in pushdown) already present on the path, rather than rebuilding
  * the path from scratch.
  */
-static IndexPath *
+IndexPath *
 AddRowCompareToExistingPrimaryKeyPath(PlannerInfo *root, RelOptInfo *rel,
 									  IndexPath *existingPath,
-									  const ExtensionScanState *scanState)
+									  Datum *primaryKeyDatums, bool rowCompareIsInclusive)
 {
+	bool isObjectIdContinuation = false;
 	RestrictInfo *rowCompareRestrictInfo =
-		BuildPrimaryKeyRowRestrictInfo(root, rel, scanState);
+		BuildPrimaryKeyRestrictInfo(root, rel, existingPath->indexinfo,
+									primaryKeyDatums,
+									rowCompareIsInclusive,
+									existingPath->indexscandir,
+									&isObjectIdContinuation);
 
 	/* Copy the IndexPath and its IndexOptInfo so we don't modify the original */
 	IndexPath *pathCopy = palloc(sizeof(IndexPath));
@@ -715,8 +747,16 @@ AddRowCompareToExistingPrimaryKeyPath(PlannerInfo *root, RelOptInfo *rel,
 	rowCompareClause->rinfo = rowCompareRestrictInfo;
 	rowCompareClause->indexquals = list_make1(rowCompareRestrictInfo);
 	rowCompareClause->lossy = false;
-	rowCompareClause->indexcol = 0;
-	rowCompareClause->indexcols = list_make2_int(0, 1);
+
+	if (isObjectIdContinuation)
+	{
+		rowCompareClause->indexcol = 1;
+	}
+	else
+	{
+		rowCompareClause->indexcol = 0;
+		rowCompareClause->indexcols = list_make2_int(0, 1);
+	}
 
 	/*
 	 * Insert the RowCompareExpr clause in sorted position by indexcol.
@@ -834,7 +874,7 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 	/* first look for a continuation function in the base quals */
 	pgbson *continuation = NULL;
 	bool hasContinuation = false;
-	RestrictInfo *unshardedShardKeyRestrictInfo = NULL;
+	bool hasShardKeyEqualityFilter = false;
 	ListCell *cell;
 
 	foreach(cell, rel->baserestrictinfo)
@@ -843,12 +883,19 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 
 		/* Track the unsharded shard_key_value expr */
 		if (EnablePrimaryKeyCursorScan &&
-			context->inputData.isShardQuery &&
-			context->inputData.collectionId > 0 &&
-			IsOpExprShardKeyForUnshardedCollections(rinfo->clause,
-													context->inputData.collectionId))
+			context->inputData.isShardQuery)
 		{
-			unshardedShardKeyRestrictInfo = rinfo;
+			int64_t shardKeyValueIgnore = 0;
+			if (context->inputData.collectionId > 0 &&
+				IsOpExprShardKeyForUnshardedCollections(rinfo->clause,
+														context->inputData.collectionId))
+			{
+				hasShardKeyEqualityFilter = true;
+			}
+			else if (IsOpExprShardKeyEquality(rinfo->clause, &shardKeyValueIgnore))
+			{
+				hasShardKeyEqualityFilter = true;
+			}
 		}
 
 		if (IsA(rinfo->clause, FuncExpr))
@@ -883,9 +930,24 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 
 				if (!IsA(secondArg, Const))
 				{
-					ereport(ERROR, (errmsg(
-										"Invalid cursor state provided - must be a const value. found: %d",
-										secondArg->type)));
+					secondArg = eval_const_expressions(NULL, secondArg);
+
+					if (!IsA(secondArg, Const) && IsA(secondArg, CoerceViaIO))
+					{
+						Node *resolved = ResolveCoerceViaIOToConst(secondArg,
+																   BsonTypeId());
+						if (resolved != NULL)
+						{
+							secondArg = resolved;
+						}
+					}
+
+					if (!IsA(secondArg, Const))
+					{
+						ereport(ERROR, (errmsg(
+											"Invalid cursor state provided - must be a const value. found: %d",
+											secondArg->type)));
+					}
 				}
 
 				Const *constValue = (Const *) secondArg;
@@ -982,41 +1044,46 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 		inputContinuation.isPrimaryKeyScan = true;
 
 		IndexPath *inputPath = NULL;
-		if (EnableCursorPlanBeforeRestrictionPathUpdate)
+		bool rowCompareInclusive = false;
+
+		/*
+		 * Check if there's already a PK btree IndexPath in rel->pathlist.
+		 * If so, reuse it and add the RowCompareExpr continuation clause,
+		 * preserving any existing index conditions on the path.
+		 * Otherwise, build a fresh PK path from scratch.
+		 */
+		IndexPath *existingPkPath = NULL;
+		foreach(cell, rel->pathlist)
 		{
-			/*
-			 * Check if there's already a PK btree IndexPath in rel->pathlist.
-			 * If so, reuse it and add the RowCompareExpr continuation clause,
-			 * preserving any existing index conditions on the path.
-			 * Otherwise, build a fresh PK path from scratch.
-			 */
-			IndexPath *existingPkPath = NULL;
-			foreach(cell, rel->pathlist)
+			Path *currentPath = lfirst(cell);
+			if (currentPath->pathtype == T_IndexScan)
 			{
-				Path *currentPath = lfirst(cell);
-				if (currentPath->pathtype == T_IndexScan)
+				IndexPath *indexPath = (IndexPath *) currentPath;
+				if (IsBtreePrimaryKeyIndex(indexPath->indexinfo))
 				{
-					IndexPath *indexPath = (IndexPath *) currentPath;
-					if (IsBtreePrimaryKeyIndex(indexPath->indexinfo))
-					{
-						existingPkPath = indexPath;
-						break;
-					}
+					existingPkPath = indexPath;
+					break;
 				}
 			}
+		}
 
 
-			if (existingPkPath != NULL)
-			{
-				inputPath = AddRowCompareToExistingPrimaryKeyPath(root, rel,
-																  existingPkPath,
-																  &scanState);
-			}
+		if (existingPkPath != NULL)
+		{
+			inputPath = AddRowCompareToExistingPrimaryKeyPath(root, rel,
+															  existingPkPath,
+															  scanState.
+															  primaryKeyDatums,
+															  rowCompareInclusive);
 		}
 
 		if (inputPath == NULL)
 		{
-			inputPath = GetPrimaryKeyContinuationIndexPath(root, rel, &scanState);
+			ScanDirection scandir = ForwardScanDirection;
+			inputPath = GetPrimaryKeyContinuationIndexPath(root, rel,
+														   scanState.primaryKeyDatums,
+														   scandir,
+														   rowCompareInclusive);
 		}
 
 		/* Trim restrict info clauses already satisfied by the index path */
@@ -1043,7 +1110,12 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 
 				bool isPrimaryKeyIndex = IsBtreePrimaryKeyIndex(
 					indexPath->indexinfo);
-				isPrimaryKeyPath = EnablePrimaryKeyCursorScan && isPrimaryKeyIndex;
+
+				/* Only support PK Cursor scan with _id clauses for unsharded collections
+				 * at the moment
+				 */
+				isPrimaryKeyPath = EnablePrimaryKeyCursorScan && isPrimaryKeyIndex &&
+								   hasShardKeyEqualityFilter;
 
 				if (isPrimaryKeyIndex && !isPrimaryKeyPath)
 				{
@@ -1077,7 +1149,8 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 				{
 					IndexPath *indexPath = (IndexPath *) bitmapQualPath;
 
-					isPrimaryKeyPath = IsBtreePrimaryKeyIndex(indexPath->indexinfo);
+					isPrimaryKeyPath = IsBtreePrimaryKeyIndex(indexPath->indexinfo) &&
+									   hasShardKeyEqualityFilter;
 					if (isPrimaryKeyPath && EnablePrimaryKeyCursorScan)
 					{
 						inputPath = (Path *) indexPath;
@@ -1135,7 +1208,11 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 																   tidLowerBoundScan);
 					inputPath = (Path *) create_tidrangescan_path(root, rel, list_make1(
 																	  rinfo),
-																  rel->lateral_relids);
+																  rel->lateral_relids
+#if PG_VERSION_NUM >= 190000
+																  , 0
+#endif
+																  );
 				}
 			}
 
@@ -1179,20 +1256,6 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 	 */
 	rel->partial_pathlist = NIL;
 
-	/* We're responsible for trimming the shard_key_value expr here. */
-	if (EnablePrimaryKeyCursorScan && unshardedShardKeyRestrictInfo != NULL)
-	{
-		if (list_length(rel->baserestrictinfo) == 1)
-		{
-			rel->baserestrictinfo = NIL;
-		}
-		else
-		{
-			rel->baserestrictinfo = list_delete(rel->baserestrictinfo,
-												unshardedShardKeyRestrictInfo);
-		}
-	}
-
 	return true;
 }
 
@@ -1205,6 +1268,13 @@ GetPrimaryKeyIndexOpt(RelOptInfo *rel)
 		return NULL;
 	}
 
+	return GetPrimaryKeyIndexOptCore(rel);
+}
+
+
+IndexOptInfo *
+GetPrimaryKeyIndexOptCore(RelOptInfo *rel)
+{
 	ListCell *cell;
 	foreach(cell, rel->indexlist)
 	{
@@ -1579,6 +1649,20 @@ ExtensionScanExplainCustomScan(CustomScanState *node, List *ancestors,
 {
 	ExtensionScanState *extensionScanState = (ExtensionScanState *) node;
 
+	/*
+	 * Report the cursor scan strategy. This field is consumed by the gateway
+	 * explain layer and emitted in the queryPlanner stage of the wire-protocol
+	 * explain response as "cursorScanType".
+	 */
+	if (extensionScanState->queryState.isPrimaryKeyScan)
+	{
+		ExplainPropertyText("cursorScanType", "streamingPrimaryKey", es);
+	}
+	else
+	{
+		ExplainPropertyText("cursorScanType", "streaming", es);
+	}
+
 	/* Explain any extension specific state */
 	if (extensionScanState->batchCount > 0)
 	{
@@ -1722,7 +1806,14 @@ ExtensionScanNext(CustomScanState *node)
 		!extensionScanState->hasPrimaryKeyState)
 	{
 		bool shouldContinue = false;
-		slot = SkipWithUserContinuation(extensionScanState, &shouldContinue);
+		bool returnOnEquality = false;
+		double numSkipped = 0;
+		slot = SkipWithUserContinuation(extensionScanState->innerScanState,
+										&extensionScanState->userContinuationState,
+										returnOnEquality,
+										&shouldContinue,
+										&numSkipped);
+
 		extensionScanState->hasUserContinuationState = false;
 		if (slot != NULL)
 		{
@@ -1983,7 +2074,8 @@ ParseContinuationState(ExtensionScanState *extensionScanState,
  */
 static bool
 SkipBitmapToUserContinuation(BitmapHeapScanState *bitmapScanState,
-							 ItemPointerData *userContinuation)
+							 ItemPointerData *userContinuation,
+							 double *numSkipped)
 {
 	TBMIterator tbmiterator = { 0 };
 
@@ -2015,7 +2107,11 @@ SkipBitmapToUserContinuation(BitmapHeapScanState *bitmapScanState,
 				table_beginscan_bm(bitmapScanState->ss.ss_currentRelation,
 								   bitmapScanState->ss.ps.state->es_snapshot,
 								   0,
-								   NULL);
+								   NULL
+#if PG_VERSION_NUM >= 190000
+								   , SO_NONE
+#endif
+								   );
 		}
 
 		bitmapScanState->ss.ss_currentScanDesc->st.rs_tbmiterator = tbmiterator;
@@ -2068,6 +2164,7 @@ SkipBitmapToUserContinuation(BitmapHeapScanState *bitmapScanState,
 		BlockNumber blockno = tbmres_tmp.blockno;
 		if (blockno < target_blockno)
 		{
+			(*numSkipped)++;
 			tbm_iterate(&tbmiterator, &tbmres);
 			continue; /* Skip blocks before target */
 		}
@@ -2109,7 +2206,8 @@ SkipBitmapToUserContinuation(BitmapHeapScanState *bitmapScanState,
  */
 static bool
 SkipBitmapToUserContinuation(BitmapHeapScanState *bitmapScanState,
-							 ItemPointerData *userContinuation)
+							 ItemPointerData *userContinuation,
+							 double *numSkipped)
 {
 	TBMIterator *tbmiterator = NULL;
 
@@ -2187,6 +2285,7 @@ SkipBitmapToUserContinuation(BitmapHeapScanState *bitmapScanState,
 		}
 
 		BlockNumber blockno = tbmres_tmp->blockno;
+		(*numSkipped) += tbmres_tmp->ntuples;
 		if (blockno < target_blockno)
 		{
 			tbmres = tbm_iterate(tbmiterator);
@@ -2230,32 +2329,35 @@ SkipBitmapToUserContinuation(BitmapHeapScanState *bitmapScanState,
  * If the enumeration ends before the continuation is hit, returns NULL and shouldContinue = false.
  * If the enumeration ends at the continuation point, returns NULL and sets shouldContinue = true.
  */
-static TupleTableSlot *
-SkipWithUserContinuation(ExtensionScanState *state, bool *shouldContinue)
+TupleTableSlot *
+SkipWithUserContinuation(ScanState *innerScanState, ItemPointer userContinuation,
+						 bool returnOnEquality, bool *shouldContinue, double *numSkipped)
 {
 	*shouldContinue = false;
+	*numSkipped = 0;
 
 	if (EnableContinuationFastBitmapLookup &&
-		state->innerScanState->ps.type == T_BitmapHeapScanState)
+		innerScanState->ps.type == T_BitmapHeapScanState)
 	{
 		BitmapHeapScanState *bitmapScanState =
-			(BitmapHeapScanState *) &state->innerScanState->ps;
+			(BitmapHeapScanState *) &innerScanState->ps;
 		bool found = SkipBitmapToUserContinuation(bitmapScanState,
-												  &state->userContinuationState);
+												  userContinuation,
+												  numSkipped);
 		if (!found)
 		{
 			return NULL;
 		}
 	}
-	else if (state->innerScanState->ps.type == T_BitmapHeapScanState)
+	else if (innerScanState->ps.type == T_BitmapHeapScanState)
 	{
 		ReportFeatureUsage(FEATURE_CURSOR_CAN_USE_FAST_BITMAP);
 	}
 
 	while (true)
 	{
-		TupleTableSlot *slot = state->innerScanState->ps.ExecProcNode(
-			(PlanState *) state->innerScanState);
+		TupleTableSlot *slot = innerScanState->ps.ExecProcNode(
+			(PlanState *) innerScanState);
 		if (TupIsNull(slot))
 		{
 			return slot;
@@ -2268,15 +2370,20 @@ SkipWithUserContinuation(ExtensionScanState *state, bool *shouldContinue)
 		 * would need to be reconciled as we build more scans on top of this.
 		 * TODO: Consider impact of VACUUM on the cursor state execution and skip
 		 */
-		TupleTableSlot *originalSlot = GetOriginalSlot(state->innerScanState, slot);
-		if (ItemPointerCompare(&originalSlot->tts_tid, &state->userContinuationState) ==
-			0)
+		(*numSkipped)++;
+		TupleTableSlot *originalSlot = GetOriginalSlot(innerScanState, slot);
+		if (ItemPointerCompare(&originalSlot->tts_tid, userContinuation) == 0)
 		{
 			*shouldContinue = true;
-			return NULL;
+
+			/* Return the matching tuple. This is used when the continuation
+			 * points to a tuple that was fetched but not emitted to the client
+			 * (e.g., dynamic cursor bitmap scans where the batch limit was
+			 * reached before writing the tuple). */
+			return returnOnEquality ? slot : NULL;
 		}
 
-		if (ItemPointerCompare(&originalSlot->tts_tid, &state->userContinuationState) > 0)
+		if (ItemPointerCompare(&originalSlot->tts_tid, userContinuation) > 0)
 		{
 			/* already found a slot after the continuation. return. */
 			return slot;
@@ -2357,34 +2464,178 @@ ReadCustomScanContinuationExtensionScanNode(struct ExtensibleNode *node)
 
 
 static RestrictInfo *
-BuildPrimaryKeyRowRestrictInfo(PlannerInfo *root, RelOptInfo *rel, const
-							   ExtensionScanState *state)
+BuildPrimaryKeyRestrictInfo(PlannerInfo *root, RelOptInfo *rel,
+							IndexOptInfo *indexInfo,
+							Datum *primaryKeyDatums, bool rowCompareIsInclusive,
+							ScanDirection scandir,
+							bool *isObjectIdContinuation)
 {
-	Var *shardKeyVar = makeVar(rel->relid,
-							   DOCUMENT_DATA_TABLE_SHARD_KEY_VALUE_VAR_ATTR_NUMBER,
-							   INT8OID, -1, InvalidOid, 0);
+	ListCell *cell;
+	bool hasShardKeyEquality = false;
+	foreach(cell, indexInfo->indrestrictinfo)
+	{
+		RestrictInfo *rinfo = (RestrictInfo *) lfirst(cell);
+		int64 shardKeyValueIgnore;
+		if (IsOpExprShardKeyEquality(rinfo->clause, &shardKeyValueIgnore))
+		{
+			hasShardKeyEquality = true;
+			break;
+		}
+	}
+
 	Var *objectIdVar = makeVar(rel->relid, DOCUMENT_DATA_TABLE_OBJECT_ID_VAR_ATTR_NUMBER,
 							   BsonTypeId(), -1, InvalidOid, 0);
 
-	Const *shardKeyConst = makeConst(INT8OID, -1, InvalidOid, sizeof(int64),
-									 state->primaryKeyDatums[0], false, true);
 	Const *objectIdConst = makeConst(BsonTypeId(), -1, InvalidOid, -1,
-									 state->primaryKeyDatums[1], false, false);
-	RowCompareExpr *rcexpr = makeNode(RowCompareExpr);
-	rcexpr = makeNode(RowCompareExpr);
-#if PG_VERSION_NUM >= 180000
-	rcexpr->cmptype = COMPARE_GT;
-#else
-	rcexpr->rctype = ROWCOMPARE_GT;
-#endif
-	rcexpr->opnos = list_make2_oid(BigIntGreaterOperatorId(),
-								   BsonGreaterThanOperatorId());
-	rcexpr->opfamilies = list_make2_oid(IntegerOpsOpFamilyOid(), BsonBtreeOpFamilyOid());
-	rcexpr->inputcollids = list_make2_oid(InvalidOid, InvalidOid);
-	rcexpr->largs = list_make2(shardKeyVar, objectIdVar);
-	rcexpr->rargs = list_make2(shardKeyConst, objectIdConst);
+									 primaryKeyDatums[1], false, false);
+	Expr *skipExpr;
+	*isObjectIdContinuation = false;
 
-	RestrictInfo *shardKeyRestrict = make_simple_restrictinfo(root, (Expr *) rcexpr);
+	Oid bsonCompareOp;
+	Oid shardKeyCompareOp;
+#if PG_VERSION_NUM >= 180000
+	CompareType cmptype;
+#else
+	RowCompareType rcType;
+#endif
+
+	if (ScanDirectionIsBackward(scandir))
+	{
+		bsonCompareOp = rowCompareIsInclusive ? BsonLessThanEqualOperatorId() :
+						BsonLessThanOperatorId();
+		shardKeyCompareOp = rowCompareIsInclusive ? BigIntLessEqualOperatorId() :
+							BigIntLessOperatorId();
+#if PG_VERSION_NUM >= 180000
+		cmptype = rowCompareIsInclusive ? COMPARE_LE : COMPARE_LT;
+#else
+		rcType = rowCompareIsInclusive ? ROWCOMPARE_LE : ROWCOMPARE_LT;
+#endif
+	}
+	else
+	{
+		bsonCompareOp = rowCompareIsInclusive ? BsonGreaterThanEqualOperatorId() :
+						BsonGreaterThanOperatorId();
+		shardKeyCompareOp = rowCompareIsInclusive ? BigIntGreaterEqualOperatorId() :
+							BigIntGreaterOperatorId();
+#if PG_VERSION_NUM >= 180000
+		cmptype = rowCompareIsInclusive ? COMPARE_GE : COMPARE_GT;
+#else
+		rcType = rowCompareIsInclusive ? ROWCOMPARE_GE : ROWCOMPARE_GT;
+#endif
+	}
+
+	if (hasShardKeyEquality)
+	{
+		/* Construct object_id > in this path */
+		skipExpr = make_opclause(bsonCompareOp, BOOLOID, false, (Expr *) objectIdVar,
+								 (Expr *) objectIdConst, InvalidOid, InvalidOid);
+		*isObjectIdContinuation = true;
+	}
+	else
+	{
+		Var *shardKeyVar = makeVar(rel->relid,
+								   DOCUMENT_DATA_TABLE_SHARD_KEY_VALUE_VAR_ATTR_NUMBER,
+								   INT8OID, -1, InvalidOid, 0);
+
+
+		Const *shardKeyConst = makeConst(INT8OID, -1, InvalidOid, sizeof(int64),
+										 primaryKeyDatums[0], false, true);
+		RowCompareExpr *rcexpr = makeNode(RowCompareExpr);
+#if PG_VERSION_NUM >= 180000
+		rcexpr->cmptype = cmptype;
+#else
+		rcexpr->rctype = rcType;
+#endif
+
+
+		rcexpr->opnos = list_make2_oid(shardKeyCompareOp, bsonCompareOp);
+		rcexpr->opfamilies = list_make2_oid(IntegerOpsOpFamilyOid(),
+											BsonBtreeOpFamilyOid());
+		rcexpr->inputcollids = list_make2_oid(InvalidOid, InvalidOid);
+		rcexpr->largs = list_make2(shardKeyVar, objectIdVar);
+		rcexpr->rargs = list_make2(shardKeyConst, objectIdConst);
+		skipExpr = (Expr *) rcexpr;
+	}
+
+
+	RestrictInfo *shardKeyRestrict = make_simple_restrictinfo(root, skipExpr);
 
 	return shardKeyRestrict;
+}
+
+
+/*
+ * ResolveCoerceViaIOToConst
+ *
+ * When a query is dispatched via remote execution (e.g. through Citus),
+ * constant parameters may arrive wrapped in a CoerceViaIO node containing
+ * the text representation of the value. This function unwraps such nodes
+ * by evaluating the inner expression to a Const, validating that the inner
+ * Const type is bytea or bson (the expected binary types for cursor state),
+ * and converting through the proper IO functions to produce the target type.
+ *
+ * If the node is already a Const or is not a CoerceViaIO, returns NULL
+ * indicating no transformation was performed.
+ *
+ * expectedTypeOid: the expected result type of the coercion (typically bson).
+ */
+Node *
+ResolveCoerceViaIOToConst(Node *arg, Oid expectedTypeOid)
+{
+	if (!IsA(arg, CoerceViaIO))
+	{
+		return NULL;
+	}
+
+	CoerceViaIO *coerce = (CoerceViaIO *) arg;
+	Node *innerArg = (Node *) coerce->arg;
+	innerArg = eval_const_expressions(NULL, innerArg);
+
+	if (!IsA(innerArg, Const))
+	{
+		ereport(ERROR, (errmsg(
+							"Invalid cursor state provided - CoerceViaIO inner arg must be a const value. found: %d",
+							innerArg->type)));
+	}
+
+	Const *innerConst = (Const *) innerArg;
+	if (innerConst->constisnull)
+	{
+		return (Node *) innerConst;
+	}
+
+	/* Validate that the inner const is a binary type (bytea or bson) */
+	Oid innerType = innerConst->consttype;
+	bool isValidType = (innerType == BYTEAOID ||
+						innerType == BsonTypeId());
+	if (!isValidType)
+	{
+		ereport(ERROR, (errmsg(
+							"Invalid cursor state type in CoerceViaIO - expected bytea or bson, found type OID: %u",
+							innerType)));
+	}
+
+	/* Validate coercion target matches expected type */
+	if (expectedTypeOid != InvalidOid && coerce->resulttype != expectedTypeOid)
+	{
+		ereport(ERROR, (errmsg(
+							"Invalid CoerceViaIO result type - expected OID %u, found OID %u",
+							expectedTypeOid, coerce->resulttype)));
+	}
+
+	/* Convert through IO: source output func -> text -> target input func */
+	Oid outputFuncId;
+	bool typIsVarlena;
+	getTypeOutputInfo(innerConst->consttype, &outputFuncId, &typIsVarlena);
+	char *textValue = OidOutputFunctionCall(outputFuncId,
+											innerConst->constvalue);
+
+	Oid inputFuncId;
+	Oid typIOParam;
+	getTypeInputInfo(coerce->resulttype, &inputFuncId, &typIOParam);
+	Datum result = OidInputFunctionCall(inputFuncId, textValue, typIOParam, -1);
+
+	return (Node *) makeConst(coerce->resulttype, -1,
+							  coerce->resultcollid, -1,
+							  result, false, false);
 }

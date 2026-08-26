@@ -9,7 +9,9 @@ SELECT documentdb_distributed_test_helpers.drop_primary_key('db','compound_index
 
 BEGIN;
   set local enable_seqscan TO off;
-  EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'compound_index_test') WHERE document @@ '{ "a.b": { "$gte" : 1 }}';
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'compound_index_test') WHERE document @@ '{ "a.b": { "$gte" : 1 }}'
+$cmd$, false, true);
 ROLLBACK;
 
 -- supported "partialFilterExpression" operators --
@@ -141,7 +143,8 @@ BEGIN;
   SET seq_page_cost TO 10000000;
 
   -- uses my_idx_5
-  EXPLAIN (COSTS OFF) SELECT COUNT(*)
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT COUNT(*)
   FROM documentdb_api.collection('mydb_4', 'collection_10')
   WHERE document @@ '
   {
@@ -154,10 +157,12 @@ BEGIN;
     },
     "c": {"$exists": 1}
   }
-  ';
+  '
+$cmd$, false, true);
 
   -- cannot use my_idx_5 since "b.e" is missing
-  EXPLAIN (COSTS OFF) SELECT COUNT(*)
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT COUNT(*)
   FROM documentdb_api.collection('mydb_4', 'collection_10')
   WHERE document @@ '
   {
@@ -169,10 +174,12 @@ BEGIN;
     },
     "c": {"$exists": 1}
   }
-  ';
+  '
+$cmd$, false, true);
 
   -- cannot use my_idx_5 since the filter on "c" is missing
-  EXPLAIN (COSTS OFF) SELECT COUNT(*)
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT COUNT(*)
   FROM documentdb_api.collection('mydb_4', 'collection_10')
   WHERE document @@ '
   {
@@ -184,10 +191,12 @@ BEGIN;
       "e": {"f": 0}
     }
   }
-  ';
+  '
+$cmd$, false, true);
 
   -- uses my_idx_5 even if we added a filter on "another_field"
-  EXPLAIN (COSTS OFF) SELECT COUNT(*)
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT COUNT(*)
   FROM documentdb_api.collection('mydb_4', 'collection_10')
   WHERE document @@ '
   {
@@ -198,10 +207,12 @@ BEGIN;
       { "a": [ { "a": "b" }, "c", 1 ] }
     ]
   }
-  ';
+  '
+$cmd$, false, true);
 
   -- cannot use my_idx_5 due to order of the fields under "b"
-  EXPLAIN (COSTS OFF) SELECT COUNT(*)
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT COUNT(*)
   FROM documentdb_api.collection('mydb_4', 'collection_10')
   WHERE document @@ '
   {
@@ -212,10 +223,12 @@ BEGIN;
       { "a": [ { "a": "b" }, "c", 1 ] }
     ]
   }
-  ';
+  '
+$cmd$, false, true);
 
   -- cannot use my_idx_5 due to order of the elements in array "b.c.d"
-  EXPLAIN (COSTS OFF) SELECT COUNT(*)
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT COUNT(*)
   FROM documentdb_api.collection('mydb_4', 'collection_10')
   WHERE document @@ '
   {
@@ -226,7 +239,8 @@ BEGIN;
       { "a": [ { "a": "b" }, "c", 1 ] }
     ]
   }
-  ';
+  '
+$cmd$, false, true);
 COMMIT;
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently(

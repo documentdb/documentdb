@@ -529,9 +529,43 @@ SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator')
 ERROR:  Failed to parse $size. Expected an integer in: $size: 3.1
 SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$size" : -3.4 }}' ORDER BY object_id;
 ERROR:  Failed to parse $size. Expected an integer in: $size: -3.4
+-- a non-finite double has no integer representation, so it must fail to parse rather than
+-- be narrowed to INT64_MAX
+SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$size" : { "$numberDouble" : "Infinity" } }}' ORDER BY object_id;
+ERROR:  Failed to parse $size. Expected an integer in: $size: Infinity
+SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$size" : { "$numberDouble" : "-Infinity" } }}' ORDER BY object_id;
+ERROR:  Failed to parse $size. Expected an integer in: $size: -Infinity
+SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$size" : { "$numberDouble" : "NaN" } }}' ORDER BY object_id;
+ERROR:  Failed to parse $size. Expected an integer in: $size: NaN
+SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$size" : Infinity }}' ORDER BY object_id;
+ERROR:  Failed to parse $size. Expected an integer in: $size: Infinity
 -- These can't be tested since the extended json syntax treats $type as an extended json operator and not a call to actual $type function.
 -- SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$type" : 123.56 }}' ORDER BY object_id;
 -- SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$type" : [] }}' ORDER BY object_id;
+-- A numeric $type code IS reachable when the number is written with its extended json
+-- wrapper, which the parser accepts where a bare number or an array is rejected.
+-- Valid code, as a control: 2 is "string".
+SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$type" : { "$numberDouble" : "2.0" } }}' ORDER BY object_id;
+            object_id             |                                                                                                          document                                                                                                          
+---------------------------------------------------------------------
+ { "" : { "$numberInt" : "4" } }  | { "_id" : { "$numberInt" : "4" }, "a" : { "b" : "someString" } }
+ { "" : { "$numberInt" : "18" } } | { "_id" : { "$numberInt" : "18" }, "a" : [ { "b" : "S", "c" : { "$numberInt" : "10" }, "d" : "X" }, { "b" : "M", "c" : { "$numberInt" : "100" }, "d" : "X" }, { "b" : "L", "c" : { "$numberInt" : "100" }, "d" : "Y" } ] }
+ { "" : { "$numberInt" : "19" } } | { "_id" : { "$numberInt" : "19" }, "a" : [ { "b" : "1", "c" : { "$numberInt" : "100" }, "d" : "Y" }, { "b" : "2", "c" : { "$numberInt" : "50" }, "d" : "X" }, { "b" : "3", "c" : { "$numberInt" : "100" }, "d" : "Z" } ] }
+ { "" : { "$numberInt" : "20" } } | { "_id" : { "$numberInt" : "20" }, "a" : [ { "b" : "M", "c" : { "$numberInt" : "100" }, "d" : "Y" } ] }
+(4 rows)
+
+-- Non-finite codes are reported with MongoDB's spelling rather than a saturated INT64_MAX.
+SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$type" : { "$numberDouble" : "Infinity" } }}' ORDER BY object_id;
+ERROR:  Invalid numerical type code: inf
+SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$type" : { "$numberDouble" : "-Infinity" } }}' ORDER BY object_id;
+ERROR:  Invalid numerical type code: -inf
+SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$type" : { "$numberDouble" : "NaN" } }}' ORDER BY object_id;
+ERROR:  Invalid numerical type code: nan
+-- A finite non-integer code, and a finite integer that is not a type code, are unchanged.
+SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$type" : { "$numberDouble" : "2.5" } }}' ORDER BY object_id;
+ERROR:  Unsupported or invalid numerical type code 2.5
+SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$type" : { "$numberLong" : "9999" } }}' ORDER BY object_id;
+ERROR:  Invalid numerical type code: 9999
 -- these queries are negative tests for $all operator
 SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a"  : {"$all" : [ {"$elemMatch" : {"b" : {"$gt" : 1} } }, 1 ] } }' ORDER BY object_id;
 ERROR:  $all/$elemMatch has to be consistent

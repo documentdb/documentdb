@@ -51,8 +51,10 @@
 #include "geospatial/bson_geospatial_common.h"
 #include "geospatial/bson_geospatial_geonear.h"
 #include "metadata/collection.h"
+#include "metadata/index.h"
 #include "metadata/metadata_cache.h"
 #include "planner/mongo_query_operator.h"
+#include "planner/documentdb_planner.h"
 #include "query/query_operator.h"
 #include "utils/error_utils.h"
 #include "utils/guc_utils.h"
@@ -66,7 +68,7 @@
 #include "vector/vector_common.h"
 #include "vector/vector_utilities.h"
 #include "index_am/index_am_utils.h"
-#include "index_am/index_am_extend.h"
+#include "index_am/index_am_extend_create.h"
 
 /* Return value of TryCreateCollectionIndexes */
 typedef struct
@@ -164,16 +166,17 @@ extern int MaxWildcardIndexKeySize;
 extern bool DefaultEnableLargeUniqueIndexKeys;
 extern bool ForceWildcardReducedTerm;
 extern bool EnableCompositeUniqueHash;
-extern bool EnableCompositeWildcardIndex;
 extern bool CreateTTLIndexAsCompositeByDefault;
-extern bool EnableCompositeReducedCorrelatedTerms;
-extern bool EnableUniqueCompositeReducedCorrelatedTerms;
 extern bool EnableCompositeShardDocumentTerms;
 extern bool EnablePerCollectionPlannerStatistics;
 extern bool EnableCompositeReducedCorrelatedTermsOnCommonSubPath;
+extern bool EnableIndexMetadataGlobalTracking;
+extern bool EnableDottedValueTextIndexTerms;
+extern bool EnableNewNamespaceValidation;
 
 extern bool EnableCollationWithNonUniqueOrderedIndexes;
 extern bool SkipFailOnCollation;
+extern bool EnableNonBlockingUniqueIndexBuild;
 
 extern char *AlternateIndexHandler;
 
@@ -211,17 +214,13 @@ static ReIndexResult reindex_concurrently(Datum dbNameDatum,
 static IndexDef * ParseIndexDefDocument(const bson_iter_t *indexesArrayIter,
 										bool ignoreUnknownIndexOptions,
 										bool buildAsUniqueForPrepareUnique);
-static IndexDef * ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
-												const char *indexSpecRepr,
-												bool ignoreUnknownIndexOptions,
-												bool buildAsUniqueForPrepareUnique);
 static void EnsureIndexDefDocFieldType(const bson_iter_t *indexDefDocIter,
 									   bson_type_t expectedType);
 static void EnsureIndexDefDocFieldConvertibleToBool(bson_iter_t *indexDefDocIter);
 static bool IsSupportedIndexVersion(int indexVersion);
 static void ThrowIndexDefDocMissingFieldError(const char *fieldName);
-static void UpdateUniqueIndexStatsForPostgresIndex(uint64 collectionId,
-												   List *indexIdList);
+static void UpdateIndexStatsForPostgresIndexCore(uint64 collectionId,
+												 List *indexIdList);
 static IndexDefKey * ParseIndexDefKeyDocument(const bson_iter_t *indexDefDocIter);
 static CosmosSearchOptions * ParseCosmosSearchOptionsDoc(const bson_iter_t *optsIter);
 static BsonIntermediatePathNode * ParseIndexDefWildcardProjDoc(const bson_iter_t *
@@ -315,7 +314,8 @@ static char * GenerateIndexExprStr(const char *indexAmSuffix,
 								   bool useReducedWildcardTerms,
 								   const char *indexAmOpClassCatalogSchema,
 								   const char *indexAmOpClassInternalCatalogSchema,
-								   const char *collationString);
+								   const char *collationString,
+								   bool supportsMetadataBasedTracking);
 static char * Generate2dsphereIndexExprStr(const IndexDefKey *indexDefKey);
 static char * Generate2dsphereSparseExprStr(const IndexDefKey *indexDefKey);
 static char * GenerateIndexFilterStr(uint64 collectionId, Expr *indexDefPartFilterExpr);
@@ -405,7 +405,8 @@ IsSinglePathIndex(IndexDef *indexDef)
 inline static bool
 IsCompositePathIndex(IndexDef *indexDef)
 {
-	return indexDef->enableCompositeTerm == BoolIndexOption_True;
+	return indexDef->enableCompositeTerm == CustomIndexOption_True ||
+		   indexDef->enableCompositeTerm == CustomIndexOption_DefaultTrue;
 }
 
 
@@ -629,7 +630,7 @@ command_fix_unique_index_stats_for_collection(PG_FUNCTION_ARGS)
 
 	if (indexIdList != NIL)
 	{
-		UpdateUniqueIndexStatsForPostgresIndex(collectionId, indexIdList);
+		UpdateIndexStatsForPostgresIndexCore(collectionId, indexIdList);
 	}
 
 	PG_RETURN_VOID();
@@ -702,6 +703,8 @@ command_reindex(const CallStmt *callStmt,
 				const ParamListInfo params,
 				DestReceiver *destReceiver)
 {
+	ThrowIfWriteCommandNotAllowed();
+
 	/* must name it as "fcinfo" to be able to use PG_ARG/PG_GETARG functions */
 	LOCAL_FCINFO(fcinfo, FUNC_MAX_ARGS);
 	InitFCInfoForCallStmt(fcinfo, callStmt, context, params);
@@ -1398,6 +1401,15 @@ ParseCreateIndexesArg(Datum *dbNameDatum, pgbson *arg, bool buildAsUniqueForPrep
 					bson_iter_value(&argIter));
 			}
 		}
+		else if (strcmp(argKey, "skipWaitForIndex") == 0)
+		{
+			if (EnsureTopLevelFieldIsBooleanLikeNullOk(
+					"skipWaitForIndex", &argIter))
+			{
+				createIndexesArg.skipWaitForIndex = BsonValueAsBool(
+					bson_iter_value(&argIter));
+			}
+		}
 		else if (strcmp(argKey, "$db") == 0)
 		{
 			ValidateOrExtractDatabaseNameFromSpec(&argIter, dbNameDatum);
@@ -1441,12 +1453,52 @@ ParseCreateIndexesArg(Datum *dbNameDatum, pgbson *arg, bool buildAsUniqueForPrep
 							   TextDatumGetCString(*dbNameDatum))));
 	}
 
+	if (EnableNewNamespaceValidation)
+	{
+		StringView collectionView = CreateStringViewFromString(
+			createIndexesArg.collectionName);
+		ValidateCollectionNameForValidSystemNamespace(&collectionView,
+													  *dbNameDatum);
+	}
+	else
+	{
+		/*
+		 * Fallback when the new namespace validation GUC is off: preserve the
+		 * legacy gateway behavior of blocking createIndexes on the 'admin'
+		 * and 'config' databases entirely. This restores the pre-feature-flag
+		 * safety net so that turning the GUC off becomes a clean revert.
+		 */
+		char *databaseName = TextDatumGetCString(*dbNameDatum);
+		if (strcmp(databaseName, "admin") == 0 ||
+			strcmp(databaseName, "config") == 0)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_ILLEGALOPERATION),
+							errmsg(
+								"Cannot create indexes in config or admin databases")));
+		}
+	}
+
 	if (list_length(createIndexesArg.indexDefList) == 0)
 	{
 		/* "indexes" field is specified, but to be an empty array */
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 						errmsg(
 							"You must provide at least one index in order to proceed with creation")));
+	}
+
+	/*
+	 * When force_index_builds_blocking is enabled, force every createIndexes to
+	 * request a blocking (non-concurrent) build. On the synchronous path this
+	 * builds inline; on the background-submit path the queued command becomes a
+	 * plain CREATE INDEX instead of CREATE INDEX CONCURRENTLY. Either way the
+	 * build no longer waits out unrelated long-running transactions cluster-wide
+	 * (the CIC drain wait), which otherwise head-of-line blocks other index
+	 * builds under heavy parallel load. All submit paths consume
+	 * createIndexesArg.blocking, so setting it here covers them uniformly.
+	 */
+	if (ForceIndexBuildsBlocking)
+	{
+		createIndexesArg.blocking = true;
 	}
 
 	return createIndexesArg;
@@ -1473,7 +1525,9 @@ ParseIndexDefDocument(const bson_iter_t *indexesArrayIter, bool ignoreUnknownInd
 	IndexDef *indexDef = NULL;
 	PG_TRY();
 	{
-		indexDef = ParseIndexDefDocumentInternal(indexesArrayIter,
+		bson_iter_t indexDefDocIter;
+		bson_iter_recurse(indexesArrayIter, &indexDefDocIter);
+		indexDef = ParseIndexDefDocumentInternal(&indexDefDocIter,
 												 indexSpecRepr,
 												 ignoreUnknownIndexOptions,
 												 buildAsUniqueForPrepareUnique);
@@ -1513,13 +1567,52 @@ ParseCustomIndexDefOption(const char *indexDefDocKey, bson_iter_t *indexDefDocIt
 	{
 		EnsureTopLevelFieldIsBooleanLike(indexDefDocKey, indexDefDocIter);
 		const bson_value_t *value = bson_iter_value(indexDefDocIter);
-		if (BsonValueAsBool(value))
+
+		/*
+		 * If the caller passes a numeric value, cast it directly to the
+		 * CustomIndexOption enum so that sentinel values (e.g. -1 for
+		 * CustomIndexOption_False, 1 for CustomIndexOption_DefaultTrue) are
+		 * preserved correctly instead of being collapsed to true/false by
+		 * BsonValueAsBool (which treats any non-zero number as true).
+		 */
+		if (value->value_type == BSON_TYPE_BOOL)
 		{
-			indexDef->enableCompositeTerm = BoolIndexOption_True;
+			if (BsonValueAsBool(value))
+			{
+				indexDef->enableCompositeTerm = CustomIndexOption_True;
+			}
+			else
+			{
+				indexDef->enableCompositeTerm = CustomIndexOption_False;
+			}
 		}
-		else
+		else if (BsonTypeIsNumber(value->value_type))
 		{
-			indexDef->enableCompositeTerm = BoolIndexOption_False;
+			/*
+			 * Reject values that are not whole numbers or fall outside int64
+			 * range (e.g. 2.1, NaN, Inf, 999999999999999999999).
+			 */
+			bool checkFixedInteger = true;
+			bool shouldError = false;
+			int32 numericValue = BsonValueAsInt32(value);
+			if (IsBsonValue32BitInteger(value, checkFixedInteger))
+			{
+				indexDef->enableCompositeTerm = (CustomIndexOption) numericValue;
+			}
+			else
+			{
+				shouldError = true;
+			}
+
+			if (shouldError || (numericValue != CustomIndexOption_False &&
+								numericValue != CustomIndexOption_DefaultTrue &&
+								numericValue != CustomIndexOption_True))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"The field '%s' must be a boolean or one of the sentinel values -1, 1, or 2",
+									indexDefDocKey)));
+			}
 		}
 
 		return true;
@@ -1582,8 +1675,8 @@ ParseCustomIndexDefOption(const char *indexDefDocKey, bson_iter_t *indexDefDocIt
  * of pgbson iterator that points to the "indexes" field of "arg" document
  * passed to dbCommand/createIndexes.
  */
-static IndexDef *
-ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
+IndexDef *
+ParseIndexDefDocumentInternal(const bson_iter_t *indexesDocIter,
 							  const char *indexSpecRepr,
 							  bool ignoreUnknownIndexOptions,
 							  bool buildAsUniqueForPrepareUnique)
@@ -1600,11 +1693,13 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 	/* set to default value in case it's unset */
 	indexDef->version = 2;
 
+	/* default textIndexVersion to the only value we actually support */
+	indexDef->textIndexVersion = 2;
+
 	/* Set to 0 to denote sphere index not present */
 	indexDef->sphereIndexVersion = 0;
 
-	bson_iter_t indexDefDocIter;
-	bson_iter_recurse(indexesArrayIter, &indexDefDocIter);
+	bson_iter_t indexDefDocIter = *indexesDocIter;
 	while (bson_iter_next(&indexDefDocIter))
 	{
 		const char *indexDefDocKey = bson_iter_key(&indexDefDocIter);
@@ -1765,7 +1860,13 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 		}
 		else if (strcmp(indexDefDocKey, "textIndexVersion") == 0)
 		{
-			/* We only support version 2 (Diacritic sensitive, case insensitive) */
+			/*
+			 * Capture the requested textIndexVersion. We deliberately do NOT
+			 * reject unsupported versions here: createIndexes against an
+			 * existing equivalent text index is treated as a no-op regardless
+			 * of textIndexVersion, so we defer validation until we know we'd
+			 * actually be creating a new index (see CheckForConflictsAndPruneExistingIndexes).
+			 */
 			const bson_value_t *value = bson_iter_value(&indexDefDocIter);
 			if (!BsonValueIsNumber(value))
 			{
@@ -1775,17 +1876,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 									BsonTypeName(value->value_type))));
 			}
 
-			int version = BsonValueAsInt32(value);
-			if (version != 2)
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-								errmsg(
-									"Currently only textIndexVersion 2 is supported, not %d",
-									version),
-								errdetail_log(
-									"Currently only textIndexVersion 2 is supported, not %d",
-									version)));
-			}
+			indexDef->textIndexVersion = BsonValueAsInt32(value);
 		}
 		else if (strcmp(indexDefDocKey, "background") == 0)
 		{
@@ -2027,9 +2118,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 									errmsg(
 										"The 'storageEngine.%s' field is invalid for use in an index specification. "
 										"Full specification provided: %s",
-										key,
-										PgbsonIterDocumentToJsonForLogging(
-											indexesArrayIter))));
+										key, indexSpecRepr)));
 				}
 			}
 		}
@@ -2043,9 +2132,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDINDEXSPECIFICATIONOPTION),
 							errmsg(
 								"The field '%s' cannot be used in an index specification. Provided specification: %s",
-								indexDefDocKey,
-								PgbsonIterDocumentToJsonForLogging(
-									indexesArrayIter))));
+								indexDefDocKey, indexSpecRepr)));
 		}
 	}
 
@@ -2219,14 +2306,6 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 							errmsg(
 								"Creating a 2dsphere index as ttl index is not supported.")));
 		}
-
-		/* TTL indexes should always use single path composite term indexing
-		 * when the GUC `CreateTTLIndexAsCompositeByDefault` is enabled (enabled by default) */
-		if (CreateTTLIndexAsCompositeByDefault && indexDef->enableCompositeTerm !=
-			BoolIndexOption_False)
-		{
-			indexDef->enableCompositeTerm = BoolIndexOption_True;
-		}
 	}
 
 	/* parse the partialFilterExpression with applicable collation*/
@@ -2237,17 +2316,34 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 											indexDef->collationString);
 	}
 
-	if (indexDef->enableCompositeTerm == BoolIndexOption_Undefined &&
-		indexDef->key->isIdIndex)
+	/* If composite option is not provided, create a composite index by default if
+	 * requested for legacy clusters via configuration, or if it's a non-legacy cluster
+	 * and the default composite op class should be used.
+	 * Skip for index. Other indexes types that don't support composite (2d, 2dsphere, hashed, text).
+	 * are taken care below. */
+
+	if (ShouldUseCompositeOpClassByDefault() ||
+		(CreateTTLIndexAsCompositeByDefault && isTTLIndex))
 	{
-		indexDef->enableCompositeTerm = BoolIndexOption_False;
+		/* TTL indexes should always use single path composite term indexing
+		 * when the GUC `CreateTTLIndexAsCompositeByDefault` is enabled (enabled by default). */
+		indexDef->key->canSupportCompositeTerm = true;
+		if (indexDef->enableCompositeTerm == CustomIndexOption_Undefined)
+		{
+			indexDef->enableCompositeTerm = CustomIndexOption_DefaultTrue;
+		}
 	}
 
-	if (indexDef->enableCompositeTerm == BoolIndexOption_True ||
-		(indexDef->enableCompositeTerm == BoolIndexOption_Undefined &&
-		 ShouldUseCompositeOpClassByDefault()))
+	if (indexDef->key->isIdIndex)
 	{
-		bool shouldError = indexDef->enableCompositeTerm == BoolIndexOption_True;
+		indexDef->key->canSupportCompositeTerm = false;
+	}
+
+
+	if (indexDef->enableCompositeTerm == CustomIndexOption_True ||
+		indexDef->enableCompositeTerm == CustomIndexOption_DefaultTrue)
+	{
+		bool shouldError = indexDef->enableCompositeTerm == CustomIndexOption_True;
 
 		indexDef->key->canSupportCompositeTerm = true;
 
@@ -2255,28 +2351,15 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 
 		if (indexDef->key->isWildcard)
 		{
-			if (EnableCompositeWildcardIndex)
-			{
-				/* We don't yet support wildcard projection */
-				if (indexDef->wildcardProjectionTree)
-				{
-					indexDef->key->canSupportCompositeTerm = false;
-					if (shouldError)
-					{
-						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
-										errmsg(
-											"enableOrderedIndex is not supported with wildcard indexes with wildcardProjectionTree.")));
-					}
-				}
-			}
-			else
+			/* We don't yet support wildcard projection */
+			if (indexDef->wildcardProjectionTree)
 			{
 				indexDef->key->canSupportCompositeTerm = false;
 				if (shouldError)
 				{
 					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
 									errmsg(
-										"enableOrderedIndex is not supported with wildcard indexes.")));
+										"enableOrderedIndex is not supported with wildcard indexes with wildcardProjectionTree.")));
 				}
 			}
 		}
@@ -2294,18 +2377,6 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
 									errmsg(
 										"enableOrderedIndex is only supported with regular indexes.")));
-				}
-			}
-
-			if (keyPath->isWildcard && !EnableCompositeWildcardIndex)
-			{
-				indexDef->key->canSupportCompositeTerm = false;
-
-				if (shouldError)
-				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
-									errmsg(
-										"enableOrderedIndex is not supported with wildcard indexes.")));
 				}
 			}
 		}
@@ -2329,12 +2400,14 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 									"enableOrderedIndex is not yet supported for multi-key wildcard indexes.")));
 			}
 		}
-
-		if (indexDef->key->canSupportCompositeTerm)
-		{
-			indexDef->enableCompositeTerm = BoolIndexOption_True;
-		}
 	}
+
+	/* Skip cases which can't support composite terms */
+	if (!indexDef->key->canSupportCompositeTerm)
+	{
+		indexDef->enableCompositeTerm = CustomIndexOption_Undefined;
+	}
+
 
 	/*
 	 * Validate collation compatibility with index types and options.
@@ -2377,7 +2450,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 		}
 
 		/* Collation is only supported for ordered (composite) indexes */
-		if (indexDef->enableCompositeTerm != BoolIndexOption_True)
+		if (!IsCompositePathIndex(indexDef))
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
 							errmsg(
@@ -2393,7 +2466,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 		}
 	}
 
-	if (indexDef->enableCompositeTerm != BoolIndexOption_True &&
+	if (!IsCompositePathIndex(indexDef) &&
 		indexDef->key->isWildcard && indexDef->key->hasDescendingIndex)
 	{
 		/* Non composite does not support descending indexes */
@@ -2403,7 +2476,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 	}
 
 	if (indexDef->buildAsUnique == BoolIndexOption_True &&
-		indexDef->enableCompositeTerm != BoolIndexOption_True)
+		!IsCompositePathIndex(indexDef))
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
 						errmsg(
@@ -2926,13 +2999,6 @@ ParseIndexDefKeyDocument(const bson_iter_t *indexDefDocIter)
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
 								errmsg(
 									"Index key pattern values are not allowed to be zero.")));
-			}
-
-			if (isWildcardKeyPath && (doubleValue < 0) && !EnableCompositeWildcardIndex)
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
-								errmsg(
-									"A numeric value in a $** index key pattern must be positive.")));
 			}
 
 			sortOrder = doubleValue < 0 ? -1 : 1;
@@ -3860,7 +3926,13 @@ CheckPartFilterExprOperatorsWalker(Node *node, void *context)
 		}
 		else if (boolExpr->boolop == OR_EXPR)
 		{
-			ThrowUnsupportedPartFilterExprError(node);
+			bool isTopLevel = (bool) context;
+			if (!isTopLevel)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+								errmsg("$or only supported in partialFilterExpression "
+									   "at top level")));
+			}
 		}
 		else if (boolExpr->boolop == NOT_EXPR)
 		{
@@ -4249,6 +4321,7 @@ CheckForConflictsAndPruneExistingIndexes(uint64 collectionId, List *indexDefList
 		IndexDef *indexDef = lfirst(indexDefCell);
 
 		IndexSpec indexSpec = MakeIndexSpecForIndexDef(indexDef);
+
 		int32_t inBuildIndexId = -1;
 		if (!CheckIndexSpecConflictWithExistingIndexes(collectionId, &indexSpec,
 													   &inBuildIndexId))
@@ -4271,8 +4344,26 @@ CheckForConflictsAndPruneExistingIndexes(uint64 collectionId, List *indexDefList
 	 */
 	for (int i = 0; i < list_length(prunedIndexDefList); i++)
 	{
-		const IndexSpec latterIndexSpec =
-			MakeIndexSpecForIndexDef(list_nth(prunedIndexDefList, i));
+		IndexDef *latterIndexDef = list_nth(prunedIndexDefList, i);
+		const IndexSpec latterIndexSpec = MakeIndexSpecForIndexDef(latterIndexDef);
+
+		/*
+		 * This index survived pruning, so we are about to actually create it.
+		 * For text indexes, validate the requested textIndexVersion now (we
+		 * deferred this check at parse time so that idempotent createIndexes
+		 * calls referencing an existing equivalent text index succeed
+		 * regardless of textIndexVersion).
+		 */
+		if (IsTextIndex(latterIndexDef) && latterIndexDef->textIndexVersion != 2)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+							errmsg(
+								"Currently only textIndexVersion 2 is supported, not %d",
+								latterIndexDef->textIndexVersion),
+							errdetail_log(
+								"Currently only textIndexVersion 2 is supported, not %d",
+								latterIndexDef->textIndexVersion)));
+		}
 
 		for (int j = 0; j < i; j++)
 		{
@@ -4393,9 +4484,8 @@ CheckIndexSpecConflictWithExistingIndexes(uint64 collectionId, const IndexSpec *
 					&optionsMatchedIndexDetails->indexSpec, indexSpec);
 			}
 
-			equivalency = IndexSpecOptionsAreEquivalent(indexSpec,
-														&optionsMatchedIndexDetails->
-														indexSpec);
+			equivalency = IndexSpecOptionsAreEquivalent(&optionsMatchedIndexDetails->
+														indexSpec, indexSpec);
 
 			if (equivalency == IndexOptionsEquivalency_TextEquivalent)
 			{
@@ -4409,6 +4499,20 @@ CheckIndexSpecConflictWithExistingIndexes(uint64 collectionId, const IndexSpec *
 					&optionsMatchedIndexDetails->indexSpec, indexSpec);
 			}
 
+			/*
+			 * when equivalency == IndexOptionsEquivalency_CompatEqual,
+			 * i.e., the case where they are not equivalent for migration.
+			 * but the error message need to treat them as equal, and we fall through and
+			 * use ThrowIndexOptionsConflictError.
+			 *
+			 * For example, existing index: { "v" : 2, "key" : { "a" : 1 }, "name" : "a" } was
+			 * created as unordered. And Requested index: { "v" : 2, "key" : { "a" : 1 }, "name" : "a_1" }
+			 * was attempted to be created this index ordered (system default) post migration.
+			 *
+			 * Even though options don't match - it needs to be treated as only name did not match and options matched.
+			 */
+
+			/* For all other cases we naturally use ThrowIndexOptionsConflictError  */
 			ThrowIndexOptionsConflictError(
 				optionsMatchedIndexDetails->indexSpec.indexName);
 		}
@@ -5018,9 +5122,18 @@ MakeIndexSpecForIndexDef(IndexDef *indexDef)
 		PgbsonWriterAppendInt32(&writer, "enableLargeIndexKeys", 20, 1);
 	}
 
-	if (indexDef->enableCompositeTerm == BoolIndexOption_True)
+	if (IsCompositePathIndex(indexDef))
 	{
-		PgbsonWriterAppendInt32(&writer, "enableOrderedIndex", 18, 1);
+		PgbsonWriterAppendInt32(&writer, "enableOrderedIndex", 18,
+								(int32_t) indexDef->enableCompositeTerm);
+	}
+	else if (indexDef->enableCompositeTerm == CustomIndexOption_False)
+	{
+		/* Persist explicit false (as -1) so we can distinguish "user said false"
+		 * from "user said nothing" for conflict checking and idempotency.
+		 * Skip _id indexes since the system sets them to False implicitly. */
+		PgbsonWriterAppendInt32(&writer, "enableOrderedIndex", 18,
+								(int32_t) CustomIndexOption_False);
 	}
 
 	if (indexDef->collationSpec)
@@ -5083,8 +5196,10 @@ static void
 CreatePostgresIndex(uint64 collectionId, IndexDef *indexDef, int indexId,
 					bool concurrently, bool isTempCollection, bool isUnsharded)
 {
+	bool isBackgroundBuild = false;
 	char *cmd = CreatePostgresIndexCreationCmd(collectionId, indexDef, indexId,
-											   concurrently, isTempCollection);
+											   concurrently, isTempCollection,
+											   isBackgroundBuild);
 	const Oid userOid = InvalidOid;
 	bool useSerialExecution = isUnsharded;
 	ExecuteCreatePostgresIndexCmd(cmd, concurrently, userOid, useSerialExecution);
@@ -5096,20 +5211,33 @@ CreatePostgresIndex(uint64 collectionId, IndexDef *indexDef, int indexId,
  */
 char *
 CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int indexId,
-							   bool concurrently, bool isTempCollection)
+							   bool concurrently, bool isTempCollection,
+							   bool isBackgroundBuild)
 {
-	/*
-	 * TODO: "For a compound multikey index, each indexed document can have at
-	 *       most one indexed field whose value is an array".
-	 *       Need to ensure this is the case when building the index.
-	 *
-	 * TODO: Currently we don't know how to build unique RUM indexes concurrently.
-	 */
-
 	StringInfo cmdStr = makeStringInfo();
 	bool unique = indexDef->unique == BoolIndexOption_True;
 	bool sparse = indexDef->sparse == BoolIndexOption_True;
 	const BsonIndexAmEntry *indexAm = GetIndexAmHandlerByName(indexDef);
+
+	/*
+	 * For unique indexes, compute enableLargeIndexKeys upfront since
+	 * both the EXCLUDE constraint path and the background CREATE INDEX
+	 * path need the same value.
+	 */
+	bool uniqueEnableLargeIndexKeys = DefaultEnableLargeUniqueIndexKeys;
+	bool isBackgroundNonBlockingUnique = false;
+	if (unique)
+	{
+		/* We ignore enable large index keys being false deliberately. */
+		uniqueEnableLargeIndexKeys = uniqueEnableLargeIndexKeys ||
+									 indexDef->enableLargeIndexKeys ==
+									 BoolIndexOption_True;
+
+		isBackgroundNonBlockingUnique = EnableNonBlockingUniqueIndexBuild &&
+										isBackgroundBuild &&
+										CanBuildNonBlockingUniqueIndex() &&
+										IsCompositePathIndex(indexDef);
+	}
 
 	if (EnableExtendedIndexes &&
 		indexDef->amIndexOptions != NULL &&
@@ -5181,7 +5309,7 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 								   indexDef->indexDelegateAM->am_name)));
 		}
 	}
-	else if (unique)
+	else if (unique && !isBackgroundNonBlockingUnique)
 	{
 		if (isTempCollection)
 		{
@@ -5195,21 +5323,7 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 							 ApiDataSchemaName, collectionId);
 		}
 
-		bool enableLargeIndexKeys = DefaultEnableLargeUniqueIndexKeys;
-		if (indexDef->enableLargeIndexKeys == BoolIndexOption_True)
-		{
-			enableLargeIndexKeys = true;
-		}
-
-		bool enableNewIndexOpClass = false;
-		if (indexDef->enableCompositeTerm != BoolIndexOption_Undefined)
-		{
-			enableNewIndexOpClass = indexDef->enableCompositeTerm == BoolIndexOption_True;
-		}
-		else
-		{
-			enableNewIndexOpClass = ShouldUseCompositeOpClassByDefault();
-		}
+		bool enableNewIndexOpClass = IsCompositePathIndex(indexDef);
 
 		bool useReducedWildcardTermGeneration = false;
 		bool buildAsUnique = false;
@@ -5225,11 +5339,12 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 											  indexDef->name,
 											  indexDef->defaultLanguage,
 											  indexDef->languageOverride,
-											  enableLargeIndexKeys,
+											  uniqueEnableLargeIndexKeys,
 											  useReducedWildcardTermGeneration,
 											  indexAm->get_opclass_catalog_schema(),
 											  indexAm->get_opclass_internal_catalog_schema(),
-											  indexDef->collationString),
+											  indexDef->collationString,
+											  indexAm->get_opclass_metadata != NULL),
 						 indexDef->partialFilterExpr ? "WHERE (" : "",
 						 indexDef->partialFilterExpr ?
 						 GenerateIndexFilterStr(collectionId,
@@ -5342,27 +5457,29 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 							 ApiDataSchemaName, collectionId);
 		}
 
+		/*
+		 * When building a unique index in the background,
+		 * use the same large key and opclass settings as the blocking unique path.
+		 */
 		bool enableLargeIndexKeys = false;
-		if (IndexSupportsTruncation(indexDef) && indexDef->unique != BoolIndexOption_True)
+		if (isBackgroundNonBlockingUnique)
+		{
+			enableLargeIndexKeys = uniqueEnableLargeIndexKeys;
+		}
+		else if (IndexSupportsTruncation(indexDef) &&
+				 indexDef->unique != BoolIndexOption_True)
 		{
 			enableLargeIndexKeys = indexDef->enableLargeIndexKeys !=
 								   BoolIndexOption_False;
 		}
 
-		bool enableNewIndexOpClass = false;
-		if (indexDef->enableCompositeTerm != BoolIndexOption_Undefined)
-		{
-			enableNewIndexOpClass = indexDef->enableCompositeTerm == BoolIndexOption_True;
-		}
-		else
-		{
-			enableNewIndexOpClass = ShouldUseCompositeOpClassByDefault();
-		}
+		bool enableNewIndexOpClass = IsCompositePathIndex(indexDef);
 
 		bool useReducedWildcardTermGeneration = ForceWildcardReducedTerm ||
 												(indexDef->enableReducedWildcardTerms ==
 												 BoolIndexOption_True);
-		bool buildAsUnique = indexDef->buildAsUnique == BoolIndexOption_True;
+		bool buildAsUnique = indexDef->buildAsUnique == BoolIndexOption_True ||
+							 isBackgroundNonBlockingUnique;
 		appendStringInfo(cmdStr,
 						 " USING %s_%s (%s) %s%s%s",
 						 ExtensionObjectPrefix,
@@ -5379,7 +5496,8 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 											  useReducedWildcardTermGeneration,
 											  indexAm->get_opclass_catalog_schema(),
 											  indexAm->get_opclass_internal_catalog_schema(),
-											  indexDef->collationString),
+											  indexDef->collationString,
+											  indexAm->get_opclass_metadata != NULL),
 						 indexDef->partialFilterExpr ? "WHERE (" : "",
 						 indexDef->partialFilterExpr ?
 						 GenerateIndexFilterStr(collectionId,
@@ -5707,7 +5825,7 @@ AppendUniqueColumnExpr(StringInfo indexExprStr, IndexDefKey *indexDefKey,
 					   bool generateCompositeHash)
 {
 	const char *generateCompositeTermString = "";
-	if (generateCompositeHash && IsClusterVersionAtleast(DocDB_V0, 109, 0) &&
+	if (generateCompositeHash &&
 		EnableCompositeShardDocumentTerms)
 	{
 		generateCompositeTermString = ", true";
@@ -5752,7 +5870,8 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 					 bool useReducedWildcardTerms,
 					 const char *indexAmOpClassCatalogSchema,
 					 const char *indexAmOpClassInternalCatalogSchema,
-					 const char *collationString)
+					 const char *collationString,
+					 bool supportsMetadataBasedTracking)
 {
 	StringInfo indexExprStr = makeStringInfo();
 
@@ -5770,6 +5889,12 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 	{
 		languageOverrideKey = ",languageOverride=";
 		languageOverrideValue = quote_literal_cstr(languageOverride);
+	}
+
+	char *enableDottedTermsOption = "";
+	if (EnableDottedValueTextIndexTerms && IsClusterVersionAtleast(DocDB_V0, 112, 2))
+	{
+		enableDottedTermsOption = ",enabledottedterms=true";
 	}
 
 	bool firstColumnWritten = false;
@@ -5956,14 +6081,6 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 
 		bool useReducedCorrelatedTerms = false;
 
-		bool isUniqueStyleIndex = unique || buildAsUnique;
-		if (list_length(indexDefKey->keyPathList) > 1 &&
-			((EnableCompositeReducedCorrelatedTerms && !isUniqueStyleIndex) ||
-			 (EnableUniqueCompositeReducedCorrelatedTerms && isUniqueStyleIndex)))
-		{
-			useReducedCorrelatedTerms = true;
-		}
-
 		int32_t wildcardTermIndex = -1;
 		int32_t numPathsWithCommonPrefix = 0;
 		if (list_length(indexDefKey->keyPathList) == 0)
@@ -6026,14 +6143,6 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 				{
 					case MongoIndexKind_Regular:
 					{
-						if (indexKeyPath->isWildcard && !EnableCompositeWildcardIndex)
-						{
-							ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
-												"unexpectedly got wildcard path for a "
-												"non-wildcard index or a non-root "
-												"wildcard index")));
-						}
-
 						if (indexKeyPath->sortDirection == 1)
 						{
 							PgbsonArrayWriterWriteUtf8(&arrayWriter, keyPath);
@@ -6085,10 +6194,16 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 		char *wildCardIndexPathLimit = "";
 		char *wildcardIndexString = "";
 		char *reducedCorrelatedTermString = "";
+		char *metadataPerPathTrackingString = "";
 
 		if (useReducedCorrelatedTerms)
 		{
 			reducedCorrelatedTermString = ",rct=true";
+		}
+
+		if (EnableIndexMetadataGlobalTracking && supportsMetadataBasedTracking)
+		{
+			metadataPerPathTrackingString = ",mkp=true";
 		}
 
 		if (wildcardTermIndex >= 0)
@@ -6102,7 +6217,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 		}
 
 		appendStringInfo(indexExprStr,
-						 "%s document %s.bson_%s_composite_path_ops(pathspec=%s%s%s%s%s%s)",
+						 "%s document %s.bson_%s_composite_path_ops(pathspec=%s%s%s%s%s%s%s)",
 						 firstColumnWritten ? "," : "",
 						 indexAmOpClassInternalCatalogSchema,
 						 indexAmSuffix,
@@ -6111,6 +6226,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 						 wildcardIndexString,
 						 wildCardIndexPathLimit,
 						 reducedCorrelatedTermString,
+						 metadataPerPathTrackingString,
 						 collationArg);
 
 		if (indexExprStr->len >= MAX_INDEX_OPTIONS_LENGTH)
@@ -6125,7 +6241,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 								lengthDelta)));
 		}
 
-		if (unique)
+		if (unique && !buildAsUnique)
 		{
 			appendStringInfo(indexExprStr, " WITH OPERATOR(%s.=?=)",
 							 ApiCatalogSchemaName);
@@ -6221,6 +6337,9 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 
 					if (unique)
 					{
+						/* buildAsUnique only applies to composite indexes which take a different path */
+						Assert(!buildAsUnique);
+
 						appendStringInfo(indexExprStr, " WITH OPERATOR(%s.=?=)",
 										 ApiCatalogSchemaName);
 
@@ -6270,7 +6389,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 					}
 
 					appendStringInfo(indexExprStr,
-									 "%s document %s.bson_%s_text_path_ops(weights=%s%s%s%s%s%s)",
+									 "%s document %s.bson_%s_text_path_ops(weights=%s%s%s%s%s%s%s)",
 									 firstColumnWritten ? "," : "",
 									 indexAmOpClassCatalogSchema,
 									 indexAmSuffix,
@@ -6278,9 +6397,17 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 															indexDefKey->textPathList)),
 									 indexKeyPath->isWildcard ? ", iswildcard=true" : "",
 									 languageOptionKey, languageOptionValue,
-									 languageOverrideKey, languageOverrideValue);
+									 languageOverrideKey, languageOverrideValue,
+									 enableDottedTermsOption);
 					textOptionsIndexWritten = true;
 					break;
+				}
+
+				case MongoIndexKind_Extended:
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+									errmsg(
+										"Extended index kind is not supported for index creation")));
 				}
 
 				default:
@@ -6320,7 +6447,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 		if (indexDefKey->hasTextIndexes && !textOptionsIndexWritten)
 		{
 			appendStringInfo(indexExprStr,
-							 "%s document %s.bson_%s_text_path_ops(weights=%s%s%s%s%s%s)",
+							 "%s document %s.bson_%s_text_path_ops(weights=%s%s%s%s%s%s%s)",
 							 firstColumnWritten ? "," : "",
 							 indexAmOpClassCatalogSchema,
 							 indexAmSuffix,
@@ -6328,14 +6455,14 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 													indexDefKey->textPathList)),
 							 indexDefKey->isWildcard ? ", iswildcard=true" : "",
 							 languageOptionKey, languageOptionValue,
-							 languageOverrideKey, languageOverrideValue);
+							 languageOverrideKey, languageOverrideValue,
+							 enableDottedTermsOption);
 		}
 	}
 
 	if (usingNewUniqueIndexOpClass && isUsingCompositeOpClass)
 	{
-		bool generateCompositeHash = EnableCompositeUniqueHash && IsClusterVersionAtleast(
-			DocDB_V0, 109, 0);
+		bool generateCompositeHash = EnableCompositeUniqueHash;
 		AppendUniqueColumnExpr(indexExprStr, indexDefKey, sparse, indexAmSuffix,
 							   indexAmOpClassInternalCatalogSchema, firstColumnWritten,
 							   buildAsUnique, generateCompositeHash);
@@ -6974,9 +7101,10 @@ GenerateUniqueProjectionSpec(IndexDefKey *indexDefKey)
 
 
 static void
-UpdateUniqueIndexStatsForPostgresIndex(uint64 collectionId, List *indexIdList)
+UpdateIndexStatsForPostgresIndexCore(uint64 collectionId, List *indexIdList)
 {
 	StringInfo indexExprStringInfo = makeStringInfo();
+
 	ListCell *cell;
 	foreach(cell, indexIdList)
 	{
@@ -7007,6 +7135,13 @@ UpdateUniqueIndexStatsForPostgresIndex(uint64 collectionId, List *indexIdList)
 			/* Only do this for RUM style indexes. Vector and Geospatial indexes do need statistics. */
 			if (!IsBsonRegularIndexAm(indexInfo->ii_Am))
 			{
+				if (IsExtendedIndexAm(indexInfo->ii_Am) &&
+					EnableExtendedIndexes &&
+					IsClusterVersionAtleast(DocDB_V0, 113, 0))
+				{
+					UpdateExtendedIndexStats(collectionId, indexId, indexName,
+											 indexInfo);
+				}
 				continue;
 			}
 
@@ -7050,9 +7185,11 @@ UpdateUniqueIndexStatsForPostgresIndex(uint64 collectionId, List *indexIdList)
 void
 UpdateIndexStatsForPostgresIndex(uint64 collectionId, List *indexIdList)
 {
-	UpdateUniqueIndexStatsForPostgresIndex(collectionId, indexIdList);
+	UpdateIndexStatsForPostgresIndexCore(collectionId, indexIdList);
 
-	if (EnablePerCollectionPlannerStatistics &&
+	bool shouldUpdatePlannerStatistics = EnablePerCollectionPlannerStatistics ||
+										 ShouldEnablePlannerStatisticsNewCollections();
+	if (shouldUpdatePlannerStatistics &&
 		IsClusterVersionAtleast(DocDB_V0, 111, 0))
 	{
 		UpdateIndexStatisticsForPlannerStatistics(collectionId, indexIdList);

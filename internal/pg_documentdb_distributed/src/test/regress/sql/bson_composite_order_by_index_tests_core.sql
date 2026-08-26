@@ -28,16 +28,24 @@ ANALYZE documentdb_data.documents_:collection_id;
 set enable_seqscan to off;
 
 -- no pushdown
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby", "filter": { "a": { "$exists": true }}, "sort": { "a": 1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby", "filter": { "a": { "$exists": true }}, "sort": { "a": 1 } }')
+$cmd$);
 
 -- now the order by succeeds with an index scan
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby", "filter": { "a": { "$exists": true }}, "sort": { "a": 1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby", "filter": { "a": { "$exists": true }}, "sort": { "a": 1 } }')
+$cmd$);
 
 -- point read on _id with order by was broken initially and was fixed in 108 
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby", "filter": { "_id": 1}, "sort": { "_id": 1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby", "filter": { "_id": 1}, "sort": { "_id": 1 } }')
+$cmd$);
 
 -- do a reverse walk
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby", "filter": { "a": { "$exists": true }}, "sort": { "a": -1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby", "filter": { "a": { "$exists": true }}, "sort": { "a": -1 } }')
+$cmd$);
 
 -- now check the correctness (things are ordered)
 SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby", "filter": { "a": { "$exists": true }}, "sort": { "a": 1 } }');
@@ -87,7 +95,9 @@ set documentdb.forceDisableSeqScan to on;
 ANALYZE documentdb_data.documents_:collection_id_2;
 
 -- should not use the index for sort (since it's a multi-key index)
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$lt": 3 }}, "sort": { "a": 1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$lt": 3 }}, "sort": { "a": 1 } }')
+$cmd$);
 
 -- now check the performance
 SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$in": [ 3, 49, 90 ] }}, "sort": { "a": 1 } }');
@@ -102,16 +112,24 @@ SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_o
 SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$lt": 3, "$gt": 96 }}, "sort": { "a": 1 } }');
 
 set documentdb.enableExtendedExplainPlans to on;
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$in": [ 3, 49, 90 ] }}, "sort": { "a": 1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$in": [ 3, 49, 90 ] }}, "sort": { "a": 1 } }')
+$cmd$);
 
 -- scans 1 loop for checking multi-key - then scans 4 loops for entries 0, 1, 2, 3.
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$lt": 3 }}, "sort": { "a": 1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$lt": 3 }}, "sort": { "a": 1 } }')
+$cmd$);
 
 -- scans 1 loop for checking multi-key - then scans 5 loops for entries 96, 97, 98, 99, 100.
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$gt": 96 }}, "sort": { "a": 1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$gt": 96 }}, "sort": { "a": 1 } }')
+$cmd$);
 
 -- only pushes filter down
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$lt": 3, "$gt": 96 }}, "sort": { "a": 1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$lt": 3, "$gt": 96 }}, "sort": { "a": 1 } }')
+$cmd$);
 
 -- test the same for non multi-key index
 ---------------------------------------------------------------------------------
@@ -128,8 +146,12 @@ set documentdb.forceDisableSeqScan to on;
 ANALYZE documentdb_data.documents_:collection_id_3;
 
 -- should use the index for sort
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3 }}, "sort": { "a": 1 } }');
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3 }}, "sort": { "a": -1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3 }}, "sort": { "a": 1 } }')
+$cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3 }}, "sort": { "a": -1 } }')
+$cmd$);
 
 -- now check correctness.
 SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$in": [ 3, 49, 90 ] }}, "sort": { "a": 1 } }');
@@ -148,79 +170,129 @@ SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_o
 SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3, "$gt": 96 }}, "sort": { "a": -1 } }');
 
 -- now check the performance
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$in": [ 3, 49, 90 ] }}, "sort": { "a": 1 } }');
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$in": [ 3, 49, 90 ] }}, "sort": { "a": -1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$in": [ 3, 49, 90 ] }}, "sort": { "a": 1 } }')
+$cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$in": [ 3, 49, 90 ] }}, "sort": { "a": -1 } }')
+$cmd$);
 
 -- scans 1 loop for checking multi-key - then scans 4 loops for entries 0, 1, 2, 3.
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3 }}, "sort": { "a": 1 } }');
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3 }}, "sort": { "a": -1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3 }}, "sort": { "a": 1 } }')
+$cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3 }}, "sort": { "a": -1 } }')
+$cmd$);
 
 -- scans 1 loop for checking multi-key - then scans 5 loops for entries 96, 97, 98, 99, 100.
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$gt": 96 }}, "sort": { "a": 1 } }');
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$gt": 96 }}, "sort": { "a": -1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$gt": 96 }}, "sort": { "a": 1 } }')
+$cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$gt": 96 }}, "sort": { "a": -1 } }')
+$cmd$);
 
 -- only scans th relevant entries
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 94, "$gt": 90 }}, "sort": { "a": 1 } }');
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 94, "$gt": 90 }}, "sort": { "a": -1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 94, "$gt": 90 }}, "sort": { "a": 1 } }')
+$cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 94, "$gt": 90 }}, "sort": { "a": -1 } }')
+$cmd$);
 
 -- scans only > 96 and stops.
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3, "$gt": 96 }}, "sort": { "a": 1 } }');
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3, "$gt": 96 }}, "sort": { "a": -1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3, "$gt": 96 }}, "sort": { "a": 1 } }')
+$cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3, "$gt": 96 }}, "sort": { "a": -1 } }')
+$cmd$);
 
 
 -- groupby pushdown works for non-multi-key indexes
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$exists": true } } }, { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$exists": true } } }, { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }')
+$cmd$);
 
 set enable_bitmapscan to off;
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }')
+$cmd$);
 
 -- the same does not work on multi-key indexes
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$exists": true } } }, { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$exists": true } } }, { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }')
+$cmd$);
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
 
 set enable_bitmapscan to off;
 -- for non-multi-key requires, prefix equality until the min order by key only.
 -- can't push this
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "_id": 1 } } ] }');
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "_id": 1 } } ] }')
+$cmd$);
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
     SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$sort": { "_id": 1 } } ] }');
 
 -- can push this
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$eq": 1 } } }, { "$sort": { "_id": 1 } } ] }');
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "a": 1, "_id": 1 } } ] }');
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$gte": 1 } } }, { "$sort": { "a": 1, "_id": 1 } } ] }');
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$sort": { "a": 1, "_id": 1 } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$eq": 1 } } }, { "$sort": { "_id": 1 } } ] }')
+$cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "a": 1, "_id": 1 } } ] }')
+$cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$gte": 1 } } }, { "$sort": { "a": 1, "_id": 1 } } ] }')
+$cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$sort": { "a": 1, "_id": 1 } } ] }')
+$cmd$);
 
 -- but not these
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "_id": 1, "a": 1 } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "_id": 1, "a": 1 } } ] }')
+$cmd$);
 
 
 -- for multi-key indexes, we can push down the order by only if there's equality until the max order by key.
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "_id": 1 } } ] }');
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "_id": 1 } } ] }')
+$cmd$);
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
     SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$sort": { "_id": 1 } } ] }');
 
 -- can push this
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$eq": 1 } } }, { "$sort": { "_id": 1 } } ] }');
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$sort": { "a": 1, "_id": 1 } } ] }');
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$sort": { "a": 1 } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$eq": 1 } } }, { "$sort": { "_id": 1 } } ] }')
+$cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$sort": { "a": 1, "_id": 1 } } ] }')
+$cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$sort": { "a": 1 } } ] }')
+$cmd$);
 
 -- but not these
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "a": 1, "_id": 1 } } ] }');
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$gte": 1 } } }, { "$sort": { "a": 1, "_id": 1 } } ] }');
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "a": 1, "_id": 1 } } ] }')
+$cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$gte": 1 } } }, { "$sort": { "a": 1, "_id": 1 } } ] }')
+$cmd$);
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
     SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$sort": { "_id": 1, "a": 1 } } ] }');
     
 
@@ -236,17 +308,25 @@ ANALYZE documentdb_data.documents_:collection_id_4;
 
 set documentdb.forceUseIndexIfAvailable to on;
 set enable_bitmapscan to off;
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": 1 } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": 1 } } ] }')
+$cmd$);
 
-EXPLAIN (COSTS OFF) WITH s1 AS (SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": 1 } } ] }')),
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) WITH s1 AS (SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": 1 } } ] }')),
 s2 AS (SELECT COALESCE(document -> 'b' >= (LAG(document, 1) OVER ()) -> 'b', true) AS greater_check FROM s1)
-SELECT MIN(greater_check::int4), MAX(greater_check::int4) FROM s2;
+SELECT MIN(greater_check::int4), MAX(greater_check::int4) FROM s2
+$cmd$, false, false, true);
 
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": -1 } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": -1 } } ] }')
+$cmd$);
 
-EXPLAIN (COSTS OFF) WITH s1 AS (SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": -1 } } ] }')),
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) WITH s1 AS (SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": -1 } } ] }')),
 s2 AS (SELECT COALESCE(document -> 'b' <= (LAG(document, 1) OVER ()) -> 'b', true) AS greater_check FROM s1)
-SELECT MIN(greater_check::int4), MAX(greater_check::int4) FROM s2;
+SELECT MIN(greater_check::int4), MAX(greater_check::int4) FROM s2
+$cmd$, false, false, true);
 
 -- validate the order is correct
 WITH s1 AS (SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": 1 } } ] }')),
@@ -294,34 +374,50 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db',
 
 set documentdb.forceDisableSeqScan to on;
 set documentdb.enableExtendedExplainPlans to on;
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$sort": { "a.b": 1 } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$sort": { "a.b": 1 } } ] }')
+$cmd$);
 
 SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$sort": { "a.b": 1 } } ] }');
 SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$sort": { "a.b": -1 } } ] }');
 
 -- can't push this down (no equality prefix)
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$sort": { "_id": 1 } } ] }');
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$sort": { "_id": 1 } } ] }');
 
 -- can't push order by down here:
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$exists": true } } }, { "$sort": { "_id": 1 } } ] }');
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$gt": 5 } } }, { "$sort": { "_id": 1 } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$exists": true } } }, { "$sort": { "_id": 1 } } ] }')
+$cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$gt": 5 } } }, { "$sort": { "_id": 1 } } ] }')
+$cmd$);
 
 -- but this is okay
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$eq": 1 } } }, { "$sort": { "_id": 1 } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$eq": 1 } } }, { "$sort": { "_id": 1 } } ] }')
+$cmd$);
 
 -- this one isn't okay since we need to resort across a.b
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$in": [ 1, 2 ] } } }, { "$sort": { "_id": 1 } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$in": [ 1, 2 ] } } }, { "$sort": { "_id": 1 } } ] }')
+$cmd$);
 
 -- but this is fine:
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$in": [ 1 ] } } }, { "$sort": { "_id": 1 } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$in": [ 1 ] } } }, { "$sort": { "_id": 1 } } ] }')
+$cmd$);
 
 -- allows incremental sorting
 set enable_sort to off;
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$eq": 1 } } }, { "$sort": { "_id": 1, "c": 1 } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$eq": 1 } } }, { "$sort": { "_id": 1, "c": 1 } } ] }')
+$cmd$);
 
 -- forced order by pushdown respects ordering when there is none.
 set documentdb_rum.forceRumOrderedIndexScan to on;
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$exists": true } } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$exists": true } } } ] }')
+$cmd$);
 SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$exists": true } } } ] }');
 
 
@@ -332,7 +428,9 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db',
 
 -- now validate pushdown
 set documentdb.forceDisableSeqScan to on;
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "idIndexOrder", "pipeline": [ { "$match": { "_id": { "$gte": 10, "$lte": 25 } } }, { "$sort": { "_id": 1 } }, { "$skip": 5 }, { "$limit": 5 } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "idIndexOrder", "pipeline": [ { "$match": { "_id": { "$gte": 10, "$lte": 25 } } }, { "$sort": { "_id": 1 } }, { "$skip": 5 }, { "$limit": 5 } ] }')
+$cmd$);
 SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "idIndexOrder", "pipeline": [ { "$match": { "_id": { "$gte": 10, "$lte": 25 } } }, { "$sort": { "_id": 1 } }, { "$skip": 5 }, { "$limit": 5 } ] }');
 
 -- now repeat sort for nulls with 3 dotted paths
@@ -375,7 +473,9 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db',
 
 
 set documentdb.forceDisableSeqScan to on;
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "large_keys", "pipeline": [ { "$match": { "a": { "$regex": ".+b$" } } }, { "$sort": { "a": 1 } }, { "$project": { "_id": 1 } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "large_keys", "pipeline": [ { "$match": { "a": { "$regex": ".+b$" } } }, { "$sort": { "a": 1 } }, { "$project": { "_id": 1 } } ] }')
+$cmd$);
 SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "large_keys", "pipeline": [ { "$match": { "a": { "$regex": ".+b$" } } }, { "$sort": { "a": 1 } }, { "$project": { "_id": 1 } } ] }');
 
 reset documentdb.forceDisableSeqScan;
@@ -383,15 +483,23 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db',
 SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db', '{ "createIndexes": "sortcoll", "indexes": [ { "key": { "a.b": -1, "_id": -1 }, "enableCompositeTerm": true, "name": "a.b_-1" }] }', true);
 
 set documentdb.forceDisableSeqScan to on;
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll3", "filter": {}, "sort": { "a.b.c": -1, "_id": -1 } }');
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "filter": {}, "sort": { "a.b": -1, "_id": -1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll3", "filter": {}, "sort": { "a.b.c": -1, "_id": -1 } }')
+$cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "filter": {}, "sort": { "a.b": -1, "_id": -1 } }')
+$cmd$);
 
 SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll3", "filter": {}, "sort": { "a.b.c": -1, "_id": -1 } }');
 SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "filter": {}, "sort": { "a.b": -1, "_id": -1 } }');
 
 -- partial sort pushdown
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll3", "filter": {}, "sort": { "a.b.c": -1, "_id": 1 } }');
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "filter": {}, "sort": { "a.b": -1, "_id": 1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll3", "filter": {}, "sort": { "a.b.c": -1, "_id": 1 } }')
+$cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "filter": {}, "sort": { "a.b": -1, "_id": 1 } }')
+$cmd$);
 
 -- mixed asc/desc indexes
 reset documentdb.forceDisableSeqScan;
@@ -403,8 +511,12 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db',
 SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db', '{ "createIndexes": "sortcoll", "indexes": [ { "key": { "a.b": -1, "_id": 1 }, "enableCompositeTerm": true, "name": "a.b_-1_id_1" }] }', true);
 
 set documentdb.forceDisableSeqScan to on;
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll3", "filter": {}, "sort": { "a.b.c": 1, "_id": -1 } }');
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "filter": {}, "sort": { "a.b": -1, "_id": 1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll3", "filter": {}, "sort": { "a.b.c": 1, "_id": -1 } }')
+$cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "filter": {}, "sort": { "a.b": -1, "_id": 1 } }')
+$cmd$);
 
 SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll3", "filter": {}, "sort": { "a.b.c": 1, "_id": -1 } }');
 SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "filter": {}, "sort": { "a.b": -1, "_id": 1 } }');
@@ -421,7 +533,9 @@ SELECT collection_id AS collection_id_5 FROM documentdb_api_catalog.collections 
 ANALYZE documentdb_data.documents_:collection_id_5;
 
 set documentdb.forceDisableSeqScan to on;
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "ordering_groups", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "ordering_groups", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }')
+$cmd$);
 SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "ordering_groups", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
 
 
@@ -430,14 +544,20 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db',
 select COUNT(documentdb_api.insert_one('comp_ordind_db', 'compOrderSkip', FORMAT('{ "_id": %s, "a": %s, "b": %s, "c": %s, "d": %s }', i , i, i % 5, i % 10, i % 20 )::bson)) FROM generate_series(1, 100) AS i;
 
 -- now given that it's not multi-key, we can push down sorts to the index fully *iff* missing fields are equality.
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "compOrderSkip", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "c": 2 }, "sort": { "a": 1, "b": 1, "d": 1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "compOrderSkip", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "c": 2 }, "sort": { "a": 1, "b": 1, "d": 1 } }')
+$cmd$);
 
 -- cannot push non equality in the non-sorted prefix
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "compOrderSkip", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "c": { "$in": [ 5, 6 ]} }, "sort": { "a": 1, "b": 1, "d": 1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "compOrderSkip", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "c": { "$in": [ 5, 6 ]} }, "sort": { "a": 1, "b": 1, "d": 1 } }')
+$cmd$);
 
 -- once it's multi-key this isn't allowed.
 SELECT documentdb_api.insert_one('comp_ordind_db', 'compOrderSkip', FORMAT('{ "_id": %s, "a": [ %s, 2, 3 ], "b": %s, "c": %s, "d": %s }', 200, 201, 202, 203, 204 )::bson);
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "compOrderSkip", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "c": 2 }, "sort": { "a": 1, "b": 1, "d": 1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "compOrderSkip", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "c": 2 }, "sort": { "a": 1, "b": 1, "d": 1 } }')
+$cmd$);
 
 
 --composite index selection with order by.
@@ -450,12 +570,18 @@ SELECT collection_id AS collection_id_6 FROM documentdb_api_catalog.collections 
 ANALYZE documentdb_data.documents_:collection_id_6;
 
 -- order by should use the order by filter index (a_b_c_1)
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "d": 10 }, "sort": { "a": 1, "b": 1, "c": 1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "d": 10 }, "sort": { "a": 1, "b": 1, "c": 1 } }')
+$cmd$);
 
 -- if we're querying just filters, use a_b_d since it's better
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "d": 10 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "d": 10 } }')
+$cmd$);
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "d": 10 }, "sort": { "a": 1, "b": 1, "c": 1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "d": 10 }, "sort": { "a": 1, "b": 1, "c": 1 } }')
+$cmd$);
 
 -- the same should work if the indexes were created in the reverse order
 CALL documentdb_api.drop_indexes('comp_ordind_db', '{ "dropIndexes": "index_orderby_selection", "index": "a_b_c_d_1" }');
@@ -465,16 +591,22 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db',
 SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db', '{ "createIndexes": "index_orderby_selection", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1, "d": 1 }, "enableOrderedIndex": true, "name": "a_b_c_d_1" }] }', true);
 
 -- order by should use the order by filter index (a_b_c_1)
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "d": 10 }, "sort": { "a": 1, "b": 1, "c": 1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "d": 10 }, "sort": { "a": 1, "b": 1, "c": 1 } }')
+$cmd$);
 
 -- if we're querying just filters, use a_b_d since it's better
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "d": 10 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "d": 10 } }')
+$cmd$);
 
 
 -- order by backward scan with unique index
 SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db', '{ "createIndexes": "unique_sort", "indexes": [ { "key": { "a": 1, "b": 1 }, "enableOrderedIndex": true, "name": "a_b_1", "unique": true }] }', true);
 select COUNT(documentdb_api.insert_one('comp_ordind_db', 'unique_sort', FORMAT('{ "_id": %s, "a": %s, "b": %s, "c": %s, "d": %s }', i, i, i, i, i )::bson)) FROM generate_series(1, 100) AS i;
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "unique_sort", "sort": { "a": -1, "b": -1 }}');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "unique_sort", "sort": { "a": -1, "b": -1 }}')
+$cmd$);
 
 
 -- test index selectivity for orderby vs filters.
@@ -495,18 +627,24 @@ reset enable_sort;
 ANALYZE documentdb_data.documents_:collection_id_6;
 
 -- this has all the paths matching.
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "filter1": "filter1-5", "filter2": "filter2-55", "filter3": { "$gt": 50 } }, "sort": { "orderKey": 1 }, "limit": 10 }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "filter1": "filter1-5", "filter2": "filter2-55", "filter3": { "$gt": 50 } }, "sort": { "orderKey": 1 }, "limit": 10 }')
+$cmd$);
 
 -- this one can't push the order by but should prefer the filter.
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "filter1": "filter1-5", "filter2": { "$gte": "filter2-55" }, "filter3": { "$gt": 50 } }, "sort": { "orderKey": 1 }, "limit": 10 }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "filter1": "filter1-5", "filter2": { "$gte": "filter2-55" }, "filter3": { "$gt": 50 } }, "sort": { "orderKey": 1 }, "limit": 10 }')
+$cmd$);
 
 SELECT documentdb_api.coll_mod('comp_ordind_db', 'index_orderby_selection', '{ "collMod": "index_orderby_selection", "index": { "name": "filterSortIndex_1", "hidden": true }}');
 
 -- now it picks the sort index
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "filter1": "filter1-5", "filter2": { "$gte": "filter2-55" }, "filter3": { "$gt": 50 } }, "sort": { "orderKey": 1 }, "limit": 10 }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "filter1": "filter1-5", "filter2": { "$gte": "filter2-55" }, "filter3": { "$gt": 50 } }, "sort": { "orderKey": 1 }, "limit": 10 }')
+$cmd$);
 
 
 -- test filter pushdown with order by scan
@@ -526,7 +664,9 @@ set documentdb.enableExtendedExplainPlans to off;
 set enable_indexscan to off;
 set enable_bitmapscan to on;
 set seq_page_cost to 1000;
-EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "testbitmaponorder", "filter": { "a": { "$gt": "" }  }, "sort": { "b": 1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (VERBOSE ON, COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "testbitmaponorder", "filter": { "a": { "$gt": "" }  }, "sort": { "b": 1 } }')
+$cmd$);
 
 set work_mem to '64';
 WITH r1 AS (SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "testbitmaponorder", "filter": { "a": { "$gt": "" }  }, "sort": { "b": 1 } }'))
@@ -592,7 +732,15 @@ set documentdb.forceDisableSeqScan to off;
 SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_sort_order", "filter": {}, "sort": { "_id": 1 } }');
 SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_sort_order", "filter": {}, "sort": { "_id": -1 } }');
 
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_sort_order", "filter": {}, "sort": { "data.value": 1 } }');
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_sort_order", "filter": {}, "sort": { "data.value": -1 } }');
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_sort_order", "filter": {}, "sort": { "_id": 1 } }');
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_sort_order", "filter": {}, "sort": { "_id": -1 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_sort_order", "filter": {}, "sort": { "data.value": 1 } }')
+$cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_sort_order", "filter": {}, "sort": { "data.value": -1 } }')
+$cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_sort_order", "filter": {}, "sort": { "_id": 1 } }')
+$cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_sort_order", "filter": {}, "sort": { "_id": -1 } }')
+$cmd$);

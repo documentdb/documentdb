@@ -22,11 +22,15 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createI
 
 ANALYZE documentdb_data.documents_10140;
 
-EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('db', 'selectivity_index_tests') WHERE document @@ '{ "a": 1, "b": { "$in": [ 2, 3, 4, 5 ] }, "a": { "$in": [ 1, 5, 6, 7 ] }, "$or": [ { "c": 3, "d": { "$gt": 500 } }, { "c": { "$gt": 4 } }] }';
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM documentdb_api.collection('db', 'selectivity_index_tests') WHERE document @@ '{ "a": 1, "b": { "$in": [ 2, 3, 4, 5 ] }, "a": { "$in": [ 1, 5, 6, 7 ] }, "$or": [ { "c": 3, "d": { "$gt": 500 } }, { "c": { "$gt": 4 } }] }'
+$cmd$);
 
 BEGIN;
 set local documentdb.enableCompositeIndexPlanner to on;
-EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('db', 'selectivity_index_tests') WHERE document @@ '{ "a": 1, "b": { "$in": [ 2, 3, 4, 5 ] }, "a": { "$in": [ 1, 5, 6, 7 ] }, "$or": [ { "c": 3, "d": { "$gt": 500 } }, { "c": { "$gt": 4 } }] }';
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM documentdb_api.collection('db', 'selectivity_index_tests') WHERE document @@ '{ "a": 1, "b": { "$in": [ 2, 3, 4, 5 ] }, "a": { "$in": [ 1, 5, 6, 7 ] }, "$or": [ { "c": 3, "d": { "$gt": 500 } }, { "c": { "$gt": 4 } }] }'
+$cmd$);
 ROLLBACK;
 
 -- test bitmap or pushdown
@@ -42,13 +46,19 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('seldb', '{ "crea
 ANALYZE documentdb_data.documents_10142;
 
 set documentdb.enableCompositeIndexPlanner to off;
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('seldb', '{ "find" : "bimap_or_selectivity", "filter" : { "plane" : { "$regularExpression" : { "pattern" : "A.+", "options" : "i" } }, "$and" : [ { "$or" : [ { "productionDate" : { "$exists" : false } }, { "stoppingDate" : { "$exists" : false } }, { "noticeDate" : { "$exists" : false } } ] } ] }, "limit" : { "$numberInt" : "10" } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('seldb', '{ "find" : "bimap_or_selectivity", "filter" : { "plane" : { "$regularExpression" : { "pattern" : "A.+", "options" : "i" } }, "$and" : [ { "$or" : [ { "productionDate" : { "$exists" : false } }, { "stoppingDate" : { "$exists" : false } }, { "noticeDate" : { "$exists" : false } } ] } ] }, "limit" : { "$numberInt" : "10" } }')
+$cmd$);
 
 set documentdb.enableCompositeIndexPlanner to on;
 set documentdb.forceDisableSeqScan to on;
 set random_page_cost to 0.01;
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('seldb', '{ "find" : "bimap_or_selectivity", "filter" : { "plane" : { "$regularExpression" : { "pattern" : "A.+", "options" : "i" } }, "$and" : [ { "$or" : [ { "productionDate" : { "$exists" : false } }, { "stoppingDate" : { "$exists" : false } }, { "noticeDate" : { "$exists" : false } } ] } ] }, "limit" : { "$numberInt" : "10" } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('seldb', '{ "find" : "bimap_or_selectivity", "filter" : { "plane" : { "$regularExpression" : { "pattern" : "A.+", "options" : "i" } }, "$and" : [ { "$or" : [ { "productionDate" : { "$exists" : false } }, { "stoppingDate" : { "$exists" : false } }, { "noticeDate" : { "$exists" : false } } ] } ] }, "limit" : { "$numberInt" : "10" } }')
+$cmd$);
 
 set documentdb.enableCompositeIndexPlanner to off;
 reset random_page_cost;
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('seldb', '{ "find" : "bimap_or_selectivity", "filter" : { "plane" : { "$regularExpression" : { "pattern" : "A.+", "options" : "i" } }, "$and" : [ { "$or" : [ { "productionDate" : { "$exists" : false } }, { "stoppingDate" : { "$exists" : false } }, { "noticeDate" : { "$exists" : false } } ] } ] }, "limit" : { "$numberInt" : "10" } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('seldb', '{ "find" : "bimap_or_selectivity", "filter" : { "plane" : { "$regularExpression" : { "pattern" : "A.+", "options" : "i" } }, "$and" : [ { "$or" : [ { "productionDate" : { "$exists" : false } }, { "stoppingDate" : { "$exists" : false } }, { "noticeDate" : { "$exists" : false } } ] } ] }, "limit" : { "$numberInt" : "10" } }')
+$cmd$);

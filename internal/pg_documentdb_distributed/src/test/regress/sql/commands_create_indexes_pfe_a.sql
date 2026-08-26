@@ -85,7 +85,8 @@ BEGIN;
 
   -- even if filter exactly matches the partialFilterExpression of my_idx_1,
   -- cannot use the index since the index key is "a.$**"
-  EXPLAIN (COSTS OFF) SELECT COUNT(*)
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT COUNT(*)
   FROM documentdb_api.collection('mydb', 'collection_i')
   WHERE document @@ '
   {
@@ -93,10 +94,12 @@ BEGIN;
       { "b": {"$gte": 10} }
     ]
   }
-  ';
+  '
+$cmd$, false, true);
 
   -- can use the index since it filters on the index key as well
-  EXPLAIN (COSTS OFF) SELECT COUNT(*)
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT COUNT(*)
   FROM documentdb_api.collection('mydb', 'collection_i')
   WHERE document @@ '
   {
@@ -105,9 +108,11 @@ BEGIN;
       { "a": 4 }
     ]
   }
-  ';
+  '
+$cmd$, false, true);
 
-  EXPLAIN (COSTS OFF) SELECT COUNT(*)
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT COUNT(*)
   FROM documentdb_api.collection('mydb', 'collection_i')
   WHERE document @@ '
   {
@@ -116,9 +121,11 @@ BEGIN;
       { "a": 4 }
     ]
   }
-  ';
+  '
+$cmd$, false, true);
 
-  EXPLAIN (COSTS OFF) SELECT COUNT(*)
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT COUNT(*)
   FROM documentdb_api.collection('mydb', 'collection_i')
   WHERE document @@ '
   {
@@ -127,9 +134,11 @@ BEGIN;
       { "a": 4 }
     ]
   }
-  ';
+  '
+$cmd$, false, true);
 
-  EXPLAIN (COSTS OFF) SELECT COUNT(*)
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT COUNT(*)
   FROM documentdb_api.collection('mydb', 'collection_i')
   WHERE document @@ '
   {
@@ -138,10 +147,12 @@ BEGIN;
       { "a": 4 }
     ]
   }
-  ';
+  '
+$cmd$, false, true);
 
  -- cannot use index (no PFE)
-  EXPLAIN (COSTS OFF) SELECT COUNT(*)
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT COUNT(*)
   FROM documentdb_api.collection('mydb', 'collection_i')
   WHERE document @@ '
   {
@@ -150,9 +161,11 @@ BEGIN;
       { "c": { "$type": "string" } }
     ]
   }
-  ';
+  '
+$cmd$, false, true);
 
-  EXPLAIN (COSTS OFF) SELECT COUNT(*)
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT COUNT(*)
   FROM documentdb_api.collection('mydb', 'collection_i')
   WHERE document @@ '
   {
@@ -161,10 +174,12 @@ BEGIN;
       { "a": 4 }
     ]
   }
-  ';
+  '
+$cmd$, false, true);
 
   -- can use index
-  EXPLAIN (COSTS OFF) SELECT COUNT(*)
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT COUNT(*)
   FROM documentdb_api.collection('mydb', 'collection_i')
   WHERE document @@ '
   {
@@ -173,7 +188,8 @@ BEGIN;
       { "c": { "$type": "number" } }
     ]
   }
-  ';
+  '
+$cmd$, false, true);
 COMMIT;
 
 -- unsupported "partialFilterExpression" operators --

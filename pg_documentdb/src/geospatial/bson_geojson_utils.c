@@ -8,6 +8,7 @@
  *-------------------------------------------------------------------------
  */
 #include "postgres.h"
+#include "access/htup_details.h"
 #include "funcapi.h"
 #include "math.h"
 #include "float.h"
@@ -1599,7 +1600,7 @@ WriteBufferGeoJsonCore(const bson_value_t *value, bool insideGeoJsonGeometryColl
  * Creates the points hash table for finding duplicate points in the multiple points rings
  */
 static HTAB *
-CreatePointsHashSet()
+CreatePointsHashSet(void)
 {
 	HASHCTL hashInfo = CreateExtensionHashCTL(
 		sizeof(PointsHashEntry),

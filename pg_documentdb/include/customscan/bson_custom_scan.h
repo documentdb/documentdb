@@ -18,6 +18,10 @@ bool UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo 
 												  RangeTblEntry *rte, struct
 												  ReplaceExtensionFunctionContext *context);
 
+bool UpdatePathsWithDynamicStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
+												RangeTblEntry *rte, struct
+												ReplaceExtensionFunctionContext *context);
+
 void UpdatePathsToForceRumIndexScanToBitmapHeapScan(PlannerInfo *root, RelOptInfo *rel);
 
 Query * ReplaceCursorParamValues(Query *query, ParamListInfo boundParams);
@@ -25,4 +29,10 @@ Query * ReplaceCursorParamValues(Query *query, ParamListInfo boundParams);
 void ValidateCursorCustomScanPlan(Plan *plan);
 
 PathTarget * BuildBaseRelPathTarget(Relation tableRel, Index relIdIndex);
+
+/* Dynamic scan methods */
+bool IsDynamicCustomScanPath(Plan *plan);
+CustomScanState * GetDynamicStreamingCustomScanState(PlanState *planState,
+													 bool *isGroupReadAhead);
+pgbson * GetContinuationFromCustomScan(CustomScanState *scan);
 #endif

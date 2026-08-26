@@ -5,7 +5,7 @@ print("Initializing users collection...");
 use('sampledb');
 
 // Create users collection and insert sample users
-db.users.insertMany([
+const sampleUsers = [
     {
         _id: "user1",
         username: "alice_smith",
@@ -96,14 +96,26 @@ db.users.insertMany([
         },
         tags: ["premium", "beta_tester"]
     }
-]);
+];
 
-print("Created " + db.users.countDocuments() + " users in the users collection");
+// Idempotent seed: insert each document only if its _id is not already present, so re-running
+// this script against a persistent volume is a no-op instead of crashing with a duplicate-key
+// error (#612). A partial first run is also repaired (only the missing documents are inserted).
+sampleUsers.forEach(function (doc) {
+    if (db.users.countDocuments({ _id: doc._id }) === 0) {
+        db.users.insertOne(doc);
+    }
+});
 
 // Create indexes for better query performance
-db.users.createIndex({ "email": 1 }, { unique: true });
-db.users.createIndex({ "username": 1 }, { unique: true });
-db.users.createIndex({ "city": 1 });
-db.users.createIndex({ "tags": 1 });
+db.runCommand({
+    createIndexes: "users",
+    indexes: [
+        { key: { "email": 1 }, name: "email_1", unique: true },
+        { key: { "username": 1 }, name: "username_1", unique: true },
+        { key: { "city": 1 }, name: "city_1" },
+        { key: { "tags": 1 }, name: "tags_1" }
+    ]
+});
 
 print("Created indexes on users collection");

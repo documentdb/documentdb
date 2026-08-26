@@ -3414,6 +3414,40 @@ select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateStr
 ERROR:  an incomplete date/time string has been found, with certain required elements missing: 'Jenuery 1 2024'
 select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateString": "act 1 2024", "format": "%b %d %Y" } } }');
 ERROR:  an incomplete date/time string has been found, with certain required elements missing: 'act 1 2024'
+-- invalid calendar dates: impossible day/month combinations should report a conversion failure
+-- rather than leaking a raw datetime out-of-range error.
+-- Feb 29 in a non-leap year (1900 is divisible by 100 but not 400, so not a leap year)
+select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateString": "1900-02-29", "format": "%Y-%m-%d" } } }');
+ERROR:  Error parsing date string '1900-02-29';The parsed date was invalid
+-- Feb 29 in another non-leap year
+select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateString": "2019-02-29", "format": "%Y-%m-%d" } } }');
+ERROR:  Error parsing date string '2019-02-29';The parsed date was invalid
+-- April has only 30 days
+select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateString": "2021-04-31", "format": "%Y-%m-%d" } } }');
+ERROR:  Error parsing date string '2021-04-31';The parsed date was invalid
+-- day 0 is invalid
+select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateString": "2021-01-00", "format": "%Y-%m-%d" } } }');
+ERROR:  an incomplete date/time string has been found, with certain required elements missing: '2021-01-00'
+-- valid leap year Feb 29 (2000 is divisible by 400) should succeed
+select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateString": "2000-02-29", "format": "%Y-%m-%d" } } }');
+                       bson_dollar_project                       
+---------------------------------------------------------------------
+ { "result" : { "$date" : { "$numberLong" : "951811200000" } } }
+(1 row)
+
+-- invalid calendar date with onError should return the onError value instead of throwing
+select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateString": "1900-02-29", "format": "%Y-%m-%d", "onError": "error handled" } } }');
+      bson_dollar_project       
+---------------------------------------------------------------------
+ { "result" : "error handled" }
+(1 row)
+
+select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateString": "2021-04-31", "format": "%Y-%m-%d", "onError": "error handled" } } }');
+      bson_dollar_project       
+---------------------------------------------------------------------
+ { "result" : "error handled" }
+(1 row)
+
 -- unkown argument in input
 select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateString": "2022-10-12", "format": " %Y-%m-%d", "unknown":1} } }');
 ERROR:  Unrecognized argument passed to $dateFromString operator: unknown

@@ -78,6 +78,7 @@ CreateExtensionHashCTL(Size keySize, Size entrySize,
 
 
 HTAB * CreatePgbsonElementHashSet(void);
+HTAB * CreateStringViewHashMap(Size entrySize);
 HTAB * CreateStringViewHashSet(void);
 HTAB * CreateBsonValueHashSet(void);
 HTAB * CreatePgbsonElementOrderedHashSet(void);

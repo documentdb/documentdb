@@ -16,15 +16,35 @@ use bytes::Buf;
 use crate::{
     error::{DocumentDBError, Result},
     protocol::{bson_writer, extract_database_and_collection_names, reader},
-    requests::{Request, RequestMessage, RequestType},
+    requests::{RequestExecutionMode, RequestMessage, RequestPreview, RequestType, WireRequest},
 };
 
-/// Parse an `OP_INSERT` message into a `Request`.
+/// Parse an `OP_INSERT` message into a `WireRequest`.
 ///
 /// # Errors
 /// Returns an error if the message is malformed or cannot be parsed.
-pub fn parse_insert(message: &RequestMessage) -> Result<Request<'_>> {
-    let mut buf = message.request.as_slice();
+pub fn parse_insert(message: &RequestMessage) -> Result<WireRequest<'static>> {
+    let doc = build_insert_request_document(message)?;
+    WireRequest::from_owned_command_document(
+        RequestType::Insert,
+        RequestExecutionMode::Normal,
+        None,
+        doc,
+        None,
+    )
+}
+
+/// Parse an `OP_INSERT` message into a payload-only request.
+///
+/// # Errors
+/// Returns an error if the message is malformed or cannot be parsed.
+pub(crate) fn parse_insert_payload(message: &RequestMessage) -> Result<RequestPreview<'static>> {
+    let doc = build_insert_request_document(message)?;
+    reader::parse_cmd_buf_payload(doc)
+}
+
+fn build_insert_request_document(message: &RequestMessage) -> Result<RawDocumentBuf> {
+    let mut buf = message.request_as_u8();
 
     if buf.remaining() < 4 {
         return Err(DocumentDBError::bad_value(
@@ -45,7 +65,7 @@ pub fn parse_insert(message: &RequestMessage) -> Result<Request<'_>> {
     // copying raw document bytes without per-document validation.
     let doc = build_insert_command(coll, ordered, docs_slice, db)?;
 
-    Ok(Request::RawBuf(RequestType::Insert, doc))
+    Ok(doc)
 }
 
 /// Build an `OP_INSERT` command document using `BufMut`, avoiding per-document
@@ -78,6 +98,7 @@ mod tests {
     use bson::{rawdoc, RawArrayBuf};
 
     use super::*;
+    use crate::protocol::opcode::OpCode;
 
     /// Build a small but realistic BSON document as raw bytes.
     fn make_test_document(id: i32) -> Vec<u8> {
@@ -145,6 +166,22 @@ mod tests {
 
         let arr = doc.get_array("documents").unwrap();
         assert_eq!(arr.into_iter().count(), 5);
+    }
+
+    #[test]
+    #[expect(deprecated, reason = "testing legacy OP_INSERT path")]
+    fn parse_insert_payload_keeps_database_metadata() {
+        let doc = make_test_document(1);
+        let mut request_bytes = Vec::new();
+        request_bytes.extend_from_slice(&0_i32.to_le_bytes());
+        request_bytes.extend_from_slice(b"mydb.mycoll\0");
+        request_bytes.extend_from_slice(&doc);
+        let message = RequestMessage::new(bytes::Bytes::from(request_bytes), OpCode::Insert, 1, 0);
+
+        let request = parse_insert_payload(&message).expect("payload parsing should succeed");
+
+        assert_eq!(request.db_hint(), Some("mydb"));
+        assert_eq!(request.document().get_str("$db").unwrap(), "mydb");
     }
 
     #[test]

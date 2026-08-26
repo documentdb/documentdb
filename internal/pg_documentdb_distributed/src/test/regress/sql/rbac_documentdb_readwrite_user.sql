@@ -6,16 +6,26 @@ SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 
 SHOW documentdb.enableRbacCompliantSchemas;
 
+-- A readWriteAnyDatabase-only user is rejected while the feature flag is off.
+SET documentdb.enable_readwrite_any_database_role_enforcement TO OFF;
+
+SELECT documentdb_api.create_user('{"createUser":"user_rw_rejected", "pwd":"Password@9", "roles":[{"role":"readWriteAnyDatabase","db":"admin"}]}');
+
+-- Provisioning a readWriteAnyDatabase-only user requires the feature flag.
+SET documentdb.enable_readwrite_any_database_role_enforcement TO ON;
+
 SELECT documentdb_api.create_user('{"createUser":"user_rw", "pwd":"Password@9", "roles":[{"role":"readWriteAnyDatabase","db":"admin"}]}');
+
+RESET documentdb.enable_readwrite_any_database_role_enforcement;
 
 \c regression user_rw
 
 SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog;
 
--- Should not have access to the earlier API schemas
+-- The readwrite role has access to the earlier API schemas.
 SELECT documentdb_api.create_collection('test', 'my_coll1');
 
-SELECT documentdb_api_v2.create_collection('test', 'my_coll1');
+SELECT documentdb_api_v2.create_collection('test', 'my_coll2');
 
 -- Should not be able to drop database
 SELECT documentdb_api_v2.drop_database('test');
@@ -116,7 +126,7 @@ SELECT documentdb_api_v2.insert_one('db', 'coll_agg_proj', '{ "_id": 4, "a": "dO
 SELECT documentdb_api_v2.insert_one('db', 'coll_agg_proj', '{ "_id": "hen", "a": "hen" }');
 SELECT documentdb_api_v2.insert_one('db', 'coll_agg_proj', '{ "_id": "bat", "a": "bat" }');
 
-SELECT document FROM bson_aggregation_find('db', '{ "find": "coll_agg_proj", "filter": { "$expr": {"$ne": ["$a", "CAT"]} }, "sort": { "_id": 1 }, "skip": 0, "collation": { "locale": "fi", "strength" : 1 } }');
+SELECT document FROM bson_aggregation_find('db', '{ "find": "coll_agg_proj", "filter": { "$expr": {"$ne": ["$a", "CAT"]} }, "sort": { "_id": 1 }, "skip": 0 }');
 
 SELECT documentdb_api_v2.insert_one('db','agg_facet_group','{ "_id": 1, "a": { "b": 1, "c": 1} }', NULL);
 SELECT documentdb_api_v2.insert_one('db','agg_facet_group','{ "_id": 2, "a": { "b": 1, "c": 2} }', NULL);

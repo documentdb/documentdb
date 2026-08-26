@@ -1,0 +1,73 @@
+[Unit]
+Description=DocumentDB Gateway (local, PostgreSQL %i)
+Documentation=https://github.com/documentdb/documentdb
+# Greenfield default: order on the per-major private PG service template.
+# In brownfield mode documentdb-setup writes a per-instance drop-in at
+# /etc/systemd/system/documentdb-gateway-local@%i.service.d/brownfield.conf
+# that resets these lists and re-points them at the adopted system PG
+# service (e.g. postgresql@18-main.service or postgresql-18.service).
+# See packaging-design.md §4.4.
+After=documentdb-postgresql@%i.service
+Requires=documentdb-postgresql@%i.service
+PartOf=documentdb-local@%i.target
+# Skip cleanly until documentdb-setup has provisioned this major, exactly like
+# the sibling documentdb-postgresql@%i.service (which is gated on setup.conf).
+# Without this, starting documentdb-local@%i.target before setup ran would
+# still launch the gateway: the greenfield PG unit is Condition-skipped and a
+# skipped unit SATISFIES Requires=, so nothing would hold the gateway back, and
+# ExecStart would then hard-fail (status=200/CHDIR) on the missing
+# WorkingDirectory (/var/lib/documentdb-local/%i/gateway is created by setup,
+# not at package install). documentdb-setup writes this per-major gateway.env
+# in both greenfield and brownfield modes, so the condition holds for both.
+ConditionPathExists=/etc/documentdb/local/%i/gateway.env
+
+[Service]
+Type=simple
+User=documentdb-gateway
+Group=documentdb-gateway
+WorkingDirectory=/var/lib/documentdb-local/%i/gateway
+UMask=0077
+# Per-major TLS state directory. The auto-gen path defaults to
+# /var/lib/documentdb-gateway/tls (the Workflow B path), which is NOT
+# in this unit's ReadWritePaths and would be blocked by
+# ProtectSystem=strict. Pin to the per-major writable tree so each
+# major's gateway owns its own cert/key pair — matches the design's
+# per-major isolation. EnvironmentFile= below can still override.
+Environment=DOCUMENTDB_TLS_STATE_DIR=/var/lib/documentdb-local/%i/gateway/tls
+EnvironmentFile=-/etc/documentdb/local/%i/gateway.env
+# Pre-create the per-major working directory root-owned (idempotent; matches
+# documentdb-register-gateway's `install -d -m 0750 -o root -g documentdb-gateway`)
+# so WorkingDirectory= is always valid even if documentdb-setup has not
+# pre-created it (avoids status=200/CHDIR — the ConditionPathExists gate keys on
+# gateway.env, not the working dir). The `+` prefix runs this as root despite
+# User= and outside the sandbox (ProtectSystem=strict does not apply to it).
+# Deliberately NOT StateDirectory=: systemd recursively chowns a StateDirectory
+# whose owner does not match User= — on every start — which would re-own this dir
+# and the root:documentdb-gateway 0640 pg-url file inside it to the gateway user,
+# letting the gateway rewrite its own connection URL. The dir must stay
+# root-owned 0750 so the gateway can read pg-url but cannot unlink/replace it.
+# `install -d` (unlike StateDirectory) never recurses into the dir's contents, so
+# an existing pg-url keeps its root:documentdb-gateway ownership.
+ExecStartPre=+/usr/bin/install -d -m 0750 -o root -g documentdb-gateway /var/lib/documentdb-local/%i/gateway
+ExecStart=/usr/bin/documentdb-gateway run
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+# Hardened sandboxing
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallFilter=@system-service
+ReadWritePaths=/var/lib/documentdb-local/%i/gateway -/run/documentdb-local/%i -/run/documentdb-local/%i/postgresql
+
+[Install]
+WantedBy=documentdb-local@%i.target

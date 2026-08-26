@@ -14,7 +14,50 @@ dnf install -y /tmp/documentdb.rpm
 
 echo "RPM package installed successfully!"
 
+# One-glance environment fingerprint. When this suite goes red across all PRs
+# (as it did when PGDG rolled 18.4 -> 18.6 under us), the first question is
+# "what changed vs the last green run" -- answer it here instead of making
+# someone diff two 12k-line logs.
+echo "=== Installed PostgreSQL/PGDG packages ==="
+rpm -qa 'postgresql*' 'pgvector*' 'pg_cron*' 'postgis*' | sort
+echo "=========================================="
+
+# Assert the package installed what it claims to, BEFORE running anything that
+# could accidentally pass against a different tree.
+for f in /usr/pgsql-${POSTGRES_VERSION}/lib/pg_documentdb.so \
+         /usr/pgsql-${POSTGRES_VERSION}/share/extension/documentdb.control; do
+    if [ ! -e "$f" ]; then
+        echo "✗ expected packaged file missing: $f"
+        rpm -ql postgresql${POSTGRES_VERSION}-documentdb | head -40
+        exit 1
+    fi
+done
+echo "✓ packaged extension artifacts present"
+
+# The RPM no longer ships a source tree (see the note in the spec's %install).
+# `make check` below therefore runs against the REPO COPY this test image was
+# built from — /usr/src/documentdb comes from the test Dockerfile's
+# `COPY . /usr/src/documentdb`, not from the package. That was already true
+# before the source tree was dropped: once the spec moved its copy to
+# /usr/src/documentdb-<major>, this `cd` silently stopped touching packaged
+# content while still being described as validating it. Name it explicitly so
+# nobody reads the result as evidence about the package payload.
+if [ ! -d /usr/src/documentdb ]; then
+    echo "✗ /usr/src/documentdb not found; the test image must COPY the repo there"
+    exit 1
+fi
+echo "NOTE: running the regression suite against the repo copy at" \
+     "/usr/src/documentdb (test-image COPY). The package ships no source tree."
 cd /usr/src/documentdb
+
+# Keep the internal directory out of the testing, exactly as the DEB entrypoint
+# (test-install-entrypoint.sh) does: the internal distributed suite preloads
+# citus, which this test container does not install -- and the RPM under test
+# ships only the OSS extensions, so the internal suite tests nothing the
+# package delivers. Without this, `make check` recurses into
+# internal/pg_documentdb_distributed and its postmaster fails to start on the
+# missing citus library.
+sed -i '/internal/d' Makefile
 
 # Set up environment for make check
 export PG_CONFIG=/usr/pgsql-${POSTGRES_VERSION}/bin/pg_config
@@ -54,7 +97,29 @@ else
     exit 1
 fi
 
+# Test diff -- pg_regress shells out to it for every output comparison and
+# reports a missing binary as a per-test "diff command failed with status
+# 32512", which reads like a test failure rather than a broken image.
+if command -v diff >/dev/null 2>&1; then
+    echo "✓ diff found at $(command -v diff)"
+else
+    echo "✗ diff not found; the test image must install diffutils (pg_regress needs it)"
+    exit 1
+fi
+
 echo "=== Environment tests passed! ==="
+
+# PGDG RHEL's postgresql.conf.sample enables logging_collector by default, which
+# redirects server logs to a separate file and leaves the postmaster stderr
+# logfile empty after startup. The PostgreSQL TAP framework (used by the
+# extended_rum_recovery suite) detects events by scanning that stderr logfile via
+# wait_for_log, so with the collector on those tests hang until timeout even
+# though the behavior under test fires correctly. Disable it in the sample so
+# every TAP cluster initdb'd here logs to stderr.
+PG_SAMPLE_CONF="$($PG_CONFIG --sharedir)/postgresql.conf.sample"
+if [ -f "$PG_SAMPLE_CONF" ]; then
+    sed -i 's/^[[:space:]]*logging_collector[[:space:]]*=.*/#logging_collector = off/' "$PG_SAMPLE_CONF"
+fi
 
 # Ensure the documentdb user has permissions to run tests
 adduser --system --no-create-home documentdb || true
@@ -63,14 +128,20 @@ chown -R documentdb:documentdb .
 # Switch to the documentdb user and run the tests
 echo "Running make check as documentdb user..."
 if ! su documentdb -c "export PG_CONFIG=/usr/pgsql-${POSTGRES_VERSION}/bin/pg_config && export PATH=/usr/pgsql-${POSTGRES_VERSION}/bin:\$PATH && make check"; then
-    echo "make check failed. Displaying postmaster.log if it exists:"
-    LOG_FILE="/usr/src/documentdb/pg_documentdb/src/test/regress/log/postmaster.log"
-    if [ -f "$LOG_FILE" ]; then
-        echo "=== Contents of $LOG_FILE ==="
-        cat "$LOG_FILE"
-        echo "==============================="
+    echo "make check failed. Displaying any postmaster.log found:"
+    # make check recurses into several suites (pg_documentdb_core,
+    # pg_documentdb, ...), each with its own regress log dir. The old
+    # hard-coded pg_documentdb path printed "not found" whenever a different
+    # suite failed, discarding the crash evidence -- search the whole tree.
+    FOUND_LOGS=$(find /usr/src/documentdb -type f -name postmaster.log 2>/dev/null)
+    if [ -n "$FOUND_LOGS" ]; then
+        for LOG_FILE in $FOUND_LOGS; do
+            echo "=== Contents of $LOG_FILE ==="
+            cat "$LOG_FILE"
+            echo "==============================="
+        done
     else
-        echo "Log file $LOG_FILE not found."
+        echo "No postmaster.log found under /usr/src/documentdb."
     fi
     exit 1
 fi

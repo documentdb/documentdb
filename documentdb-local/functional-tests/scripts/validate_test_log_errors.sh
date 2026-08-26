@@ -1,0 +1,36 @@
+#!/bin/bash
+# Scan engine/gateway logs for internal-error signatures.
+#
+# Exits 1 when any signature is present so a caller can gate on it. The
+# functional workflow does not: it converts the non-zero exit into a warning
+# annotation, because a step exiting non-zero under continue-on-error still
+# renders as an ERROR annotation on an otherwise green run.
+#
+# Output is a per-signature count plus the distinct messages behind it. A raw
+# dump is unreadable: one gateway error line runs past 500 characters, and a
+# single known gap accounts for hundreds of them, so the distinct-message
+# summary is what makes a NEW signature visible.
+#
+# Usage: validate_test_log_errors.sh <log-file> [<log-file>...]
+set -u
+
+found=0
+for file in "$@"; do
+    [ -f "$file" ] || { echo "Log not found (skipping): $file"; continue; }
+    echo "Checking log $file for errors"
+    for pattern in "ContractViolationException" "InternalError"; do
+        # Capture first, then test the captured text. `if grep ... | head; then`
+        # tests head's exit status, which is 0 whether or not grep matched — so
+        # the check reported every signature on every run.
+        matches=$(grep -i "$pattern" "$file") || true
+        [ -n "$matches" ] || continue
+        echo "Found $pattern in $file ($(printf '%s\n' "$matches" | wc -l | tr -d ' ') occurrence(s)); distinct messages:"
+        printf '%s\n' "$matches" \
+            | sed -E 's/.*error_message_internal: //; s/, db_error_code.*//' \
+            | cut -c1-160 \
+            | sort | uniq -c | sort -rn | head -10 | sed 's/^/    /'
+        found=1
+    done
+done
+[ "$found" -eq 0 ] && echo "Found no internal errors."
+exit "$found"

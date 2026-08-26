@@ -280,9 +280,293 @@ SELECT document FROM bson_aggregation_pipeline('compdb',
  { "_id" : { "$numberInt" : "3" }, "item_name" : "hat", "price" : { "$numberInt" : "10" }, "order_quantity" : { "$numberInt" : "5" }, "matched_docs" : [ { "_id" : { "$numberInt" : "2" }, "item_code" : "hat", "product_description" : "product 2", "stock_quantity" : { "$numberInt" : "80" }, "matched_docs" : { "hello" : "newsubpipelinefield" } } ] }
 (5 rows)
 
+-- Flag-off controls for the three distributed topologies exercised below.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'compdb',
+    '{
+      "aggregate": "customer_purchases_sharded",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "catalog_items",
+            "localField": "item_name",
+            "foreignField": "item_code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "catalog_items",
+                  "localField": "_id",
+                  "foreignField": "_id",
+                  "as": "item_copy"
+                }
+              }
+            ],
+            "as": "matched_docs"
+          }
+        }
+      ]
+    }'
+);
+                                                                                                                                                                                                                                                                                                                                                                                        document                                                                                                                                                                                                                                                                                                                                                                                        
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "item_name" : "pants", "price" : { "$numberInt" : "20" }, "order_quantity" : { "$numberInt" : "1" }, "matched_docs" : [ { "_id" : { "$numberInt" : "4" }, "item_code" : "pants", "product_description" : "product 4", "stock_quantity" : { "$numberInt" : "70" }, "item_copy" : [ { "_id" : { "$numberInt" : "4" }, "item_code" : "pants", "product_description" : "product 4", "stock_quantity" : { "$numberInt" : "70" } } ] } ] }
+ { "_id" : { "$numberInt" : "4" }, "matched_docs" : [ { "_id" : { "$numberInt" : "5" }, "item_code" : null, "product_description" : "product 4", "stock_quantity" : { "$numberInt" : "70" }, "item_copy" : [ { "_id" : { "$numberInt" : "5" }, "item_code" : null, "product_description" : "product 4", "stock_quantity" : { "$numberInt" : "70" } } ] } ] }
+ { "_id" : { "$numberInt" : "5" }, "item_name" : { "a" : "x", "b" : { "$numberInt" : "1" }, "c" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }, "matched_docs" : [ { "_id" : { "$numberInt" : "6" }, "item_code" : { "a" : "x", "b" : { "$numberInt" : "1" }, "c" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }, "product_description" : "complex object", "item_copy" : [ { "_id" : { "$numberInt" : "6" }, "item_code" : { "a" : "x", "b" : { "$numberInt" : "1" }, "c" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }, "product_description" : "complex object" } ] } ] }
+ { "_id" : { "$numberInt" : "1" }, "item_name" : "shirt", "price" : { "$numberInt" : "12" }, "order_quantity" : { "$numberInt" : "2" }, "matched_docs" : [ { "_id" : { "$numberInt" : "1" }, "item_code" : "shirt", "product_description" : "product 1", "stock_quantity" : { "$numberInt" : "120" }, "item_copy" : [ { "_id" : { "$numberInt" : "1" }, "item_code" : "shirt", "product_description" : "product 1", "stock_quantity" : { "$numberInt" : "120" } } ] }, { "_id" : { "$numberInt" : "11" }, "item_code" : "shirt", "product_description" : "product 1", "stock_quantity" : { "$numberInt" : "240" }, "item_copy" : [ { "_id" : { "$numberInt" : "11" }, "item_code" : "shirt", "product_description" : "product 1", "stock_quantity" : { "$numberInt" : "240" } } ] } ] }
+ { "_id" : { "$numberInt" : "3" }, "item_name" : "hat", "price" : { "$numberInt" : "10" }, "order_quantity" : { "$numberInt" : "5" }, "matched_docs" : [ { "_id" : { "$numberInt" : "2" }, "item_code" : "hat", "product_description" : "product 2", "stock_quantity" : { "$numberInt" : "80" }, "item_copy" : [ { "_id" : { "$numberInt" : "2" }, "item_code" : "hat", "product_description" : "product 2", "stock_quantity" : { "$numberInt" : "80" } } ] } ] }
+(5 rows)
+
+SELECT document
+FROM bson_aggregation_pipeline(
+    'compdb',
+    '{
+      "aggregate": "customer_purchases",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "customer_purchases_sharded",
+            "localField": "item_name",
+            "foreignField": "item_name",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "catalog_items",
+                  "localField": "item_name",
+                  "foreignField": "item_code",
+                  "as": "items"
+                }
+              }
+            ],
+            "as": "matched_docs"
+          }
+        }
+      ]
+    }'
+);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               document                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "item_name" : "shirt", "price" : { "$numberInt" : "12" }, "order_quantity" : { "$numberInt" : "2" }, "matched_docs" : [ { "_id" : { "$numberInt" : "1" }, "item_name" : "shirt", "price" : { "$numberInt" : "12" }, "order_quantity" : { "$numberInt" : "2" }, "items" : [ { "_id" : { "$numberInt" : "1" }, "item_code" : "shirt", "product_description" : "product 1", "stock_quantity" : { "$numberInt" : "120" } }, { "_id" : { "$numberInt" : "11" }, "item_code" : "shirt", "product_description" : "product 1", "stock_quantity" : { "$numberInt" : "240" } } ] } ] }
+ { "_id" : { "$numberInt" : "2" }, "item_name" : "pants", "price" : { "$numberInt" : "20" }, "order_quantity" : { "$numberInt" : "1" }, "matched_docs" : [ { "_id" : { "$numberInt" : "2" }, "item_name" : "pants", "price" : { "$numberInt" : "20" }, "order_quantity" : { "$numberInt" : "1" }, "items" : [ { "_id" : { "$numberInt" : "4" }, "item_code" : "pants", "product_description" : "product 4", "stock_quantity" : { "$numberInt" : "70" } } ] } ] }
+ { "_id" : { "$numberInt" : "3" }, "item_name" : "hat", "price" : { "$numberInt" : "10" }, "order_quantity" : { "$numberInt" : "5" }, "matched_docs" : [ { "_id" : { "$numberInt" : "3" }, "item_name" : "hat", "price" : { "$numberInt" : "10" }, "order_quantity" : { "$numberInt" : "5" }, "items" : [ { "_id" : { "$numberInt" : "2" }, "item_code" : "hat", "product_description" : "product 2", "stock_quantity" : { "$numberInt" : "80" } } ] } ] }
+ { "_id" : { "$numberInt" : "4" }, "item_name" : [ "shirt", "hat", "pants" ], "price" : { "$numberInt" : "10" }, "order_quantity" : { "$numberInt" : "5" }, "matched_docs" : [ { "_id" : { "$numberInt" : "2" }, "item_name" : "pants", "price" : { "$numberInt" : "20" }, "order_quantity" : { "$numberInt" : "1" }, "items" : [ { "_id" : { "$numberInt" : "4" }, "item_code" : "pants", "product_description" : "product 4", "stock_quantity" : { "$numberInt" : "70" } } ] }, { "_id" : { "$numberInt" : "1" }, "item_name" : "shirt", "price" : { "$numberInt" : "12" }, "order_quantity" : { "$numberInt" : "2" }, "items" : [ { "_id" : { "$numberInt" : "1" }, "item_code" : "shirt", "product_description" : "product 1", "stock_quantity" : { "$numberInt" : "120" } }, { "_id" : { "$numberInt" : "11" }, "item_code" : "shirt", "product_description" : "product 1", "stock_quantity" : { "$numberInt" : "240" } } ] }, { "_id" : { "$numberInt" : "3" }, "item_name" : "hat", "price" : { "$numberInt" : "10" }, "order_quantity" : { "$numberInt" : "5" }, "items" : [ { "_id" : { "$numberInt" : "2" }, "item_code" : "hat", "product_description" : "product 2", "stock_quantity" : { "$numberInt" : "80" } } ] } ] }
+ { "_id" : { "$numberInt" : "5" }, "matched_docs" : [ { "_id" : { "$numberInt" : "4" }, "items" : [ { "_id" : { "$numberInt" : "5" }, "item_code" : null, "product_description" : "product 4", "stock_quantity" : { "$numberInt" : "70" } } ] } ] }
+ { "_id" : { "$numberInt" : "6" }, "item_name" : { "a" : "x", "b" : { "$numberInt" : "1" }, "c" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }, "matched_docs" : [ { "_id" : { "$numberInt" : "5" }, "item_name" : { "a" : "x", "b" : { "$numberInt" : "1" }, "c" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }, "items" : [ { "_id" : { "$numberInt" : "6" }, "item_code" : { "a" : "x", "b" : { "$numberInt" : "1" }, "c" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }, "product_description" : "complex object" } ] } ] }
+ { "_id" : { "$numberInt" : "7" }, "item_name" : [ { "a" : { "b" : { "$numberInt" : "1" } } }, [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ], { "$numberInt" : "1" }, "x" ], "matched_docs" : [  ] }
+(7 rows)
+
+SELECT document
+FROM bson_aggregation_pipeline(
+    'compdb',
+    '{
+      "aggregate": "customer_purchases",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "catalog_items",
+            "localField": "item_name",
+            "foreignField": "item_code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "customer_purchases_sharded",
+                  "localField": "item_code",
+                  "foreignField": "item_name",
+                  "as": "purchases"
+                }
+              }
+            ],
+            "as": "matched_docs"
+          }
+        }
+      ]
+    }'
+);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  document                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "item_name" : "shirt", "price" : { "$numberInt" : "12" }, "order_quantity" : { "$numberInt" : "2" }, "matched_docs" : [ { "_id" : { "$numberInt" : "1" }, "item_code" : "shirt", "product_description" : "product 1", "stock_quantity" : { "$numberInt" : "120" }, "purchases" : [ { "_id" : { "$numberInt" : "1" }, "item_name" : "shirt", "price" : { "$numberInt" : "12" }, "order_quantity" : { "$numberInt" : "2" } } ] }, { "_id" : { "$numberInt" : "11" }, "item_code" : "shirt", "product_description" : "product 1", "stock_quantity" : { "$numberInt" : "240" }, "purchases" : [ { "_id" : { "$numberInt" : "1" }, "item_name" : "shirt", "price" : { "$numberInt" : "12" }, "order_quantity" : { "$numberInt" : "2" } } ] } ] }
+ { "_id" : { "$numberInt" : "2" }, "item_name" : "pants", "price" : { "$numberInt" : "20" }, "order_quantity" : { "$numberInt" : "1" }, "matched_docs" : [ { "_id" : { "$numberInt" : "4" }, "item_code" : "pants", "product_description" : "product 4", "stock_quantity" : { "$numberInt" : "70" }, "purchases" : [ { "_id" : { "$numberInt" : "2" }, "item_name" : "pants", "price" : { "$numberInt" : "20" }, "order_quantity" : { "$numberInt" : "1" } } ] } ] }
+ { "_id" : { "$numberInt" : "3" }, "item_name" : "hat", "price" : { "$numberInt" : "10" }, "order_quantity" : { "$numberInt" : "5" }, "matched_docs" : [ { "_id" : { "$numberInt" : "2" }, "item_code" : "hat", "product_description" : "product 2", "stock_quantity" : { "$numberInt" : "80" }, "purchases" : [ { "_id" : { "$numberInt" : "3" }, "item_name" : "hat", "price" : { "$numberInt" : "10" }, "order_quantity" : { "$numberInt" : "5" } } ] } ] }
+ { "_id" : { "$numberInt" : "4" }, "item_name" : [ "shirt", "hat", "pants" ], "price" : { "$numberInt" : "10" }, "order_quantity" : { "$numberInt" : "5" }, "matched_docs" : [ { "_id" : { "$numberInt" : "1" }, "item_code" : "shirt", "product_description" : "product 1", "stock_quantity" : { "$numberInt" : "120" }, "purchases" : [ { "_id" : { "$numberInt" : "1" }, "item_name" : "shirt", "price" : { "$numberInt" : "12" }, "order_quantity" : { "$numberInt" : "2" } } ] }, { "_id" : { "$numberInt" : "11" }, "item_code" : "shirt", "product_description" : "product 1", "stock_quantity" : { "$numberInt" : "240" }, "purchases" : [ { "_id" : { "$numberInt" : "1" }, "item_name" : "shirt", "price" : { "$numberInt" : "12" }, "order_quantity" : { "$numberInt" : "2" } } ] }, { "_id" : { "$numberInt" : "2" }, "item_code" : "hat", "product_description" : "product 2", "stock_quantity" : { "$numberInt" : "80" }, "purchases" : [ { "_id" : { "$numberInt" : "3" }, "item_name" : "hat", "price" : { "$numberInt" : "10" }, "order_quantity" : { "$numberInt" : "5" } } ] }, { "_id" : { "$numberInt" : "4" }, "item_code" : "pants", "product_description" : "product 4", "stock_quantity" : { "$numberInt" : "70" }, "purchases" : [ { "_id" : { "$numberInt" : "2" }, "item_name" : "pants", "price" : { "$numberInt" : "20" }, "order_quantity" : { "$numberInt" : "1" } } ] } ] }
+ { "_id" : { "$numberInt" : "5" }, "matched_docs" : [ { "_id" : { "$numberInt" : "5" }, "item_code" : null, "product_description" : "product 4", "stock_quantity" : { "$numberInt" : "70" }, "purchases" : [ { "_id" : { "$numberInt" : "4" } } ] } ] }
+ { "_id" : { "$numberInt" : "6" }, "item_name" : { "a" : "x", "b" : { "$numberInt" : "1" }, "c" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }, "matched_docs" : [ { "_id" : { "$numberInt" : "6" }, "item_code" : { "a" : "x", "b" : { "$numberInt" : "1" }, "c" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }, "product_description" : "complex object", "purchases" : [ { "_id" : { "$numberInt" : "5" }, "item_name" : { "a" : "x", "b" : { "$numberInt" : "1" }, "c" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] } } ] } ] }
+ { "_id" : { "$numberInt" : "7" }, "item_name" : [ { "a" : { "b" : { "$numberInt" : "1" } } }, [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ], { "$numberInt" : "1" }, "x" ], "matched_docs" : [ { "_id" : { "$numberInt" : "7" }, "item_code" : [ { "a" : { "b" : { "$numberInt" : "1" } } }, [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ], { "$numberInt" : "1" }, "x" ], "product_description" : "complex array", "purchases" : [  ] }, { "_id" : { "$numberInt" : "8" }, "item_code" : [ { "a" : { "b" : { "$numberInt" : "1" } } }, [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ], { "$numberInt" : "1" }, "x" ], "product_description" : "complex array", "purchases" : [  ] } ] }
+(7 rows)
+
+SET documentdb.force_nested_lookup_pipeline_after_join TO on;
+-- Nested lookup over a sharded outer collection
+SELECT document
+FROM bson_aggregation_pipeline(
+    'compdb',
+    '{
+      "aggregate": "customer_purchases_sharded",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "catalog_items",
+            "localField": "item_name",
+            "foreignField": "item_code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "catalog_items",
+                  "localField": "_id",
+                  "foreignField": "_id",
+                  "as": "item_copy"
+                }
+              }
+            ],
+            "as": "matched_docs"
+          }
+        }
+      ]
+    }'
+);
+psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:199: ERROR:  CTEs that refer to other subqueries are not supported in multi-shard queries
+-- Nested lookup with a sharded parent foreign collection
+SELECT document
+FROM bson_aggregation_pipeline(
+    'compdb',
+    '{
+      "aggregate": "customer_purchases",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "customer_purchases_sharded",
+            "localField": "item_name",
+            "foreignField": "item_name",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "catalog_items",
+                  "localField": "item_name",
+                  "foreignField": "item_code",
+                  "as": "items"
+                }
+              }
+            ],
+            "as": "matched_docs"
+          }
+        }
+      ]
+    }'
+);
+psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:228: ERROR:  CTEs that refer to other subqueries are not supported in multi-shard queries
+-- Nested lookup with a sharded collection deeper in the lookup chain
+SELECT document
+FROM bson_aggregation_pipeline(
+    'compdb',
+    '{
+      "aggregate": "customer_purchases",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "catalog_items",
+            "localField": "item_name",
+            "foreignField": "item_code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "customer_purchases_sharded",
+                  "localField": "item_code",
+                  "foreignField": "item_name",
+                  "as": "purchases"
+                }
+              }
+            ],
+            "as": "matched_docs"
+          }
+        }
+      ]
+    }'
+);
+psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:257: ERROR:  CTEs that refer to other subqueries are not supported in multi-shard queries
+RESET documentdb.force_nested_lookup_pipeline_after_join;
+-- Flag-off control for the foreign _id planner issue.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'compdb',
+    '{
+      "aggregate": "customer_purchases",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "catalog_items",
+            "localField": "item_name",
+            "foreignField": "item_code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "catalog_items",
+                  "localField": "_id",
+                  "foreignField": "_id",
+                  "pipeline": [
+                    {
+                      "$lookup": {
+                        "from": "customer_purchases_sharded",
+                        "localField": "item_code",
+                        "foreignField": "item_name",
+                        "as": "purchases"
+                      }
+                    }
+                  ],
+                  "as": "item_copy"
+                }
+              }
+            ],
+            "as": "matched_docs"
+          }
+        }
+      ]
+    }'
+);
+psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:298: ERROR:  CTEs that refer to other subqueries are not supported in multi-shard queries
+SET documentdb.force_nested_lookup_pipeline_after_join TO on;
+-- PRE-EXISTING LIMITATION:
+-- The foreign _id path keeps its pipeline after the join and produces an
+-- unsupported correlated CTE independently of the force setting.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'compdb',
+    '{
+      "aggregate": "customer_purchases",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "catalog_items",
+            "localField": "item_name",
+            "foreignField": "item_code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "catalog_items",
+                  "localField": "_id",
+                  "foreignField": "_id",
+                  "pipeline": [
+                    {
+                      "$lookup": {
+                        "from": "customer_purchases_sharded",
+                        "localField": "item_code",
+                        "foreignField": "item_name",
+                        "as": "purchases"
+                      }
+                    }
+                  ],
+                  "as": "item_copy"
+                }
+              }
+            ],
+            "as": "matched_docs"
+          }
+        }
+      ]
+    }'
+);
+psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:341: ERROR:  CTEs that refer to other subqueries are not supported in multi-shard queries
+RESET documentdb.force_nested_lookup_pipeline_after_join;
 -- Test coalesce path, return empty array when no match found 
 SELECT documentdb_api.insert_one('compdb','coalesce_source','{"_id": 0, "a": 1}', NULL);
-psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:87: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:346: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -301,7 +585,7 @@ SELECT documentdb_api.insert_one('compdb','coalesce_source','{"_id": 2}', NULL);
 (1 row)
 
 SELECT documentdb_api.insert_one('compdb','coalesce_foreign','{"_id": 0, "b": 1}', NULL);
-psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:90: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:349: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -330,7 +614,7 @@ SELECT document FROM bson_aggregation_pipeline('compdb',
 
 -- Test dotted path
 SELECT documentdb_api.insert_one('compdb','dotted_path_source','{"_id": 0, "a": 1}', NULL);
-psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:98: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:357: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -355,7 +639,7 @@ SELECT documentdb_api.insert_one('compdb','dotted_path_source','{"_id": 3, "a": 
 (1 row)
 
 SELECT documentdb_api.insert_one('compdb','dotted_path_foreign','{"_id": 0, "b": 1}', NULL);
-psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:103: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:362: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -398,7 +682,7 @@ SELECT document FROM bson_aggregation_pipeline('compdb',
 -- (B) Lookup with pipeline support
 -- (B).1 Data Ingestion
 SELECT documentdb_api.insert_one('compdb','establishments',' {"_id": 1, "establishment_name": "The Grand Diner", "dishes": ["burger", "fries"], "order_quantity": 100 , "drinks": ["soda", "juice"]}', NULL);
-psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:116: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:375: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -411,7 +695,7 @@ SELECT documentdb_api.insert_one('compdb','establishments','{ "_id": 2, "establi
 (1 row)
 
 SELECT documentdb_api.insert_one('compdb','menu','{ "_id": 1, "item_name": "burger", "establishment_name": "The Grand Diner"}', NULL);
-psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:119: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:378: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -841,7 +1125,7 @@ EXPLAIN(costs off) SELECT document from bson_aggregation_pipeline('compdb',
 ROLLBACK;
 -- Lookup Tests for array index-based paths
 SELECT documentdb_api.insert_one('compdb','array_path_purchases',' { "_id" : 1, "a" : [{"x" : 1}] }', NULL);
-psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:279: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:538: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -896,7 +1180,7 @@ SELECT documentdb_api.insert_one('compdb','array_path_purchases',' { "_id" : 9, 
 (1 row)
 
 SELECT documentdb_api.insert_one('compdb','array_path_items',' { "_id" : 1, "b" : 1 }', NULL);
-psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:289: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:548: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -924,7 +1208,7 @@ SELECT document FROM bson_aggregation_pipeline('compdb', '{ "aggregate": "array_
 
 -- Test for Index push down crash when Foreign Field = '_id' and the target collection is sharded 
 SELECT documentdb_api.insert_one('compdb','purchases_pushdown_test',' { "_id" : 1, "item_name" : "itemA", "price" : 12, "order_quantity" : 2 }', NULL);
-psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:296: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:555: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -967,7 +1251,7 @@ SELECT documentdb_api.insert_one('compdb','purchases_pushdown_test',' { "_id" : 
 (1 row)
 
 SELECT documentdb_api.insert_one('compdb','items_pushdown_test',' { "_id" :  "itemA", "item_description": "product 1", "in_stock" : 120 }', NULL);
-psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:304: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:563: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1250,28 +1534,28 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('
 ROLLBACK;
 -- do a multi layer lookup that matches on _id
 SELECT COUNT(documentdb_api.insert_one('compdb', 'source1', FORMAT('{ "_id": %s, "field1": "value%s", "fieldsource1": "foo" }', i, i)::bson)) FROM generate_series(1, 100) i;
-psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:359: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:618: NOTICE:  creating collection
  count 
 ---------------------------------------------------------------------
    100
 (1 row)
 
 SELECT COUNT(documentdb_api.insert_one('compdb', 'source2', FORMAT('{ "_id": "value%s", "field2": "othervalue%s", "fieldsource2": "foobar" }', i, i)::bson)) FROM generate_series(1, 100) i;
-psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:360: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:619: NOTICE:  creating collection
  count 
 ---------------------------------------------------------------------
    100
 (1 row)
 
 SELECT COUNT(documentdb_api.insert_one('compdb', 'source3', FORMAT('{ "_id": "othervalue%s", "field3": "someothervalue%s", "fieldsource3": "foobarfoo" }', i, i)::bson)) FROM generate_series(1, 100) i;
-psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:361: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:620: NOTICE:  creating collection
  count 
 ---------------------------------------------------------------------
    100
 (1 row)
 
 SELECT COUNT(documentdb_api.insert_one('compdb', 'source4', FORMAT('{ "_id": "someothervalue%s", "field4": "yetsomeothervalue%s", "fieldsource4": "foobarbaz" }', i, i)::bson)) FROM generate_series(1, 100) i;
-psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:362: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_lookup_tests_composite.sql:621: NOTICE:  creating collection
  count 
 ---------------------------------------------------------------------
    100

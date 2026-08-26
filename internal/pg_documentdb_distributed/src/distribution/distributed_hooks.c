@@ -12,6 +12,7 @@
 #include <utils/timestamp.h>
 #include <nodes/makefuncs.h>
 #include <catalog/namespace.h>
+#include <catalog/pg_type.h>
 #include <utils/lsyscache.h>
 #include <utils/memutils.h>
 #include <metadata/index.h>
@@ -25,6 +26,7 @@
 #include "utils/documentdb_errors.h"
 
 #include "metadata/collection.h"
+#include "metadata/distributed_oid_cache.h"
 #include "api_hooks_def.h"
 
 #include "shard_colocation.h"
@@ -59,6 +61,30 @@ IsMetadataCoordinatorCore(void)
 		"SELECT citus_is_coordinator()", readOnly, SPI_OK_SELECT, &isNull);
 
 	return !isNull && DatumGetBool(resultBoolDatum);
+}
+
+
+/*
+ * Returns true if the cluster has been initialized (initialize_cluster has been called).
+ * Checks for the presence of initialized_version in the cluster_data metadata table.
+ */
+static bool
+IsClusterInitializedCore(void)
+{
+	StringInfoData cmdStr = { 0 };
+	initStringInfo(&cmdStr);
+	appendStringInfo(&cmdStr,
+					 "SELECT %s.bson_get_value_text(metadata, 'initialized_version') FROM "
+					 "%s.%s_cluster_data;", CoreSchemaName, ApiDistributedSchemaName,
+					 ExtensionObjectPrefix);
+
+	bool isNull = false;
+	bool readOnly = true;
+	ExtensionExecuteQueryViaSPI(cmdStr.data, readOnly, SPI_OK_SELECT, &isNull);
+
+	pfree(cmdStr.data);
+
+	return !isNull;
 }
 
 
@@ -141,6 +167,29 @@ RunQueryWithCommutativeWritesCore(const char *query, int nargs, Oid *argTypes,
 
 	RollbackGUCChange(savedGUCLevel);
 	return result;
+}
+
+
+static void
+RunMultiValueQueryWithCommutativeWritesCore(const char *query, SPIPlanPtr plan,
+											int nargs, Oid *argTypes,
+											Datum *argValues, char *argNulls,
+											bool readOnly, long maxTupleCount)
+{
+	int savedGUCLevel = NewGUCNestLevel();
+	SetGUCLocally("citus.all_modifications_commutative", "true");
+
+	if (plan != NULL)
+	{
+		SPI_execute_plan(plan, argValues, argNulls, readOnly, maxTupleCount);
+	}
+	else
+	{
+		SPI_execute_with_args(query, nargs, argTypes, argValues, argNulls,
+							  readOnly, maxTupleCount);
+	}
+
+	RollbackGUCChange(savedGUCLevel);
 }
 
 
@@ -325,11 +374,12 @@ RunMultiValueQueryWithNestedDistributionCore(const char *query, int nArgs, Oid *
  */
 static const char *
 TryGetShardNameForUnshardedCollectionCore(Oid relationId, uint64 collectionId, const
-										  char *tableName)
+										  char *tableName, bool *isSingleShardTable)
 {
 	if (!UseLocalExecutionShardQueries)
 	{
 		/* Defensive - only turn this on with feature flag */
+		*isSingleShardTable = false;
 		return "";
 	}
 
@@ -351,6 +401,7 @@ TryGetShardNameForUnshardedCollectionCore(Oid relationId, uint64 collectionId, c
 	if (resultNulls[0])
 	{
 		/* Not a distributed table */
+		*isSingleShardTable = false;
 		return NULL;
 	}
 
@@ -362,8 +413,11 @@ TryGetShardNameForUnshardedCollectionCore(Oid relationId, uint64 collectionId, c
 	if (!resultNulls[1] || !resultNulls[2])
 	{
 		/* has at least some shard values */
+		*isSingleShardTable = false;
 		return "";
 	}
+
+	*isSingleShardTable = true;
 
 	/* Construct the shard table name */
 	char *shardTableName = psprintf("%s_%ld", tableName, shardIdValue);
@@ -509,14 +563,30 @@ TryGetExtendedVersionRefreshQueryCore(void)
 {
 	/* Update the version check query to consider distributed versions */
 	MemoryContext currContext = MemoryContextSwitchTo(TopMemoryContext);
-	StringInfo s = makeStringInfo();
-	appendStringInfo(s,
+	StringInfoData s = { 0 };
+	initStringInfo(&s);
+	appendStringInfo(&s,
 					 "SELECT regexp_split_to_array(TRIM(%s.bson_get_value_text(metadata, 'last_deploy_version'), '\"'), '[-\\.]')::int4[] FROM %s.%s_cluster_data",
 					 CoreSchemaName, ApiDistributedSchemaName, ExtensionObjectPrefix);
 	MemoryContextSwitchTo(currContext);
 
-	ereport(DEBUG1, (errmsg("Version refresh query is %s", s->data)));
-	return s->data;
+	return s.data;
+}
+
+
+static char *
+TryGetExtendedInitializedVersionRefreshQueryCore(void)
+{
+	/* Update the version check query to consider distributed versions */
+	MemoryContext currContext = MemoryContextSwitchTo(TopMemoryContext);
+	StringInfoData s = { 0 };
+	initStringInfo(&s);
+	appendStringInfo(&s,
+					 "SELECT regexp_split_to_array(TRIM(%s.bson_get_value_text(metadata, 'initialized_version'), '\"'), '[-\\.]')::int4[] FROM %s.%s_cluster_data",
+					 CoreSchemaName, ApiDistributedSchemaName, ExtensionObjectPrefix);
+	MemoryContextSwitchTo(currContext);
+
+	return s.data;
 }
 
 
@@ -657,14 +727,14 @@ TryGetCancelIndexBuildQueryCore(int32_t indexId, char cmdType)
 
 
 static bool
-ShouldScheduleIndexBuildsCore()
+ShouldScheduleIndexBuildsCore(void)
 {
 	return false;
 }
 
 
 static List *
-GetDistributedShardIndexOidsCore(uint64_t collectionId, int indexId, bool ignoreMissing)
+GetDistributedShardIndexOidsCore(uint64_t collectionId, Oid indexOid, bool ignoreMissing)
 {
 	/* First for the given collection, get the shard ids associated with it */
 	char tableName[NAMEDATALEN] = { 0 };
@@ -677,18 +747,18 @@ GetDistributedShardIndexOidsCore(uint64_t collectionId, int indexId, bool ignore
 
 	List *indexShardList = NIL;
 	ListCell *shardCell;
+	const char *indexName = get_rel_name(indexOid);
 	foreach(shardCell, shardIdList)
 	{
 		uint64_t *shardIdPointer = (uint64_t *) lfirst(shardCell);
 		char shardIndexName[NAMEDATALEN] = { 0 };
-		pg_sprintf(shardIndexName, DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "_%lu", indexId,
-				   *shardIdPointer);
+		pg_sprintf(shardIndexName, "%s_%lu", indexName, *shardIdPointer);
 
 
-		Oid indexOid = get_relname_relid(shardIndexName, ApiDataNamespaceOid());
-		if (indexOid != InvalidOid)
+		Oid shardIndexOid = get_relname_relid(shardIndexName, ApiDataNamespaceOid());
+		if (shardIndexOid != InvalidOid)
 		{
-			indexShardList = lappend_oid(indexShardList, indexOid);
+			indexShardList = lappend_oid(indexShardList, shardIndexOid);
 		}
 		else if (!ignoreMissing)
 		{
@@ -744,14 +814,83 @@ GetDistributedOperationCancellationQuery(int64 shardId, StringView *opIdView,
 
 
 /*
+ * Citus distributed-execution rewrite: when a partial aggregate is pushed
+ * down to a shard, the original Aggref's aggfnoid is replaced with Citus's
+ * worker_partial_agg / worker_binary_partial_agg wrapper, whose first
+ * argument is a Const carrying the underlying aggregate's regprocedure oid.
+ *
+ * This hook unwraps that wrapper so callers in the core extension (which is
+ * intentionally Citus-agnostic) can classify the Aggref by its underlying
+ * aggregate without knowing anything about Citus's worker-side functions.
+ *
+ * If the Aggref is not a recognized wrapper, returns false and leaves
+ * *aggregateFunctionOid untouched.
+ */
+static bool
+GetEffectiveAggregateFunctionOidCore(Aggref *aggref, Oid *aggregateFunctionOid)
+{
+	if ((aggref->aggfnoid != CitusWorkerPartialAggregateFunctionOid() &&
+		 aggref->aggfnoid != CitusWorkerBinaryPartialAggregateFunctionOid()) ||
+		aggref->args == NIL)
+	{
+		return false;
+	}
+
+	TargetEntry *firstArg = linitial(aggref->args);
+	Expr *firstArgExpr = firstArg->expr;
+	if (IsA(firstArgExpr, RelabelType))
+	{
+		firstArgExpr = ((RelabelType *) firstArgExpr)->arg;
+	}
+
+	if (!IsA(firstArgExpr, Const))
+	{
+		return false;
+	}
+
+	Const *functionConst = (Const *) firstArgExpr;
+	if (functionConst->constisnull ||
+		(functionConst->consttype != REGPROCEDUREOID &&
+		 functionConst->consttype != OIDOID))
+	{
+		return false;
+	}
+
+	*aggregateFunctionOid = DatumGetObjectId(functionConst->constvalue);
+	return true;
+}
+
+
+static bool
+CanBuildNonBlockingUniqueIndexCore(void)
+{
+	bool isNull = false;
+	Datum result = ExtensionExecuteQueryViaSPI(
+		"SELECT COUNT(*)::int4 FROM pg_dist_node where nodecluster = 'default' AND noderole = 'primary' and isactive",
+		true, SPI_OK_SELECT, &isNull);
+
+	if (isNull)
+	{
+		return false;
+	}
+
+	/* Multi-node clusters currently cannot build unique non-blocking indexes */
+	return DatumGetInt32(result) <= 1;
+}
+
+
+/*
  * Register hook overrides for DocumentDB.
  */
 void
 InitializeDocumentDBDistributedHooks(void)
 {
 	is_metadata_coordinator_hook = IsMetadataCoordinatorCore;
+	is_cluster_initialized_hook = IsClusterInitializedCore;
 	run_command_on_metadata_coordinator_hook = RunCommandOnMetadataCoordinatorCore;
 	run_query_with_commutative_writes_hook = RunQueryWithCommutativeWritesCore;
+	run_multi_value_query_with_commutative_writes_hook =
+		RunMultiValueQueryWithCommutativeWritesCore;
 	run_query_with_sequential_modification_mode_hook =
 		RunQueryWithSequentialModificationCore;
 	distribute_postgres_table_hook = DistributePostgresTableCore;
@@ -771,6 +910,8 @@ InitializeDocumentDBDistributedHooks(void)
 	UpdateColocationHooks();
 
 	try_get_extended_version_refresh_query_hook = TryGetExtendedVersionRefreshQueryCore;
+	try_get_extended_initialized_version_refresh_query_hook =
+		TryGetExtendedInitializedVersionRefreshQueryCore;
 	get_shard_ids_and_names_for_collection_hook = GetShardIdsAndNamesForCollectionCore;
 
 	get_pid_for_index_build_hook = GetPidForIndexBuildCore;
@@ -783,6 +924,10 @@ InitializeDocumentDBDistributedHooks(void)
 
 	update_postgres_index_hook = UpdateDistributedPostgresIndex;
 	get_operation_cancellation_query_hook = GetDistributedOperationCancellationQuery;
+
+	get_effective_aggregate_function_oid_hook = GetEffectiveAggregateFunctionOidCore;
+
+	can_build_non_blocking_unique_index_hook = CanBuildNonBlockingUniqueIndexCore;
 
 	RegisterDistributedExplainStageHook();
 

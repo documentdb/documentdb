@@ -110,6 +110,11 @@ typedef struct IndexDef
 	/* represents value of "v" field */
 	int version;
 
+	/*
+	 * Requested textIndexVersion for text indexes.
+	 */
+	int textIndexVersion;
+
 	/* Indicates the version of the sphere index */
 	int sphereIndexVersion;
 
@@ -182,7 +187,7 @@ typedef struct IndexDef
 	BoolIndexOption enableLargeIndexKeys;
 
 	/* Feature flag to enable the composite term index */
-	BoolIndexOption enableCompositeTerm;
+	CustomIndexOption enableCompositeTerm;
 
 	/* Flag to indicate we should create the index as unique without the unique constraint being added to the table. Then we can transform it to unique iff an equivalent unique index exists. */
 	BoolIndexOption buildAsUnique;
@@ -257,6 +262,9 @@ typedef struct
 	/* CreateIndex using CREATE INDEX (NON-CONCURRENTLY) blocking the write operations*/
 	bool blocking;
 
+	/* Flag to indicate whether to skip waiting for the index to be built */
+	bool skipWaitForIndex;
+
 	/* TODO: other things such as commitQuorum, comment ... */
 } CreateIndexesArg;
 
@@ -290,7 +298,8 @@ List * CheckForConflictsAndPruneExistingIndexes(uint64 collectionId,
 												List **inBuildIndexIds);
 char * CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int
 									  indexId,
-									  bool concurrently, bool isTempCollection);
+									  bool concurrently, bool isTempCollection,
+									  bool isBackgroundBuild);
 void ExecuteCreatePostgresIndexCmd(char *cmd, bool concurrently, const Oid userOid,
 								   bool useSerialExecution);
 void UpdateIndexStatsForPostgresIndex(uint64 collectionId, List *indexIdList);
@@ -306,5 +315,11 @@ CreateIndexesResult SubmitCreateIndexesRequest(Datum dbNameDatum,
 											   bool *volatile snapshotSet);
 
 Datum ReindexOrCreateCommandCore(PG_FUNCTION_ARGS, char *internalQuery);
+
+
+IndexDef * ParseIndexDefDocumentInternal(const bson_iter_t *indexesDocIter,
+										 const char *indexSpecRepr,
+										 bool ignoreUnknownIndexOptions,
+										 bool buildAsUniqueForPrepareUnique);
 
 #endif

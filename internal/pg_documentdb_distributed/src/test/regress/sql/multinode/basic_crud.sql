@@ -13,10 +13,10 @@ SELECT documentdb_api.insert_one('testdb', 'test_collection_node_1', '{"_id": 4,
 SELECT documentdb_api.insert_one('testdb', 'test_collection_node_1', '{"_id": 5, "test": "value5"}');
 
 -- Try to place it on a node that doesn't exist
-SELECT documentdb_distributed_test_helpers.place_collection_on_node('testdb', 'test_collection_node_1', 10);
+CALL documentdb_distributed_test_helpers.place_collection_on_node('testdb', 'test_collection_node_1', 10);
 
 -- Place it on node 1
-SELECT documentdb_distributed_test_helpers.place_collection_on_node('testdb', 'test_collection_node_1', 1);
+CALL documentdb_distributed_test_helpers.place_collection_on_node('testdb', 'test_collection_node_1', 1);
 
 SELECT object_id, document FROM documentdb_api.collection('testdb', 'test_collection_node_1') WHERE document @@ '{ "_id": { "$lte" : 5 }}' ORDER BY object_id;
 

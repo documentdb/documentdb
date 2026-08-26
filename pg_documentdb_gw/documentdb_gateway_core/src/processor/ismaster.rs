@@ -29,7 +29,7 @@ pub fn process(
     connection_context: &mut ConnectionContext,
     dynamic_configuration: &Arc<dyn DynamicConfiguration>,
 ) -> Result<Response> {
-    let request = request_context.payload;
+    let request = request_context.request();
     let local_time = i64::try_from(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -82,5 +82,5 @@ pub fn process(
         );
     }
 
-    Ok(Response::Raw(RawResponse(response_doc)))
+    Ok(Response::Raw(RawResponse::new(response_doc)))
 }

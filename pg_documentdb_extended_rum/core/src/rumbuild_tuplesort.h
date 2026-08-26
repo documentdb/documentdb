@@ -40,10 +40,13 @@ typedef struct RumTuple
 
 extern Tuplesortstate * tuplesort_begin_indexbuild_rum(Relation heapRel,
 													   Relation indexRel,
-													   int workMem, SortCoordinate
-													   coordinate,
-													   int sortopt);
+													   int workMem,
+													   SortCoordinate coordinate,
+													   int sortopt,
+													   FmgrInfo *compareFn);
 
+typedef struct SortSupportData *SortSupport;
+int rum_indexbuild_comparator_shim(Datum x, Datum y, SortSupport ssup);
 void tuplesort_putrumtuple(Tuplesortstate *state, RumTuple *tuple, Size size);
 RumTuple * tuplesort_getrumtuple(Tuplesortstate *state, Size *len, bool forward);
 

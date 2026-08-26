@@ -182,8 +182,8 @@ SET citus.propagate_set_commands TO 'local';
 BEGIN;
   set local enable_seqscan TO OFF;
   -- can use idx_1
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a.b": 1}';
-                                                                QUERY PLAN                                                                 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a.b": 1}'$$);
+                                                           run_explain_and_trim                                                            
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -196,8 +196,8 @@ BEGIN;
                      Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson)
 (9 rows)
 
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": 1}';
-                                                               QUERY PLAN                                                                
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": 1}'$$);
+                                                          run_explain_and_trim                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -210,8 +210,8 @@ BEGIN;
                      Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson)
 (9 rows)
 
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": {"b": 1}}';
-                                                                    QUERY PLAN                                                                     
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": {"b": 1}}'$$);
+                                                               run_explain_and_trim                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -224,8 +224,8 @@ BEGIN;
                      Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "b" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
 (9 rows)
 
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"_id": 1}';
-                                                                                                              QUERY PLAN                                                                                                               
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"_id": 1}'$$);
+                                                                                                         run_explain_and_trim                                                                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -237,8 +237,8 @@ BEGIN;
 (7 rows)
 
   -- cannot use idx_1
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b.d": 1}';
-                                                           QUERY PLAN                                                            
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b.d": 1}'$$);
+                                                      run_explain_and_trim                                                       
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -249,8 +249,8 @@ BEGIN;
                Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "b.d" : { "$numberInt" : "1" } }'::documentdb_core.bson)
 (7 rows)
 
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b": {"d": 1}}';
-                                                               QUERY PLAN                                                                
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b": {"d": 1}}'$$);
+                                                          run_explain_and_trim                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -261,8 +261,8 @@ BEGIN;
                Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "b" : { "d" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
 (7 rows)
 
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"e": 1}';
-                                                          QUERY PLAN                                                           
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"e": 1}'$$);
+                                                     run_explain_and_trim                                                      
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -308,8 +308,8 @@ SET citus.propagate_set_commands TO 'local';
 BEGIN;
   set local enable_seqscan TO OFF;
   -- cannot use idx_1
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a.b": 1}';
-                                                           QUERY PLAN                                                            
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a.b": 1}'$$);
+                                                      run_explain_and_trim                                                       
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -320,8 +320,8 @@ BEGIN;
                Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson)
 (7 rows)
 
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": 1}';
-                                                          QUERY PLAN                                                           
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": 1}'$$);
+                                                     run_explain_and_trim                                                      
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -332,8 +332,8 @@ BEGIN;
                Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson)
 (7 rows)
 
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": {"b": 1}}';
-                                                               QUERY PLAN                                                                
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": {"b": 1}}'$$);
+                                                          run_explain_and_trim                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -344,8 +344,8 @@ BEGIN;
                Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "b" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
 (7 rows)
 
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"_id": 1}';
-                                                                                                              QUERY PLAN                                                                                                               
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"_id": 1}'$$);
+                                                                                                         run_explain_and_trim                                                                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -357,8 +357,8 @@ BEGIN;
 (7 rows)
 
   -- can use idx_1
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b.d": 1}';
-                                                                QUERY PLAN                                                                 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b.d": 1}'$$);
+                                                           run_explain_and_trim                                                            
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -371,8 +371,8 @@ BEGIN;
                      Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "b.d" : { "$numberInt" : "1" } }'::documentdb_core.bson)
 (9 rows)
 
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b": {"d": 1}}';
-                                                                    QUERY PLAN                                                                     
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b": {"d": 1}}'$$);
+                                                               run_explain_and_trim                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -385,8 +385,8 @@ BEGIN;
                      Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "b" : { "d" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
 (9 rows)
 
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"e": 1}';
-                                                               QUERY PLAN                                                                
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"e": 1}'$$);
+                                                          run_explain_and_trim                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -399,8 +399,8 @@ BEGIN;
                      Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "e" : { "$numberInt" : "1" } }'::documentdb_core.bson)
 (9 rows)
 
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"f.g": 1}';
-                                                                QUERY PLAN                                                                 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"f.g": 1}'$$);
+                                                           run_explain_and_trim                                                            
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -435,8 +435,8 @@ SELECT 1 FROM documentdb_api.insert_one('wp_test', 'ok_test_4', '{"b": {"d": 2},
 BEGIN;
   set local enable_seqscan TO OFF;
   -- can use idx_1
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b.d": 1, "a.k": 1}';
-                                                                QUERY PLAN                                                                 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b.d": 1, "a.k": 1}'$$);
+                                                           run_explain_and_trim                                                            
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -450,8 +450,8 @@ BEGIN;
                      Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "b.d" : { "$numberInt" : "1" } }'::documentdb_core.bson)
 (10 rows)
 
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a.k": 1, "b.d": 1}';
-                                                                QUERY PLAN                                                                 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a.k": 1, "b.d": 1}'$$);
+                                                           run_explain_and_trim                                                            
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -481,8 +481,8 @@ COMMIT;
 BEGIN;
   set local enable_seqscan TO OFF;
   -- can use idx_1
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b.d": {"$in": [1,2,3]}}';
-                                                                                           QUERY PLAN                                                                                           
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b.d": {"$in": [1,2,3]}}'$$);
+                                                                                      run_explain_and_trim                                                                                      
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -496,8 +496,8 @@ BEGIN;
 (9 rows)
 
   -- cannot use idx_1 due to filter on "a.z.r" in "$or"
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"$or": [{"b.d": {"$eq": [1,2,3]}}, {"a.z": {"r": {"$gte": 5}}}]}';
-                                                                                                                                                        QUERY PLAN                                                                                                                                                         
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"$or": [{"b.d": {"$eq": [1,2,3]}}, {"a.z": {"r": {"$gte": 5}}}]}'$$);
+                                                                                                                                                   run_explain_and_trim                                                                                                                                                    
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -509,8 +509,8 @@ BEGIN;
 (7 rows)
 
   -- can use idx_1 since none of the quals in "$or" are excluded
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"$or": [{"b.d": {"$eq": [1,2,3]}}, {"k": 5}]}';
-                                                                                                                                               QUERY PLAN                                                                                                                                               
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"$or": [{"b.d": {"$eq": [1,2,3]}}, {"k": 5}]}'$$);
+                                                                                                                                          run_explain_and_trim                                                                                                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -561,8 +561,8 @@ SET citus.propagate_set_commands TO 'local';
 BEGIN;
   set local enable_seqscan TO OFF;
   -- can use idx_1
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_5') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"d.e.f": 1, "_id": 0}';
-                                                                                                                      QUERY PLAN                                                                                                                       
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_5') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"d.e.f": 1, "_id": 0}'$$);
+                                                                                                                 run_explain_and_trim                                                                                                                  
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1

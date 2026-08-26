@@ -16,8 +16,11 @@
 #include "executor/spi.h"
 #include "lib/stringinfo.h"
 #include "utils/builtins.h"
+#include "utils/portal.h"
+#include "utils/snapmgr.h"
 
 #include "io/bson_core.h"
+#include "io/bsonvalue_utils.h"
 #include "aggregation/bson_project.h"
 #include "aggregation/bson_query.h"
 #include "collation/collation.h"
@@ -34,9 +37,13 @@
 #include "utils/error_utils.h"
 #include "utils/documentdb_errors.h"
 #include "utils/feature_counter.h"
+#include "utils/index_utils.h"
 #include "utils/version_utils.h"
 #include "utils/query_utils.h"
 #include "api_hooks.h"
+
+extern bool EnableDeleteOnePlanCacheOptimization;
+extern bool EnableCommutativeDeleteMany;
 
 
 /*
@@ -90,13 +97,15 @@ typedef struct
 
 	/* list of write errors for each deletion, or NIL */
 	List *writeErrors;
-} BatchDeletionResult;
 
-extern bool UseLocalExecutionShardQueries;
+	/* Memory context to write results/errors to */
+	MemoryContext resultMemoryContext;
+} BatchDeletionResult;
 
 PG_FUNCTION_INFO_V1(command_delete);
 PG_FUNCTION_INFO_V1(command_delete_one);
 PG_FUNCTION_INFO_V1(command_delete_worker);
+PG_FUNCTION_INFO_V1(command_delete_txn_proc);
 
 
 static BatchDeletionSpec * BuildBatchDeletionSpec(bson_iter_t *deleteCommandIter,
@@ -111,7 +120,18 @@ static DeletionSpec * BuildDeletionSpec(bson_iter_t *deletionIterator,
 static void ProcessBatchDeletion(MongoCollection *collection,
 								 BatchDeletionSpec *batchSpec,
 								 bool forceInline, text *transactionId,
-								 BatchDeletionResult *batchResult);
+								 BatchDeletionResult *batchResult,
+								 WriteMode writeMode);
+static bool DoSingleDeletion(MongoCollection *collection,
+							 DeletionSpec *deletionSpec,
+							 bool forceInline, text *transactionId,
+							 BatchDeletionResult *batchResult,
+							 int deleteIndex);
+static bool DoSingleDeletionWithSubTxn(MongoCollection *collection,
+									   DeletionSpec *deletionSpec,
+									   bool forceInline, text *transactionId,
+									   BatchDeletionResult *batchResult,
+									   int deleteIndex);
 
 static pgbson * ProcessBatchDeleteUnsharded(MongoCollection *collection,
 											BatchDeletionSpec *batchSpec,
@@ -155,6 +175,9 @@ static void DeserializeDeleteWorkerSpecForUnsharded(const
 													bson_value_t *deleteInternalSpec,
 													BatchDeletionSpec *batchDeletionSpec);
 static pgbson * SerializeDeleteWorkerSpecForUnsharded(BatchDeletionSpec *batchSpec);
+static Datum CommandDeleteCore(PG_FUNCTION_ARGS, WriteMode writeMode,
+							   MemoryContext allocContext);
+static inline void ReportDeleteFeatureUsage(int batchSize);
 
 
 /*
@@ -162,6 +185,42 @@ static pgbson * SerializeDeleteWorkerSpecForUnsharded(BatchDeletionSpec *batchSp
  */
 Datum
 command_delete(PG_FUNCTION_ARGS)
+{
+	ReportFeatureUsage(FEATURE_COMMAND_DELETE);
+	PG_RETURN_DATUM(CommandDeleteCore(fcinfo, WriteMode_Txn_Func, CurrentMemoryContext));
+}
+
+
+/*
+ * command_delete_txn_proc handles the delete command invocation through a PostgreSQL procedure.
+ * Skips subtransactions for single-document deletes, reducing WAL overhead.
+ * Cannot be used inside an explicit client transaction block.
+ */
+Datum
+command_delete_txn_proc(PG_FUNCTION_ARGS)
+{
+	ReportFeatureUsage(FEATURE_COMMAND_DELETE_PROC);
+
+	bool isTopLevel = true;
+	if (IsInTransactionBlock(isTopLevel))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_OPERATIONNOTSUPPORTEDINTRANSACTION),
+						errmsg("the delete procedure cannot be used in transactions."
+							   " Please use the delete function instead")));
+	}
+
+	/* Use function context as a stable memory context to store errors across transaction aborts */
+	PG_RETURN_DATUM(CommandDeleteCore(fcinfo, WriteMode_Txn_Proc,
+									  fcinfo->flinfo->fn_mcxt));
+}
+
+
+/*
+ * CommandDeleteCore is the shared implementation for both
+ * command_delete (function) and command_delete_txn_proc (procedure).
+ */
+static Datum
+CommandDeleteCore(PG_FUNCTION_ARGS, WriteMode writeMode, MemoryContext allocContext)
 {
 	if (PG_ARGISNULL(1))
 	{
@@ -178,8 +237,6 @@ command_delete(PG_FUNCTION_ARGS)
 	{
 		transactionId = PG_GETARG_TEXT_P(3);
 	}
-
-	ReportFeatureUsage(FEATURE_COMMAND_DELETE);
 
 	/* fetch TupleDesc for return value, not interested in resultTypeId */
 	Oid *resultTypeId = NULL;
@@ -222,9 +279,10 @@ command_delete(PG_FUNCTION_ARGS)
 			collection->shardKey != NULL || collection->shardTableName[0] != '\0')
 		{
 			BatchDeletionResult batchResult = { 0 };
+			batchResult.resultMemoryContext = allocContext;
 			bool forceInline = false;
 			ProcessBatchDeletion(collection, batchSpec, forceInline, transactionId,
-								 &batchResult);
+								 &batchResult, writeMode);
 			batchResponse = BuildResponseMessage(&batchResult);
 		}
 		else
@@ -237,9 +295,11 @@ command_delete(PG_FUNCTION_ARGS)
 	else
 	{
 		BatchDeletionResult batchResult = { 0 };
+		batchResult.resultMemoryContext = allocContext;
+		text *collectionNameText = DatumGetTextPP(collectionNameDatum);
 		StringView collectionView = {
-			.length = VARSIZE_ANY_EXHDR(collectionNameDatum),
-			.string = VARDATA_ANY(collectionNameDatum)
+			.length = VARSIZE_ANY_EXHDR(collectionNameText),
+			.string = VARDATA_ANY(collectionNameText)
 		};
 
 		PostProcessDeleteBatchSpec(batchSpec);
@@ -298,7 +358,10 @@ BuildBatchDeletionSpec(bson_iter_t *deleteCommandIter, pgbsonsequence *deleteDoc
 									   BsonIterTypeName(deleteCommandIter))));
 			}
 
-			collectionName = bson_iter_utf8(deleteCommandIter, NULL);
+			uint32_t collectionNameLength = 0;
+			collectionName = bson_iter_utf8(deleteCommandIter, &collectionNameLength);
+			ValidateNamespaceStringForEmbeddedNull(collectionName,
+												   collectionNameLength);
 		}
 		else if (strcmp(field, "deletes") == 0)
 		{
@@ -459,6 +522,8 @@ PostProcessDeleteBatchSpec(BatchDeletionSpec *spec)
 							"Write batch size must fall within the range of 1 to %d, but %d operations were provided.",
 							MaxWriteBatchSize, deletionCount)));
 	}
+
+	ReportDeleteFeatureUsage(deletionCount);
 }
 
 
@@ -511,14 +576,23 @@ BuildDeletionSpec(bson_iter_t *deletionIter, const bson_value_t *variableSpec)
 		}
 		else if (strcmp(field, "limit") == 0)
 		{
-			if (!BSON_ITER_HOLDS_NUMBER(deletionIter))
+			const bson_value_t *limitValue = bson_iter_value(deletionIter);
+			if (!BsonTypeIsNumber(limitValue->value_type))
 			{
 				/* we treats arbitrary types as valid limit 0 */
 				limit = 0;
 			}
 			else
 			{
-				limit = bson_iter_as_int64(deletionIter);
+				/* reject non-integral values instead of truncating them */
+				if (!IsBsonValueFixedInteger(limitValue))
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
+									errmsg("BSON field 'delete.deletes.limit' must"
+										   " be the integer 0 or 1.")));
+				}
+
+				limit = BsonValueAsInt64(limitValue);
 				if (limit != 0 && limit != 1)
 				{
 					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
@@ -595,95 +669,179 @@ BuildDeletionSpec(bson_iter_t *deletionIter, const bson_value_t *variableSpec)
 
 /*
  * ProcessBatchDeletion iterates over the deletes array and executes each
- * deletion in a subtransaction, to allow us to continue after an error.
+ * deletion, handling errors appropriately based on the WriteMode.
  *
- * If batchSpec->isOrdered is false, we continue with remaining tasks an
+ * If batchSpec->isOrdered is false, we continue with remaining tasks on
  * error.
  *
- * We Use subtransactions which effectively
- * does each delete operation in a separate transaction.
+ * When writeMode is WriteMode_Txn_Proc and there is a single delete without
+ * a transactionId, subtransactions are skipped: the whole transaction is
+ * aborted and restarted on error, reducing WAL overhead.
+ * Otherwise, each delete runs in its own subtransaction.
  */
 static void
 ProcessBatchDeletion(MongoCollection *collection, BatchDeletionSpec *batchSpec,
 					 bool forceInline, text *transactionId,
-					 BatchDeletionResult *batchResult)
+					 BatchDeletionResult *batchResult,
+					 WriteMode writeMode)
 {
 	PostProcessDeleteBatchSpec(batchSpec);
 	List *deletions = batchSpec->deletionsProcessed;
 	bool isOrdered = batchSpec->isOrdered;
 
-	/*
-	 * Execute the query inside a sub-transaction, so we can restore order
-	 * after a failure.
-	 */
-	MemoryContext oldContext = CurrentMemoryContext;
-	ResourceOwner oldOwner = CurrentResourceOwner;
-
 	batchResult->ok = 1;
 	batchResult->rowsDeleted = 0;
 	batchResult->writeErrors = NIL;
 
-	/* declared volatile because of the longjmp in PG_CATCH */
-	volatile int deleteIndex = 0;
+	if (list_length(deletions) == 1)
+	{
+		int deleteIndex = 0;
+		DeletionSpec *deletionSpec = linitial(deletions);
+		if (writeMode == WriteMode_Txn_Proc && transactionId == NULL)
+		{
+			DoSingleDeletion(collection, deletionSpec, forceInline,
+							 transactionId, batchResult, deleteIndex);
+		}
+		else
+		{
+			DoSingleDeletionWithSubTxn(collection, deletionSpec, forceInline,
+									   transactionId, batchResult, deleteIndex);
+		}
+		return;
+	}
 
+	/* Multiple deletions: always use subtransactions for each */
+	int deleteIndex = 0;
 	ListCell *deletionCell = NULL;
 	foreach(deletionCell, deletions)
 	{
 		CHECK_FOR_INTERRUPTS();
 
 		DeletionSpec *deletionSpec = lfirst(deletionCell);
-
-		/* declared volatile because of the longjmp in PG_CATCH */
-		volatile uint64 rowsDeleted = 0;
-		volatile bool isSuccess = false;
-
-		/* use a subtransaction to correctly handle failures */
-		BeginInternalSubTransaction(NULL);
-
-		PG_TRY();
-		{
-			rowsDeleted = ProcessDeletion(collection, deletionSpec, forceInline,
-										  transactionId);
-
-			/* Commit the inner transaction, return to outer xact context */
-			ReleaseCurrentSubTransaction();
-			MemoryContextSwitchTo(oldContext);
-			CurrentResourceOwner = oldOwner;
-
-			isSuccess = true;
-		}
-		PG_CATCH();
-		{
-			MemoryContextSwitchTo(oldContext);
-			ErrorData *errorData = CopyErrorDataAndFlush();
-
-			/* Abort inner transaction */
-			RollbackAndReleaseCurrentSubTransaction();
-			MemoryContextSwitchTo(oldContext);
-			CurrentResourceOwner = oldOwner;
-
-			if (IsOperatorInterventionError(errorData))
-			{
-				ReThrowError(errorData);
-			}
-
-			batchResult->writeErrors = lappend(batchResult->writeErrors,
-											   GetWriteErrorFromErrorData(errorData,
-																		  deleteIndex));
-
-			isSuccess = false;
-		}
-		PG_END_TRY();
+		bool isSuccess = DoSingleDeletionWithSubTxn(collection, deletionSpec,
+													forceInline, transactionId,
+													batchResult, deleteIndex);
+		deleteIndex++;
 
 		if (!isSuccess && isOrdered)
 		{
 			/* stop trying delete operations after a failure if using ordered:true */
 			break;
 		}
+	}
+}
+
+
+/*
+ * Performs a single deletion without a subtransaction.
+ * On failure, aborts the current transaction and starts a new one.
+ * Applicable only for deletes invoked via a procedure (WriteMode_Txn_Proc).
+ */
+static bool
+DoSingleDeletion(MongoCollection *collection,
+				 DeletionSpec *deletionSpec,
+				 bool forceInline, text *transactionId,
+				 BatchDeletionResult *batchResult,
+				 int deleteIndex)
+{
+	/* declared volatile because of the longjmp in PG_CATCH */
+	volatile bool isSuccess = false;
+	volatile uint64 rowsDeleted = 0;
+
+	PG_TRY();
+	{
+		rowsDeleted = ProcessDeletion(collection, deletionSpec, forceInline,
+									  transactionId);
+		batchResult->rowsDeleted += rowsDeleted;
+		isSuccess = true;
+	}
+	PG_CATCH();
+	{
+		MemoryContext oldContext = MemoryContextSwitchTo(
+			batchResult->resultMemoryContext);
+		ErrorData *errorData = CopyErrorDataAndFlush();
+		MemoryContextSwitchTo(oldContext);
+
+		if (IsOperatorInterventionError(errorData))
+		{
+			ReThrowError(errorData);
+		}
+
+		PopAllActiveSnapshots();
+		AbortCurrentTransaction();
+		StartTransactionCommand();
+
+		oldContext = MemoryContextSwitchTo(batchResult->resultMemoryContext);
+		batchResult->writeErrors = lappend(batchResult->writeErrors,
+										   GetWriteErrorFromErrorData(errorData,
+																	  deleteIndex));
+		MemoryContextSwitchTo(oldContext);
+		FreeErrorData(errorData);
+		isSuccess = false;
+	}
+	PG_END_TRY();
+	return isSuccess;
+}
+
+
+/*
+ * Performs a single deletion in a subtransaction, to allow us to continue
+ * after an error.
+ */
+static bool
+DoSingleDeletionWithSubTxn(MongoCollection *collection,
+						   DeletionSpec *deletionSpec,
+						   bool forceInline, text *transactionId,
+						   BatchDeletionResult *batchResult,
+						   int deleteIndex)
+{
+	/* declared volatile because of the longjmp in PG_CATCH */
+	volatile bool isSuccess = false;
+	volatile uint64 rowsDeleted = 0;
+
+	/* use a subtransaction to correctly handle failures */
+	MemoryContext oldContext = CurrentMemoryContext;
+	ResourceOwner oldOwner = CurrentResourceOwner;
+	BeginInternalSubTransaction(NULL);
+
+	PG_TRY();
+	{
+		rowsDeleted = ProcessDeletion(collection, deletionSpec, forceInline,
+									  transactionId);
+
+		/* Commit the inner transaction, return to outer xact context */
+		ReleaseCurrentSubTransaction();
+		MemoryContextSwitchTo(oldContext);
+		CurrentResourceOwner = oldOwner;
 
 		batchResult->rowsDeleted += rowsDeleted;
-		deleteIndex++;
+		isSuccess = true;
 	}
+	PG_CATCH();
+	{
+		MemoryContextSwitchTo(oldContext);
+		ErrorData *errorData = CopyErrorDataAndFlush();
+
+		/* Abort inner transaction */
+		RollbackAndReleaseCurrentSubTransaction();
+		MemoryContextSwitchTo(oldContext);
+		CurrentResourceOwner = oldOwner;
+
+		if (IsOperatorInterventionError(errorData))
+		{
+			ReThrowError(errorData);
+		}
+
+		MemoryContextSwitchTo(batchResult->resultMemoryContext);
+		batchResult->writeErrors = lappend(batchResult->writeErrors,
+										   GetWriteErrorFromErrorData(errorData,
+																	  deleteIndex));
+		MemoryContextSwitchTo(oldContext);
+		FreeErrorData(errorData);
+		isSuccess = false;
+	}
+	PG_END_TRY();
+	return isSuccess;
 }
 
 
@@ -977,7 +1135,22 @@ DeleteAllMatchingDocuments(MongoCollection *collection, pgbson *queryDoc,
 													collection->shardTableName, planId,
 													deleteQuery.data, argTypes, argCount);
 
-	SPI_execute_plan(plan, argValues, argNulls, readOnly, maxTupleCount);
+	if (collection->shardKey != NULL && EnableCommutativeDeleteMany)
+	{
+		/*
+		 * In distributed scenarios, enable commutative writes to improve
+		 * deleteMany performance. The GUC is scoped to just this query
+		 * execution to avoid leaking into subsequent operations (e.g., updates)
+		 * in the same transaction.
+		 */
+		RunMultiValueQueryWithCommutativeWrites(deleteQuery.data, plan, argCount,
+												argTypes, argValues, argNulls,
+												readOnly, maxTupleCount);
+	}
+	else
+	{
+		SPI_execute_plan(plan, argValues, argNulls, readOnly, maxTupleCount);
+	}
 	rowsDeleted = SPI_processed;
 
 	pfree(deleteQuery.data);
@@ -1151,7 +1324,6 @@ command_delete_worker(PG_FUNCTION_ARGS)
 	uint64 collectionId = PG_GETARG_INT64(0);
 	int64 shardKeyHash = PG_GETARG_INT64(1);
 	Oid shardOid = PG_GETARG_OID(2);
-
 	pgbson *deleteInternalSpec = PG_GETARG_PGBSON_PACKED(3);
 
 	if (shardOid == InvalidOid)
@@ -1194,7 +1366,7 @@ command_delete_worker(PG_FUNCTION_ARGS)
 	{
 		BatchDeletionSpec batchDeletionSpec = { 0 };
 		BatchDeletionResult result = { 0 };
-
+		result.resultMemoryContext = CurrentMemoryContext;
 		DeserializeDeleteWorkerSpecForUnsharded(&commandElement.bsonValue,
 												&batchDeletionSpec);
 		batchDeletionSpec.deletionSequence = specDocuments;
@@ -1204,7 +1376,7 @@ command_delete_worker(PG_FUNCTION_ARGS)
 
 		bool forceInline = true;
 		ProcessBatchDeletion(&mongoCollection, &batchDeletionSpec, forceInline,
-							 transactionId, &result);
+							 transactionId, &result, WriteMode_Txn_Func);
 		serializedResult = BuildResponseMessage(&result);
 	}
 	else
@@ -1251,8 +1423,6 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 		applyObjectIdFilter = !isIdFilterCollationAware;
 	}
 
-	argCount += applyObjectIdFilter ? 1 : 0;
-
 	int nextSqlArgIndex = 1;
 	MemoryContext outerContext = CurrentMemoryContext;
 
@@ -1274,66 +1444,82 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 	 * For this reason, here we use a materialized cte to compute the ctid of the
 	 * tuple that needs to be deleted.
 	 */
-	StringInfoData selectQuery;
-	initStringInfo(&selectQuery);
-	appendStringInfo(&selectQuery, "WITH s AS MATERIALIZED (SELECT ctid FROM ");
+	StringInfoData deleteQuery;
+	initStringInfo(&deleteQuery);
+	appendStringInfo(&deleteQuery, "WITH s AS MATERIALIZED (SELECT ctid FROM ");
 
 	if (collection->shardTableName[0] != '\0')
 	{
-		appendStringInfo(&selectQuery, " %s.%s", ApiDataSchemaName,
+		appendStringInfo(&deleteQuery, " %s.%s", ApiDataSchemaName,
 						 collection->shardTableName);
 	}
 	else
 	{
-		appendStringInfo(&selectQuery, " %s.documents_" UINT64_FORMAT, ApiDataSchemaName,
+		appendStringInfo(&deleteQuery, " %s.documents_" UINT64_FORMAT, ApiDataSchemaName,
 						 collection->collectionId);
 	}
 
-	appendStringInfo(&selectQuery, " WHERE shard_key_value = $1 AND");
+	appendStringInfo(&deleteQuery, " WHERE shard_key_value = $1 ");
 	nextSqlArgIndex++;
 	argCount++;
 
 	const bson_value_t *variableSpec = deleteOneParams->variableSpec;
-	pgbson *variableSpecBson = NULL;
-	if (queryHasNonIdFilters)
-	{
-		variableSpecBson = variableSpec != NULL &&
-						   variableSpec->value_type == BSON_TYPE_DOCUMENT ?
-						   PgbsonInitFromDocumentBsonValue(variableSpec) : NULL;
-	}
+	pgbson *variableSpecBson = variableSpec != NULL &&
+							   variableSpec->value_type == BSON_TYPE_DOCUMENT ?
+							   PgbsonInitFromDocumentBsonValue(variableSpec) : NULL;
+	pgbson *querySpecBson = deleteOneParams->query != NULL &&
+							deleteOneParams->query->value_type == BSON_TYPE_DOCUMENT ?
+							PgbsonInitFromDocumentBsonValue(
+		deleteOneParams->query) : NULL;
 
-	bool applyVariableSpec = variableSpecBson != NULL;
+	bool applyVariableSpec = queryHasNonIdFilters && variableSpecBson != NULL;
 	if (applyVariableSpec || applyCollation)
 	{
 		planId = QUERY_DELETE_ONE_LET_AND_COLLATION;
 
 		/* utilize the collation and/or variables in matching the document */
-		appendStringInfo(&selectQuery,
-						 " %s.bson_query_match(document, $2, $3, $4)",
+		appendStringInfo(&deleteQuery,
+						 " AND %s.bson_query_match(document, $2, $3, $4) ",
 						 ApiInternalSchemaNameV2);
 
 		nextSqlArgIndex += 3;
 		argCount += 3;
 	}
-	else
+	else if (!EnableDeleteOnePlanCacheOptimization || queryHasNonIdFilters)
 	{
-		appendStringInfo(&selectQuery,
-						 " document OPERATOR(%s.@@) $2::%s",
+		appendStringInfo(&deleteQuery,
+						 " AND document OPERATOR(%s.@@) $2::%s ",
 						 ApiCatalogSchemaName, FullBsonTypeName);
 
 		nextSqlArgIndex += 1;
 		argCount += 1;
 	}
+	else
+	{
+		/* No query filter clause needed — only shard_key_value filter
+		 * delete({})
+		 */
+		planId = QUERY_DELETE_ONE_NO_FILTER;
+	}
 
 	int objectIdArgIndex = -1;
 	if (applyObjectIdFilter)
 	{
-		planId = (applyVariableSpec || applyCollation) ?
-				 QUERY_DELETE_ONE_ID_LET_AND_COLLATION :
-				 QUERY_DELETE_ONE_ID;
+		if (applyVariableSpec || applyCollation)
+		{
+			planId = QUERY_DELETE_ONE_ID_LET_AND_COLLATION;
+		}
+		else if (!EnableDeleteOnePlanCacheOptimization || queryHasNonIdFilters)
+		{
+			planId = QUERY_DELETE_ONE_ID;
+		}
+		else
+		{
+			planId = QUERY_DELETE_ONE_ID_ONLY;
+		}
 
-		appendStringInfo(&selectQuery,
-						 " AND object_id OPERATOR(%s.=) $%d::%s",
+		appendStringInfo(&deleteQuery,
+						 " AND object_id OPERATOR(%s.=) $%d::%s ",
 						 CoreSchemaName, nextSqlArgIndex, FullBsonTypeName);
 
 		objectIdArgIndex = nextSqlArgIndex - 1;
@@ -1350,15 +1536,20 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 	argValues[0] = Int64GetDatum(shardKeyHash);
 	argNulls[0] = ' ';
 
-	/* assign query value*/
-	pgbson *query = PgbsonInitFromDocumentBsonValue(deleteOneParams->query);
-	Oid bsonTypeId = BsonTypeId();
-	argTypes[1] = bsonTypeId;
-	argValues[1] = PointerGetDatum(query);
-	argNulls[1] = ' ';
+	/* assign query value only when it is referenced in the SQL query */
+	pgbson *query = NULL;
+	if (planId != QUERY_DELETE_ONE_ID_ONLY)
+	{
+		query = PgbsonInitFromDocumentBsonValue(deleteOneParams->query);
+	}
 
+	Oid bsonTypeId = BsonTypeId();
 	if (applyVariableSpec || applyCollation)
 	{
+		argTypes[1] = bsonTypeId;
+		argValues[1] = PointerGetDatum(query);
+		argNulls[1] = ' ';
+
 		/* set the variable spec */
 		argTypes[2] = bsonTypeId;
 		argValues[2] = applyVariableSpec ? PointerGetDatum(variableSpecBson) :
@@ -1372,6 +1563,12 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 					   CStringGetTextDatum("");
 		argNulls[3] = ' ';
 	}
+	else if (!EnableDeleteOnePlanCacheOptimization || queryHasNonIdFilters)
+	{
+		argTypes[1] = bsonTypeId;
+		argValues[1] = PointerGetDatum(query);
+		argNulls[1] = ' ';
+	}
 
 	/* set id filter value */
 	if (objectIdArgIndex != -1)
@@ -1384,7 +1581,7 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 	/* assign sorting values */
 	if (sortFieldDocumentsLength > 0)
 	{
-		appendStringInfoString(&selectQuery, " ORDER BY");
+		appendStringInfoString(&deleteQuery, " ORDER BY");
 
 		int sortItemSqlArgBaseIndex = nextSqlArgIndex;
 		for (int i = 0; i < sortFieldDocumentsLength; i++)
@@ -1396,7 +1593,7 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 
 			if (applyCollation)
 			{
-				appendStringInfo(&selectQuery,
+				appendStringInfo(&deleteQuery,
 								 "%s %s.bson_orderby(document, $%d::%s.bson, $4) USING OPERATOR(%s.%s)",
 								 i > 0 ? "," : "", ApiInternalSchemaNameV2,
 								 sqlArgPosition, CoreSchemaNameV2,
@@ -1404,7 +1601,7 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 			}
 			else
 			{
-				appendStringInfo(&selectQuery,
+				appendStringInfo(&deleteQuery,
 								 "%s %s.bson_orderby(document, $%d) %s",
 								 i > 0 ? "," : "", ApiCatalogSchemaName,
 								 sqlArgPosition, isAscending ? "ASC" : "DESC");
@@ -1416,12 +1613,11 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 		}
 	}
 
-	appendStringInfo(&selectQuery,
+	appendStringInfo(&deleteQuery,
 					 " LIMIT 1 FOR UPDATE)");
 
-	StringInfoData deleteQuery;
-	initStringInfo(&deleteQuery);
-	appendStringInfo(&deleteQuery, "%s DELETE FROM", selectQuery.data);
+	/* Now build the actual delete query in the same string buffer */
+	appendStringInfo(&deleteQuery, " DELETE FROM");
 
 	if (collection->shardTableName[0] != '\0')
 	{
@@ -1440,7 +1636,38 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 
 	if (deleteOneParams->returnDeletedDocument)
 	{
-		planId = QUERY_DELETE_ONE_ID_RETURN_DOCUMENT;
+		if (planId == QUERY_DELETE_ONE_NO_FILTER)
+		{
+			planId = QUERY_DELETE_ONE_NO_FILTER_RETURN_DOCUMENT;
+		}
+		else if (planId == QUERY_DELETE_ONE_ID_ONLY)
+		{
+			planId = QUERY_DELETE_ONE_ID_ONLY_RETURN_DOCUMENT;
+		}
+		else if (planId == QUERY_DELETE_ONE_LET_AND_COLLATION)
+		{
+			planId = QUERY_DELETE_ONE_LET_AND_COLLATION_RETURN_DOCUMENT;
+		}
+		else if (planId == QUERY_DELETE_ONE_ID_LET_AND_COLLATION)
+		{
+			planId = QUERY_DELETE_ONE_ID_LET_AND_COLLATION_RETURN_DOCUMENT;
+		}
+		else if (planId == QUERY_DELETE_ONE)
+		{
+			planId = QUERY_DELETE_ONE_RETURN_DOCUMENT;
+		}
+		else if (planId == QUERY_DELETE_ONE_ID)
+		{
+			planId = QUERY_DELETE_ONE_ID_RETURN_DOCUMENT;
+		}
+		else
+		{
+			/* Error out the unexpected planId here. Every plan should have its own return document plan */
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg(
+								"unexpected planId %lu when adding return document clause",
+								planId)));
+		}
 		appendStringInfo(&deleteQuery, ", document");
 	}
 
@@ -1509,13 +1736,14 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 				bson_iter_t projectIter;
 				BsonValueInitIterator(deleteOneParams->returnFields, &projectIter);
 
-				/* no need for a variableSpec in this projection */
-				pgbson *variableSpec = NULL;
 				const BsonProjectionQueryState *projectionState =
-					GetProjectionStateForBsonProject(&projectIter,
-													 forceProjectId,
-													 allowInclusionExclusion,
-													 variableSpec);
+					GetProjectionStateForBsonProjectFind(&projectIter,
+														 forceProjectId,
+														 allowInclusionExclusion,
+														 variableSpecBson,
+														 querySpecBson,
+														 deleteOneParams->
+														 collationString);
 				resultDeletedDocument = ProjectDocumentWithState(resultDeletedDocument,
 																 projectionState);
 			}
@@ -1895,4 +2123,30 @@ BuildResponseMessage(BatchDeletionResult *batchResult)
 	}
 
 	return PgbsonWriterGetPgbson(&resultWriter);
+}
+
+
+static inline void
+ReportDeleteFeatureUsage(int batchSize)
+{
+	if (batchSize == 1)
+	{
+		ReportFeatureUsage(FEATURE_COMMAND_DELETE_ONE);
+	}
+	else if (batchSize <= 100)
+	{
+		ReportFeatureUsage(FEATURE_COMMAND_DELETE_100);
+	}
+	else if (batchSize <= 500)
+	{
+		ReportFeatureUsage(FEATURE_COMMAND_DELETE_500);
+	}
+	else if (batchSize <= 1000)
+	{
+		ReportFeatureUsage(FEATURE_COMMAND_DELETE_1000);
+	}
+	else
+	{
+		ReportFeatureUsage(FEATURE_COMMAND_DELETE_EXTENDED);
+	}
 }

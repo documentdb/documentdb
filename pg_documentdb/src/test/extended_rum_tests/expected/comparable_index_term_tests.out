@@ -621,6 +621,57 @@ ORDER BY id;
   6 | en-US-u-ks-level2 | t
 (6 rows)
 
+-- ===================================================================
+-- Orderby index-term collation ordering
+-- Verifies bson_orderby_index() honors the collation when producing an
+-- index term whose btree operators (<, >, =) are then used to order
+-- values. With "en-US-u-ks-level2" (case-insensitive) the terms for
+-- "FOO" and "foo" must compare equal, and "bar" must sort before both.
+-- The operators are schema-qualified so the bsonindexterm btree operators
+-- (which decode the collation carried in the term) are used rather than
+-- any default byte comparison.
+-- ===================================================================
+SET documentdb_core.enableCollation TO on;
+-- Case-insensitive (level2): "FOO" and "foo" are equal; "bar" sorts first.
+WITH terms AS (
+    SELECT
+        documentdb_api_internal.bson_orderby_index('{ "str": "bar" }', '{ "str": 1 }', 'en-US-u-ks-level2') AS bar,
+        documentdb_api_internal.bson_orderby_index('{ "str": "FOO" }', '{ "str": 1 }', 'en-US-u-ks-level2') AS foo_upper,
+        documentdb_api_internal.bson_orderby_index('{ "str": "foo" }', '{ "str": 1 }', 'en-US-u-ks-level2') AS foo_lower
+)
+SELECT
+    (foo_upper OPERATOR(documentdb_api_internal.=) foo_lower) AS "FOO_eq_foo",
+    (foo_upper OPERATOR(documentdb_api_internal.<) foo_lower) AS "FOO_lt_foo",
+    (foo_upper OPERATOR(documentdb_api_internal.>) foo_lower) AS "FOO_gt_foo",
+    (bar OPERATOR(documentdb_api_internal.<) foo_lower) AS "bar_lt_foo",
+    (bar OPERATOR(documentdb_api_internal.<) foo_upper) AS "bar_lt_FOO",
+    (bar OPERATOR(documentdb_api_internal.>) foo_lower) AS "bar_gt_foo"
+FROM terms;
+ FOO_eq_foo | FOO_lt_foo | FOO_gt_foo | bar_lt_foo | bar_lt_FOO | bar_gt_foo 
+------------+------------+------------+------------+------------+------------
+ t          | f          | f          | t          | t          | f
+(1 row)
+
+-- Contrast: default (case-sensitive) byte ordering is FOO < bar < foo, so the
+-- case-insensitive equality above is specifically a product of the collation.
+WITH terms AS (
+    SELECT
+        documentdb_api_internal.bson_orderby_index('{ "str": "bar" }', '{ "str": 1 }') AS bar,
+        documentdb_api_internal.bson_orderby_index('{ "str": "FOO" }', '{ "str": 1 }') AS foo_upper,
+        documentdb_api_internal.bson_orderby_index('{ "str": "foo" }', '{ "str": 1 }') AS foo_lower
+)
+SELECT
+    (foo_upper OPERATOR(documentdb_api_internal.=) foo_lower) AS "FOO_eq_foo",
+    (foo_upper OPERATOR(documentdb_api_internal.<) foo_lower) AS "FOO_lt_foo",
+    (foo_upper OPERATOR(documentdb_api_internal.<) bar) AS "FOO_lt_bar",
+    (bar OPERATOR(documentdb_api_internal.<) foo_lower) AS "bar_lt_foo"
+FROM terms;
+ FOO_eq_foo | FOO_lt_foo | FOO_lt_bar | bar_lt_foo 
+------------+------------+------------+------------
+ f          | t          | t          | t
+(1 row)
+
+RESET documentdb_core.enableCollation;
 DROP SCHEMA comparable_indexterm_test_schema CASCADE;
 NOTICE:  drop cascades to 5 other objects
 DETAIL:  drop cascades to table comparable_indexterm_test_schema.test_round_trip_table

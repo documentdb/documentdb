@@ -1,0 +1,353 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,pg_catalog;
+SET citus.next_shard_id TO 257000000;
+SET documentdb.next_collection_id TO 25700000;
+SET documentdb.next_collection_index_id TO 25700000;
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
+SET documentdb.useLocalExecutionShardQueries TO off;
+SET citus.enable_local_execution TO off;
+SELECT documentdb_api.insert_one('db', 'group_collation_dist_test',
+    '{ "_id": 1, "category": "Cat", "region": "North", "value": 10 }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'group_collation_dist_test',
+    '{ "_id": 2, "category": "cat", "region": "north", "value": 20 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'group_collation_dist_test',
+    '{ "_id": 3, "category": "CAT", "region": "NORTH", "value": 30 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'group_collation_dist_test',
+    '{ "_id": 4, "category": "Dog", "region": "South", "value": 40 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'group_collation_dist_test',
+    '{ "_id": 5, "category": "dog", "region": "south", "value": 50 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'group_collation_dist_test',
+    '{ "_id": 6, "category": "DOG", "region": "SOUTH", "value": 60 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+BEGIN;
+SET local documentdb_core.enableCollation TO on;
+-- Strength 1 merges case variants into two groups.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": { "_id": "$category", "firstId": { "$min": "$_id" }, "count": { "$sum": 1 } } },
+        { "$sort": { "firstId": 1 } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+                                        document                                         
+---------------------------------------------------------------------
+ { "_id" : "Cat", "firstId" : { "$numberInt" : "1" }, "count" : { "$numberInt" : "3" } }
+ { "_id" : "Dog", "firstId" : { "$numberInt" : "4" }, "count" : { "$numberInt" : "3" } }
+(2 rows)
+
+-- Each string value in the compound key uses the command collation.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": {
+            "_id": { "category": "$category", "region": "$region" },
+            "firstId": { "$min": "$_id" },
+            "total": { "$sum": "$value" }
+        } },
+        { "$sort": { "firstId": 1 } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+                                                            document                                                            
+---------------------------------------------------------------------
+ { "_id" : { "category" : "Cat", "region" : "North" }, "firstId" : { "$numberInt" : "1" }, "total" : { "$numberInt" : "60" } }
+ { "_id" : { "category" : "Dog", "region" : "South" }, "firstId" : { "$numberInt" : "4" }, "total" : { "$numberInt" : "150" } }
+(2 rows)
+
+-- Decomposed multi-field grouping uses the command collation for every key field.
+SET local documentdb.enableGroupByCompoundIdIndexPushdown TO on;
+-- This matches the decomposed $sum pipeline used by the true multinode test.
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": {
+            "_id": { "category": "$category", "region": "$region" },
+            "firstId": { "$min": "$_id" },
+            "total": { "$sum": "$value" }
+        } },
+        { "$sort": { "firstId": 1 } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT document FROM (SELECT documentdb_core.bson_repath_and_build('_id'::text, documentdb_core.bson_repath_and_build('category'::text, documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text), 'region'::text, documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$region" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)), 'firstId'::text, documentdb_api_internal.bsonminwithexpr(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text), 'total'::text, documentdb_api_internal.bsonsumwithexpr(collection.document, '{ "" : "$value" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)) AS document FROM documentdb_data.documents_25700000_257000001 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '25700000'::bigint) AND documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "category" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "region" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)) GROUP BY (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$region" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text))) agg_stage_1 ORDER BY (documentdb_api_internal.bson_orderby_index(document, '{ "firstId" : { "$numberInt" : "1" } }'::documentdb_core.bson, 'en-u-ks-level1'::text)) NULLS FIRST
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort
+               Output: agg_stage_1.document, (documentdb_api_internal.bson_orderby_index(agg_stage_1.document, '{ "firstId" : { "$numberInt" : "1" } }'::documentdb_core.bson, 'en-u-ks-level1'::text))
+               Sort Key: (documentdb_api_internal.bson_orderby_index(agg_stage_1.document, '{ "firstId" : { "$numberInt" : "1" } }'::documentdb_core.bson, 'en-u-ks-level1'::text)) NULLS FIRST
+               ->  Subquery Scan on agg_stage_1
+                     Output: agg_stage_1.document, documentdb_api_internal.bson_orderby_index(agg_stage_1.document, '{ "firstId" : { "$numberInt" : "1" } }'::documentdb_core.bson, 'en-u-ks-level1'::text)
+                     ->  GroupAggregate
+                           Output: documentdb_core.bson_repath_and_build('_id'::text, documentdb_core.bson_repath_and_build('category'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)), 'region'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$region" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text))), 'firstId'::text, documentdb_api_internal.bsonminwithexpr(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text), 'total'::text, documentdb_api_internal.bsonsumwithexpr(collection.document, '{ "" : "$value" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$region" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text))
+                           Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$region" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text))
+                           ->  Sort
+                                 Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$region" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)), collection.document
+                                 Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)) USING <<<, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$region" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)) USING <<<
+                                 ->  Bitmap Heap Scan on documentdb_data.documents_25700000_257000001 collection
+                                       Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text), documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$region" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text), collection.document
+                                       Recheck Cond: (collection.shard_key_value = '25700000'::bigint)
+                                       ->  Bitmap Index Scan on _id_
+                                             Index Cond: (collection.shard_key_value = '25700000'::bigint)
+(23 rows)
+
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": {
+            "_id": { "category": "$category", "region": "$region" },
+            "firstId": { "$min": "$_id" },
+            "total": { "$sum": "$value" }
+        } },
+        { "$sort": { "firstId": 1 } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+                                                            document                                                            
+---------------------------------------------------------------------
+ { "_id" : { "category" : "Cat", "region" : "North" }, "firstId" : { "$numberInt" : "1" }, "total" : { "$numberInt" : "60" } }
+ { "_id" : { "category" : "Dog", "region" : "South" }, "firstId" : { "$numberInt" : "4" }, "total" : { "$numberInt" : "150" } }
+(2 rows)
+
+-- Other accumulators preserve the same decomposed key semantics.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": {
+            "_id": { "category": "$category", "region": "$region" },
+            "firstId": { "$min": "$_id" },
+            "values": { "$max": "$value" }
+        } },
+        { "$sort": { "firstId": 1 } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+                                                            document                                                            
+---------------------------------------------------------------------
+ { "_id" : { "category" : "Cat", "region" : "North" }, "firstId" : { "$numberInt" : "1" }, "values" : { "$numberInt" : "30" } }
+ { "_id" : { "category" : "Dog", "region" : "South" }, "firstId" : { "$numberInt" : "4" }, "values" : { "$numberInt" : "60" } }
+(2 rows)
+
+-- The command collation also applies to a computed string key.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": {
+            "_id": { "$concat": ["$category", "-", "$region"] },
+            "firstId": { "$min": "$_id" },
+            "average": { "$avg": "$value" }
+        } },
+        { "$sort": { "firstId": 1 } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+                                               document                                                
+---------------------------------------------------------------------
+ { "_id" : "Cat-North", "firstId" : { "$numberInt" : "1" }, "average" : { "$numberDouble" : "20.0" } }
+ { "_id" : "Dog-South", "firstId" : { "$numberInt" : "4" }, "average" : { "$numberDouble" : "50.0" } }
+(2 rows)
+
+-- Grouping after $skip preserves the command collation.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$sort": { "_id": 1 } },
+        { "$skip": 1 },
+        { "$group": { "_id": "$category", "firstId": { "$min": "$_id" }, "total": { "$sum": "$value" } } },
+        { "$sort": { "firstId": 1 } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+                                         document                                          
+---------------------------------------------------------------------
+ { "_id" : "cat", "firstId" : { "$numberInt" : "2" }, "total" : { "$numberInt" : "50" } }
+ { "_id" : "Dog", "firstId" : { "$numberInt" : "4" }, "total" : { "$numberInt" : "150" } }
+(2 rows)
+
+-- Grouping after multiple projection stages preserves the command collation.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$project": {
+            "_id": 1,
+            "projectedCategory": "$category",
+            "projectedRegion": "$region",
+            "projectedValue": "$value"
+        } },
+        { "$addFields": {
+            "projectedKey": { "$concat": ["$projectedCategory", "-", "$projectedRegion"] }
+        } },
+        { "$project": { "_id": 1, "projectedKey": 1, "projectedValue": 1 } },
+        { "$group": {
+            "_id": "$projectedKey",
+            "firstId": { "$min": "$_id" },
+            "total": { "$sum": "$projectedValue" }
+        } },
+        { "$sort": { "firstId": 1 } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+                                            document                                             
+---------------------------------------------------------------------
+ { "_id" : "Cat-North", "firstId" : { "$numberInt" : "1" }, "total" : { "$numberInt" : "60" } }
+ { "_id" : "Dog-South", "firstId" : { "$numberInt" : "4" }, "total" : { "$numberInt" : "150" } }
+(2 rows)
+
+-- A collection-less pipeline rooted at $documents uses the command collation.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": 1, "pipeline": [
+        { "$documents": [
+            { "_id": 1, "category": "Cat", "value": 10 },
+            { "_id": 2, "category": "cat", "value": 20 },
+            { "_id": 3, "category": "Dog", "value": 40 },
+            { "_id": 4, "category": "DOG", "value": 60 }
+        ] },
+        { "$group": {
+            "_id": "$category",
+            "firstId": { "$min": "$_id" },
+            "total": { "$sum": "$value" }
+        } },
+        { "$sort": { "firstId": 1 } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+                                    documents_aggregate                                    
+---------------------------------------------------------------------
+ { "_id" : "Cat", "firstId" : { "$numberInt" : "1" }, "total" : { "$numberInt" : "30" } }
+ { "_id" : "Dog", "firstId" : { "$numberInt" : "3" }, "total" : { "$numberInt" : "100" } }
+(2 rows)
+
+-- Case-sensitive control: strength 3 keeps all case variants separate.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": {
+            "_id": "$category",
+            "firstId": { "$min": "$_id" },
+            "values": { "$max": "$value" }
+        } },
+        { "$sort": { "firstId": 1 } }
+    ], "collation": { "locale": "en", "strength": 3 } }');
+                                         document                                          
+---------------------------------------------------------------------
+ { "_id" : "Cat", "firstId" : { "$numberInt" : "1" }, "values" : { "$numberInt" : "10" } }
+ { "_id" : "cat", "firstId" : { "$numberInt" : "2" }, "values" : { "$numberInt" : "20" } }
+ { "_id" : "CAT", "firstId" : { "$numberInt" : "3" }, "values" : { "$numberInt" : "30" } }
+ { "_id" : "Dog", "firstId" : { "$numberInt" : "4" }, "values" : { "$numberInt" : "40" } }
+ { "_id" : "dog", "firstId" : { "$numberInt" : "5" }, "values" : { "$numberInt" : "50" } }
+ { "_id" : "DOG", "firstId" : { "$numberInt" : "6" }, "values" : { "$numberInt" : "60" } }
+(6 rows)
+
+ROLLBACK;
+-- $push cannot honor a collation, so it is rejected.
+BEGIN;
+SET local documentdb_core.enableCollation TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": {
+            "_id": { "category": "$category", "region": "$region" },
+            "values": { "$push": "$value" }
+        } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+ERROR:  collation is not supported with the $push accumulator in $group yet.
+ROLLBACK;
+-- These only do arithmetic, so the collation applies to the input expression.
+-- With it all six rows contribute 100; without it only two do.
+BEGIN;
+SET local documentdb_core.enableCollation TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$stdDevPop": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] } } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+                       document                        
+---------------------------------------------------------------------
+ { "_id" : null, "acc" : { "$numberDouble" : "0.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$stdDevPop": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] } } } }
+    ] }');
+                                document                                 
+---------------------------------------------------------------------
+ { "_id" : null, "acc" : { "$numberDouble" : "47.140452079103170036" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$stdDevSamp": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] } } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+                       document                        
+---------------------------------------------------------------------
+ { "_id" : null, "acc" : { "$numberDouble" : "0.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$stdDevSamp": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] } } } }
+    ] }');
+                                document                                
+---------------------------------------------------------------------
+ { "_id" : null, "acc" : { "$numberDouble" : "51.63977794943222932" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$median": { "input": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] }, "method": "approximate" } } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+                        document                         
+---------------------------------------------------------------------
+ { "_id" : null, "acc" : { "$numberDouble" : "100.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$median": { "input": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] }, "method": "approximate" } } } }
+    ] }');
+                       document                        
+---------------------------------------------------------------------
+ { "_id" : null, "acc" : { "$numberDouble" : "0.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$percentile": { "input": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] }, "p": [ 0.5, 0.9 ], "method": "approximate" } } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+                                          document                                          
+---------------------------------------------------------------------
+ { "_id" : null, "acc" : [ { "$numberDouble" : "100.0" }, { "$numberDouble" : "100.0" } ] }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$percentile": { "input": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] }, "p": [ 0.5, 0.9 ], "method": "approximate" } } } }
+    ] }');
+                                         document                                         
+---------------------------------------------------------------------
+ { "_id" : null, "acc" : [ { "$numberDouble" : "0.0" }, { "$numberDouble" : "100.0" } ] }
+(1 row)
+
+ROLLBACK;
+SELECT documentdb_api.drop_collection('db', 'group_collation_dist_test');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+RESET citus.enable_local_execution;
+RESET documentdb.useLocalExecutionShardQueries;
+RESET documentdb.enableNewWithExprAccumulators;
+RESET documentdb_core.enableCollation;

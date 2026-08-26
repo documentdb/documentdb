@@ -1,0 +1,35 @@
+#!/bin/bash
+set -e
+
+# Gate on /run/systemd/system so apt
+# purge inside containers without systemd doesn't emit "Host is down" noise.
+has_working_systemd() {
+    [[ -d /run/systemd/system ]] && command -v systemctl >/dev/null 2>&1
+}
+
+# Stop on "remove" only, and never disable here.
+#
+# "deconfigure" is dpkg's TEMPORARY deconfiguration during dependency or
+# conflict resolution -- the package is not going away and will be
+# reconfigured in the same run. The postinst has no re-enable path, so
+# including it here meant a routine apt transaction permanently dropped
+# /etc/systemd/system/multi-user.target.wants/documentdb-gateway.service and
+# the gateway silently stopped coming up at boot.
+#
+# "disable" is likewise wrong on remove: Debian policy keeps enablement state
+# across remove -> reinstall and clears it only on purge (that is what
+# postrm's deb-systemd-helper purge handling is for). The RPM already behaves
+# this way -- %systemd_preun disables only on a full erase -- and the sibling
+# documentdb-N prerm in build-standalone-deb.sh matches "remove" alone.
+case "$1" in
+    remove)
+        if has_working_systemd; then
+            systemctl stop documentdb-gateway 2>/dev/null || true
+            for unit in $(systemctl list-units 'documentdb-gateway-local@*.service' --state=active --plain --no-legend 2>/dev/null | awk '{print $1}'); do
+                systemctl stop "${unit}" 2>/dev/null || true
+            done
+        fi
+        ;;
+esac
+
+exit 0

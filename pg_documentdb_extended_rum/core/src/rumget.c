@@ -26,11 +26,7 @@
 #include "common/pg_prng.h"
 #endif
 #include "pg_documentdb_rum.h"
-
-typedef enum RumIndexTransformOperation
-{
-	RumIndexTransform_IndexGenerateSkipBound = 1
-} RumIndexTransformOperation;
+#include "pg_documentdb_rum_dedup.h"
 
 
 /* Scan bounds used in comparePartial initialization */
@@ -43,8 +39,8 @@ typedef struct RumItemScanEntryBounds
 /* GUC parameter */
 extern int RumFuzzySearchLimit;
 extern bool RumDisableFastScan;
-extern bool RumForceOrderedIndexScan;
 extern bool RumEnableSkipIntermediateEntry;
+extern const RumIndexArrayStateFuncs RoaringStateFuncs;
 
 static bool scanPage(RumState *rumstate, RumScanEntry entry, RumItem *item,
 					 bool equalOk);
@@ -58,6 +54,12 @@ static void entryGetItemOrdered(RumState *rumstate, RumScanEntry entry,
 								RumScanOpaque so);
 static void entryFindItem(RumState *rumstate, RumScanEntry entry, RumItem *item, Snapshot
 						  snapshot);
+static void CopyPageContents(Page sourcePage, Page targetPage);
+static bool TrySkipScanToNextDistinctKey(IndexScanDesc scan, RumScanOpaque so,
+										 RumScanEntry entry);
+
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_get_current_index_key);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_skip_tids_on_current_entry);
 
 /*
  * Extract key value for ordering.
@@ -394,10 +396,12 @@ scanPostingTree(Relation index, RumScanEntry scanEntry,
 			ItemPointerSetMin(&item.item.iptr);
 
 			ptr = RumDataPageGetData(page);
+			InitBlockNumberIncrZero(blockNumberIncr);
 			for (i = FirstOffsetNumber; i <= maxoff; i++)
 			{
-				ptr = rumDataPageLeafRead(ptr, attnum, &item.item, false,
-										  rumstate);
+				ptr = rumDataPageLeafReadWithBlockNumberIncr(ptr, attnum, &item.item,
+															 false, rumstate,
+															 &blockNumberIncr);
 
 				if (scanEntryBounds != NULL &&
 					!IsEntryInBounds(rumstate, scanEntry, &item.item, scanEntryBounds,
@@ -667,11 +671,13 @@ collectMatchBitmap(RumBtreeData *btree, RumBtreeStack *stack,
 
 			MemSet(&item, 0, sizeof(item));
 			ItemPointerSetMin(&item.item.iptr);
+			InitBlockNumberIncrZero(blockNumberIncr);
 			for (i = 0; i < RumGetNPosting(itup); i++)
 			{
 				bool checkMaximum = true;
-				ptr = rumDataPageLeafRead(ptr, scanEntry->attnum, &item.item,
-										  true, rumstate);
+				ptr = rumDataPageLeafReadWithBlockNumberIncr(ptr, scanEntry->attnum,
+															 &item.item, true, rumstate,
+															 &blockNumberIncr);
 				if (scanEntryBounds != NULL &&
 					!IsEntryInBounds(rumstate, scanEntry, &item.item, scanEntryBounds,
 									 checkMaximum))
@@ -796,7 +802,7 @@ restartScanEntry:
 						entry->queryKey, entry->queryCategory,
 						rumstate);
 	btreeEntry.searchMode = true;
-	stackEntry = rumFindLeafPage(&btreeEntry, NULL);
+	stackEntry = rumFindLeafPage(&btreeEntry, NULL, false);
 	page = BufferGetPage(stackEntry->buffer);
 	needUnlock = true;
 
@@ -1217,6 +1223,7 @@ ValidateIndexEntry(RumScanOpaque so, Datum idatum,
 	so->scanLoops++;
 	so->recheckCurrentItem = false;
 	so->recheckCurrentItemOrderBy = false;
+	so->orderByScanData->lastItemMatched = false;
 
 	/* check if we need to skip based on page splits */
 	if (so->orderByScanData->boundEntryTuple != NULL)
@@ -1248,7 +1255,7 @@ ValidateIndexEntry(RumScanOpaque so, Datum idatum,
 
 		Assert(so->rumstate.rumConfig[orderEntry->attnum -
 									  1].compareFunctionHasRecheck);
-		cmp = DatumGetInt32(FunctionCall5Coll(
+		cmp = DatumGetInt32(FunctionCall6Coll(
 								&so->rumstate.comparePartialFn[orderEntry->attnum
 															   -
 															   1],
@@ -1258,7 +1265,8 @@ ValidateIndexEntry(RumScanOpaque so, Datum idatum,
 								idatum,
 								UInt16GetDatum(orderEntry->strategy),
 								PointerGetDatum(orderEntry->extra_data),
-								PointerGetDatum(&so->recheckCurrentItem)));
+								PointerGetDatum(&so->recheckCurrentItem),
+								so->orderByScanData->highKeyMatchDatum));
 		if (cmp < 0)
 		{
 			if (cmp < -1)
@@ -1488,7 +1496,7 @@ IndexBuildTupleDynamic(TupleDesc tupleDescriptor,
 					(char *) tp + hoff,
 					data_size,
 					&tupmask,
-					(hasnull ? (bits8 *) tp + sizeof(IndexTupleData) : NULL));
+					(hasnull ? (uint8 *) tp + sizeof(IndexTupleData) : NULL));
 
 	/*
 	 * We do this because heap_fill_tuple wants to initialize a "tupmask"
@@ -1531,7 +1539,10 @@ PrepareOrderedMatchedEntry(RumScanOpaque so, RumScanEntry entry,
 	 * This needs to be done if the current key has recheck, or if we've historically
 	 * had any entry that needed recheck since the runtime can re-evaluate any key after
 	 * a recheck was set.
+	 * Mark the last item as matched so that the order by scan logic
+	 * knows that for the highKey optimization.
 	 */
+	so->orderByScanData->lastItemMatched = true;
 	if (so->recheckCurrentItemOrderBy || so->orderByHasRecheck)
 	{
 		int i;
@@ -1560,30 +1571,48 @@ PrepareOrderedMatchedEntry(RumScanOpaque so, RumScanEntry entry,
 
 	if (so->projectIndexTupleData)
 	{
-		/* This is the case where we want to project a document that maches the index paths */
-		MemoryContext oldContext;
-		Datum values[INDEX_MAX_KEYS] = { 0 };
-		bool isnull[INDEX_MAX_KEYS] = { true };
+		if (so->projectIndexTupleData->pageProjectsRawIndexTuple)
+		{
+			so->projectIndexTupleData->iscan_tuple = itup;
+		}
+		else
+		{
+			/* This is the case where we want to project a document that maches the index paths */
+			MemoryContext oldContext;
+			Datum values[INDEX_MAX_KEYS] = { 0 };
+			bool isnull[INDEX_MAX_KEYS] = { true };
 
-		memset(isnull, true, sizeof(bool) *
-			   so->projectIndexTupleData->indexTupleDesc->natts);
-		oldContext = MemoryContextSwitchTo(so->keyCtx);
+			memset(isnull, true, sizeof(bool) *
+				   so->projectIndexTupleData->indexTupleDesc->natts);
+			oldContext = MemoryContextSwitchTo(so->keyCtx);
 
-		so->projectIndexTupleData->indexTupleDatum = FunctionCall4(
-			&so->rumstate.orderingFn[0],
-			idatum,
-			(Datum) 0,
-			UInt16GetDatum(UINT16_MAX),
-			so->projectIndexTupleData->indexTupleDatum);
+			bool projectRawIndexTuple = false;
+			so->projectIndexTupleData->indexTupleDatum = FunctionCall5(
+				&so->rumstate.orderingFn[0],
+				idatum,
+				PointerGetDatum(so->orderByScanData->orderByEntry->extra_data),
+				UInt16GetDatum(UINT16_MAX),
+				so->projectIndexTupleData->indexTupleDatum,
+				PointerGetDatum(&projectRawIndexTuple));
 
-		/* Now form the index datum (freeing the prior one) */
-		values[0] = so->projectIndexTupleData->indexTupleDatum;
-		isnull[0] = false;
+			/* Now form the index datum (freeing the prior one) */
+			if (projectRawIndexTuple)
+			{
+				so->projectIndexTupleData->iscan_tuple = itup;
+			}
+			else
+			{
+				values[0] = so->projectIndexTupleData->indexTupleDatum;
+				isnull[0] = false;
+				so->projectIndexTupleData->iscan_tuple_built = IndexBuildTupleDynamic(
+					so->projectIndexTupleData->indexTupleDesc, values, isnull,
+					so->projectIndexTupleData->iscan_tuple_built, so->keyCtx);
+				so->projectIndexTupleData->iscan_tuple =
+					so->projectIndexTupleData->iscan_tuple_built;
+			}
 
-		so->projectIndexTupleData->iscan_tuple = IndexBuildTupleDynamic(
-			so->projectIndexTupleData->indexTupleDesc, values, isnull,
-			so->projectIndexTupleData->iscan_tuple, so->keyCtx);
-		MemoryContextSwitchTo(oldContext);
+			MemoryContextSwitchTo(oldContext);
+		}
 	}
 
 	if (RumIsPostingTree(itup))
@@ -1699,6 +1728,8 @@ startScanEntryOrderedCore(RumScanOpaque so, RumScanEntry minScanEntry, Snapshot 
 	{
 		so->orderByScanData->isPageValid = false;
 	}
+	so->orderByScanData->lastItemMatched = false;
+	so->orderByScanData->highKeyMatchDatum = (Datum) 0;
 
 	so->orderByScanData->canSkipConsistentCheck = false;
 	if (so->nkeys == 1 && !so->keys[0]->orderBy &&
@@ -1726,7 +1757,7 @@ startScanEntryOrderedCore(RumScanOpaque so, RumScanEntry minScanEntry, Snapshot 
 						entryToUse, entry->queryCategory,
 						rumstate);
 	orderedBtree->searchMode = true;
-	stackEntry = rumFindLeafPage(orderedBtree, NULL);
+	stackEntry = rumFindLeafPage(orderedBtree, NULL, false);
 	page = BufferGetPage(stackEntry->buffer);
 	needUnlock = true;
 
@@ -1749,13 +1780,17 @@ startScanEntryOrderedCore(RumScanOpaque so, RumScanEntry minScanEntry, Snapshot 
 	/* Otherwise found something valid */
 	itemid = PageGetItemId(page, stackEntry->off);
 
+	/* TODO: should this be an assert? */
 	if (!ItemIdHasStorage(itemid))
 	{
 		goto endOrderedScanEntry;
 	}
 
-	/* Let MoveScanForward deal with the reving and setting of stuff */
+	/* Copy the page before we unlock it and set it to valid to avoid TOCTOU issues with page splits and vacuum. */
+	CopyPageContents(page, so->orderByScanData->orderByEntryPageCopy);
 	so->orderByScanData->orderStack = stackEntry;
+	so->orderByScanData->isPageValid = true;
+	so->orderByScanData->needsParallelSeize = true;
 	entry->isFinished = true;
 
 endOrderedScanEntry:
@@ -1854,6 +1889,42 @@ getMinScanEntry(RumScanOpaque so)
 
 
 static void
+CheckAndAddDeduplicateState(RumScanOpaque so)
+{
+	RumScanEntry entry = so->orderByScanData->orderByEntry;
+	if (!so->rumstate.canOuterOrdering[entry->attnum - 1] ||
+		!(so->rumstate.outerOrderingFn[entry->attnum - 1].fn_nargs == 4))
+	{
+		return;
+	}
+
+	bytea *serializedDedupState = NULL;
+	Datum requiresDedup = FunctionCall5Coll(
+		&so->rumstate.outerOrderingFn[entry->attnum - 1],
+		so->rumstate.supportCollation[entry->attnum - 1],
+		entry->queryKey,
+		PointerGetDatum(entry->extra_data),
+		UInt16GetDatum(RumIndexTransform_OrderedScanRequiresDedup),
+		UInt16GetDatum(entry->strategy),
+		PointerGetDatum(&serializedDedupState));
+	if (DatumGetBool(requiresDedup))
+	{
+		if (serializedDedupState != NULL)
+		{
+			/* Restore the dedup tracker carried across pages by the continuation
+			 * so already-returned documents are suppressed on this page. */
+			so->orderByScanData->orderByDedupState =
+				RoaringStateFuncs.deserializeState(serializedDedupState);
+		}
+		else
+		{
+			so->orderByScanData->orderByDedupState = RoaringStateFuncs.createState();
+		}
+	}
+}
+
+
+static void
 startOrderedScanEntries(IndexScanDesc scan, RumState *rumstate, RumScanOpaque so)
 {
 	/* Now adjust the bounds based on the minimum value of the other scan keys */
@@ -1879,13 +1950,25 @@ startOrderedScanEntries(IndexScanDesc scan, RumState *rumstate, RumScanOpaque so
 		pfree(so->orderByScanData);
 	}
 
+	/* Ensure orderScanDirection is initialized */
+	if (ScanDirectionIsNoMovement(so->orderScanDirection))
+	{
+		so->orderScanDirection = ForwardScanDirection;
+	}
+
 	so->orderByScanData = palloc0(sizeof(RumOrderByScanData));
 	so->orderByScanData->orderByEntryPageCopy = palloc(BLCKSZ);
 	startScanEntryOrderedCore(so, minEntry, scan->xs_snapshot);
+
+	/* For ordered scans, the scan isn't ordered by TID
+	 * Ask the opclass to see if we need to deduplicate.
+	 * Note: This is set once per scan (not reset during skip scan moves).
+	 */
+	CheckAndAddDeduplicateState(so);
 }
 
 
-static void
+void
 startScan(IndexScanDesc scan)
 {
 	RumScanOpaque so = (RumScanOpaque) scan->opaque;
@@ -1893,67 +1976,9 @@ startScan(IndexScanDesc scan)
 	uint32 i;
 	RumScanType scanType = RumFastScan;
 	MemoryContext oldCtx = MemoryContextSwitchTo(so->keyCtx);
-	bool isSupportedOrderedScan = false;
 
-	/* Validate that there's only 1 attnum in all the keys,
-	 * multiatt ordered scan is not supported
-	 * Ordered scan also requires comparePartial and
-	 * an ordering function on all keys.
-	 */
-	isSupportedOrderedScan = so->nkeys > 0;
-	for (i = 0; i < so->nkeys; i++)
+	if (!ScanDirectionIsNoMovement(so->orderScanDirection))
 	{
-		RumScanKey key = so->keys[i];
-		if (key->attnum != so->keys[0]->attnum)
-		{
-			isSupportedOrderedScan = false;
-			break;
-		}
-
-		if (!rumstate->canPartialMatch[key->attnum - 1] ||
-			!rumstate->canOrdering[key->attnum - 1] ||
-			rumstate->orderingFn[key->attnum - 1].fn_nargs != 4)
-		{
-			isSupportedOrderedScan = false;
-			break;
-		}
-	}
-
-	if (RumForceOrderedIndexScan && isSupportedOrderedScan)
-	{
-		scanType = RumOrderedScan;
-		startOrderedScanEntries(scan, rumstate, so);
-	}
-	else if ((so->norderbys > 0 || RumEnableOrderedOperatorScans) &&
-			 so->willSort && !rumstate->useAlternativeOrder)
-	{
-		scanType = RumOrderedScan;
-		startOrderedScanEntries(scan, rumstate, so);
-	}
-	else if (scan->parallel_scan != NULL && isSupportedOrderedScan)
-	{
-		scanType = RumOrderedScan;
-		startOrderedScanEntries(scan, rumstate, so);
-	}
-	else if (scan->xs_want_itup)
-	{
-		if (!isSupportedOrderedScan)
-		{
-			ereport(ERROR, (errmsg(
-								"Unexpected index only scan when ordered scan is not supported.")));
-		}
-
-		/* If we want to return index tuples, we can use ordered scan */
-		scanType = RumOrderedScan;
-		startOrderedScanEntries(scan, rumstate, so);
-	}
-	else if (isSupportedOrderedScan &&
-			 so->totalentries == 1 && so->entries[0]->isPartialMatch)
-	{
-		/* We can simply use an ordered scan if there's only 1 entry
-		 * This would happen for any scenario that is not needing a
-		 * consistent check intersection.
-		 */
 		scanType = RumOrderedScan;
 		startOrderedScanEntries(scan, rumstate, so);
 	}
@@ -1990,7 +2015,6 @@ startScan(IndexScanDesc scan)
 		{
 			scanType = RumFullScan;
 		}
-
 		/* Else check keys for preConsistent method */
 		else if (scanType == RumFastScan && !so->rumstate.canPreConsistent[key->attnum -
 																		   1])
@@ -2169,7 +2193,7 @@ RumKillDataPageItems(RumScanOpaque so, XLogRecPtr cachedPageLsn, Buffer buffer,
 		return;
 	}
 
-	/* We have share lock on current buffer. Ensure contents unchanged */
+	/* Ensure contents are unchanged before setting hint bits. */
 	latestLsn = BufferGetLSNAtomic(buffer);
 	Assert(!XLogRecPtrIsInvalid(cachedPageLsn));
 	Assert(cachedPageLsn <= latestLsn);
@@ -2198,9 +2222,20 @@ RumKillDataPageItems(RumScanOpaque so, XLogRecPtr cachedPageLsn, Buffer buffer,
 		return;
 	}
 
+#if PG_VERSION_NUM >= 190000
+	if (!BufferBeginSetHintBits(buffer))
+	{
+		return;
+	}
+#endif
+
 	/* Note we don't generate WAL records and let checkpoint handle this.*/
 	RumDataPageEntryMarkDead(page);
+#if PG_VERSION_NUM >= 190000
+	BufferFinishSetHintBits(buffer, true, true);
+#else
 	MarkBufferDirtyHint(buffer, true);
+#endif
 }
 
 
@@ -2222,7 +2257,7 @@ RumKillEntryItems(RumScanOpaque so, RumOrderByScanData *scanData)
 		return;
 	}
 
-	/* We have share lock on current buffer. Ensure contents unchanged */
+	/* Ensure contents are unchanged before setting hint bits. */
 	latestLsn = BufferGetLSNAtomic(buffer);
 	cachedLsn = PageGetLSN(scanData->orderByEntryPageCopy);
 	Assert(!XLogRecPtrIsInvalid(cachedLsn));
@@ -2275,6 +2310,13 @@ RumKillEntryItems(RumScanOpaque so, RumOrderByScanData *scanData)
 		 */
 		if (!RumIndexEntryIsDead(curItem))
 		{
+#if PG_VERSION_NUM >= 190000
+			if (!killedsomething && !BufferBeginSetHintBits(buffer))
+			{
+				return;
+			}
+#endif
+
 			/* found the item/all posting list items */
 			RumIndexEntryMarkDead(curItem);
 			killedsomething = true;
@@ -2283,7 +2325,11 @@ RumKillEntryItems(RumScanOpaque so, RumOrderByScanData *scanData)
 
 	if (killedsomething)
 	{
+#if PG_VERSION_NUM >= 190000
+		BufferFinishSetHintBits(buffer, true, true);
+#else
 		MarkBufferDirtyHint(buffer, true);
+#endif
 	}
 }
 
@@ -2372,9 +2418,7 @@ entryGetNextItem(RumState *rumstate, RumScanEntry entry, Snapshot snapshot,
 			OffsetNumber maxoff,
 						 i;
 			Pointer ptr;
-			RumItem item;
 			bool searchBorder;
-
 			searchBorder = (ScanDirectionIsForward(entry->scanDirection) &&
 							ItemPointerIsValid(&entry->curItem.iptr));
 
@@ -2408,7 +2452,6 @@ entryGetNextItem(RumState *rumstate, RumScanEntry entry, Snapshot snapshot,
 			maxoff = RumDataPageMaxOff(page);
 			entry->cachedLsn = PageGetLSN(page);
 			entry->nlist = maxoff;
-			ItemPointerSetMin(&item.iptr);
 			ptr = RumDataPageGetData(page);
 
 			/*
@@ -2447,11 +2490,14 @@ entryGetNextItem(RumState *rumstate, RumScanEntry entry, Snapshot snapshot,
 				break;
 			}
 
+			InitBlockNumberIncrZero(blockNumberIncr);
 			for (i = FirstOffsetNumber; i <= maxoff; i = OffsetNumberNext(i))
 			{
-				ptr = rumDataPageLeafRead(ptr, entry->attnum, &item, true,
-										  rumstate);
-				entry->list[i - FirstOffsetNumber] = item;
+				RumItem *slot = &entry->list[i - FirstOffsetNumber];
+				ptr = rumDataPageLeafReadWithBlockNumberIncr(ptr, entry->attnum,
+															 slot, true,
+															 rumstate,
+															 &blockNumberIncr);
 
 				if (searchBorder)
 				{
@@ -2460,7 +2506,7 @@ entryGetNextItem(RumState *rumstate, RumScanEntry entry, Snapshot snapshot,
 					int cmp = compareRumItem(rumstate,
 											 entry->attnumOrig,
 											 &entry->curItem,
-											 &item);
+											 slot);
 
 					if (cmp > 0)
 					{
@@ -2880,7 +2926,6 @@ entryGetItem(RumState *rumstate, RumScanEntry entry,
 			entry->isFinished = true;
 		}
 	}
-
 	/* Get next item from posting tree */
 	else
 	{
@@ -3320,19 +3365,24 @@ scanPage(RumState *rumstate, RumScanEntry entry, RumItem *item, bool equalOk)
 	entry->nlist = maxoff - first + 1;
 	entry->cachedLsn = PageGetLSN(page);
 	bound = -1;
+
+	InitBlockNumberIncr(blockNumberIncr, (&iter_item.iptr));
+
 	for (i = first; i <= maxoff; i++)
 	{
-		ptr = rumDataPageLeafRead(ptr, entry->attnum, &iter_item, true,
-								  rumstate);
-		entry->list[i - first] = iter_item;
+		RumItem *slot = &entry->list[i - first];
+
+		ptr = rumDataPageLeafReadWithBlockNumberIncr(ptr, entry->attnum,
+													 slot, true,
+													 rumstate,
+													 &blockNumberIncr);
 
 		if (bound != -1)
 		{
 			continue;
 		}
 
-		cmp = compareRumItem(rumstate, entry->attnumOrig,
-							 item, &iter_item);
+		cmp = compareRumItem(rumstate, entry->attnumOrig, item, slot);
 
 		if (cmp <= 0)
 		{
@@ -3856,6 +3906,127 @@ CopyPageContents(Page sourcePage, Page targetPage)
 
 
 static bool
+ComputePageLevelStats(RumScanOpaque so, RumIndexTransformOperation operation)
+{
+	RumOrderByScanData *scanData = so->orderByScanData;
+
+	OffsetNumber pageMaxOff = PageGetMaxOffsetNumber(scanData->orderByEntryPageCopy);
+	OffsetNumber maxOff = ScanDirectionIsBackward(so->orderScanDirection) ?
+						  FirstOffsetNumber : pageMaxOff;
+	OffsetNumber minOff = ScanDirectionIsBackward(so->orderScanDirection) ?
+						  pageMaxOff : FirstOffsetNumber;
+	ItemId upperBoundItemId = PageGetItemId(scanData->orderByEntryPageCopy, maxOff);
+	IndexTuple upperBoundTup = (IndexTuple) PageGetItem(scanData->orderByEntryPageCopy,
+														upperBoundItemId);
+	ItemId lowerBoundItemId = PageGetItemId(scanData->orderByEntryPageCopy, minOff);
+	IndexTuple lowerBoundTup = (IndexTuple) PageGetItem(scanData->orderByEntryPageCopy,
+														lowerBoundItemId);
+
+	if (rumtuple_get_attrnum(&so->rumstate, upperBoundTup) !=
+		scanData->orderByEntry->attnum ||
+		rumtuple_get_attrnum(&so->rumstate, lowerBoundTup) !=
+		scanData->orderByEntry->attnum)
+	{
+		/* Can't apply high key optimization - we're at a path boundary */
+		return false;
+	}
+
+	RumNullCategory upperCategory;
+	Datum upperBoundDatum = rumtuple_get_key(&so->rumstate, upperBoundTup,
+											 &upperCategory);
+	RumNullCategory lowerCategory;
+	Datum lowerBoundDatum = rumtuple_get_key(&so->rumstate, lowerBoundTup,
+											 &lowerCategory);
+
+	if (upperCategory != RUM_CAT_NORM_KEY || lowerCategory != RUM_CAT_NORM_KEY)
+	{
+		/* Can't apply high key optimization - we have a null value */
+		return false;
+	}
+
+	bool pageProjectsIndexTuple = false;
+	Datum recheckDatum = FunctionCall6Coll(
+		&so->rumstate.outerOrderingFn[scanData->orderByEntry->
+									  attnum - 1],
+		so->rumstate.supportCollation[scanData->orderByEntry->
+									  attnum - 1],
+		upperBoundDatum,
+		scanData->orderByEntry->queryKey,
+		UInt16GetDatum(operation),
+		PointerGetDatum(scanData->orderByEntry->extra_data),
+		lowerBoundDatum,
+		PointerGetDatum(&pageProjectsIndexTuple));
+	if (recheckDatum != (Datum) 0)
+	{
+		scanData->highKeyMatchDatum = recheckDatum;
+		return true;
+	}
+
+	if (pageProjectsIndexTuple && so->projectIndexTupleData)
+	{
+		so->projectIndexTupleData->pageProjectsRawIndexTuple = true;
+	}
+
+	return false;
+}
+
+
+/*
+ * Shared entry point for the high key optimization. Resets any prior high key
+ * state, checks that the current page is eligible for the optimization, and if
+ * so asks the operator class (via ComputePageLevelStats) whether the page's high
+ * key transitively matches the scan condition. lastItemMatched gates the
+ * sequential case (where eligibility requires the last item of the previous
+ * page to have matched); the parallel case passes true since each page is
+ * evaluated in isolation. operation selects the transform semantics used for
+ * the operator class recheck.
+ */
+static void
+TryApplyPageLevelStatsOptimization(RumScanOpaque so, bool lastItemMatched,
+								   RumIndexTransformOperation operation)
+{
+	RumOrderByScanData *scanData = so->orderByScanData;
+
+	scanData->highKeyMatchDatum = (Datum) 0;
+	if (so->projectIndexTupleData)
+	{
+		/* Reset the metadata on first calculation */
+		so->projectIndexTupleData->pageProjectsRawIndexTuple = false;
+	}
+
+	if (so->rumstate.rumConfig[scanData->orderByEntry->attnum -
+							   1].enableHighKeyOptimization &&
+		so->totalsearchentries == 1 && scanData->boundEntryTuple == NULL &&
+		lastItemMatched &&
+		PageGetMaxOffsetNumber(scanData->orderByEntryPageCopy) > FirstOffsetNumber &&
+		so->rumstate.canOuterOrdering[scanData->orderByEntry->attnum - 1] &&
+		so->rumstate.outerOrderingFn[scanData->orderByEntry->attnum - 1].fn_nargs == 4)
+	{
+		if (ComputePageLevelStats(so, operation))
+		{
+			scanData->highKeyEligiblePages++;
+		}
+	}
+}
+
+
+static void
+ApplyPageLevelStatsOptimization(RumScanOpaque so, bool lastItemMatched)
+{
+	TryApplyPageLevelStatsOptimization(so, lastItemMatched,
+									   RumIndexTransform_PageLevelStatsScalarCheck);
+}
+
+
+static void
+ApplyParallelPageLevelStatsOptimization(RumScanOpaque so)
+{
+	TryApplyPageLevelStatsOptimization(so, true,
+									   RumIndexTransform_PageLevelStatsPageIsolated);
+}
+
+
+static bool
 MoveBuffersForOrderedScan(RumScanOpaque so, RumBtree btree)
 {
 	RumOrderByScanData *scanData = so->orderByScanData;
@@ -3863,16 +4034,8 @@ MoveBuffersForOrderedScan(RumScanOpaque so, RumBtree btree)
 	BlockNumber nextBlockNo = InvalidBlockNumber;
 	IndexTuple boundTuple = NULL;
 	OffsetNumber boundTupleOffset = InvalidOffsetNumber;
-	if (!scanData->isPageValid)
-	{
-		/* First time after startOrderedScan is called - need to init from current buffer page */
-		LockBuffer(scanData->orderStack->buffer, RUM_SHARE);
-		page = BufferGetPage(scanData->orderStack->buffer);
-		CopyPageContents(page, scanData->orderByEntryPageCopy);
-		scanData->isPageValid = true;
-		LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
-		return true;
-	}
+
+	Assert(scanData->isPageValid);
 
 	/* We have a page already, check if it's reusable */
 	if (ScanDirectionIsForward(so->orderScanDirection))
@@ -3921,10 +4084,33 @@ MoveBuffersForOrderedScan(RumScanOpaque so, RumBtree btree)
 		RumKillEntryItems(so, scanData);
 	}
 
+	/* Reset prior page data */
+	so->orderByScanData->highKeyMatchDatum = (Datum) 0;
+	if (so->projectIndexTupleData)
+	{
+		so->projectIndexTupleData->pageProjectsRawIndexTuple = false;
+	}
+
 	/* Now do the step to the direction requested */
-	scanData->orderStack->buffer = rumStep(
-		scanData->orderStack->buffer, btree->index, RUM_SHARE,
-		so->orderScanDirection);
+	if (RumEnableEntryPageStep)
+	{
+		scanData->orderStack->buffer = rumStepEntryForScans(
+			scanData->orderStack->buffer, btree->index,
+			so->orderScanDirection);
+	}
+	else
+	{
+		scanData->orderStack->buffer = rumStep(
+			scanData->orderStack->buffer, btree->index, RUM_SHARE,
+			so->orderScanDirection);
+	}
+
+	if (scanData->orderStack->buffer == InvalidBuffer)
+	{
+		/* Through a chain of HALF_DEAD pages we reached the end. */
+		return false;
+	}
+
 	scanData->orderStack->blkno = BufferGetBlockNumber(scanData->orderStack->buffer);
 
 	if (scanData->orderStack->blkno != nextBlockNo)
@@ -3956,6 +4142,17 @@ MoveBuffersForOrderedScan(RumScanOpaque so, RumBtree btree)
 		PageGetMaxOffsetNumber(scanData->orderByEntryPageCopy)
 		: FirstOffsetNumber;
 	LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
+
+	/* Now that the buffer is unlocked and the page is copied, apply the high key optimization
+	 * If the last item on the previous page matched the scan condition, then we can ask
+	 * the operator class if the high key of the new page also matches (and transitively matches).
+	 * It is up to the operator class to determine the transitive property (i.e. if some point lower)
+	 * matched the key fully, will everything from that point onward to this high key matches.
+	 * Operator classes that support this opt-in via the rumConfig. We also only do this if there's 1
+	 * search entry since more than 1 requires more support functions to support.
+	 */
+	ApplyPageLevelStatsOptimization(so, scanData->lastItemMatched);
+
 	return true;
 
 cleanupOnMissing:
@@ -3963,6 +4160,72 @@ cleanupOnMissing:
 	scanData->orderByEntry->isFinished = true;
 	LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
 	return false;
+}
+
+
+static void
+SynchronizeParallelOrderedScanEntry(RumScanOpaque so, int32_t sharedEntryIndex)
+{
+	RumOrderByScanData *scanData = so->orderByScanData;
+	RumScanEntry sharedEntry;
+
+	if (sharedEntryIndex < 0 || sharedEntryIndex >= (int32_t) so->totalentries)
+	{
+		ereport(ERROR, (errmsg("invalid shared ordered scan entry index %d",
+							   sharedEntryIndex)));
+	}
+	if (sharedEntryIndex >= (int32_t) so->totalsearchentries)
+	{
+		ereport(ERROR, (errmsg("shared ordered scan entry is not a search entry")));
+	}
+
+	sharedEntry = so->entries[sharedEntryIndex];
+	if (sharedEntry == NULL)
+	{
+		ereport(ERROR, (errmsg("shared ordered scan entry is null")));
+	}
+
+	if (so->numKilled > 0)
+	{
+		rumFlushKilledEntries(so);
+	}
+
+	for (int32_t i = 0; i < (int32_t) so->totalsearchentries; i++)
+	{
+		RumScanEntry candidate = so->entries[i];
+
+		if (candidate == sharedEntry)
+		{
+			ResetEntryItem(candidate);
+			continue;
+		}
+		if (candidate->isFinished)
+		{
+			continue;
+		}
+
+		/* If entries now become finished due to us advancing forward, mark them as such */
+		int cmp = rumCompareAttEntries(&so->rumstate,
+									   candidate->attnum,
+									   candidate->queryKey,
+									   candidate->queryCategory,
+									   sharedEntry->attnum,
+									   sharedEntry->queryKey,
+									   sharedEntry->queryCategory);
+
+		if (ScanDirectionIsBackward(so->orderScanDirection))
+		{
+			cmp = -cmp;
+		}
+
+		candidate->isFinished = cmp < 0;
+	}
+
+	scanData->orderByEntry = sharedEntry;
+	sharedEntry->isFinished = false;
+	so->parallelScanEntryIndex = sharedEntryIndex;
+	scanData->isPageValid = false;
+	scanData->needsParallelSeize = true;
 }
 
 
@@ -3975,10 +4238,11 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 	if (ScanDirectionIsForward(so->orderScanDirection))
 	{
 		if (scanData->isPageValid &&
+			!scanData->needsParallelSeize &&
 			scanData->orderStack->off <= PageGetMaxOffsetNumber(
 				scanData->orderByEntryPageCopy))
 		{
-			/* Current page is still valid */
+			/* Current page is still valid and already registered */
 			return true;
 		}
 
@@ -3986,17 +4250,36 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 		if (scanData->isPageValid && RumEnableSupportDeadIndexItems &&
 			so->numKilled > 0)
 		{
+			LockBuffer(scanData->orderStack->buffer, RUM_SHARE);
 			RumKillEntryItems(so, scanData);
+			LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
 		}
 
+		scanData->highKeyMatchDatum = (Datum) 0;
 		while (true)
 		{
 			BlockNumber startingBlock;
-			bool hasMore = rum_parallel_seize(parallelScan, &startingBlock);
-			if (!hasMore)
+			int32_t sharedEntryIndex = -1;
+			RumParallelScanAction action = rum_parallel_seize(
+				parallelScan, so, &startingBlock, &sharedEntryIndex);
+
+			if (action == RumParallelScanAction_Stop)
 			{
+				/* Some other worker scanned and hit the end of the scan
+				 * No more items to scan.
+				 */
 				return false;
 			}
+			else if (action == RumParallelScanAction_Rejoin)
+			{
+				/* Some other thread hit an end of a scanEntry and moved the scan
+				 * forward to a different entry - synchronize with the other worker.
+				 */
+				SynchronizeParallelOrderedScanEntry(so, sharedEntryIndex);
+				continue;
+			}
+
+			scanData->needsParallelSeize = false;
 
 			if (startingBlock == InvalidBlockNumber)
 			{
@@ -4004,14 +4287,26 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 				 * start by copying this and moving forward on this buffer while
 				 * notifying the parallel state that we've currently processed this block.
 				 */
-				LockBuffer(scanData->orderStack->buffer, RUM_SHARE);
-				page = BufferGetPage(scanData->orderStack->buffer);
-				CopyPageContents(page, scanData->orderByEntryPageCopy);
-				scanData->isPageValid = true;
+				if (!scanData->isPageValid)
+				{
+					LockBuffer(scanData->orderStack->buffer, RUM_SHARE);
+					page = BufferGetPage(scanData->orderStack->buffer);
+					CopyPageContents(page, scanData->orderByEntryPageCopy);
+					scanData->isPageValid = true;
+					rum_parallel_release(parallelScan, RumPageRightLink(page),
+										 scanData->orderStack->blkno);
+					LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
+				}
+				else
+				{
+					/* Page already copied in startScanEntryOrderedCore — just register rightlink */
+					rum_parallel_release(parallelScan,
+										 RumPageGetOpaque(
+											 scanData->orderByEntryPageCopy)->rightlink,
+										 scanData->orderStack->blkno);
+				}
 
-				/* In the forward scan we store the right link as read right now in the parallel data */
-				rum_parallel_release(parallelScan, RumPageRightLink(page));
-				LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
+				/* This is the first page, don't apply high key here */
 				return true;
 			}
 
@@ -4022,16 +4317,20 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 			 */
 			ReleaseBuffer(scanData->orderStack->buffer);
 			scanData->orderStack->blkno = startingBlock;
+
+			/* Check for interrupts where we don't hold any buffers */
+			CHECK_FOR_INTERRUPTS();
+
 			scanData->orderStack->buffer = ReadBuffer(btree->index, startingBlock);
 			LockBuffer(scanData->orderStack->buffer, RUM_SHARE);
 			page = BufferGetPage(scanData->orderStack->buffer);
 
 			/* Let other threads move on with the next buffer */
 			/* In the forward scan we store the right link as read right now in the parallel data */
-			rum_parallel_release(parallelScan, RumPageRightLink(page));
+			rum_parallel_release(parallelScan, RumPageRightLink(page), startingBlock);
 			if (RumPageIsDeleted(page) || RumPageIsHalfDead(page))
 			{
-				/* TODO: Should we release here? */
+				LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
 				continue;
 			}
 			else
@@ -4039,8 +4338,15 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 				/* The page is valid - use it */
 				CopyPageContents(page, scanData->orderByEntryPageCopy);
 				scanData->isPageValid = true;
+				scanData->orderStack->off = FirstOffsetNumber;
 
 				LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
+
+				/* Only apply if there's more than lowkey, highkey and one element */
+				if (PageGetMaxOffsetNumber(scanData->orderByEntryPageCopy) > 3)
+				{
+					ApplyParallelPageLevelStatsOptimization(so);
+				}
 				return true;
 			}
 		}
@@ -4054,6 +4360,122 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 
 
 static bool
+FindScanEntryIndex(RumScanOpaque so, RumScanEntry targetEntry, int32_t *entryIndex)
+{
+	for (int32 i = 0; i < so->totalentries; i++)
+	{
+		if (so->entries[i] == targetEntry)
+		{
+			*entryIndex = i;
+			return true;
+		}
+	}
+
+	*entryIndex = -1;
+	return false;
+}
+
+
+static void
+SetParallelScanEntryIndex(RumScanOpaque so)
+{
+	if (!FindScanEntryIndex(so, so->orderByScanData->orderByEntry,
+							&so->parallelScanEntryIndex))
+	{
+		ereport(ERROR, (errmsg("Could not find orderByEntry in entries")));
+	}
+}
+
+
+static RumParallelScanAction
+ResetScanForwardWithEntryForParallel(RumScanOpaque so, ParallelIndexScanDesc parallelScan,
+									 RumScanEntry newMinEntry, Snapshot snapshot)
+{
+	/* Find the index of the entry */
+	int32_t newEntryIndex = -1;
+	if (!FindScanEntryIndex(so, newMinEntry, &newEntryIndex))
+	{
+		ereport(ERROR, (errmsg("Could not find ordered scan entry in entries")));
+	}
+
+	int32_t sharedEntryIndex = -1;
+	BlockNumber currentBlock = so->orderByScanData->orderStack->blkno;
+	RumParallelScanAction action = rum_parallel_seize_for_move(
+		parallelScan, so, currentBlock, &sharedEntryIndex);
+
+	if (action == RumParallelScanAction_Rejoin)
+	{
+		SynchronizeParallelOrderedScanEntry(so, sharedEntryIndex);
+		return RumParallelScanAction_Rejoin;
+	}
+	else if (action == RumParallelScanAction_Stop)
+	{
+		return RumParallelScanAction_Stop;
+	}
+
+	/* We are responsible for moving the entry forward. */
+	rumFlushKilledEntries(so);
+	startScanEntryOrderedCore(so, newMinEntry, snapshot);
+	newMinEntry->isFinished = false;
+
+	if (!so->orderByScanData->orderStack)
+	{
+		/* There is no entry left - close scan */
+		rum_parallel_move_scan_done(parallelScan, so, newEntryIndex);
+		return RumParallelScanAction_Stop;
+	}
+
+	/* We have a buffer and a page from the walk ready */
+	so->orderByScanData->needsParallelSeize = false;
+	so->parallelScanEntryIndex = newEntryIndex;
+	rum_parallel_release_for_move(
+		parallelScan,
+		RumPageGetOpaque(so->orderByScanData->orderByEntryPageCopy)->rightlink,
+		so->orderByScanData->orderStack->blkno,
+		newEntryIndex);
+	return RumParallelScanAction_Proceed;
+}
+
+
+static RumParallelScanAction
+RewalkScanForwardForParallel(RumScanOpaque so, ParallelIndexScanDesc parallelScan,
+							 RumScanEntry entry, Snapshot snapshot)
+{
+	int32_t sharedEntryIndex = -1;
+	BlockNumber currentBlock = so->orderByScanData->orderStack->blkno;
+	RumParallelScanAction action = rum_parallel_seize_for_rewalk(
+		parallelScan, so, currentBlock, &sharedEntryIndex);
+
+	if (action == RumParallelScanAction_Rejoin)
+	{
+		SynchronizeParallelOrderedScanEntry(so, sharedEntryIndex);
+		return RumParallelScanAction_Rejoin;
+	}
+	else if (action == RumParallelScanAction_Stop)
+	{
+		return RumParallelScanAction_Stop;
+	}
+
+	rumFlushKilledEntries(so);
+	startScanEntryOrderedCore(so, entry, snapshot);
+	entry->isFinished = false;
+
+	if (!so->orderByScanData->orderStack)
+	{
+		rum_parallel_scan_done(parallelScan, so);
+		return RumParallelScanAction_Stop;
+	}
+
+	so->orderByScanData->needsParallelSeize = false;
+	rum_parallel_release(
+		parallelScan,
+		RumPageGetOpaque(so->orderByScanData->orderByEntryPageCopy)->rightlink,
+		so->orderByScanData->orderStack->blkno);
+	return RumParallelScanAction_Proceed;
+}
+
+
+static bool
 MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc parallelScan)
 {
 	Page page;
@@ -4063,6 +4485,7 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 	bool isIndexMatch;
 	bool markedEntryFinished = false;
 	bool scanFinished = false, canSkipCheck = false;
+	bool isParallelPageScan = parallelScan != NULL && so->isParallelEnabled;
 	RumScanEntry entry = so->orderByScanData->orderByEntry;
 	RumBtree orderedBtree = &so->orderByScanData->orderByBtree;
 
@@ -4077,7 +4500,7 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 		/*
 		 * stack->off points to the interested entry, buffer is already locked
 		 */
-		bool moveResult = parallelScan != NULL ?
+		bool moveResult = isParallelPageScan ?
 						  MoveBuffersForOrderedScanParallel(so, orderedBtree,
 															parallelScan) :
 						  MoveBuffersForOrderedScan(so, orderedBtree);
@@ -4086,6 +4509,7 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 		{
 			return false;
 		}
+		entry = so->orderByScanData->orderByEntry;
 
 		page = so->orderByScanData->orderByEntryPageCopy;
 
@@ -4106,6 +4530,10 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 
 			ItemPointerSetInvalid(&entry->curItem.iptr);
 			entry->isFinished = true;
+			if (isParallelPageScan)
+			{
+				rum_parallel_scan_done(parallelScan, so);
+			}
 			return false;
 		}
 
@@ -4115,6 +4543,10 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 			so->orderByScanData->orderStack->off += so->orderScanDirection;
 			so->killedItemsSkipped++;
 			continue;
+		}
+		else if (RumIndexEntryIsDead(itemId))
+		{
+			so->eligibleDeadItems++;
 		}
 
 		/* Check if the current tuple matches */
@@ -4137,6 +4569,10 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 		{
 			if (scanFinished)
 			{
+				if (isParallelPageScan)
+				{
+					rum_parallel_scan_done(parallelScan, so);
+				}
 				return false;
 			}
 
@@ -4154,19 +4590,59 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 														 newMinEntry->queryCategory);
 					if (cmp > 0)
 					{
-						/* start the orderedScan again with the new entry now */
-						startScanEntryOrderedCore(so, newMinEntry, snapshot);
-						newMinEntry->isFinished = false;
-						entry = so->orderByScanData->orderByEntry;
-						if (!so->orderByScanData->orderStack)
+						if (!isParallelPageScan)
 						{
-							/* There is no entry left - close scan */
-							return false;
+							/* start the orderedScan again with the new entry now */
+							rumFlushKilledEntries(so);
+							startScanEntryOrderedCore(so, newMinEntry, snapshot);
+							newMinEntry->isFinished = false;
+							entry = so->orderByScanData->orderByEntry;
+							if (!so->orderByScanData->orderStack)
+							{
+								/* There is no entry left - close scan */
+								return false;
+							}
+							else
+							{
+								/* move right and continue */
+								continue;
+							}
 						}
 						else
 						{
-							/* move right and continue */
-							continue;
+							orderedBtree->entryKey = newMinEntry->queryKey;
+							if (entryIsMoveRight(orderedBtree, page))
+							{
+								/* If resetting the scan key means moving off this page,
+								 * Then, move forward
+								 */
+								RumParallelScanAction action =
+									ResetScanForwardWithEntryForParallel(
+										so, parallelScan, newMinEntry, snapshot);
+								if (action == RumParallelScanAction_Stop)
+								{
+									return false;
+								}
+
+								entry = so->orderByScanData->orderByEntry;
+								continue;
+							}
+							else
+							{
+								/* The new key is found directly on this page continue - but skip to that offset */
+								OffsetNumber targetOffset =
+									so->orderByScanData->orderStack->off;
+								entryLocateLeafEntryBounds(orderedBtree, page,
+														   so->orderByScanData->orderStack
+														   ->off,
+														   PageGetMaxOffsetNumber(page),
+														   &targetOffset);
+								if (targetOffset > so->orderByScanData->orderStack->off)
+								{
+									so->orderByScanData->orderStack->off = targetOffset;
+									continue;
+								}
+							}
 						}
 					}
 
@@ -4219,22 +4695,39 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 
 				MemoryContextReset(so->tempCtx);
 
-				if (resetScan && parallelScan == NULL)
+				if (resetScan)
 				{
 					/* Check if it's worth moving to the next page */
 					orderedBtree->entryKey = entry->queryKeyOverride;
 					if (entryIsMoveRight(orderedBtree, page))
 					{
-						startScanEntryOrderedCore(so, entry, snapshot);
-						entry->isFinished = false;
-						if (!so->orderByScanData->orderStack)
+						if (!isParallelPageScan)
 						{
-							/* There is no entry left - close scan */
-							return false;
+							rumFlushKilledEntries(so);
+							startScanEntryOrderedCore(so, entry, snapshot);
+							entry->isFinished = false;
+							if (!so->orderByScanData->orderStack)
+							{
+								/* There is no entry left - close scan */
+								return false;
+							}
+							else
+							{
+								/* move right and continue */
+								continue;
+							}
 						}
 						else
 						{
-							/* move right and continue */
+							RumParallelScanAction action =
+								RewalkScanForwardForParallel(
+									so, parallelScan, entry, snapshot);
+							if (action == RumParallelScanAction_Stop)
+							{
+								return false;
+							}
+
+							entry = so->orderByScanData->orderByEntry;
 							continue;
 						}
 					}
@@ -4432,7 +4925,7 @@ rumgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 	 */
 	if (RumIsNewKey(scan))
 	{
-		rumNewScanKey(scan);
+		rumNewScanKey(scan, NoMovementScanDirection);
 	}
 
 	if (RumIsVoidRes(scan))
@@ -4658,7 +5151,7 @@ reverseScan(IndexScanDesc scan)
 	int i, j;
 
 	freeScanKeys(so);
-	rumNewScanKey(scan);
+	rumNewScanKey(scan, NoMovementScanDirection);
 
 	for (i = 0; i < so->nkeys; i++)
 	{
@@ -4678,6 +5171,53 @@ reverseScan(IndexScanDesc scan)
 }
 
 
+inline static bool
+RumGetTupleDoSimpleScan(IndexScanDesc scan, RumScanOpaque so)
+{
+	bool recheck = false;
+	bool recheckOrderby = false;
+	if (scan->kill_prior_tuple)
+	{
+		if (RumEnableSupportDeadIndexItems)
+		{
+			/* Remember it for later. (We'll deal with all such
+			 * tuples at once right before leaving the index page.)
+			 */
+			if (so->killedItems == NULL)
+			{
+				so->killedItems = (ItemPointerData *) palloc(MaxTIDsPerRumPage *
+															 sizeof(ItemPointerData));
+			}
+
+			if (so->numKilled < MaxTIDsPerRumPage)
+			{
+				so->killedItems[so->numKilled++] = so->item.iptr;
+			}
+		}
+		else
+		{
+			so->eligibleDeadItems++;
+		}
+	}
+
+	if (scanGetItem(scan, &so->item, &so->item, &recheck, &recheckOrderby))
+	{
+		scan->xs_heaptid = so->item.iptr;
+		scan->xs_recheck = recheck;
+		scan->xs_recheckorderby = recheckOrderby;
+
+		if (scan->xs_want_itup && so->projectIndexTupleData)
+		{
+			scan->xs_itup = so->projectIndexTupleData->iscan_tuple;
+		}
+
+		return true;
+	}
+
+	return false;
+}
+
+
 bool
 rumgettuple(IndexScanDesc scan, ScanDirection direction)
 {
@@ -4687,31 +5227,19 @@ rumgettuple(IndexScanDesc scan, ScanDirection direction)
 	RumSortItem *item;
 	bool should_free;
 
-#if PG_VERSION_NUM >= 120000
-#define GET_SCAN_TID(scan) ((scan)->xs_heaptid)
-#define SET_SCAN_TID(scan, tid) ((scan)->xs_heaptid = (tid))
-#else
-#define GET_SCAN_TID(scan) ((scan)->xs_ctup.t_self)
-#define SET_SCAN_TID(scan, tid) ((scan)->xs_ctup.t_self = (tid))
-#endif
-
 	if (so->firstCall)
 	{
-		if (!ScanDirectionIsNoMovement(direction))
-		{
-			so->orderScanDirection = direction;
-		}
-
 		/*
 		 * Set up the scan keys, and check for unsatisfiable query.
 		 */
 		if (RumIsNewKey(scan))
 		{
-			rumNewScanKey(scan);
+			rumNewScanKey(scan, direction);
 		}
 
 		so->firstCall = false;
-		ItemPointerSetInvalid(&GET_SCAN_TID(scan));
+		so->getTupleScanType = RumGetTupleTidOrderedScan;
+		ItemPointerSetInvalid(&scan->xs_heaptid);
 
 		if (RumIsVoidRes(scan))
 		{
@@ -4730,6 +5258,10 @@ rumgettuple(IndexScanDesc scan, ScanDirection direction)
 			if (runStartScan)
 			{
 				startScan(scan);
+				if (so->scanType == RumOrderedScan)
+				{
+					SetParallelScanEntryIndex(so);
+				}
 				so->isParallelEnabled = rum_parallel_scan_start_notify(scan);
 			}
 			else if (!isScanParallelValid)
@@ -4740,9 +5272,17 @@ rumgettuple(IndexScanDesc scan, ScanDirection direction)
 			{
 				/* Run startScan as well on the workers - the rest is done below
 				 * with parallel cooperation.
+				 *
+				 * NOTE: This performs a redundant B-tree descent (rumFindLeafPage)
+				 * whose buffer will be discarded once this worker seizes its
+				 * assigned page from the parallel state. This is wasteful I/O
+				 * but required to initialize the orderByScanData structures.
+				 * A future optimization could skip the descent and only allocate
+				 * the scan data structures.
 				 */
 				so->isParallelEnabled = true;
 				startScan(scan);
+				SetParallelScanEntryIndex(so);
 			}
 		}
 		else
@@ -4752,13 +5292,17 @@ rumgettuple(IndexScanDesc scan, ScanDirection direction)
 
 		if (so->scanType == RumOrderedScan)
 		{
-			so->useSimpleScan = true;
+			so->getTupleScanType =
+				so->orderByScanData->orderByDedupState ? RumGetTupleSimpleDedupScan :
+				RumGetTupleSimpleScan;
 		}
 		else if (so->norderbys == 0 &&
 				 so->scanType != RumFullScan && !so->rumstate.useAlternativeOrder)
 		{
-			/* We don't search here. */
-			so->useSimpleScan = true;
+			/* We don't search here: This is a TID ordered regular scan so we don't
+			 * need dedup here.
+			 */
+			so->getTupleScanType = RumGetTupleSimpleScan;
 		}
 		else if (so->naturalOrder == NoMovementScanDirection)
 		{
@@ -4774,100 +5318,347 @@ rumgettuple(IndexScanDesc scan, ScanDirection direction)
 		}
 	}
 
-	if (so->useSimpleScan)
+	switch (so->getTupleScanType)
 	{
-		if (scan->kill_prior_tuple && RumEnableSupportDeadIndexItems)
+		case RumGetTupleSimpleScan:
 		{
-			/* Remember it for later. (We'll deal with all such
-			 * tuples at once right before leaving the index page.)
-			 */
-			if (so->killedItems == NULL)
-			{
-				so->killedItems = (ItemPointerData *) palloc(MaxTIDsPerRumPage *
-															 sizeof(ItemPointerData));
-			}
-
-			if (so->numKilled < MaxTIDsPerRumPage)
-			{
-				so->killedItems[so->numKilled++] = so->item.iptr;
-			}
+			return RumGetTupleDoSimpleScan(scan, so);
 		}
 
-		if (scanGetItem(scan, &so->item, &so->item, &recheck, &recheckOrderby))
+		case RumGetTupleSimpleDedupScan:
 		{
-			SET_SCAN_TID(scan, so->item.iptr);
-			scan->xs_recheck = recheck;
-			scan->xs_recheckorderby = recheckOrderby;
-
-			if (scan->xs_want_itup && so->projectIndexTupleData)
+			while (RumGetTupleDoSimpleScan(scan, so))
 			{
-				scan->xs_itup = so->projectIndexTupleData->iscan_tuple;
+				if (!RoaringStateFuncs.addItem(so->orderByScanData->orderByDedupState,
+											   &so->item.iptr))
+				{
+					/* else, get the next tuple
+					 * Ensure that we reset kill_prior_tuple since this is the duplicate path.
+					 */
+					so->numDuplicates++;
+					scan->kill_prior_tuple = false;
+					continue;
+				}
+
+				scan->xs_heaptid = so->item.iptr;
+				return true;
 			}
 
-			return true;
+			return false;
 		}
 
-		return false;
-	}
-
-	if (so->naturalOrder != NoMovementScanDirection)
-	{
-		if (scanGetItem(scan, &so->item, &so->item, &recheck, &recheckOrderby))
+		default:
+		case RumGetTupleTidOrderedScan:
 		{
-			SET_SCAN_TID(scan, so->item.iptr);
-			scan->xs_recheck = recheck;
-			scan->xs_recheckorderby = recheckOrderby;
-
-			return true;
-		}
-		else if (so->secondPass == false)
-		{
-			reverseScan(scan);
-			so->secondPass = true;
-			return rumgettuple(scan, direction);
-		}
-
-		return false;
-	}
-
-	item = rum_tuplesort_getrum(so->sortstate, true, &should_free);
-	while (item)
-	{
-		uint32 i,
-			   j = 0;
-
-		if (rumCompareItemPointers(&GET_SCAN_TID(scan), &item->iptr) == 0)
-		{
-			if (should_free)
+			if (so->naturalOrder != NoMovementScanDirection)
 			{
-				pfree(item);
+				if (scanGetItem(scan, &so->item, &so->item, &recheck, &recheckOrderby))
+				{
+					scan->xs_heaptid = so->item.iptr;
+					scan->xs_recheck = recheck;
+					scan->xs_recheckorderby = recheckOrderby;
+
+					return true;
+				}
+				else if (so->secondPass == false)
+				{
+					reverseScan(scan);
+					so->secondPass = true;
+					return rumgettuple(scan, direction);
+				}
+
+				return false;
 			}
+
 			item = rum_tuplesort_getrum(so->sortstate, true, &should_free);
-			continue;
-		}
-
-		SET_SCAN_TID(scan, item->iptr);
-		scan->xs_recheck = item->recheck;
-		scan->xs_recheckorderby = false;
-
-		for (i = 0; i < so->nkeys; i++)
-		{
-			if (!so->keys[i]->orderBy)
+			while (item)
 			{
-				continue;
+				uint32 i,
+					   j = 0;
+
+				if (rumCompareItemPointers(&scan->xs_heaptid, &item->iptr) == 0)
+				{
+					if (should_free)
+					{
+						pfree(item);
+					}
+					item = rum_tuplesort_getrum(so->sortstate, true, &should_free);
+					continue;
+				}
+
+				scan->xs_heaptid = item->iptr;
+				scan->xs_recheck = item->recheck;
+				scan->xs_recheckorderby = false;
+
+				for (i = 0; i < so->nkeys; i++)
+				{
+					if (!so->keys[i]->orderBy)
+					{
+						continue;
+					}
+					scan->xs_orderbyvals[j] = Float8GetDatum(item->data[j]);
+					scan->xs_orderbynulls[j] = false;
+
+					j++;
+				}
+
+				if (should_free)
+				{
+					pfree(item);
+				}
+				return true;
 			}
-			scan->xs_orderbyvals[j] = Float8GetDatum(item->data[j]);
-			scan->xs_orderbynulls[j] = false;
 
-			j++;
+			return false;
 		}
+	}
+}
 
-		if (should_free)
-		{
-			pfree(item);
-		}
-		return true;
+
+RMGR_PG_FUNCTION_DEF(documentdb_rum_get_current_index_key)
+{
+	IndexScanDesc scan = (IndexScanDesc) PG_GETARG_POINTER(0);
+	bytea **dedupStateOutput = (bytea **) (PG_NARGS() > 1 && !PG_ARGISNULL(1) ?
+										   PG_GETARG_POINTER(1) : NULL);
+
+	RumScanOpaque so = (RumScanOpaque) scan->opaque;
+	if (so->scanType != RumOrderedScan)
+	{
+		ereport(ERROR, (errmsg(
+							"documentdb_rum_get_current_index_key can only be called for ordered scans")));
 	}
 
-	return false;
+
+	if (dedupStateOutput != NULL)
+	{
+		if (so->orderByScanData->orderByDedupState != NULL)
+		{
+			/*
+			 * The current tuple (scan->xs_heaptid) is the boundary tuple that
+			 * was fetched but rejected by the batch/size limit and NOT emitted;
+			 * the continuation points at it so it is re-yielded on the next page.
+			 * It was already added to the dedup tracker while being fetched, so
+			 * remove it before serializing - otherwise the restored tracker would
+			 * suppress it on resume and the document would be dropped entirely.
+			 */
+			if (ItemPointerIsValid(&scan->xs_heaptid))
+			{
+				RoaringStateFuncs.removeItem(so->orderByScanData->orderByDedupState,
+											 &scan->xs_heaptid);
+			}
+
+			*dedupStateOutput = RoaringStateFuncs.serializeState(
+				so->orderByScanData->orderByDedupState);
+		}
+		else
+		{
+			*dedupStateOutput = NULL;
+		}
+	}
+
+	Page page = so->orderByScanData->orderByEntryPageCopy;
+
+	OffsetNumber off = so->orderByScanData->orderStack->off;
+
+	/* Off would already be pointing to the next item */
+	off = off - so->orderScanDirection;
+
+	if (off < FirstOffsetNumber || off > PageGetMaxOffsetNumber(page))
+	{
+		PG_RETURN_DATUM((Datum) 0);
+	}
+
+	ItemId itemId = PageGetItemId(page, off);
+	IndexTuple itup = (IndexTuple) PageGetItem(page, itemId);
+
+	RumNullCategory icategory;
+	Datum idatum = rumtuple_get_key(&so->rumstate, itup, &icategory);
+
+	PG_RETURN_DATUM(idatum);
+}
+
+
+RMGR_PG_FUNCTION_DEF(documentdb_rum_skip_tids_on_current_entry)
+{
+	IndexScanDesc scan = (IndexScanDesc) PG_GETARG_POINTER(0);
+	BlockNumber block = PG_GETARG_UINT32(1);
+	bool skipScan = PG_NARGS() > 2 ? PG_GETARG_BOOL(2) : false;
+
+	RumScanOpaque so = (RumScanOpaque) scan->opaque;
+	if (so->scanType != RumOrderedScan)
+	{
+		ereport(ERROR, (errmsg(
+							"documentdb_rum_skip_tids_on_current_entry can only be called for ordered scans")));
+	}
+
+	RumScanEntry entry = so->orderByScanData->orderByEntry;
+
+	/*
+	 * When skip-scan is requested, ask the opclass (via the same outer-ordering
+	 * function used to generate skip bounds) whether it can determine a bound to
+	 * jump ahead to the next distinct leading-key value. If it can, re-seek the
+	 * ordered scan to that bound instead of walking the remaining TIDs one by
+	 * one, and report that the skip scan was performed so the caller can keep
+	 * driving the scan through this path. If it cannot (e.g. a single-column
+	 * index, or an order-by prefix that already covers every index path, so
+	 * there is no trailing key to skip over), fall back to the per-TID skip
+	 * below and report false so the caller stops re-attempting the skip-scan
+	 * path for this scan.
+	 *
+	 * This is attempted before the "current entry finished" short-circuit below
+	 * because a composite key whose trailing suffix is highly selective (for
+	 * example a unique trailing column) exhausts its posting list after a single
+	 * TID, so the scan reaches the key boundary - exactly where we want to jump
+	 * to the next distinct leading value - with the entry already marked
+	 * finished.
+	 *
+	 * The re-seek does not coordinate with parallel workers, so the skip-scan
+	 * path is only taken for non-parallel scans; parallel scans always fall back
+	 * to the per-TID skip.
+	 */
+	if (skipScan &&
+		scan->parallel_scan == NULL &&
+		so->totalsearchentries == 1 &&
+		so->rumstate.canOuterOrdering[entry->attnum - 1] &&
+		so->rumstate.outerOrderingFn[entry->attnum - 1].fn_nargs == 4)
+	{
+		if (TrySkipScanToNextDistinctKey(scan, so, entry))
+		{
+			PG_RETURN_BOOL(true);
+		}
+	}
+
+	if (entry->isFinished)
+	{
+		/* Current entry is finished - no need to move forward */
+		PG_RETURN_BOOL(false);
+	}
+
+	if (block == InvalidBlockNumber)
+	{
+		/* We wanna just skip the rest of the rows for this entry */
+		entry->isFinished = true;
+		PG_RETURN_BOOL(false);
+	}
+
+	RumItem targetItem = { 0 };
+	BlockIdSet(&targetItem.iptr.ip_blkid, block);
+	targetItem.iptr.ip_posid = 0;
+	targetItem.addInfoIsNull = true;
+
+	if (rumCompareItemPointers(&entry->curItem.iptr, &targetItem.iptr) >= 0)
+	{
+		/* Current item is after the target block - no need to move forward */
+		PG_RETURN_BOOL(false);
+	}
+
+	while (!entry->isFinished &&
+		   rumCompareItemPointers(&entry->curItem.iptr, &targetItem.iptr) < 0)
+	{
+		/* Move forward until we reach the target block */
+		entryGetItemOrdered(&so->rumstate, so->orderByScanData->orderByEntry,
+							scan->xs_snapshot, &targetItem, so);
+	}
+
+	if (entry->isFinished)
+	{
+		/* We finished the entry - we're done */
+		PG_RETURN_BOOL(false);
+	}
+
+	/* If we got here, we reached the target block (or could have exceeded it by 1 entry)
+	 * To handle the corner case where the current item is exactly where we need to be,
+	 * we rev offset back by one entry.
+	 */
+	entry->offset -= entry->scanDirection;
+	PG_RETURN_BOOL(false);
+}
+
+
+/*
+ * Attempts to advance the ordered scan past the current leading-key value by
+ * asking the opclass for a distinct skip bound. Returns true when a bound was
+ * found and the scan was re-seeked, in which case the caller must not perform
+ * the per-TID skip. Returns false when no skip bound could be determined, so the
+ * caller should fall back to the per-TID skip.
+ */
+static bool
+TrySkipScanToNextDistinctKey(IndexScanDesc scan, RumScanOpaque so,
+							 RumScanEntry entry)
+{
+	/* Fetch the current index key value for the ordered entry. */
+	Page page = so->orderByScanData->orderByEntryPageCopy;
+	OffsetNumber off = so->orderByScanData->orderStack->off - so->orderScanDirection;
+	if (off < FirstOffsetNumber || off > PageGetMaxOffsetNumber(page))
+	{
+		return false;
+	}
+
+	ItemId itemId = PageGetItemId(page, off);
+	IndexTuple itup = (IndexTuple) PageGetItem(page, itemId);
+
+	RumNullCategory icategory;
+	Datum idatum = rumtuple_get_key(&so->rumstate, itup, &icategory);
+	if (icategory != RUM_CAT_NORM_KEY)
+	{
+		return false;
+	}
+
+	bool resetScan = false;
+	MemoryContext oldCtx = MemoryContextSwitchTo(so->tempCtx);
+	bool attbyval = TupleDescAttr(so->rumstate.origTupdesc, entry->attnum - 1)->attbyval;
+	int attlen = TupleDescAttr(so->rumstate.origTupdesc, entry->attnum - 1)->attlen;
+	Datum entryToUse = entry->queryKeyOverride != (Datum) 0 ?
+					   entry->queryKeyOverride : entry->queryKey;
+
+	/*
+	 * The opclass needs to know how far into the index paths the scan is
+	 * ordered so it only skips the trailing paths after the LAST order-by
+	 * column. The order-by columns need not be the leading index paths and need
+	 * not be contiguous: equality-constrained columns may precede them or sit
+	 * between them (an equality-pinned middle column still lets the index
+	 * satisfy the surrounding order-by columns). Hand the opclass the LAST
+	 * order-by query key so it can map that column to its index path position;
+	 * everything up to and including that path must stay pinned and only the
+	 * paths strictly after it are safe to skip.
+	 */
+	int lastOrderByKeyIdx = so->orderByKeyIndex + scan->numberOfOrderBys - 1;
+	Datum orderByQuery = (so->orderByKeyIndex >= 0 &&
+						  lastOrderByKeyIdx >= 0 &&
+						  lastOrderByKeyIdx < (int) so->nkeys) ?
+						 so->keys[lastOrderByKeyIdx]->query : (Datum) 0;
+	Datum skipBound = FunctionCall6Coll(
+		&so->rumstate.outerOrderingFn[entry->attnum - 1],
+		so->rumstate.supportCollation[entry->attnum - 1],
+		idatum,
+		entryToUse,
+		UInt16GetDatum(RumIndexTransform_IndexGenerateDistinctSkipBound),
+		PointerGetDatum(entry->extra_data),
+		Int32GetDatum(scan->numberOfOrderBys),
+		orderByQuery);
+	MemoryContextSwitchTo(oldCtx);
+
+	if (skipBound != (Datum) 0)
+	{
+		if (!attbyval && entry->queryKeyOverride != (Datum) 0)
+		{
+			pfree(DatumGetPointer(entry->queryKeyOverride));
+		}
+
+		entry->queryKeyOverride = datumTransfer(skipBound, attbyval, attlen);
+		resetScan = true;
+	}
+
+	MemoryContextReset(so->tempCtx);
+
+	if (!resetScan)
+	{
+		return false;
+	}
+
+	/* Re-seek the ordered scan to the new skip bound. */
+	rumFlushKilledEntries(so);
+	startScanEntryOrderedCore(so, entry, scan->xs_snapshot);
+	entry->isFinished = false;
+	return true;
 }

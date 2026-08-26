@@ -65,12 +65,12 @@ rumComputeDatumSize(Size data_length, Datum val, bool typbyval, char typalign,
  * alignment, if needed). Setting padding bytes to zero if needed. Return the
  * pointer incremented by space used.
  */
-static Pointer
-rumDatumWrite(Pointer ptr, Datum datum, bool typbyval, char typalign,
+static char *
+rumDatumWrite(char *ptr, Datum datum, bool typbyval, char typalign,
 			  int16 typlen, char typstorage)
 {
 	Size data_length;
-	Pointer prev_ptr = ptr;
+	char *prev_ptr = ptr;
 
 	if (typbyval)
 	{
@@ -122,7 +122,7 @@ rumDatumWrite(Pointer ptr, Datum datum, bool typbyval, char typalign,
 	else if (typlen == -1)
 	{
 		/* varlena */
-		Pointer val = DatumGetPointer(datum);
+		char *val = DatumGetPointer(datum);
 
 		if (VARATT_IS_EXTERNAL(val))
 		{
@@ -251,8 +251,8 @@ rumDataPageLeafWriteItemPointer(RumState *rumstate, char *ptr, ItemPointer iptr,
 /**
  * Place item pointer with additional information into leaf data page.
  */
-Pointer
-rumPlaceToDataPageLeaf(Pointer ptr, OffsetNumber attnum,
+char *
+rumPlaceToDataPageLeaf(char *ptr, OffsetNumber attnum,
 					   RumItem *item, ItemPointer prev, RumState *rumstate)
 {
 	Form_pg_attribute attr;
@@ -590,9 +590,9 @@ convertIndexToKey(RumDataLeafItemIndex *src, RumItem *dst)
  */
 static bool
 findInLeafPage(RumBtree btree, Page page, OffsetNumber *offset,
-			   ItemPointerData *iptrOut, Pointer *ptrOut)
+			   ItemPointerData *iptrOut, char **ptrOut)
 {
-	Pointer ptr = RumDataPageGetData(page);
+	char *ptr = RumDataPageGetData(page);
 	OffsetNumber i,
 				 maxoff,
 				 first = FirstOffsetNumber;
@@ -687,7 +687,7 @@ dataLocateLeafItem(RumBtree btree, RumBtreeStack *stack)
 {
 	Page page = BufferGetPage(stack->buffer);
 	ItemPointerData iptr;
-	Pointer ptr;
+	char *ptr;
 
 	Assert(RumPageIsLeaf(page));
 	Assert(RumPageIsData(page));
@@ -928,10 +928,12 @@ dataPrepareData(RumBtree btree, Page page, OffsetNumber off)
  * Places keys to page and fills WAL record. In case leaf page and
  * build mode puts all ItemPointers to page.
  */
-static void
-dataPlaceToPage(RumBtree btree, Page page, OffsetNumber off)
+static bool
+dataPlaceToPage(RumBtree btree, Page page, OffsetNumber off, bool
+				requireWalFromPlaceToPage)
 {
 	Assert(RumPageIsData(page));
+	Assert(!requireWalFromPlaceToPage);
 
 	dataPrepareData(btree, page, off);
 
@@ -942,8 +944,8 @@ dataPlaceToPage(RumBtree btree, Page page, OffsetNumber off)
 
 	if (RumPageIsLeaf(page))
 	{
-		Pointer ptr = RumDataPageGetData(page),
-				copyPtr = NULL;
+		char *ptr = RumDataPageGetData(page),
+			 *copyPtr = NULL;
 		ItemPointerData iptr = { { 0, 0 }, 0 };
 		RumItem copyItem;
 		bool copyItemEmpty = true;
@@ -1123,6 +1125,8 @@ dataPlaceToPage(RumBtree btree, Page page, OffsetNumber off)
 	{
 		RumDataPageAddItem(page, &(btree->pitem), off);
 	}
+
+	return false;
 }
 
 
@@ -1160,8 +1164,8 @@ dataSplitPageLeaf(RumBtree btree, Buffer lbuf, Buffer rbuf,
 				 maxoff;
 	Size totalsize = 0,
 		 prevTotalsize;
-	Pointer ptr,
-			copyPtr;
+	char *ptr,
+		 *copyPtr;
 	Page page;
 	Page newlPage = PageGetTempPageCopy(lPage);
 	Size pageSize = PageGetPageSize(newlPage);
@@ -1504,7 +1508,7 @@ dataSplitPage(RumBtree btree, Buffer lbuf, Buffer rbuf,
 void
 updateItemIndexes(Page page, OffsetNumber attnum, RumState *rumstate)
 {
-	Pointer ptr;
+	char *ptr;
 	RumItem item;
 	int j = 0,
 		maxoff,
@@ -1623,7 +1627,7 @@ rumCreatePostingTree(RumState *rumstate, OffsetNumber attnum, Relation index,
 	Buffer buffer = RumNewBuffer(index);
 	Page page;
 	int i;
-	Pointer ptr;
+	char *ptr;
 	ItemPointerData prev_iptr = { { 0, 0 }, 0 };
 	GenericXLogState *state = NULL;
 
@@ -1735,6 +1739,7 @@ rumInsertItemPointers(RumState *rumstate,
 					  RumStatsData *buildStats)
 {
 	BlockNumber rootBlkno;
+	bool rootConflictCheck = true;
 
 	Assert(gdi->stack);
 	rootBlkno = gdi->stack->blkno;
@@ -1749,7 +1754,7 @@ rumInsertItemPointers(RumState *rumstate,
 			gdi->stack = rumPrepareFindLeafPage(&gdi->btree, rootBlkno);
 		}
 
-		gdi->stack = rumFindLeafPage(&gdi->btree, gdi->stack);
+		gdi->stack = rumFindLeafPage(&gdi->btree, gdi->stack, rootConflictCheck);
 
 		if (gdi->btree.findItem(&(gdi->btree), gdi->stack))
 		{
@@ -1792,6 +1797,6 @@ rumScanBeginPostingTree(RumPostingTreeScan *gdi, RumItem *item)
 		gdi->btree.nitem = 1;
 	}
 
-	gdi->stack = rumFindLeafPage(&gdi->btree, gdi->stack);
+	gdi->stack = rumFindLeafPage(&gdi->btree, gdi->stack, false);
 	return gdi->stack->buffer;
 }

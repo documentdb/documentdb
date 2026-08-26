@@ -1,0 +1,1 @@
+\i sql/bson_aggregation_group_distinct_scan_tests.sql

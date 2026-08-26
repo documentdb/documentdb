@@ -9,39 +9,44 @@ readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = []
+# Compiles request span creation and inbound W3C parent extraction.
+request-tracing = []
+# Compiles outbound PostgreSQL SQLCommenter generation.
+postgres-sql-commenter = [
+	"request-tracing",
+]
+
 [dependencies]
 arc-swap.workspace = true
-async-recursion.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 bitflags.workspace = true
 bson.workspace = true
 bytes.workspace = true
 dashmap.workspace = true
+deadpool.workspace = true
 deadpool-postgres.workspace = true
 documentdb_macros.workspace = true
 dyn-clone.workspace = true
 either.workspace = true
 hex.workspace = true
+metrics.workspace = true
 once_cell.workspace = true
 openssl.workspace = true
-opentelemetry.workspace = true
-opentelemetry-otlp.workspace = true
-opentelemetry-semantic-conventions.workspace = true
-opentelemetry_sdk.workspace = true
 rand.workspace = true
 regex.workspace = true
+scc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 socket2.workspace = true
-strum.workspace = true
 strum_macros.workspace = true
 tokio.workspace = true
 tokio-openssl.workspace = true
 tokio-postgres.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
 uuid.workspace = true
 whoami.workspace = true
 
@@ -49,7 +54,11 @@ whoami.workspace = true
 criterion.workspace = true
 
 [[bench]]
-name = "insert_bench"
+name = "hot_path_bench"
+harness = false
+
+[[bench]]
+name = "request_insert_bench"
 harness = false
 
 [lints]

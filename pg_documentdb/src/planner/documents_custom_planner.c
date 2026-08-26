@@ -11,6 +11,7 @@
 #include <fmgr.h>
 #include <miscadmin.h>
 #include <funcapi.h>
+#include <catalog/pg_type.h>
 #include <utils/portal.h>
 #include <utils/varlena.h>
 #include <utils/rel.h>
@@ -20,9 +21,13 @@
 #include <commands/portalcmds.h>
 #include "metadata/collection.h"
 #include "planner/documents_custom_planner.h"
+#include "utils/version_utils.h"
+#include "opclass/bson_index_support.h"
 
 static bool SetPointReadQualsOnIndexScan(IndexScan *indexScan, Expr *queryQuals);
 static List * FormatProjections(List *targetEntries);
+
+extern bool EnableSupportFunctionIdPushdown;
 
 /*
  * Does a best effort to create a point read plan on the primary key index.
@@ -295,6 +300,62 @@ TraverseQualsAndExtract(List *quals, List **queryRuntimeClauses,
 				{
 					/* Strip full scan */
 					continue;
+				}
+				else if (IsClusterVersionAtleast(DocDB_V0, 112, 1))
+				{
+					if (funcExpr->funcid == ApiCursorTrackerFunctionId())
+					{
+						/* Strip the continuation function */
+						continue;
+					}
+
+					/* Check for the object_id equal function and convert it to the object_id opExpr for Point Lookup. */
+					if (EnableSupportFunctionIdPushdown &&
+						IsClusterVersionAtleast(DocDB_V0, 112, 1) &&
+						funcExpr->funcid == BsonEqualMatchObjectIdRuntimeFunctionId())
+					{
+						if (*objectIdExp != NULL)
+						{
+							return false;
+						}
+
+						pgbsonelement queryElement;
+						Var *objectIdVar, *documentVar;
+						Datum queryValue;
+						bool allowCollation = false;
+						if (ExtractExprsForObjectIdFunction(funcExpr, &queryElement,
+															&objectIdVar,
+															&documentVar, &queryValue,
+															allowCollation))
+						{
+							Var *newIndexVar = makeVar(INDEX_VAR, 2, BsonTypeId(), -1,
+													   InvalidOid, 0);
+							pgbson *qualValue = BsonValueToDocumentPgbson(
+								&queryElement.bsonValue);
+							Const *documentIdConst = makeConst(BsonTypeId(), -1,
+															   InvalidOid, -1,
+															   PointerGetDatum(qualValue),
+															   false, false);
+							OpExpr *newObjectIdExp = (OpExpr *) make_opclause(
+								BsonEqualOperatorId(), BOOLOID, false,
+								(Expr *)
+								newIndexVar,
+								(Expr *)
+								documentIdConst, InvalidOid,
+								InvalidOid);
+							newObjectIdExp->opfuncid = BsonEqualFunctionOid();
+							*objectIdExp = (Expr *) newObjectIdExp;
+
+							/* objectIdOrigExp is the indexpath->indexqualorig, which is the original expression that was used to generate the indexqual (this is derived from it). Explain shows indexqualorig as the original index condition.
+							 * Given that we are replacing the original funcExpr with a new opExpr, we also update the indexqualorig to point to the new opExpr for consitency.
+							 * However the indexqualorig is the runtime expression, so we need to use the runtime vars, not the index vars.
+							 */
+							OpExpr *origOpExpr = copyObject(newObjectIdExp);
+							origOpExpr->args = list_make2(objectIdVar, documentIdConst);
+							*objectIdOrigExp = (Expr *) origOpExpr;
+							continue;
+						}
+					}
 				}
 
 				*queryRuntimeClauses = lappend(*queryRuntimeClauses, expr);

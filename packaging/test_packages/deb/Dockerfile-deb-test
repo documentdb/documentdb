@@ -25,16 +25,27 @@ ENV LC_COLLATE=en_US.UTF-8
 ENV LC_CTYPE=en_US.UTF-8
 ENV LANG=en_US.UTF-8
 
-RUN echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main ${POSTGRES_VERSION}" > /etc/apt/sources.list.d/pgdg.list && \
-    wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add -
+RUN echo "deb [signed-by=/usr/share/keyrings/pgdg-archive-keyring.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main ${POSTGRES_VERSION}" > /etc/apt/sources.list.d/pgdg.list && \
+    wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor > /usr/share/keyrings/pgdg-archive-keyring.gpg
 
-# actual dependencies of the package
+# actual dependencies of the package, plus libipc-run-perl for the TAP suites
+# (extended_rum_recovery_tests): PostgreSQL::Test::Cluster requires IPC::Run,
+# and without it every t/*.pl dies at compile ("Can't locate IPC/Run.pm",
+# "No plan found in TAP output") -- the build image already installs it
+# (libipc-run-perl in Dockerfile-deb), this test image must too.
 RUN apt-get update && apt-get install -y \
     postgresql-${POSTGRES_VERSION} \
     postgresql-${POSTGRES_VERSION}-cron \
     postgresql-${POSTGRES_VERSION}-pgvector \
-    postgresql-${POSTGRES_VERSION}-postgis-3 \
+    libipc-run-perl \
     $(if [ "${POSTGRES_VERSION}" -lt 18 ]; then echo "postgresql-${POSTGRES_VERSION}-rum"; else echo ""; fi)
+
+# postgis: PGDG package when available, else built from source with a dpkg
+# stub so the documentdb .deb's Depends still resolves (PGDG has no pg18
+# postgis on bullseye, for example). Details in install-postgis.sh.
+COPY scripts /tmp/install_setup
+COPY packaging/test_packages/deb/install-postgis.sh /tmp/install-postgis.sh
+RUN bash /tmp/install-postgis.sh ${POSTGRES_VERSION}
 
 WORKDIR /test-install
 

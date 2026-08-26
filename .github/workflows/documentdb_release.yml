@@ -1,3 +1,17 @@
+# Release pipeline: tag push (v*) or manual dispatch.
+#
+# Package production goes through the consolidated build_all_packages.yml
+# reusable workflow, which fans out to the DEB/RPM builds over the Tier-1
+# matrix and emits ONE verified bundle: every .deb/.rpm, SHA256SUMS,
+# manifest.txt, gated by a per-category presence check. The release job
+# attaches that bundle verbatim, so a release can never ship a silently
+# partial package set (the v0.114-0 release shipped no RPMs at all —
+# exactly the failure mode the presence check exists to stop).
+#
+# Downstream: the documentdb.github.io deploy workflow downloads the
+# published release assets, GPG-signs them, and publishes the apt/yum
+# repositories on documentdb.io. Keep asset filenames stable — that
+# pipeline selects packages by filename pattern.
 name: DocumentDB Release Pipeline
 concurrency:
   group: release-${{ github.ref }}
@@ -35,53 +49,65 @@ jobs:
 
       - name: Extract Version from Control File
         id: extract
+        uses: ./.github/actions/resolve-documentdb-version
+
+      # A tag that disagrees with the control file would produce a release
+      # whose name, package versions, and changelog all describe a different
+      # version than the one the operator thought they tagged. Fail fast
+      # instead of publishing the mismatch.
+      - name: Verify tag matches control-file version
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          VERSION_DASH: ${{ steps.extract.outputs.version_dash }}
         run: |
-          # Extract version from control file (format: X.Y-Z)
-          VERSION=$(grep -E "^default_version" pg_documentdb_core/documentdb_core.control | sed -E "s/.*'([0-9]+\.[0-9]+-[0-9]+)'.*/\1/")
-          
-          if [ -z "$VERSION" ]; then
-            echo "::error::Unable to extract version from control file."
+          TAG="${GITHUB_REF_NAME}"
+          if [ "$TAG" != "v${VERSION_DASH}" ]; then
+            echo "::error::Pushed tag '${TAG}' does not match the control-file version 'v${VERSION_DASH}' (pg_documentdb_core/documentdb_core.control). Bump the control file (and CHANGELOG.md) first, or fix the tag."
             exit 1
           fi
-          
-          # VERSION is in format X.Y-Z (e.g., 0.109-0)
-          # Convert to dots format for package building: X.Y.Z (e.g., 0.109.0)
-          VERSION_DOTS=$(echo $VERSION | sed "s/-/./g")
-          
-          echo "Extracted Version (dash format): $VERSION"
-          echo "Converted to dots format: $VERSION_DOTS"
-          echo "version=$VERSION_DOTS" >> $GITHUB_OUTPUT
-          echo "version_dash=$VERSION" >> $GITHUB_OUTPUT
+          echo "Tag ${TAG} matches control-file version."
 
-  build-deb-packages:
-    name: Build DEB Packages
+      # Require the changelog section BEFORE spending ~an hour of build time,
+      # not after. The release body is assembled in create-release below.
+      - name: Verify CHANGELOG has a section for this version
+        env:
+          VERSION_DASH: ${{ steps.extract.outputs.version_dash }}
+        run: |
+          if ! grep -q "^### documentdb v${VERSION_DASH}" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '### documentdb v${VERSION_DASH}' section. Add the release notes before tagging."
+            exit 1
+          fi
+          echo "CHANGELOG.md section found for v${VERSION_DASH}."
+
+  build-all-packages:
+    name: Build All Packages
     needs: extract-version
-    uses: ./.github/workflows/build_deb_packages.yml
+    uses: ./.github/workflows/build_all_packages.yml
     with:
       version: ${{ needs.extract-version.outputs.version }}
       use_full_matrix: true
-
-  build-rpm-packages:
-    name: Build RPM Packages
-    needs: extract-version
-    uses: ./.github/workflows/build_rpm_packages.yml
-    with:
-      version: ${{ needs.extract-version.outputs.version }}
-      use_full_matrix: true
+    secrets: inherit
 
   build-gateway-images:
     name: Build Gateway Images
-    needs: extract-version
+    # Wait for the packages: images and packages ship as one release, so a
+    # failed package build must not leave published images behind with no
+    # release to accompany them. Costs serialization on an infrequent
+    # (tag-triggered) pipeline, which is the right trade for an atomic release.
+    needs: [extract-version, build-all-packages]
     uses: ./.github/workflows/build_gateway.yml
     with:
-      push_images: true
+      # Publish only for a real release. A dry run (workflow_dispatch with
+      # create_release=false) builds the images and pushes nothing — the
+      # gateway workflow honours this value on workflow_call.
+      push_images: ${{ startsWith(github.ref, 'refs/tags/') || inputs.create_release }}
 
   create-release:
     name: Create GitHub Release
-    needs: [extract-version, build-deb-packages, build-rpm-packages, build-gateway-images]
+    needs: [extract-version, build-all-packages, build-gateway-images]
     runs-on: ubuntu-24.04
     if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.create_release)
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -95,46 +121,108 @@ jobs:
           echo "VERSION_DASH=$VERSION_DASH" >> $GITHUB_ENV
           echo "RELEASE_NAME=v${VERSION_DASH} (${RELEASE_DATE})" >> $GITHUB_ENV
 
-      - name: Download all artifacts
+      # Only the consolidated, presence-checked bundle is attached — not the
+      # raw per-cell artifacts. It already contains every .deb/.rpm (deduped,
+      # dbgsym excluded) plus SHA256SUMS and manifest.txt.
+      - name: Download consolidated package bundle
         uses: actions/download-artifact@v4
         with:
-          path: ./release-artifacts
+          name: documentdb-packages-${{ needs.extract-version.outputs.version }}
+          path: ./bundle
 
-      - name: Organize artifacts
+      - name: Verify bundle checksums
         run: |
-          mkdir -p ./packages
-          # Copy all package files to packages directory (exclude debug symbols)
-          find ./release-artifacts -type f \( -name "*.deb" -o -name "*.rpm" \) ! -name "*dbgsym*" -exec cp {} ./packages/ \;
-          ls -lh ./packages/
-          echo "Total packages: $(ls -1 ./packages/ | wc -l)"
+          cd ./bundle
+          sha256sum -c SHA256SUMS
+          echo "Bundle contents:"
+          ls -lh
+
+      # Debug symbols are optional and, until debug-symbol production is
+      # enabled in the builders (see the TODO in build_all_packages.yml), the
+      # artifact is never produced at all — so a missing artifact must not
+      # fail the release.
+      - name: Download debug-symbol bundle (optional)
+        id: dbgsym
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: documentdb-debug-symbols-${{ needs.extract-version.outputs.version }}
+          path: ./debug-symbols
+
+      - name: Zip debug symbols for release attachment
+        if: ${{ steps.dbgsym.outcome == 'success' }}
+        run: |
+          cd ./debug-symbols
+          zip -r "../documentdb-debug-symbols-${{ needs.extract-version.outputs.version }}.zip" .
+          ls -lh ..
 
       - name: Extract Changelog for Version
         id: changelog
         run: |
           VERSION_DASH="${{ env.VERSION_DASH }}"
-          CHANGELOG_FILE="CHANGELOG.md"
-          
-          if ! grep -q "### documentdb v${VERSION_DASH}" "$CHANGELOG_FILE"; then
-            echo "Warning: Version v${VERSION_DASH} not found in CHANGELOG.md"
-            echo "Release ${VERSION_DASH}" > changelog_excerpt.md
-          else
-            # Extract from this version header to the next version header
-            # The pattern matches from the target version to any line starting with "### documentdb v"
-            # Then we remove the last line (which is the next version header)
-            sed -n "/^### documentdb v${VERSION_DASH}/,/^### documentdb v[0-9]/p" "$CHANGELOG_FILE" | \
-              sed '$d' > changelog_excerpt.md
-            
-            # If extraction is empty or too short, add fallback
-            if [ ! -s changelog_excerpt.md ] || [ $(wc -l < changelog_excerpt.md) -le 1 ]; then
-              echo "### documentdb v${VERSION_DASH}" > changelog_excerpt.md
-              echo "" >> changelog_excerpt.md
-              echo "Release ${VERSION_DASH}" >> changelog_excerpt.md
-            fi
+
+          # The section's presence was already enforced in extract-version;
+          # re-check here so a manual re-run of just this job still fails
+          # loudly rather than shipping a placeholder body.
+          if ! grep -q "^### documentdb v${VERSION_DASH}" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md lost its '### documentdb v${VERSION_DASH}' section between build and release."
+            exit 1
           fi
-          
+
+          # Print from this version's header up to (not including) the next
+          # version header. awk handles the last-section-in-file case that a
+          # sed range + '$d' mishandles (it would eat the final content line).
+          awk -v hdr="### documentdb v${VERSION_DASH}" '
+            index($0, hdr) == 1 { found = 1; print; next }
+            found && /^### documentdb v[0-9]/ { exit }
+            found { print }
+          ' CHANGELOG.md > changelog_excerpt.md
+
+          # The header often still carries the pre-release "(Unreleased)"
+          # marker; a published release must not. Strip it here and warn so
+          # the flip lands in CHANGELOG.md next time.
+          if grep -q "(Unreleased)" changelog_excerpt.md; then
+            echo "::warning::CHANGELOG.md section for v${VERSION_DASH} is still marked '(Unreleased)' — stripping it from the release body. Flip it to the release date in CHANGELOG.md."
+            sed -i 's/ (Unreleased)//' changelog_excerpt.md
+          fi
+
           echo "=== Changelog excerpt ==="
           cat changelog_excerpt.md
           echo "========================"
+
+      - name: Append release footer (install, verify, support tier)
+        run: |
+          VERSION_DASH="${{ env.VERSION_DASH }}"
+          cat >> changelog_excerpt.md <<EOF
+
+          ---
+
+          ## 📦 Packages
+
+          All \`.deb\` / \`.rpm\` files are attached below, together with \`SHA256SUMS\` and \`manifest.txt\`. Verify after downloading:
+
+          \`\`\`sh
+          gh release download v${VERSION_DASH} -R ${{ github.repository }} -D pkgs && cd pkgs && sha256sum -c SHA256SUMS
+          \`\`\`
+
+          **Repository-backed install (recommended):** see <https://documentdb.io> → Package Installation. Repository publication follows shortly after this release.
+
+          ### First-party (Tier 1) targets
+
+          | Format | Distro | PostgreSQL | Architectures |
+          |---|---|---|---|
+          | DEB | Ubuntu 24.04 | 17, 18 | amd64, arm64 |
+          | RPM | RHEL/Rocky/Alma 9 | 17, 18 | x86_64, aarch64 |
+
+          Other supported combinations (PostgreSQL 15/16; Debian 11/12/13, Ubuntu 22.04, RHEL 8) can be built on demand from this tag — see \`packaging/README.md\`:
+
+          \`\`\`sh
+          ./packaging/build_packages.sh --os <os> --pg <N>
+          ./packaging/gateway/build_gateway_packages.sh --os <os> --pg <N> --version ${VERSION_DASH//-/.}
+          \`\`\`
+
+          > **Pre-GA note:** in-place package upgrades from earlier releases are not supported yet. Install on a clean host, or remove the previous DocumentDB packages first.
+          EOF
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -144,5 +232,8 @@ jobs:
           body_path: changelog_excerpt.md
           draft: true
           prerelease: true
+          # The debug-symbols zip is optional; unmatched patterns are ignored
+          # by default (fail_on_unmatched_files is false).
           files: |
-            ./packages/*
+            ./bundle/*
+            ./documentdb-debug-symbols-*.zip

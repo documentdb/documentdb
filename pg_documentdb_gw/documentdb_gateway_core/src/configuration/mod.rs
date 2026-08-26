@@ -12,16 +12,19 @@ mod pg_configuration;
 mod setup;
 mod version;
 
-pub use certs::{CertInputType, CertificateOptions};
-pub use dynamic::DynamicConfiguration;
-pub use pg_configuration::PgConfiguration;
-pub use setup::DocumentDBSetupConfiguration;
-pub use version::Version;
-
-use dyn_clone::{clone_trait_object, DynClone};
 use std::fmt::Debug;
 
-use crate::telemetry::config::TelemetryOptions;
+pub use certs::{CertInputType, CertificateOptions};
+use dyn_clone::{clone_trait_object, DynClone};
+pub use dynamic::{ClusterVersion, DynamicConfiguration};
+pub use pg_configuration::PgConfiguration;
+pub use setup::{env_keys, DocumentDBSetupConfiguration};
+pub use version::Version;
+
+use crate::telemetry::TelemetrySettings;
+
+pub(crate) const SOCKET_CONNECTION_IDLE_TIMEOUT_KEY: &str = "SocketConnectionIdleTimeout";
+pub(crate) const SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS: u64 = 18_000;
 
 /// These are the required configuration fields.
 ///
@@ -112,10 +115,16 @@ pub trait SetupConfiguration: DynClone + Send + Sync + Debug {
     fn instance_kind(&self) -> &str;
 
     /// Returns telemetry options from static setup configuration, if present.
-    fn telemetry_options(&self) -> Option<&TelemetryOptions>;
+    fn telemetry_provider_options(&self) -> Option<&serde_json::Value>;
+
+    /// Returns provider-neutral telemetry capabilities resolved at startup.
+    fn telemetry_settings(&self) -> TelemetrySettings;
 
     /// Provides a way to downcast the trait object to a concrete type.
     fn as_any(&self) -> &dyn std::any::Any;
+
+    /// Returns whether refreshing settings from `pg_file_settings` is enabled.
+    fn enable_pg_file_settings_refresh(&self) -> Option<bool>;
 }
 
 clone_trait_object!(SetupConfiguration);

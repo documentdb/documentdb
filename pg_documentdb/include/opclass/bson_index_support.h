@@ -15,6 +15,7 @@
 #include <vector/vector_utilities.h>
 #include <optimizer/planner.h>
 #include "planner/mongo_query_operator.h"
+#include "planner/bson_index_force_pushdown_types.h"
 
 struct IndexOptInfo;
 
@@ -35,51 +36,6 @@ typedef struct ReplaceFunctionContextInput
 	Index rteIndex;
 } ReplaceFunctionContextInput;
 
-
-/* The operation type for forcing index pushdown */
-typedef enum ForceIndexOpType
-{
-	/* No index pushdown required */
-	ForceIndexOpType_None = 0,
-
-	/* Index pushdown required due to $text */
-	ForceIndexOpType_Text = 1,
-
-	/* Index pushdown required due to $geoNear */
-	ForceIndexOpType_GeoNear = 2,
-
-	/* Index pushdown required for a vectorSearch */
-	ForceIndexOpType_VectorSearch = 3,
-
-	/* Index pushdown required for a index hint */
-	ForceIndexOpType_IndexHint = 4,
-
-	/* Index pushdown required for a primary key lookup */
-	ForceIndexOpType_PrimaryKeyLookup = 5,
-
-	ForceIndexOpType_Max,
-} ForceIndexOpType;
-
-/*
- * Data used to enforce index to special query operators like $geoNear, $text etc
- */
-typedef struct ForceIndexQueryOperatorData
-{
-	/* Type of the mongo query operator used */
-	ForceIndexOpType type;
-
-	/*
-	 * If pushed to index by default by Postgres, then the it points to the index path otherwise NULL
-	 * In case this is NULL, we try to push to the available index
-	 */
-	IndexPath *path;
-
-	/*
-	 * Any operator specific metadata or state.
-	 * e.g. For $geoNear, it is the operatorExpression which is used for deciding the index pushdown
-	 */
-	void *opExtraState;
-} ForceIndexQueryOperatorData;
 
 /* Context persisted during walking the query for order by scenarios */
 typedef struct
@@ -108,8 +64,14 @@ typedef struct ReplaceExtensionFunctionContext
 	/* Whether or not the rel pathlist has streaming cursor scan filters */
 	bool hasStreamingContinuationScan;
 
+	/* whether or not the rel pathlist has dynamic streaming cursor scan filters */
+	bool hasDynamicStreamingContinuationScan;
+
 	/* Whether or not the index paths already has a primary key lookup */
 	IndexPath *primaryKeyLookupPath;
+
+	/* FuncExpr for the reservoir sampling marker, or NULL if absent */
+	FuncExpr *reservoirSampleExpr;
 
 	/* The input data context for the call */
 	ReplaceFunctionContextInput inputData;
@@ -140,15 +102,18 @@ List * ReplaceExtensionFunctionOperatorsInRestrictionPaths(List *restrictInfo,
 void ReplaceExtensionFunctionOperatorsInPaths(PlannerInfo *root, RelOptInfo *rel,
 											  List *pathsList, PlanParentType parentType,
 											  ReplaceExtensionFunctionContext *context);
-Path * ForceIndexForQueryOperators(PlannerInfo *root, RelOptInfo *rel,
-								   ReplaceExtensionFunctionContext *context);
-
 void ConsiderIndexOrderByPushdownForId(PlannerInfo *root, RelOptInfo *rel,
 									   RangeTblEntry *rte,
 									   Index rti,
 									   ReplaceExtensionFunctionContext *context);
 void ConsiderIndexOnlyScan(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte,
 						   Index rti, ReplaceExtensionFunctionContext *context);
+void ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel,
+								  RangeTblEntry *rte, Index rti,
+								  ReplaceExtensionFunctionContext *context);
+void MaybeMarkIndexPathForMergeSortInPrefix(PlannerInfo *root, IndexPath *indexPath);
+void RemoveMergeSortInPrefixMarkersFromPaths(List *pathsList);
+bool IndexPathHasMergeSortInPrefixMarker(IndexPath *indexPath);
 bool IsOpExprShardKeyForUnshardedCollections(Expr *expr, uint64 collectionId);
 
 IndexPath * TrimIndexRestrictInfoForBtreePath(PlannerInfo *root,
@@ -161,15 +126,33 @@ void WalkRestrictionPathsForIndexOperations(List *restrictInfo,
 											List *joinInfo,
 											ReplaceExtensionFunctionContext *context);
 
+bool CompositeIndexOptInfoIsMultiKey(IndexOptInfo *indexOptInfo,
+									 uint32_t *multiKeyBitMask);
 bool IsBtreePrimaryKeyIndex(struct IndexOptInfo *indexInfo);
+bool IsOpExprShardKeyEquality(Expr *expr, int64 *shardKeyValue);
 bool InMatchIsEquvalentTo(ScalarArrayOpExpr *opExpr, const bson_value_t *arrayValue);
 
 OpExpr * GetOpExprClauseFromIndexOperator(const
-										  MongoIndexOperatorInfo *operator, List *args,
+										  MongoIndexOperatorInfo *operator,
+										  Expr *firstArg, Expr *secondArg,
 										  bytea *indexOptions);
 
+bool IsCollationPresentOnQueryOrIndex(const char *queryCollation, bytea *indexOptions);
+
+void ConsiderBtreeOrderByPushdown(PlannerInfo *root, IndexPath *indexPath);
+bool GetBtreeIndexBoundQuals(BsonIndexStrategy strategy, const bson_value_t *queryValue,
+							 Index varno, Expr **firstBound, Expr **secondBound);
+bool ExtractExprsForObjectIdFunction(FuncExpr *expr, pgbsonelement *queryElement,
+									 Var **objectIdVar,
+									 Var **documentVar, Datum *queryValue,
+									 bool allowCollation);
 void documentdb_btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 							   Cost *indexStartupCost, Cost *indexTotalCost,
 							   Selectivity *indexSelectivity, double *indexCorrelation,
 							   double *indexPages);
+
+Path * OptimizeAndTrimBitmapQualsForBitmapAnd(BitmapAndPath *andPath, uint64_t
+											  collectionId);
+
+Pointer HandleDistinctExistsSupportRequest(Node *supportRequest);
 #endif

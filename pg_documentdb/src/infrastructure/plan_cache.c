@@ -16,6 +16,7 @@
 #include "fmgr.h"
 #include "miscadmin.h"
 
+#include "utils/hsearch.h"
 #include "utils/memutils.h"
 
 #include "infrastructure/documentdb_plan_cache.h"
@@ -122,6 +123,10 @@ GetSPIQueryPlanWithLocalShard(uint64 collectionId, const char *shardTableName, u
 							  queryId,
 							  const char *query, Oid *argTypes, int argCount)
 {
+	/* Verify this queryId has been registered in the collision check array.
+	 * If this Assert fires, you forgot to add PlanCacheIdEntry(MACRO) */
+	Assert(_plan_cache_id_collision_check[queryId >> 32] == (uint8) (queryId >> 32));
+
 	InitializeQueryPlanCache();
 
 	bool foundInCache = false;

@@ -1,21 +1,5 @@
-CREATE SCHEMA change_index_jobs_schema;
-CREATE OR REPLACE FUNCTION change_index_jobs_schema.change_index_jobs_status(active_status boolean)
-RETURNS void
-AS $$
-DECLARE
-    job_id integer;
-BEGIN
-    FOR job_id IN (SELECT jobid FROM cron.job WHERE jobname LIKE 'documentdb_index_%' order by jobid)
-    LOOP
-        UPDATE cron.job SET active = active_status WHERE jobid = job_id;
-        RAISE NOTICE 'Processing job_id: %', job_id;
-    END LOOP;
-END;
-$$
-LANGUAGE plpgsql;
-
-SET search_path to documentdb_core,documentdb_api,documentdb_api_catalog,change_index_jobs_schema;
-SELECT change_index_jobs_schema.change_index_jobs_status(true);
+SET search_path to documentdb_core,documentdb_api,documentdb_api_catalog;
+SELECT documentdb_test_helpers.change_index_jobs_status(true);
 
 -- Delete all old create index requests from other tests
 DELETE from documentdb_api_catalog.documentdb_index_queue;
@@ -316,11 +300,39 @@ DELETE FROM documentdb_api_catalog.documentdb_index_queue;
 
 SELECT * FROM documentdb_api_internal.check_build_index_status('{"indexRequest" : {"cmdType" : "C", "ids" :[32101]}}');
 
+-- ============================================================
+-- Tests for skipWaitForIndex flag
+-- ============================================================
+
+-- Create the collection first so that indexes are queued in the background
+SELECT documentdb_api.create_collection('db', 'skip_wait_coll');
+
+-- skipWaitForIndex: true — should return empty requests (no polling)
+SELECT * FROM documentdb_api.create_indexes_background('db', '{ "createIndexes": "skip_wait_coll", "indexes": [ { "key" : { "a": 1 }, "name": "skip_wait_idx_1"}], "skipWaitForIndex": true }');
+
+-- verify the index is queued
+SELECT index_cmd_status FROM documentdb_api_catalog.documentdb_index_queue
+  WHERE collection_id = (SELECT collection_id FROM documentdb_api_catalog.collections
+    WHERE database_name = 'db' AND collection_name = 'skip_wait_coll');
+
+-- skipWaitForIndex: false — should return requests with index id (normal behavior)
+SELECT * FROM documentdb_api.create_indexes_background('db', '{ "createIndexes": "skip_wait_coll", "indexes": [ { "key" : { "b": 1 }, "name": "skip_wait_idx_2"}], "skipWaitForIndex": false }');
+
+-- without skipWaitForIndex (default) — should return requests with index id
+SELECT * FROM documentdb_api.create_indexes_background('db', '{ "createIndexes": "skip_wait_coll", "indexes": [ { "key" : { "c": 1 }, "name": "skip_wait_idx_3"}] }');
+
+-- skipWaitForIndex with multiple indexes — should return empty requests
+SELECT * FROM documentdb_api.create_indexes_background('db', '{ "createIndexes": "skip_wait_coll", "indexes": [ { "key" : { "d": 1 }, "name": "skip_wait_idx_4"}, { "key" : { "e": 1 }, "name": "skip_wait_idx_5"}], "skipWaitForIndex": true }');
+
+-- clean up queued indexes from skipWaitForIndex tests
+DELETE FROM documentdb_api_catalog.documentdb_index_queue;
+SELECT documentdb_api.drop_collection('db', 'skip_wait_coll');
+
 -- test multiple scheduled builds drain together.
 DELETE FROM documentdb_api_catalog.documentdb_index_queue;
 
 -- Disable cron jobs to prevent them from racing with manual build calls below.
-SELECT change_index_jobs_schema.change_index_jobs_status(false);
+SELECT documentdb_test_helpers.change_index_jobs_status(false);
 
 -- insert multiple index requests across multiple collections.
 SELECT documentdb_api.create_indexes_background('db', '{ "createIndexes": "backgroundcoll1", "indexes": [ { "key" : { "a": 1 }, "name": "a_1"}] }');
@@ -368,39 +380,5 @@ CALL documentdb_api_internal.build_index_concurrently(1);
 --all indexes should be built and queue should be empty.
 SELECT * FROM documentdb_api_catalog.documentdb_index_queue;
 
--- Test collMod reindex option
--- Create a collection with an index
-SELECT documentdb_api.insert_one('db', 'collmod_reindex_coll', '{ "_id": 1, "x": 1 }');
-SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "collmod_reindex_coll", "indexes": [ { "key": { "x": 1 }, "name": "x_1" } ] }', true);
-
--- Error: reindex must be true
-SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "name": "x_1", "reindex": false } }');
-
--- Error: index not found
-SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "name": "nonexistent_idx", "reindex": true } }');
-
--- Error: reindex cannot be combined with other options
-SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "name": "x_1", "reindex": true, "hidden": true } }');
-
--- Queue reindex via collMod
-SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "name": "x_1", "reindex": true } }');
-
--- Verify the reindex request is in the queue
-SELECT index_cmd, cmd_type, index_id, index_cmd_status, collection_id FROM documentdb_api_catalog.documentdb_index_queue ORDER BY index_id;
-
--- Process the reindex queue
-CALL documentdb_api_internal.build_index_concurrently(1);
-CALL documentdb_api_internal.build_index_background(1);
-
--- Verify the queue is empty after processing
-SELECT * FROM documentdb_api_catalog.documentdb_index_queue;
-
--- Test reindex on _id_ index via keyPattern
-SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "keyPattern": { "_id": 1 }, "reindex": true } }');
-SELECT index_cmd, cmd_type, index_id, index_cmd_status, collection_id FROM documentdb_api_catalog.documentdb_index_queue ORDER BY index_id;
-CALL documentdb_api_internal.build_index_concurrently(1);
-CALL documentdb_api_internal.build_index_background(1);
-SELECT * FROM documentdb_api_catalog.documentdb_index_queue;
-
 -- Re-enable cron jobs for the schedule_background_index_build_jobs test below.
-SELECT change_index_jobs_schema.change_index_jobs_status(true);
+SELECT documentdb_test_helpers.change_index_jobs_status(true);

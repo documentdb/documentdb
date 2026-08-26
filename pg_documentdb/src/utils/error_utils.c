@@ -42,8 +42,7 @@ PG_FUNCTION_INFO_V1(command_throw_mongo_error);
  * [Update] : starting 1.22, this function is deprecated and should not be used.
  * and return the deprecated error.
  */
-Datum
-pg_attribute_noreturn()
+pg_noreturn Datum
 command_throw_mongo_error(PG_FUNCTION_ARGS)
 {
 	ereport(ERROR, (errcode(ERRCODE_WARNING_DEPRECATED_FEATURE),

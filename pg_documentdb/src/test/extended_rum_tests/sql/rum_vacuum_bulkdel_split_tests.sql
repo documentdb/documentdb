@@ -39,6 +39,10 @@ SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_
 -- now delete the earlier rows in the tree (occupying the lower pages)
 SELECT documentdb_api.delete('pvacuum_split_db', '{ "delete": "pbulkdel", "deletes": [ { "q": { "_id": { "$lte": 3000 } }, "limit": 0 } ]}');
 
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
+
 -- vacuum the collection (twice to ensure we have void pages): but make sure to skip the visibility check (to ensure we get void pages)
 set documentdb_rum.skip_global_visibility_check_on_prune to on;
 set client_min_messages to LOG;
@@ -71,6 +75,10 @@ SELECT COUNT(*), MIN((entry->>'cycleId')::int4), MAX((entry->>'cycleId')::int4) 
 
 -- delete everything
 SELECT documentdb_api.delete('pvacuum_split_db', '{ "delete": "pbulkdel", "deletes": [ { "q": { }, "limit": 0 } ]}');
+
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 
 -- run a vacuum in the mode that only works on backtrack mode.
 set documentdb_rum.default_traverse_rum_page_only_on_backtrack to on;

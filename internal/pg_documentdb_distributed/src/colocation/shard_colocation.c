@@ -9,6 +9,7 @@
  */
 
 #include <postgres.h>
+#include <access/xact.h>
 #include <utils/builtins.h>
 #include <parser/parse_node.h>
 #include <parser/parse_relation.h>
@@ -22,10 +23,12 @@
 
 #include "io/bson_core.h"
 #include "utils/documentdb_errors.h"
+#include "utils/guc_utils.h"
 #include "utils/query_utils.h"
 #include "sharding/sharding.h"
 #include "commands/commands_common.h"
 #include "commands/parse_error.h"
+#include "commands/retryable_writes.h"
 
 #include "metadata/metadata_cache.h"
 #include "metadata/collection.h"
@@ -36,6 +39,7 @@
 
 
 extern bool EnableMoveCollection;
+extern bool AddNodePortToNodeName;
 
 PG_FUNCTION_INFO_V1(command_get_shard_map);
 PG_FUNCTION_INFO_V1(command_list_shards);
@@ -77,6 +81,11 @@ typedef struct NodeInfo
 	 * the case it's in the middle of an addnode)
 	 */
 	bool isactive;
+
+	/*
+	 * The internal port of the node
+	 */
+	int nodePort;
 
 	/*
 	 * The formatted node name
@@ -167,6 +176,37 @@ documentdb_command_move_collection(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
 						errmsg("moveCollection is not supported yet")));
 	}
+
+	/*
+	 * moveCollection is not permitted inside a transaction block. The
+	 * documented semantics disallow relocating a collection within a
+	 * multi-document transaction, and the command relocates a shard which must
+	 * run in its own transaction. Reject it here so the restriction applies to
+	 * every caller (direct SQL / psql, PL/pgSQL, and the gateway), not just the
+	 * gateway. Because moveCollection therefore always runs as the sole
+	 * statement of its (implicit) transaction, no placement has been accessed
+	 * locally yet and disabling local execution below is always safe.
+	 */
+	bool isTopLevel = true;
+	if (IsInTransactionBlock(isTopLevel))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_OPERATIONNOTSUPPORTEDINTRANSACTION),
+						errmsg(
+							"Cannot run 'moveCollection' in a multi-document transaction.")));
+	}
+
+	/*
+	 * Disable local execution for this transaction. The statements run below
+	 * (breaking colocation, dropping the per-node retry table) can otherwise
+	 * execute locally against a placement that resides on this node. Once a
+	 * placement has been accessed locally, citus_move_shard_placement cannot run
+	 * because it requires parallel/remote execution, failing with "a local
+	 * execution has accessed a placement in the transaction". Forcing adaptive
+	 * (connection based) execution avoids poisoning the transaction. This is
+	 * always safe because the guard above guarantees moveCollection is the sole
+	 * statement of its transaction.
+	 */
+	SetGUCLocally("citus.enable_local_execution", "off");
 
 	bson_iter_t moveSpecIter;
 	PgbsonInitIterator(moveSpec, &moveSpecIter);
@@ -311,23 +351,42 @@ documentdb_command_move_collection(PG_FUNCTION_ARGS)
 										argOids, argDatums, NULL, false, SPI_OK_SELECT,
 										&resultNullIgnore);
 
-	/* Next re-colocate the retry table with the main table */
-	const char *retryTableUpdateColocationQuery =
-		"SELECT update_distributed_table_colocation($1, colocate_with => $2)";
-	StringInfoData retryTableNameData;
-	initStringInfo(&retryTableNameData);
-	appendStringInfo(&retryTableNameData, "%s.retry_%ld", ApiDataSchemaName,
-					 collection->collectionId);
+	if (UseLocalRetryTable())
+	{
+		/*
+		 * LocalRetryTable is enabled, drop the retry table for the collection if exists.
+		 */
+		StringInfoData retryTableDropQuery;
+		initStringInfo(&retryTableDropQuery);
+		appendStringInfo(&retryTableDropQuery,
+						 "DROP TABLE IF EXISTS %s.retry_" INT64_FORMAT,
+						 ApiDataSchemaName, collection->collectionId);
 
-	Oid retryArgOid[2] = { TEXTOID, TEXTOID };
-	Datum retryArgDatums[2] = {
-		CStringGetTextDatum(retryTableNameData.data), CStringGetTextDatum(
-			tableNameData.data)
-	};
-	ExtensionExecuteQueryWithArgsViaSPI(retryTableUpdateColocationQuery, 2,
-										retryArgOid, retryArgDatums, NULL, false,
-										SPI_OK_SELECT,
-										&resultNullIgnore);
+		ExtensionExecuteQueryViaSPI(retryTableDropQuery.data, false, SPI_OK_UTILITY,
+									&resultNullIgnore);
+	}
+	else
+	{
+		/* LocalRetryTable is not enabled
+		 * Re-colocate the retry table with the main table
+		 */
+		const char *retryTableUpdateColocationQuery =
+			"SELECT update_distributed_table_colocation($1, colocate_with => $2)";
+		StringInfoData retryTableNameData;
+		initStringInfo(&retryTableNameData);
+		appendStringInfo(&retryTableNameData, "%s.retry_%ld", ApiDataSchemaName,
+						 collection->collectionId);
+
+		Oid retryArgOid[2] = { TEXTOID, TEXTOID };
+		Datum retryArgDatums[2] = {
+			CStringGetTextDatum(retryTableNameData.data), CStringGetTextDatum(
+				tableNameData.data)
+		};
+		ExtensionExecuteQueryWithArgsViaSPI(retryTableUpdateColocationQuery, 2,
+											retryArgOid, retryArgDatums, NULL, false,
+											SPI_OK_SELECT,
+											&resultNullIgnore);
+	}
 
 	/* Now move the shard to the target group */
 	const char *shardTransferMode = useLogicalReplication ? "force_logical" :
@@ -552,11 +611,14 @@ HandleDistributedColocation(MongoCollection *collection, const
 															   targetWithNamespace);
 	}
 
-	/* Colocate retry with the original table */
-	char *retryTableWithNamespace = psprintf("%s.retry_%ld", ApiDataSchemaName,
-											 collection->collectionId);
-	UndistributeAndRedistributeTable(retryTableWithNamespace, tableWithNamespace,
-									 retryTableShardKeyValue);
+	if (!UseLocalRetryTable())
+	{
+		/* Colocate retry with the original table */
+		char *retryTableWithNamespace = psprintf("%s.retry_%ld", ApiDataSchemaName,
+												 collection->collectionId);
+		UndistributeAndRedistributeTable(retryTableWithNamespace, tableWithNamespace,
+										 retryTableShardKeyValue);
+	}
 }
 
 
@@ -1654,7 +1716,7 @@ GetShardMapNodes(void)
 {
 	/* First query pg_dist_node to get the set of nodes in the cluster */
 	const char *baseQuery = psprintf(
-		"WITH base AS (SELECT groupid, nodeid, noderole::text, nodecluster::text, isactive FROM pg_dist_node WHERE shouldhaveshards ORDER BY groupid, noderole)"
+		"WITH base AS (SELECT groupid, nodeid, noderole::text, nodecluster::text, isactive, nodeport::int4 FROM pg_dist_node WHERE shouldhaveshards ORDER BY groupid, noderole)"
 		" SELECT %s.BSON_ARRAY_AGG(%s.row_get_bson(base), 'nodes') FROM base",
 		ApiCatalogSchemaName, ApiCatalogSchemaName);
 
@@ -1737,9 +1799,14 @@ GetShardMapNodes(void)
 					nodeInfo->isactive = bson_iter_bool(&objectIter);
 					numFields++;
 				}
+				else if (strcmp(key, "nodeport") == 0)
+				{
+					nodeInfo->nodePort = bson_iter_int32(&objectIter);
+					numFields++;
+				}
 			}
 
-			if (numFields != 5)
+			if (numFields != 6)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
 								errmsg(
@@ -1752,6 +1819,11 @@ GetShardMapNodes(void)
 
 			nodeInfo->mongoNodeName = psprintf("node_%s_%d", nodeInfo->nodeCluster,
 											   nodeInfo->nodeId);
+			if (AddNodePortToNodeName)
+			{
+				nodeInfo->mongoNodeName = psprintf("%s_%d", nodeInfo->mongoNodeName,
+												   nodeInfo->nodePort);
+			}
 			nodeInfo->mongoShardName = psprintf("shard_%d", nodeInfo->groupId);
 			groupMap = lappend(groupMap, nodeInfo);
 		}

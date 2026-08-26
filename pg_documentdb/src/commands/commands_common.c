@@ -34,6 +34,7 @@ extern bool ThrowDeadlockOnCrud;
 extern bool EnableBackendStatementTimeout;
 extern int MaxCustomCommandTimeout;
 extern bool RumFailOnLostPath;
+extern bool EnableNullCollectionValidation;
 
 /*
  *  This is a list of command options that are not currently supported.
@@ -41,7 +42,7 @@ extern bool RumFailOnLostPath;
  *
  *  Note: Please keep this array sorted.
  */
-static const char *IgnoredCommonSpecFields[] = {
+static const char *const IgnoredCommonSpecFields[] = {
 	"$clusterTime",
 	"$db",
 	"$readPreference",
@@ -91,13 +92,35 @@ static const char *IgnoredCommonSpecFields[] = {
 	"writeConcern"  /* insert, update, delete, createIndex, dropIndex command */
 };
 
-static int NumberOfIgnoredFields = sizeof(IgnoredCommonSpecFields) / sizeof(char *);
+static int NumberOfIgnoredFields = sizeof(IgnoredCommonSpecFields) /
+								   sizeof(IgnoredCommonSpecFields[0]);
 
 /* Forward declartion */
 static int CompareStringsCaseInsensitive(const void *a, const void *b);
 static pgbson * RewriteDocumentAddObjectIdCore(const bson_value_t *docValue,
 											   bson_value_t *objectIdToWrite,
 											   bool replaceEmptyTimestamps);
+
+/*
+ * Rejects an embedded null in a namespace when validation is enabled.
+ * length is the BSON string length in bytes; a null anywhere within those
+ * bytes is illegal, including when additional bytes follow it.
+ */
+void
+ValidateNamespaceStringForEmbeddedNull(const char *value, uint32_t length)
+{
+	if (!EnableNullCollectionValidation || length == 0)
+	{
+		return;
+	}
+
+	if (memchr(value, '\0', length) != NULL)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
+						errmsg("namespaces cannot have embedded null characters")));
+	}
+}
+
 
 /*
  * FindShardKeyValueForDocumentId queries the collection for the shard key value that
@@ -265,9 +288,10 @@ FindShardKeyValueForDocumentId(MongoCollection *collection, const bson_value_t *
 bool
 IsCommonSpecIgnoredField(const char *fieldName)
 {
-	char **pItem = (char **) bsearch(&fieldName, IgnoredCommonSpecFields,
-									 NumberOfIgnoredFields,
-									 sizeof(char *), CompareStringsCaseInsensitive);
+	const char *const *pItem = bsearch(&fieldName, IgnoredCommonSpecFields,
+									   NumberOfIgnoredFields,
+									   sizeof(IgnoredCommonSpecFields[0]),
+									   CompareStringsCaseInsensitive);
 	return (pItem != NULL);
 }
 
@@ -384,7 +408,7 @@ GetObjectIdFilterFromQueryDocument(pgbson *queryDoc, bool *queryHasNonIdFilters,
 static int
 CompareStringsCaseInsensitive(const void *a, const void *b)
 {
-	return strcasecmp(*(char **) a, *(char **) b);
+	return strcasecmp(*(const char *const *) a, *(const char *const *) b);
 }
 
 
@@ -528,6 +552,12 @@ TryGetErrorMessageAndCode(ErrorData *errorData, int *code, char **errmessage)
 /*
  * Ensures that the _id field in a write document conforms to the protocol requirements
  * Right now this ensures that the _id is not undefined or an array or a regex pattern
+ *
+ * NOTE: If this contract ever changes to allow regex _id values, the btree and RUM
+ * index pushdown logic for $regex on _id must be updated accordingly, since it
+ * currently assumes _id values are never regex types when computing index bounds.
+ * See HandleRegexBtreeIdPushdown and HandleSupportRequestForRegularObjectIdCondition
+ * in index_support.c.
  */
 void
 ValidateIdField(const bson_value_t *idValue)

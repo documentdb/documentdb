@@ -1219,6 +1219,7 @@ NOTICE:  creating collection
          Join Filter: (documents_780053.object_id = bson_get_value(collection.document, '_id'::text))
          ->  Bitmap Heap Scan on documents_780052 collection
                Recheck Cond: (shard_key_value = '780052'::bigint)
+               Filter: (document IS NOT NULL)
                ->  Bitmap Index Scan on _id_
                      Index Cond: (shard_key_value = '780052'::bigint)
          ->  Materialize
@@ -1226,7 +1227,7 @@ NOTICE:  creating collection
                      Recheck Cond: (shard_key_value OPERATOR(pg_catalog.=) '780053'::bigint)
                      ->  Bitmap Index Scan on _id_
                            Index Cond: (shard_key_value OPERATOR(pg_catalog.=) '780053'::bigint)
-(12 rows)
+(13 rows)
 
 --explain when merge is not first stage of pipeline
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sourceExplain", "pipeline": [{ "$match" : {"_id" :1}}, {"$merge" : { "into": "explainTarget", "whenMatched" : "replace" }} ] }');
@@ -1236,9 +1237,10 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "agg
    ->  Nested Loop Left Join
          ->  Index Scan using _id_ on documents_780052 collection
                Index Cond: ((shard_key_value = '780052'::bigint) AND (object_id = '{ "" : { "$numberInt" : "1" } }'::bson))
+               Filter: (document IS NOT NULL)
          ->  Index Scan using _id_ on documents_780053
                Index Cond: ((shard_key_value OPERATOR(pg_catalog.=) '780053'::bigint) AND (object_id = bson_get_value(collection.document, '_id'::text)))
-(6 rows)
+(7 rows)
 
 -- Let's look at explain plan for sharded collection
 SELECT documentdb_api.shard_collection('db', 'sourceExplain', '{ "a": "hashed" }', false);
@@ -1254,12 +1256,13 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "agg
    ->  Nested Loop Left Join
          Join Filter: (documents_780053.object_id = bson_get_value(collection.document, '_id'::text))
          ->  Seq Scan on documents_780052 collection
+               Filter: (document IS NOT NULL)
          ->  Materialize
                ->  Bitmap Heap Scan on documents_780053
                      Recheck Cond: (shard_key_value OPERATOR(pg_catalog.=) '780053'::bigint)
                      ->  Bitmap Index Scan on _id_
                            Index Cond: (shard_key_value OPERATOR(pg_catalog.=) '780053'::bigint)
-(9 rows)
+(10 rows)
 
 -- Let's look at explain plan for when on field is indexed
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "sourceExplain", "indexes": [{"key": {"a": 1}, "name": "index_1", "unique" : true}]}', true);
@@ -1282,12 +1285,13 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "agg
    ->  Nested Loop Left Join
          Join Filter: bson_dollar_merge_join(documents_780053.document, bson_dollar_extract_merge_filter(collection.document, 'a'::text), 'a'::text)
          ->  Seq Scan on documents_780052 collection
+               Filter: (document IS NOT NULL)
          ->  Materialize
                ->  Bitmap Heap Scan on documents_780053
                      Recheck Cond: (shard_key_value OPERATOR(pg_catalog.=) '780053'::bigint)
                      ->  Bitmap Index Scan on _id_
                            Index Cond: (shard_key_value OPERATOR(pg_catalog.=) '780053'::bigint)
-(9 rows)
+(10 rows)
 
 -- source and target are same
 SELECT documentdb_api.create_collection('db', 'AsSourceAsTarget');
@@ -1808,11 +1812,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson
          ->  Index Scan using _id_ on documentdb_data.documents_780078 collection
                Output: collection.document, collection.ctid
                Index Cond: (collection.shard_key_value = '780078'::bigint)
+               Filter: (collection.document IS NOT NULL)
          ->  Index Scan using a_1 on documentdb_data.documents_780079
                Output: documents_780079.ctid, documents_780079.document
                Index Cond: (documents_780079.document @= bson_dollar_extract_merge_filter(collection.document, 'a'::text))
                Filter: ((documents_780079.shard_key_value OPERATOR(pg_catalog.=) '780079'::bigint) AND bson_dollar_merge_join(documents_780079.document, bson_dollar_extract_merge_filter(collection.document, 'a'::text), 'a'::text))
-(10 rows)
+(11 rows)
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mrgedb', '{ "createIndexes": "merge_idx_dest", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1", "enableOrderedIndex": true, "unique": true } ]}', TRUE);
                                                                                                    create_indexes_non_concurrently                                                                                                    
@@ -1830,9 +1835,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson
          ->  Index Scan using _id_ on documentdb_data.documents_780078 collection
                Output: collection.document, collection.ctid
                Index Cond: (collection.shard_key_value = '780078'::bigint)
+               Filter: (collection.document IS NOT NULL)
          ->  Index Scan using a_b_1 on documentdb_data.documents_780079
                Output: documents_780079.ctid, documents_780079.document
                Index Cond: ((documents_780079.document @= bson_dollar_extract_merge_filter(collection.document, 'a'::text)) AND (documents_780079.document @= bson_dollar_extract_merge_filter(collection.document, 'b'::text)))
                Filter: ((documents_780079.shard_key_value OPERATOR(pg_catalog.=) '780079'::bigint) AND bson_dollar_merge_join(documents_780079.document, bson_dollar_extract_merge_filter(collection.document, 'a'::text), 'a'::text) AND bson_dollar_merge_join(documents_780079.document, bson_dollar_extract_merge_filter(collection.document, 'b'::text), 'b'::text))
-(10 rows)
+(11 rows)
 

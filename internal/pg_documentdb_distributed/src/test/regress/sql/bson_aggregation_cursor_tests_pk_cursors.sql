@@ -3,8 +3,6 @@ SET documentdb.next_collection_id TO 400;
 SET documentdb.next_collection_index_id TO 400;
 SET citus.next_shard_id TO 40000;
 
-set documentdb.enablePrimaryKeyCursorScan to on;
-set documentdb.enableCursorPlanBeforeRestrictionPathUpdate to off;
 
 -- insert 10 documents - but insert the _id as reverse order of insertion order (so that TID and insert order do not match)
 DO $$
@@ -177,7 +175,6 @@ BEGIN;
 set local enable_seqscan to on;
 set local enable_indexscan to off;
 set local enable_bitmapscan to off;
-set local documentdb.enablePrimaryKeyCursorScan to on;
 set local citus.max_adaptive_executor_pool_size to 1;
 EXECUTE drain_find_query('{ "find": "aggregation_cursor_pk", "projection": { "_id": 1 }, "batchSize": 2 }', '{ "getMore": { "$numberLong": "534" }, "collection": "aggregation_cursor_pk", "batchSize": 2 }');
 
@@ -186,7 +183,6 @@ EXECUTE drain_find_query('{ "find": "aggregation_cursor_pk", "projection": { "_i
 ROLLBACK;
 
 BEGIN;
-set local documentdb.enablePrimaryKeyCursorScan to on;
 set local citus.max_adaptive_executor_pool_size to 1;
 EXECUTE drain_find_query('{ "find": "aggregation_cursor_pk", "projection": { "_id": 1 }, "batchSize": 2 }', '{ "getMore": { "$numberLong": "534" }, "collection": "aggregation_cursor_pk", "batchSize": 2 }');
 
@@ -231,7 +227,6 @@ set citus.propagate_set_commands to 'local';
 set local citus.max_adaptive_executor_pool_size to 1;
 set local citus.enable_local_execution to off;
 set local citus.explain_analyze_sort_method to taskId;
-set local documentdb.enablePrimaryKeyCursorScan to on;
 
 -- shard key is _id so range queries should still do bitmap heap scan on the RUM index since we don't have a shard_key filter.
 DROP TABLE firstPageResponse;
@@ -288,7 +283,6 @@ set citus.propagate_set_commands to 'local';
 set local citus.max_adaptive_executor_pool_size to 1;
 set local citus.enable_local_execution to off;
 set local citus.explain_analyze_sort_method to taskId;
-set local documentdb.enablePrimaryKeyCursorScan to on;
 
 -- range queries on _id with shard_key equality should use pk index scan
 DROP TABLE firstPageResponse;
@@ -380,55 +374,9 @@ SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.id
 SELECT * FROM firstPageResponse;
 SELECT continuation AS r1_continuation FROM firstPageResponse \gset
 
--- enablePrimaryKeyCursorScan = off, enableCursorPlanBeforeRestrictionPathUpdate = off
--- The explain below should show bitmap index scan
-set documentdb.enablePrimaryKeyCursorScan to off;
-set documentdb.enableCursorPlanBeforeRestrictionPathUpdate to off;
-
-SELECT pm_temp_in.make_in_find(10, 5) AS in_spec \gset
-EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('pkcursordb', :'in_spec');
-
-EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('pkcursordb',
-    '{ "getMore": { "$numberLong": "4294967294" }, "collection": "aggregation_cursor_pk_in", "batchSize": 5 }', :'r1_continuation');
-
--- enablePrimaryKeyCursorScan = on, enableCursorPlanBeforeRestrictionPathUpdate = off
--- The explain below should show primary key scan, but $in is not pushed to the index so it will still filter a lot of rows
-set documentdb.enablePrimaryKeyCursorScan to on;
-
-SELECT pm_temp_in.make_in_find(10, 5) AS in_spec \gset
-
-EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('pkcursordb', :'in_spec');
-
--- On PG16 the SAOP (object_id = ANY) stays in Filter; on PG17 it moves to Index Cond.
--- Use check_explain_index_and_filter to verify version-invariant properties.
-DO $check$
-DECLARE
-    lines text[];
-    line text;
-    cont text;
-    result boolean;
-BEGIN
-    SELECT continuation::text INTO cont FROM firstPageResponse;
-    FOR line IN EXECUTE format(
-        'EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore(%L, %L, %L::bson)',
-        'pkcursordb',
-        '{ "getMore": { "$numberLong": "4294967294" }, "collection": "aggregation_cursor_pk_in", "batchSize": 5 }',
-        cont
-    ) LOOP
-        lines := array_append(lines, line);
-    END LOOP;
-    SELECT check_explain_index_and_filter(
-        lines,
-        ARRAY['collection.shard_key_value = ''403''::bigint', 'ROW(collection.shard_key_value, collection.object_id) >'],
-        ARRAY['documentdb_api_internal.cursor_state(collection.document, ''{ "']
-    ) INTO result;
-    RAISE NOTICE 'check_explain_index_and_filter: %', result;
-END;
-$check$;
-
--- enablePrimaryKeyCursorScan = on, enableCursorPlanBeforeRestrictionPathUpdate = on
+-- enablePrimaryKeyCursorScan = on
 -- The explain below should show primary key scan and the $in should be pushed down to the index
-set documentdb.enableCursorPlanBeforeRestrictionPathUpdate to on;
+set documentdb.enablePrimaryKeyCursorScan to on;
 
 SELECT pm_temp_in.make_in_find(10, 5) AS in_spec \gset
 
@@ -442,4 +390,45 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('p
     '{ "getMore": { "$numberLong": "4294967294" }, "collection": "aggregation_cursor_pk_in", "batchSize": 5 }', :'r1_continuation');
 
 
+-- test buffers used in btree index scans with large $in filter and primary key scan
+SELECT COUNT(documentdb_api.insert_one('pkcursordb', 'saop_pkpushdown', FORMAT('{ "_id": "prefix:%s_suffix", "a": %s }', i, i)::bson)) FROM generate_series(1, 10000) i;
+
+-- reindex and vacuum analyze the table
+SELECT collection_id AS pkpushdown_coll FROM documentdb_api_catalog.collections WHERE database_name = 'pkcursordb' AND collection_name = 'saop_pkpushdown' \gset
+
+REINDEX TABLE documentdb_data.documents_:pkpushdown_coll;
+VACUUM (ANALYZE ON) documentdb_data.documents_:pkpushdown_coll;
+
+-- now run a query for the first page where every periodic value is in the $in.
+SELECT bson_build_document('find', 'saop_pkpushdown'::text, 'filter', bson_build_document('_id',
+    bson_build_document('$in', (SELECT ARRAY_AGG(FORMAT('prefix:%s_suffix', i * 10)) FROM generate_series(1, 1000) i)::text[])), 'batchSize', 250) AS find_spec \gset
+
+SELECT continuation FROM documentdb_api.find_cursor_first_page('pkcursordb', :'find_spec', cursorId => 534) \gset
+
+-- now run the getmore explain once without buffers (to seed the buffers into shared memory)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim(
+  'EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF, VERBOSE ON)' ||
+  $cmd$ SELECT document FROM bson_aggregation_getmore('pkcursordb', '{ "getMore": { "$numberLong": "534" }, "collection": "saop_pkpushdown" }', '$cmd$ || :'continuation' || $cmd$')$cmd$);
+
+-- rerun with Buffers on to check resource usage
+-- extract the max shared hit from the getMore explain output
+SELECT MAX((regexp_match(line, 'shared hit=(\d+)'))[1]::int) AS getmore_buffers
+FROM documentdb_distributed_test_helpers.run_explain_and_trim(
+  'EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS ON, TIMING OFF, SUMMARY OFF, VERBOSE ON)' ||
+  $cmd$ SELECT document FROM bson_aggregation_getmore('pkcursordb', '{ "getMore": { "$numberLong": "534" }, "collection": "saop_pkpushdown" }', '$cmd$ || :'continuation' || $cmd$')$cmd$) AS line \gset
+
 set documentdb.enableCursorsOnAggregationQueryRewrite to off;
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim(
+  'EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF, VERBOSE ON)' ||
+  $cmd$ SELECT document FROM bson_aggregation_find('pkcursordb', '$cmd$ || :'find_spec' || $cmd$')$cmd$);
+
+-- extract the max shared hit from the find explain output
+SELECT MAX((regexp_match(line, 'shared hit=(\d+)'))[1]::int) AS find_buffers
+FROM documentdb_distributed_test_helpers.run_explain_and_trim(
+  'EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS ON, TIMING OFF, SUMMARY OFF, VERBOSE ON)' ||
+  $cmd$ SELECT document FROM bson_aggregation_find('pkcursordb', '$cmd$ || :'find_spec' || $cmd$')$cmd$) AS line \gset
+
+-- validate that getMore uses no more buffers than the equivalent find query
+SELECT :getmore_buffers <= :find_buffers AS getmore_buffers_leq_find_buffers;

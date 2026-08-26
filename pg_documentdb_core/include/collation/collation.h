@@ -17,11 +17,18 @@
  * and each of them are set to the longest possible character values*/
 #define MAX_ICU_COLLATION_LENGTH 110
 
+/* Stack scratch capacity for a sort key, and for the UTF-16 conversion that feeds it;
+ * larger inputs fall back to a palloc'd buffer. */
+#define COLLATION_SORT_KEY_SCRATCH_BYTES 512
+
 extern bool EnableCollation;
 
 void ParseAndGetCollationString(const bson_value_t *collationValue,
 								const char *collationString);
-char * GetCollationSortKey(const char *collationString, char *key, int keyLength);
+int32_t GetCollationSortKey(const char *collationString, const char *string,
+							int32_t stringLength, uint8_t *scratch, int32_t
+							scratchCapacity,
+							uint8_t **sortKey);
 
 int StringCompareWithCollation(const char *left, uint32_t leftLength,
 							   const char *right, uint32_t rightLength, const
@@ -41,11 +48,15 @@ IsCollationApplicable(const char *collationString)
 }
 
 
+/*
+ * True for bson types a collation can affect. Must stay in sync with the types
+ * CompareBsonValue collates; documents and arrays may contain such values.
+ */
 static inline bool
 IsBsonTypeCollationAware(bson_type_t type)
 {
 	return type == BSON_TYPE_UTF8 || type == BSON_TYPE_DOCUMENT ||
-		   type == BSON_TYPE_ARRAY;
+		   type == BSON_TYPE_ARRAY || type == BSON_TYPE_SYMBOL;
 }
 
 

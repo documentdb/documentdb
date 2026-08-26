@@ -12,7 +12,8 @@ IMAGE_NAME="documentdb-gateway-test"
 INIT_DATA_DIR="$SCRIPT_DIR/test-init-data"
 DOCKERFILE_PATH="$PROJECT_ROOT/packaging/gateway/docker/Dockerfile_documentdb_local"
 DOCUMENTDB_PORT="10260"
-PASSWORD="TestPassword123"
+# Runtime-generated so no credential literal lives in source (CredScan).
+PASSWORD="$(openssl rand -hex 12)Aa1!"
 
 echo "=== DocumentDB Init-Data-Path Feature Test ==="
 echo "Project Root: $PROJECT_ROOT"
@@ -46,7 +47,12 @@ build_image() {
     fi
     
     echo "Building image $IMAGE_NAME from $DOCKERFILE_PATH..."
-    docker build -f "$DOCKERFILE_PATH" -t "$IMAGE_NAME" "$PROJECT_ROOT" --no-cache
+    local ext_deb
+    ext_deb="$(cd "$PROJECT_ROOT" && find "packaging" -maxdepth 1 -name '*-postgresql-*-documentdb_*.deb' ! -name '*dbgsym*' | head -1 || true)"
+    [ -n "$ext_deb" ] || { echo "Error: extension DEB not found in packaging/"; exit 1; }
+    # Dockerfile_documentdb_local builds the gateway from source; no gateway .deb is needed.
+    docker build -f "$DOCKERFILE_PATH" -t "$IMAGE_NAME" "$PROJECT_ROOT" --no-cache \
+        --build-arg DEB_PACKAGE_REL_PATH="$ext_deb"
     echo "✅ Image built successfully"
     echo
 }

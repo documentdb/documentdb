@@ -7,6 +7,7 @@
  */
 
 use std::sync::LazyLock;
+
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug)]

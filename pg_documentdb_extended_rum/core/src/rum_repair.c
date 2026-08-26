@@ -33,9 +33,10 @@
 #include "pg_documentdb_rum.h"
 
 
-PG_FUNCTION_INFO_V1(documentdb_rum_prune_empty_entries_on_index);
-PG_FUNCTION_INFO_V1(documentdb_rum_repair_incomplete_split_on_index);
-PG_FUNCTION_INFO_V1(documentdb_rum_repair_revive_all_pages_and_tuples);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_prune_empty_entries_on_index);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_repair_incomplete_split_on_index);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_repair_revive_all_pages_and_tuples);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_test_set_incomplete_split_on_page);
 
 
 static void rumRepairLostPathOnIndex(Relation index, bool trackDataPages, bool
@@ -48,6 +49,44 @@ static void CheckTreeAtLevel(RumState *rumState, BlockNumber blockNumber, int le
 static void RumReviveAllPagesAndTuplesOnIndex(Relation rel, bool dryrunMode);
 
 
+RMGR_PG_FUNCTION_DEF(documentdb_rum_test_set_incomplete_split_on_page)
+{
+	Oid indexRelId = PG_GETARG_OID(0);
+	BlockNumber blockNumber = PG_GETARG_UINT32(1);
+	bool setIncompleteSplit = PG_GETARG_BOOL(2);
+	Relation index = index_open(indexRelId, RowExclusiveLock);
+	Buffer buffer;
+	GenericXLogState *state;
+	Page page;
+
+	if (blockNumber >= RelationGetNumberOfBlocks(index))
+	{
+		index_close(index, RowExclusiveLock);
+		ereport(ERROR, (errmsg("block number %u is outside the index", blockNumber)));
+	}
+
+	buffer = ReadBuffer(index, blockNumber);
+	LockBuffer(buffer, RUM_EXCLUSIVE);
+	state = GenericXLogStart(index);
+	page = GenericXLogRegisterBuffer(state, buffer, 0);
+
+	if (setIncompleteSplit)
+	{
+		RumPageGetOpaque(page)->flags |= RUM_INCOMPLETE_SPLIT;
+	}
+	else
+	{
+		RumPageGetOpaque(page)->flags &= ~RUM_INCOMPLETE_SPLIT;
+	}
+
+	GenericXLogFinish(state);
+	UnlockReleaseBuffer(buffer);
+	index_close(index, RowExclusiveLock);
+
+	PG_RETURN_VOID();
+}
+
+
 /*
  * Given an index specified by the indexRelId, crawls all the leaf
  * entries of the index and prunes any empty entries on the index.
@@ -58,8 +97,7 @@ static void RumReviveAllPagesAndTuplesOnIndex(Relation rel, bool dryrunMode);
  * Note that it does not do the bulk deletion of pruning dead rows.
  * That is still delegated to vacuum.
  */
-PGDLLEXPORT Datum
-documentdb_rum_prune_empty_entries_on_index(PG_FUNCTION_ARGS)
+RMGR_PG_FUNCTION_DEF(documentdb_rum_prune_empty_entries_on_index)
 {
 	Relation indrel;
 	Oid indexRelId = PG_GETARG_OID(0);
@@ -83,8 +121,7 @@ documentdb_rum_prune_empty_entries_on_index(PG_FUNCTION_ARGS)
  * Revive any pages based on the LP_DEAD hints being set and revives
  * all the pages and flushes to wal.
  */
-PGDLLEXPORT Datum
-documentdb_rum_repair_revive_all_pages_and_tuples(PG_FUNCTION_ARGS)
+RMGR_PG_FUNCTION_DEF(documentdb_rum_repair_revive_all_pages_and_tuples)
 {
 	Relation indrel;
 	Oid indexRelId = PG_GETARG_OID(0);
@@ -116,8 +153,7 @@ documentdb_rum_repair_revive_all_pages_and_tuples(PG_FUNCTION_ARGS)
  * that subsequent inserts will repair the tree and leave it in a
  * consistent state.
  */
-PGDLLEXPORT Datum
-documentdb_rum_repair_incomplete_split_on_index(PG_FUNCTION_ARGS)
+RMGR_PG_FUNCTION_DEF(documentdb_rum_repair_incomplete_split_on_index)
 {
 	Relation indrel;
 	Oid indexRelId = PG_GETARG_OID(0);

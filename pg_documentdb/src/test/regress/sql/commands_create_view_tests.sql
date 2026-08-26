@@ -111,3 +111,19 @@ SELECT documentdb_api.create_collection_view('db', '{ "create": "create_view_cyc
 
 -- create with long name
 SELECT documentdb_api.create_collection_view('db', FORMAT('{ "create": "create_view_cycle_4_%s", "viewOn": "create_view_cycle_1" }', repeat('1bc', 80))::documentdb_core.bson);
+
+
+-- Crash fix: Natural sort on collection view
+SELECT documentdb_api.insert_one('db', 'targetCollection', '{ "_id" : 1, "a" : 2, "b" : 3 }', NULL);
+SELECT documentdb_api.insert_one('db', 'targetCollection', '{ "_id" : 2, "a" : 1, "b" : 2 }', NULL);
+SELECT documentdb_api.insert_one('db', 'targetCollection', '{ "_id" : 3, "a" : 3, "b" : 1 }', NULL);
+SELECT documentdb_api.create_collection_view('db', '{ "create": "targetViewToSort", "viewOn": "targetCollection", "pipeline": [ { "$sort": { "_id": 1 } } ] }');
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('db', '{ "find": "targetViewToSort", "projection": {}, "sort": { "$natural": 1 }}');
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('db', '{ "find": "targetViewToSort", "projection": {}, "sort": { "$natural": -1 }}');
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "targetViewToSort", "pipeline": [ { "$sort": { "$natural": 1 } } ] }');
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "targetViewToSort", "pipeline": [ { "$sort": { "$natural": -1 } } ] }');
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "targetViewToSort", "pipeline": [ { "$match": { "a": { "$gt": 1 } } }, { "$sort": { "$natural": 1 } } ] }');
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "targetViewToSort", "pipeline": [ { "$match": { "a": { "$gt": 1 } } }, { "$sort": { "$natural": -1 } } ] }');
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "targetViewToSort", "pipeline": [ { "$project": { "sum": { "$add": ["$a", "$b"] } } }, { "$sort": { "$natural": 1 } } ] }');
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "targetViewToSort", "pipeline": [ { "$project": { "sum": { "$add": ["$a", "$b"] } } }, { "$sort": { "$natural": -1 } } ] }');
+SELECT drop_collection('db','targetCollection');

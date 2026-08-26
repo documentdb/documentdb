@@ -1,12 +1,14 @@
 -- Core correctness tests for composite group-by.
 -- Included by wrapper test files that set GUC combinations for
--- enableGroupByCompoundIdIndexPushdown and enableGroupSubqueryElimination.
+-- enableGroupByCompoundIdIndexPushdown.
 
 -- if documentdb_extended_rum exists, set alternate index handler
 SELECT pg_catalog.set_config('documentdb.alternate_index_handler_name', 'extended_rum', false), extname FROM pg_extension WHERE extname = 'documentdb_extended_rum';
 
 set documentdb.defaultUseCompositeOpClass to on;
 set documentdb_core.enableWriteDocumentsInRepath to on;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- Clean up from any prior run
 SELECT documentdb_api.drop_collection('group_corr_db', 'group_push') IS NOT NULL;

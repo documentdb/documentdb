@@ -5,7 +5,7 @@ print("Initializing products collection...");
 use('sampledb');
 
 // Create products collection and insert sample products
-db.products.insertMany([
+const sampleProducts = [
     {
         _id: "prod1",
         name: "Wireless Bluetooth Headphones",
@@ -133,15 +133,27 @@ db.products.insertMany([
         createdAt: new Date("2024-05-01T09:30:00Z"),
         updatedAt: new Date("2024-06-20T15:15:00Z")
     }
-]);
+];
 
-print("Created " + db.products.countDocuments() + " products in the products collection");
+// Idempotent seed: insert each document only if its _id is not already present, so re-running
+// this script against a persistent volume is a no-op instead of crashing with a duplicate-key
+// error (#612). A partial first run is also repaired (only the missing documents are inserted).
+sampleProducts.forEach(function (doc) {
+    if (db.products.countDocuments({ _id: doc._id }) === 0) {
+        db.products.insertOne(doc);
+    }
+});
 
 // Create indexes for better query performance
-db.products.createIndex({ "category": 1 });
-db.products.createIndex({ "brand": 1 });
-db.products.createIndex({ "price": 1 });
-db.products.createIndex({ "tags": 1 });
-db.products.createIndex({ "sku": 1 }, { unique: true });
+db.runCommand({
+    createIndexes: "products",
+    indexes: [
+        { key: { "category": 1 }, name: "category_1" },
+        { key: { "brand": 1 }, name: "brand_1" },
+        { key: { "price": 1 }, name: "price_1" },
+        { key: { "tags": 1 }, name: "tags_1" },
+        { key: { "sku": 1 }, name: "sku_1", unique: true }
+    ]
+});
 
 print("Created indexes on products collection");

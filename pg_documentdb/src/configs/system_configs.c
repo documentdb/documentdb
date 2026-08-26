@@ -45,6 +45,19 @@ int ShardingMaxChunks = DEFAULT_SHARDING_MAX_CHUNKS;
 #define DEFAULT_QUERY_PLAN_CACHE_SIZE_LIMIT 100
 int QueryPlanCacheSizeLimit = DEFAULT_QUERY_PLAN_CACHE_SIZE_LIMIT;
 
+/* Cap on the number of ordered scans merged for an $in prefix. */
+#define DEFAULT_MAX_MERGE_SORT_IN_VALUES 200
+
+/*
+ * Hard upper bound for the max_merge_sort_in_values GUC. The cap governs how many
+ * ordered index scans are fanned out into a single MergeAppend, which costs
+ * O(N) planner and executor memory/CPU, so the configurable value is bounded
+ * well below INT_MAX to keep a misconfiguration from building a pathologically
+ * large plan.
+ */
+#define MAX_MERGE_SORT_IN_VALUES_LIMIT SHRT_MAX
+int MaxMergeSortInValues = DEFAULT_MAX_MERGE_SORT_IN_VALUES;
+
 /* TODO: Raise this back to 100,000 once we can optimize sub-transaction */
 /* handling with multi-node clusters. */
 #define DEFAULT_MAX_WRITE_BATCH_SIZE 25000
@@ -56,6 +69,22 @@ int BatchWriteSubTransactionCount = DEFAULT_BATCH_WRITE_SUB_TRANSACTION_COUNT;
 
 #define DEFAULT_BATCH_UPDATE_LOCK_TIMEOUT_MS 20
 int BatchUpdateLockTimeoutMs = DEFAULT_BATCH_UPDATE_LOCK_TIMEOUT_MS;
+
+/*
+ * Default per-call row estimate the distinct-unwind planner support function
+ * uses for a document whose unwound path holds an array. Exposed as a GUC so
+ * the expansion factor can be tuned without a code change.
+ */
+#define DEFAULT_DISTINCT_UNWIND_DEFAULT_ROWS 10
+int DistinctUnwindDefaultRows = DEFAULT_DISTINCT_UNWIND_DEFAULT_ROWS;
+
+/*
+ * Default maxAwaitTimeMS for tailable cursors on getMore when the client
+ * does not specify a value. The wire-protocol default is 1000 ms.
+ * Exposed as a GUC so that it can be tuned if needed.
+ */
+#define DEFAULT_TAILABLE_CURSOR_MAX_AWAIT_TIME_MS 1000
+int DefaultTailableCursorMaxAwaitTimeMs = DEFAULT_TAILABLE_CURSOR_MAX_AWAIT_TIME_MS;
 
 /*
  * GUC for "Count Policy" change Threshold for collStats DB command
@@ -138,6 +167,9 @@ bool EnableGeonearForceIndexPushdown = DEFAULT_ENABLE_GEONEAR_FORCE_INDEX_PUSHDO
 #define DEFAULT_ENABLE_EXTENDED_EXPLAIN_PLANS false
 bool EnableExtendedExplainPlans = DEFAULT_ENABLE_EXTENDED_EXPLAIN_PLANS;
 
+#define DEFAULT_ENABLE_DEFAULT_EXTENDED_EXPLAIN true
+bool EnableDefaultExtendedExplain = DEFAULT_ENABLE_DEFAULT_EXTENDED_EXPLAIN;
+
 /* Note that this is explicitly left disabled
  * This is primarily because the operator that sets default_transaction_readonly
  * would want to avoid new writes (perhaps due to high disk usage) and a background
@@ -157,23 +189,27 @@ int MaxAllowedCursorIntermediateFileSizeMB =
 #define DEFAULT_MAX_CURSOR_FILE_COUNT 5000
 int MaxCursorFileCount = DEFAULT_MAX_CURSOR_FILE_COUNT;
 
-/* Starting pg18 use documentdb_extended_rum for the rum library */
-#if PG_VERSION_NUM >= 180000
-#define DEFAULT_RUM_LIBRARY_LOAD_OPTION RumLibraryLoadOption_RequireDocumentDBRum
-#else
-#define DEFAULT_RUM_LIBRARY_LOAD_OPTION RumLibraryLoadOption_None
-#endif
-
 #define DEFAULT_ALTERNATE_INDEX_HANDLER ""
 char *AlternateIndexHandler = DEFAULT_ALTERNATE_INDEX_HANDLER;
 
 #define DEFAULT_MAX_NON_ORDERED_TERM_SCAN_THRESHOLD 500
 int MaxNonOrderedTermScanThreshold = DEFAULT_MAX_NON_ORDERED_TERM_SCAN_THRESHOLD;
 
+/* use documentdb_extended_rum for the rum library by default */
+#define DEFAULT_RUM_LIBRARY_LOAD_OPTION RumLibraryLoadOption_RequireDocumentDBRum
 RumLibraryLoadOptions DocumentDBRumLibraryLoadOption = DEFAULT_RUM_LIBRARY_LOAD_OPTION;
 
 #define DEFAULT_ENABLE_STATEMENT_TIMEOUT true
 bool EnableBackendStatementTimeout = DEFAULT_ENABLE_STATEMENT_TIMEOUT;
+
+#define DEFAULT_ENABLE_CURSORS_ON_AGGREGATION_QUERY_REWRITE false
+bool EnableCursorsOnAggregationQueryRewrite =
+	DEFAULT_ENABLE_CURSORS_ON_AGGREGATION_QUERY_REWRITE;
+
+/* CodeSync with bson_dollar_selectivity.c */
+#define ARRAY_STATISTICS_MAX_SAMPLE_COUNT 128
+#define DEFAULT_ARRAY_STATISTICS_MAX_SAMPLE_COUNT 10
+int ArrayStatisticsMaxSampleCount = DEFAULT_ARRAY_STATISTICS_MAX_SAMPLE_COUNT;
 
 static struct config_enum_entry rum_load_options[4] = {
 	{ "none", RumLibraryLoadOption_None, false },
@@ -228,6 +264,22 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 		0,
 		NULL, NULL, NULL);
 
+	DefineCustomIntVariable(
+		psprintf("%s.max_merge_sort_in_values", newGucPrefix),
+		gettext_noop(
+			"The maximum number of ordered index scans (product of $in array lengths) that may be merged for an $in-prefixed sort. Above this the optimization is skipped."),
+		NULL, &MaxMergeSortInValues,
+		DEFAULT_MAX_MERGE_SORT_IN_VALUES, 1, MAX_MERGE_SORT_IN_VALUES_LIMIT,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.distinct_unwind_default_rows", newGucPrefix),
+		gettext_noop(
+			"The per-call row estimate the distinct-unwind planner support function uses for a document whose unwound path holds an array."),
+		NULL, &DistinctUnwindDefaultRows,
+		DEFAULT_DISTINCT_UNWIND_DEFAULT_ROWS, 1, INT_MAX,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
 	DefineCustomBoolVariable(
 		psprintf("%s.forceUseIndexIfAvailable", prefix),
 		gettext_noop(
@@ -259,6 +311,14 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 			"The lock timeout in milliseconds for each batch of updates within bulk procedural write path."),
 		NULL, &BatchUpdateLockTimeoutMs,
 		DEFAULT_BATCH_UPDATE_LOCK_TIMEOUT_MS, 0, INT_MAX,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.defaultTailableCursorMaxAwaitTimeMs", newGucPrefix),
+		gettext_noop(
+			"Default maxAwaitTimeMS hint (in milliseconds) returned for tailable cursor getMore responses when the client did not supply a value. Matches the documented wire-protocol default of 1000 ms."),
+		NULL, &DefaultTailableCursorMaxAwaitTimeMs,
+		DEFAULT_TAILABLE_CURSOR_MAX_AWAIT_TIME_MS, 0, INT_MAX,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -442,6 +502,16 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 		NULL, &EnableExtendedExplainPlans, DEFAULT_ENABLE_EXTENDED_EXPLAIN_PLANS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_default_extended_explain", newGucPrefix),
+		gettext_noop(
+			"Enables extended explain plans by default when running EXPLAIN. "
+			"When enabled, the extended explain hook turns on extended explain "
+			"plans for the duration of the explain so the additional annotations "
+			"are always produced."),
+		NULL, &EnableDefaultExtendedExplain, DEFAULT_ENABLE_DEFAULT_EXTENDED_EXPLAIN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
 	DefineCustomIntVariable(
 		psprintf("%s.defaultCursorExpiryTimeLimitSeconds", newGucPrefix),
 		gettext_noop(
@@ -494,4 +564,23 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 		NULL, &MaxNonOrderedTermScanThreshold,
 		DEFAULT_MAX_NON_ORDERED_TERM_SCAN_THRESHOLD,
 		-1, INT_MAX, PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.arrayStatisticsMaxSampleCount", newGucPrefix),
+		gettext_noop(
+			"The maximum number of samples to collect for array statistics."),
+		NULL, &ArrayStatisticsMaxSampleCount,
+		DEFAULT_ARRAY_STATISTICS_MAX_SAMPLE_COUNT,
+		1, ARRAY_STATISTICS_MAX_SAMPLE_COUNT, PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableCursorsOnAggregationQueryRewrite", newGucPrefix),
+		gettext_noop(
+			"Whether or not to add the cursors on aggregation style queries."),
+		NULL,
+		&EnableCursorsOnAggregationQueryRewrite,
+		DEFAULT_ENABLE_CURSORS_ON_AGGREGATION_QUERY_REWRITE,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
 }

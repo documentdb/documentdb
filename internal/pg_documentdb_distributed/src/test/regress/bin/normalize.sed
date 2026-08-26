@@ -13,6 +13,7 @@ s/^\s+/ /g
 s/\s+$//g
 s/Memory Usage: [0-9]+kB/Memory Usage: XXXkB/g
 s/Memory: [0-9]+kB/Memory: XXXkB/g
+s/Heap Blocks: exact=[0-9]+/Heap Blocks: exact=XXX/g
 s/process [0-9]+ still waiting for ShareLock on transaction [0-9]+ after [0-9\.]+ ms/process XYZ still waiting on ShareLock on transaction T1 after D1 ms/g
 s/process [0-9]+ acquired ShareLock on transaction [0-9]+ after [0-9\.]+ ms/process XYZ acquired ShareLock on transaction T1 after D1 ms/g
 s/Distributed Subplan \d+/Distributed Subplan DDD/g
@@ -22,6 +23,9 @@ s/Type oid not supported \d+/Type oid not supported ddd/g
 # Replace the values of the $$NOW time system variable with a constant
 s/\"now\" : \{ \"\$date\" : \{ \"\$numberLong\" : \"[0-9]*\" \} \}/\"now\" : NOW_SYS_VARIABLE/g
 s/\"sn\" : \{ \"\$date\" : \{ \"\$numberLong\" : \"[0-9]*\" \} \}/\"sn\" : NOW_SYS_VARIABLE/g
+# Same as above but for BSON embedded in composite/record literals, where quotes are doubled
+s/""now"" : \{ ""\$date"" : \{ ""\$numberLong"" : ""[0-9]*"" \} \}/""now"" : NOW_SYS_VARIABLE/g
+s/""sn"" : \{ ""\$date"" : \{ ""\$numberLong"" : ""[0-9]*"" \} \}/""sn"" : NOW_SYS_VARIABLE/g
 s/documentdb_api_catalog.shard_key_and_document/shard_key_and_document/g
 s/documentdb_api_internal.generate_unique_shard_document/generate_unique_shard_document/g
 s/documentdb_core.bson/bson/g

@@ -730,10 +730,10 @@ SELECT documentdb_api.insert_one('db', 'wildcard_index_truncation_tests_single_f
 SELECT documentdb_api.insert_one('db', 'wildcard_index_truncation_tests_single_field', '{"_id": 3, "a" : { "b": { "c": [ 2345, 1234, 1234, 1234, 1234 ] } } }');
 
 /* making sure the array is being truncated */
-SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documentdb_distributed_test_helpers.gin_bson_get_single_path_generated_terms('{"_id": 3, "a.b.c": [ 2345, 1234, 1234, 1234, 1234 ] }', '', true, true, false, 60) term;
+SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documentdb_distributed_test_helpers.gin_bson_get_single_path_generated_terms('{"_id": 3, "a": { "b": { "c": [ 2345, 1234, 1234, 1234, 1234 ] } } }', '', true, true, false, 60) term;
 
 /* making sure the wildcard index terms are being generated correctly for a truncated value */
-SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documentdb_distributed_test_helpers.gin_bson_get_wildcard_project_generated_terms('{"_id": 3, "a.b.c": [ 2345, 1234, 1234, 1234, 1234, 76, 85 ] }', '["a"]', false, true, false, 60) term;
+SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documentdb_distributed_test_helpers.gin_bson_get_wildcard_project_generated_terms('{"_id": 3, "a": { "b": { "c": [ 2345, 1234, 1234, 1234, 1234, 76, 85 ] } } }', '["a"]', false, true, false, 60) term;
 
 SELECT documentdb_api.insert_one('db', 'wildcard_index_truncation_tests_single_field', '{"_id": 4, "a": { "b": { "c": 1, "d": 2, "e": "12334141424124" } } }');
 

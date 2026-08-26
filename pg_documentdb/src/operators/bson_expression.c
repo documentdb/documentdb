@@ -510,7 +510,7 @@ ExpressionResultCreateFromElementWriter(pgbson_element_writer *writer,
  * a hash and search based on the element path.
  */
 inline static HTAB *
-CreateVariableEntryHashTable()
+CreateVariableEntryHashTable(void)
 {
 	HASHCTL hashInfo = CreateExtensionHashCTL(
 		sizeof(VariableData),
@@ -625,32 +625,15 @@ bson_expression_get(PG_FUNCTION_ARGS)
 											  &writer,
 											  state->variableContext, isNullOnEmpty);
 
-	pgbson *returnedBson = PgbsonWriterGetPgbson(&writer);
-
 	if (IsCollationApplicable(collationString))
 	{
-		/* Add the collation, if any, to the returned bson */
+		/* Append the collation directly to the writer before materializing, */
 		/* so it can be extracted by other functions that utilize it from bson_expression_get. */
 		/* For example: the comparison filter for bson_dollar_in used in $graphLookup */
-		pgbson_writer returnedWriter;
-		PgbsonWriterInit(&returnedWriter);
-
-		bson_value_t getValue = ConvertPgbsonToBsonValue(returnedBson);
-		bson_iter_t pathValueIter;
-		BsonValueInitIterator(&getValue, &pathValueIter);
-
-		while (bson_iter_next(&pathValueIter))
-		{
-			const bson_value_t *pathValue = bson_iter_value(&pathValueIter);
-			PgbsonWriterAppendValue(&returnedWriter, bson_iter_key(&pathValueIter),
-									bson_iter_key_len(&pathValueIter), pathValue);
-		}
-
-		PgbsonWriterAppendUtf8(&returnedWriter, "collation", 9,
-							   collationString);
-
-		returnedBson = PgbsonWriterGetPgbson(&returnedWriter);
+		PgbsonWriterAppendUtf8(&writer, "collation", 9, collationString);
 	}
+
+	pgbson *returnedBson = PgbsonWriterGetPgbson(&writer);
 
 
 	PG_FREE_IF_COPY(document, 0);
@@ -1611,28 +1594,19 @@ ExpressionResultSetValueFromWriter(ExpressionResult *expressionResult)
 		expressionResult->isExpressionWriter = false;
 	}
 
-	if (!expressionResult->expressionResultPrivate.variableContext.hasSingleVariable)
+	/* Some variable context tables (eg: from $let) are shared across every */
+	/* document/iteration, so skip destroying them when flagged to preserve; */
+	/* otherwise a later evaluation dereferences a freed table. */
+	ExpressionVariableContext *variableContext =
+		&expressionResult->expressionResultPrivate.variableContext;
+	bool destroyTable = !variableContext->preserveVariableTable &&
+						!variableContext->hasSingleVariable &&
+						variableContext->context.table != NULL;
+	if (destroyTable)
 	{
-		hash_destroy(
-			expressionResult->expressionResultPrivate.variableContext.context.table);
-		expressionResult->expressionResultPrivate.variableContext.context.table = NULL;
+		hash_destroy(variableContext->context.table);
+		variableContext->context.table = NULL;
 	}
-}
-
-
-/*
- * Creates a child expressionResult that is tied to the parent
- * in terms of its lifetime (nested temporary objects created).
- */
-ExpressionResult
-ExpressionResultCreateChild(ExpressionResult *parent)
-{
-	ExpressionResult childExpression = ExpressionResultCreateWithTracker(
-		parent->expressionResultPrivate.tracker);
-	childExpression.expressionResultPrivate.variableContext.parent =
-		&parent->expressionResultPrivate.variableContext;
-
-	return childExpression;
 }
 
 

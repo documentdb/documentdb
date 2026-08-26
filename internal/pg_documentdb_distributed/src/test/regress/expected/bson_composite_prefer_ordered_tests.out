@@ -51,9 +51,11 @@ SELECT COUNT(documentdb_api.insert_one('comp_db2', 'query_ordered_pref', FORMAT(
 ANALYZE documentdb_data.documents_68501;
 set enable_bitmapscan to off;
 set documentdb.forceDisableSeqScan to on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2',
-    '{ "find": "query_ordered_pref", "filter": { "a": { "$gt": 50 } }, "projection": { "_id": 1 }, "limit": 5 }');
-                                                                                                          QUERY PLAN                                                                                                          
+    '{ "find": "query_ordered_pref", "filter": { "a": { "$gt": 50 } }, "projection": { "_id": 1 }, "limit": 5 }')
+$cmd$);
+                                                                                                     run_explain_and_trim                                                                                                     
 ---------------------------------------------------------------------
  Limit (actual rows=5 loops=1)
    Output: (bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "a" : { "$gt" : { "$numberInt" : "50" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
@@ -71,9 +73,11 @@ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF
                Index Cond: (collection.document @> '{ "a" : { "$numberInt" : "50" } }'::bson)
 (14 rows)
 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2',
-    '{ "find": "query_ordered_pref", "filter": { "a": { "$gt": 50, "$lt": 900 } }, "projection": { "_id": 1 }, "limit": 5 }');
-                                                                                                                           QUERY PLAN                                                                                                                           
+    '{ "find": "query_ordered_pref", "filter": { "a": { "$gt": 50, "$lt": 900 } }, "projection": { "_id": 1 }, "limit": 5 }')
+$cmd$);
+                                                                                                                      run_explain_and_trim                                                                                                                      
 ---------------------------------------------------------------------
  Limit (actual rows=5 loops=1)
    Output: (bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "a" : { "$gt" : { "$numberInt" : "50" }, "$lt" : { "$numberInt" : "900" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
@@ -91,9 +95,11 @@ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF
                Index Cond: ((collection.document @> '{ "a" : { "$numberInt" : "50" } }'::bson) AND (collection.document @< '{ "a" : { "$numberInt" : "900" } }'::bson))
 (14 rows)
 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2',
-    '{ "find": "query_ordered_pref", "filter": { "a": { "$gt": 50 } }, "projection": { "_id": 1 }, "limit": 5 }');
-                                                                                                          QUERY PLAN                                                                                                          
+    '{ "find": "query_ordered_pref", "filter": { "a": { "$gt": 50 } }, "projection": { "_id": 1 }, "limit": 5 }')
+$cmd$);
+                                                                                                     run_explain_and_trim                                                                                                     
 ---------------------------------------------------------------------
  Limit (actual rows=5 loops=1)
    Output: (bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "a" : { "$gt" : { "$numberInt" : "50" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
@@ -111,9 +117,11 @@ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF
                Index Cond: (collection.document @> '{ "a" : { "$numberInt" : "50" } }'::bson)
 (14 rows)
 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2',
-    '{ "find": "query_ordered_pref", "filter": { "a": { "$gt": 50, "$lt": 900 } }, "projection": { "_id": 1 }, "limit": 5 }');
-                                                                                                                           QUERY PLAN                                                                                                                           
+    '{ "find": "query_ordered_pref", "filter": { "a": { "$gt": 50, "$lt": 900 } }, "projection": { "_id": 1 }, "limit": 5 }')
+$cmd$);
+                                                                                                                      run_explain_and_trim                                                                                                                      
 ---------------------------------------------------------------------
  Limit (actual rows=5 loops=1)
    Output: (bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "a" : { "$gt" : { "$numberInt" : "50" }, "$lt" : { "$numberInt" : "900" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
@@ -149,8 +157,10 @@ SELECT COUNT(documentdb_api.insert_one('comp_db2', 'ordered_delete', FORMAT('{ "
 
 ANALYZE documentdb_data.documents_68502;
 set documentdb.forceDisableSeqScan to on;
-EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "ordered_delete", "filter": { "a": { "$lt": 4 } } }');
-                                            QUERY PLAN                                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "ordered_delete", "filter": { "a": { "$lt": 4 } } }')
+$cmd$);
+                                       run_explain_and_trim                                        
 ---------------------------------------------------------------------
  Index Scan using a_1 on documentdb_data.documents_68502_685004 collection (actual rows=8 loops=1)
    Output: document
@@ -164,8 +174,10 @@ DELETE FROM documentdb_data.documents_68502;
 VACUUM documentdb_data.documents_68502;
 -- query the data
 set documentdb.forceDisableSeqScan to on;
-EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "ordered_delete", "filter": { "a": { "$lt": 4 } } }');
-                                            QUERY PLAN                                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "ordered_delete", "filter": { "a": { "$lt": 4 } } }')
+$cmd$);
+                                       run_explain_and_trim                                        
 ---------------------------------------------------------------------
  Index Scan using a_1 on documentdb_data.documents_68502_685004 collection (actual rows=0 loops=1)
    Output: document
@@ -212,8 +224,10 @@ SELECT COUNT(documentdb_api.insert_one('comp_db2', 'ordered_delete', FORMAT('{ "
 
 ANALYZE documentdb_data.documents_68502;
 set documentdb.forceDisableSeqScan to on;
-EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "ordered_delete", "filter": { "a": { "$lte": 4 } } }');
-                                              QUERY PLAN                                               
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "ordered_delete", "filter": { "a": { "$lte": 4 } } }')
+$cmd$);
+                                         run_explain_and_trim                                          
 ---------------------------------------------------------------------
  Index Scan using a_1 on documentdb_data.documents_68502_685004 collection (actual rows=20000 loops=1)
    Output: document
@@ -227,8 +241,10 @@ VACUUM documentdb_data.documents_68502;
 reset documentdb.forceDisableSeqScan;
 set enable_indexscan to off;
 set enable_bitmapscan to off; 
-EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "ordered_delete", "filter": { "a": { "$lte": 4 } } }');
-                                        QUERY PLAN                                         
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "ordered_delete", "filter": { "a": { "$lte": 4 } } }')
+$cmd$);
+                                   run_explain_and_trim                                    
 ---------------------------------------------------------------------
  Seq Scan on documentdb_data.documents_68502_685004 collection (actual rows=15502 loops=1)
    Output: document
@@ -247,28 +263,33 @@ SELECT document FROM bson_aggregation_pipeline('comp_db2', '{ "aggregate": "orde
 reset enable_indexscan;
 reset enable_bitmapscan;
 set documentdb.forceDisableSeqScan to on;
-EXPLAIN (ANALYZE OFF, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('comp_db2', '{ "aggregate": "ordered_delete", "pipeline": [ { "$match": { "a": { "$lte": 4 } } }, { "$group": { "_id": "$a", "c": { "$count": {} } }} ] }');
-                                                                                              QUERY PLAN                                                                                              
+-- Disable bitmap scan so the planner deterministically picks Index Only Scan
+-- for this covered $group + $count query instead of Bitmap Heap Scan.
+set enable_bitmapscan to off;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE OFF, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('comp_db2', '{ "aggregate": "ordered_delete", "pipeline": [ { "$match": { "a": { "$lte": 4 } } }, { "$group": { "_id": "$a", "c": { "$count": {} } }} ] }')
+$cmd$);
+                                                                                                                                                              run_explain_and_trim                                                                                                                                                               
 ---------------------------------------------------------------------
- HashAggregate
+ GroupAggregate
    Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'c'::text, bsoncount(1)), (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   ->  Bitmap Heap Scan on documentdb_data.documents_68502_685004 collection
+   ->  Index Only Scan using a_1 on documentdb_data.documents_68502_685004 collection
          Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
-         Recheck Cond: (collection.document @<= '{ "a" : { "$numberInt" : "4" } }'::bson)
-         ->  Bitmap Index Scan on a_1
-               Index Cond: (collection.document @<= '{ "a" : { "$numberInt" : "4" } }'::bson)
-(8 rows)
+         Index Cond: (collection.document @<= '{ "a" : { "$numberInt" : "4" } }'::bson)
+         Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(7 rows)
 
 SELECT document FROM bson_aggregation_pipeline('comp_db2', '{ "aggregate": "ordered_delete", "pipeline": [ { "$match": { "a": { "$lte": 4 } } }, { "$group": { "_id": "$a", "c": { "$count": {} } }} ] }');
                               document                               
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "5000" } }
  { "_id" : { "$numberInt" : "2" }, "c" : { "$numberInt" : "3001" } }
- { "_id" : { "$numberInt" : "4" }, "c" : { "$numberInt" : "5000" } }
  { "_id" : { "$numberInt" : "3" }, "c" : { "$numberInt" : "2501" } }
+ { "_id" : { "$numberInt" : "4" }, "c" : { "$numberInt" : "5000" } }
 (4 rows)
 
+reset enable_bitmapscan;
 -- now delete everthing
 reset documentdb.forceDisableSeqScan;
 DELETE FROM documentdb_data.documents_68502;
@@ -276,8 +297,10 @@ DELETE FROM documentdb_data.documents_68502;
 VACUUM documentdb_data.documents_68502;
 -- query the data
 set documentdb.forceDisableSeqScan to on;
-EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "ordered_delete", "filter": { "a": { "$lt": 4 } } }');
-                                            QUERY PLAN                                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "ordered_delete", "filter": { "a": { "$lt": 4 } } }')
+$cmd$);
+                                       run_explain_and_trim                                        
 ---------------------------------------------------------------------
  Index Scan using a_1 on documentdb_data.documents_68502_685004 collection (actual rows=0 loops=1)
    Output: document
@@ -317,9 +340,11 @@ ANALYZE documentdb_data.documents_68503;
 set documentdb.forceDisableSeqScan to on;
 set documentdb.enableExtendedExplainPlans to on;
 set documentdb_rum.enableSkipIntermediateEntry to off;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2',
-    '{ "find": "skip_entry_asc", "filter": { "a": { "$gte": 2, "$lte": 4 }, "c": { "$gte": 3, "$lte": 5 } } }');
-                                                                                                                                                  QUERY PLAN                                                                                                                                                   
+    '{ "find": "skip_entry_asc", "filter": { "a": { "$gte": 2, "$lte": 4 }, "c": { "$gte": 3, "$lte": 5 } } }')
+$cmd$);
+                                                                                                                                             run_explain_and_trim                                                                                                                                              
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=90 loops=1)
    Output: document
@@ -335,9 +360,11 @@ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF
          Index Cond: ((collection.document @>= '{ "a" : { "$numberInt" : "2" } }'::bson) AND (collection.document @<= '{ "a" : { "$numberInt" : "4" } }'::bson) AND (collection.document @>= '{ "c" : { "$numberInt" : "3" } }'::bson) AND (collection.document @<= '{ "c" : { "$numberInt" : "5" } }'::bson))
 (12 rows)
 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2',
-    '{ "find": "skip_entry_desc", "filter": { "a": { "$gte": 2, "$lte": 4 }, "c": { "$gte": 3, "$lte": 5 } } }');
-                                                                                                                                                  QUERY PLAN                                                                                                                                                   
+    '{ "find": "skip_entry_desc", "filter": { "a": { "$gte": 2, "$lte": 4 }, "c": { "$gte": 3, "$lte": 5 } } }')
+$cmd$);
+                                                                                                                                             run_explain_and_trim                                                                                                                                              
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=90 loops=1)
    Output: document
@@ -353,9 +380,11 @@ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF
          Index Cond: ((collection.document @>= '{ "a" : { "$numberInt" : "2" } }'::bson) AND (collection.document @<= '{ "a" : { "$numberInt" : "4" } }'::bson) AND (collection.document @>= '{ "c" : { "$numberInt" : "3" } }'::bson) AND (collection.document @<= '{ "c" : { "$numberInt" : "5" } }'::bson))
 (12 rows)
 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2',
-    '{ "find": "skip_entry_asc", "filter": { "a": { "$in": [ 2, 3 ] }, "c": { "$gte": 3, "$lte": 5 } } }');
-                                                                                                                             QUERY PLAN                                                                                                                             
+    '{ "find": "skip_entry_asc", "filter": { "a": { "$in": [ 2, 3 ] }, "c": { "$gte": 3, "$lte": 5 } } }')
+$cmd$);
+                                                                                                                        run_explain_and_trim                                                                                                                        
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=60 loops=1)
    Output: document
@@ -373,9 +402,11 @@ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF
 
 -- with skip entries on we skip relevant portions of the tree
 set documentdb_rum.enableSkipIntermediateEntry to on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2',
-    '{ "find": "skip_entry_asc", "filter": { "a": { "$gte": 2, "$lte": 4 }, "c": { "$gte": 3, "$lte": 5 } } }');
-                                                                                                                                                  QUERY PLAN                                                                                                                                                   
+    '{ "find": "skip_entry_asc", "filter": { "a": { "$gte": 2, "$lte": 4 }, "c": { "$gte": 3, "$lte": 5 } } }')
+$cmd$);
+                                                                                                                                             run_explain_and_trim                                                                                                                                              
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=90 loops=1)
    Output: document
@@ -391,9 +422,11 @@ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF
          Index Cond: ((collection.document @>= '{ "a" : { "$numberInt" : "2" } }'::bson) AND (collection.document @<= '{ "a" : { "$numberInt" : "4" } }'::bson) AND (collection.document @>= '{ "c" : { "$numberInt" : "3" } }'::bson) AND (collection.document @<= '{ "c" : { "$numberInt" : "5" } }'::bson))
 (12 rows)
 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2',
-    '{ "find": "skip_entry_desc", "filter": { "a": { "$gte": 2, "$lte": 4 }, "c": { "$gte": 3, "$lte": 5 } } }');
-                                                                                                                                                  QUERY PLAN                                                                                                                                                   
+    '{ "find": "skip_entry_desc", "filter": { "a": { "$gte": 2, "$lte": 4 }, "c": { "$gte": 3, "$lte": 5 } } }')
+$cmd$);
+                                                                                                                                             run_explain_and_trim                                                                                                                                              
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=90 loops=1)
    Output: document
@@ -409,9 +442,11 @@ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF
          Index Cond: ((collection.document @>= '{ "a" : { "$numberInt" : "2" } }'::bson) AND (collection.document @<= '{ "a" : { "$numberInt" : "4" } }'::bson) AND (collection.document @>= '{ "c" : { "$numberInt" : "3" } }'::bson) AND (collection.document @<= '{ "c" : { "$numberInt" : "5" } }'::bson))
 (12 rows)
 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2',
-    '{ "find": "skip_entry_asc", "filter": { "a": { "$in": [ 2, 3 ] }, "c": { "$gte": 3, "$lte": 5 } } }');
-                                                                                                                             QUERY PLAN                                                                                                                             
+    '{ "find": "skip_entry_asc", "filter": { "a": { "$in": [ 2, 3 ] }, "c": { "$gte": 3, "$lte": 5 } } }')
+$cmd$);
+                                                                                                                        run_explain_and_trim                                                                                                                        
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=60 loops=1)
    Output: document
@@ -466,8 +501,10 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_db2', '{ "c
 (1 row)
 
 set documentdb.forceDisableSeqScan to off;
-EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "a": 1 }, "hint": "a_1" }');
-                                                QUERY PLAN                                                 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "a": 1 }, "hint": "a_1" }')
+$cmd$);
+                                           run_explain_and_trim                                            
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
    Output: document
@@ -483,8 +520,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF
          Index Cond: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
 (12 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "b": 1 }, "hint": "a_1" }');
-                                                QUERY PLAN                                                 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "b": 1 }, "hint": "a_1" }')
+$cmd$);
+                                           run_explain_and_trim                                            
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
    Output: document
@@ -500,8 +539,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF
          Index Cond: (collection.document @= '{ "b" : { "$numberInt" : "1" } }'::bson)
 (12 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "c": 1 }, "hint": "a_1" }');
-                                                QUERY PLAN                                                 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "c": 1 }, "hint": "a_1" }')
+$cmd$);
+                                           run_explain_and_trim                                            
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
    Output: document
@@ -517,8 +558,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF
          Index Cond: (collection.document @= '{ "c" : { "$numberInt" : "1" } }'::bson)
 (12 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "d": 1 }, "hint": "a_1" }');
-                                                QUERY PLAN                                                 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "d": 1 }, "hint": "a_1" }')
+$cmd$);
+                                           run_explain_and_trim                                            
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
    Output: document
@@ -743,8 +786,10 @@ SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_undefine
 (3 rows)
 
 -- EXPLAIN to show skip scan behavior with undefined prefix paths
-EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_undefined_prefix", "filter": { "c": { "$gte": 10, "$lte": 30 } }, "hint": "abc_1" }');
-                                                                            QUERY PLAN                                                                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_undefined_prefix", "filter": { "c": { "$gte": 10, "$lte": 30 } }, "hint": "abc_1" }')
+$cmd$);
+                                                                       run_explain_and_trim                                                                        
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
    Output: document
@@ -760,8 +805,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF
          Index Cond: ((collection.document @>= '{ "c" : { "$numberInt" : "10" } }'::bson) AND (collection.document @<= '{ "c" : { "$numberInt" : "30" } }'::bson))
 (12 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_undefined_prefix", "filter": { "a": 1, "c": 10 }, "hint": "abc_1" }');
-                                                                           QUERY PLAN                                                                           
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_undefined_prefix", "filter": { "a": 1, "c": 10 }, "hint": "abc_1" }')
+$cmd$);
+                                                                      run_explain_and_trim                                                                      
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
    Output: document
@@ -777,8 +824,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF
          Index Cond: ((collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson) AND (collection.document @= '{ "c" : { "$numberInt" : "10" } }'::bson))
 (12 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "a": null }, "hint": "a_1" }');
-                                                    QUERY PLAN                                                     
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "a": null }, "hint": "a_1" }')
+$cmd$);
+                                               run_explain_and_trim                                                
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
    Output: document
@@ -794,8 +843,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF
          Index Cond: (collection.document @= '{ "a" : null }'::bson)
 (12 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "b": null }, "hint": "a_1" }');
-                                                    QUERY PLAN                                                     
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "b": null }, "hint": "a_1" }')
+$cmd$);
+                                               run_explain_and_trim                                                
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
    Output: document
@@ -811,8 +862,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF
          Index Cond: (collection.document @= '{ "b" : null }'::bson)
 (12 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "c": null }, "hint": "a_1" }');
-                                                    QUERY PLAN                                                     
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "c": null }, "hint": "a_1" }')
+$cmd$);
+                                               run_explain_and_trim                                                
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
    Output: document
@@ -828,8 +881,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF
          Index Cond: (collection.document @= '{ "c" : null }'::bson)
 (12 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "d": null }, "hint": "a_1" }');
-                                                    QUERY PLAN                                                     
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "d": null }, "hint": "a_1" }')
+$cmd$);
+                                               run_explain_and_trim                                                
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
    Output: document

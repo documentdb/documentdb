@@ -28,6 +28,9 @@ int IndexQueueEvictionIntervalInSec = DEFAULT_INDEX_BUILD_EVICTION_INTERVAL_IN_S
 #define DEFAULT_MAX_NUM_ACTIVE_USERS_INDEX_BUILDS 2
 int MaxNumActiveUsersIndexBuilds = DEFAULT_MAX_NUM_ACTIVE_USERS_INDEX_BUILDS;
 
+#define DEFAULT_FORCE_INDEX_BUILDS_BLOCKING false
+bool ForceIndexBuildsBlocking = DEFAULT_FORCE_INDEX_BUILDS_BLOCKING;
+
 #define DEFAULT_MAX_TTL_DELETE_BATCH_SIZE 1000
 int MaxTTLDeleteBatchSize = DEFAULT_MAX_TTL_DELETE_BATCH_SIZE;
 
@@ -47,8 +50,6 @@ int TTLTaskMaxRunTimeInMS = DEFAULT_TTL_TASK_MAX_RUNTIME_IN_MS;
 #define DEFAULT_REPEAT_PURGE_INDEXES_FOR_TTL_TASK true
 bool RepeatPurgeIndexesForTTLTask = DEFAULT_REPEAT_PURGE_INDEXES_FOR_TTL_TASK;
 
-#define DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES true
-bool TTLSkipCaughtUpIndexes = DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES;
 
 #define DEFAULT_SKIP_REPEAT_DELETE_FOR_UNORDERED_INDEX true
 bool SkipRepeatDeleteForUnOrderedIndex = DEFAULT_SKIP_REPEAT_DELETE_FOR_UNORDERED_INDEX;
@@ -60,13 +61,14 @@ int MaxTTLBatchSizeUnorderedIndex = DEFAULT_MAX_TTL_BATCH_SIZE_UNORDERED_INDEX;
 #define DEFAULT_ENABLE_TTL_DESC_SORT false
 bool EnableTTLDescSort = DEFAULT_ENABLE_TTL_DESC_SORT;
 
+
 #define DEFAULT_ENABLE_BG_WORKER true
 bool EnableBackgroundWorker = DEFAULT_ENABLE_BG_WORKER;
 
 #define DEFAULT_ENABLE_BG_WORKER_JOBS true
 bool EnableBackgroundWorkerJobs = DEFAULT_ENABLE_BG_WORKER_JOBS;
 
-/* Added in v111, pending stabilization */
+/* Added in v0.111, pending stabilization */
 #define DEFAULT_ENABLE_BG_WORKER_INIT_JOBS false
 bool EnableBackgroundWorkerInitJobs = DEFAULT_ENABLE_BG_WORKER_INIT_JOBS;
 
@@ -79,17 +81,20 @@ char *BackgroundWorkerDatabaseName = DEFAULT_BG_DATABASE_NAME;
 #define DEFAULT_BG_LATCH_TIMEOUT_SEC 1
 int LatchTimeOutSec = DEFAULT_BG_LATCH_TIMEOUT_SEC;
 
+#define DEFAULT_BG_WORKER_ENABLE_DIAGNOSTICS_LOG false
+bool BgWorkerEnableDiagnosticsLog = DEFAULT_BG_WORKER_ENABLE_DIAGNOSTICS_LOG;
+
 #define DEFAULT_LOG_TTL_PROGRESS_ACTIVITY false
 bool LogTTLProgressActivity = DEFAULT_LOG_TTL_PROGRESS_ACTIVITY;
 
 #define DEFAULT_ENABLE_TTL_BATCH_OBSERVABILITY true
 bool EnableTTLBatchObservability = DEFAULT_ENABLE_TTL_BATCH_OBSERVABILITY;
 
-#define DEFAULT_FORCE_INDEX_SCAN_TTL_TASK true
-bool ForceIndexScanForTTLTask = DEFAULT_FORCE_INDEX_SCAN_TTL_TASK;
-
 #define DEFAULT_USE_INDEX_HINTS_TTL_TASK true
 bool UseIndexHintsForTTLTask = DEFAULT_USE_INDEX_HINTS_TTL_TASK;
+
+#define DEFAULT_ENABLE_DROP_INDEXES_ON_READ_ONLY true
+bool EnableDropInvalidIndexesOnReadOnly = DEFAULT_ENABLE_DROP_INDEXES_ON_READ_ONLY;
 
 
 void
@@ -121,17 +126,18 @@ InitializeBackgroundJobConfigurations(const char *prefix, const char *newGucPref
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.forceIndexScanForTTLTask", prefix),
-		gettext_noop(
-			"Whether to force Index Scan for TTL task by locally disabling Sequential Scan and Bitmap Index Scan"),
-		NULL, &ForceIndexScanForTTLTask, DEFAULT_FORCE_INDEX_SCAN_TTL_TASK,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.useIndexHintsForTTLTask", prefix),
 		gettext_noop(
 			"Whether to force ordered Index Scan via Index Hints for TTL task"),
 		NULL, &UseIndexHintsForTTLTask, DEFAULT_USE_INDEX_HINTS_TTL_TASK,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_drop_invalid_indexes_on_read_only", newGucPrefix),
+		gettext_noop(
+			"Whether to enable dropping invalid indexes on read only database state."),
+		NULL, &EnableDropInvalidIndexesOnReadOnly,
+		DEFAULT_ENABLE_DROP_INDEXES_ON_READ_ONLY,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomIntVariable(
@@ -168,16 +174,6 @@ InitializeBackgroundJobConfigurations(const char *prefix, const char *newGucPref
 		0,
 		NULL, NULL, NULL);
 
-	DefineCustomBoolVariable(
-		psprintf("%s.TTLSkipCaughtUpIndexes", newGucPrefix),
-		gettext_noop(
-			"Whether to skip checking a TTL index further, once they are caught up during a TTL task invocation cycle."),
-		NULL,
-		&TTLSkipCaughtUpIndexes,
-		DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES,
-		PGC_USERSET,
-		0,
-		NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.skipRepeatDeleteForUnOrderedIndex", newGucPrefix),
@@ -234,11 +230,26 @@ InitializeBackgroundJobConfigurations(const char *prefix, const char *newGucPref
 		0,
 		NULL, NULL, NULL);
 
+
 	DefineCustomIntVariable(
 		psprintf("%s.maxNumActiveUsersIndexBuilds", prefix),
 		gettext_noop("Max number of active users Index Builds that can run."),
 		NULL, &MaxNumActiveUsersIndexBuilds,
 		DEFAULT_MAX_NUM_ACTIVE_USERS_INDEX_BUILDS, 1, INT_MAX,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.force_index_builds_blocking", prefix),
+		gettext_noop(
+			"Forces createIndexes to request a blocking (non-concurrent) build "
+			"instead of a CREATE INDEX CONCURRENTLY background build. Intended for "
+			"parallel test stacks where the concurrent build path waits out "
+			"unrelated long-running transactions cluster-wide and head-of-line "
+			"blocks other index builds."),
+		NULL, &ForceIndexBuildsBlocking,
+		DEFAULT_FORCE_INDEX_BUILDS_BLOCKING,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
@@ -324,6 +335,17 @@ InitDocumentDBBackgroundWorkerConfigurations(const char *prefix)
 		0,
 		200,
 		PGC_POSTMASTER,
+		GUC_SUPERUSER_ONLY,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.bg_worker_enable_diagnostics_log", prefix),
+		gettext_noop("Enables diagnostic LOG messages from the background worker "
+					 "for testing purposes."),
+		NULL,
+		&BgWorkerEnableDiagnosticsLog,
+		DEFAULT_BG_WORKER_ENABLE_DIAGNOSTICS_LOG,
+		PGC_SIGHUP,
 		GUC_SUPERUSER_ONLY,
 		NULL, NULL, NULL);
 }

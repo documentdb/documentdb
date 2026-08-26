@@ -654,6 +654,7 @@ NOTICE:  creating collection
                ->  Nested Loop Left Join
                      ->  Bitmap Heap Scan on documents_9861_9830116 collection
                            Recheck Cond: (shard_key_value = '9861'::bigint)
+                           Filter: (document IS NOT NULL)
                            ->  Bitmap Index Scan on _id_
                                  Index Cond: (shard_key_value = '9861'::bigint)
                      ->  Materialize
@@ -661,7 +662,7 @@ NOTICE:  creating collection
                                  Recheck Cond: (shard_key_value = '9862'::bigint)
                                  ->  Bitmap Index Scan on _id_
                                        Index Cond: (shard_key_value = '9862'::bigint)
-(16 rows)
+(17 rows)
 
 --2) non colocated tables, hash shard distributed
 SELECT documentdb_api.insert_one('db','explainsrc',' {"_id": 1, "name": "Test Case"}', NULL);
@@ -673,7 +674,7 @@ NOTICE:  creating collection
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "explainsrc", "pipeline": [{"$out" :  "target"} ] }');
 NOTICE:  creating collection
-                                                                                                                                                                                                              QUERY PLAN                                                                                                                                                                                                              
+                                                                                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                                                                                             
 ---------------------------------------------------------------------
  Custom Scan (Citus MERGE INTO ...)
    MERGE INTO documents_9864 method: pull to coordinator
@@ -682,14 +683,15 @@ NOTICE:  creating collection
          Task Count: 1
          Tasks Shown: All
          ->  Task
-               Query: SELECT document, target_shard_key_value, generated_object_id FROM (SELECT collection.document, '9864'::bigint AS target_shard_key_value, documentdb_api_internal.bson_dollar_merge_generate_object_id(collection.document) AS generated_object_id FROM documentdb_data.documents_9863_9830125 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '9863'::bigint)) citus_insert_select_subquery
+               Query: SELECT document, target_shard_key_value, generated_object_id FROM (SELECT agg_stage_0.document, agg_stage_0.target_shard_key_value, agg_stage_0.generated_object_id FROM (SELECT collection.document, '9864'::bigint AS target_shard_key_value, documentdb_api_internal.bson_dollar_merge_generate_object_id(collection.document) AS generated_object_id FROM documentdb_data.documents_9863_9830125 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '9863'::bigint)) agg_stage_0 WHERE (agg_stage_0.document IS NOT NULL)) citus_insert_select_subquery
                Node: host=localhost port=58070 dbname=regression
                ->  Bitmap Heap Scan on documentdb_data.documents_9863_9830125 collection
                      Output: collection.document, '9864'::bigint, documentdb_api_internal.bson_dollar_merge_generate_object_id(collection.document)
                      Recheck Cond: (collection.shard_key_value = '9863'::bigint)
+                     Filter: (collection.document IS NOT NULL)
                      ->  Bitmap Index Scan on _id_
                            Index Cond: (collection.shard_key_value = '9863'::bigint)
-(14 rows)
+(15 rows)
 
 --3) sharded source
 SELECT documentdb_api.shard_collection('newdb', 'explainsrc', '{ "a": "hashed" }', false);
@@ -699,7 +701,7 @@ SELECT documentdb_api.shard_collection('newdb', 'explainsrc', '{ "a": "hashed" }
 (1 row)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "explainsrc", "pipeline": [{"$out" :  "target"} ] }');
-                                                                                                                                                                                                              QUERY PLAN                                                                                                                                                                                                              
+                                                                                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                                                                                             
 ---------------------------------------------------------------------
  Custom Scan (Citus MERGE INTO ...)
    MERGE INTO documents_9864 method: pull to coordinator
@@ -708,14 +710,15 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('
          Task Count: 1
          Tasks Shown: All
          ->  Task
-               Query: SELECT document, target_shard_key_value, generated_object_id FROM (SELECT collection.document, '9864'::bigint AS target_shard_key_value, documentdb_api_internal.bson_dollar_merge_generate_object_id(collection.document) AS generated_object_id FROM documentdb_data.documents_9863_9830125 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '9863'::bigint)) citus_insert_select_subquery
+               Query: SELECT document, target_shard_key_value, generated_object_id FROM (SELECT agg_stage_0.document, agg_stage_0.target_shard_key_value, agg_stage_0.generated_object_id FROM (SELECT collection.document, '9864'::bigint AS target_shard_key_value, documentdb_api_internal.bson_dollar_merge_generate_object_id(collection.document) AS generated_object_id FROM documentdb_data.documents_9863_9830125 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '9863'::bigint)) agg_stage_0 WHERE (agg_stage_0.document IS NOT NULL)) citus_insert_select_subquery
                Node: host=localhost port=58070 dbname=regression
                ->  Bitmap Heap Scan on documentdb_data.documents_9863_9830125 collection
                      Output: collection.document, '9864'::bigint, documentdb_api_internal.bson_dollar_merge_generate_object_id(collection.document)
                      Recheck Cond: (collection.shard_key_value = '9863'::bigint)
+                     Filter: (collection.document IS NOT NULL)
                      ->  Bitmap Index Scan on _id_
                            Index Cond: (collection.shard_key_value = '9863'::bigint)
-(14 rows)
+(15 rows)
 
 -- simplest test case working with db database
 SELECT documentdb_api.insert('db', '{"insert":"source", "documents":[
@@ -735,3 +738,28 @@ SELECT * FROM  aggregate_cursor_first_page('db', '{ "aggregate": "nonImmutable",
 ERROR:  The query references collections that do not exist. Create the missing collections and retry.
 SELECT * FROM  aggregate_cursor_first_page('db', '{ "aggregate": "nonImmutable", "pipeline": [ { "$sample": { "size": 1000000 } }, {"$out" :  "bar" } ], "cursor": { "batchSize": 1 } }', 4294967294);
 ERROR:  The $out stage is not yet supported with the $sample aggregation stage.
+-- Documents pruned at the root by $redact are not written by $out.
+SELECT documentdb_api.insert('db', '{"insert":"source", "documents":[
+   { "_id" : 12, "level": 1 },
+   { "_id" : 13, "level": 5 },
+   { "_id" : 14, "level": 2 }
+]}');
+                                         insert                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""3"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "source", "pipeline": [ { "$redact": { "$cond": { "if": { "$lte": [ "$level", 2 ] }, "then": "$$KEEP", "else": "$$PRUNE" } } }, { "$out": "target" } ], "cursor": { "batchSize": 1 } }', 4294967294);
+                                                           cursorpage                                                           | continuation | persistconnection | cursorid 
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.source", "firstBatch" : [  ] }, "ok" : { "$numberDouble" : "1.0" } } |              | f                 |        0
+(1 row)
+
+SELECT document FROM documentdb_api.collection('db', 'target') ORDER BY object_id;
+                                                             document                                                              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "11" }, "movie" : "Thor", "Budget" : { "$numberInt" : "123456" }, "year" : { "$numberInt" : "1987" } }
+ { "_id" : { "$numberInt" : "12" }, "level" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "14" }, "level" : { "$numberInt" : "2" } }
+(3 rows)
+

@@ -12,6 +12,7 @@
 #include <unicode/ures.h>
 #include <unicode/uloc.h>
 #include <unicode/ucnv.h>
+#include <unicode/ucol.h>
 #include <unicode/ustring.h>
 #include "mb/pg_wchar.h"
 #include <utils/hsearch.h>
@@ -26,7 +27,6 @@
 #include "collation/collation.h"
 
 #define ALPHABET_SIZE 26
-#define DEFAULT_ICU_COLLATION_SORT_KEY_LENGTH 512
 
 typedef struct
 {
@@ -251,7 +251,9 @@ inline static void CheckCollationInputParamType(bson_type_t expectedType, bson_t
 
 inline static bool CheckIfValidLocale(const char *locale);
 inline static void ThrowInvalidLocaleError(const char *locale);
-static int32_t icu_to_uchar_core(UChar **buff_uchar, const char *buff, size_t nbytes);
+static int32_t icu_to_uchar_core(UChar **buff_uchar, UChar *scratch,
+								 int32_t scratchCapacity, const char *buff,
+								 size_t nbytes);
 
 /*
  *  This takes a collation document and convert to postgres locale string
@@ -274,8 +276,8 @@ ParseAndGetCollationString(const bson_value_t *collationValue, const char *colat
 	bool numericOrdering = false;   /* optional, default = false */
 	bool backwards = false;         /* optional, default = false */
 	bool normalization = false;     /* optional, default = false */
-	const char *alternate = NULL;   /* optional, default = non-ignorable */
-	const char *maxVariable = NULL; /* optional, default not specified. ICU default punct. */
+	const char *alternate = NULL;   /* optional, default non-ignorable */
+	const char *maxVariable = NULL; /* optional, ICU default punct */
 
 	char *inputLocale = NULL;    /* required */
 	while (bson_iter_next(&docIter))
@@ -383,13 +385,13 @@ ParseAndGetCollationString(const bson_value_t *collationValue, const char *colat
 
 			if (strcmp(alternate, "non-ignorable") == 0)
 			{
-				/* No op, as default for ICU is false. We could have also added "-ka-noignore" */
+				/* ICU default; no -ka- needed. */
 				alternate = NULL;
 			}
 			else if (strcmp(alternate, "shifted") != 0)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
-									"unable to parse collation :: caused by :: Enumeration value '%s' for field 'collation.alternate' is not a valid value.",
+									"Collation field 'alternate' must be one of 'non-ignorable' or 'shifted', got '%s'.",
 									alternate)));
 			}
 		}
@@ -400,13 +402,13 @@ ParseAndGetCollationString(const bson_value_t *collationValue, const char *colat
 
 			if (strcmp(maxVariable, "punct") == 0)
 			{
-				/* No op, as default for ICU is false. We could have also added "-kv-punct" */
+				/* ICU default when alternate is shifted; no -kv- needed. */
 				maxVariable = NULL;
 			}
 			else if (strcmp(maxVariable, "space") != 0)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
-									"unable to parse collation :: caused by :: Enumeration value '%s' for field 'collation.maxVariable' is not a valid value.",
+									"Collation field 'maxVariable' must be one of 'punct' or 'space', got '%s'.",
 									maxVariable)));
 			}
 		}
@@ -416,6 +418,13 @@ ParseAndGetCollationString(const bson_value_t *collationValue, const char *colat
 								"unable to parse collation :: caused by :: BSON field 'collation.%s' is an unknown field.",
 								key)));
 		}
+	}
+
+	/* locale is required; without it ICU silently falls back to "und". */
+	if (inputLocale == NULL)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION40414), errmsg(
+							"Collation specification is missing the required 'locale' field.")));
 	}
 
 	/* ICU ignores unsupported locales and picks default, and so do we. This string is not used in SQL query so safe from SQL injection */
@@ -464,24 +473,25 @@ ParseAndGetCollationString(const bson_value_t *collationValue, const char *colat
 		appendStringInfo(&icuCollation, "-kn-true");
 	}
 
-	if (backwards)
-	{
-		appendStringInfo(&icuCollation, "-kb-true");
-	}
-
 	if (normalization)
 	{
 		appendStringInfo(&icuCollation, "-kk-true");
 	}
 
+	if (backwards)
+	{
+		appendStringInfo(&icuCollation, "-kb-true");
+	}
+
+	/* ICU kv only has meaning when ka-shifted is in effect. */
 	if (alternate != NULL)
 	{
 		appendStringInfo(&icuCollation, "-ka-%s", alternate);
-	}
 
-	if (maxVariable != NULL && strcmp(alternate, "shifted") != 0)
-	{
-		appendStringInfo(&icuCollation, "-kv-%s", maxVariable);
+		if (maxVariable != NULL)
+		{
+			appendStringInfo(&icuCollation, "-kv-%s", maxVariable);
+		}
 	}
 }
 
@@ -523,35 +533,50 @@ StringCompareWithCollation(const char *left, uint32_t leftLength,
 
 
 /*
- *  Convenience function to generate a collation aware sortkey that can be used in strcmp().
- *
- *  Two calls to ucol_getSortKey() is a pattern used in pg code. This is to know the expected size
- *  of the sort key so that we allocate a larger buffer if needed.
- *  Reference: https://unicode-org.github.io/icu-docs/apidoc/dev/icu4c/ucol_8h.html#a58be2c76d01184cb1821ff0af28081c2
- *  Reference: https://unicode-org.github.io/icu/userguide/collation/api.html
+ * Generates a collation-aware sort key (usable in strcmp()/hashing). *sortKey points
+ * into 'scratch' when it fits, else a palloc'd buffer the caller must pfree.
  */
-inline char *
-GetCollationSortKey(const char *collationString, char *key, int keyLength)
+int32_t
+GetCollationSortKey(const char *collationString, const char *string,
+					int32_t stringLength, uint8_t *scratch, int32_t scratchCapacity,
+					uint8_t **sortKey)
 {
 	ucollator_cache_entry *collation_entry = LookupUCollatorCache(collationString);
 
-	uint8_t *sortKeyPtr = palloc(DEFAULT_ICU_COLLATION_SORT_KEY_LENGTH);
+	UChar ucharScratch[COLLATION_SORT_KEY_SCRATCH_BYTES];
 	UChar *uchar;
-	int32_t ulen;
+	int32_t ulen = icu_to_uchar_core(&uchar, ucharScratch,
+									 COLLATION_SORT_KEY_SCRATCH_BYTES,
+									 string, stringLength);
 
-	ulen = icu_to_uchar_core(&uchar, key, keyLength);
-	Size expectedLength = ucol_getSortKey(collation_entry->collator, uchar, ulen,
-										  sortKeyPtr,
-										  DEFAULT_ICU_COLLATION_SORT_KEY_LENGTH);
-	if (expectedLength > DEFAULT_ICU_COLLATION_SORT_KEY_LENGTH)
+	int32_t keyLength = ucol_getSortKey(collation_entry->collator, uchar, ulen,
+										scratch, scratchCapacity);
+	if (keyLength > scratchCapacity)
 	{
-		sortKeyPtr = repalloc(sortKeyPtr, expectedLength);
-		ucol_getSortKey(collation_entry->collator, uchar, ulen, sortKeyPtr,
-						expectedLength);
+		/* Scratch too small: allocate the exact size and regenerate. */
+		*sortKey = palloc(keyLength);
+		ucol_getSortKey(collation_entry->collator, uchar, ulen, *sortKey, keyLength);
+	}
+	else
+	{
+		*sortKey = scratch;
 	}
 
-	pfree(uchar);
-	return (char *) sortKeyPtr;
+	if (uchar != ucharScratch)
+	{
+		pfree(uchar);
+	}
+
+	if (keyLength <= 0)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg(
+							"Failed to generate collation sort key for collation language tag: %s",
+							collationString)));
+	}
+
+	/* keyLength counts ICU's terminating zero, which the key itself never contains. */
+	return keyLength - 1;
 }
 
 
@@ -691,7 +716,7 @@ CheckIfValidLocale(const char *locale)
 			if (strcmp(localeSuffix, "k") == 0 ||
 				strcmp(localeSuffix, "@collation=search") == 0 ||
 				strcmp(localeSuffix, "@collation=searchjl") == 0 ||
-				strcmp(localeSuffix, "ko@collation=unihan") == 0)
+				strcmp(localeSuffix, "@collation=unihan") == 0)
 			{
 				return true;
 			}
@@ -700,7 +725,7 @@ CheckIfValidLocale(const char *locale)
 
 		case 'L':
 		{
-			if (strcmp(localeSuffix, "_Latin,") == 0 ||
+			if (strcmp(localeSuffix, "_Latn") == 0 ||
 				strcmp(localeSuffix, "_Latn@collation=search") == 0)
 			{
 				return true;
@@ -806,7 +831,7 @@ CheckIfValidLocale(const char *locale)
 				strcmp(localeSuffix, "@collation=big5han") == 0 ||
 				strcmp(localeSuffix, "@collation=gb2312han") == 0 ||
 				strcmp(localeSuffix, "@collation=unihan") == 0 ||
-				strcmp(localeSuffix, "ko@collation=zhuyin") == 0)
+				strcmp(localeSuffix, "@collation=zhuyin") == 0)
 			{
 				return true;
 			}
@@ -827,14 +852,14 @@ CheckIfValidLocale(const char *locale)
 /*
  *  Throws error for unsupported locales.
  */
-inline static void
-pg_attribute_noreturn()
-ThrowInvalidLocaleError(const char * locale)
+pg_noreturn static inline void
+ThrowInvalidLocaleError(const char *locale)
 {
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
 						"unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: \"%s\", strength: 1 }.",
 						locale)));
 }
+
 
 /*
  *  Checks the input type of the parameters of the collation spec document against the expected types.
@@ -949,22 +974,37 @@ GenerateICULocaleAndExtractCollationOption(char *inputLocale, char **locale,
 		return;
 	}
 
-	/* conversion type 1: if locale contains the collation option */
-	/* Example: for inputLocale = "en@collation=search", */
-	/* locale = "es" and collationOptionString = "search" */
-	char *variant = strstr(inputLocale, "=");
-	if (variant != NULL)
-	{
-		/* Get the actual locale */
-		int localeLen = variant - inputLocale;
-		*locale = pnstrdup(inputLocale, localeLen);
+	/* Split on '@': locale is before '@', option value after '='. */
+	char *atSign = strchr(inputLocale, '@');
+	char *equalSign = strchr(inputLocale, '=');
 
-		/* Get the option */
-		*collationOptionString = variant + 1;
+	if (equalSign != NULL)
+	{
+		*collationOptionString = equalSign + 1;
+	}
+
+	if (atSign != NULL)
+	{
+		int localeLen = atSign - inputLocale;
+		*locale = pnstrdup(inputLocale, localeLen);
+	}
+	else if (equalSign != NULL)
+	{
+		int localeLen = equalSign - inputLocale;
+		*locale = pnstrdup(inputLocale, localeLen);
 	}
 	else
 	{
-		*locale = inputLocale;
+		/*
+		 * Copy rather than alias inputLocale: the '_' -> '-' conversion below
+		 * rewrites the locale in place, and inputLocale points directly into the
+		 * caller's BSON buffer (the collation spec's "locale" value). Mutating it
+		 * would corrupt the original spec, which breaks any path that re-parses
+		 * the spec later (e.g. the remote dynamic cursor worker re-parsing a spec
+		 * the coordinator already parsed, turning "en_US" into an invalid
+		 * "en-US").
+		 */
+		*locale = pstrdup(inputLocale);
 	}
 
 	/* conversion type 2: replace '_' with '-' in locale string */
@@ -1021,27 +1061,6 @@ init_icu_converter(void)
 /*
  * Ported from pg_locale.c in Postgres 17:
  * See https://github.com/postgres/postgres/blob/REL_17_STABLE/src/backend/utils/adt/pg_locale.c#L2758
- * Find length, in UChars, of given string if converted to UChar string.
- */
-static size_t
-uchar_length(UConverter *converter, const char *str, int32_t len)
-{
-	UErrorCode status = U_ZERO_ERROR;
-	int32_t ulen;
-
-	ulen = ucnv_toUChars(converter, NULL, 0, str, len, &status);
-	if (U_FAILURE(status) && status != U_BUFFER_OVERFLOW_ERROR)
-	{
-		ereport(ERROR,
-				(errmsg("%s failed: %s", "ucnv_toUChars", u_errorName(status))));
-	}
-	return ulen;
-}
-
-
-/*
- * Ported from pg_locale.c in Postgres 17:
- * See https://github.com/postgres/postgres/blob/REL_17_STABLE/src/backend/utils/adt/pg_locale.c#L2758
  * Convert the given source string into a UChar string, stored in dest, and
  * return the length (in UChars).
  */
@@ -1066,29 +1085,32 @@ uchar_convert(UConverter *converter, UChar *dest, int32_t destlen,
 /*
  * Ported from pg_locale.c in Postgres 17:
  * See https://github.com/postgres/postgres/blob/REL_17_STABLE/src/backend/utils/adt/pg_locale.c#L2758
- * Convert a string in the database encoding into a string of UChars.
- *
- * The source string at buff is of length nbytes
- * (it needn't be nul-terminated)
- *
- * *buff_uchar receives a pointer to the palloc'd result string, and
- * the function's result is the number of UChars generated.
- *
- * The result string is nul-terminated, though most callers rely on the
- * result length instead.
+ * Convert a database-encoding string (buff, nbytes, needn't be nul-terminated) into
+ * UChars. *buff_uchar points into 'scratch' when it fits, else a palloc'd buffer the
+ * caller must pfree.
  */
 static int32_t
-icu_to_uchar_core(UChar **buff_uchar, const char *buff, size_t nbytes)
+icu_to_uchar_core(UChar **buff_uchar, UChar *scratch, int32_t scratchCapacity,
+				  const char *buff, size_t nbytes)
 {
-	int32_t len_uchar;
-
 	init_icu_converter();
 
-	len_uchar = uchar_length(icu_converter, buff, nbytes);
+	UErrorCode status = U_ZERO_ERROR;
+	int32_t len_uchar = ucnv_toUChars(icu_converter, scratch, scratchCapacity,
+									  buff, nbytes, &status);
+	if (status == U_BUFFER_OVERFLOW_ERROR)
+	{
+		/* Scratch too small: allocate the exact size (plus terminator) and retry. */
+		*buff_uchar = palloc((len_uchar + 1) * sizeof(**buff_uchar));
+		return uchar_convert(icu_converter, *buff_uchar, len_uchar + 1, buff, nbytes);
+	}
 
-	*buff_uchar = palloc((len_uchar + 1) * sizeof(**buff_uchar));
-	len_uchar = uchar_convert(icu_converter,
-							  *buff_uchar, len_uchar + 1, buff, nbytes);
+	if (U_FAILURE(status))
+	{
+		ereport(ERROR,
+				(errmsg("%s failed: %s", "ucnv_toUChars", u_errorName(status))));
+	}
 
+	*buff_uchar = scratch;
 	return len_uchar;
 }

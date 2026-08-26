@@ -5,7 +5,7 @@ print("Initializing analytics collection...");
 use('sampledb');
 
 // Create analytics collection and insert sample analytics data
-db.analytics.insertMany([
+const sampleAnalytics = [
     {
         _id: "analytics_2024_06",
         period: "2024-06",
@@ -55,34 +55,25 @@ db.analytics.insertMany([
             }
         ]
     }
-]);
+];
 
-print("Created " + db.analytics.countDocuments() + " analytics records");
+// Idempotent seed: insert each document only if its _id is not already present, so re-running
+// this script against a persistent volume is a no-op instead of crashing with a duplicate-key
+// error (#612). A partial first run is also repaired (only the missing documents are inserted).
+sampleAnalytics.forEach(function (doc) {
+    if (db.analytics.countDocuments({ _id: doc._id }) === 0) {
+        db.analytics.insertOne(doc);
+    }
+});
 
 // Create indexes for analytics queries
-db.analytics.createIndex({ "period": 1 });
-db.analytics.createIndex({ "type": 1 });
-db.analytics.createIndex({ "date": 1 });
+db.runCommand({
+    createIndexes: "analytics",
+    indexes: [
+        { key: { "period": 1 }, name: "period_1" },
+        { key: { "type": 1 }, name: "type_1" },
+        { key: { "date": 1 }, name: "date_1" }
+    ]
+});
 
 print("Created indexes on analytics collection");
-
-// Create some aggregation views for common queries
-print("Setting up sample aggregation examples...");
-
-// Example aggregation: User order summary
-print("Sample aggregation - User order summary:");
-db.orders.aggregate([
-    {
-        $group: {
-            _id: "$userId",
-            totalOrders: { $sum: 1 },
-            totalSpent: { $sum: "$orderSummary.total" },
-            averageOrderValue: { $avg: "$orderSummary.total" }
-        }
-    },
-    {
-        $sort: { totalSpent: -1 }
-    }
-]).forEach(printjson);
-
-print("Sample data initialization completed!");

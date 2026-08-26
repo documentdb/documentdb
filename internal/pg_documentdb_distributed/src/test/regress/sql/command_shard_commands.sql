@@ -3,7 +3,6 @@ SET citus.next_shard_id TO 756000;
 SET documentdb.next_collection_id TO 7560;
 SET documentdb.next_collection_index_id TO 7560;
 ALTER SEQUENCE pg_dist_colocationid_seq RESTART WITH 7560;
-set documentdb.recreate_retry_table_on_shard to on;
 
 
 CREATE FUNCTION command_sharding_get_collectionInfo(dbname text DEFAULT 'comm_sh_coll', filterValue text DEFAULT '')

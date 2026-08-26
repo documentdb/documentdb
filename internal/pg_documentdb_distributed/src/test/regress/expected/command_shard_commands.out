@@ -3,7 +3,6 @@ SET citus.next_shard_id TO 756000;
 SET documentdb.next_collection_id TO 7560;
 SET documentdb.next_collection_index_id TO 7560;
 ALTER SEQUENCE pg_dist_colocationid_seq RESTART WITH 7560;
-set documentdb.recreate_retry_table_on_shard to on;
 CREATE FUNCTION command_sharding_get_collectionInfo(dbname text DEFAULT 'comm_sh_coll', filterValue text DEFAULT '')
 RETURNS SETOF documentdb_core.bson
 AS $$
@@ -85,13 +84,13 @@ SELECT * FROM public.citus_tables tbls JOIN
     ORDER BY colocation_id ASC;
            table_name           | citus_table_type | distribution_column | colocation_id | table_size | shard_count |      table_owner      | access_method |        mongo_table_name        
 ---------------------------------------------------------------------
+ documentdb_data.retry_7563     | distributed      | <none>              |          7560 | 24 kB      |           1 | documentdb_admin_role | heap          | documentdb_data.retry_7563
+ documentdb_data.retry_7562     | distributed      | <none>              |          7560 | 24 kB      |           1 | documentdb_admin_role | heap          | documentdb_data.retry_7562
  documentdb_data.documents_7560 | distributed      | <none>              |          7560 | 16 kB      |           1 | documentdb_admin_role | heap          | documentdb_data.documents_7560
  documentdb_data.documents_7562 | distributed      | <none>              |          7560 | 32 kB      |           1 | documentdb_admin_role | heap          | documentdb_data.documents_7562
  documentdb_data.retry_7560     | distributed      | <none>              |          7560 | 24 kB      |           1 | documentdb_admin_role | heap          | documentdb_data.retry_7560
- documentdb_data.retry_7562     | distributed      | <none>              |          7560 | 24 kB      |           1 | documentdb_admin_role | heap          | documentdb_data.retry_7562
+ documentdb_data.retry_7561     | distributed      | <none>              |          7560 | 24 kB      |           1 | documentdb_admin_role | heap          | documentdb_data.retry_7561
  documentdb_data.documents_7561 | distributed      | shard_key_value     |          7561 | 272 kB     |           8 | documentdb_admin_role | heap          | documentdb_data.documents_7561
- documentdb_data.retry_7561     | distributed      | shard_key_value     |          7561 | 192 kB     |           8 | documentdb_admin_role | heap          | documentdb_data.retry_7561
- documentdb_data.retry_7563     | distributed      | shard_key_value     |          7562 | 192 kB     |           8 | documentdb_admin_role | heap          | documentdb_data.retry_7563
  documentdb_data.documents_7563 | distributed      | shard_key_value     |          7562 | 256 kB     |           8 | documentdb_admin_role | heap          | documentdb_data.documents_7563
 (8 rows)
 

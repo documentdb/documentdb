@@ -51,7 +51,7 @@ stop="false"
 distributed="false"
 allowExternalAccess="false"
 gatewayWorker="false"
-useDocumentdbExtendedRum="false"
+useDocumentdbExtendedRum="true"
 customAdminUser="docdb_admin"
 customAdminUserPassword="Admin100"
 valgrindMode="false"
@@ -61,20 +61,22 @@ logPath=""
 numberWorkerNodes=0
 workerNodePortPrefix="1000"  # yields 10001, 10002, ...
 workerNodeDirectoryPrefix=""
+dataChecksums="false"
 
 # Append a configuration line to postgresql.conf in the given Postgres data directory
 AddPostgresConfigToServers() {
-  if [[ $# -lt 2 ]]; then
-    echo "Usage: AddPostgresConfigToServers <postgres_dir> <config_line>" >&2
+  if [[ $# -lt 2 || $# -gt 3 ]]; then
+    echo "Usage: AddPostgresConfigToServers <postgres_dir> <config_line> [upsert]" >&2
     return 1
   fi
-  local dir="$1"; shift
-  local line="$*"
-  echo "$line" >> "$dir/postgresql.conf"
+  local dir="$1"
+  local line="$2"
+  local upsert="${3:-false}"
+  AddPostgresConfigToServer "$dir" "$line" "$upsert"
   if [ "$numberWorkerNodes" -gt 0 ]; then
     # Also add the config to worker instances
     for (( i=1; i<=$numberWorkerNodes; i++ )); do
-      echo "$line" >> "$workerNodeDirectoryPrefix$i/postgresql.conf"
+      AddPostgresConfigToServer "$workerNodeDirectoryPrefix$i" "$line" "$upsert"
     done
   fi
 }
@@ -96,7 +98,48 @@ AddHBAConfigToServers() {
   fi
 }
 
-while getopts "d:p:u:a:hcsxegrvf:l:n:w:" opt; do
+EnableGatewayWorkerPreload() {
+  local dir="$1"
+  local sharedPreloadLibraries="$2"
+  local desiredPreloadLibraries="${sharedPreloadLibraries}, pg_documentdb_gw_host"
+
+  if grep -Eq "^[[:space:]]*shared_preload_libraries[[:space:]]*=.*pg_documentdb_gw_host" \
+    "$dir/postgresql.conf"; then
+    echo "pg_documentdb_gw_host is already configured in shared_preload_libraries; skipping update."
+    return 1
+  fi
+
+  AddPostgresConfigToServer \
+    "$dir" \
+    "shared_preload_libraries = '$desiredPreloadLibraries'" \
+    "true"
+  echo "Configured pg_documentdb_gw_host in shared_preload_libraries for the coordinator."
+}
+
+BootstrapGatewayWorkerOnCoordinator() {
+  local user="$1"
+  local port="$2"
+  local dir="$3"
+  local sharedPreloadLibraries="$4"
+  local serverLogPath="$5"
+  local restartCoordinatorForGateway="false"
+
+  # Bootstrap the hosted gateway after the backend extension is fully installed so the
+  # worker's startup validation can rely on `documentdb_api` already existing.
+  psql -p "$port" -U "$user" -d postgres -X -c \
+    "CREATE EXTENSION IF NOT EXISTS pg_documentdb_gw_host CASCADE;"
+  if EnableGatewayWorkerPreload "$dir" "$sharedPreloadLibraries"; then
+    restartCoordinatorForGateway="true"
+  fi
+
+  if [ "$restartCoordinatorForGateway" == "true" ]; then
+    echo "${green}Restarting coordinator to activate pg_documentdb_gw_host${reset}"
+    StopServer "$dir"
+    StartServer "$dir" "$port" "$serverLogPath"
+  fi
+}
+
+while getopts "a:cd:ef:ghkl:n:p:rsu:vw:x" opt; do
   case $opt in
     d) postgresDirectory="$OPTARG"
     ;;
@@ -115,7 +158,16 @@ while getopts "d:p:u:a:hcsxegrvf:l:n:w:" opt; do
     ;;
     g) gatewayWorker="true"
     ;;
-    r) useDocumentdbExtendedRum="true"
+    r) # -r takes an OPTIONAL argument: "-r" alone means true, or "-r true"/"-r false".
+       # getopts can't express optional args directly, so look ahead at the next token
+       # and only consume it when it looks like a boolean value (not another option).
+       eval nextArg="\${$OPTIND:-}"
+       if [ "$nextArg" == "true" ] || [ "$nextArg" == "false" ]; then
+         useDocumentdbExtendedRum="$nextArg"
+         OPTIND=$((OPTIND + 1))
+       else
+         useDocumentdbExtendedRum="true"
+       fi
     ;;
     u) customAdminUser="$OPTARG"
     ;;
@@ -130,6 +182,8 @@ while getopts "d:p:u:a:hcsxegrvf:l:n:w:" opt; do
     n) numberWorkerNodes="$OPTARG"
     ;;
     w) workerNodePortPrefix="$OPTARG"
+    ;;
+    k) dataChecksums="true"
     ;;
   esac
 
@@ -166,10 +220,11 @@ if [ "$help" == "true" ]; then
     echo "${green}[-u <user>] - optional argument. Specifies a custom admin user to connect to the database"
     echo "${green}[-a <password>] - optional argument. Specifies the password for the custom admin user"
     echo "${green}[-g] - optional argument. starts the gateway worker host along with the backend"
-    echo "${green}[-r] - optional argument. use the pg_documentdb_extended_rum extension instead of rum"
+    echo "${green}[-r [true|false]] - optional argument. use the pg_documentdb_extended_rum extension instead of rum. '-r', '-r true', or omitting the flag enables it; '-r false' disables it (default: true)${reset}"
     echo "${green}[-v] - optional argument. run via valgrind mode"
     echo "${green}[-f <file>] - optional argument. add this extra conf file to postgresql.conf"
     echo "${green}[-l <file>] - optional argument. log to this file for the postgres server logs"
+    echo "${green}[-k] - optional argument. enables data checksums"
     echo "${green}if postgresDir not specified assumed to be $HOME/.documentdb/data"
     exit 1;
 fi
@@ -206,20 +261,6 @@ else
   extensionName="documentdb"
 fi
 
-preloadLibraries="pg_documentdb_core, pg_documentdb"
-
-if [ "$distributed" == "true" ]; then
-  preloadLibraries="citus, $preloadLibraries, pg_documentdb_distributed"
-fi
-
-if [ "$gatewayWorker" == "true" ]; then
-  preloadLibraries="$preloadLibraries, pg_documentdb_gw_host"
-fi
-
-if [ "$useDocumentdbExtendedRum" == "true" ]; then
-  preloadLibraries="$preloadLibraries, pg_documentdb_extended_rum"
-fi
-
 source="${BASH_SOURCE[0]}"
 while [[ -h $source ]]; do
    scriptroot="$( cd -P "$( dirname "$source" )" && pwd )"
@@ -233,6 +274,7 @@ done
 scriptDir="$( cd -P "$( dirname "$source" )" && pwd )"
 
 . $scriptDir/utils.sh
+. $scriptDir/preload_libraries.sh
 
 if [ -z $postgresDirectory ]; then
     postgresDirectory="$HOME/.documentdb/data"
@@ -269,6 +311,17 @@ else
     echo "${green}Found existing PostgreSQL data directory at $postgresDirectory${reset}"
 fi
 
+ossPreloadArgs=""
+if [ "$distributed" == "true" ]; then
+  ossPreloadArgs="$ossPreloadArgs --distributed"
+fi
+
+if [ "$useDocumentdbExtendedRum" == "true" ]; then
+  ossPreloadArgs="$ossPreloadArgs --rum"
+fi
+
+sharedPreloadLibraries="$(GetDocumentDBBasePreloadLibraries $ossPreloadArgs)"
+
 # We stop the coordinator first and the worker node servers
 # afterwards. However this order is not required and it doesn't
 # really matter which order we choose to stop the active servers.
@@ -297,12 +350,12 @@ fi
 echo "InitDatabaseExtended $initSetup $postgresDirectory"
 
 if [ "$initSetup" == "true" ]; then
-    InitDatabaseExtended $postgresDirectory "$preloadLibraries"
+    InitDatabaseExtended $postgresDirectory "$sharedPreloadLibraries" $dataChecksums
 
     # Initialize worker node data directories for multinode setups
     if [ "$numberWorkerNodes" -gt 0 ]; then
       for (( i=1; i<=$numberWorkerNodes; i++ )); do
-        InitDatabaseExtended "${workerNodeDirectoryPrefix}${i}" "$preloadLibraries"
+        InitDatabaseExtended "${workerNodeDirectoryPrefix}${i}" "$sharedPreloadLibraries" $dataChecksums
       done
     fi
 fi
@@ -318,8 +371,11 @@ fi
 
 if [ "$gatewayWorker" == "true" ]; then
   setupConfigurationFile="$scriptDir/../pg_documentdb_gw/SetupConfiguration.json"
-  AddPostgresConfigToServers "$postgresDirectory" "documentdb_gateway.database = 'postgres'"
-  AddPostgresConfigToServers "$postgresDirectory" "documentdb_gateway.setup_configuration_file = '$setupConfigurationFile'"
+  AddPostgresConfigToServer "$postgresDirectory" "documentdb_gateway.database = 'postgres'" "true"
+  AddPostgresConfigToServer \
+    "$postgresDirectory" \
+    "documentdb_gateway.setup_configuration_file = '$setupConfigurationFile'" \
+    "true"
 fi
 
 if [ "$useDocumentdbExtendedRum" == "true" ] && [ "$initSetup" == "true" ]; then
@@ -376,6 +432,15 @@ if [ "$initSetup" == "true" ]; then
   if [ "$customAdminUser" != "" ]; then
     SetupCustomAdminUser "$customAdminUser" "$customAdminUserPassword" $coordinatorPort "$userName"
   fi
+fi
+
+if [ "$gatewayWorker" == "true" ]; then
+  BootstrapGatewayWorkerOnCoordinator \
+    "$userName" \
+    "$coordinatorPort" \
+    "$postgresDirectory" \
+    "$sharedPreloadLibraries" \
+    "$logPath"
 fi
 
 if [ "$valgrindMode" == "true" ]; then

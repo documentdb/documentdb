@@ -23,7 +23,7 @@ PG_FUNCTION_INFO_V1(get_documentdb_api_binary_version);
 #define GIT_REF
 #endif
 
-static const char *ExtensionVersionString = EXTENSION_VERSION_STR GIT_REF;
+PGDLLEXPORT const char *ExtensionVersionString = EXTENSION_VERSION_STR GIT_REF;
 
 Datum
 get_documentdb_api_extended_binary_version(PG_FUNCTION_ARGS)

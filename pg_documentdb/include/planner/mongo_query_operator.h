@@ -24,14 +24,23 @@
  */
 typedef enum MongoQueryOperatorType
 {
-	/* comparison */
+	/*
+	 * Operators that can be pushed down to the _id_ btree index via the
+	 * ObjectId-runtime overloads. These MUST be the first entries (indices
+	 * 0 .. QUERY_OPERATOR_OBJECT_ID_MAX) so that ObjectIdQueryOperators[]
+	 * can be indexed directly by MongoQueryOperatorType.
+	 */
 	QUERY_OPERATOR_EQ = 0,
 	QUERY_OPERATOR_GT,
 	QUERY_OPERATOR_GTE,
 	QUERY_OPERATOR_LT,
 	QUERY_OPERATOR_LTE,
-	QUERY_OPERATOR_NE,
 	QUERY_OPERATOR_IN,
+	QUERY_OPERATOR_REGEX,
+	QUERY_OPERATOR_OBJECT_ID_MAX = QUERY_OPERATOR_REGEX,
+
+	/* comparison (continued) */
+	QUERY_OPERATOR_NE,
 	QUERY_OPERATOR_NIN,
 	QUERY_OPERATOR_ALL,
 
@@ -49,8 +58,7 @@ typedef enum MongoQueryOperatorType
 	QUERY_OPERATOR_SIZE,
 	QUERY_OPERATOR_ELEMMATCH,
 
-	/* evaluation */
-	QUERY_OPERATOR_REGEX,
+	/* evaluation (continued) */
 	QUERY_OPERATOR_MOD,
 	QUERY_OPERATOR_TEXT,
 	QUERY_OPERATOR_EXPR,
@@ -157,6 +165,20 @@ typedef struct
 	bool isApiInternalSchema;
 } MongoIndexOperatorInfo;
 
+/*
+ * ObjectIdMongoOperatorInfo is a type-safe wrapper around MongoQueryOperator
+ * and MongoIndexOperatorInfo for ObjectId-specific operators. This prevents
+ * accidental interchange with non-ObjectId operator APIs.
+ */
+typedef struct
+{
+	/* ObjectId-specific runtime query operator info */
+	MongoQueryOperator queryOperator;
+
+	/* Index strategy and operator information */
+	MongoIndexOperatorInfo indexOperator;
+} ObjectIdMongoOperatorInfo;
+
 const MongoQueryOperator * GetMongoQueryOperatorByMongoOpName(const char *key,
 															  MongoQueryOperatorInputType
 															  inputType);
@@ -166,8 +188,16 @@ const MongoQueryOperator * GetMongoQueryOperatorByQueryOperatorType(MongoQueryOp
 																	operatorType,
 																	MongoQueryOperatorInputType
 																	inputType);
+const MongoIndexOperatorInfo * GetMongoIndexOperatorInfoByOperatorType(
+	MongoQueryOperatorType type);
 const MongoIndexOperatorInfo * GetMongoIndexOperatorInfoByPostgresFuncId(Oid
 																		 functionId);
+
+const ObjectIdMongoOperatorInfo * GetObjectIdMongoIndexOperatorByPostgresFuncId(Oid
+																				functionId);
+const ObjectIdMongoOperatorInfo * GetObjectIdMongoQueryOperatorByNonObjectIdFuncId(Oid
+																				   functionId);
+
 BsonIndexStrategy GetBsonStrategyForFuncId(Oid functionOid);
 Oid GetMongoQueryOperatorOid(const MongoIndexOperatorInfo *mongoQueryOperator);
 const MongoQueryOperator * GetMongoQueryOperatorFromExpr(Node *expr, List **args);

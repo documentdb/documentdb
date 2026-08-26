@@ -70,6 +70,46 @@ pub async fn validate_abort_transaction(client: &Client, db: &Database) -> Resul
     Ok(())
 }
 
+/// Asserts ending a transaction with no active transaction returns `NoSuchTransaction`.
+///
+/// A session that never began a transaction has no active transaction context,
+/// so no transaction number resolves. Both `commitTransaction` and
+/// `abortTransaction` must return `NoSuchTransaction` (251) rather than silently
+/// succeeding or reporting an internal error.
+pub async fn validate_end_transaction_without_active_transaction(
+    client: &Client,
+) -> Result<(), Error> {
+    for command_name in ["commitTransaction", "abortTransaction"] {
+        let mut session = client.start_session().await?;
+        let db = client.database("admin");
+        let result = db
+            .run_command(doc! { command_name: 1 })
+            .session(&mut session)
+            .await;
+
+        match result {
+            Err(e) => {
+                if let ErrorKind::Command(ref cmd_err) = *e.kind {
+                    assert_eq!(
+                        cmd_err.code, 251,
+                        "Expected error code 251 (NoSuchTransaction) for {command_name}, got: {}",
+                        cmd_err.code
+                    );
+                } else {
+                    panic!("Expected a Command error with code 251 for {command_name}, got: {e:?}");
+                }
+            }
+            Ok(resp) => {
+                panic!(
+                    "Expected {command_name} without an active transaction to fail, got: {resp:?}"
+                )
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Asserts a command run inside a transaction returns error code 263
 /// (`OperationNotSupportedInTransaction`).
 async fn assert_blocked_in_transaction(
@@ -150,6 +190,15 @@ pub async fn validate_create_indexes_blocked_in_transaction(client: &Client) -> 
             "createIndexes": "some_collection",
             "indexes": [{ "key": { "field": 1 }, "name": "field_1" }]
         },
+    )
+    .await
+}
+
+pub async fn validate_move_collection_blocked_in_transaction(client: &Client) -> Result<(), Error> {
+    assert_blocked_in_transaction(
+        client,
+        "admin",
+        doc! { "moveCollection": "txn_move_test.some_collection", "toShard": "shard_1" },
     )
     .await
 }

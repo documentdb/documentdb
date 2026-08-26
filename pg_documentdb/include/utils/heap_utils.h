@@ -48,9 +48,6 @@ typedef struct BinaryHeap
 } BinaryHeap;
 
 
-BinaryHeap * AllocateHeap(int64_t capacity, HeapComparator comparator);
-void PushToHeap(BinaryHeap *heap, const bson_value_t *value);
-bson_value_t PopFromHeap(BinaryHeap *heap);
 bson_value_t TopHeap(BinaryHeap *heap);
 void FreeHeap(BinaryHeap *heap);
 

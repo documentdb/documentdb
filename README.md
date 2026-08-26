@@ -56,6 +56,9 @@ Step 3. Setup DocumentDB using Docker
 
 ```bash
 
+   # Remove any existing DocumentDB image
+   docker image rm -f ghcr.io/documentdb/documentdb/documentdb-local:latest || echo "No existing documentdb image to remove"
+
    # Pull the latest DocumentDB Docker image
    docker pull ghcr.io/documentdb/documentdb/documentdb-local:latest
 
@@ -64,7 +67,6 @@ Step 3. Setup DocumentDB using Docker
 
    # Run the container with your chosen username and password
    docker run -dt -p 10260:10260 --name documentdb-container documentdb --username <YOUR_USERNAME> --password <YOUR_PASSWORD>
-   docker image rm -f ghcr.io/documentdb/documentdb/documentdb-local:latest || echo "No existing documentdb image to remove"
 
 ```
 

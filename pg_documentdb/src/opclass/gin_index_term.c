@@ -2126,7 +2126,7 @@ SerializeCompositeBsonIndexTerm(bytea **individualTerms, int32_t numTerms)
 		}
 		else
 		{
-			totalSize += VARSIZE(individualTerms[i]);
+			totalSize += VARSIZE_ANY(individualTerms[i]);
 		}
 	}
 
@@ -2140,7 +2140,7 @@ SerializeCompositeBsonIndexTerm(bytea **individualTerms, int32_t numTerms)
 	for (int i = 0; i < numTerms; i++)
 	{
 		/* Take the content size of each (excluding varhdr size) */
-		uint32_t dataSize = VARSIZE(individualTerms[i]);
+		uint32_t dataSize = VARSIZE_ANY(individualTerms[i]);
 		if (VARATT_CAN_MAKE_SHORT(individualTerms[i]))
 		{
 			uint8_t data_length = VARATT_CONVERTED_SHORT_SIZE(individualTerms[i]);

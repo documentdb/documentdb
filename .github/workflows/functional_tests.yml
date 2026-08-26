@@ -1,0 +1,320 @@
+name: Functional tests
+run-name: ${{ github.event.pull_request.title || '' }}
+
+concurrency:
+  group: functional-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'main'
+    paths-ignore:
+      - '.devcontainer/**'
+      - '*.md'
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths-ignore:
+      - '.devcontainer/**'
+      - '**/*.md'
+  schedule:
+    - cron: '0 6 * * *'  # Daily at 06:00 UTC
+
+env:
+  # PG16: the configuration the known-failure baseline is calibrated against.
+  # Bump the lists and this value together.
+  PG_VERSION: 16
+  ENGINE_NAME: documentdb
+  DOCUMENTDB_USER: docdb_admin
+  DOCUMENTDB_PORT: 10260
+  # Width of the parallel split. THREE places must agree: this value, the
+  # number of `mode: parallel` entries in the matrix below, and each parallel
+  # entry's `total:` field. (GitHub Actions cannot reference env inside
+  # strategy.matrix, hence the manual invariant.) The verify-splits job fails
+  # closed if a parallel leg is missing, so a miscount cannot silently drop
+  # coverage.
+  PARALLEL_SPLITS: 6
+
+jobs:
+  # Build the engine + gateway host once; every leg installs the resulting
+  # tree. Legs must all test the SAME binaries anyway, and building per leg
+  # spent ~21 runner-minutes x 7 legs per run.
+  build:
+    if: >
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule'
+    name: build engine + gateway
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      # --- Layer 1: ccache for the DocumentDB C build. PATH masquerade covers
+      #     the unprivileged `make`; `sudo make install` only copies. ---
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-pg${{ env.PG_VERSION }}-${{ github.sha }}
+          restore-keys: ccache-pg${{ env.PG_VERSION }}-
+
+      # --- Layer 2: cargo caches. install_rust_tools.sh already no-ops when
+      #     the pinned tool version is present, so restoring ~/.cargo/bin
+      #     skips the 8-minute cargo-pgrx source build; the target cache makes
+      #     the gateway-host build incremental. ---
+      - name: Restore cargo tool cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+          key: cargo-tools-${{ hashFiles('rust-toolchain.toml') }}
+
+      - name: Restore gateway-host build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            pg_documentdb_gw_host/target
+          key: gwhost-${{ hashFiles('pg_documentdb_gw_host/Cargo.lock', 'rust-toolchain.toml') }}-${{ github.sha }}
+          restore-keys: |
+            gwhost-${{ hashFiles('pg_documentdb_gw_host/Cargo.lock', 'rust-toolchain.toml') }}-
+            gwhost-
+
+      # The rust toolchain + cargo-pgrx setup needs NOTHING from the build and is
+      # the largest cold-path item (~8 min compiling cargo-pgrx), so it runs in
+      # the BACKGROUND; only the gateway-host build (which needs pg_config AND
+      # pgrx) joins it. install_rustup.sh is pure curl, so it cannot contend with
+      # the build's apt operations.
+      - name: Build engine + gateway (rust setup overlapped with the build)
+        run: |
+          set -euo pipefail
+          chmod +x ./scripts/build_documentdb_with_scripts.sh
+
+          # --- background: rust toolchain + cargo-pgrx (seconds when the cargo
+          #     caches above hit; ~8 min cold) ---
+          ( export CARGO_HOME=$HOME/.cargo RUSTUP_HOME=$HOME/.rustup
+            ./scripts/install_rustup.sh --install-toolchain
+            ./scripts/install_rust_tools.sh ./rust-toolchain.toml
+          ) > "$RUNNER_TEMP/rust-setup.log" 2>&1 &
+          RUST_PID=$!
+
+          # Snapshot the install roots BEFORE anything is built: the tar shipped
+          # to the legs is an exact before/after path-set difference over them.
+          # Path sets, NOT mtimes — `make install` preserves source timestamps
+          # often enough that `find -newer` misses most files and yields a
+          # silently thin tar whose legs then fail on a missing header.
+          # ccache is installed first so it stays out of that difference.
+          sudo apt-get install -y --no-install-recommends ccache >/dev/null
+          ROOTS="/usr/local /usr/include /usr/lib /etc/ld.so.conf.d"
+          sudo find $ROOTS \( -type f -o -type l \) 2>/dev/null | sort > /tmp/install-before.txt
+
+          # --- foreground: dependencies + DocumentDB in one pass (ccache via
+          #     PATH masquerade covers the unprivileged `make`; the script's
+          #     `sudo make install` only copies) ---
+          export CCACHE_DIR=~/.ccache CCACHE_MAXSIZE=500M
+          PATH="/usr/lib/ccache:$PATH" ./scripts/build_documentdb_with_scripts.sh \
+            --pg-version ${{ env.PG_VERSION }} --citus-version 12
+          ccache -s | head -4
+
+          # --- join the rust setup, then build the gateway host (needs both) ---
+          if ! wait "$RUST_PID"; then
+            echo "::error::rust toolchain / cargo-pgrx setup failed; last 40 lines:"
+            tail -40 "$RUNNER_TEMP/rust-setup.log"
+            exit 1
+          fi
+          tail -2 "$RUNNER_TEMP/rust-setup.log"
+          export PATH="/usr/lib/postgresql/${{ env.PG_VERSION }}/bin:$HOME/.cargo/bin:$PATH"
+          # -i installs into the PG dirs (start_oss_server -g loads it as an extension)
+          ./scripts/build_and_install_with_pgrx.sh -v ${{ env.PG_VERSION }} -i -d ./pg_documentdb_gw_host
+
+      # --- Ship the installed tree to the legs as ONE tar: the PostgreSQL
+      #     prefix (carrying DocumentDB + the gateway host) plus every file the
+      #     build added under the install roots. ---
+      - name: Package install tree
+        run: |
+          set -euo pipefail
+          ROOTS="/usr/local /usr/include /usr/lib /etc/ld.so.conf.d"
+          sudo find $ROOTS \( -type f -o -type l \) 2>/dev/null | sort > /tmp/install-after.txt
+          mkdir -p "$RUNNER_TEMP/install-pkg"
+          { echo "usr/lib/postgresql/${{ env.PG_VERSION }}"; \
+            comm -13 /tmp/install-before.txt /tmp/install-after.txt | sed 's|^/||'; } > /tmp/install-manifest
+          echo "files added by the build: $(wc -l < /tmp/install-manifest)"
+          # Fail closed on an implausibly thin manifest rather than shipping it:
+          # a thin tar surfaces on the legs as an inscrutable compile/startup
+          # error hundreds of lines later (run 30654379381: "bson.h: No such
+          # file or directory").
+          if [ "$(wc -l < /tmp/install-manifest)" -lt 200 ]; then
+            echo "::error::install manifest has only $(wc -l < /tmp/install-manifest) entries — refusing to ship a partial tree."
+            exit 1
+          fi
+          sudo tar -C / -cf - -T /tmp/install-manifest \
+            | zstd -T0 -3 -o "$RUNNER_TEMP/install-pkg/install.tar.zst"
+          ls -lh "$RUNNER_TEMP/install-pkg/"
+
+      - name: Upload install tree
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentdb-install
+          path: ${{ runner.temp }}/install-pkg/
+          retention-days: 7
+          overwrite: true
+
+  functional-gate:
+    needs: build
+    name: functional-gate (${{ matrix.tag }})
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+    strategy:
+      # One red leg must not cancel the others: each leg gates a disjoint slice,
+      # and the surviving legs' artifacts are what makes the red triageable.
+      fail-fast: false
+      matrix:
+        include:
+          - { tag: p0, mode: parallel, id: 0, total: 6 }
+          - { tag: p1, mode: parallel, id: 1, total: 6 }
+          - { tag: p2, mode: parallel, id: 2, total: 6 }
+          - { tag: p3, mode: parallel, id: 3, total: 6 }
+          - { tag: p4, mode: parallel, id: 4, total: 6 }
+          - { tag: p5, mode: parallel, id: 5, total: 6 }
+          # Not a slice: runs every no_parallel test serially, so always 0/1.
+          - { tag: np, mode: noparallel, id: 0, total: 1 }
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      # Runtime pieces the install tree links against but does not carry:
+      # the PostGIS stack's shared libraries and the en_US.UTF-8 locale.
+      - name: Install runtime prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            locales zstd libgeos-c1v5 libgdal30 libproj22 libjson-c5 libxml2
+          sudo locale-gen en_US.UTF-8
+
+      - name: Download install tree
+        uses: actions/download-artifact@v4
+        with:
+          name: documentdb-install
+          path: ${{ runner.temp }}
+
+      - name: Install DocumentDB from build artifact
+        run: |
+          sudo tar -C / --zstd -xf "$RUNNER_TEMP/install.tar.zst"
+          sudo ldconfig
+          # A tar that extracted thin otherwise surfaces as an inscrutable
+          # failure much later (run 30654379381: "bson.h: No such file or
+          # directory"), so name the missing pieces here.
+          missing=""
+          for f in /usr/include/libbson-1.0/bson/bson.h \
+                   /usr/lib/postgresql/${{ env.PG_VERSION }}/bin/pg_config \
+                   /usr/lib/postgresql/${{ env.PG_VERSION }}/lib/citus.so; do
+            [ -e "$f" ] || missing="$missing $f"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::install tree is incomplete (missing:$missing)."
+            exit 1
+          fi
+
+      - name: Export pg_config PATH
+        run: echo "/usr/lib/postgresql/${{ env.PG_VERSION }}/bin" >> $GITHUB_PATH
+
+      # --- Start the engine: source build, extended_rum + gateway ---
+      - name: Generate DocumentDB password
+        run: |
+          PASSWORD=$(python3 -c 'import secrets, string; print("".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32)))')
+          echo "::add-mask::$PASSWORD"
+          echo "DOCUMENTDB_PASSWORD=$PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Start DocumentDB (source build, extended_rum + gateway)
+        run: |
+          export PG_VERSION_USED=${{ env.PG_VERSION }}
+          mkdir -p "$RUNNER_TEMP/pgdata"
+          ./scripts/start_oss_server.sh -d "$RUNNER_TEMP/pgdata" -c -g -r \
+            -u "${{ env.DOCUMENTDB_USER }}" -a "$DOCUMENTDB_PASSWORD"
+          echo "Waiting for gateway on port ${{ env.DOCUMENTDB_PORT }}..."
+          timeout 240 bash -c 'until (echo > /dev/tcp/localhost/${{ env.DOCUMENTDB_PORT }}) 2>/dev/null; do sleep 2; done'
+          echo "Gateway is ready."
+
+      # --- Clone the suite at source_sha (the layout the known-failure lists'
+      #     node IDs are written against) ---
+      - name: Setup functional-tests suite (pinned source_sha)
+        run: |
+          ./documentdb-local/functional-tests/scripts/setup_functional_tests.sh "$GITHUB_WORKSPACE/docdb_functional_tests"
+
+      # --- This leg's slice + known-failures gate (collection guards, universe
+      #     record, re-run recovery, recover-and-gate verdict — all in the
+      #     shared split runner). ---
+      - name: Run split leg + known-failures gate (${{ matrix.tag }})
+        env:
+          SPLIT_MODE: ${{ matrix.mode }}
+          SPLIT_ID: ${{ matrix.id }}
+          SPLIT_TOTAL: ${{ matrix.total }}
+          SPLIT_TAG: ${{ matrix.tag }}
+          CONN_USER: ${{ env.DOCUMENTDB_USER }}
+          CONN_PORT: ${{ env.DOCUMENTDB_PORT }}
+        run: |
+          export RESULTS_DIR="$GITHUB_WORKSPACE/.test-results/functional-tests"
+          export TMPDIR="$RUNNER_TEMP"
+          export CONN_PASS="$DOCUMENTDB_PASSWORD"
+          bash ./documentdb-local/functional-tests/scripts/run_pytest_split.sh
+
+      - name: Collect engine logs
+        if: always()
+        run: |
+          mkdir -p .test-results/functional-tests
+          cp "$RUNNER_TEMP/pgdata/pglog.log" .test-results/functional-tests/postgres.log 2>/dev/null || true
+
+      # Warning-only log scan. The OSS gateway runs as a PG background worker, so
+      # pglog IS the gateway log. The non-zero exit becomes a warning annotation
+      # rather than relying on continue-on-error, which still renders a non-zero
+      # step as an ERROR annotation (seven red marks on a fully passing run).
+      - name: Check for Log Errors
+        if: always()
+        run: |
+          ./documentdb-local/functional-tests/scripts/validate_test_log_errors.sh \
+            "$RUNNER_TEMP/pgdata/pglog.log" \
+            || echo "::warning::internal-error signatures found in the engine log for ${{ matrix.tag }} (summary above); informational, does not gate"
+
+      - name: Upload gate results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: functional-test-results-${{ matrix.tag }}
+          overwrite: true
+          path: .test-results/functional-tests/
+
+  # Cross-leg guard. Each parallel leg slices ids[SPLIT_ID::SPLIT_TOTAL] of a
+  # universe it collected ITSELF, so the slices only tile the suite if every leg
+  # collected the same universe. A leg that silently omits one node (a partial
+  # collect still exiting 0) shifts every later position by one: it runs the next
+  # leg's tests while its own share runs on NO leg — and every leg still clears
+  # MIN_MANIFEST and reports PASS, so nothing inside a leg can detect it.
+  # `needs` runs this exactly when every leg succeeded, the only case where the
+  # skew would otherwise be scored green.
+  verify-splits:
+    name: Verify split universes agree
+    needs: functional-gate
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Download per-split universe records
+        uses: actions/download-artifact@v4
+        with:
+          pattern: functional-test-results-*
+          path: ${{ runner.temp }}/legs
+      - name: Assert every parallel split collected one universe
+        run: |
+          python3 documentdb-local/functional-tests/tools/functional_gate.py \
+            verify-split-universes \
+            --dir "$RUNNER_TEMP/legs" \
+            --artifact-prefix functional-test-results- \
+            --expected-splits "${{ env.PARALLEL_SPLITS }}"

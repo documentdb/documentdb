@@ -22,8 +22,10 @@
 #include <utils/rel.h>
 #include <catalog/pg_am.h>
 #include <access/skey.h>
+#include <executor/instrument.h>
 #include <nodes/execnodes.h>
 #include <utils/jsonb.h>
+#include <utils/tuplesort.h>
 
 #include "io/bson_core.h"
 #include "commands/commands_common.h"
@@ -33,6 +35,12 @@
 #include "planner/mongo_query_operator.h"
 #include "metadata/metadata_cache.h"
 #include "planner/documentdb_planner.h"
+
+#if PG_VERSION_NUM >= 190000
+typedef NodeInstrumentation DocumentDBNodeInstrumentation;
+#else
+typedef Instrumentation DocumentDBNodeInstrumentation;
+#endif
 #include "index_am/index_am_utils.h"
 #include "index_am/documentdb_rum.h"
 #include "explain/documentdb_explain.h"
@@ -79,7 +87,8 @@ DocumentDBExplainStageHook explain_stage_hook = NULL;
 PG_FUNCTION_INFO_V1(documentdb_explain);
 
 ExplainInputData * ParseExplainSpec(pgbson *explainSpec);
-static Query * CreateQueryFromQuerySpec(ExplainInputData *data, bool addCursorParams,
+static Query * CreateQueryFromQuerySpec(ExplainInputData *data, CursorParamKind
+										cursorParams,
 										QueryData *queryData, ExplainKind *explainKind);
 static DocumentDBExplainState * GenerateAndExecutePlan(Query *query, QueryData *queryData,
 													   ExplainVerbosity verbosity);
@@ -105,8 +114,10 @@ documentdb_explain(PG_FUNCTION_ARGS)
 	QueryData queryData = GenerateFirstPageQueryData();
 
 	/* Next, generate the query from the spec */
+	CursorParamKind cursorParams = addCursorParams ? CursorParamKind_Streaming :
+								   CursorParamKind_Persistent;
 	ExplainKind explainKind;
-	Query *query = CreateQueryFromQuerySpec(data, addCursorParams, &queryData,
+	Query *query = CreateQueryFromQuerySpec(data, cursorParams, &queryData,
 											&explainKind);
 
 	/* Now generate & execute plan in explain mode. This is similar to what Postgres
@@ -219,7 +230,7 @@ ParseExplainSpec(pgbson *explainSpec)
 
 
 static Query *
-CreateQueryFromQuerySpec(ExplainInputData *data, bool addCursorParams,
+CreateQueryFromQuerySpec(ExplainInputData *data, CursorParamKind cursorParams,
 						 QueryData *queryData, ExplainKind *explainKind)
 {
 	/* Get the command from the explain spec first */
@@ -230,14 +241,14 @@ CreateQueryFromQuerySpec(ExplainInputData *data, bool addCursorParams,
 		/* It's a find command - generate find query */
 		*explainKind = ExplainKind_Find;
 		return GenerateFindQuery(data->databaseName, data->command, queryData,
-								 addCursorParams, setStatementTimeout);
+								 cursorParams, setStatementTimeout);
 	}
 	else if (PgbsonInitIteratorAtPath(data->command, "aggregate", &commandIter))
 	{
 		/* It's an aggregate command - generate aggregate query */
 		*explainKind = ExplainKind_Aggregate;
 		return GenerateAggregationQuery(data->databaseName, data->command, queryData,
-										addCursorParams, setStatementTimeout);
+										cursorParams, setStatementTimeout);
 	}
 	else if (PgbsonInitIteratorAtPath(data->command, "count", &commandIter))
 	{
@@ -388,7 +399,7 @@ GenerateAndExecutePlan(Query *query, QueryData *queryData, ExplainVerbosity verb
 	int cursorOptions = CURSOR_OPT_PARALLEL_OK;
 	char *queryString = "";
 	ParamListInfo params = NULL;
-	plan = pg_plan_query(query, queryString, cursorOptions, params);
+	plan = PgPlanQueryCompat(query, queryString, cursorOptions, params);
 
 	INSTR_TIME_SET_CURRENT(state->planningTime);
 	INSTR_TIME_SUBTRACT(state->planningTime, planstart);
@@ -487,6 +498,11 @@ WriterSingleQual(pgbson_writer *writer, Expr *qual)
 	}
 
 	const char *operatorName = operator->mongoOperatorName;
+	if (operator->operatorType == QUERY_OPERATOR_REGEX)
+	{
+		operatorName = "$regExp";
+	}
+
 	Expr *secondArg = lsecond(args);
 	if (!IsA(secondArg, Const))
 	{
@@ -1319,7 +1335,7 @@ WriteQueryPlanner(DocumentDBExplainState *state, QueryDesc *queryDesc,
 
 static void
 WriteIndexExecutionStats(pgbson_writer *writer, IndexScanDescData *scanDesc,
-						 Instrumentation *instrument)
+						 DocumentDBNodeInstrumentation *instrument)
 {
 	if (scanDesc == NULL)
 	{
@@ -1363,8 +1379,16 @@ WriterExecutionStage(pgbson_writer *writer, const char *stageName, QueryDesc *qu
 
 	InstrEndLoop(planstate->instrument);
 	double nloops = Max(planstate->instrument->nloops, 1);
+#if PG_VERSION_NUM >= 190000
+	double startup_ms = INSTR_TIME_GET_MILLISEC(planstate->instrument->startup) / nloops;
+	double total_ms = INSTR_TIME_GET_MILLISEC(planstate->instrument->instr.total) /
+					  nloops;
+	Instrumentation *instrumentation = &planstate->instrument->instr;
+#else
 	double startup_ms = 1000.0 * planstate->instrument->startup / nloops;
 	double total_ms = 1000.0 * planstate->instrument->total / nloops;
+	Instrumentation *instrumentation = planstate->instrument;
+#endif
 	double rows = planstate->instrument->ntuples;
 	PgbsonWriterAppendDouble(writer, "nReturned", -1, rows);
 	PgbsonWriterAppendDouble(writer, "executionStartAtTimeMillis", -1, startup_ms);
@@ -1472,18 +1496,18 @@ WriterExecutionStage(pgbson_writer *writer, const char *stageName, QueryDesc *qu
 
 	PgbsonWriterAppendDouble(writer, "totalDocsExamined", -1, totalDocsExamined);
 
-	if (planstate->instrument->need_bufusage)
+	if (instrumentation->need_bufusage)
 	{
 		PgbsonWriterAppendDouble(writer, "numBlocksFromCache", -1,
-								 planstate->instrument->bufusage.shared_blks_hit);
+								 instrumentation->bufusage.shared_blks_hit);
 		PgbsonWriterAppendDouble(writer, "numBlocksFromDisk", -1,
-								 planstate->instrument->bufusage.shared_blks_read);
+								 instrumentation->bufusage.shared_blks_read);
 #if PG_VERSION_NUM >= 170000
 		PgbsonWriterAppendDouble(writer, "ioReadTimeMillis", -1, INSTR_TIME_GET_MILLISEC(
-									 planstate->instrument->bufusage.shared_blk_read_time));
+									 instrumentation->bufusage.shared_blk_read_time));
 #else
 		PgbsonWriterAppendDouble(writer, "ioReadTimeMillis", -1, INSTR_TIME_GET_MILLISEC(
-									 planstate->instrument->bufusage.blk_read_time));
+									 instrumentation->bufusage.blk_read_time));
 #endif
 	}
 }

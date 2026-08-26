@@ -11,6 +11,21 @@
 #ifndef RETRYABLE_WRITES_H
 #define RETRYABLE_WRITES_H
 
+#include "utils/version_utils.h"
+
+extern bool EnableLocalRetryTable;
+
+
+/*
+ * UseLocalRetryTable returns whether to use a single local retry table
+ * instead of per-collection distributed retry tables.
+ */
+static inline bool
+UseLocalRetryTable(void)
+{
+	return EnableLocalRetryTable && IsClusterVersionAtleast(DocDB_V0, 113, 0);
+}
+
 
 /*
  * RetryableWriteResult stores information about the result of a retryable

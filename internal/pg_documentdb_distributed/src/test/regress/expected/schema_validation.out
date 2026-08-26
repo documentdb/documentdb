@@ -3,9 +3,10 @@ SET citus.next_shard_id TO 17770000;
 SET documentdb.next_collection_id TO 177700;
 SET documentdb.next_collection_index_id TO 177700;
 -- create a collection and insert a document
+set documentdb.enableSchemaValidation = off;
 SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"a": {"bsonType": "int"}}}}, "validationLevel": "strict", "validationAction": "error"}');
 ERROR:  validator not supported yet
-set documentdb.enableSchemaValidation = true;
+set documentdb.enableSchemaValidation = on;
 SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"a": {"bsonType": "int"}}}}, "validationLevel": "strict", "validationAction": "error"}');
 NOTICE:  creating collection
          create_collection_view         
@@ -113,11 +114,6 @@ SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "
  { "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
-set documentdb.enableSchemaValidation = false;
--- update validation action
-SELECT documentdb_api.coll_mod('schema_validation', 'col', '{"collMod":"col", "validationAction": "warn"}');
-ERROR:  validator not supported yet
-set documentdb.enableSchemaValidation = true;
 SELECT documentdb_api.coll_mod('schema_validation', 'col', '{"collMod":"col", "validationAction": "warn"}');
              coll_mod              
 ---------------------------------------------------------------------
@@ -205,4 +201,59 @@ SELECT bson_dollar_project(cursorpage, '{"cursor.firstBatch.info": 0, "cursor.fi
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "schema_validation.$cmd.ListCollections", "firstBatch" : [ { "name" : "col7", "type" : "collection", "options" : { "validator" : { "$jsonSchema" : { "bsonType" : "object", "properties" : { "a" : { "bsonType" : "int", "description" : "This is field a" } } } }, "validationLevel" : "strict", "validationAction" : "error" } } ] }, "ok" : { "$numberDouble" : "1.0" } } |              | f                 |        0
 (1 row)
 
+-- Suppress the "creating collection" NOTICE: in a distributed setup it is emitted
+-- on the metadata coordinator and forwarded back, so its delivery is timing-sensitive.
+SET client_min_messages TO WARNING;
+-- enum: scalar values
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_enum1", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"status": {"enum": ["active", "inactive", "pending"]}}}}}');
+         create_collection_view         
+---------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- enum: mixed types including null, document, array
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_enum2", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"v": {"enum": [1, "two", true, null, {"x": 1}, [1, 2]]}}}}}');
+         create_collection_view         
+---------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- enum at top level (whole document must equal one of these)
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_enum3", "validator": {"$jsonSchema": {"enum": [{"a": 1}, {"a": 2}]}}}');
+         create_collection_view         
+---------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- enum invalid: not an array
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_enum_bad1", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"v": {"enum": "active"}}}}}');
+ERROR:  $jsonSchema keyword 'enum' must be an array
+-- enum invalid: empty array
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_enum_bad2", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"v": {"enum": []}}}}}');
+ERROR:  $jsonSchema keyword 'enum' cannot be an empty array
+   
+-- oneOf: two disjoint sub-schemas
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_oneof1", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"v": {"oneOf": [{"bsonType": "int"}, {"bsonType": "string"}]}}}}}');
+         create_collection_view         
+---------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- oneOf: nested properties / required
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_oneof2", "validator": {"$jsonSchema": {"oneOf": [{"bsonType": "object", "required": ["a"]}, {"bsonType": "object", "required": ["b"]}]}}}');
+         create_collection_view         
+---------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- oneOf invalid: not an array
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_oneof_bad1", "validator": {"$jsonSchema": {"oneOf": {"bsonType": "int"}}}}');
+ERROR:  $jsonSchema keyword 'oneOf' must be an array
+-- oneOf invalid: empty array
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_oneof_bad2", "validator": {"$jsonSchema": {"oneOf": []}}}');
+ERROR:  $jsonSchema keyword 'oneOf' cannot be an empty array
+-- oneOf invalid: element is not an object
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_oneof_bad3", "validator": {"$jsonSchema": {"oneOf": [{"bsonType": "int"}, "string"]}}}');
+ERROR:  $jsonSchema keyword 'oneOf' requires that each element of the array is an object, but found a string
+RESET client_min_messages;
    

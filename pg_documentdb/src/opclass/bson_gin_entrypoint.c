@@ -37,7 +37,6 @@
 #include "metadata/metadata_cache.h"
 #include "collation/collation.h"
 
-extern bool EnableExprLookupIndexPushdown;
 extern bool EnableValueOnlyIndexTerms;
 
 /* --------------------------------------------------------- */
@@ -70,7 +69,6 @@ static bool IsCollationApplicableToStrategy(BsonGinIndexOptionsBase *indexOption
 
 extern Datum gin_bson_exclusion_pre_consistent(PG_FUNCTION_ARGS);
 extern uint32_t MaxWildcardIndexKeySize;
-extern bool EnableCollation;
 extern bool EnableCollationWithNonUniqueOrderedIndexes;
 
 /*
@@ -1146,12 +1144,6 @@ ValidateIndexForQualifierPathForEquality(bytea *indexOptions, const StringView *
 
 		case IndexOptionsType_Composite:
 		{
-			if (!EnableExprLookupIndexPushdown)
-			{
-				traverse = IndexTraverse_Invalid;
-				break;
-			}
-
 			int32_t compositeColumnIgnore;
 			bson_value_t unspecifiedValue = { 0 };
 			traverse = GetCompositePathIndexTraverseOption(
@@ -1689,6 +1681,8 @@ IsCollationApplicableToStrategy(BsonGinIndexOptionsBase *indexOptions,
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_GTE:
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_LT:
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_LTE:
+		case BSON_INDEX_STRATEGY_DOLLAR_IN:
+		case BSON_INDEX_STRATEGY_DOLLAR_NOT_IN:
 		{
 			if (!IsBsonTypeCollationAware(queryValueType))
 			{
@@ -1696,6 +1690,17 @@ IsCollationApplicableToStrategy(BsonGinIndexOptionsBase *indexOptions,
 			}
 
 			return collationsMatch;
+		}
+
+		/*
+		 * $elemMatch on composite indexes is handled earlier by
+		 * ProcessElemMatchOperator, which decomposes it into inner
+		 * operators ($eq, $gt, etc.) that each pass through this
+		 * function individually.
+		 */
+		case BSON_INDEX_STRATEGY_DOLLAR_ELEMMATCH:
+		{
+			return false;
 		}
 
 		/*
@@ -1716,14 +1721,21 @@ IsCollationApplicableToStrategy(BsonGinIndexOptionsBase *indexOptions,
 			return false;
 		}
 
-		/* TODO (COLLATION): To be supported */
-		case BSON_INDEX_STRATEGY_DOLLAR_IN:
-		case BSON_INDEX_STRATEGY_DOLLAR_NOT_IN:
-		case BSON_INDEX_STRATEGY_DOLLAR_ELEMMATCH:
-		case BSON_INDEX_STRATEGY_DOLLAR_RANGE:
+		/*
+		 * $orderby pushdown — collation-aware matching of the sort to a
+		 * collated index is enforced by the planner before ordered output
+		 * is attached. Validation here only needs to confirm the index can
+		 * be considered for ordered output; allow it through.
+		 */
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY:
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_REVERSE:
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_INDEXTERM:
+		{
+			return true;
+		}
+
+		/* TODO (COLLATION): To be supported */
+		case BSON_INDEX_STRATEGY_DOLLAR_RANGE:
 
 		/* TODO (COLLATION): Pending unique index support */
 		case BSON_INDEX_STRATEGY_UNIQUE_EQUAL:

@@ -30,6 +30,7 @@
 #include "metadata/metadata_cache.h"
 #include "query/bson_dollar_operators.h"
 #include "query/bson_compare.h"
+#include "collation/collation.h"
 #include "utils/hashset_utils.h"
 #include "utils/fmgr_utils.h"
 #include "utils/feature_counter.h"
@@ -502,6 +503,13 @@ HandleDensify(const bson_value_t *existingValue, Query *query,
 							BsonTypeName(existingValue->value_type))));
 	}
 
+	if (IsCollationApplicable(context->collationString))
+	{
+		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						errmsg(
+							"collation is not supported in the $densify stage yet.")));
+	}
+
 	RangeTblEntry *rte = linitial(query->rtable);
 
 	bool isCollectionDataTable = rte->rtekind == RTE_RELATION;
@@ -748,8 +756,7 @@ ReleasePartitionAwareState(PartitionAwareState *partitionState)
 }
 
 
-static inline void
-pg_attribute_noreturn()
+pg_noreturn static inline void
 ThorwLimitExceededError(int32 nDocumentsGenerated)
 {
 	ereport(ERROR, (
@@ -762,8 +769,8 @@ ThorwLimitExceededError(int32 nDocumentsGenerated)
 					nDocumentsGenerated, PEC_InternalQueryMaxAllowedDensifyDocs)));
 }
 
-static inline void
-pg_attribute_noreturn()
+
+pg_noreturn static inline void
 ThrowMemoryLimitExceededError(int meConsumed)
 {
 	ereport(ERROR, (
@@ -1732,7 +1739,7 @@ CheckEnoughRoomForNewDocuments(const bson_value_t *min, const bson_value_t *max,
  * Generates a SELECT NULL query;
  */
 static Query *
-GenerateSelectNullQuery()
+GenerateSelectNullQuery(void)
 {
 	Query *query = makeNode(Query);
 	query->commandType = CMD_SELECT;

@@ -1,0 +1,1 @@
+\i sql/bson_aggregation_pipeline_tests_sumavg_group.sql

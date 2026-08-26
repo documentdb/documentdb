@@ -1,0 +1,372 @@
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
+SET citus.next_shard_id TO 258600000;
+SET documentdb.next_collection_id TO 25860000;
+SET documentdb.next_collection_index_id TO 25860000;
+SET citus.propagate_set_commands TO 'local';
+-- Enable the support function pushdown GUC
+-- Note: use SET LOCAL inside BEGIN blocks for distributed tests
+-- so the GUC propagates to Citus workers via propagate_set_commands.
+---------------------------------------------------------------------
+-- Setup: Unsharded collection
+---------------------------------------------------------------------
+SELECT documentdb_api.insert_one('id_push_dist_db', 'test_unsharded', '{ "_id": 1, "a": 10, "b": "x" }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'test_unsharded', '{ "_id": 2, "a": 20, "b": "y" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'test_unsharded', '{ "_id": 3, "a": 30, "b": "z" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'test_unsharded', '{ "_id": 4, "a": 40, "b": "w" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'test_unsharded', '{ "_id": 5, "a": 50, "b": "v" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'test_unsharded', '{ "_id": "abc", "a": 60, "b": "u" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'test_unsharded', '{ "_id": "def", "a": 70, "b": "t" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('id_push_dist_db', 'test_unsharded', FORMAT('{ "_id": %s, "a": %s }', g, g)::bson) FROM generate_series(100, 200) g) i;
+ count 
+---------------------------------------------------------------------
+   101
+(1 row)
+
+---------------------------------------------------------------------
+-- Section 1: Btree pushdown on unsharded collection
+---------------------------------------------------------------------
+SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "test_unsharded", "filter": { "_id": 3 } }');
+                                   document                                   
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "30" }, "b" : "z" }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "test_unsharded", "filter": { "_id": { "$gt": 3, "$lt": 5 } } }');
+                                   document                                   
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "4" }, "a" : { "$numberInt" : "40" }, "b" : "w" }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "test_unsharded", "filter": { "_id": { "$in": [1, 3, 5] } }, "sort": { "_id": 1 } }');
+                                   document                                   
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "10" }, "b" : "x" }
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "30" }, "b" : "z" }
+ { "_id" : { "$numberInt" : "5" }, "a" : { "$numberInt" : "50" }, "b" : "v" }
+(3 rows)
+
+BEGIN;
+SET LOCAL documentdb.enable_support_function_id_pushdown TO on;
+SET LOCAL enable_seqscan TO off;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "test_unsharded", "filter": { "_id": 3 } }');
+                                                                               QUERY PLAN                                                                               
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using _id_ on documents_25860001_258600002 collection
+               Index Cond: ((shard_key_value = '25860001'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "3" } }'::documentdb_core.bson))
+(7 rows)
+
+COMMIT;
+BEGIN;
+SET LOCAL documentdb.enable_support_function_id_pushdown TO on;
+SET LOCAL enable_seqscan TO off;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "test_unsharded", "filter": { "_id": { "$gt": 3 } } }');
+                                                                                                                                      QUERY PLAN                                                                                                                                       
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using _id_ on documents_25860001_258600002 collection
+               Index Cond: ((shard_key_value = '25860001'::bigint) AND (object_id OPERATOR(documentdb_core.>) '{ "" : { "$numberInt" : "3" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberDouble" : "Infinity" } }'::documentdb_core.bson))
+(7 rows)
+
+COMMIT;
+BEGIN;
+SET LOCAL documentdb.enable_support_function_id_pushdown TO on;
+SET LOCAL enable_seqscan TO off;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "test_unsharded", "filter": { "_id": { "$in": [1, 3] } } }');
+                                                                                                                  QUERY PLAN                                                                                                                  
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using _id_ on documents_25860001_258600002 collection
+               Index Cond: ((shard_key_value = '25860001'::bigint) AND (object_id OPERATOR(documentdb_core.=) ANY (ARRAY['{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "" : { "$numberInt" : "3" } }'::documentdb_core.bson])))
+(7 rows)
+
+COMMIT;
+---------------------------------------------------------------------
+-- Section 2: Sharded collection — shard key is _id
+---------------------------------------------------------------------
+SELECT documentdb_api.insert_one('id_push_dist_db', 'test_sharded_by_id', '{ "_id": 1, "a": 10 }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'test_sharded_by_id', '{ "_id": 2, "a": 20 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'test_sharded_by_id', '{ "_id": 3, "a": 30 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'test_sharded_by_id', '{ "_id": 4, "a": 40 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'test_sharded_by_id', '{ "_id": 5, "a": 50 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'test_sharded_by_id', '{ "_id": "abc", "a": 60 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('id_push_dist_db', 'test_sharded_by_id', FORMAT('{ "_id": %s, "a": %s }', g, g)::bson) FROM generate_series(100, 150) g) i;
+ count 
+---------------------------------------------------------------------
+    51
+(1 row)
+
+SELECT documentdb_api.shard_collection('id_push_dist_db', 'test_sharded_by_id', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+-- 2a: Point read with shard key = _id
+SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "test_sharded_by_id", "filter": { "_id": 3 } }');
+                             document                              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "30" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "test_sharded_by_id", "filter": { "_id": "abc" } }');
+                     document                     
+---------------------------------------------------------------------
+ { "_id" : "abc", "a" : { "$numberInt" : "60" } }
+(1 row)
+
+-- 2b: Range queries
+SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "test_sharded_by_id", "filter": { "_id": { "$gt": 3, "$lt": 5 } } }');
+                             document                              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "4" }, "a" : { "$numberInt" : "40" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "test_sharded_by_id", "filter": { "_id": { "$in": [1, 3, 5] } }, "sort": { "_id": 1 } }');
+                             document                              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "10" } }
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "30" } }
+ { "_id" : { "$numberInt" : "5" }, "a" : { "$numberInt" : "50" } }
+(3 rows)
+
+-- 2c: EXPLAIN
+BEGIN;
+SET LOCAL documentdb.enable_support_function_id_pushdown TO on;
+SET LOCAL enable_seqscan TO off;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "test_sharded_by_id", "filter": { "_id": 3 } }');
+                                                                                     QUERY PLAN                                                                                     
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using _id_ on documents_25860002_258600007 collection
+               Index Cond: ((shard_key_value = '-4918719581749358852'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "3" } }'::documentdb_core.bson))
+(7 rows)
+
+COMMIT;
+BEGIN;
+SET LOCAL documentdb.enable_support_function_id_pushdown TO on;
+SET LOCAL enable_seqscan TO off;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "test_sharded_by_id", "filter": { "_id": { "$gt": 3 } } }');
+                                                             QUERY PLAN                                                              
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 8
+   Tasks Shown: One of 8
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using _id_ on documents_25860002_258600006 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@>) '{ "_id" : { "$numberInt" : "3" } }'::documentdb_core.bson)
+(7 rows)
+
+COMMIT;
+---------------------------------------------------------------------
+-- Section 3: Sharded collection — shard key is different field
+---------------------------------------------------------------------
+SELECT documentdb_api.insert_one('id_push_dist_db', 'test_sharded_by_a', '{ "_id": 1, "a": 10 }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'test_sharded_by_a', '{ "_id": 2, "a": 20 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'test_sharded_by_a', '{ "_id": 3, "a": 30 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'test_sharded_by_a', '{ "_id": 4, "a": 40 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'test_sharded_by_a', '{ "_id": 5, "a": 50 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('id_push_dist_db', 'test_sharded_by_a', FORMAT('{ "_id": %s, "a": %s }', g, g)::bson) FROM generate_series(100, 150) g) i;
+ count 
+---------------------------------------------------------------------
+    51
+(1 row)
+
+SELECT documentdb_api.shard_collection('id_push_dist_db', 'test_sharded_by_a', '{ "a": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+-- 3a: _id filter without shard key → scatter-gather
+SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "test_sharded_by_a", "filter": { "_id": 3 } }');
+                             document                              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "30" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "test_sharded_by_a", "filter": { "_id": { "$gt": 3, "$lt": 5 } } }');
+                             document                              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "4" }, "a" : { "$numberInt" : "40" } }
+(1 row)
+
+-- 3b: _id + shard key filter → targeted + btree pushdown
+SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "test_sharded_by_a", "filter": { "_id": 3, "a": 30 } }');
+                             document                              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "30" } }
+(1 row)
+
+BEGIN;
+SET LOCAL documentdb.enable_support_function_id_pushdown TO on;
+SET LOCAL enable_seqscan TO off;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "test_sharded_by_a", "filter": { "_id": 3, "a": 30 } }');
+                                                                                     QUERY PLAN                                                                                     
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using _id_ on documents_25860003_258600018 collection
+               Index Cond: ((shard_key_value = '-4970023665459033743'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "3" } }'::documentdb_core.bson))
+               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "30" } }'::documentdb_core.bson)
+(8 rows)
+
+COMMIT;
+-- 3c: Range on _id with shard key
+SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "test_sharded_by_a", "filter": { "_id": { "$gte": 1, "$lte": 3 }, "a": { "$gte": 10, "$lte": 30 } }, "sort": { "_id": 1 } }');
+                             document                              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "10" } }
+ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "20" } }
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "30" } }
+(3 rows)
+
+---------------------------------------------------------------------
+-- Section 4: RUM index with _id on sharded collection
+---------------------------------------------------------------------
+SELECT documentdb_api_internal.create_indexes_non_concurrently('id_push_dist_db',
+  '{ "createIndexes": "test_sharded_by_a", "indexes": [{ "key": { "a": 1, "_id": 1 }, "name": "idx_a_id_sharded" }] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+ANALYZE;
+-- 4a: Compound filter on sharded collection
+SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "test_sharded_by_a", "filter": { "a": 30, "_id": 3 } }');
+                             document                              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "30" } }
+(1 row)
+
+-- 4b: EXPLAIN
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL documentdb.enable_support_function_id_pushdown TO on;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "test_sharded_by_a", "filter": { "a": 30, "_id": 3 } }');
+                                                                                     QUERY PLAN                                                                                     
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using _id_ on documents_25860003_258600018 collection
+               Index Cond: ((shard_key_value = '-4970023665459033743'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "3" } }'::documentdb_core.bson))
+               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "30" } }'::documentdb_core.bson)
+(8 rows)
+
+COMMIT;

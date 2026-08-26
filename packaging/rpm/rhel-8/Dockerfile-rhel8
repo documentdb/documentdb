@@ -15,14 +15,22 @@ RUN dnf --setopt=skip_if_unavailable=True install -y dnf-plugins-core && \
     dnf --setopt=skip_if_unavailable=True config-manager --set-enabled powertools
 
 # Locale setup
+# glibc-langpack-en provides en_US.UTF-8; localedef stays best-effort because
+# it exits nonzero on this base even when the locale is fine (charmap not
+# shipped). The `locale -a` check is the real gate: the old trailing
+# `|| true` bound to the WHOLE && chain, so a transient dnf/mirror failure
+# built a locale-less image that only failed ~30 min later inside initdb
+# ("invalid locale settings") - and the poisoned cached layer then defeated
+# the workflow-level retry. Failing here leaves no layer to cache, so a
+# retry rebuilds cleanly.
 RUN dnf -y install glibc-langpack-en glibc-common && \
-    localedef -i en_US -f UTF-8 en_US.UTF-8 || true
+    (localedef -i en_US -f UTF-8 en_US.UTF-8 || true) && \
+    locale -a | grep -qiE '^en_US\.utf-?8$'
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 
 # Install base build tools and dependencies
-RUN dnf -y swap curl-minimal curl && \
-    dnf -y install \
+RUN dnf -y install --allowerasing \
         dnf-utils \
         rpm-build \
         rpmdevtools \
@@ -37,6 +45,7 @@ RUN dnf -y swap curl-minimal curl && \
         libicu-devel \
         krb5-devel \
         python3 \
+        perl-IPC-Run \
         tar && \
     dnf clean all
 
@@ -64,9 +73,12 @@ RUN dnf -y install \
         clang-devel \
         llvm-devel
 
-# PostgreSQL 16+ with JIT enabled expects LLVM tools in /usr/lib64/llvm20/bin
-# On RHEL 8, LLVM binaries are in /usr/bin, so create a simple symlink
-RUN mkdir -p /usr/lib64/llvm20 && ln -s /usr/bin /usr/lib64/llvm20/bin
+# PostgreSQL with JIT enabled expects LLVM tools in a versioned bin directory.
+# PG16 was built against LLVM20; PG17.10+/PG18 from PGDG are built against LLVM21.
+# On RHEL 8, llvm-toolset places binaries in /usr/bin, so symlink both versioned paths to it.
+RUN mkdir -p /usr/lib64/llvm20 /usr/lib64/llvm21 && \
+    ln -s /usr/bin /usr/lib64/llvm20/bin && \
+    ln -s /usr/bin /usr/lib64/llvm21/bin
 
 RUN rpmdev-setuptree
 

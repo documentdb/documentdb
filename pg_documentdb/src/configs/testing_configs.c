@@ -32,10 +32,6 @@ bool EnableGenerateNonExistsTerm = DEFAULT_ENABLE_GENERATE_NON_EXISTS_TERM;
 #define DEFAULT_INDEX_TRUNCATION_LIMIT_OVERRIDE INT_MAX
 int IndexTruncationLimitOverride = DEFAULT_INDEX_TRUNCATION_LIMIT_OVERRIDE;
 
-#define DEFAULT_ENABLE_CURSORS_ON_AGGREGATION_QUERY_REWRITE false
-bool EnableCursorsOnAggregationQueryRewrite =
-	DEFAULT_ENABLE_CURSORS_ON_AGGREGATION_QUERY_REWRITE;
-
 #define DEFAULT_UNIQUE_INDEX_KEYHASH_OVERIDE 0
 int DefaultUniqueIndexKeyhashOverride = DEFAULT_UNIQUE_INDEX_KEYHASH_OVERIDE;
 
@@ -103,11 +99,28 @@ bool DisableExtendedRumExplainPlans = DEFAULT_DISABLE_EXTENDED_RUM_EXPLAIN_PLANS
 bool EnableDataTableWithoutCreationTime =
 	DEFAULT_ENABLE_DATA_TABLES_WITHOUT_CREATION_TIME;
 
+/* Left behind for long term testing of old (pre-composite-hash) unique indexes */
+#define DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH true
+bool EnableCompositeUniqueHash = DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH;
+
+/* Left behind for long term testing of full correlated composite indexes */
+#define DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS_ON_COMMON_SUBPATH true
+bool EnableCompositeReducedCorrelatedTermsOnCommonSubPath =
+	DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS_ON_COMMON_SUBPATH;
+
+/* Left behind for long term testing of non-composite TTL indexes */
+#define DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE true
+bool CreateTTLIndexAsCompositeByDefault = DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE;
+
 #define DEFAULT_RUM_FAIL_ON_LOST_PATH false
 bool RumFailOnLostPath = DEFAULT_RUM_FAIL_ON_LOST_PATH;
 
 #define DEFAULT_FORCE_COLL_STATS_DATA_COLLECTION false
 bool ForceCollStatsDataCollection = DEFAULT_FORCE_COLL_STATS_DATA_COLLECTION;
+
+/* On by default; can be turned off in tests to exercise the non-live-tuples count path */
+#define DEFAULT_USE_PG_STATS_LIVE_TUPLES_FOR_COUNT true
+bool UsePgStatsLiveTuplesForCount = DEFAULT_USE_PG_STATS_LIVE_TUPLES_FOR_COUNT;
 
 #define DEFAULT_FORCE_BITMAP_SCAN_FOR_LOOKUP false
 bool ForceBitmapScanForLookup = DEFAULT_FORCE_BITMAP_SCAN_FOR_LOOKUP;
@@ -118,9 +131,39 @@ bool ForceGroupSubqueryElimination = DEFAULT_FORCE_GROUP_SUBQUERY_ELIMINATION;
 #define DEFAULT_RECREATE_RETRY_TABLE_ON_SHARDING false
 bool RecreateRetryTableOnSharding = DEFAULT_RECREATE_RETRY_TABLE_ON_SHARDING;
 
-/* Added in v109, Pending stabilization */
 #define DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_SCAN false
 bool EnableCompositeParallelIndexScan = DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_SCAN;
+
+#define DEFAULT_SKIP_INDEX_CLEANUP_ON_FAILURE false
+bool SkipIndexCleanupOnFailure = DEFAULT_SKIP_INDEX_CLEANUP_ON_FAILURE;
+
+#define DEFAULT_SKIP_INDEX_CLEANUP_ON_REINDEX false
+bool SkipIndexCleanupOnReindex = DEFAULT_SKIP_INDEX_CLEANUP_ON_REINDEX;
+
+#define DEFAULT_ENABLE_EXPLAIN_SCAN_INDEX_COSTS true
+bool EnableExplainScanIndexCosts = DEFAULT_ENABLE_EXPLAIN_SCAN_INDEX_COSTS;
+
+#define DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME true
+bool EnableExplainScanNamespaceName = DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME;
+
+#define DEFAULT_ENABLE_EXPLAIN_SCAN_SEQ_SCAN true
+bool EnableExplainScanSeqScan = DEFAULT_ENABLE_EXPLAIN_SCAN_SEQ_SCAN;
+
+/*
+ * See create_indexes_background.c for the full description of each failure point value.
+ */
+#define DEFAULT_INDEX_BUILD_FAILURE_POINT 0
+int IndexBuildFailurePoint = DEFAULT_INDEX_BUILD_FAILURE_POINT;
+
+/*
+ * When set, the file-based persisted cursor drain path walks the planned
+ * statement and reports whether the plan uses a parallel scan in the cursor
+ * continuation document. Used only by tests to assert that parallel plans are
+ * exercised without relying on EXPLAIN.
+ */
+#define DEFAULT_REPORT_PARALLEL_PLAN_IN_CURSOR_CONTINUATION false
+bool ReportParallelPlanInCursorContinuation =
+	DEFAULT_REPORT_PARALLEL_PLAN_IN_CURSOR_CONTINUATION;
 
 void
 InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
@@ -173,17 +216,6 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		DEFAULT_MAX_WORKER_CURSOR_SIZE, 1, BSON_MAX_ALLOWED_SIZE,
 		PGC_USERSET,
 		GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE,
-		NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableCursorsOnAggregationQueryRewrite", newGucPrefix),
-		gettext_noop(
-			"Whether or not to add the cursors on aggregation style queries."),
-		NULL,
-		&EnableCursorsOnAggregationQueryRewrite,
-		DEFAULT_ENABLE_CURSORS_ON_AGGREGATION_QUERY_REWRITE,
-		PGC_USERSET,
-		0,
 		NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -388,6 +420,35 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
+		psprintf("%s.enableCompositeUniqueHash", newGucPrefix),
+		gettext_noop(
+			"Whether to enable new unique hash equality implementation. "
+			"Left behind for long term testing of old (pre-composite-hash) unique indexes."),
+		NULL, &EnableCompositeUniqueHash,
+		DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableCompositeReducedCorrelatedTermsOnCommonSubPath",
+				 newGucPrefix),
+		gettext_noop(
+			"Whether to enable reduced term generation for correlated composite paths "
+			"on common sub-paths. Left behind for long term testing of full correlated "
+			"composite indexes."),
+		NULL, &EnableCompositeReducedCorrelatedTermsOnCommonSubPath,
+		DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS_ON_COMMON_SUBPATH,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.createTTLIndexAsCompositeByDefault", newGucPrefix),
+		gettext_noop(
+			"Whether to always create TTL indexes as composite indexes by default. "
+			"Left behind for long term testing of non-composite TTL indexes."),
+		NULL, &CreateTTLIndexAsCompositeByDefault,
+		DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
 		psprintf("%s.rumFailOnLostPath", newGucPrefix),
 		gettext_noop(
 			"Whether or not to fail the query when a lost path is detected in RUM"),
@@ -400,6 +461,14 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		gettext_noop(
 			"Whether to force fetching metadata during collstats operations."),
 		NULL, &ForceCollStatsDataCollection, DEFAULT_FORCE_COLL_STATS_DATA_COLLECTION,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.use_pg_stats_live_tuples_for_count", newGucPrefix),
+		gettext_noop(
+			"Whether to use pg_stat_all_tables live tuples for count in collStats."),
+		NULL, &UsePgStatsLiveTuplesForCount,
+		DEFAULT_USE_PG_STATS_LIVE_TUPLES_FOR_COUNT,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -417,4 +486,66 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		NULL, &ForceGroupSubqueryElimination,
 		DEFAULT_FORCE_GROUP_SUBQUERY_ELIMINATION,
 		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.skipIndexCleanupOnFailure", newGucPrefix),
+		gettext_noop(
+			"Whether or not to skip index cleanup on failure."),
+		NULL, &SkipIndexCleanupOnFailure,
+		DEFAULT_SKIP_INDEX_CLEANUP_ON_FAILURE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.skipIndexCleanupOnReindex", newGucPrefix),
+		gettext_noop(
+			"Whether or not to skip index cleanup on reindex."),
+		NULL, &SkipIndexCleanupOnReindex,
+		DEFAULT_SKIP_INDEX_CLEANUP_ON_REINDEX,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableExplainScanIndexCosts", newGucPrefix),
+		gettext_noop(
+			"Whether to include index costs in explain output for index scans. requires enableextendedexplainplans"),
+		NULL, &EnableExplainScanIndexCosts,
+		DEFAULT_ENABLE_EXPLAIN_SCAN_INDEX_COSTS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableExplainScanNamespaceName", newGucPrefix),
+		gettext_noop(
+			"Whether to include namespace name in explain output for index scans. requires enableextendedexplainplans"),
+		NULL, &EnableExplainScanNamespaceName,
+		DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_explain_scan_seq_scan", newGucPrefix),
+		gettext_noop(
+			"Whether to wrap sequential scans in extended explain output."),
+		NULL, &EnableExplainScanSeqScan,
+		DEFAULT_ENABLE_EXPLAIN_SCAN_SEQ_SCAN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.indexBuildFailurePoint", newGucPrefix),
+		gettext_noop("Inject a failure at a specific point during index "
+					 "background build or reindex post-processing. "
+					 "0 = disabled, 1-9 = specific failure points."),
+		NULL,
+		&IndexBuildFailurePoint,
+		DEFAULT_INDEX_BUILD_FAILURE_POINT, 0, 9,
+		PGC_USERSET,
+		GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.reportParallelPlanInCursorContinuation", newGucPrefix),
+		gettext_noop(
+			"Whether the file-based persisted cursor drain path reports if the "
+			"plan uses a parallel scan in the cursor continuation document. For "
+			"testing only."),
+		NULL, &ReportParallelPlanInCursorContinuation,
+		DEFAULT_REPORT_PARALLEL_PLAN_IN_CURSOR_CONTINUATION,
+		PGC_USERSET, GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE, NULL, NULL, NULL);
 }

@@ -1,0 +1,1 @@
+\i sql/bson_composite_index_correlation_tests.sql

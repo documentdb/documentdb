@@ -45,7 +45,7 @@ SELECT application_name FROM pg_stat_activity WHERE application_name = 'document
  documentdb_bg_worker_leader
 (1 row)
 
-CREATE OR REPLACE FUNCTION documentdb_test_helpers.run_explain_and_trim(p_query text, p_ignore_heap_fetches boolean DEFAULT false)
+CREATE OR REPLACE FUNCTION documentdb_test_helpers.run_explain_and_trim(p_query text, p_ignore_heap_fetches boolean DEFAULT false, p_normalize_window boolean DEFAULT false)
 RETURNS SETOF text
 AS $$
 DECLARE
@@ -54,6 +54,8 @@ BEGIN
   FOR v_explain_row IN EXECUTE p_query
   LOOP
     IF v_explain_row ~ '^\s+Disabled: true\s*$' THEN
+      CONTINUE;
+    ELSIF p_normalize_window AND v_explain_row ~ '^\s+Window: ' THEN
       CONTINUE;
     ELSIF v_explain_row ~ '^\s+Index Searches: [0-9]+\s*$' THEN
       CONTINUE;
@@ -66,11 +68,41 @@ BEGIN
       SELECT regexp_replace(v_explain_row, 'actual rows=([0-9]+)\.00', 'actual rows=\1') INTO v_explain_row;
     ELSIF v_explain_row ~ 'Sort Method: quicksort  Memory: [0-9]+kB' THEN
       SELECT regexp_replace(v_explain_row, 'Sort Method: quicksort  Memory: [0-9]+kB', 'Sort Method: quicksort  Memory: xxxkB') INTO v_explain_row;
+    ELSIF v_explain_row ~ 'Sort Method: quicksort  Average Memory: [0-9]+kB  Peak Memory: [0-9]+kB' THEN
+      SELECT regexp_replace(v_explain_row, 'Sort Method: quicksort  Average Memory: [0-9]+kB  Peak Memory: [0-9]+kB', 'Sort Method: quicksort  Average Memory: xxxkB  Peak Memory: xxxkB') INTO v_explain_row;
+    ELSIF v_explain_row ~ 'Sample Rows Skipped: [0-9]+' THEN
+      SELECT regexp_replace(v_explain_row, 'Sample Rows Skipped: [0-9]+', 'Sample Rows Skipped: xxx') INTO v_explain_row;
+    ELSIF v_explain_row ~ 'Sample Heap Fetches: [0-9]+' THEN
+      SELECT regexp_replace(v_explain_row, 'Sample Heap Fetches: [0-9]+', 'Sample Heap Fetches: xxx') INTO v_explain_row;
     ELSIF v_explain_row ~ 'Memory Usage: [0-9]+kB' THEN
       SELECT regexp_replace(v_explain_row, 'Memory Usage: [0-9]+kB', 'Memory Usage: xxxkB') INTO v_explain_row;
     END IF;
+    -- Normalize PG18 window function references (OVER w1 -> OVER (?))
+    IF p_normalize_window AND v_explain_row ~ ' OVER w[0-9]+' THEN
+      SELECT regexp_replace(v_explain_row, ' OVER w[0-9]+', ' OVER (?)', 'g') INTO v_explain_row;
+    END IF;
     RETURN NEXT v_explain_row;
   END LOOP;
+END
+$$
+LANGUAGE plpgsql;
+-- Returns true when the plan for p_query contains an Index Only Scan on the
+-- given index (defaults to the _id primary key). Used to assert plan shape in a
+-- way that stays stable across PostgreSQL versions, whose EXPLAIN text differs
+-- (e.g. the Group Key line is printed on some versions but elided on others).
+CREATE OR REPLACE FUNCTION documentdb_test_helpers.explain_uses_index_only_scan(p_query text, p_index_name text DEFAULT '_id_')
+RETURNS boolean
+AS $$
+DECLARE
+  v_explain_row text;
+BEGIN
+  FOR v_explain_row IN EXECUTE 'EXPLAIN (COSTS OFF) ' || p_query
+  LOOP
+    IF v_explain_row ~ ('Index Only Scan using ' || p_index_name || ' ') THEN
+      RETURN true;
+    END IF;
+  END LOOP;
+  RETURN false;
 END
 $$
 LANGUAGE plpgsql;
@@ -254,3 +286,125 @@ BEGIN
   GROUP BY indisprimary;
 END;
 $$ LANGUAGE plpgsql;
+-- Wait until the database-wide xmin horizon advances past every transaction that
+-- committed before this call so a subsequent VACUUM is guaranteed to see prior
+-- DELETEs as fully dead and run ambulkdelete.
+--
+-- This is a procedure rather than a function because it must COMMIT between
+-- iterations: otherwise the caller's own snapshot (and any xid this routine
+-- allocates) would itself pin the horizon and the loop could never make
+-- progress. We use pg_snapshot_xmax() as the target (an upper bound on every
+-- already-committed xid) so we never have to allocate a new xid ourselves.
+CREATE OR REPLACE PROCEDURE documentdb_test_helpers.wait_for_vacuum_horizon(p_timeout_ms int default 30000)
+  LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_target xid8;
+  v_deadline timestamptz := clock_timestamp() + (p_timeout_ms || ' ms')::interval;
+  v_holders text;
+  v_prepared_holders text;
+  v_slot_holders text;
+  v_horizon_ok boolean;
+BEGIN
+  v_target := pg_snapshot_xmax(pg_current_snapshot());
+  COMMIT;
+  LOOP
+    -- VACUUM uses GetOldestNonRemovableTransactionId(), which (via
+    -- ComputeXidHorizons) walks the ProcArray for both proc->xid AND
+    -- proc->xmin, plus replication slot xmins, plus prepared xacts.
+    --
+    -- A read-only backend with proc->xid = InvalidTransactionId but
+    -- proc->xmin set (e.g., a long-running SELECT in a background worker)
+    -- pins VACUUM's horizon but is *invisible* to pg_snapshot_xmin(),
+    -- which GetSnapshotData computes from proc->xid only. That asymmetry
+    -- is the historical flake source -- the helper would return ✓ while
+    -- VACUUM still saw an older OldestXmin and silently skipped
+    -- ambulkdelete. Use pg_stat_activity.backend_xmin (which exposes
+    -- proc->xmin) so we wait on the same holders VACUUM does. Also check
+    -- backend_xid to defend against the narrow race PG itself defends
+    -- against in ComputeXidHorizons (xmin = TransactionIdOlder(xmin, xid)):
+    -- a writer whose proc->xmin is momentarily cleared between snapshots
+    -- but whose proc->xid still pins the horizon.
+    --
+    -- We use age() for the xid comparisons (rather than ::text::bigint)
+    -- to be wraparound-safe: backend_xmin / backend_xid / pg_prepared_xacts
+    -- / pg_replication_slots all expose 32-bit xid which wraps every ~4B
+    -- transactions. age() computes next_xid - xid in modulo arithmetic,
+    -- so "older than v_target" is exactly age(x) > age(v_target::xid),
+    -- which behaves correctly across wraparound boundaries.
+    --
+    -- ComputeXidHorizons's *data* horizon counts:
+    --   * backends in the current database (proc->databaseId == MyDatabaseId)
+    --   * backends with PROC_AFFECTS_ALL_HORIZONS set (physical walsenders
+    --     doing hot-standby-feedback), which are not tied to any specific
+    --     database and appear in pg_stat_activity with datname IS NULL
+    -- so we scope the backend check to (current_database() OR NULL).
+    SELECT NOT EXISTS (
+             SELECT 1 FROM pg_stat_activity
+              WHERE pid <> pg_backend_pid()
+                AND (datname = current_database() OR datname IS NULL)
+                AND (
+                  (backend_xmin IS NOT NULL
+                   AND age(backend_xmin) > age(v_target::text::xid))
+                  OR
+                  (backend_xid IS NOT NULL
+                   AND age(backend_xid) > age(v_target::text::xid))
+                )
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM pg_prepared_xacts
+              WHERE age(transaction) > age(v_target::text::xid)
+                AND database = current_database()
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM pg_replication_slots
+              WHERE xmin IS NOT NULL
+                AND age(xmin) > age(v_target::text::xid)
+           )
+      INTO v_horizon_ok;
+
+    EXIT WHEN v_horizon_ok;
+
+    IF clock_timestamp() > v_deadline THEN
+      SELECT string_agg(format('pid=%s xid=%s xmin=%s state=%s backend_type=%s db=%s',
+                               pid, backend_xid, backend_xmin, state, backend_type, datname), '; ')
+        INTO v_holders
+        FROM pg_stat_activity
+       WHERE pid <> pg_backend_pid()
+         AND (datname = current_database() OR datname IS NULL)
+         AND (backend_xmin IS NOT NULL OR backend_xid IS NOT NULL);
+      SELECT string_agg(format('gid=%s xid=%s db=%s',
+                               gid, transaction, database), '; ')
+        INTO v_prepared_holders
+        FROM pg_prepared_xacts
+       WHERE database = current_database();
+      SELECT string_agg(format('slot=%s xmin=%s active=%s',
+                               slot_name, xmin, active), '; ')
+        INTO v_slot_holders
+        FROM pg_replication_slots
+       WHERE xmin IS NOT NULL;
+      RAISE EXCEPTION 'wait_for_vacuum_horizon: xmin horizon did not advance to % within %ms (backends: %; prepared: %; slots: %)',
+        v_target, p_timeout_ms,
+        COALESCE(v_holders, '<none>'),
+        COALESCE(v_prepared_holders, '<none>'),
+        COALESCE(v_slot_holders, '<none>');
+    END IF;
+    PERFORM pg_sleep(0.05);
+    COMMIT;
+  END LOOP;
+END;
+$$;
+CREATE OR REPLACE FUNCTION documentdb_test_helpers.change_index_jobs_status(active_status boolean)
+RETURNS void
+AS $$
+DECLARE
+    job_id integer;
+BEGIN
+    FOR job_id IN (SELECT jobid FROM cron.job WHERE jobname LIKE 'documentdb_index_%' order by jobid)
+    LOOP
+        UPDATE cron.job SET active = active_status WHERE jobid = job_id;
+        RAISE NOTICE 'Processing job_id: %', job_id;
+    END LOOP;
+END;
+$$
+LANGUAGE plpgsql;

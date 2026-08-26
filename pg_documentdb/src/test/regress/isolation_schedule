@@ -1,3 +1,4 @@
 test: isolation-setup
 test: isolation-rename-collection
 test: isolation-bulk-write-lock-timeout
+test: isolation-currentop-compact

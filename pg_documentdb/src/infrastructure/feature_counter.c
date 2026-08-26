@@ -14,6 +14,7 @@
 #include <nodes/execnodes.h>
 #include <executor/executor.h>
 #include <funcapi.h>
+#include <utils/tuplestore.h>
 
 #include <storage/shmem.h>
 #include <access/slru.h>
@@ -79,9 +80,9 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_AGG_OPERATOR_COSH] = "agg_operator_cosh",
 	[FEATURE_AGG_OPERATOR_DATEADD] = "agg_operator_dateadd",
 	[FEATURE_AGG_OPERATOR_DATEDIFF] = "agg_operator_datediff",
-	[FEATURE_AGG_OPERATOR_DATESUBTRACT] = "agg_operator_datesubtract",
 	[FEATURE_AGG_OPERATOR_DATEFROMPARTS] = "agg_operator_datefromparts",
 	[FEATURE_AGG_OPERATOR_DATEFROMSTRING] = "agg_operator_datefromstring",
+	[FEATURE_AGG_OPERATOR_DATESUBTRACT] = "agg_operator_datesubtract",
 	[FEATURE_AGG_OPERATOR_DATETOPARTS] = "agg_operator_datetoparts",
 	[FEATURE_AGG_OPERATOR_DATETOSTRING] = "agg_operator_datetostring",
 	[FEATURE_AGG_OPERATOR_DATETRUNC] = "agg_operator_datetrunc",
@@ -147,8 +148,8 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_AGG_OPERATOR_REGEXFIND] = "agg_operator_regexfind",
 	[FEATURE_AGG_OPERATOR_REGEXFINDALL] = "agg_operator_regexfindall",
 	[FEATURE_AGG_OPERATOR_REGEXMATCH] = "agg_operator_regexmatch",
-	[FEATURE_AGG_OPERATOR_REPLACEONE] = "agg_operator_replaceone",
 	[FEATURE_AGG_OPERATOR_REPLACEALL] = "agg_operator_replaceall",
+	[FEATURE_AGG_OPERATOR_REPLACEONE] = "agg_operator_replaceone",
 	[FEATURE_AGG_OPERATOR_REVERSEARRAY] = "agg_operator_reversearray",
 	[FEATURE_AGG_OPERATOR_ROUND] = "agg_operator_round",
 	[FEATURE_AGG_OPERATOR_RTRIM] = "agg_operator_rtrim",
@@ -168,9 +169,9 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_AGG_OPERATOR_SQRT] = "agg_operator_sqrt",
 	[FEATURE_AGG_OPERATOR_STDDEVPOP] = "agg_operator_stddevpop",
 	[FEATURE_AGG_OPERATOR_STDDEVSAMP] = "agg_operator_stddevsamp",
+	[FEATURE_AGG_OPERATOR_STRCASECMP] = "agg_operator_strcasecmp",
 	[FEATURE_AGG_OPERATOR_STRLENBYTES] = "agg_operator_strlenbytes",
 	[FEATURE_AGG_OPERATOR_STRLENCP] = "agg_operator_strlencp",
-	[FEATURE_AGG_OPERATOR_STRCASECMP] = "agg_operator_strcasecmp",
 	[FEATURE_AGG_OPERATOR_SUBSTR] = "agg_operator_substr",
 	[FEATURE_AGG_OPERATOR_SUBSTRBYTES] = "agg_operator_substrbytes",
 	[FEATURE_AGG_OPERATOR_SUBSTRCP] = "agg_operator_substrcp",
@@ -209,6 +210,7 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_AGGREGATE_GROUP_CONCAT_ARRAYS] = "group_concat_arrays",
 	[FEATURE_AGGREGATE_GROUP_COUNT] = "group_count",
 	[FEATURE_AGGREGATE_GROUP_COUNT_WITH_ARG] = "group_count_with_arg",
+	[FEATURE_AGGREGATE_GROUP_DECOMPOSED_GROUP_BY] = "group_decomposed_group_by",
 	[FEATURE_AGGREGATE_GROUP_FIRST] = "group_first",
 	[FEATURE_AGGREGATE_GROUP_FIRST_N] = "group_first_n",
 	[FEATURE_AGGREGATE_GROUP_LAST] = "group_last",
@@ -221,6 +223,9 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_AGGREGATE_GROUP_MIN_N] = "group_min_n",
 	[FEATURE_AGGREGATE_GROUP_PERCENTILE] = "group_percentile",
 	[FEATURE_AGGREGATE_GROUP_PUSH] = "group_push",
+	[FEATURE_AGGREGATE_GROUP_SCALAR_AGG_INDEX_PUSHDOWN] =
+		"group_scalar_agg_index_pushdown",
+	[FEATURE_AGGREGATE_GROUP_SORT_PREFIX_CANDIDATE] = "group_sort_prefix_candidate",
 	[FEATURE_AGGREGATE_GROUP_STDDEV_POP] = "group_stddev_pop",
 	[FEATURE_AGGREGATE_GROUP_STDDEV_SAMP] = "group_stddev_samp",
 	[FEATURE_AGGREGATE_GROUP_SUM] = "group_sum",
@@ -264,11 +269,27 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 
 	/* Find/Aggregate using collation */
 	[FEATURE_COLLATION] = "collation",
+	[FEATURE_COLLATION_CREATE_COLLECTION] = "collation_with_collection",
 	[FEATURE_COLLATION_CREATE_INDEX] = "collation_with_indexes",
+	[FEATURE_COLLATION_UNSUPPORTED_GROUP_ACCUMULATOR] =
+		"collation_unsupported_group_accumulator",
 
 	/* Feature Mapping region - Commands */
 	[FEATURE_COMMAND_AGG_CURSOR_FIRST_PAGE] = "command_agg_cursor_first_page",
+	[FEATURE_COMMAND_BULKWRITE] = "command_bulkWrite",
 	[FEATURE_COMMAND_COLLMOD] = "command_collmod",
+
+	[FEATURE_COMMAND_COLLMOD_COLLECTION_PLANNER_STATISTICS] =
+		"collMod_collection_planner_statistics",
+	[FEATURE_COMMAND_COLLMOD_COLOCATION] = "collMod_colocation",
+	[FEATURE_COMMAND_COLLMOD_INDEX_HIDDEN] = "collMod_index_hidden",
+	[FEATURE_COMMAND_COLLMOD_INDEX_PREPARE_UNIQUE] = "collMod_index_prepare_unique",
+	[FEATURE_COMMAND_COLLMOD_PREIMAGE] = "collMod_preimage",
+	[FEATURE_COMMAND_COLLMOD_TTL_UPDATE] = "collMod_ttl_update",
+	[FEATURE_COMMAND_COLLMOD_UNIQUE] = "collMod_index_unique",
+	[FEATURE_COMMAND_COLLMOD_VALIDATION] = "collMod_validation",
+	[FEATURE_COMMAND_COLLMOD_VIEW] = "collMod_view",
+
 	[FEATURE_COMMAND_COLLSTATS] = "command_collstats",
 	[FEATURE_COMMAND_COMPACT] = "command_compact",
 	[FEATURE_COMMAND_COUNT] = "command_count",
@@ -278,46 +299,44 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_COMMAND_CURRENTOP] = "command_current_op",
 	[FEATURE_COMMAND_DBSTATS] = "command_dbstats",
 	[FEATURE_COMMAND_DELETE] = "command_delete",
+	[FEATURE_COMMAND_DELETE_100] = "command_delete_100",
+	[FEATURE_COMMAND_DELETE_1000] = "command_delete_1000",
+	[FEATURE_COMMAND_DELETE_500] = "command_delete_500",
+	[FEATURE_COMMAND_DELETE_EXTENDED] = "command_delete_extended",
+	[FEATURE_COMMAND_DELETE_ONE] = "command_delete_one",
+	[FEATURE_COMMAND_DELETE_PROC] = "command_delete_proc",
 	[FEATURE_COMMAND_DISTINCT] = "command_distinct",
 	[FEATURE_COMMAND_FINDANDMODIFY] = "command_findAndModify",
 	[FEATURE_COMMAND_FIND_CURSOR_FIRST_PAGE] = "command_find_cursor_first_page",
 	[FEATURE_COMMAND_GET_MORE] = "command_get_more",
 	[FEATURE_COMMAND_INSERT] = "command_insert",
-	[FEATURE_COMMAND_INSERT_ONE] = "command_insert_one",
 	[FEATURE_COMMAND_INSERT_100] = "command_insert_100",
-	[FEATURE_COMMAND_INSERT_500] = "command_insert_500",
 	[FEATURE_COMMAND_INSERT_1000] = "command_insert_1000",
-	[FEATURE_COMMAND_INSERT_EXTENDED] = "command_insert_extended",
+	[FEATURE_COMMAND_INSERT_500] = "command_insert_500",
 	[FEATURE_COMMAND_INSERT_BULK] = "command_insert_bulk",
+	[FEATURE_COMMAND_INSERT_EXTENDED] = "command_insert_extended",
+	[FEATURE_COMMAND_INSERT_ONE] = "command_insert_one",
 	[FEATURE_COMMAND_LIST_COLLECTIONS_CURSOR_FIRST_PAGE] =
 		"command_list_collections_cursor_first_page",
 	[FEATURE_COMMAND_LIST_DATABASES] =
 		"command_list_databases",
 	[FEATURE_COMMAND_LIST_INDEXES_CURSOR_FIRST_PAGE] =
 		"command_list_indexes_cursor_first_page",
-	[FEATURE_COMMAND_SHARD_COLLECTION] = "command_shard_collection",
 	[FEATURE_COMMAND_RESHARD_COLLECTION] = "command_reshard_collection",
+	[FEATURE_COMMAND_SHARD_COLLECTION] = "command_shard_collection",
 	[FEATURE_COMMAND_UNSHARD_COLLECTION] = "command_unshard_collection",
 	[FEATURE_COMMAND_UPDATE] = "command_update",
-	[FEATURE_COMMAND_UPDATE_ONE] = "command_update_one",
+	[FEATURE_COMMAND_UPDATEMANY_1000_NOOP] = "command_updatemany_1000_noop",
+	[FEATURE_COMMAND_UPDATEMANY_100_NOOP] = "command_updatemany_100_noop",
+	[FEATURE_COMMAND_UPDATEMANY_10_NOOP] = "command_updatemany_10_noop",
+	[FEATURE_COMMAND_UPDATEMANY_EXTENDED_NOOP] = "command_updatemany_extended_noop",
 	[FEATURE_COMMAND_UPDATE_100] = "command_update_100",
-	[FEATURE_COMMAND_UPDATE_500] = "command_update_500",
 	[FEATURE_COMMAND_UPDATE_1000] = "command_update_1000",
-	[FEATURE_COMMAND_UPDATE_EXTENDED] = "command_update_extended",
+	[FEATURE_COMMAND_UPDATE_500] = "command_update_500",
 	[FEATURE_COMMAND_UPDATE_BULK] = "command_update_bulk",
-	[FEATURE_COMMAND_BULKWRITE] = "command_bulkWrite",
+	[FEATURE_COMMAND_UPDATE_EXTENDED] = "command_update_extended",
+	[FEATURE_COMMAND_UPDATE_ONE] = "command_update_one",
 	[FEATURE_COMMAND_VALIDATE_REPAIR] = "validate_repair",
-
-	[FEATURE_COMMAND_COLLMOD_VIEW] = "collMod_view",
-	[FEATURE_COMMAND_COLLMOD_COLOCATION] = "collMod_colocation",
-	[FEATURE_COMMAND_COLLMOD_VALIDATION] = "collMod_validation",
-	[FEATURE_COMMAND_COLLMOD_TTL_UPDATE] = "collMod_ttl_update",
-	[FEATURE_COMMAND_COLLMOD_INDEX_HIDDEN] = "collMod_index_hidden",
-	[FEATURE_COMMAND_COLLMOD_INDEX_PREPARE_UNIQUE] = "collMod_index_prepare_unique",
-	[FEATURE_COMMAND_COLLMOD_UNIQUE] = "collMod_index_unique",
-	[FEATURE_COMMAND_COLLMOD_PREIMAGE] = "collMod_preimage",
-	[FEATURE_COMMAND_COLLMOD_COLLECTION_PLANNER_STATISTICS] =
-		"collMod_collection_planner_statistics",
 
 	/* Feature Connection Status */
 	[FEATURE_CONNECTION_STATUS] = "connection_status",
@@ -326,17 +345,17 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_CREATE_INDEX_2D] = "create_index_2d",
 	[FEATURE_CREATE_INDEX_2DSPHERE] = "create_index_2dsphere",
 	[FEATURE_CREATE_INDEX_ALTERNATE_AM] = "create_index_alternate_am",
+	[FEATURE_CREATE_INDEX_BUILD_AS_UNIQUE] = "create_index_build_as_unique",
 	[FEATURE_CREATE_INDEX_COMPOSITE_BASED_TERM] = "create_index_composite_based_term",
 	[FEATURE_CREATE_INDEX_FTS] = "create_index_fts",
 	[FEATURE_CREATE_INDEX_TEXT] = "create_index_text",
 	[FEATURE_CREATE_INDEX_TTL] = "create_index_ttl",
 	[FEATURE_CREATE_INDEX_UNIQUE] = "create_index_unique",
-	[FEATURE_CREATE_INDEX_BUILD_AS_UNIQUE] = "create_index_build_as_unique",
 	[FEATURE_CREATE_INDEX_VECTOR] = "create_index_vector",
-	[FEATURE_CREATE_INDEX_VECTOR_COS] = "create_index_vector_cos",
 	[FEATURE_CREATE_INDEX_VECTOR_COMPRESSION_HALF] =
 		"create_index_vector_compression_half",
 	[FEATURE_CREATE_INDEX_VECTOR_COMPRESSION_PQ] = "create_index_vector_compression_pq",
+	[FEATURE_CREATE_INDEX_VECTOR_COS] = "create_index_vector_cos",
 	[FEATURE_CREATE_INDEX_VECTOR_IP] = "create_index_vector_ip",
 	[FEATURE_CREATE_INDEX_VECTOR_L2] = "create_index_vector_l2",
 	[FEATURE_CREATE_INDEX_VECTOR_TYPE_DISKANN] = "create_index_vector_type_diskann",
@@ -348,22 +367,50 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 		"create_unique_index_with_term_truncation",
 
 	/* Feature Mapping region - Cursor types */
+	[FEATURE_CURSOR_CAN_USE_FAST_BITMAP] = "cursor_can_use_fast_bitmap",
+	[FEATURE_CURSOR_CAN_USE_PRIMARY_KEY_SCAN] = "cursor_can_use_primary_key_scan",
+	[FEATURE_CURSOR_TOPOLOGY_GENERAL_SHARDED] = "cursor_sharded",
+	[FEATURE_CURSOR_TOPOLOGY_LOCAL_UNSHARDED] = "cursor_local_unsharded",
+	[FEATURE_CURSOR_TOPOLOGY_REMOTE_UNSHARDED] = "cursor_remote_unsharded",
+	[FEATURE_CURSOR_TOPOLOGY_SHARDED_WITH_IN_ON_SHARD_KEY] =
+		"cursor_sharded_saop_on_shard_key",
+	[FEATURE_CURSOR_TOPOLOGY_SHARDED_WITH_SHARD_KEY_EQUALITY] =
+		"cursor_sharded_equality_on_shard_key",
+	[FEATURE_CURSOR_TYPE_DYNAMIC_FILE_REMOTE] = "cursor_type_dynamic_file_remote",
+	[FEATURE_CURSOR_TYPE_DYNAMIC_PERSISTENT] = "cursor_type_dynamic_persistent",
+	[FEATURE_CURSOR_TYPE_DYNAMIC_REMOTE_FIRSTPAGE] =
+		"cursor_type_dynamic_remote_firstpage",
+	[FEATURE_CURSOR_TYPE_DYNAMIC_REMOTE_GETMORE] =
+		"cursor_type_dynamic_remote_getmore",
+	[FEATURE_CURSOR_TYPE_DYNAMIC_REMOTE_WORKER_FIRSTPAGE_FILE] =
+		"cursor_type_dynamic_remote_worker_firstpage_file",
+	[FEATURE_CURSOR_TYPE_DYNAMIC_REMOTE_WORKER_FIRSTPAGE_STREAMING] =
+		"cursor_type_dynamic_remote_worker_firstpage_streaming",
+	[FEATURE_CURSOR_TYPE_DYNAMIC_REMOTE_WORKER_GETMORE_FILE] =
+		"cursor_type_dynamic_remote_worker_getmore_file",
+	[FEATURE_CURSOR_TYPE_DYNAMIC_REMOTE_WORKER_GETMORE_STREAMING] =
+		"cursor_type_dynamic_remote_worker_getmore_streaming",
+	[FEATURE_CURSOR_TYPE_DYNAMIC_STREAMING] = "cursor_type_dynamic_streaming",
+	[FEATURE_CURSOR_TYPE_DYNAMIC_STREAMING_REMOTE] =
+		"cursor_type_dynamic_streaming_remote",
 	[FEATURE_CURSOR_TYPE_PERSISTENT] = "cursor_type_persistent",
 	[FEATURE_CURSOR_TYPE_POINT_READ] = "cursor_type_point_read",
 	[FEATURE_CURSOR_TYPE_SINGLE_BATCH] = "cursor_type_single_batch",
 	[FEATURE_CURSOR_TYPE_STREAMING] = "cursor_type_streaming",
 	[FEATURE_CURSOR_TYPE_TAILABLE] = "cursor_type_tailable",
-	[FEATURE_CURSOR_CAN_USE_PRIMARY_KEY_SCAN] = "cursor_can_use_primary_key_scan",
-	[FEATURE_CURSOR_CAN_USE_FAST_BITMAP] = "cursor_can_use_fast_bitmap",
 
 	/* Feature mapping region - ExternalIdentityProvider */
+	[FEATURE_EXTERNAL_IDENTITY_USER_AUTHENTICATE] = "external_identity_user_authenticate",
 	[FEATURE_EXTERNAL_IDENTITY_USER_CREATE] = "external_identity_user_create",
 	[FEATURE_EXTERNAL_IDENTITY_USER_DROP] = "external_identity_user_drop",
-	[FEATURE_EXTERNAL_IDENTITY_USER_AUTHENTICATE] = "external_identity_user_authenticate",
 	[FEATURE_EXTERNAL_IDENTITY_USER_GET] = "external_identity_user_get",
 
 	[FEATURE_INDEX_AM_PREREGISTERED] = "index_am_preregistered",
+	[FEATURE_INDEX_DOTTED_FIELD_NAME_SKIPPED] = "index_dotted_field_name_skipped",
 	[FEATURE_INDEX_HINT] = "index_hint",
+	[FEATURE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT_CANDIDATE] =
+		"index_only_scan_for_find_project_candidate",
+	[FEATURE_INDEX_PARALLEL_ARRAYS_INDEXED] = "index_parallel_arrays_indexed",
 
 	/* Feature counter region - Top-level let support */
 	[FEATURE_LET_TOP_LEVEL] = "let_top_level",
@@ -411,13 +458,33 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	/* Feature mapping region - Role CRUD */
 	[FEATURE_ROLE_CREATE] = "role_create",
 
+	/* Feature mapping region - Search operators */
+	[FEATURE_SEARCH_OPERATOR_AUTO_COMPLETE] = "search_operator_auto_complete",
+	[FEATURE_SEARCH_OPERATOR_COMPOUND] = "search_operator_compound",
+	[FEATURE_SEARCH_OPERATOR_COSMOS_SEARCH] = "search_operator_cosmos_search",
+	[FEATURE_SEARCH_OPERATOR_EMBEDDED_DOCUMENT] = "search_operator_embedded_document",
+	[FEATURE_SEARCH_OPERATOR_EQUALS] = "search_operator_equals",
+	[FEATURE_SEARCH_OPERATOR_EXISTS] = "search_operator_exists",
+	[FEATURE_SEARCH_OPERATOR_GEO_SHAPE] = "search_operator_geo_shape",
+	[FEATURE_SEARCH_OPERATOR_GEO_WITHIN] = "search_operator_geo_within",
+	[FEATURE_SEARCH_OPERATOR_IN] = "search_operator_in",
+	[FEATURE_SEARCH_OPERATOR_KNN_BETA] = "search_operator_knn_beta",
+	[FEATURE_SEARCH_OPERATOR_MORELIKETHIS] = "search_operator_morelikethis",
+	[FEATURE_SEARCH_OPERATOR_NEAR] = "search_operator_near",
+	[FEATURE_SEARCH_OPERATOR_PHRASE] = "search_operator_phrase",
+	[FEATURE_SEARCH_OPERATOR_QUERY_STRING] = "search_operator_query_string",
+	[FEATURE_SEARCH_OPERATOR_RANGE] = "search_operator_range",
+	[FEATURE_SEARCH_OPERATOR_REGEX] = "search_operator_regex",
+	[FEATURE_SEARCH_OPERATOR_TEXT] = "search_operator_text",
+	[FEATURE_SEARCH_OPERATOR_WILDCARD] = "search_operator_wildcard",
+
 	/* Feature Mapping region - Aggregation stages */
 	[FEATURE_STAGE_ADD_FIELDS] = "add_fields",
 	[FEATURE_STAGE_BUCKET] = "bucket",
 	[FEATURE_STAGE_BUCKET_AUTO] = "bucket_auto",
+	[FEATURE_STAGE_CHANGE_STREAM] = "change_stream",
 	[FEATURE_STAGE_COLLSTATS] = "collstats_agg",
 	[FEATURE_STAGE_COUNT] = "count",
-	[FEATURE_STAGE_CHANGE_STREAM] = "change_stream",
 	[FEATURE_STAGE_CURRENTOP] = "current_op_agg",
 	[FEATURE_STAGE_DENSIFY] = "densify",
 	[FEATURE_STAGE_DOCUMENTS] = "documents_agg",
@@ -433,23 +500,28 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_STAGE_INTERNAL_INHIBIT_OPTIMIZATION] = "_internalInhibitOptimization",
 	[FEATURE_STAGE_INVERSEMATCH] = "inverseMatch",
 	[FEATURE_STAGE_LIMIT] = "limit",
+	[FEATURE_STAGE_LIST_SEARCH_INDEXES] = "listSearchIndexes",
 	[FEATURE_STAGE_LOOKUP] = "lookup",
 	[FEATURE_STAGE_MATCH] = "match",
 	[FEATURE_STAGE_MERGE] = "merge",
 	[FEATURE_STAGE_OUT] = "out",
 	[FEATURE_STAGE_PROJECT] = "project",
 	[FEATURE_STAGE_PROJECT_FIND] = "project_find",
+	[FEATURE_STAGE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP] =
+		"project_pushup_before_unwind_with_group",
 	[FEATURE_STAGE_REDACT] = "redact",
 	[FEATURE_STAGE_REPLACE_ROOT] = "replace_root",
 	[FEATURE_STAGE_REPLACE_WITH] = "replace_with",
 	[FEATURE_STAGE_SAMPLE] = "sample",
+	[FEATURE_STAGE_SAMPLE_HEAP_SKIP] = "sample_heap_skip",
+	[FEATURE_STAGE_SAMPLE_HEAP_SKIP_ELIGIBLE] = "sample_heap_skip_eligible",
 	[FEATURE_STAGE_SEARCH] = "search",
 	[FEATURE_STAGE_SEARCH_VECTOR] = "search_vector",
 	[FEATURE_STAGE_SEARCH_VECTOR_COMPRESSION_HALF] = "search_vector_compression_half",
 	[FEATURE_STAGE_SEARCH_VECTOR_COMPRESSION_PQ] = "search_vector_compression_pq",
-	[FEATURE_STAGE_SEARCH_VECTOR_DEFAULT_NPROBES] = "search_vector_default_nprobes",
 	[FEATURE_STAGE_SEARCH_VECTOR_DEFAULT_EFSEARCH] = "search_vector_default_efsearch",
 	[FEATURE_STAGE_SEARCH_VECTOR_DEFAULT_LSEARCH] = "search_vector_default_lsearch",
+	[FEATURE_STAGE_SEARCH_VECTOR_DEFAULT_NPROBES] = "search_vector_default_nprobes",
 	[FEATURE_STAGE_SEARCH_VECTOR_DISKANN] = "search_vector_diskann",
 	[FEATURE_STAGE_SEARCH_VECTOR_EXACT] = "search_vector_exact",
 	[FEATURE_STAGE_SEARCH_VECTOR_GEN_EMBEDDINGS] = "search_vector_gen_embeddings",
@@ -468,7 +540,8 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_STAGE_VECTOR_SEARCH_KNN] = "vector_search_knn",
 	[FEATURE_STAGE_VECTOR_SEARCH_NATIVE] = "vector_search_native",
 
-	/* Feature Mapping region - Update operators */
+	/* Feature Mapping region - Update operators / options */
+	[FEATURE_UPDATE_MANY] = "update_many",
 	[FEATURE_UPDATE_OPERATOR_ADDTOSET] = "update_operator_addtoset",
 	[FEATURE_UPDATE_OPERATOR_BIT] = "update_operator_bit",
 	[FEATURE_UPDATE_OPERATOR_CURRENTDATE] = "update_operator_currentdate",

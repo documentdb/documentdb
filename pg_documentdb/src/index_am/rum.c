@@ -16,9 +16,12 @@
 #include <utils/index_selfuncs.h>
 #include <utils/selfuncs.h>
 #include <utils/lsyscache.h>
+#include <utils/builtins.h>
 #include <access/relscan.h>
+#include <access/genam.h>
 #include <utils/rel.h>
 #include "math.h"
+#include <optimizer/optimizer.h>
 #include <commands/explain.h>
 #include <access/gin.h>
 #include <parser/parsetree.h>
@@ -30,6 +33,7 @@
 #endif
 
 #include "api_hooks.h"
+#include "opclass/bson_index_support.h"
 #include "planner/mongo_query_operator.h"
 #include "opclass/bson_gin_index_mgmt.h"
 #include "index_am/documentdb_rum.h"
@@ -41,18 +45,15 @@
 #include "utils/documentdb_errors.h"
 #include "planner/documentdb_planner.h"
 #include "utils/error_utils.h"
+#include "collation/collation.h"
 #include "query/bson_dollar_selectivity.h"
+#include "index_am/documentdb_rum_impl.h"
 
-extern bool ForceUseIndexIfAvailable;
-extern bool EnableIndexOnlyScan;
-extern bool EnableIndexOnlyScanOnCostFunction;
-extern bool DisableExtendedRumExplainPlans;
-extern bool EnableOrderedCostEstimator;
 extern bool EnableExtendedExplainPlans;
 extern bool EnableExplainScanIndexCosts;
 extern bool EnableOrderByIndexTerm;
-
-extern const RumIndexArrayStateFuncs RoaringStateFuncs;
+extern bool EnableMergeSortForInPrefix;
+extern bool EnableDynamicCursorDedupTracking;
 
 bool RumHasMultiKeyPaths = false;
 
@@ -60,23 +61,6 @@ bool RumHasMultiKeyPaths = false;
 /* --------------------------------------------------------- */
 /* Forward declaration */
 /* --------------------------------------------------------- */
-extern BsonIndexAmEntry RumIndexAmEntry;
-static bool loaded_rum_routine = false;
-static IndexAmRoutine rum_index_routine = { 0 };
-
-const RumIndexArrayStateFuncs *IndexArrayStateFuncs = &RoaringStateFuncs;
-
-static GetMultikeyStatusFunc rum_index_multi_key_get_func = NULL;
-static UpdateMultikeyStatusFunc rum_index_multi_key_update_func = NULL;
-
-typedef enum IndexMultiKeyStatus
-{
-	IndexMultiKeyStatus_Unknown = 0,
-
-	IndexMultiKeyStatus_HasArrays = 1,
-
-	IndexMultiKeyStatus_HasNoArrays = 2
-} IndexMultiKeyStatus;
 
 typedef struct DocumentDBRumIndexState
 {
@@ -88,11 +72,7 @@ typedef struct DocumentDBRumIndexState
 
 	bool hasCorrelatedReducedTerms;
 
-	void *indexArrayState;
-
-	int32_t numDuplicates;
-
-	ScanDirection scanDirection;
+	uint32_t multiKeyPerPathStatus;
 } DocumentDBRumIndexState;
 
 
@@ -113,8 +93,6 @@ typedef struct IndexCostsData
 	double dataPagesProportionFetched;
 } IndexCostsData;
 
-typedef const RumIndexArrayStateFuncs *(*GetIndexArrayStateFuncsFunc)(void);
-
 extern Datum gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS);
 
 static bool IsIndexIsValidForQuery(IndexPath *path);
@@ -124,491 +102,11 @@ static bool ValidateMatchForOrderbyQuals(IndexPath *path);
 
 static bool IsTextIndexMatch(IndexPath *path);
 
-static bool CheckIndexHasReducedTerms(Relation indexRelation,
-									  IndexAmRoutine *coreRoutine);
-static IndexMultiKeyStatus CheckIndexHasArrays(Relation indexRelation,
-											   IndexAmRoutine *coreRoutine);
-
-static IndexScanDesc extension_rumbeginscan(Relation rel, int nkeys, int norderbys);
-static void extension_rumendscan(IndexScanDesc scan);
-static void extension_rumrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
-								ScanKey orderbys, int norderbys);
-static int64 extension_amgetbitmap(IndexScanDesc scan,
-								   TIDBitmap *tbm);
-static bool extension_amgettuple(IndexScanDesc scan,
-								 ScanDirection direction);
-static IndexBuildResult * extension_rumbuild(Relation heapRelation,
-											 Relation indexRelation,
-											 struct IndexInfo *indexInfo);
-static bool extension_ruminsert(Relation indexRelation,
-								Datum *values,
-								bool *isnull,
-								ItemPointer heap_tid,
-								Relation heapRelation,
-								IndexUniqueCheck checkUnique,
-								bool indexUnchanged,
-								struct IndexInfo *indexInfo);
-
-static void extension_rumcostestimate(PlannerInfo *root, IndexPath *path,
-									  double loop_count,
-									  Cost *indexStartupCost, Cost *indexTotalCost,
-									  Selectivity *indexSelectivity,
-									  double *indexCorrelation,
-									  double *indexPages);
-static IndexAmRoutine * GetRumIndexHandler(PG_FUNCTION_ARGS);
-
-static bool RumGetMultiKeyStatusSlow(Relation relation);
-
-static Datum (*rum_extract_tsquery_func)(PG_FUNCTION_ARGS) = NULL;
-static Datum (*rum_tsquery_consistent_func)(PG_FUNCTION_ARGS) = NULL;
-static Datum (*rum_tsvector_config_func)(PG_FUNCTION_ARGS) = NULL;
-static Datum (*rum_tsquery_pre_consistent_func)(PG_FUNCTION_ARGS) = NULL;
-static Datum (*rum_tsquery_distance_func)(PG_FUNCTION_ARGS) = NULL;
-static Datum (*rum_ts_join_pos_func)(PG_FUNCTION_ARGS) = NULL;
-static Datum (*rum_extract_tsvector_func)(PG_FUNCTION_ARGS) = NULL;
-
 
 #define MAX_EXPLAIN_COSTS_SIZE 100
 #define MAX_LOGGED_PLANS 8
 static IndexCostsData IndexExplainCosts[MAX_EXPLAIN_COSTS_SIZE] = { 0 };
 static int IndexExplainCostsIndex = 0;
-const char *DocumentdbRumCorePath = "$libdir/pg_documentdb_extended_rum_core";
-
-inline static void
-EnsureRumLibLoaded(void)
-{
-	if (!loaded_rum_routine)
-	{
-		ereport(ERROR, (errmsg(
-							"The rum library should be loaded as part of shared_preload_libraries - this is a bug")));
-	}
-}
-
-
-typedef enum RumFunctionCatalog
-{
-	RumFunction_AmHandler = 0,
-	RumFunction_ExtractTsQuery,
-	RumFunction_TsQueryConsistent,
-	RumFunction_Tsvector_Config,
-	RumFunction_Tsquery_PreConsistent,
-	RumFunction_Tsquery_Distance,
-	RumFunction_Ts_Join_Pos,
-	RumFunction_Extract_Tsvector,
-	RumFunction_TryExplainRumIndex,
-	RumFunction_CanRumIndexScanOrdered,
-	RumFunction_RumGetMultiKeyStatus,
-	RumFunction_RumUpdateMultiKeyStatus,
-	RumFunction_SetUnredactedLogHook,
-	RumFunction_RumOrderedCostEstimate,
-	RumFunction_Max,
-} RumFunctionCatalog;
-
-
-static const char *RumFunctionArray[RumFunction_Max] =
-{
-	[RumFunction_AmHandler] = "rumhandler",
-	[RumFunction_ExtractTsQuery] = "rum_extract_tsquery",
-	[RumFunction_TsQueryConsistent] = "rum_tsquery_consistent",
-	[RumFunction_Tsvector_Config] = "rum_tsvector_config",
-	[RumFunction_Tsquery_PreConsistent] = "rum_tsquery_pre_consistent",
-	[RumFunction_Tsquery_Distance] = "rum_tsquery_distance",
-	[RumFunction_Ts_Join_Pos] = "rum_ts_join_pos",
-	[RumFunction_Extract_Tsvector] = "rum_extract_tsvector",
-	[RumFunction_TryExplainRumIndex] = "try_explain_rum_index",
-	[RumFunction_CanRumIndexScanOrdered] = "can_rum_index_scan_ordered",
-	[RumFunction_RumGetMultiKeyStatus] = "rum_get_multi_key_status",
-	[RumFunction_RumUpdateMultiKeyStatus] = "rum_update_multi_key_status",
-	[RumFunction_SetUnredactedLogHook] = "SetRumUnredactedLogEmitHook",
-	[RumFunction_RumOrderedCostEstimate] = "RumOrderedCostEstimate",
-};
-
-
-static const char *DocumentDBRumFunctionArray[RumFunction_Max] =
-{
-	[RumFunction_AmHandler] = "documentdb_rumhandler",
-	[RumFunction_ExtractTsQuery] = "documentdb_extended_rum_extract_tsquery",
-	[RumFunction_TsQueryConsistent] = "documentdb_extended_rum_tsquery_consistent",
-	[RumFunction_Tsvector_Config] = "documentdb_extended_rum_tsvector_config",
-	[RumFunction_Tsquery_PreConsistent] =
-		"documentdb_extended_rum_tsquery_pre_consistent",
-	[RumFunction_Tsquery_Distance] = "documentdb_extended_rum_tsquery_distance",
-	[RumFunction_Ts_Join_Pos] = "documentdb_extended_rum_ts_join_pos",
-	[RumFunction_Extract_Tsvector] = "documentdb_extended_rum_extract_tsvector",
-	[RumFunction_TryExplainRumIndex] = "try_explain_documentdb_rum_index",
-	[RumFunction_CanRumIndexScanOrdered] = "can_documentdb_rum_index_scan_ordered",
-	[RumFunction_RumGetMultiKeyStatus] = "documentdb_rum_get_multi_key_status",
-	[RumFunction_RumUpdateMultiKeyStatus] = "documentdb_rum_update_multi_key_status",
-	[RumFunction_SetUnredactedLogHook] = "DocumentDBSetRumUnredactedLogEmitHook",
-	[RumFunction_RumOrderedCostEstimate] = "DocumentDBRumOrderedCostEstimate",
-};
-
-
-/* --------------------------------------------------------- */
-/* Top level exports */
-/* --------------------------------------------------------- */
-PG_FUNCTION_INFO_V1(extensionrumhandler);
-PG_FUNCTION_INFO_V1(documentdb_rum_extract_tsquery);
-PG_FUNCTION_INFO_V1(documentdb_rum_tsquery_consistent);
-PG_FUNCTION_INFO_V1(documentdb_rum_tsvector_config);
-PG_FUNCTION_INFO_V1(documentdb_rum_tsquery_pre_consistent);
-PG_FUNCTION_INFO_V1(documentdb_rum_tsquery_distance);
-PG_FUNCTION_INFO_V1(documentdb_rum_ts_join_pos);
-PG_FUNCTION_INFO_V1(documentdb_rum_extract_tsvector);
-
-
-extern void SetDocumentDBFunctionNames(const char *explainRumIndexFunc,
-									   const char *canRumIndexScanOrdered,
-									   const char *getMultiKeyStatus,
-									   const char *updateMultiKeyStatus,
-									   const char *orderedCostEstimateFunc);
-
-static OrderedCostEstimateCoreFunc RumOrderedCostEstimate = NULL;
-
-
-/*
- * Register the access method for RUM as a custom index handler.
- * This allows us to create a 'custom' RUM index in the extension.
- * Today, this is temporary: This is needed until the RUM index supports
- * a custom configuration function proc for index operator classes.
- * By registering it here we maintain compatibility with existing GIN implementations.
- * Once we merge the RUM config changes into the mainline repo, this can be removed.
- */
-Datum
-extensionrumhandler(PG_FUNCTION_ARGS)
-{
-	IndexAmRoutine *indexRoutine = GetRumIndexHandler(fcinfo);
-	PG_RETURN_POINTER(indexRoutine);
-}
-
-
-Datum
-documentdb_rum_extract_tsquery(PG_FUNCTION_ARGS)
-{
-	EnsureRumLibLoaded();
-	return rum_extract_tsquery_func(fcinfo);
-}
-
-
-Datum
-documentdb_rum_tsquery_consistent(PG_FUNCTION_ARGS)
-{
-	EnsureRumLibLoaded();
-	return rum_tsquery_consistent_func(fcinfo);
-}
-
-
-Datum
-documentdb_rum_tsvector_config(PG_FUNCTION_ARGS)
-{
-	EnsureRumLibLoaded();
-	return rum_tsvector_config_func(fcinfo);
-}
-
-
-Datum
-documentdb_rum_tsquery_pre_consistent(PG_FUNCTION_ARGS)
-{
-	EnsureRumLibLoaded();
-	return rum_tsquery_pre_consistent_func(fcinfo);
-}
-
-
-Datum
-documentdb_rum_tsquery_distance(PG_FUNCTION_ARGS)
-{
-	EnsureRumLibLoaded();
-	return rum_tsquery_distance_func(fcinfo);
-}
-
-
-Datum
-documentdb_rum_ts_join_pos(PG_FUNCTION_ARGS)
-{
-	EnsureRumLibLoaded();
-	return rum_ts_join_pos_func(fcinfo);
-}
-
-
-Datum
-documentdb_rum_extract_tsvector(PG_FUNCTION_ARGS)
-{
-	EnsureRumLibLoaded();
-	return rum_extract_tsvector_func(fcinfo);
-}
-
-
-void
-SetDocumentDBFunctionNames(const char *explainRumIndexFunc,
-						   const char *canRumIndexScanOrdered,
-						   const char *getMultiKeyStatus,
-						   const char *updateMultiKeyStatus,
-						   const char *orderedCostEstimateFunc)
-{
-	RumFunctionArray[RumFunction_TryExplainRumIndex] = explainRumIndexFunc;
-	RumFunctionArray[RumFunction_CanRumIndexScanOrdered] = canRumIndexScanOrdered;
-	RumFunctionArray[RumFunction_RumGetMultiKeyStatus] = getMultiKeyStatus;
-	RumFunctionArray[RumFunction_RumUpdateMultiKeyStatus] = updateMultiKeyStatus;
-	RumFunctionArray[RumFunction_RumOrderedCostEstimate] = orderedCostEstimateFunc;
-}
-
-
-static IndexAmRoutine *
-GetRumIndexHandler(PG_FUNCTION_ARGS)
-{
-	IndexAmRoutine *indexRoutine = palloc0(sizeof(IndexAmRoutine));
-
-	EnsureRumLibLoaded();
-	*indexRoutine = rum_index_routine;
-
-	/* add a new proc as a config prog. */
-	/* Based on https://github.com/postgrespro/rum/blob/master/src/rumutil.c#L117 */
-	/* AMsupport is the index of the largest support function. We point to the options proc */
-	uint16 RUMNProcs = indexRoutine->amsupport;
-	if (RUMNProcs < 11)
-	{
-		indexRoutine->amsupport = RUMNProcs + 1;
-
-		/* register the user config proc number. */
-		/* based on https://github.com/postgrespro/rum/blob/master/src/rum.h#L837 */
-		/* RUMNprocs is the count, and the highest function supported */
-		/* We set our config proc to be one above that */
-		indexRoutine->amoptsprocnum = RUMNProcs + 1;
-	}
-
-	indexRoutine->ambeginscan = extension_rumbeginscan;
-	indexRoutine->amrescan = extension_rumrescan;
-	indexRoutine->amgetbitmap = extension_amgetbitmap;
-	indexRoutine->amgettuple = extension_amgettuple;
-	indexRoutine->amendscan = extension_rumendscan;
-	indexRoutine->amcostestimate = extension_rumcostestimate;
-	indexRoutine->ambuild = extension_rumbuild;
-	indexRoutine->aminsert = extension_ruminsert;
-	indexRoutine->amcanreturn = NULL;
-
-	return indexRoutine;
-}
-
-
-void
-LoadRumRoutine(void)
-{
-	bool missingOk = false;
-	void **ignoreLibFileHandle = NULL;
-
-	/* Load the rum handler function from the shared library
-	 * Allow overrides via the documentdb_rum extension
-	 */
-
-	Datum (*rumhandler) (FunctionCallInfo);
-	const char *rumLibPath;
-
-	ereport(LOG, (errmsg("Loading RUM handler with DocumentDBRumLibraryLoadOption: %d",
-						 DocumentDBRumLibraryLoadOption)));
-
-	StaticAssertExpr(RumFunction_Max == sizeof(RumFunctionArray) /
-					 sizeof(RumFunctionArray[0]),
-					 "Mismatch between RumFunctionCatalog enum and RumFunctionArray size");
-	StaticAssertExpr(RumFunction_Max == sizeof(DocumentDBRumFunctionArray) /
-					 sizeof(DocumentDBRumFunctionArray[0]),
-					 "Mismatch between RumFunctionCatalog enum and DocumentDBRumFunctionArray size");
-	for (int i = 0; i < RumFunction_Max; i++)
-	{
-		if (DocumentDBRumFunctionArray[i] == NULL ||
-			strlen(DocumentDBRumFunctionArray[i]) == 0)
-		{
-			ereport(PANIC, (errmsg(
-								"DocumentDBRum Function must be defined for for index %d",
-								i)));
-		}
-
-		if (RumFunctionArray[i] == NULL ||
-			strlen(RumFunctionArray[i]) == 0)
-		{
-			ereport(PANIC, (errmsg("Rum Function must be defined for for index %d", i)));
-		}
-	}
-
-	const char **functionCatalog;
-	switch (DocumentDBRumLibraryLoadOption)
-	{
-		case RumLibraryLoadOption_RequireDocumentDBRum:
-		{
-			rumLibPath = DocumentdbRumCorePath;
-			functionCatalog = DocumentDBRumFunctionArray;
-			rumhandler = load_external_function(rumLibPath,
-												functionCatalog[RumFunction_AmHandler],
-												!missingOk,
-												ignoreLibFileHandle);
-			ereport(LOG, (errmsg(
-							  "Loaded documentdb_rumhandler successfully via pg_documentdb_extended_rum")));
-			break;
-		}
-
-		case RumLibraryLoadOption_PreferDocumentDBRum:
-		{
-			rumLibPath = DocumentdbRumCorePath;
-			functionCatalog = DocumentDBRumFunctionArray;
-			rumhandler = load_external_function(rumLibPath,
-												functionCatalog[RumFunction_AmHandler],
-												missingOk,
-												ignoreLibFileHandle);
-
-			if (rumhandler == NULL)
-			{
-				rumLibPath = "$libdir/rum";
-				functionCatalog = RumFunctionArray;
-				rumhandler = load_external_function(rumLibPath,
-													functionCatalog[RumFunction_AmHandler],
-													!missingOk,
-													ignoreLibFileHandle);
-				ereport(LOG,
-						(errmsg(
-							 "Loaded documentdb_rum handler successfully via rum as a fallback")));
-			}
-			else
-			{
-				ereport(LOG,
-						(errmsg(
-							 "Loaded documentdb_rumhandler successfully via pg_documentdb_extended_rum")));
-			}
-
-			break;
-		}
-
-		case RumLibraryLoadOption_None:
-		{
-			rumLibPath = "$libdir/rum";
-			functionCatalog = RumFunctionArray;
-			rumhandler = load_external_function(rumLibPath,
-												functionCatalog[RumFunction_AmHandler],
-												!missingOk,
-												ignoreLibFileHandle);
-			ereport(LOG, (errmsg("Loaded documentdb_rum handler successfully via rum")));
-			break;
-		}
-
-		default:
-		{
-			ereport(ERROR, (errmsg("Unknown RUM library load option: %d",
-								   DocumentDBRumLibraryLoadOption)));
-		}
-	}
-
-	LOCAL_FCINFO(fcinfo, 0);
-
-	InitFunctionCallInfoData(*fcinfo, NULL, 1, InvalidOid, NULL, NULL);
-	Datum rumHandlerDatum = rumhandler(fcinfo);
-	IndexAmRoutine *indexRoutine = (IndexAmRoutine *) DatumGetPointer(rumHandlerDatum);
-	rum_index_routine = *indexRoutine;
-
-	/* Load required C functions */
-	rum_extract_tsquery_func =
-		load_external_function(rumLibPath, functionCatalog[RumFunction_ExtractTsQuery],
-							   !missingOk,
-							   ignoreLibFileHandle);
-	rum_tsquery_consistent_func =
-		load_external_function(rumLibPath, functionCatalog[RumFunction_TsQueryConsistent],
-							   !missingOk,
-							   ignoreLibFileHandle);
-	rum_tsvector_config_func =
-		load_external_function(rumLibPath, functionCatalog[RumFunction_Tsvector_Config],
-							   !missingOk,
-							   ignoreLibFileHandle);
-	rum_tsquery_pre_consistent_func =
-		load_external_function(rumLibPath,
-							   functionCatalog[RumFunction_Tsquery_PreConsistent],
-							   !missingOk,
-							   ignoreLibFileHandle);
-	rum_tsquery_distance_func =
-		load_external_function(rumLibPath, functionCatalog[RumFunction_Tsquery_Distance],
-							   !missingOk,
-							   ignoreLibFileHandle);
-	rum_ts_join_pos_func =
-		load_external_function(rumLibPath, functionCatalog[RumFunction_Ts_Join_Pos],
-							   !missingOk,
-							   ignoreLibFileHandle);
-	rum_extract_tsvector_func =
-		load_external_function(rumLibPath, functionCatalog[RumFunction_Extract_Tsvector],
-							   !missingOk,
-							   ignoreLibFileHandle);
-
-	/* Load optional explain function */
-	missingOk = true;
-	TryExplainIndexFunc explain_index_func =
-		load_external_function(rumLibPath,
-							   functionCatalog[RumFunction_TryExplainRumIndex],
-							   !missingOk,
-							   ignoreLibFileHandle);
-
-	if (explain_index_func != NULL && !DisableExtendedRumExplainPlans)
-	{
-		RumIndexAmEntry.add_explain_output = explain_index_func;
-	}
-
-	CanOrderInIndexScan scanOrderedFunc =
-		load_external_function(rumLibPath,
-							   functionCatalog[RumFunction_CanRumIndexScanOrdered],
-							   !missingOk,
-							   ignoreLibFileHandle);
-	if (scanOrderedFunc != NULL)
-	{
-		RumIndexAmEntry.can_order_in_index_scans = scanOrderedFunc;
-	}
-
-	OrderedCostEstimateCoreFunc costEstimateFunc =
-		load_external_function(rumLibPath,
-							   functionCatalog[RumFunction_RumOrderedCostEstimate],
-							   !missingOk,
-							   ignoreLibFileHandle);
-	if (costEstimateFunc != NULL)
-	{
-		RumOrderedCostEstimate = costEstimateFunc;
-	}
-
-	void (*setRumUnredactedLogEmitHookFunc)(format_log_hook hook) = NULL;
-	setRumUnredactedLogEmitHookFunc =
-		load_external_function(rumLibPath,
-							   functionCatalog[RumFunction_SetUnredactedLogHook],
-							   !missingOk,
-							   ignoreLibFileHandle);
-
-	if (setRumUnredactedLogEmitHookFunc != NULL)
-	{
-		setRumUnredactedLogEmitHookFunc(unredacted_log_emit_hook);
-	}
-
-	rum_index_multi_key_get_func =
-		load_external_function(rumLibPath,
-							   functionCatalog[RumFunction_RumGetMultiKeyStatus],
-							   !missingOk,
-							   ignoreLibFileHandle);
-	if (rum_index_multi_key_get_func != NULL)
-	{
-		RumIndexAmEntry.get_multikey_status = rum_index_multi_key_get_func;
-	}
-	else
-	{
-		/* For backwards compatibility with public RUM, here we use the slow
-		 * path and query the multi-key status
-		 */
-		RumIndexAmEntry.get_multikey_status = RumGetMultiKeyStatusSlow;
-	}
-
-	rum_index_multi_key_update_func =
-		load_external_function(rumLibPath,
-							   functionCatalog[RumFunction_RumUpdateMultiKeyStatus],
-							   !missingOk,
-							   ignoreLibFileHandle);
-
-	ereport(LOG, (errmsg(
-					  "rum library has update func %d, get func %d, cost estimate func %d",
-					  rum_index_multi_key_update_func != NULL,
-					  rum_index_multi_key_get_func != NULL,
-					  RumOrderedCostEstimate != NULL)));
-	loaded_rum_routine = true;
-	pfree(indexRoutine);
-}
 
 
 /*
@@ -624,26 +122,6 @@ LoadRumRoutine(void)
  * build_index_paths). In this case, we need to check that at least one predicate matches the
  * index for the index to be considered.
  */
-static void
-extension_rumcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
-						  Cost *indexStartupCost, Cost *indexTotalCost,
-						  Selectivity *indexSelectivity, double *indexCorrelation,
-						  double *indexPages)
-{
-	bool enableCompositePlannerCosts = EnablePlannerCostSelectivityFromRelOptInfo(root,
-																				  path->
-																				  indexinfo
-																				  ->rel);
-	bool forceIndexPushdownCostToZero = !enableCompositePlannerCosts &&
-										ForceUseIndexIfAvailable;
-	extension_rumcostestimate_core(root, path, loop_count, indexStartupCost,
-								   indexTotalCost,
-								   indexSelectivity, indexCorrelation, indexPages,
-								   &rum_index_routine, forceIndexPushdownCostToZero,
-								   enableCompositePlannerCosts, RumOrderedCostEstimate);
-}
-
-
 void
 extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_count,
 							   Cost *indexStartupCost, Cost *indexTotalCost,
@@ -651,7 +129,7 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 							   double *indexPages, IndexAmRoutine *coreRoutine,
 							   bool forceIndexPushdownCostToZero, bool
 							   enableCompositePlannerCosts,
-							   OrderedCostEstimateCoreFunc orderedCostEstimateCoreFunc)
+							   PGFunction orderedCostEstimateCoreFunc)
 {
 	if (!IsIndexIsValidForQuery(path))
 	{
@@ -678,25 +156,11 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 	if (isCompositeOpFamily)
 	{
 		bool canSupportIndexOnlyScan = false;
-		bool firstColumnSpecified = TraverseIndexPathForCompositeIndex(path, root,
-																	   &
-																	   canSupportIndexOnlyScan);
+		bool firstColumnSpecified = TraverseIndexPathForCompositeIndex(
+			path, root, &canSupportIndexOnlyScan);
 
-		/* If this is a composite index, then we need to ensure that
-		 * the first column of the index matches the query path.
-		 * This is because using the composite index would require specifying
-		 * the first column.
-		 */
-		if (!firstColumnSpecified)
-		{
-			*indexStartupCost = 0;
-			*indexTotalCost = INFINITY;
-			*indexSelectivity = 0;
-			*indexCorrelation = 0;
-			*indexPages = 0;
-			return;
-		}
-
+		/* Even if the first column was not specified and the index covers the query entirely we should consider doing
+		 * an index-only scan even though the cost will be set to INFINITY. This way we support index only scan when hinting is used and the first column is not part of the filters. */
 		if (canSupportIndexOnlyScan && path->path.pathtype != T_IndexOnlyScan)
 		{
 			/* We copy the index opt info to a new allocated memory as we can't modify
@@ -713,18 +177,47 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 			path->path.pathtype = T_IndexOnlyScan;
 			convertedToIndexOnlyScan = true;
 		}
+
+		/* If this is a composite index, then we need to ensure that
+		 * the first column of the index matches the query path.
+		 * This is because using the composite index would require specifying
+		 * the first column.
+		 */
+		if (!firstColumnSpecified)
+		{
+			*indexStartupCost = 0;
+			*indexTotalCost = INFINITY;
+			*indexSelectivity = 0;
+			*indexCorrelation = 0;
+			*indexPages = 0;
+			return;
+		}
 	}
 
-	if (enableCompositePlannerCosts && EnableOrderedCostEstimator &&
+	if (enableCompositePlannerCosts &&
 		orderedCostEstimateCoreFunc != NULL && isCompositeOpFamily)
 	{
-		orderedCostEstimateCoreFunc(root, path, loop_count, indexStartupCost,
-									indexTotalCost, indexSelectivity,
-									indexCorrelation,
-									indexPages, &totalNumTuples,
-									&boundarySelectivity, &numBoundaryQuals,
-									&dataPagesProportionFetched,
-									ExtractBoundaryQualsForOrderedIndexPath);
+		LOCAL_FCINFO(fcinfo, 13);
+		memset(fcinfo->args, 0, sizeof(NullableDatum) * 13);
+		fcinfo->args[0].value = PointerGetDatum(root);
+		fcinfo->args[1].value = PointerGetDatum(path);
+		fcinfo->args[2].value = Float8GetDatum(loop_count);
+		fcinfo->args[3].value = PointerGetDatum(indexStartupCost);
+		fcinfo->args[4].value = PointerGetDatum(indexTotalCost);
+		fcinfo->args[5].value = PointerGetDatum(indexSelectivity);
+		fcinfo->args[6].value = PointerGetDatum(indexCorrelation);
+		fcinfo->args[7].value = PointerGetDatum(indexPages);
+		fcinfo->args[8].value = PointerGetDatum(&totalNumTuples);
+		fcinfo->args[9].value = PointerGetDatum(&boundarySelectivity);
+		fcinfo->args[10].value = PointerGetDatum(&numBoundaryQuals);
+		fcinfo->args[11].value = PointerGetDatum(&dataPagesProportionFetched);
+		fcinfo->args[12].value = PointerGetDatum(ExtractBoundaryQualsForOrderedIndexPath);
+
+		InitFunctionCallInfoData(*fcinfo, NULL, 13, InvalidOid, NULL, NULL);
+		orderedCostEstimateCoreFunc(fcinfo);
+
+		/* if possible also record correlation via stats if available */
+		GetCorrelationFromStatistics(root, path, indexCorrelation);
 	}
 	else
 	{
@@ -772,20 +265,32 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 								   boundarySelectivity, numBoundaryQuals,
 								   dataPagesProportionFetched);
 	}
+
+	if (EnableMergeSortForInPrefix && isCompositeOpFamily)
+	{
+		MaybeMarkIndexPathForMergeSortInPrefix(root, path);
+	}
 }
 
 
-/* Check if the index supports index-only scans based on the index rel am. */
+/*
+ * Whether the index's access method / opclass structurally supports index-only
+ * scans (AM support, composite non-wildcard opclass). Multi-key gating is done by
+ * the caller from the shared opclass metadata. Truncated terms also block
+ * index-only scan; when skipTruncationCheck is true the caller has already
+ * accounted for truncation from the tracked metadata, so it is not re-read here.
+ */
 bool
-CompositeIndexSupportsIndexOnlyScan(const IndexPath *indexPath)
+CompositeIndexSupportsIndexOnlyScan(const IndexPath *indexPath, bool skipTruncationCheck)
 {
-	GetMultikeyStatusFunc getMultiKeyStatusFunc = NULL;
+	PGFunction getMultiKeyStatusFunc = NULL;
 	GetTruncationStatusFunc getTruncationStatusFunc = NULL;
 
 	bool supports = GetIndexAmSupportsIndexOnlyScan(indexPath->indexinfo->relam,
 													indexPath->indexinfo->opfamily[0],
 													&getMultiKeyStatusFunc,
-													&getTruncationStatusFunc);
+													&getTruncationStatusFunc,
+													NULL);
 
 	if (!supports || getMultiKeyStatusFunc == NULL || getTruncationStatusFunc == NULL)
 	{
@@ -819,13 +324,25 @@ CompositeIndexSupportsIndexOnlyScan(const IndexPath *indexPath)
 		return false;
 	}
 
-	Relation indexRelation = index_open(indexPath->indexinfo->indexoid, NoLock);
-	bool multiKeyStatus = getMultiKeyStatusFunc(indexRelation);
-	bool hasTruncatedTerms = getTruncationStatusFunc(indexRelation);
-	index_close(indexRelation, NoLock);
+	/*
+	 * Multi-key gating and (when the opclass metadata is tracked) the truncation
+	 * status are supplied by the caller from the shared metadata read. Only when
+	 * the caller has no tracked metadata do we read the truncation status here.
+	 * Truncated terms are never full fidelity, so they always block index only scan.
+	 */
+	if (!skipTruncationCheck)
+	{
+		Relation indexRelation = index_open(indexPath->indexinfo->indexoid, NoLock);
+		bool hasTruncatedTerms = getTruncationStatusFunc(indexRelation);
+		index_close(indexRelation, NoLock);
 
-	/* can only support index only scan if the index is not multikey and there are no truncated terms. */
-	return !multiKeyStatus && !hasTruncatedTerms;
+		if (hasTruncatedTerms)
+		{
+			return false;
+		}
+	}
+
+	return true;
 }
 
 
@@ -964,7 +481,7 @@ ValidateMatchForOrderbyQuals(IndexPath *path)
 
 		/* Validate that it's a supported operator */
 		OpExpr *opQual = (OpExpr *) orderQual;
-		if (EnableOrderByIndexTerm &&
+		if ((EnableOrderByIndexTerm || EnableCollation) &&
 			opQual->opfuncid != BsonOrderByFunctionOid() &&
 			opQual->opfuncid != BsonOrderByIndexFunctionOid() &&
 			opQual->opfuncid != BsonOrderByIndexWithCollationFunctionOid() &&
@@ -1032,15 +549,6 @@ IsTextIndexMatch(IndexPath *path)
 }
 
 
-static IndexScanDesc
-extension_rumbeginscan(Relation rel, int nkeys, int norderbys)
-{
-	EnsureRumLibLoaded();
-	return extension_rumbeginscan_core(rel, nkeys, norderbys,
-									   &rum_index_routine);
-}
-
-
 IndexScanDesc
 extension_rumbeginscan_core(Relation rel, int nkeys, int norderbys,
 							IndexAmRoutine *coreRoutine)
@@ -1052,7 +560,6 @@ extension_rumbeginscan_core(Relation rel, int nkeys, int norderbys,
 		DocumentDBRumIndexState *outerScanState = palloc0(
 			sizeof(DocumentDBRumIndexState));
 		scan->opaque = outerScanState;
-		outerScanState->scanDirection = ForwardScanDirection;
 
 		/* Don't yet start inner scan here - instead wait until rescan to begin */
 		return scan;
@@ -1064,11 +571,21 @@ extension_rumbeginscan_core(Relation rel, int nkeys, int norderbys,
 }
 
 
-static void
-extension_rumendscan(IndexScanDesc scan)
+IndexScanDesc
+extension_documentdb_rumbeginscan_core(Relation rel, int nkeys, int norderbys,
+									   IndexAmRoutine *coreRoutine)
 {
-	EnsureRumLibLoaded();
-	extension_rumendscan_core(scan, &rum_index_routine);
+	if (IsCompositeOpClass(rel))
+	{
+		/* Ask for 1 more key (storage for summarization key) */
+		IndexScanDesc scan = coreRoutine->ambeginscan(rel, nkeys + 1, norderbys);
+		scan->numberOfKeys = nkeys;
+		return scan;
+	}
+	else
+	{
+		return coreRoutine->ambeginscan(rel, nkeys, norderbys);
+	}
 }
 
 
@@ -1079,9 +596,12 @@ extension_rumendscan_core(IndexScanDesc scan, IndexAmRoutine *coreRoutine)
 	{
 		DocumentDBRumIndexState *outerScanState =
 			(DocumentDBRumIndexState *) scan->opaque;
+
 		if (outerScanState->innerScan)
 		{
 			coreRoutine->amendscan(outerScanState->innerScan);
+			IndexScanEnd(outerScanState->innerScan);
+			outerScanState->innerScan = NULL;
 		}
 
 		pfree(outerScanState);
@@ -1093,27 +613,17 @@ extension_rumendscan_core(IndexScanDesc scan, IndexAmRoutine *coreRoutine)
 }
 
 
-static void
-extension_rumrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
-					ScanKey orderbys, int norderbys)
-{
-	EnsureRumLibLoaded();
-	extension_rumrescan_core(scan, scankey, nscankeys,
-							 orderbys, norderbys, &rum_index_routine);
-}
-
-
 void
 extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 						 ScanKey orderbys, int norderbys,
 						 IndexAmRoutine *coreRoutine)
 {
 	bool supportsOrderedOperatorScans = false;
-	GetMultikeyStatusFunc multiKeyStatusFunc = NULL;
-	CanOrderInIndexScan isIndexScanOrdered = NULL;
+	PGFunction multiKeyStatusFunc = NULL;
+	PGFunction getopclassMetadataFunc = NULL;
 	if (GetCompositeOpClassWithProps(scan->indexRelation,
 									 &supportsOrderedOperatorScans, &multiKeyStatusFunc,
-									 &isIndexScanOrdered))
+									 &getopclassMetadataFunc))
 	{
 		/* Copy the scan keys to our scan */
 		if (scankey && scan->numberOfKeys > 0)
@@ -1135,39 +645,65 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 			scan->indexRelation->rd_opcoptions[0]);
 		if (outerScanState->multiKeyStatus == IndexMultiKeyStatus_Unknown)
 		{
-			if (multiKeyStatusFunc != NULL)
-			{
-				outerScanState->multiKeyStatus = multiKeyStatusFunc(scan->indexRelation);
-			}
-			else
-			{
-				outerScanState->multiKeyStatus =
-					CheckIndexHasArrays(scan->indexRelation, coreRoutine);
-			}
-
 			/* Check if we are producing reduced index terms in this index */
 			BsonGinCompositePathOptions *options =
 				(BsonGinCompositePathOptions *) scan->indexRelation->rd_opcoptions[0];
-			if (options->enableCompositeReducedCorrelatedTerms &&
-				outerScanState->multiKeyStatus == IndexMultiKeyStatus_HasArrays &&
-				numColumns > 1)
+
+			if (options->enableMetadataBasedTracking &&
+				getopclassMetadataFunc != NULL)
 			{
-				/* Check if we have correlated reduced terms */
-				outerScanState->hasCorrelatedReducedTerms = CheckIndexHasReducedTerms(
-					scan->indexRelation, coreRoutine);
+				uint32_t truncatedPerPathStatus = 0;
+				bool hasReducedCorrelatedTerms = false;
+				bool indexHasArrays = false;
+				bool indexHasTruncation = false;
+				uint64_t opclassMetadata = DatumGetUInt64(DirectFunctionCall1(
+															  getopclassMetadataFunc,
+															  PointerGetDatum(
+																  scan->indexRelation)));
+				DecodeCompositeOpClassQueryMetadata(options, opclassMetadata,
+													&indexHasArrays,
+													&outerScanState->multiKeyPerPathStatus,
+													&hasReducedCorrelatedTerms,
+													&indexHasTruncation,
+													&truncatedPerPathStatus);
+				outerScanState->multiKeyStatus = indexHasArrays ?
+												 IndexMultiKeyStatus_HasArrays :
+												 IndexMultiKeyStatus_HasNoArrays;
+				outerScanState->hasCorrelatedReducedTerms = hasReducedCorrelatedTerms;
+			}
+			else
+			{
+				if (multiKeyStatusFunc != NULL)
+				{
+					bool indexHasArrays =
+						DatumGetBool(DirectFunctionCall1(multiKeyStatusFunc,
+														 PointerGetDatum(
+															 scan->indexRelation)));
+					outerScanState->multiKeyStatus = indexHasArrays ?
+													 IndexMultiKeyStatus_HasArrays :
+													 IndexMultiKeyStatus_HasNoArrays;
+				}
+				else
+				{
+					outerScanState->multiKeyStatus =
+						CheckIndexHasArrays(scan->indexRelation, coreRoutine) ?
+						IndexMultiKeyStatus_HasArrays :
+						IndexMultiKeyStatus_HasNoArrays;
+				}
+
+				if (options->enableCompositeReducedCorrelatedTerms &&
+					outerScanState->multiKeyStatus == IndexMultiKeyStatus_HasArrays &&
+					numColumns > 1)
+				{
+					/* Check if we have correlated reduced terms */
+					outerScanState->hasCorrelatedReducedTerms = CheckIndexHasReducedTerms(
+						scan->indexRelation, coreRoutine);
+				}
 			}
 		}
 
-		ScanKey innerOrderBy = NULL;
-		int32_t nInnerorderbys = 0;
-		innerOrderBy = orderbys;
-		nInnerorderbys = norderbys;
-
-		outerScanState->scanDirection =
-			DetermineCompositeScanDirection(
-				scan->indexRelation->rd_opcoptions[0],
-				orderbys, norderbys);
-
+		ScanKey innerOrderBy = orderbys;
+		int32_t nInnerorderbys = norderbys;
 		ScanKey innerScanKey = scankey;
 		int32_t nInnerScanKeys = nscankeys;
 
@@ -1180,9 +716,8 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 										   outerScanState->multiKeyStatus ==
 										   IndexMultiKeyStatus_HasArrays,
 										   outerScanState->hasCorrelatedReducedTerms,
-										   nInnerorderbys > 0,
-										   outerScanState->scanDirection,
-										   supportsOrderedOperatorScans))
+										   supportsOrderedOperatorScans,
+										   outerScanState->multiKeyPerPathStatus))
 		{
 			innerScanKey = &outerScanState->compositeKey;
 			nInnerScanKeys = 1;
@@ -1205,33 +740,6 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 							  innerScanKey, nInnerScanKeys,
 							  innerOrderBy,
 							  nInnerorderbys);
-
-		if (isIndexScanOrdered(outerScanState->innerScan) || nInnerorderbys > 0)
-		{
-			if (outerScanState->multiKeyStatus == IndexMultiKeyStatus_HasArrays)
-			{
-				if (IndexArrayStateFuncs != NULL)
-				{
-					if (outerScanState->indexArrayState != NULL)
-					{
-						/* free the state */
-						IndexArrayStateFuncs->freeState(outerScanState->indexArrayState);
-					}
-
-					outerScanState->indexArrayState = IndexArrayStateFuncs->createState();
-				}
-				else if (nInnerorderbys > 0)
-				{
-					ereport(ERROR, (errmsg(
-										"Cannot push down order by on path with arrays")));
-				}
-			}
-		}
-		else if (outerScanState->innerScan->xs_want_itup)
-		{
-			ereport(ERROR, (errmsg(
-								"Cannot use index only scan on a non-ordered index scan")));
-		}
 	}
 	else
 	{
@@ -1240,11 +748,128 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 }
 
 
-static int64
-extension_amgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
+static bool
+IsCompositeScanEligible(ScanKey scanKey, int nscankeys)
 {
-	EnsureRumLibLoaded();
-	return extension_rumgetbitmap_core(scan, tbm, &rum_index_routine);
+	if (nscankeys == 0)
+	{
+		return true;
+	}
+
+	/* the runtime will order scan keys by attnum
+	 * If the first and last scan keys are not the same att - skip.
+	 */
+	if (scanKey[0].sk_attno != 1 ||
+		scanKey[0].sk_attno != scanKey[nscankeys - 1].sk_attno)
+	{
+		return false;
+	}
+
+	if (scanKey[0].sk_strategy == BSON_INDEX_STRATEGY_UNIQUE_EQUAL)
+	{
+		return false;
+	}
+
+	return true;
+}
+
+
+void
+extension_documentdb_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
+									ScanKey orderbys, int norderbys,
+									IndexAmRoutine *coreRoutine)
+{
+	bool supportsOrderedOperatorScans = false;
+	PGFunction multiKeyStatusFunc = NULL;
+	PGFunction getopclassMetadataFunc = NULL;
+	if (IsCompositeScanEligible(scankey, nscankeys) &&
+		GetCompositeOpClassWithProps(scan->indexRelation,
+									 &supportsOrderedOperatorScans, &multiKeyStatusFunc,
+									 &getopclassMetadataFunc))
+	{
+		BsonGinCompositePathOptions *options =
+			(BsonGinCompositePathOptions *) scan->indexRelation->rd_opcoptions[0];
+		IndexMultiKeyStatus indexHasArrays = IndexMultiKeyStatus_Unknown;
+		bool hasCorrelatedReducedTerms = false;
+		uint32_t multiKeyPerPathStatus = 0;
+		if (options->enableMetadataBasedTracking)
+		{
+			bool indexHasArraysBool = false;
+			bool indexHasTruncation = false;
+			uint32_t truncatedPerPathStatus = 0;
+			uint64_t opclassMetadata = DatumGetUInt64(DirectFunctionCall1(
+														  getopclassMetadataFunc,
+														  PointerGetDatum(
+															  scan->indexRelation)));
+			DecodeCompositeOpClassQueryMetadata(options, opclassMetadata,
+												&indexHasArraysBool,
+												&multiKeyPerPathStatus,
+												&hasCorrelatedReducedTerms,
+												&indexHasTruncation,
+												&truncatedPerPathStatus);
+			indexHasArrays = indexHasArraysBool ? IndexMultiKeyStatus_HasArrays :
+							 IndexMultiKeyStatus_HasNoArrays;
+		}
+		else
+		{
+			if (multiKeyStatusFunc != NULL)
+			{
+				indexHasArrays = DatumGetBool(DirectFunctionCall1(multiKeyStatusFunc,
+																  PointerGetDatum(
+																	  scan->indexRelation)));
+			}
+			else
+			{
+				indexHasArrays = CheckIndexHasArrays(scan->indexRelation, coreRoutine);
+			}
+
+			/* Check if we are producing reduced index terms in this index */
+
+			int numColumns = GetCompositeOpClassPathCount(
+				scan->indexRelation->rd_opcoptions[0]);
+			if (options->enableCompositeReducedCorrelatedTerms &&
+				indexHasArrays == IndexMultiKeyStatus_HasArrays && numColumns > 1)
+			{
+				/* Check if we have correlated reduced terms */
+				hasCorrelatedReducedTerms = CheckIndexHasReducedTerms(
+					scan->indexRelation, coreRoutine);
+			}
+		}
+
+		/* There are 2 paths here, regular queries, or unique order by
+		 * If this is a unique order by, we need to modify the scan keys
+		 * for both paths.
+		 */
+		ScanKeyData compositeKey = { 0 };
+		if (ModifyScanKeysForCompositeScan(scankey, nscankeys,
+										   &compositeKey,
+										   indexHasArrays ==
+										   IndexMultiKeyStatus_HasArrays,
+										   hasCorrelatedReducedTerms,
+										   supportsOrderedOperatorScans,
+										   multiKeyPerPathStatus))
+		{
+			int numscankeys = 1;
+			coreRoutine->amrescan(scan, &compositeKey, numscankeys, orderbys, norderbys);
+
+			/* scan->scanKeyData[0] will now be the composite keys - copy the remaining from 1-> N
+			 * This is fine since we requested 1 extra key on beginscan
+			 */
+			if (nscankeys > 0)
+			{
+				memmove(&scan->keyData[1], scankey,
+						nscankeys * sizeof(ScanKeyData));
+			}
+		}
+		else
+		{
+			coreRoutine->amrescan(scan, scankey, nscankeys, orderbys, norderbys);
+		}
+	}
+	else
+	{
+		coreRoutine->amrescan(scan, scankey, nscankeys, orderbys, norderbys);
+	}
 }
 
 
@@ -1262,14 +887,6 @@ extension_rumgetbitmap_core(IndexScanDesc scan, TIDBitmap *tbm,
 	{
 		return coreRoutine->amgetbitmap(scan, tbm);
 	}
-}
-
-
-static bool
-extension_amgettuple(IndexScanDesc scan, ScanDirection direction)
-{
-	EnsureRumLibLoaded();
-	return extension_rumgettuple_core(scan, direction, &rum_index_routine);
 }
 
 
@@ -1318,39 +935,10 @@ extension_rumgettuple_core(IndexScanDesc scan, ScanDirection direction,
 
 		/* Push this to the inner scan */
 		outerScanState->innerScan->kill_prior_tuple = scan->kill_prior_tuple;
-		if (outerScanState->indexArrayState == NULL)
-		{
-			/* No arrays, or we don't support dedup - just return the basics */
-			return GetOneTupleCore(outerScanState, scan, outerScanState->scanDirection,
-								   coreRoutine);
-		}
-		else
-		{
-			bool result = GetOneTupleCore(outerScanState, scan,
-										  outerScanState->scanDirection, coreRoutine);
-			while (result)
-			{
-				/* if we could add it to the bitmap, return */
-				if (IndexArrayStateFuncs->addItem(outerScanState->indexArrayState,
-												  &scan->xs_heaptid))
-				{
-					return true;
-				}
-				else
-				{
-					outerScanState->numDuplicates++;
-				}
 
-				/* else, get the next tuple
-				 * Ensure that we reset kill_prior_tuple since this is the duplicate path.
-				 */
-				outerScanState->innerScan->kill_prior_tuple = false;
-				result = GetOneTupleCore(outerScanState, scan,
-										 outerScanState->scanDirection, coreRoutine);
-			}
-
-			return result;
-		}
+		/* No arrays, or we don't support dedup - just return the basics */
+		return GetOneTupleCore(outerScanState, scan, direction,
+							   coreRoutine);
 	}
 	else
 	{
@@ -1359,26 +947,10 @@ extension_rumgettuple_core(IndexScanDesc scan, ScanDirection direction,
 }
 
 
-static IndexBuildResult *
-extension_rumbuild(Relation heapRelation,
-				   Relation indexRelation,
-				   struct IndexInfo *indexInfo)
-{
-	EnsureRumLibLoaded();
-
-	bool amCanBuildParallel = true;
-	return extension_rumbuild_core(heapRelation, indexRelation,
-								   indexInfo, &rum_index_routine,
-								   rum_index_multi_key_update_func,
-								   amCanBuildParallel);
-}
-
-
 IndexBuildResult *
 extension_rumbuild_core(Relation heapRelation, Relation indexRelation,
 						struct IndexInfo *indexInfo, IndexAmRoutine *coreRoutine,
-						UpdateMultikeyStatusFunc updateMultikeyStatus,
-						bool amCanBuildParallel)
+						PGFunction updateMultikeyStatus)
 {
 	RumHasMultiKeyPaths = false;
 	IndexBuildResult *result = coreRoutine->ambuild(heapRelation, indexRelation,
@@ -1388,39 +960,34 @@ extension_rumbuild_core(Relation heapRelation, Relation indexRelation,
 	 * Note: We don't use HasMultiKeyPaths here as we want to handle the parallel build
 	 * scenario where we may have multiple workers building the index.
 	 */
-	if (amCanBuildParallel && IsCompositeOpClass(indexRelation))
+	if (IsCompositeOpClass(indexRelation))
 	{
-		IndexMultiKeyStatus status = CheckIndexHasArrays(indexRelation, coreRoutine);
-		if (status == IndexMultiKeyStatus_HasArrays && updateMultikeyStatus != NULL)
+		BsonGinCompositePathOptions *options =
+			(BsonGinCompositePathOptions *) indexRelation->rd_opcoptions[0];
+
+		/* In metadata based tracking mode the multi-key (and per-path) status is
+		 * written directly into the opclass metadata blob during the build itself,
+		 * so the post-build term scan is unnecessary. It is also unsupported in this
+		 * mode (the IS_MULTIKEY term strategy errors), so skip it.
+		 */
+		if (options != NULL && options->enableMetadataBasedTracking)
 		{
-			updateMultikeyStatus(indexRelation);
+			/* nothing to do - metadata was written during the build */
+		}
+		else if (updateMultikeyStatus != NULL)
+		{
+			if (CheckIndexHasArrays(indexRelation, coreRoutine))
+			{
+				DirectFunctionCall1(updateMultikeyStatus, PointerGetDatum(indexRelation));
+			}
 		}
 	}
 	else if (RumHasMultiKeyPaths && updateMultikeyStatus != NULL)
 	{
-		updateMultikeyStatus(indexRelation);
+		DirectFunctionCall1(updateMultikeyStatus, PointerGetDatum(indexRelation));
 	}
 
 	return result;
-}
-
-
-static bool
-extension_ruminsert(Relation indexRelation,
-					Datum *values,
-					bool *isnull,
-					ItemPointer heap_tid,
-					Relation heapRelation,
-					IndexUniqueCheck checkUnique,
-					bool indexUnchanged,
-					struct IndexInfo *indexInfo)
-{
-	EnsureRumLibLoaded();
-
-	return extension_ruminsert_core(indexRelation, values, isnull,
-									heap_tid, heapRelation, checkUnique,
-									indexUnchanged, indexInfo,
-									&rum_index_routine, rum_index_multi_key_update_func);
 }
 
 
@@ -1434,7 +1001,7 @@ extension_ruminsert_core(Relation indexRelation,
 						 bool indexUnchanged,
 						 struct IndexInfo *indexInfo,
 						 IndexAmRoutine *coreRoutine,
-						 UpdateMultikeyStatusFunc updateMultikeyStatus)
+						 PGFunction updateMultikeyStatus)
 {
 	RumHasMultiKeyPaths = false;
 	bool result = coreRoutine->aminsert(indexRelation, values, isnull,
@@ -1443,24 +1010,14 @@ extension_ruminsert_core(Relation indexRelation,
 
 	if (RumHasMultiKeyPaths && updateMultikeyStatus != NULL)
 	{
-		updateMultikeyStatus(indexRelation);
+		DirectFunctionCall1(updateMultikeyStatus, PointerGetDatum(indexRelation));
 	}
 
 	return result;
 }
 
 
-static bool
-RumGetMultiKeyStatusSlow(Relation indexRelation)
-{
-	EnsureRumLibLoaded();
-	IndexMultiKeyStatus multiKeyStatus = CheckIndexHasArrays(indexRelation,
-															 &rum_index_routine);
-	return multiKeyStatus == IndexMultiKeyStatus_HasArrays;
-}
-
-
-static bool
+bool
 CheckIndexHasReducedTerms(Relation indexRelation, IndexAmRoutine *coreRoutine)
 {
 	/* Start a nested query lookup */
@@ -1480,7 +1037,7 @@ CheckIndexHasReducedTerms(Relation indexRelation, IndexAmRoutine *coreRoutine)
 }
 
 
-static IndexMultiKeyStatus
+bool
 CheckIndexHasArrays(Relation indexRelation, IndexAmRoutine *coreRoutine)
 {
 	/* Start a nested query lookup */
@@ -1496,22 +1053,20 @@ CheckIndexHasArrays(Relation indexRelation, IndexAmRoutine *coreRoutine)
 	coreRoutine->amrescan(innerDesc, &arrayKey, 1, NULL, 0);
 	bool hasArrays = coreRoutine->amgettuple(innerDesc, ForwardScanDirection);
 	coreRoutine->amendscan(innerDesc);
-	return hasArrays ? IndexMultiKeyStatus_HasArrays : IndexMultiKeyStatus_HasNoArrays;
+	return hasArrays;
 }
 
 
 bool
-RumGetTruncationStatus(Relation indexRelation)
+RumGetTruncationStatusCore(Relation indexRelation, IndexAmRoutine *coreRoutine)
 {
-	EnsureRumLibLoaded();
-
 	if (!IsCompositeOpClass(indexRelation))
 	{
 		return false;
 	}
 
 	/* Start a nested query lookup */
-	IndexScanDesc innerDesc = rum_index_routine.ambeginscan(indexRelation, 1, 0);
+	IndexScanDesc innerDesc = coreRoutine->ambeginscan(indexRelation, 1, 0);
 
 	ScanKeyData truncatedKey = { 0 };
 	truncatedKey.sk_attno = 1;
@@ -1520,16 +1075,17 @@ RumGetTruncationStatus(Relation indexRelation)
 	truncatedKey.sk_argument = PointerGetDatum(PgbsonInitEmpty());
 	innerDesc->parallel_scan = NULL;
 
-	rum_index_routine.amrescan(innerDesc, &truncatedKey, 1, NULL, 0);
-	bool hasTruncation = rum_index_routine.amgettuple(innerDesc, ForwardScanDirection);
-	rum_index_routine.amendscan(innerDesc);
+	coreRoutine->amrescan(innerDesc, &truncatedKey, 1, NULL, 0);
+	bool hasTruncation = coreRoutine->amgettuple(innerDesc, ForwardScanDirection);
+	coreRoutine->amendscan(innerDesc);
 	return hasTruncation;
 }
 
 
 static List *
-GetIndexBoundsForExplain(Relation index_rel, Datum compositeArgDatum, bool hasOrderBy,
-						 List **rawPerPathBounds)
+GetIndexBoundsForExplain(Relation index_rel, Datum compositeArgDatum,
+						 ScanDirection scanDirection,
+						 List **rawPerPathBounds, const char **minBounds)
 {
 	uint32_t nentries = 0;
 	bool *partialMatch = NULL;
@@ -1537,8 +1093,7 @@ GetIndexBoundsForExplain(Relation index_rel, Datum compositeArgDatum, bool hasOr
 
 	/* From the composite keys, get the lower bounds of the scans */
 	/* Call extract_query to get the index details */
-	int32_t ginScanType = hasOrderBy ? GIN_SEARCH_MODE_ALL :
-						  GIN_SEARCH_MODE_DEFAULT;
+	int32_t ginScanType = GetScanTypeForScanDirection(scanDirection);
 	LOCAL_FCINFO(fcinfo, 7);
 	fcinfo->flinfo = palloc(sizeof(FmgrInfo));
 	fmgr_info_copy(fcinfo->flinfo,
@@ -1570,7 +1125,8 @@ GetIndexBoundsForExplain(Relation index_rel, Datum compositeArgDatum, bool hasOr
 		char *serializedBound = SerializeBoundsStringForExplain(entry,
 																extraData[i],
 																fcinfo,
-																&rawPathBoundsInner);
+																&rawPathBoundsInner,
+																minBounds);
 		boundsList = lappend(boundsList, serializedBound);
 		if (rawPathBoundsInner != NIL)
 		{
@@ -1583,23 +1139,53 @@ GetIndexBoundsForExplain(Relation index_rel, Datum compositeArgDatum, bool hasOr
 
 
 static void
-ExplainCompositeProperties(void *state, GetMultikeyStatusFunc multiKeyStatusFunc,
-						   Relation index_rel, bool enableCompositeReducedCorrelatedTerms,
-						   List *indexQuals, List *indexOrderBy, bool
-						   supportsOrderedOperatorScans,
+ExplainCompositeProperties(void *state, PGFunction multiKeyStatusFunc,
+						   Relation index_rel, BsonGinCompositePathOptions *options,
+						   List *indexQuals, List *indexOrderBy,
+						   bool supportsOrderedOperatorScans,
+						   PGFunction getOpclassMetadataFunc,
 						   void (*writeBoolFunc)(const char *, bool, void *),
-						   void (*writeStringListFunc)(const char *, List *, void *))
+						   void (*writeStringListFunc)(const char *, List *, void *),
+						   void (*writeStringFunc)(const char *, const char *, void *))
 {
-	bool isMultiKey = multiKeyStatusFunc ? multiKeyStatusFunc(index_rel) :
-					  RumGetMultiKeyStatusSlow(index_rel);
-	writeBoolFunc("isMultiKey", isMultiKey, state);
-
+	bool isMultiKey;
+	List *multiKeyPerPathList = NIL;
 	bool hasCorrelatedTerms = false;
-	if (enableCompositeReducedCorrelatedTerms && isMultiKey)
+	bool isTruncated = false;
+	List *truncatedPerPathList = NIL;
+	uint32_t multiKeyBitMask = 0;
+	if (getOpclassMetadataFunc != NULL && options != NULL &&
+		options->enableMetadataBasedTracking)
 	{
-		/* Check if we have correlated reduced terms */
-		EnsureRumLibLoaded();
-		hasCorrelatedTerms = CheckIndexHasReducedTerms(index_rel, &rum_index_routine);
+		uint64_t opclassMetadata = DatumGetUInt64(DirectFunctionCall1(
+													  getOpclassMetadataFunc,
+													  PointerGetDatum(
+														  index_rel)));
+		DecodeCompositeOpClassMetadata(options, opclassMetadata, &isMultiKey,
+									   &multiKeyBitMask, &multiKeyPerPathList,
+									   &hasCorrelatedTerms, &isTruncated,
+									   &truncatedPerPathList);
+	}
+	else
+	{
+		isMultiKey = DatumGetBool(DirectFunctionCall1(multiKeyStatusFunc,
+													  PointerGetDatum(index_rel)));
+
+		if (options != NULL && options->enableCompositeReducedCorrelatedTerms &&
+			isMultiKey)
+		{
+			/* Check if we have correlated reduced terms */
+			hasCorrelatedTerms = GetIndexReducedTermsStatus(index_rel);
+		}
+
+		isTruncated = GetIndexTruncationStatus(index_rel);
+	}
+
+
+	writeBoolFunc("isMultiKey", isMultiKey, state);
+	if (multiKeyPerPathList != NIL)
+	{
+		writeStringListFunc("multiKeyPaths", multiKeyPerPathList, state);
 	}
 
 	if (hasCorrelatedTerms)
@@ -1607,21 +1193,41 @@ ExplainCompositeProperties(void *state, GetMultikeyStatusFunc multiKeyStatusFunc
 		writeBoolFunc("hasCorrelatedTerms", true, state);
 	}
 
-	bool isTruncated = RumGetTruncationStatus(index_rel);
 	if (isTruncated)
 	{
 		writeBoolFunc("hasTruncation", true, state);
 	}
 
-	Datum compositeDatum = FormCompositeDatumFromQuals(indexQuals, indexOrderBy,
+	if (truncatedPerPathList != NIL)
+	{
+		writeStringListFunc("truncatedPaths", truncatedPerPathList, state);
+	}
+
+	Datum compositeDatum = FormCompositeDatumFromQuals(indexQuals,
 													   isMultiKey, hasCorrelatedTerms,
-													   supportsOrderedOperatorScans);
+													   supportsOrderedOperatorScans,
+													   multiKeyBitMask);
 	if (compositeDatum != 0)
 	{
+		ScanDirection scanDir = NoMovementScanDirection;
+		if (list_length(indexOrderBy) > 0)
+		{
+			scanDir = ForwardScanDirection;
+			OpExpr *orderByExpr = (OpExpr *) linitial(indexOrderBy);
+			Expr *expr = lsecond(orderByExpr->args);
+			if (IsA(expr, Const))
+			{
+				Datum orderByConstDatum = ((Const *) expr)->constvalue;
+				scanDir = GetOrderByScanDirectionFromDatum(index_rel->rd_opcoptions[0],
+														   orderByConstDatum);
+			}
+		}
+
 		List *rawPerPathBounds = NIL;
+		const char *minBounds = NULL;
 		List *boundsList = GetIndexBoundsForExplain(index_rel, compositeDatum,
-													list_length(indexOrderBy) > 0,
-													&rawPerPathBounds);
+													scanDir, &rawPerPathBounds,
+													&minBounds);
 		if (rawPerPathBounds != NIL)
 		{
 			writeStringListFunc("startBounds", boundsList, state);
@@ -1630,6 +1236,11 @@ ExplainCompositeProperties(void *state, GetMultikeyStatusFunc multiKeyStatusFunc
 		else
 		{
 			writeStringListFunc("indexBounds", boundsList, state);
+		}
+
+		if (minBounds != NULL)
+		{
+			writeStringFunc("minKey", minBounds, state);
 		}
 	}
 }
@@ -1718,34 +1329,42 @@ ExplainRawCompositeScanToWriter(Relation index_rel, List *indexQuals, List *inde
 								ScanDirection indexScanDir, pgbson_writer *writer)
 {
 	bool supportsOrderedOperatorScans = false;
-	GetMultikeyStatusFunc multiKeyStatusFunc = NULL;
-	CanOrderInIndexScan isIndexScanOrdered = NULL;
+	PGFunction multiKeyStatusFunc = NULL;
+	PGFunction getopclassMetadataFunc = NULL;
 	if (!GetCompositeOpClassWithProps(index_rel, &supportsOrderedOperatorScans,
-									  &multiKeyStatusFunc, &isIndexScanOrdered))
+									  &multiKeyStatusFunc, &getopclassMetadataFunc))
 	{
 		return;
 	}
 
-	bool enableCompositeReducedCorrelatedTerms = false;
+	BsonGinCompositePathOptions *options = NULL;
 	if (index_rel->rd_opcoptions != NULL)
 	{
-		BsonGinCompositePathOptions *options =
-			(BsonGinCompositePathOptions *) index_rel->rd_opcoptions[0];
+		options = (BsonGinCompositePathOptions *) index_rel->rd_opcoptions[0];
 		pgbson_writer keyWriter;
 		PgbsonWriterStartDocument(writer, "keyPattern", -1, &keyWriter);
 		SerializeCompositeIndexKeyForExplainToWriter(
 			index_rel->rd_opcoptions[0], &keyWriter);
 		PgbsonWriterEndDocument(writer, &keyWriter);
-		enableCompositeReducedCorrelatedTerms =
-			options->enableCompositeReducedCorrelatedTerms;
+
+		const char *indexCollation = NULL;
+		int indexCollationLength = 0;
+		Get_Index_Collation_Option((&options->base), collation,
+								   indexCollation, indexCollationLength);
+		if (indexCollationLength > 0 && indexCollation != NULL)
+		{
+			PgbsonWriterAppendUtf8(writer, "indexCollation", -1, indexCollation);
+		}
 	}
 
 	ExplainCompositeProperties(writer, multiKeyStatusFunc, index_rel,
-							   enableCompositeReducedCorrelatedTerms, indexQuals,
+							   options, indexQuals,
 							   indexOrderBy,
 							   supportsOrderedOperatorScans,
+							   getopclassMetadataFunc,
 							   PgbsonExplainWriterWriteBool,
-							   PgbsonExplainWriterWriteStringList);
+							   PgbsonExplainWriterWriteStringList,
+							   PgbsonExplainWriterWriteString);
 }
 
 
@@ -1754,31 +1373,40 @@ ExplainRawCompositeScan(Relation index_rel, List *indexQuals, List *indexOrderBy
 						ScanDirection indexScanDir, struct ExplainState *es)
 {
 	bool supportsOrderedOperatorScans = false;
-	GetMultikeyStatusFunc multiKeyStatusFunc = NULL;
-	CanOrderInIndexScan isIndexScanOrdered = NULL;
+	PGFunction multiKeyStatusFunc = NULL;
+	PGFunction getopclassMetadataFunc = NULL;
 	if (!GetCompositeOpClassWithProps(index_rel, &supportsOrderedOperatorScans,
-									  &multiKeyStatusFunc, &isIndexScanOrdered))
+									  &multiKeyStatusFunc, &getopclassMetadataFunc))
 	{
 		return;
 	}
 
-	bool enableCompositeReducedCorrelatedTerms = false;
+	BsonGinCompositePathOptions *options = NULL;
 	if (index_rel->rd_opcoptions != NULL)
 	{
-		BsonGinCompositePathOptions *options =
-			(BsonGinCompositePathOptions *) index_rel->rd_opcoptions[0];
+		options = (BsonGinCompositePathOptions *) index_rel->rd_opcoptions[0];
 		const char *keyString = SerializeCompositeIndexKeyForExplain(
 			index_rel->rd_opcoptions[0]);
 		ExplainPropertyText("indexKey", keyString, es);
-		enableCompositeReducedCorrelatedTerms =
-			options->enableCompositeReducedCorrelatedTerms;
+
+		const char *indexCollation = NULL;
+		int indexCollationLength = 0;
+		Get_Index_Collation_Option((&options->base), collation,
+								   indexCollation, indexCollationLength);
+
+		if (indexCollationLength > 0 && indexCollation != NULL)
+		{
+			ExplainPropertyText("indexCollation", indexCollation, es);
+		}
 	}
 
 	ExplainCompositeProperties(es, multiKeyStatusFunc, index_rel,
-							   enableCompositeReducedCorrelatedTerms, indexQuals,
+							   options, indexQuals,
 							   indexOrderBy,
 							   supportsOrderedOperatorScans,
-							   ExplainWriterWriteBool, ExplainWriterWriteStringList);
+							   getopclassMetadataFunc,
+							   ExplainWriterWriteBool, ExplainWriterWriteStringList,
+							   ExplainWriterWriteString);
 }
 
 
@@ -1786,32 +1414,104 @@ static void
 ExplainCompositeScanCore(IndexScanDesc scan, void *state,
 						 ExplainWriterFuncs *writerFuncs)
 {
-	DocumentDBRumIndexState *outerScanState =
-		(DocumentDBRumIndexState *) scan->opaque;
+	BsonGinCompositePathOptions *options =
+		(BsonGinCompositePathOptions *) scan->indexRelation->rd_opcoptions[0];
 
-	writerFuncs->writeBool("isMultiKey",
-						   outerScanState->multiKeyStatus ==
-						   IndexMultiKeyStatus_HasArrays,
-						   state);
+	bool hasMultiKey = false;
+	List *multiKeyPerPathList = NIL;
+	bool hasCorrelatedReducedTerms = false;
+	bool hasTruncation = false;
+	List *truncatedPerPathList = NIL;
+	uint32_t multiKeyBitMask = 0;
 
-	if (outerScanState->hasCorrelatedReducedTerms)
+	bool supportsOrderedOperatorScans = false;
+	PGFunction multiKeyStatusFunc = NULL;
+	PGFunction getopclassMetadataFunc = NULL;
+	GetCompositeOpClassWithProps(scan->indexRelation, &supportsOrderedOperatorScans,
+								 &multiKeyStatusFunc, &getopclassMetadataFunc);
+
+	if (getopclassMetadataFunc != NULL && options != NULL &&
+		options->enableMetadataBasedTracking)
+	{
+		uint64_t opclassMetadata = DatumGetUInt64(DirectFunctionCall1(
+													  getopclassMetadataFunc,
+													  PointerGetDatum(
+														  scan->indexRelation)));
+
+		DecodeCompositeOpClassMetadata(options, opclassMetadata, &hasMultiKey,
+									   &multiKeyBitMask, &multiKeyPerPathList,
+									   &hasCorrelatedReducedTerms, &hasTruncation,
+									   &truncatedPerPathList);
+	}
+	else
+	{
+		hasMultiKey = DatumGetBool(DirectFunctionCall1(multiKeyStatusFunc,
+													   PointerGetDatum(
+														   scan->indexRelation)));
+		if (options->enableCompositeReducedCorrelatedTerms && hasMultiKey)
+		{
+			/* Check if we have correlated reduced terms */
+			hasCorrelatedReducedTerms = GetIndexReducedTermsStatus(
+				scan->indexRelation);
+		}
+
+		hasTruncation = GetIndexTruncationStatus(scan->indexRelation);
+	}
+
+	writerFuncs->writeBool("isMultiKey", hasMultiKey, state);
+	if (multiKeyPerPathList != NIL)
+	{
+		writerFuncs->writeStringList("multiKeyPaths", multiKeyPerPathList, state);
+	}
+
+	if (hasCorrelatedReducedTerms)
 	{
 		writerFuncs->writeBool("hasCorrelatedTerms", true, state);
 	}
 
-	bool hasTruncation = RumGetTruncationStatus(scan->indexRelation);
 	if (hasTruncation)
 	{
 		writerFuncs->writeBool("hasTruncation", true, state);
 	}
 
-	if (outerScanState->compositeKey.sk_argument != (Datum) 0)
+	if (truncatedPerPathList != NIL)
 	{
+		writerFuncs->writeStringList("truncatedPaths", truncatedPerPathList, state);
+	}
+
+	Datum compositeKey = (Datum) 0;
+	IndexScanDesc innerScan = scan;
+	if (scan->keyData[0].sk_argument != (Datum) 0 &&
+		scan->keyData[0].sk_strategy == BSON_INDEX_STRATEGY_COMPOSITE_QUERY)
+	{
+		innerScan = scan;
+		compositeKey = scan->keyData[0].sk_argument;
+	}
+	else
+	{
+		DocumentDBRumIndexState *outerScanState =
+			(DocumentDBRumIndexState *) scan->opaque;
+		compositeKey = outerScanState->compositeKey.sk_argument;
+		innerScan = outerScanState->innerScan;
+	}
+
+	if (compositeKey != (Datum) 0)
+	{
+		ScanDirection scanDir = NoMovementScanDirection;
+		if (scan->numberOfOrderBys > 0)
+		{
+			scanDir = ForwardScanDirection;
+			scanDir = GetOrderByScanDirectionFromDatum(
+				scan->indexRelation->rd_opcoptions[0],
+				scan->orderByData[0].sk_argument);
+		}
+
 		List *rawPerPathBounds = NIL;
+		const char *minBounds = NULL;
 		List *boundsList = GetIndexBoundsForExplain(
 			scan->indexRelation,
-			outerScanState->compositeKey.sk_argument,
-			scan->numberOfOrderBys > 0, &rawPerPathBounds);
+			compositeKey,
+			scanDir, &rawPerPathBounds, &minBounds);
 
 		if (rawPerPathBounds != NIL)
 		{
@@ -1822,22 +1522,15 @@ ExplainCompositeScanCore(IndexScanDesc scan, void *state,
 		{
 			writerFuncs->writeStringList("indexBounds", boundsList, state);
 		}
-	}
 
-	if (outerScanState->numDuplicates > 0)
-	{
-		/* If we have duplicates, explain the number of duplicates */
-		writerFuncs->writeInteger("numDuplicates", "entries",
-								  outerScanState->numDuplicates, state);
-	}
-
-	if (ScanDirectionIsBackward(outerScanState->scanDirection))
-	{
-		writerFuncs->writeBool("isBackwardScan", true, state);
+		if (minBounds != NULL)
+		{
+			writerFuncs->writeString("minKey", minBounds, state);
+		}
 	}
 
 	/* Explain the inner scan using underlying am */
-	TryExplainByIndexAm(outerScanState->innerScan, writerFuncs, state);
+	TryExplainByIndexAm(innerScan, writerFuncs, state);
 }
 
 
@@ -1901,9 +1594,21 @@ ExplainCompositeScan(IndexScanDesc scan, ExplainState *es)
 
 	if (scan->indexRelation->rd_opcoptions != NULL)
 	{
+		BsonGinCompositePathOptions *options =
+			(BsonGinCompositePathOptions *) scan->indexRelation->rd_opcoptions[0];
 		const char *keyString = SerializeCompositeIndexKeyForExplain(
 			scan->indexRelation->rd_opcoptions[0]);
 		ExplainPropertyText("indexKey", keyString, es);
+
+		const char *indexCollation = NULL;
+		int indexCollationLength = 0;
+		Get_Index_Collation_Option((&options->base), collation,
+								   indexCollation, indexCollationLength);
+
+		if (indexCollationLength > 0 && indexCollation != NULL)
+		{
+			ExplainPropertyText("indexCollation", indexCollation, es);
+		}
 	}
 
 	ExplainWriterFuncs writerFuncs = GetForExplain();
@@ -1935,6 +1640,17 @@ ExplainRegularIndexScanToWriter(IndexScanDesc scan, pgbson_writer *writer)
 }
 
 
+/*
+ * Records a single index's planner cost estimate for later reporting in the
+ * extended EXPLAIN index-cost summary.
+ *
+ * Entries are keyed by index OID. If the planner costs the same index more than
+ * once - for example when it evaluates different access-path shapes for that
+ * index such as a plain index scan, an index-only scan, or a bitmap index scan -
+ * each call overwrites the previous estimate for that OID. As a result the
+ * reported numbers reflect the last variant costed for the index, which is not
+ * necessarily the access path the planner ultimately chose as the winning plan.
+ */
 void
 RecordCostEstimateForIndex(Oid indexOid, Oid relOid, Cost indexStartupCost,
 						   Cost indexTotalCost, Selectivity indexSelectivity,
@@ -1953,7 +1669,8 @@ RecordCostEstimateForIndex(Oid indexOid, Oid relOid, Cost indexStartupCost,
 	{
 		if (IndexExplainCosts[i].indexOid == indexOid)
 		{
-			/* We already have an entry for this index - update it with the new cost */
+			/* Same index already recorded - overwrite with the latest estimate
+			 * (last variant costed wins; see the function header comment). */
 			costData = &IndexExplainCosts[i];
 			break;
 		}
@@ -1991,6 +1708,44 @@ CompareIndexCostsByTotalCost(const void *left, const void *right)
 	/* Sort by cost ascending */
 	return leftData->indexTotalCost > rightData->indexTotalCost ? 1 :
 		   (leftData->indexTotalCost < rightData->indexTotalCost ? -1 : 0);
+}
+
+
+/*
+ * Resolves the index key document (as a display string) for a candidate index
+ * reported in the extended EXPLAIN index-cost summary.
+ *
+ * For composite/ordered indexes the key is read directly from the in-memory
+ * opclass options. This produces the same clean representation used for the
+ * selected index (e.g. {"a": 1}) and avoids a catalog round-trip. For other
+ * index types (e.g. the _id_ btree) it falls back to resolving the key from the
+ * collection_indexes catalog. Returns NULL when no key can be resolved.
+ */
+static const char *
+GetReportedIndexKeyString(Oid indexOid)
+{
+	const char *indexKeyString = NULL;
+
+	Relation indexRelation = index_open(indexOid, AccessShareLock);
+	if (IsCompositeOpClass(indexRelation) && indexRelation->rd_opcoptions != NULL)
+	{
+		indexKeyString = SerializeCompositeIndexKeyForExplain(
+			indexRelation->rd_opcoptions[0]);
+	}
+	else if (indexRelation->rd_index != NULL && indexRelation->rd_index->indisprimary)
+	{
+		/* The primary key btree is the _id index, whose key is always {"_id": 1} */
+		indexKeyString = "{\"_id\": 1}";
+	}
+	index_close(indexRelation, AccessShareLock);
+
+	if (indexKeyString == NULL)
+	{
+		bool useLibPq = true;
+		indexKeyString = ExtensionIndexOidGetIndexKey(indexOid, useLibPq);
+	}
+
+	return indexKeyString;
 }
 
 
@@ -2036,11 +1791,20 @@ LogReportedIndexCosts(Oid relOid, struct ExplainState *es)
 		}
 
 		numPlansLogged++;
+
+		const char *indexKeyString = GetReportedIndexKeyString(
+			IndexExplainCosts[i].indexOid);
 		if (es->format == EXPLAIN_FORMAT_TEXT)
 		{
 			resetStringInfo(&buf);
+			appendStringInfoChar(&buf, '(');
+			if (indexKeyString != NULL)
+			{
+				appendStringInfo(&buf, "indexKey=%s, ",
+								 quote_literal_cstr(indexKeyString));
+			}
 			appendStringInfo(&buf,
-							 "(startup cost=%.3f, total cost=%.3f, selectivity=%g, correlation=%.3f, estimated index pages loaded=%.2f%%, estimated total index entries=%.0f, boundary selectivity=%g, num boundaries=%d, estimated data pages loaded=%.2f%%)",
+							 "startup cost=%.3f, total cost=%.3f, selectivity=%g, correlation=%.3f, estimated index pages loaded=%.2f%%, estimated total index entries=%.0f, boundary selectivity=%g, num boundaries=%d, estimated data pages loaded=%.2f%%)",
 							 IndexExplainCosts[i].indexStartupCost,
 							 IndexExplainCosts[i].indexTotalCost,
 							 IndexExplainCosts[i].indexSelectivity,
@@ -2057,6 +1821,10 @@ LogReportedIndexCosts(Oid relOid, struct ExplainState *es)
 		{
 			ExplainOpenGroup("indexScanCost", NULL, true, es);
 			ExplainPropertyText("indexName", indexName, es);
+			if (indexKeyString != NULL)
+			{
+				ExplainPropertyText("indexKey", indexKeyString, es);
+			}
 			ExplainPropertyFloat("startupCost", "", IndexExplainCosts[i].indexStartupCost,
 								 3, es);
 			ExplainPropertyFloat("totalCost", "", IndexExplainCosts[i].indexTotalCost, 3,
@@ -2101,4 +1869,122 @@ ResetReportedIndexCosts(void)
 {
 	IndexExplainCostsIndex = 0;
 	memset(IndexExplainCosts, 0, sizeof(IndexExplainCosts));
+}
+
+
+Datum
+DocumentDBRumGetCurrentIndexKey(IndexScanDesc scan, bytea **dedupState)
+{
+	if (!IsCompositeOpClass(scan->indexRelation))
+	{
+		ereport(ERROR, (errmsg(
+							"GetCurrentIndexKeyFunc not supported for non ordered indexes")));
+	}
+
+	PGFunction getCurrentIndexKey =
+		GetIndexKeyCurrentKeyFunc(scan->indexRelation->rd_rel->relam,
+								  scan->indexRelation->rd_opfamily[0]);
+	if (getCurrentIndexKey == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Index AM does not support get_current_index_key for index")));
+	}
+
+	if (IsPathKeySummarizationScan(scan->indexRelation->rd_rel->relam))
+	{
+		/* When dedup tracking is disabled, do not request the dedup state from
+		 * the index: call without the out-pointer and report none, so no dedup
+		 * state is serialized into the continuation. */
+		if (!EnableDynamicCursorDedupTracking)
+		{
+			if (dedupState != NULL)
+			{
+				*dedupState = NULL;
+			}
+
+			return DirectFunctionCall1(getCurrentIndexKey, PointerGetDatum(scan));
+		}
+
+		return DirectFunctionCall2(getCurrentIndexKey, PointerGetDatum(scan),
+								   PointerGetDatum(dedupState));
+	}
+	else
+	{
+		if (dedupState != NULL)
+		{
+			*dedupState = NULL;
+		}
+
+		DocumentDBRumIndexState *state = scan->opaque;
+		return DirectFunctionCall1(getCurrentIndexKey, PointerGetDatum(state->innerScan));
+	}
+}
+
+
+static bool
+SkipTidsForCurrentEntryInternal(IndexScanDesc scan,
+								PGFunction skipTidsFunc,
+								ItemPointer userContinuationState,
+								bool skipEntryScan)
+{
+	if (!IsCompositeOpClass(scan->indexRelation))
+	{
+		ereport(ERROR, (errmsg(
+							"SkipTidsForCurrentEntry not supported for non ordered indexes")));
+	}
+
+	if (skipTidsFunc == NULL)
+	{
+		return false;
+	}
+
+	Datum result;
+	if (IsPathKeySummarizationScan(scan->indexRelation->rd_rel->relam))
+	{
+		result = DirectFunctionCall3(skipTidsFunc, PointerGetDatum(scan),
+									 UInt32GetDatum(BlockIdGetBlockNumber(
+														&userContinuationState->ip_blkid)),
+									 BoolGetDatum(skipEntryScan));
+	}
+	else
+	{
+		DocumentDBRumIndexState *state = scan->opaque;
+		result = DirectFunctionCall3(skipTidsFunc, PointerGetDatum(state->innerScan),
+									 UInt32GetDatum(BlockIdGetBlockNumber(
+														&userContinuationState->ip_blkid)),
+									 BoolGetDatum(skipEntryScan));
+	}
+
+	return DatumGetBool(result);
+}
+
+
+void
+DocumentDBRumSkipTidsForCurrentEntry(IndexScanDesc scan,
+									 PGFunction skipTidsFunc,
+									 ItemPointer userContinuationState)
+{
+	bool skipEntryScan = false;
+	SkipTidsForCurrentEntryInternal(scan, skipTidsFunc, userContinuationState,
+									skipEntryScan);
+}
+
+
+/*
+ * Skip-scan aware variant of DocumentDBRumSkipTidsForCurrentEntry. Invokes the
+ * skip function with skipScan = true so the underlying ordered scan attempts to
+ * jump directly to the next distinct leading-key value instead of walking every
+ * trailing TID. Returns true when the skip scan was actually performed (i.e. the
+ * index has trailing key(s) beyond the order-by prefix to skip over), and false
+ * when no skip scan was possible so the caller can stop re-attempting this path
+ * (for example on single-column indexes) and fall back to the per-TID skip.
+ */
+bool
+DocumentDBRumSkipTidsForCurrentEntryWithSkipScan(IndexScanDesc scan,
+												 PGFunction skipTidsFunc,
+												 ItemPointer userContinuationState)
+{
+	bool skipEntryScan = true;
+	return SkipTidsForCurrentEntryInternal(scan, skipTidsFunc,
+										   userContinuationState, skipEntryScan);
 }

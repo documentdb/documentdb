@@ -55,6 +55,10 @@ command_drop_collection(PG_FUNCTION_ARGS)
 	Datum databaseNameDatum = PG_GETARG_DATUM(0);
 	Datum collectionNameDatum = PG_GETARG_DATUM(1);
 
+	char *databaseName = TextDatumGetCString(databaseNameDatum);
+	char *collectionName = TextDatumGetCString(collectionNameDatum);
+
+
 	MongoCollection *collection =
 		GetMongoCollectionOrViewByNameDatum(databaseNameDatum,
 											collectionNameDatum,
@@ -66,8 +70,6 @@ command_drop_collection(PG_FUNCTION_ARGS)
 		PG_RETURN_BOOL(false);
 	}
 
-	char *databaseName = TextDatumGetCString(databaseNameDatum);
-	char *collectionName = TextDatumGetCString(collectionNameDatum);
 	if (strncmp(collectionName, "system.", 7) == 0 &&
 		strcmp(collectionName, "system.dbSentinel") != 0)
 	{
@@ -149,13 +151,32 @@ command_drop_collection(PG_FUNCTION_ARGS)
 	ExtensionExecuteQueryViaSPI(deleteCommand->data, readOnly, SPI_OK_UTILITY, &isNull);
 
 	resetStringInfo(deleteCommand);
-	appendStringInfo(deleteCommand,
-					 "DROP TABLE IF EXISTS %s.retry_" INT64_FORMAT,
-					 ApiDataSchemaName, collection->collectionId);
-	readOnly = false;
-	isNull = false;
 
-	ExtensionExecuteQueryViaSPI(deleteCommand->data, readOnly, SPI_OK_UTILITY, &isNull);
+	/* Check if the retry table exists before dropping it - this prevents unnecessary
+	 * "retry table does not exist warning spew"
+	 */
+	char retryTableName[NAMEDATALEN] = { 0 };
+	pg_snprintf(retryTableName, NAMEDATALEN, "retry_" INT64_FORMAT,
+				collection->collectionId);
+	Oid retryTableOid = get_relname_relid(retryTableName, ApiDataNamespaceOid());
+	if (retryTableOid != InvalidOid)
+	{
+		/*
+		 * TODO: We don't clean the retry table records today. with local retry tables
+		 * as well we don't attempt to clean these as soon as the collection is dropped
+		 * because concurrently there can be retry request still coming for the collection
+		 * which will be considered a new write and will create the collection again.
+		 * We need to implement TTL for orphaned retried rows for dropped collections.
+		 */
+		appendStringInfo(deleteCommand,
+						 "DROP TABLE IF EXISTS %s.retry_" INT64_FORMAT,
+						 ApiDataSchemaName, collection->collectionId);
+		readOnly = false;
+		isNull = false;
+
+		ExtensionExecuteQueryViaSPI(deleteCommand->data, readOnly, SPI_OK_UTILITY,
+									&isNull);
+	}
 
 	StringInfo deleteFromCollectionsCommand = makeStringInfo();
 	appendStringInfo(deleteFromCollectionsCommand,

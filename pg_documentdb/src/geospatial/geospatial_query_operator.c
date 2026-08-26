@@ -54,6 +54,8 @@ typedef struct RuntimeBsonGeospatialState
 /* GeoSpatial operator runtime handlers */
 PG_FUNCTION_INFO_V1(bson_dollar_geowithin);
 PG_FUNCTION_INFO_V1(bson_dollar_geointersects);
+PG_FUNCTION_INFO_V1(bson_value_dollar_geowithin);
+PG_FUNCTION_INFO_V1(bson_value_dollar_geointersects);
 
 static void PopulateBsonDollarGeoWithinQueryState(RuntimeBsonGeospatialState *state,
 												  const bson_value_t *shapeOperatorValue);
@@ -169,6 +171,100 @@ bson_dollar_geointersects(PG_FUNCTION_ARGS)
 	}
 
 	PG_RETURN_BOOL(CompareGeoIntersectsState(document, element.path, state));
+}
+
+
+/*
+ * bson_value_dollar_geowithin implements the runtime handler for $geoWithin
+ * when evaluating a nested query against a BSON value.
+ */
+Datum
+bson_value_dollar_geowithin(PG_FUNCTION_ARGS)
+{
+	pgbsonelement *documentElement = (pgbsonelement *) PG_GETARG_POINTER(0);
+	pgbson *geoWithinQuery = PG_GETARG_PGBSON(1);
+	pgbsonelement queryElement;
+	PgbsonToSinglePgbsonElement(geoWithinQuery, &queryElement);
+
+	const RuntimeBsonGeospatialState *state;
+	int argPosition = 1;
+
+	SetCachedFunctionState(
+		state,
+		RuntimeBsonGeospatialState,
+		argPosition,
+		PopulateBsonDollarGeoWithinQueryState,
+		&queryElement.bsonValue);
+
+	RuntimeBsonGeospatialState localState;
+	if (state == NULL)
+	{
+		memset(&localState, 0, sizeof(RuntimeBsonGeospatialState));
+		PopulateBsonDollarGeoWithinQueryState(&localState, &queryElement.bsonValue);
+		state = &localState;
+	}
+
+	const char *valuePath = "__value";
+	pgbsonelement wrappedElement = *documentElement;
+	wrappedElement.path = valuePath;
+	wrappedElement.pathLength = strlen(valuePath);
+	pgbson *wrappedDocument = PgbsonElementToPgbson(&wrappedElement);
+
+	StringInfo path = makeStringInfo();
+	appendStringInfoString(path, valuePath);
+	if (queryElement.pathLength > 0)
+	{
+		appendStringInfo(path, ".%s", queryElement.path);
+	}
+
+	PG_RETURN_BOOL(CompareGeoWithinState(wrappedDocument, path->data, state));
+}
+
+
+/*
+ * bson_value_dollar_geointersects implements the runtime handler for
+ * $geoIntersects when evaluating a nested query against a BSON value.
+ */
+Datum
+bson_value_dollar_geointersects(PG_FUNCTION_ARGS)
+{
+	pgbsonelement *documentElement = (pgbsonelement *) PG_GETARG_POINTER(0);
+	pgbson *geoIntersectsQuery = PG_GETARG_PGBSON(1);
+	pgbsonelement queryElement;
+	PgbsonToSinglePgbsonElement(geoIntersectsQuery, &queryElement);
+
+	const RuntimeBsonGeospatialState *state;
+	int argPosition = 1;
+
+	SetCachedFunctionState(
+		state,
+		RuntimeBsonGeospatialState,
+		argPosition,
+		PopulateBsonDollarGeoIntersectQueryState,
+		&queryElement.bsonValue);
+
+	RuntimeBsonGeospatialState localState;
+	if (state == NULL)
+	{
+		memset(&localState, 0, sizeof(RuntimeBsonGeospatialState));
+		PopulateBsonDollarGeoIntersectQueryState(&localState, &queryElement.bsonValue);
+		state = &localState;
+	}
+
+	const char *valuePath = "__value";
+	pgbsonelement wrappedElement = *documentElement;
+	wrappedElement.path = valuePath;
+	wrappedElement.pathLength = strlen(valuePath);
+	pgbson *wrappedDocument = PgbsonElementToPgbson(&wrappedElement);
+
+	StringInfo path = makeStringInfo();
+	appendStringInfoString(path, valuePath);
+	if (queryElement.pathLength > 0)
+	{
+		appendStringInfo(path, ".%s", queryElement.path);
+	}
+
+	PG_RETURN_BOOL(CompareGeoIntersectsState(wrappedDocument, path->data, state));
 }
 
 

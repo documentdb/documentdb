@@ -1,4 +1,4 @@
-# ----------- Prebuild Stage -----------
+# ----------- Global build args -----------
 ARG BASE_IMAGE=ubuntu:22.04
 ARG DEBIAN_FRONTEND=noninteractive
 ARG POSTGRES_VERSION=16
@@ -7,104 +7,115 @@ ARG POSTGRES_VERSION=16
 # No default is intentionally set to avoid accidentally picking a stale or wrong package.
 ARG DEB_PACKAGE_REL_PATH
 
-FROM ${BASE_IMAGE} AS prebuild
+# ----------- Gateway Build Stage -----------
+# Builds only the Rust gateway binary. Based on ${BASE_IMAGE} directly rather
+# than on a stage that installs the freshly built .deb: the .deb changes on
+# every build and nothing in the cargo build depends on it or on the
+# PostgreSQL stack, so deriving from such a stage would invalidate the
+# toolchain layers on each run. LLVM is deliberately not installed: the
+# gateway has no bindgen/libclang dependency (the RPM gateway images build
+# the same binary without it).
+FROM ${BASE_IMAGE} AS stage
+ARG DEBIAN_FRONTEND
+
+RUN apt-get update; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates curl jq git make build-essential openssl pkg-config libssl-dev; \
+    rm -rf /var/lib/apt/lists/*
+
+ENV RUSTUP_HOME=/opt/rustup \
+    CARGO_HOME=/opt/cargo
+ENV PATH=$PATH:/opt/cargo/bin
+
+# Toolchain layer keyed only on the rustup script and the pinned toolchain
+# file (`rustup show` reads ./rust-toolchain.toml), not on the source tree.
+WORKDIR /build
+COPY scripts/install_rustup.sh scripts/
+COPY rust-toolchain.toml ./
+RUN bash scripts/install_rustup.sh --install-toolchain
+
+COPY . /build
+
+WORKDIR /build/pg_documentdb_gw
+
+RUN CARGO_MANIFEST_DIR=/build/pg_documentdb_gw cargo build --profile=release-with-symbols -p documentdb_gateway
+
+# Install mongosh in a throwaway stage so the final image only copies the runtime files.
+FROM ${BASE_IMAGE} AS mongosh
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends wget ca-certificates && \
+    wget -qO- https://www.mongodb.org/static/pgp/server-8.0.asc | tee /etc/apt/trusted.gpg.d/server-8.0.asc >/dev/null && \
+    echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/debian bookworm/mongodb-org/8.0 main" > /etc/apt/sources.list.d/mongodb-org-8.0.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends binutils mongodb-mongosh && \
+    strip --strip-debug /usr/bin/mongosh && \
+    rm -rf /var/lib/apt/lists/*
+
+# ----------- Runtime Base Stage -----------
+FROM ${BASE_IMAGE} AS runtime-base
 ARG DEBIAN_FRONTEND
 ARG POSTGRES_VERSION
 ARG DEB_PACKAGE_REL_PATH
-# Fail fast if caller did not pass the required deb path build arg.
+
 RUN [ -n "${DEB_PACKAGE_REL_PATH}" ] || (echo "ERROR: DEB_PACKAGE_REL_PATH build-arg is required. Example: --build-arg DEB_PACKAGE_REL_PATH=packaging/packages/ubuntu22.04-postgresql-16-documentdb_1.0.0_amd64.deb" >&2; exit 1)
 
-# Base tools + locale (single layer)
-RUN apt-get update; \
-    apt-get install -y --no-install-recommends \
-        wget \
-        gnupg2 \
-        lsb-release \
-        ca-certificates \
-        locales \
-        sudo; \
-    echo "en_US.UTF-8 UTF-8" > /etc/locale.gen; \
-    locale-gen; \
-    rm -rf /var/lib/apt/lists/*
+COPY ${DEB_PACKAGE_REL_PATH} /tmp/install_setup/
 
-# Minimal locale env (others inherit)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ca-certificates locales sudo wget gnupg2 lsb-release jq openssl lsof netcat-openbsd && \
+    echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
+    locale-gen && \
+    install -d -m 0755 /etc/apt/keyrings && \
+    wget -qO /etc/apt/keyrings/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc && \
+    echo "deb [signed-by=/etc/apt/keyrings/pgdg.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main ${POSTGRES_VERSION}" \
+        > /etc/apt/sources.list.d/pgdg.list && \
+    apt-get update && \
+    RUM_PKG="" && \
+    if [ "${POSTGRES_VERSION}" -lt 18 ]; then RUM_PKG="postgresql-${POSTGRES_VERSION}-rum"; fi && \
+    apt-get install -y --no-install-recommends \
+    postgresql-${POSTGRES_VERSION} \
+    postgresql-${POSTGRES_VERSION}-cron \
+    postgresql-${POSTGRES_VERSION}-pgvector \
+    postgresql-${POSTGRES_VERSION}-postgis-3 \
+    $RUM_PKG && \
+    { gid_owner="$(getent group 103 | cut -d: -f1)"; uid_owner="$(getent passwd 105 | cut -d: -f1)"; \
+      if getent passwd postgres >/dev/null 2>&1 && { [ -z "$gid_owner" ] || [ "$gid_owner" = postgres ]; } && { [ -z "$uid_owner" ] || [ "$uid_owner" = postgres ]; }; then \
+          groupmod -g 103 postgres && usermod -u 105 -g 103 postgres; \
+      else echo "postgres uid/gid normalization skipped (uid 105 or gid 103 held by another account)"; fi; } && \
+    dpkg -i /tmp/install_setup/$(basename "$DEB_PACKAGE_REL_PATH") && \
+    useradd -ms /bin/bash documentdb -G sudo && \
+    echo "%sudo ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/no-pass-ask && \
+    apt-get purge -y wget gnupg2 lsb-release && \
+    apt-get autoremove -y && \
+    rm -rf \
+    /etc/apt/keyrings/pgdg.asc \
+    /etc/apt/sources.list.d/pgdg.list \
+    /tmp/install_setup \
+    /usr/lib/postgresql/${POSTGRES_VERSION}/lib/bitcode \
+    /usr/share/doc/* \
+    /usr/share/man/* \
+    /var/lib/apt/lists/*
+
 ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 
-# Add PostgreSQL upstream repo (modern keyring usage) + install extensions
-RUN install -d -m 0755 /etc/apt/keyrings; \
-    wget -qO /etc/apt/keyrings/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc; \
-    echo "deb [signed-by=/etc/apt/keyrings/pgdg.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main ${POSTGRES_VERSION}" \
-        > /etc/apt/sources.list.d/pgdg.list; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends \
-        postgresql-${POSTGRES_VERSION} \
-        postgresql-${POSTGRES_VERSION}-cron \
-        postgresql-${POSTGRES_VERSION}-pgvector \
-        postgresql-${POSTGRES_VERSION}-postgis-3 \
-        postgresql-${POSTGRES_VERSION}-rum \
-    ; \
-    rm -rf /var/lib/apt/lists/*
-
-RUN mkdir -p /tmp/install_setup
-COPY ${DEB_PACKAGE_REL_PATH} /tmp/install_setup/
-RUN dpkg -i /tmp/install_setup/$(basename "$DEB_PACKAGE_REL_PATH")
-
-RUN useradd -ms /bin/bash documentdb -G sudo
-RUN echo "%sudo ALL=(ALL:ALL) NOPASSWD: ALL" >> /etc/sudoers.d/no-pass-ask
-
-# ----------- Gateway Build Stage -----------
-FROM prebuild AS stage
-ARG BASE_IMAGE
-
-# Install dependencies (conditionally add software-properties-common unless base is debian:trixie-slim)
-RUN apt-get update; \
-    PKGS="jq curl sudo git make build-essential openssl pkg-config libssl-dev"; \
-    if [ "${BASE_IMAGE}" != "debian:trixie-slim" ]; then \
-        PKGS="$PKGS software-properties-common"; \
-    else \
-        echo "Skipping software-properties-common for base ${BASE_IMAGE}"; \
-    fi; \
-    apt-get install -y --no-install-recommends $PKGS; \
-    rm -rf /var/lib/apt/lists/*
-
-USER documentdb
-WORKDIR /home/documentdb/code
-
-COPY . /home/documentdb/code
-
-RUN /home/documentdb/code/scripts/install_llvm.sh
-
-# Install rustup (which includes rustc and cargo) in user directory
-ENV RUSTUP_HOME=/home/documentdb/code/.rustup
-ENV CARGO_HOME=/home/documentdb/code/.cargo
-RUN mkdir -p $RUSTUP_HOME && mkdir -p $CARGO_HOME
-ENV PATH=$PATH:$CARGO_HOME/bin
-
-RUN /home/documentdb/code/scripts/install_rustup.sh --install-toolchain
-
-RUN sudo chown -R documentdb:documentdb /home/documentdb/code
-
-WORKDIR /home/documentdb/code/pg_documentdb_gw
-
-RUN CARGO_MANIFEST_DIR=/home/documentdb/code/pg_documentdb_gw cargo build --profile=release-with-symbols
-
 # ----------- Final Gateway Image -----------
-FROM prebuild AS final
+FROM runtime-base AS final
 ARG POSTGRES_VERSION
+ARG DOCUMENTDB_VERSION=unknown
+ARG GIT_COMMIT=unknown
+ARG BUILD_DATE=""
+ARG IMAGE_SOURCE="https://github.com/documentdb/documentdb"
 
-RUN sudo groupmod -g 103 postgres && sudo usermod -u 105 -g 103 postgres
-RUN sudo apt-get update && \
-    sudo apt-get install -y --no-install-recommends \
-    jq openssl lsof wget gnupg netcat-openbsd && \
-    sudo apt-get upgrade -y && \
-    sudo rm -rf /var/lib/apt/lists/*
-
-RUN wget -qO- https://www.mongodb.org/static/pgp/server-8.0.asc | sudo tee /etc/apt/trusted.gpg.d/server-8.0.asc && \
-    echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/debian bookworm/mongodb-org/8.0 main" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list && \
-    sudo apt-get update && \
-    sudo apt-get install -y mongodb-mongosh && \
-    sudo apt-get clean && \
-    sudo rm -rf /var/lib/apt/lists/*
+# Identity labels so tooling can discover the container by label alone, without
+# relying on its name/port or inspecting logs/env (which hold credentials).
+LABEL org.opencontainers.image.title="DocumentDB Local" \
+      com.documentdb.documentdb.local="true" \
+      org.opencontainers.image.version="${DOCUMENTDB_VERSION}" \
+      org.opencontainers.image.revision="${GIT_COMMIT}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.source="${IMAGE_SOURCE}"
 
 ENV LANGUAGE=en_US.UTF-8 \
     TERM=xterm-256color
@@ -122,7 +133,8 @@ ENV CERT_PATH="" \
     OWNER="documentdb" \
     PG_VERSION_USED="${POSTGRES_VERSION}" \
     ALLOW_EXTERNAL_CONNECTIONS="false" \
-    INIT_DATA="true" \
+    TLS_MODE="allowTLS" \
+    INIT_DATA="" \
     INIT_DATA_PATH="/init_doc_db.d" \
     PATH=/usr/lib/postgresql/${POSTGRES_VERSION}/bin:$PATH
 
@@ -133,19 +145,26 @@ RUN sudo mkdir -p /var/run/postgresql && \
     sudo chown -R documentdb:documentdb /var/run/postgresql && \
     sudo chmod 755 /var/run/postgresql
     
-COPY --from=stage /home/documentdb/code/pg_documentdb_gw/target/release-with-symbols/documentdb_gateway \
+COPY --from=stage /build/pg_documentdb_gw/target/release-with-symbols/documentdb_gateway \
                   /home/documentdb/gateway/pg_documentdb_gw/target/release-with-symbols/documentdb_gateway
-COPY --from=stage /home/documentdb/code/pg_documentdb_gw/SetupConfiguration.json /home/documentdb/gateway/pg_documentdb_gw/SetupConfiguration.json
-COPY --from=stage /home/documentdb/code/scripts/start_oss_server.sh /home/documentdb/gateway/scripts/start_oss_server.sh
-COPY --from=stage /home/documentdb/code/scripts/build_and_start_gateway.sh /home/documentdb/gateway/scripts/build_and_start_gateway.sh
-COPY --from=stage /home/documentdb/code/documentdb-local/scripts/emulator_entrypoint.sh /home/documentdb/gateway/scripts/emulator_entrypoint.sh
-COPY --from=stage /home/documentdb/code/scripts/utils.sh /home/documentdb/gateway/scripts/utils.sh
-COPY --from=stage /home/documentdb/code/scripts/setup_psqlrc.sh /home/documentdb/gateway/scripts/setup_psqlrc.sh
+COPY --from=mongosh /usr/bin/mongosh /usr/bin/mongosh
+# Plain source files come straight from the build context; only the compiled
+# gateway binary and mongosh need their build stages.
+COPY pg_documentdb_gw/SetupConfiguration.json /home/documentdb/gateway/pg_documentdb_gw/SetupConfiguration.json
+COPY scripts/start_oss_server.sh /home/documentdb/gateway/scripts/start_oss_server.sh
+COPY scripts/build_and_start_gateway.sh /home/documentdb/gateway/scripts/build_and_start_gateway.sh
+COPY documentdb-local/scripts/emulator_entrypoint.sh /home/documentdb/gateway/scripts/emulator_entrypoint.sh
+COPY documentdb-local/scripts/documentdb_reserved_roles.sh /home/documentdb/gateway/scripts/documentdb_reserved_roles.sh
+COPY documentdb-local/scripts/documentdb_validate_username.sh /home/documentdb/gateway/scripts/documentdb_validate_username.sh
+COPY documentdb-local/scripts/documentdb_install_getparameter_stub.sh /home/documentdb/gateway/scripts/documentdb_install_getparameter_stub.sh
+COPY scripts/utils.sh /home/documentdb/gateway/scripts/utils.sh
+COPY scripts/preload_libraries.sh /home/documentdb/gateway/scripts/preload_libraries.sh
+COPY scripts/setup_psqlrc.sh /home/documentdb/gateway/scripts/setup_psqlrc.sh
 # Copy initialization scripts
-COPY --from=stage /home/documentdb/code/documentdb-local/scripts/init_documentdb_data.sh /home/documentdb/gateway/scripts/init_documentdb_data.sh
+COPY documentdb-local/scripts/init_documentdb_data.sh /home/documentdb/gateway/scripts/init_documentdb_data.sh
 
 # Copy sample data for built-in initialization
-COPY --from=stage /home/documentdb/code/documentdb-local/sample-data /home/documentdb/gateway/sample-data
+COPY documentdb-local/sample-data /home/documentdb/gateway/sample-data
 
 # Create default initialization directory for user-provided scripts
 RUN sudo mkdir -p /init_doc_db.d
@@ -157,4 +176,27 @@ RUN sudo chown -R documentdb:documentdb /home/documentdb/gateway
 RUN sudo chmod +x /home/documentdb/gateway/scripts/init_documentdb_data.sh
 
 WORKDIR /home/documentdb/gateway/scripts
+# Declare /data as a volume mount point for the PostgreSQL data directory.
+# This does NOT persist by itself: without an explicit `-v host_path:/data`
+# (or a named volume), each `docker run` gets a fresh anonymous volume and
+# `docker rm` can strand it. Its purpose is to (a) follow the official
+# postgres/mysql image convention so `-v` mounts land on the right path and
+# (b) keep the heavy data dir out of the container's writable layer. Runtime
+# initialization happens in the entrypoint (not at build time), so declaring
+# the volume does not discard any baked-in state. See the container's "ready"
+# banner (printed by the entrypoint) for the `-v` guidance users must follow
+# to persist.
+VOLUME ["/data"]
+
+RUN v="$(dpkg-query -W -f='${Version}' "postgresql-${POSTGRES_VERSION}-documentdb")" \
+        && [ -n "$v" ] \
+        || { echo "ERROR: cannot resolve the installed postgresql-${POSTGRES_VERSION}-documentdb version; /version.txt would misreport this build" >&2; exit 1; }; \
+    if [ "${DOCUMENTDB_VERSION}" != "unknown" ] \
+        && [ "$(printf '%s' "${DOCUMENTDB_VERSION}" | tr - .)" != "$(printf '%s' "$v" | tr - .)" ]; then \
+        echo "ERROR: DOCUMENTDB_VERSION build arg '${DOCUMENTDB_VERSION}' does not match the installed package version '$v'" >&2; exit 1; \
+    fi; \
+    printf '%s (commit %s, built %s, postgresql %s)\n' \
+        "$v" "${GIT_COMMIT}" "${BUILD_DATE:-unknown}" "${POSTGRES_VERSION}" \
+    | sudo tee /version.txt >/dev/null
+
 ENTRYPOINT ["/bin/bash", "-c", "/home/documentdb/gateway/scripts/emulator_entrypoint.sh \"$@\"", "--"]

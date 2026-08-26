@@ -397,9 +397,8 @@ GenerateTermsForDollarIn(pgbsonelement *queryElement, int *nentries)
 
 /* Helper function to throw common error when array is found during the
  * extractValue document traversal. */
-static void
-pg_attribute_noreturn()
-ThrowErrorArraysNotSupported(const char * path, int pathLength)
+pg_noreturn static void
+ThrowErrorArraysNotSupported(const char *path, int pathLength)
 {
 	char *errorPath;
 	if (pathLength <= 0)

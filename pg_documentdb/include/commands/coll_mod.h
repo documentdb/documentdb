@@ -22,4 +22,6 @@ void UpdatePostgresIndexCore(uint64_t collectionId, int indexId,
 							 IndexMetadataUpdateOperation operation, bool value, bool
 							 ignoreMissingShards);
 
+void UpdatePostgresIndexesForPrepareUnique(List *indexOids, bool prepareUnique);
+
 #endif

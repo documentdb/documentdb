@@ -52,6 +52,16 @@ InitializeQueryDollarRange(const bson_value_t *filterValue,
 		{
 			rangeParams->isFullScan = true;
 		}
+		else if (strcmp(key, "mergeSortInPrefix") == 0)
+		{
+			/*
+			 * isFullScan keeps the marker benign if processed during planning,
+			 * while isMergeSortInPrefixMarker lets the index-bounds and runtime
+			 * paths throw if it ever reaches execution.
+			 */
+			rangeParams->isFullScan = true;
+			rangeParams->isMergeSortInPrefixMarker = true;
+		}
 		else if (strcmp(key, "orderByScan") == 0)
 		{
 			rangeParams->isFullScan = true;
@@ -62,6 +72,50 @@ InitializeQueryDollarRange(const bson_value_t *filterValue,
 		{
 			rangeParams->isElemMatch = true;
 			rangeParams->elemMatchValue = *bson_iter_value(&rangeIter);
+		}
+		else if (strcmp(key, "minIndexOp") == 0)
+		{
+			if (rangeParams->isMaxIndexKey)
+			{
+				ereport(ERROR, (errmsg("Cannot specify both minIndexOp and maxIndexOp"),
+								errdetail_log(
+									"Cannot specify both minIndexOp and maxIndexOp")));
+			}
+
+			rangeParams->isMinIndexKey = true;
+			rangeParams->minOrMaxIndexKey = *bson_iter_value(&rangeIter);
+		}
+		else if (strcmp(key, "maxIndexOp") == 0)
+		{
+			if (rangeParams->isMinIndexKey)
+			{
+				ereport(ERROR, (errmsg("Cannot specify both minIndexOp and maxIndexOp"),
+								errdetail_log(
+									"Cannot specify both minIndexOp and maxIndexOp")));
+			}
+
+			rangeParams->isMaxIndexKey = true;
+			rangeParams->minOrMaxIndexKey = *bson_iter_value(&rangeIter);
+		}
+		else if (strcmp(key, "dedupState") == 0)
+		{
+			rangeParams->dedupState = *bson_iter_value(&rangeIter);
+		}
+		else if (strcmp(key, "sample") == 0)
+		{
+			rangeParams->isSample = true;
+			rangeParams->sampleSize = BsonValueAsInt64(bson_iter_value(&rangeIter));
+		}
+		else if (strcmp(key, "indexProjectionMetadata") == 0)
+		{
+			/*
+			 * Marker range that carries index projection metadata rather than a
+			 * scan bound. The index consumes the payload and, for negative
+			 * values, projects the raw index tuple instead of reconstructing the
+			 * document.
+			 */
+			rangeParams->isIndexProjectionMetadata = true;
+			rangeParams->indexProjectionMetadata = *bson_iter_value(&rangeIter);
 		}
 		else
 		{
@@ -109,4 +163,21 @@ TryGetSingleFieldPathFromBsonValue(const bson_value_t *value,
 	}
 
 	return false;
+}
+
+
+/*
+ * IsBsonRangeArgsForReservoirSample returns true if the BsonRangeMatch args encode
+ * a reservoir sampling marker.
+ */
+bool
+IsBsonRangeArgsForReservoirSample(List *args)
+{
+	DollarRangeParams rangeParams = { 0 };
+	if (!TryGetRangeParamsForRangeArgs(args, &rangeParams))
+	{
+		return false;
+	}
+
+	return rangeParams.isSample;
 }

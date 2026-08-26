@@ -12,6 +12,7 @@
 #include <postgres.h>
 #include <fmgr.h>
 #include <miscadmin.h>
+#include <catalog/pg_type.h>
 #include <utils/builtins.h>
 #include <nodes/execnodes.h>
 #include <executor/executor.h>
@@ -20,6 +21,8 @@
 #include "query/query_operator.h"
 #include "utils/documentdb_errors.h"
 #include "metadata/metadata_cache.h"
+
+extern bool EnablePullNestedArrayEqFix;
 
 
 /* --------------------------------------------------------- */
@@ -264,18 +267,33 @@ EvalExpressionAgainstArrayGetAllMatchingIndices(ExprEvalState *evalState,
 		BsonIterToPgbsonElement(&arrayIterator, &element);
 
 		/*
-		 * If the value itself is array then check for any match consider the complete array a match
+		 * For each element of the source array (arrayValue), try matching it as a
+		 * whole value first (handles exact array equality, e.g. $pull: { $eq: [Binary] }
+		 * on source [..., [Binary], ...] correctly removes [Binary] rather than the
+		 * inner Binary). Only recurse into the nested array if the whole-value check
+		 * fails.
 		 */
-		Datum result;
-		if (shouldRecurseIfArray && element.bsonValue.value_type == BSON_TYPE_ARRAY)
+		bool matched;
+		if (EnablePullNestedArrayEqFix)
 		{
-			result = EvalBooleanExpressionAgainstArray(evalState, &(element.bsonValue));
+			matched = EvalBooleanExpressionAgainstValue(evalState,
+														&(element.bsonValue),
+														shouldRecurseIfArray);
 		}
 		else
 		{
-			result = ExpressionEval(evalState, &element);
+			if (shouldRecurseIfArray && element.bsonValue.value_type == BSON_TYPE_ARRAY)
+			{
+				matched = DatumGetBool(EvalBooleanExpressionAgainstArray(evalState,
+																		 &(element.
+																		   bsonValue)));
+			}
+			else
+			{
+				matched = DatumGetBool(ExpressionEval(evalState, &element));
+			}
 		}
-		if (DatumGetBool(result))
+		if (matched)
 		{
 			matchingIndices = lappend_int(matchingIndices, index);
 		}
@@ -347,7 +365,24 @@ GetExpressionEvalStateWithCollation(const bson_value_t *expression, MemoryContex
 									memoryContext, const char *collationString)
 {
 	MemoryContext originalMemoryContext = MemoryContextSwitchTo(memoryContext);
-	Expr *expr = CreateQualForBsonValueExpression(expression, collationString);
+	Expr *expr = CreateQualForBsonValueExpression(expression, collationString, false);
+	ExprEvalState *evalState = CreateEvalStateFromExpr(expr, INTERNALOID);
+	MemoryContextSwitchTo(originalMemoryContext);
+	return evalState;
+}
+
+
+/*
+ * Variant of GetExpressionEvalState for arrayFilter expressions.
+ * Skips the object/array type filter so $or/$and/$nor can match
+ * scalar array elements.
+ */
+ExprEvalState *
+GetExpressionEvalStateForArrayFilter(const bson_value_t *expression,
+									 MemoryContext memoryContext)
+{
+	MemoryContext originalMemoryContext = MemoryContextSwitchTo(memoryContext);
+	Expr *expr = CreateQualForBsonValueExpression(expression, NULL, true);
 	ExprEvalState *evalState = CreateEvalStateFromExpr(expr, INTERNALOID);
 	MemoryContextSwitchTo(originalMemoryContext);
 	return evalState;
@@ -459,7 +494,7 @@ ExpressionEval(ExprEvalState *exprEvalState, const pgbsonelement *element)
  * Evaluates an expression given the expression evaluation state against a target
  * value in the pgbson and returns the Datum that is returned by the expression.
  */
-static pg_attribute_no_sanitize_alignment() Datum
+static Datum
 ExpressionEvalForBson(ExprEvalState *exprEvalState, const pgbson *bson)
 {
 	bool isNull = false;

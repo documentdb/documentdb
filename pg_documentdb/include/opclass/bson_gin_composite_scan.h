@@ -19,18 +19,32 @@ bool GetEqualityRangePredicatesForIndexPath(struct IndexPath *indexPath, void *o
 											nonEqualityPrefixes[INDEX_MAX_KEYS]);
 bool CompositePathHasFirstColumnSpecified(IndexPath *indexPath);
 char *SerializeBoundsStringForExplain(bytea * entry, void *extraData, PG_FUNCTION_ARGS,
-									  List **rawPathBounds);
+									  List **rawPathBounds, const char **minBounds);
 
-Datum FormCompositeDatumFromQuals(List *indexQuals, List *indexOrderBy, bool isMultiKey,
+Datum FormCompositeDatumFromQuals(List *indexQuals, bool isMultiKey,
 								  bool hasCorrelatedReducedTerm,
-								  bool supportsOperatorOrderedScans);
+								  bool supportsOperatorOrderedScans,
+								  uint32_t multiKeyBitMask);
 char * SerializeCompositeIndexKeyForExplain(bytea *entry);
+
+void DecodeCompositeOpClassQueryMetadata(void *options, uint64_t opclassMetadata,
+										 bool *hasMultiKey, uint32_t *multiKeyPathBitmask,
+										 bool *hasCorrelatedReducedTerms,
+										 bool *hasTruncation,
+										 uint32_t *perPathTruncationBitmask);
+void DecodeCompositeOpClassMetadata(void *options, uint64_t opclassMetadata,
+									bool *hasMultiKey, uint32_t *multiKeyBitMask,
+									List **multiKeyPerPathList,
+									bool *hasCorrelatedReducedTerms, bool *hasTruncation,
+									List **truncatedPerPathList);
 void SerializeCompositeIndexKeyForExplainToWriter(bytea *entry, pgbson_writer *writer);
 bool ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey
 									targetScanKey, bool hasArrayKeys, bool
 									hasCorrelatedReducedTerms,
-									bool hasOrderBys, ScanDirection scanDirection,
-									bool supportsOrderedOperatorScans);
-ScanDirection DetermineCompositeScanDirection(bytea *compositeScanOptions,
-											  ScanKey orderbys, int norderbys);
+									bool supportsOrderedOperatorScans,
+									uint32_t multiKeyBitMask);
+
+int32_t GetScanTypeForScanDirection(ScanDirection scanDirection);
+ScanDirection GetOrderByScanDirectionFromDatum(bytea *opClassoptions, Datum orderByDatum);
+ScanDirection GetIndexScanDirectionForComposite(bytea *opClassoptions);
  #endif

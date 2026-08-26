@@ -113,6 +113,8 @@ command_validate(PG_FUNCTION_ARGS)
 									"Collection name contains an invalid object type")));
 			}
 			EnsureTopLevelFieldType("validate", &validateIter, BSON_TYPE_UTF8);
+			ValidateNamespaceStringForEmbeddedNull(value->value.v_utf8.str,
+												   value->value.v_utf8.len);
 			validateSpec.collectionName = value->value.v_utf8.str;
 		}
 		else if (StringViewEqualsCString(&keyView, "$db"))

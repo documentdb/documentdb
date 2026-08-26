@@ -90,8 +90,8 @@ typedef struct
 } UpdateOneResult;
 
 
-void UpdateOne(MongoCollection *collection, UpdateOneParams *updateOneParams,
-			   int64 shardKeyHash, text *transactionId, UpdateOneResult *result,
-			   bool forceInlineWrites, ExprEvalState *state);
+void ExecuteUpdateOne(MongoCollection *collection, UpdateOneParams *updateOneParams,
+					  int64 shardKeyHash, text *transactionId, UpdateOneResult *result,
+					  bool forceInlineWrites, ExprEvalState *state);
 
 #endif

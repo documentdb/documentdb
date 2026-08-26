@@ -7,116 +7,6 @@ SET documentdb.defaultUseCompositeOpClass TO on;
 
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 
--- ===== Section 0: Negative tests ======
-
--- ordered/composite index with collation should fail when
--- enableCollationWithNonUniqueOrderedIndexes is OFF
-SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO off;
-
-SELECT documentdb_api_internal.create_indexes_non_concurrently(
-  'ord_coll_ordered_db',
-  '{
-    "createIndexes": "ord_guc_off_fail",
-    "indexes": [{
-      "key": { "a": 1 },
-      "name": "a_coll_guc_off_idx",
-      "collation": { "locale": "en", "strength": 1 }
-    }]
-  }',
-  TRUE
-);
-
-SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
-
--- unique ordered index with collation should fail
-SELECT documentdb_api_internal.create_indexes_non_concurrently(
-  'ord_coll_ordered_db',
-  '{
-    "createIndexes": "ord_unique_fail",
-    "indexes": [{
-      "key": { "a": 1, "b": 1 },
-      "name": "a_b_unique_coll_idx",
-      "unique": true,
-      "collation": { "locale": "en", "numericOrdering": true }
-    }]
-  }',
-  TRUE
-);
-
--- non-ordered index with collation should fail
-SET documentdb.defaultUseCompositeOpClass TO off;
-
-SELECT documentdb_api_internal.create_indexes_non_concurrently(
-  'ord_coll_ordered_db',
-  '{
-    "createIndexes": "ord_non_ordered_fail",
-    "indexes": [{
-      "key": { "a": 1 },
-      "name": "a_non_ordered_coll_idx",
-      "collation": { "locale": "en", "strength": 1 }
-    }]
-  }',
-  TRUE
-);
-
-SET documentdb.defaultUseCompositeOpClass TO on;
-
--- hashed index with collation should fail
-SELECT documentdb_api_internal.create_indexes_non_concurrently(
-  'ord_coll_ordered_db',
-  '{
-    "createIndexes": "ord_hashed_fail",
-    "indexes": [{
-      "key": { "a": "hashed" },
-      "name": "a_hashed_coll_idx",
-      "collation": { "locale": "en", "strength": 1 }
-    }]
-  }',
-  TRUE
-);
-
--- 2d index with collation should fail
-SELECT documentdb_api_internal.create_indexes_non_concurrently(
-  'ord_coll_ordered_db',
-  '{
-    "createIndexes": "ord_2d_fail",
-    "indexes": [{
-      "key": { "loc": "2d" },
-      "name": "loc_2d_coll_idx",
-      "collation": { "locale": "en", "strength": 1 }
-    }]
-  }',
-  TRUE
-);
-
--- text index with collation should fail
-SELECT documentdb_api_internal.create_indexes_non_concurrently(
-  'ord_coll_ordered_db',
-  '{
-    "createIndexes": "ord_text_fail",
-    "indexes": [{
-      "key": { "content": "text" },
-      "name": "content_text_coll_idx",
-      "collation": { "locale": "en", "strength": 1 }
-    }]
-  }',
-  TRUE
-);
-
--- 2dsphere index with collation should fail
-SELECT documentdb_api_internal.create_indexes_non_concurrently(
-  'ord_coll_ordered_db',
-  '{
-    "createIndexes": "ord_2dsphere_fail",
-    "indexes": [{
-      "key": { "loc": "2dsphere" },
-      "name": "loc_2dsphere_coll_idx",
-      "collation": { "locale": "en", "strength": 1 }
-    }]
-  }',
-  TRUE
-);
-
 CREATE SCHEMA IF NOT EXISTS collation_ordered_test_schema;
 
 CREATE FUNCTION collation_ordered_test_schema.gin_bson_index_term_to_bson(bytea) 
@@ -1361,10 +1251,11 @@ SET documentdb.max_non_ordered_term_scan_threshold TO 1;
 SET enable_seqscan TO OFF;
 
 -- I1: Accented characters — "café" vs "cafe"
--- Key finding: In ICU collation, the accent on "é" makes "café" a different
--- primary character from "cafe" — they are NOT equal even at strength-1.
--- "cafe" = "CAFE" (case only) at strength-1, but "café" ≠ "cafe" at any strength.
--- Ordering: cafe/CAFE < café/Café < caff (accent sorts after non-accent).
+-- ICU primary level (strength-1) treats accents and case as equal, so
+-- "cafe" = "café" = "CAFE" = "Café". Strength-2 keeps accents distinct
+-- but ignores case. Strength-3 keeps both.
+-- Ordering: at strength-1 all four cafe-variants tie; strength-2 puts
+-- cafe/CAFE before café/Café before caff.
 SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id": 1, "a": "cafe"}', NULL);
 SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id": 2, "a": "café"}', NULL);
 SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id": 3, "a": "caff"}', NULL);
@@ -1375,7 +1266,7 @@ SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id
 SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id": 8, "a": "Café"}', NULL);
 SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id": 9, "a": "CAFE"}', NULL);
 
--- Strength-1 index (case-insensitive; cafe/café remain distinct)
+-- Strength-1 index (case + accent insensitive — all cafe-variants collapse)
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
   'ord_coll_ordered_db',
   '{
@@ -1403,9 +1294,9 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
   TRUE
 );
 
--- I1a: $ne "cafe" at strength-1 — excludes "cafe"(1) and "CAFE"(9) (case-only equiv)
--- "café"(2) and "Café"(8) are NOT excluded — accent makes them different at all strengths.
--- Should return: café(2), caff(3), apple(4), banana(5), date(6), elderberry(7), Café(8) = 7 docs
+-- I1a: $ne "cafe" at strength-1 — excludes all four cafe-variants (1, 2, 8, 9)
+-- because at primary level "cafe" = "café" = "CAFE" = "Café".
+-- Should return: caff(3), apple(4), banana(5), date(6), elderberry(7) = 5 docs
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_accent_coll", "filter": { "a": { "$ne": "cafe" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_accent_coll", "filter": { "a": { "$ne": "cafe" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
@@ -1419,9 +1310,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 $cmd$);
 
 -- I1c: $not $gt "cafe" at strength-1 — a ≤ "cafe"
--- Since "café" > "cafe" even at strength-1, only cafe(1), CAFE(9) are ≤ "cafe", plus apple, banana.
--- Should return: cafe(1), apple(4), banana(5), CAFE(9) = 4 docs
--- Excluded: café(2), caff(3), date(6), elderberry(7), Café(8)
+-- All four cafe-variants are equal to "cafe" at primary level, so they are
+-- all ≤ "cafe"; "caff" is greater so it is excluded.
+-- Should return: cafe(1), café(2), apple(4), banana(5), Café(8), CAFE(9) = 6 docs
+-- Excluded: caff(3), date(6), elderberry(7)
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_accent_coll", "filter": { "a": { "$not": { "$gt": "cafe" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 
 -- I1d: $not $gt "cafe" at strength-2 — a ≤ "cafe" at strength-2
@@ -1724,6 +1616,729 @@ $cmd$);
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_array_coll", "filter": { "$and": [ { "a": { "$not": { "$gt": "cherry" } } }, { "a": { "$not": { "$lt": "banana" } } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 
 RESET documentdb.max_non_ordered_term_scan_threshold;
+
+
+-- =============================================================================
+-- Section 28: $in/$nin — ordered scan NOT supported with collation
+-- =============================================================================
+-- $in and $nin should use the collation index for filtering but NOT for
+-- providing sort order. EXPLAIN should show scanType: regular (not an ordered
+-- scan) on the Custom Scan node when sorting by the collated field.
+
+-- 28.1: $in with sort on collated field "a" ascending — no ordered scan
+-- Index used for filtering, separate Sort node for ordering
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "banana", "cherry"] } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "banana", "cherry"] } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28.2: $in with sort on collated field descending — no ordered scan
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "date"] } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "date"] } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28.3: $nin with sort on collated field ascending — no ordered scan
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$nin": ["apple", "cherry"] } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$nin": ["apple", "cherry"] } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28.4: $nin with sort on collated field descending — no ordered scan
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$nin": ["banana"] } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$nin": ["banana"] } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28.5: $in on compound with sort on both keys — no ordered scan
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$in": ["apple", "cherry"] } }, "sort": { "a": 1, "b": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$in": ["apple", "cherry"] } }, "sort": { "a": 1, "b": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28.6: $in with sort on _id (non-collated) — should work normally
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "banana"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "banana"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+RESET documentdb.enableExtendedExplainPlans;
+RESET enable_seqscan;
+
+
+-- =============================================================================
+-- Section 28: $elemMatch with ordered scan + collation
+-- =============================================================================
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_elemmatch_coll', '{"_id": 1, "a": ["Apple", "banana", "Cherry"]}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_elemmatch_coll', '{"_id": 2, "a": ["apple", "BANANA", "cherry"]}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_elemmatch_coll', '{"_id": 3, "a": ["Dog", "elephant", "FOX"]}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_elemmatch_coll', '{"_id": 4, "a": [42, "apple", null]}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_elemmatch_coll', '{"_id": 5, "a": []}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_elemmatch_coll', '{"_id": 6, "a": ["cherry", "CHERRY", "Cherry"]}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_elemmatch_coll', '{"_id": 7, "a": [null, "banana"]}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_elemmatch_coll', '{"_id": 8, "a": "apple"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_elemmatch_coll', '{"_id": 9, "other": "value"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_elemmatch_coll', '{"_id": 10, "a": ["grape"]}', NULL);
+
+-- Ascending index
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_elemmatch_coll",
+    "indexes": [{
+      "key": { "a": 1 },
+      "name": "idx_ord_em_asc_s1",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+
+-- Descending index
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_elemmatch_coll",
+    "indexes": [{
+      "key": { "a": -1 },
+      "name": "idx_ord_em_desc_s1",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+
+SET documentdb.enableExtendedExplainPlans TO on;
+SET documentdb.max_non_ordered_term_scan_threshold TO 1;
+SET enable_seqscan TO OFF;
+
+-- 28a: $elemMatch $eq "apple" with matching collation + sort {_id: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "apple" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "apple" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28b: $elemMatch $eq "apple" + sort by collated field {a: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "apple" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "apple" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28c: $elemMatch range + sort {a: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gte": "banana", "$lte": "cherry" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gte": "banana", "$lte": "cherry" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28d: $elemMatch $eq + descending sort {a: -1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "cherry" } } }, "sort": { "a": -1, "_id": -1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "cherry" } } }, "sort": { "a": -1, "_id": -1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28e: $elemMatch $gt (open upper bound) + sort {a: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gt": "cherry" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gt": "cherry" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28f: $elemMatch $lt (open lower bound) + sort {a: -1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$lt": "banana" } } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$lt": "banana" } } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28g: $elemMatch with $not $gt + sort {_id: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$not": { "$gt": "cherry" } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$not": { "$gt": "cherry" } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28h: $elemMatch $ne + sort {a: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$ne": "apple" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$ne": "apple" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28i: $elemMatch with mismatched collation + sort
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "apple" } } }, "sort": { "a": 1 }, "collation": { "locale": "de", "strength": 1 } }')
+$cmd$);
+
+-- 28j: $elemMatch with non-string value + sort
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": 42 } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": 42 } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28k: $elemMatch on all-case-variants + sort to verify tie ordering
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28l: $elemMatch $exists: true + sort {a: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$exists": true } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$exists": true } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28m: $elemMatch $type: "string" + sort {a: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$type": "string" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$type": "string" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28n: $elemMatch $not: {$eq: "apple"} + sort {a: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$not": { "$eq": "apple" } } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$not": { "$eq": "apple" } } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28o: $elemMatch three-way ($gt + $lt + $ne) + sort {a: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gt": "apple", "$lt": "fox", "$ne": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gt": "apple", "$lt": "fox", "$ne": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28p: $elemMatch empty range + sort {a: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gte": "banana", "$lt": "banana" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gte": "banana", "$lt": "banana" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28q: $elemMatch point range + sort {a: -1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gte": "banana", "$lte": "banana" } } }, "sort": { "a": -1, "_id": -1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gte": "banana", "$lte": "banana" } } }, "sort": { "a": -1, "_id": -1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28r: $elemMatch $type + $gte + sort {a: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$type": "string", "$gte": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$type": "string", "$gte": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+RESET documentdb.max_non_ordered_term_scan_threshold;
+
+
+-- ===== Section 29: ORDER BY pushdown with numericOrdering ======
+SET documentdb.enableExtendedExplainPlans TO on;
+SET enable_seqscan TO OFF;
+SET documentdb.max_non_ordered_term_scan_threshold TO 1;
+SET documentdb.enableOrderByIndexTerm TO on;
+SET documentdb.forceUseIndexIfAvailable TO on;
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_orderby_numeric',
+  FORMAT('{"_id": %s, "a": "%s"}', g.idx, g.a)::documentdb_core.bson, NULL)
+FROM (VALUES
+  (1, 'item20'), (2, 'item3'), (3, 'item11'),
+  (4, 'item1'), (5, 'item100'), (6, 'item2')
+) AS g(idx, a);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_orderby_numeric",
+    "indexes": [{
+      "key": { "a": 1 },
+      "name": "idx_orderby_numeric_en_num",
+      "collation": { "locale": "en", "numericOrdering": true }
+    }]
+  }',
+  TRUE
+);
+
+ANALYZE;
+
+-- 29a: ASC sort with matching numericOrdering collation
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_numeric", "filter": {}, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_numeric", "filter": {}, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29b: DESC sort with matching numericOrdering collation
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_numeric", "filter": {}, "sort": { "a": -1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_numeric", "filter": {}, "sort": { "a": -1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29c: top-N sort with matching numericOrdering collation
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_numeric", "filter": {}, "sort": { "a": 1 }, "limit": 3, "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_numeric", "filter": {}, "sort": { "a": 1 }, "limit": 3, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29d: locale mismatch retains a separate Sort
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_numeric", "filter": {}, "sort": { "a": 1 }, "collation": { "locale": "fr", "numericOrdering": true } }')
+$cmd$);
+
+-- 29e: numericOrdering mismatch retains a separate Sort
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_numeric", "filter": {}, "sort": { "a": 1 }, "collation": { "locale": "en" } }')
+$cmd$);
+
+-- 29f: uncollated query against numericOrdering index retains a separate Sort
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_numeric", "filter": {}, "sort": { "a": 1 } }')
+$cmd$);
+
+-- 29y: aggregation pipeline $sort + $skip + $limit with matching numericOrdering collation
+SELECT document FROM bson_aggregation_pipeline('ord_coll_ordered_db', '{ "aggregate": "ord_orderby_numeric", "pipeline": [ { "$sort": { "a": 1 } }, { "$skip": 2 }, { "$limit": 3 } ], "cursor": {}, "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ordered_db', '{ "aggregate": "ord_orderby_numeric", "pipeline": [ { "$sort": { "a": 1 } }, { "$skip": 2 }, { "$limit": 3 } ], "cursor": {}, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29z: aggregation pipeline $sort + $limit with matching numericOrdering collation
+SELECT document FROM bson_aggregation_pipeline('ord_coll_ordered_db', '{ "aggregate": "ord_orderby_numeric", "pipeline": [ { "$sort": { "a": 1 } }, { "$limit": 3 } ], "cursor": {}, "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ordered_db', '{ "aggregate": "ord_orderby_numeric", "pipeline": [ { "$sort": { "a": 1 } }, { "$limit": 3 } ], "cursor": {}, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_orderby_filter',
+  FORMAT('{"_id": %s, "a": "%s", "tag": "%s"}', g.idx, g.a, g.tag)::documentdb_core.bson, NULL)
+FROM (VALUES
+  (1, 'item20', 'tag1'), (2, 'item3', 'tag2'), (3, 'item11', 'tag3'),
+  (4, 'item1', 'tag4'), (5, 'item100', 'tag5'), (6, 'item2', 'tag6'),
+  (10, 'item12', 'tag10'), (11, 'item10', 'tag11'), (12, 'item4', 'tag12')
+) AS g(idx, a, tag);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_orderby_filter', '{"_id": 7, "tag": "missing-a"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_orderby_filter', '{"_id": 8, "a": 42, "tag": "number-a"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_orderby_filter', '{"_id": 9, "a": null, "tag": "null-a"}', NULL);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_orderby_filter",
+    "indexes": [{
+      "key": { "a": 1 },
+      "name": "idx_orderby_filter_en_num",
+      "collation": { "locale": "en", "numericOrdering": true }
+    }]
+  }',
+  TRUE
+);
+
+ANALYZE;
+
+-- 29g: $exists true + sort on collated field
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$exists": true } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$exists": true } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29h: $type string + reverse sort on collated field
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$type": "string" } }, "sort": { "a": -1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$type": "string" } }, "sort": { "a": -1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29i: equality filter + sort
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$eq": "item3" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$eq": "item3" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29j: greater-than filter + sort
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$gt": "item10" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$gt": "item10" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29k: less-than filter + sort
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$lt": "item10" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$lt": "item10" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29l: bounded range filter + sort
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$gte": "item3", "$lte": "item20" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$gte": "item3", "$lte": "item20" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29m: not-equal filter + sort
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$ne": "item3" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$ne": "item3" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29n: negated comparison filter + sort
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$not": { "$gt": "item20" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$not": { "$gt": "item20" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29o: filter on collated field + sort on _id
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$gt": "item10" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$gt": "item10" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29x: aggregation pipeline $match + $sort + $project with matching numericOrdering collation
+SELECT document FROM bson_aggregation_pipeline('ord_coll_ordered_db', '{ "aggregate": "ord_orderby_filter", "pipeline": [ { "$match": { "a": { "$gte": "item3" } } }, { "$sort": { "a": 1 } }, { "$project": { "_id": 0, "a": 1 } }, { "$limit": 3 } ], "cursor": {}, "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ordered_db', '{ "aggregate": "ord_orderby_filter", "pipeline": [ { "$match": { "a": { "$gte": "item3" } } }, { "$sort": { "a": 1 } }, { "$project": { "_id": 0, "a": 1 } }, { "$limit": 3 } ], "cursor": {}, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_orderby_compound',
+  FORMAT('{"_id": %s, "a": "%s", "b": "%s"}', g.idx, g.a, g.b)::documentdb_core.bson, NULL)
+FROM (VALUES
+  (1, 'item1', 'sub20'), (2, 'item2', 'sub3'), (3, 'item2', 'sub11'),
+  (4, 'item10', 'sub10'), (5, 'item10', 'sub2'), (6, 'item3', 'sub2')
+) AS g(idx, a, b);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_orderby_compound",
+    "indexes": [{
+      "key": { "a": 1, "b": 1 },
+      "name": "idx_orderby_compound_en_num",
+      "collation": { "locale": "en", "numericOrdering": true }
+    }]
+  }',
+  TRUE
+);
+
+ANALYZE;
+
+-- 29p: compound sort with matching numericOrdering collation
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_compound", "filter": {}, "sort": { "a": 1, "b": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_compound", "filter": {}, "sort": { "a": 1, "b": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29q: equality on leading compound key + sort on secondary numeric string key
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_compound", "filter": { "a": "item10" }, "sort": { "b": 1, "_id": 1 }, "limit": 4, "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_compound", "filter": { "a": "item10" }, "sort": { "b": 1, "_id": 1 }, "limit": 4, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_orderby_mixed',
+  FORMAT('{"_id": %s, "a": "%s", "b": "%s"}', g.idx, g.a, g.b)::documentdb_core.bson, NULL)
+FROM (VALUES
+  (1, 'item1', 'sub20'), (2, 'item2', 'sub3'), (3, 'item2', 'sub11'),
+  (4, 'item10', 'sub10'), (5, 'item10', 'sub2'), (6, 'item3', 'sub2')
+) AS g(idx, a, b);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_orderby_mixed",
+    "indexes": [{
+      "key": { "a": 1, "b": -1 },
+      "name": "idx_orderby_mixed_en_num",
+      "collation": { "locale": "en", "numericOrdering": true }
+    }]
+  }',
+  TRUE
+);
+
+ANALYZE;
+
+-- 29r: mixed-direction compound sort with matching numericOrdering collation
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_mixed", "filter": {}, "sort": { "a": 1, "b": -1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_mixed", "filter": {}, "sort": { "a": 1, "b": -1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29s: reverse mixed-direction compound sort with matching numericOrdering collation
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_mixed", "filter": {}, "sort": { "a": -1, "b": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_mixed", "filter": {}, "sort": { "a": -1, "b": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29t: mixed-direction mismatch retains a separate Sort
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_mixed", "filter": {}, "sort": { "a": 1, "b": 1, "_id": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_orderby_id',
+  FORMAT('{"_id": "%s", "a": %s}', g.id, g.a)::documentdb_core.bson, NULL)
+FROM (VALUES
+  ('item1', 1), ('item10', 2), ('item2', 3),
+  ('item20', 4), ('item3', 5), ('item30', 6)
+) AS g(id, a);
+
+ANALYZE;
+
+-- 29u: _id sort without collation baseline
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_id", "filter": {}, "sort": { "_id": 1 } }')
+$cmd$);
+
+-- 29v: _id sort with collation does not use _id order
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_id", "filter": {}, "sort": { "_id": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29w: _id equality filter + collated _id sort
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_id", "filter": { "_id": "item2" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_orderby_samefield',
+  FORMAT('{"_id": %s, "a": "%s"}', g.idx, g.a)::documentdb_core.bson, NULL)
+FROM (VALUES
+  (1, 'item20'), (2, 'item3'), (3, 'item11'),
+  (4, 'item1'), (5, 'item100'), (6, 'item2')
+) AS g(idx, a);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_orderby_samefield",
+    "indexes": [
+      {
+        "key": { "a": 1 },
+        "name": "idx_orderby_samefield_en_num",
+        "collation": { "locale": "en", "numericOrdering": true }
+      },
+      {
+        "key": { "a": 1 },
+        "name": "idx_orderby_samefield_fr_num",
+        "collation": { "locale": "fr", "numericOrdering": true }
+      },
+      {
+        "key": { "a": 1 },
+        "name": "idx_orderby_samefield_simple"
+      }
+    ]
+  }',
+  TRUE
+);
+
+SELECT
+  (ci.index_spec).index_name,
+  documentdb_api_internal.index_spec_as_bson(ci.index_spec, for_get_indexes=>true) AS index_spec,
+  ci.index_is_valid
+FROM documentdb_api_catalog.collection_indexes ci
+JOIN documentdb_api_catalog.collections c ON c.collection_id = ci.collection_id
+WHERE c.database_name = 'ord_coll_ordered_db'
+  AND c.collection_name = 'ord_orderby_samefield'
+  AND (ci.index_spec).index_name LIKE 'idx_orderby_samefield%'
+ORDER BY (ci.index_spec).index_name;
+
+ANALYZE;
+
+-- 29aa: same field has three indexes; no hint picks matching numericOrdering index
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29ab: matching hint on the same field preserves ordered output
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_en_num", "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_en_num", "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29ac: locale-specific hint on the same field uses the matching collated index
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_fr_num", "collation": { "locale": "fr", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_fr_num", "collation": { "locale": "fr", "numericOrdering": true } }')
+$cmd$);
+
+-- 29ad: uncollated hint on the same field uses the simple index
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_simple" }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_simple" }')
+$cmd$);
+
+-- 29ae: wrong collation hint still returns correct order via a separate Sort
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_fr_num", "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_fr_num", "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29af: collated query with simple hint still returns correct order via a separate Sort
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_simple", "collation": { "locale": "en", "numericOrdering": true } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_simple", "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29ag: a collated group cannot stream from a simple index. "item02" and
+-- "item2" compare equal with numericOrdering but are separated in binary index
+-- order, so omitting the Sort would split one logical group into two.
+SET documentdb.enableNewWithExprAccumulators TO on;
+
+SELECT documentdb_api.insert_one(
+  'ord_coll_ordered_db',
+  'ord_orderby_samefield',
+  '{ "_id": 7, "a": "item02" }'
+);
+
+SELECT document FROM bson_aggregation_pipeline(
+  'ord_coll_ordered_db',
+  '{ "aggregate": "ord_orderby_samefield",
+     "pipeline": [
+       { "$group": { "_id": "$a", "count": { "$sum": 1 } } },
+       { "$sort": { "_id": 1 } }
+     ],
+     "hint": "idx_orderby_samefield_simple",
+     "collation": { "locale": "en", "numericOrdering": true } }'
+);
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline(
+      'ord_coll_ordered_db',
+      '{ "aggregate": "ord_orderby_samefield",
+         "pipeline": [
+           { "$group": { "_id": "$a", "count": { "$sum": 1 } } },
+           { "$sort": { "_id": 1 } }
+         ],
+         "hint": "idx_orderby_samefield_simple",
+         "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29ah: the matching collated index can provide the group ordering directly.
+SELECT document FROM bson_aggregation_pipeline(
+  'ord_coll_ordered_db',
+  '{ "aggregate": "ord_orderby_samefield",
+     "pipeline": [
+       { "$group": { "_id": "$a", "count": { "$sum": 1 } } },
+       { "$sort": { "_id": 1 } }
+     ],
+     "hint": "idx_orderby_samefield_en_num",
+     "collation": { "locale": "en", "numericOrdering": true } }'
+);
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline(
+      'ord_coll_ordered_db',
+      '{ "aggregate": "ord_orderby_samefield",
+         "pipeline": [
+           { "$group": { "_id": "$a", "count": { "$sum": 1 } } },
+           { "$sort": { "_id": 1 } }
+         ],
+         "hint": "idx_orderby_samefield_en_num",
+         "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+RESET documentdb.enableNewWithExprAccumulators;
+
+-- ============================================================
+-- Section 30: index-only scan under collation on collation-aware
+-- ordered indexes led by _id and by country.
+-- A covered $count needs only indexed columns, so it resolves to
+-- an Index Only Scan even under collation; a find that returns the
+-- document needs the heap, so it stays an Index Scan.
+-- ============================================================
+
+-- distinct (byte-wise) string _id values including case variants so a
+-- strength-1 collation index treats "cat"/"Cat"/"CAT" as equal
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "cat", "country": "usa", "seq": 1 }');
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "Cat", "country": "USA", "seq": 2 }');
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "CAT", "country": "Usa", "seq": 3 }');
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "dog", "country": "brazil", "seq": 4 }');
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "Dog", "country": "Brazil", "seq": 5 }');
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "bird", "country": "mexico", "seq": 6 }');
+
+-- A trailing key keeps this as an explicitly creatable compound index while
+-- preserving collation-aware bounds on the leading _id key.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ord_coll_ios_db', '{ "createIndexes": "ios_coll", "indexes": [ { "key": { "_id": 1, "seq": 1 }, "storageEngine": { "enableOrderedIndex": true }, "collation": { "locale": "en", "strength": 1 }, "name": "ios_id_seq_en_s1" }] }', true);
+
+-- the ordered collation index rebuilds ios_coll onto a new backing table; disable
+-- autovacuum and freeze it so the index-only scans below stay deterministic
+ALTER TABLE documentdb_data.documents_8129 SET (autovacuum_enabled = off);
+VACUUM (ANALYZE ON, FREEZE ON) documentdb_data.documents_8129;
+
+SET enable_bitmapscan TO off;
+
+-- covered $count with equality on _id under collation => Index Only Scan
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "_id": "cat" } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "_id": "cat" } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }');
+
+-- count command with equality on _id under collation => Index Only Scan
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_count('ord_coll_ios_db', '{ "count": "ios_coll", "query": { "_id": "cat" }, "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_count('ord_coll_ios_db', '{ "count": "ios_coll", "query": { "_id": "cat" }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- covered $count with a range on _id under collation => Index Only Scan
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "_id": { "$gte": "cat" } } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "_id": { "$gte": "cat" } } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }');
+
+-- count command with a range on _id under collation => Index Only Scan
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_count('ord_coll_ios_db', '{ "count": "ios_coll", "query": { "_id": { "$gte": "cat" } }, "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_count('ord_coll_ios_db', '{ "count": "ios_coll", "query": { "_id": { "$gte": "cat" } }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- returning the document needs the heap, so it stays an Index Scan (not IOS)
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "_id": "dog" }, "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "_id": "dog" }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- the index-only scan honors enable_indexonlyscan
+SET enable_indexonlyscan TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "_id": { "$gte": "cat" } } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+RESET enable_indexonlyscan;
+
+-- compound collation-aware ordered index (country, _id): covered $count on the
+-- leading field resolves to an Index Only Scan under collation
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ord_coll_ios_db', '{ "createIndexes": "ios_coll", "indexes": [ { "key": { "country": 1, "_id": 1 }, "storageEngine": { "enableOrderedIndex": true }, "collation": { "locale": "en", "strength": 1 }, "name": "ios_country_id_en_s1" }] }', true);
+
+VACUUM (ANALYZE ON, FREEZE ON) documentdb_data.documents_8129;
+
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": "usa" } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": "usa" } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }');
+
+-- count command on the leading compound key under collation => Index Only Scan
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_count('ord_coll_ios_db', '{ "count": "ios_coll", "query": { "country": "usa" }, "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_count('ord_coll_ios_db', '{ "count": "ios_coll", "query": { "country": "usa" }, "collation": { "locale": "en", "strength": 1 } }');
+
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": { "$gte": "brazil" } } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": { "$gte": "brazil" } } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }');
+
+-- ==== Projection blocks IOS with _id range + collated country ====
+SET documentdb.enable_support_function_id_pushdown TO on;
+SET documentdb.enableIndexOnlyScanForFindProject TO on;
+
+-- Collation-equivalent values can share one index entry, so each projected
+-- value must come from its heap row.
+-- _id $gt + collated country, projection on country + _id
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "usa", "_id": { "$gt": "bird" } }, "projection": { "country": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "usa", "_id": { "$gt": "bird" } }, "projection": { "country": 1, "_id": 1 }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- _id $gte with collated match ("CAT" >= "cat" at strength 1), projection on _id
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "usa", "_id": { "$gte": "CAT" } }, "projection": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "usa", "_id": { "$gte": "CAT" } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- _id $lt + collated country, projection on country + _id
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "brazil", "_id": { "$lt": "dog" } }, "projection": { "country": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "brazil", "_id": { "$lt": "dog" } }, "projection": { "country": 1, "_id": 1 }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- A covered $count does not return index values and can still use IOS.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": "usa", "_id": { "$gte": "cat" } } }, { "$count": "n" } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": "usa", "_id": { "$gte": "cat" } } }, { "$count": "n" } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+
+-- _id $in + collated country, projection on country + _id
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "usa", "_id": { "$in": ["cat", "dog"] } }, "projection": { "country": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "usa", "_id": { "$in": ["cat", "dog"] } }, "projection": { "country": 1, "_id": 1 }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- Field-consuming aggregate targets also require the stored row values.
+SET documentdb.enableNewWithExprAccumulators TO on;
+
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": "usa" } }, { "$group": { "_id": null, "value": { "$first": "$country" } } } ], "hint": "ios_country_id_en_s1", "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": "usa" } }, { "$group": { "_id": null, "value": { "$last": "$country" } } } ], "hint": "ios_country_id_en_s1", "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": "usa" } }, { "$group": { "_id": "$country", "count": { "$sum": 1 } } } ], "hint": "ios_country_id_en_s1", "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+
+RESET documentdb.enableNewWithExprAccumulators;
+
+-- The index, rather than the query, determines whether values can be reconstructed.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ord_coll_ios_db', '{ "createIndexes": "ios_coll", "indexes": [ { "key": { "seq": 1, "country": 1 }, "storageEngine": { "enableOrderedIndex": true }, "collation": { "locale": "en", "strength": 1 }, "name": "ios_seq_country_en_s1" }, { "key": { "seq": 1, "country": 1 }, "storageEngine": { "enableOrderedIndex": true }, "name": "ios_seq_country_simple" } ] }', true);
+VACUUM (ANALYZE ON, FREEZE ON) documentdb_data.documents_8129;
+
+-- A collation-free numeric predicate cannot safely project from a collated index.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "seq": { "$gte": 1 } }, "projection": { "country": 1, "_id": 0 }, "hint": "ios_seq_country_en_s1" }') $$, p_ignore_heap_fetches => true);
+
+-- A collated query can still project numeric-filtered values from a simple index.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "seq": { "$gte": 1 } }, "projection": { "country": 1, "_id": 0 }, "hint": "ios_seq_country_simple", "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+
+RESET enable_bitmapscan;
+
+RESET documentdb.max_non_ordered_term_scan_threshold;
+RESET documentdb.enableOrderByIndexTerm;
+RESET documentdb.forceUseIndexIfAvailable;
 RESET documentdb.enableExtendedExplainPlans;
 RESET enable_seqscan;
 

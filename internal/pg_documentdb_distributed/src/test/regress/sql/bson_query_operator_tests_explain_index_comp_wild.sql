@@ -4,7 +4,6 @@ SET documentdb.next_collection_id TO 1100;
 SET documentdb.next_collection_index_id TO 1100;
 
 set documentdb.enableExtendedExplainPlans to on;
-set documentdb.enableCompositeWildcardIndex to on;
 
 SELECT documentdb_api.drop_collection('db', 'queryoperator') IS NOT NULL;
 SELECT documentdb_api.create_collection('db', 'queryoperator');
@@ -35,7 +34,6 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createI
 BEGIN;
 SET LOCAL citus.enable_local_execution TO OFF;
 set local documentdb.useLocalExecutionShardQueries to off;
-set local documentdb.enableCompositeWildcardIndex to on;
 -- avoid sequential scan (likely to be preferred on small tables)
 set local enable_seqscan TO off;
 set local documentdb.forceUseIndexIfAvailable to on;

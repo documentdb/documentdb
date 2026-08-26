@@ -30,6 +30,7 @@
 #include "vector/vector_utilities.h"
 #include "vector/vector_spec.h"
 #include "utils/error_utils.h"
+#include "aggregation/bson_aggregation_search.h"
 
 
 /* --------------------------------------------------------- */
@@ -74,7 +75,7 @@ EvaluateMetaSearchScore(pgbson *document)
 	 * If the metadata field is not available, we throw an error.
 	 */
 	const char *metaScorePathName =
-		VECTOR_METADATA_FIELD_NAME "." VECTOR_METADATA_SCORE_FIELD_NAME;
+		SEARCH_METADATA_FIELD_NAME "." SEARCH_METADATA_SCORE_FIELD_NAME;
 	bson_iter_t documentIterator;
 	if (PgbsonInitIteratorAtPath(document, metaScorePathName, &documentIterator))
 	{

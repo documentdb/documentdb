@@ -20,11 +20,13 @@ use crate::{
     explain::Verbosity,
     postgres::{
         conn_mgmt::{
-            run_request_with_retries, Connection, ConnectionPool, ConnectionSource, PoolConnection,
-            PullConnection, QueryOptions, RequestOptions,
+            command_deadline_for, run_request_with_retries, Connection, ConnectionPool,
+            ConnectionSource, PoolConnection, PullConnection, QueryOptions, RequestOptions,
+            StatementError,
         },
         PgDocument,
     },
+    requests::ExplainTarget,
     responses::{PgResponse, Response},
 };
 
@@ -54,7 +56,19 @@ pub trait PgDataClient: Send + Sync {
     async fn pull_connection_with_transaction(&self, in_transaction: bool) -> Result<Connection> {
         let pool_connection = self.acquire_pool_connection().await?;
 
-        Ok(Connection::new(pool_connection, in_transaction))
+        // Mirror the pool's deadline when one is available; otherwise derive it
+        // from the same configuration the pool would have used, so a connection
+        // built without a pool is never left without a client-side bound.
+        let command_deadline = self.connection_pool().map_or_else(
+            |_| command_deadline_for(self.service_context().setup_configuration()),
+            ConnectionPool::command_deadline,
+        );
+
+        Ok(Connection::new(
+            pool_connection,
+            in_transaction,
+            command_deadline,
+        ))
     }
 
     /// Returns the underlying connection pool.
@@ -63,14 +77,12 @@ pub trait PgDataClient: Send + Sync {
     /// Returns an error if no pool is available for this client.
     fn connection_pool(&self) -> Result<&ConnectionPool>;
 
-    fn request_options(&self) -> RequestOptions {
+    fn request_options(&self, command_timeout_ms: Option<u64>) -> RequestOptions {
         RequestOptions::new(
             self.service_context()
                 .dynamic_configuration()
                 .is_replica_cluster(),
-            self.service_context()
-                .setup_configuration()
-                .postgres_command_timeout_secs(),
+            command_timeout_ms,
         )
     }
 
@@ -116,6 +128,7 @@ pub trait PgDataClient: Send + Sync {
         &self,
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
+        enable_write_procedures: bool,
     ) -> Result<Vec<Row>>;
 
     async fn execute_delete_when_readonly(
@@ -163,6 +176,7 @@ pub trait PgDataClient: Send + Sync {
     async fn execute_explain(
         &self,
         request_context: &RequestContext<'_>,
+        explain_target: &ExplainTarget<'_>,
         query_base: &str,
         verbosity: Verbosity,
         connection_context: &ConnectionContext,
@@ -408,6 +422,29 @@ pub trait PgDataClient: Send + Sync {
         connection_context: &ConnectionContext,
     ) -> Result<Response>;
 
+    async fn execute_create_search_indexes(
+        &self,
+        _request_context: &RequestContext<'_>,
+        _connection_context: &ConnectionContext,
+    ) -> Result<(bool, PgResponse)> {
+        Err(crate::error::DocumentDBError::documentdb_error(
+            crate::error::ErrorCode::CommandNotSupported,
+            "Command 'createSearchIndexes' not supported.".to_owned(),
+        ))
+    }
+
+    async fn execute_wait_for_search_index(
+        &self,
+        _request_context: &RequestContext<'_>,
+        _index_build_id: &PgDocument<'_>,
+        _connection_context: &ConnectionContext,
+    ) -> Result<(bool, bool, PgResponse)> {
+        Err(crate::error::DocumentDBError::documentdb_error(
+            crate::error::ErrorCode::CommandNotSupported,
+            "Command 'createSearchIndexes' not supported.".to_owned(),
+        ))
+    }
+
     /// Unified query execution that resolves a connection and dispatches to
     /// the retry loop.
     async fn run_query<T, F, Fut>(
@@ -421,19 +458,21 @@ pub trait PgDataClient: Send + Sync {
     where
         T: Send,
         F: Fn(Arc<Connection>) -> Fut + Send + Sync,
-        Fut: Future<Output = std::result::Result<T, tokio_postgres::Error>> + Send,
+        Fut: Future<Output = std::result::Result<T, StatementError>> + Send,
     {
-        let source = if let Some((session_id, _)) = connection_context.transaction.as_ref() {
+        let source = if let Some((lsid, _)) = connection_context.transaction.as_ref() {
+            let caller = connection_context.auth_state.principal()?;
+
             if let Some(connection) = self
                 .service_context()
                 .transaction_store()
-                .get_connection(session_id)
+                .get_connection(lsid, caller)
             {
                 ConnectionSource::Transaction(connection)
             } else {
                 // This should not happen because we check transaction existence at the beginning of each request handling,
                 // but we add this fallback just in case to avoid panicking and to allow the retry logic to kick in.
-                tracing::error!("Transaction connection not found for session_id {:?}, falling back to pool connection", session_id);
+                tracing::error!("Transaction connection not found for lsid {:?}, falling back to pool connection", lsid);
                 ConnectionSource::Pool(self.connection_pool()?)
             }
         } else {
@@ -445,16 +484,20 @@ pub trait PgDataClient: Send + Sync {
             }
         };
 
-        let (_, request_info, request_tracker) = request_context.get_components();
-        let max_time_ms = request_info.max_time_ms;
-        let req_opts = self.request_options();
+        let request = request_context.request();
+        let command_timeout_ms = request.max_time_ms().map(i64::cast_unsigned);
+        let req_opts = self.request_options(command_timeout_ms);
 
         run_request_with_retries(
             source,
             query_options,
             req_opts,
-            max_time_ms,
-            request_tracker,
+            Duration::from_secs(
+                self.service_context()
+                    .setup_configuration()
+                    .postgres_command_timeout_secs(),
+            ),
+            request_context,
             run_func,
         )
         .await
@@ -471,7 +514,7 @@ pub trait PgDataClient: Send + Sync {
     ) -> Result<Response>
     where
         F: Fn(Arc<Connection>) -> Fut + Send + Sync,
-        Fut: Future<Output = std::result::Result<(Vec<Row>, Arc<Connection>), tokio_postgres::Error>>
+        Fut: Future<Output = std::result::Result<(Vec<Row>, Arc<Connection>), StatementError>>
             + Send,
     {
         let (rows, connection) = self
@@ -489,26 +532,36 @@ pub trait PgDataClient: Send + Sync {
         if let Some((persist, cursor)) = response.get_cursor()? {
             let connection = persist.then_some(connection);
 
+            // Surface the backend cursor id for diagnostics: find/aggregate first pages
+            // open a cursor here when the result spans multiple batches. The same request
+            // tracker instance is read back at telemetry-emission time.
+            request_context
+                .tracker
+                .set_cursor_id(cursor.cursor_id.into());
+
             let dynamic_config = self.service_context().dynamic_configuration();
 
-            let cursor_timeout = Duration::from_secs(
-                if dynamic_config.enable_stateless_cursor_timeout() && connection.is_none() {
-                    dynamic_config.stateless_cursor_idle_timeout_sec()
-                } else {
-                    dynamic_config.default_cursor_idle_timeout_sec()
-                },
-            );
+            let cursor_timeout = Duration::from_secs(if connection.is_none() {
+                dynamic_config.stateless_cursor_idle_timeout_sec()
+            } else {
+                dynamic_config.default_cursor_idle_timeout_sec()
+            });
 
-            let request_info = request_context.info();
+            let request = request_context.request();
+            let lsid = request.lsid().cloned();
+            let transaction_number = request
+                .transaction_info()
+                .map(|txn_info| txn_info.transaction_number);
 
             connection_context.add_cursor(
                 connection,
                 cursor,
-                connection_context.auth_state.username()?,
-                request_info.db()?,
-                request_info.collection()?,
+                request.db(),
+                request.collection()?,
                 cursor_timeout,
-                request_info.session_id.clone(),
+                lsid,
+                transaction_number,
+                connection_context.auth_state.principal()?,
             );
         }
 

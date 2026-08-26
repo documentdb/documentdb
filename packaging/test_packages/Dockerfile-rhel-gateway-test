@@ -1,0 +1,128 @@
+# Single RHEL-family clean-install test image for the DocumentDB gateway +
+# stand-alone RPMs, shared by the rhel8 and rhel9 test targets. The caller
+# (build_gateway_packages.sh) selects the EL major
+# by passing --build-arg BASE_IMAGE (rockylinux:8 or rockylinux:9); every
+# EL-major-specific step below derives the major from /etc/os-release so the two
+# families cannot drift. Mirrors the build-side packaging/rpm/Dockerfile_gateway_rhel.
+ARG BASE_IMAGE=rockylinux:9
+FROM ${BASE_IMAGE}
+
+ARG POSTGRES_VERSION=16
+ARG RPM_PACKAGE_REL_PATH
+ARG GATEWAY_RPM_PACKAGE_REL_PATH
+# Track 1 (packaging-design.md §4) Workflow C coverage requires the
+# tools + per-major stand-alone RPMs in addition to the extension and
+# gateway. The build orchestrator (packaging/gateway/build_gateway_packages.sh)
+# builds these via packaging/build_extra_packages.sh --type rpm before
+# invoking docker build, so all four args must be set.
+ARG TOOLS_RPM_PACKAGE_REL_PATH
+ARG STANDALONE_RPM_PACKAGE_REL_PATH
+ARG COMMON_RPM_PACKAGE_REL_PATH
+ARG TARGETARCH
+
+ENV POSTGRES_VERSION=${POSTGRES_VERSION}
+RUN . /etc/os-release && echo "Testing for RPM install on RHEL ${VERSION_ID%%.*}"
+
+RUN [ -n "${RPM_PACKAGE_REL_PATH}" ] || (echo "ERROR: RPM_PACKAGE_REL_PATH build-arg is required." >&2; exit 1)
+RUN [ -n "${GATEWAY_RPM_PACKAGE_REL_PATH}" ] || (echo "ERROR: GATEWAY_RPM_PACKAGE_REL_PATH build-arg is required." >&2; exit 1)
+RUN [ -n "${TOOLS_RPM_PACKAGE_REL_PATH}" ] || (echo "ERROR: TOOLS_RPM_PACKAGE_REL_PATH build-arg is required (built by packaging/build_extra_packages.sh --type rpm)." >&2; exit 1)
+RUN [ -n "${COMMON_RPM_PACKAGE_REL_PATH}" ] || (echo "ERROR: COMMON_RPM_PACKAGE_REL_PATH build-arg is required (built by packaging/build_extra_packages.sh --type rpm)." >&2; exit 1)
+RUN [ -n "${STANDALONE_RPM_PACKAGE_REL_PATH}" ] || (echo "ERROR: STANDALONE_RPM_PACKAGE_REL_PATH build-arg is required (built by packaging/build_extra_packages.sh --type rpm)." >&2; exit 1)
+
+RUN dnf install -y dnf-plugins-core
+# EL8 ships the "powertools" repo; EL9 renamed it to "crb" (CodeReady Builder).
+RUN . /etc/os-release && EL_MAJOR="${VERSION_ID%%.*}" && \
+    dnf install -y epel-release && \
+    if [ "${EL_MAJOR}" = "8" ]; then dnf config-manager --set-enabled powertools; \
+    else dnf config-manager --set-enabled crb; fi && \
+    dnf clean all
+
+# glibc-langpack-en provides en_US.UTF-8; localedef stays best-effort because
+# it exits nonzero on this base even when the locale is fine (charmap not
+# shipped). The `locale -a` check is the real gate: the old trailing
+# `|| true` bound to the WHOLE && chain, so a transient dnf/mirror failure
+# built a locale-less image that only failed ~30 min later inside initdb
+# ("invalid locale settings") - and the poisoned cached layer then defeated
+# the workflow-level retry. Failing here leaves no layer to cache, so a
+# retry rebuilds cleanly.
+RUN dnf -y install glibc-langpack-en glibc-common && \
+    (localedef -i en_US -f UTF-8 en_US.UTF-8 || true) && \
+    locale -a | grep -qiE '^en_US\.utf-?8$'
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+
+RUN dnf -y install --allowerasing \
+    curl \
+    make \
+    ca-certificates \
+    gcc \
+    gcc-c++ \
+    pkg-config \
+    openssl \
+    openssl-libs \
+    openssl-devel \
+    zlib-devel \
+    libuuid-devel \
+    libicu-devel \
+    krb5-devel \
+    jq \
+    sudo
+
+RUN echo "Detected architecture: ${TARGETARCH}"
+
+RUN . /etc/os-release && EL_MAJOR="${VERSION_ID%%.*}"; \
+    if [ -n "${TARGETARCH}" ] && ( [ "${TARGETARCH}" = "arm64" ] || [ "${TARGETARCH}" = "arm64v8" ] ); then ARCH=aarch64; else ARCH=x86_64; fi; \
+    echo "Setting up PGDG repo for RHEL ${EL_MAJOR} (arch=${ARCH})" && \
+    dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-${EL_MAJOR}-${ARCH}/pgdg-redhat-repo-latest.noarch.rpm && \
+    dnf -qy module disable postgresql && \
+    PKGS="postgresql${POSTGRES_VERSION} \
+        postgresql${POSTGRES_VERSION}-devel \
+        postgresql${POSTGRES_VERSION}-server \
+        postgresql${POSTGRES_VERSION}-contrib \
+        pgvector_${POSTGRES_VERSION} \
+        pg_cron_${POSTGRES_VERSION} \
+        postgis36_${POSTGRES_VERSION} \
+        $(if [ "${POSTGRES_VERSION}" -lt 18 ]; then echo "rum_${POSTGRES_VERSION}"; else echo ""; fi)"; \
+    for i in 1 2 3; do \
+        dnf -y install --allowerasing --nobest ${PKGS} && break || \
+        { echo "Attempt $i failed, retrying in 5 seconds..." && sleep 5; }; \
+    done; \
+    rpm -q ${PKGS}
+
+# Runtime tools needed for E2E test (ps, ss)
+# `systemd` is added so verify_systemd_unit_files can statically check
+# the unit files with `systemd-analyze verify` without requiring PID 1.
+RUN dnf -y install procps-ng iproute systemd
+
+# Install the mongosh client from its upstream yum repository (EL major derived)
+RUN . /etc/os-release && EL_MAJOR="${VERSION_ID%%.*}"; \
+    if [ -n "${TARGETARCH}" ] && ( [ "${TARGETARCH}" = "arm64" ] || [ "${TARGETARCH}" = "arm64v8" ] ); then MONGO_ARCH=aarch64; else MONGO_ARCH=x86_64; fi; \
+    cat > /etc/yum.repos.d/mongodb-org-8.0.repo <<REPO
+[mongodb-org-8.0]
+name=mongosh upstream repository
+baseurl=https://repo.mongodb.org/yum/redhat/${EL_MAJOR}/mongodb-org/8.0/${MONGO_ARCH}/
+gpgcheck=1
+enabled=1
+gpgkey=https://pgp.mongodb.com/server-8.0.asc
+REPO
+RUN dnf -y install mongodb-mongosh
+
+COPY ${RPM_PACKAGE_REL_PATH} /tmp/documentdb.rpm
+COPY ${GATEWAY_RPM_PACKAGE_REL_PATH} /tmp/documentdb-gateway.rpm
+COPY ${TOOLS_RPM_PACKAGE_REL_PATH} /tmp/documentdb-postgresql-tools.rpm
+COPY ${STANDALONE_RPM_PACKAGE_REL_PATH} /tmp/documentdb-standalone.rpm
+COPY ${COMMON_RPM_PACKAGE_REL_PATH} /tmp/documentdb-common.rpm
+
+# Install all four packages in one dnf transaction so inter-package
+# Requires: are resolved together.
+RUN dnf -y install --allowerasing --nobest \
+    /tmp/documentdb.rpm \
+    /tmp/documentdb-gateway.rpm \
+    /tmp/documentdb-postgresql-tools.rpm \
+    /tmp/documentdb-common.rpm \
+    /tmp/documentdb-standalone.rpm
+
+COPY packaging/test_packages/test-gateway-install-entrypoint-rpm.sh /usr/local/bin/test-gateway-install-entrypoint-rpm.sh
+RUN chmod +x /usr/local/bin/test-gateway-install-entrypoint-rpm.sh
+
+ENTRYPOINT ["test-gateway-install-entrypoint-rpm.sh"]

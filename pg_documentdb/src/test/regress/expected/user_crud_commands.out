@@ -23,12 +23,12 @@ SELECT documentdb_api.drop_user('{"dropUser":"documentdb_unblocked", "$db":"admi
 
 SET documentdb.blockedRolePrefixList TO 'documentdb';
 SELECT documentdb_api.drop_user('{"dropUser":"documentdb_unblocked", "$db":"admin"}');
-ERROR:  Invalid username.
+ERROR:  The specified user does not exist.
 SET documentdb.blockedRolePrefixList TO 'newBlock, newBlock2';
 SELECT documentdb_api.create_user('{"createUser":"newBlock_user", "pwd":"test_password", "roles":[{"role":"readWriteAnyDatabase","db":"admin"}, {"role":"clusterAdmin","db":"admin"}], "$db":"admin"}');
-ERROR:  Invalid username, use a different username.
+ERROR:  Username is reserved, use a different username.
 SELECT documentdb_api.create_user('{"createUser":"newBlock2_user", "pwd":"test_password", "roles":[{"role":"readWriteAnyDatabase","db":"admin"}, {"role":"clusterAdmin","db":"admin"}], "$db":"admin"}');
-ERROR:  Invalid username, use a different username.
+ERROR:  Username is reserved, use a different username.
 RESET documentdb.blockedRolePrefixList;
 --Enable DB admin requirement feature flag
 SET documentdb.enableUsersAdminDBCheck TO ON;
@@ -166,13 +166,13 @@ SELECT documentdb_api.create_user('{"createUser":"test_user", "pwd":"Valid$123Pa
 ERROR:  The 'roles' attribute is required to be in an array format
 --Create a user with a blocked prefix
 SELECT documentdb_api.create_user('{"createUser":"documentdb_user2", "pwd":"test_password", "roles":[{"role":"readWriteAnyDatabase","db":"admin"}, {"role":"clusterAdmin","db":"admin"}], "$db":"admin"}');
-ERROR:  Invalid username, use a different username.
+ERROR:  Username is reserved, use a different username.
 --Create an already existing user
 SELECT documentdb_api.create_user('{"createUser":"test_user2", "pwd":"test_password", "roles":[{"role":"readWriteAnyDatabase","db":"admin"}, {"role":"clusterAdmin","db":"admin"}], "$db":"admin"}');
 ERROR:  role "test_user2" already exists
 --Create a user with no role
 SELECT documentdb_api.create_user('{"createUser":"test_user4", "pwd":"test_password", "roles":[], "$db":"admin"}');
-ERROR:  Roles specified are invalid. Only [{role: "readAnyDatabase", db: "admin"}] or [{role: "clusterAdmin", db: "admin"}, {role: "readWriteAnyDatabase", db: "admin"}] are allowed.
+ERROR:  No role specified.
 --Create a user without specifying role parameter
 SELECT documentdb_api.create_user('{"createUser":"test_user4", "pwd":"test_password", "$db":"admin"}');
 ERROR:  'createUser', 'roles' and 'pwd' are required fields.
@@ -192,6 +192,9 @@ SELECT documentdb_api.create_user('{"createUser":"test_user4", "pwd":"test_passw
  { "ok" : { "$numberInt" : "1" } }
 (1 row)
 
+--Create a user with clusterAdmin but no readWriteAnyDatabase should fail
+SELECT documentdb_api.create_user('{"createUser":"test_user4", "pwd":"test_password", "roles":[{"role":"clusterAdmin","db":"admin"}], "$db":"admin"}');
+ERROR:  Roles specified are invalid. Only readAnyDatabase or readWriteAnyDatabase+clusterAdmin are allowed built-in roles.
 -- Create a user with an empty password should fail
 SELECT documentdb_api.create_user('{"createUser":"test_user_empty_pwd", "pwd":"", "roles":[{"role":"readAnyDatabase","db":"admin"}], "$db":"admin"}');
 ERROR:  The password field must not be left empty.
@@ -289,16 +292,16 @@ SELECT documentdb_api.users_info('{"usersInfo":"test_user5", "$db":"admin"}');
 
 --Drop a reserved user, should fail
 SELECT documentdb_api.drop_user('{"dropUser":"documentdb_user", "$db":"admin"}');
-ERROR:  Invalid username.
+ERROR:  The specified user does not exist.
 --Drop non-existent user
 SELECT documentdb_api.drop_user('{"dropUser":"nonexistent_user", "$db":"admin"}');
 ERROR:  role "nonexistent_user" does not exist
 --Drop a system user
 SELECT documentdb_api.drop_user('{"dropUser":"documentdb_bg_worker_role", "$db":"admin"}');
-ERROR:  Invalid username.
+ERROR:  The specified user does not exist.
 --Drop a built-in user
 SELECT documentdb_api.drop_user('{"dropUser":"documentdb_admin_role", "$db":"admin"}');
-ERROR:  Invalid username.
+ERROR:  The specified user does not exist.
 --Drop with disallowed parameter
 SELECT documentdb_api.drop_user('{"user":"test_user", "$db":"admin"}');
 ERROR:  The specified field 'user' is not supported.
@@ -609,5 +612,298 @@ SELECT documentdb_api.drop_user('{"dropUser":"adminUser", "$db":"admin"}');
 
 -- Reset the max user limit to 500
 SET documentdb.maxUserLimit TO 500;
+-- ***** Regression: readWriteAnyDatabase-only users must count toward the user limit *****
+-- The user count previously only considered members of the admin and read-only
+-- roles, so a user granted only readWriteAnyDatabase was never counted and could
+-- bypass maxUserLimit. All users created above have been dropped, so the
+-- starting user count here is zero.
+-- Allow exactly two users.
+SET documentdb.maxUserLimit TO 2;
+-- These users are granted readWriteAnyDatabase on its own, which requires the flag.
+SET documentdb.enable_readwrite_any_database_role_enforcement TO ON;
+-- Two users granted only readWriteAnyDatabase succeed.
+SELECT documentdb_api.create_user('{"createUser":"rwLimitUser1", "pwd":"test_password", "roles":[{"role":"readWriteAnyDatabase","db":"admin"}], "$db":"admin"}');
+            create_user            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.create_user('{"createUser":"rwLimitUser2", "pwd":"test_password", "roles":[{"role":"readWriteAnyDatabase","db":"admin"}], "$db":"admin"}');
+            create_user            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- A third read-write user is rejected: read-write users count toward the limit.
+SELECT documentdb_api.create_user('{"createUser":"rwLimitUser3", "pwd":"test_password", "roles":[{"role":"readWriteAnyDatabase","db":"admin"}], "$db":"admin"}');
+ERROR:  Exceeded the limit of 2 user roles.
+-- A read-only user is likewise rejected once the limit is reached.
+SELECT documentdb_api.create_user('{"createUser":"rwLimitUser4", "pwd":"test_password", "roles":[{"role":"readAnyDatabase","db":"admin"}], "$db":"admin"}');
+ERROR:  Exceeded the limit of 2 user roles.
+-- Dropping a read-write user frees a slot, confirming it was counted.
+SELECT documentdb_api.drop_user('{"dropUser":"rwLimitUser1", "$db":"admin"}');
+             drop_user             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.create_user('{"createUser":"rwLimitUser3", "pwd":"test_password", "roles":[{"role":"readWriteAnyDatabase","db":"admin"}], "$db":"admin"}');
+            create_user            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Cleanup
+SELECT documentdb_api.drop_user('{"dropUser":"rwLimitUser2", "$db":"admin"}');
+             drop_user             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.drop_user('{"dropUser":"rwLimitUser3", "$db":"admin"}');
+             drop_user             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SET documentdb.maxUserLimit TO 500;
+RESET documentdb.enable_readwrite_any_database_role_enforcement;
+-- ***** Role-combination gating for createUser *****
+-- Only the exact accepted built-in role combinations map to a PG role. Any
+-- other combination is rejected rather than silently reduced to one role.
+-- Case 1: specifying all three built-in roles is not an accepted combination and is rejected.
+SELECT documentdb_api.create_user('{"createUser":"gatingUserAllBuiltin", "pwd":"test_password", "roles":[{"role":"clusterAdmin","db":"admin"},{"role":"readWriteAnyDatabase","db":"admin"},{"role":"readAnyDatabase","db":"admin"}], "$db":"admin"}');
+ERROR:  Roles specified are invalid. Only readAnyDatabase or readWriteAnyDatabase+clusterAdmin are allowed built-in roles.
+-- Case 2: readWriteAnyDatabase + readAnyDatabase is not an accepted combination and is rejected.
+SELECT documentdb_api.create_user('{"createUser":"gatingUserRwRo", "pwd":"test_password", "roles":[{"role":"readWriteAnyDatabase","db":"admin"},{"role":"readAnyDatabase","db":"admin"}], "$db":"admin"}');
+ERROR:  Roles specified are invalid. Only readAnyDatabase or readWriteAnyDatabase+clusterAdmin are allowed built-in roles.
+-- Case 3: the accepted clusterAdmin + readWriteAnyDatabase combination still succeeds.
+SELECT documentdb_api.create_user('{"createUser":"gatingUserAdmin", "pwd":"test_password", "roles":[{"role":"clusterAdmin","db":"admin"},{"role":"readWriteAnyDatabase","db":"admin"}], "$db":"admin"}');
+            create_user            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Case 4: readWriteAnyDatabase on its own is rejected while the flag is off, with a
+-- message that points at the required pairing rather than listing it as allowed.
+SELECT documentdb_api.create_user('{"createUser":"gatingUserRwOnly", "pwd":"test_password", "roles":[{"role":"readWriteAnyDatabase","db":"admin"}], "$db":"admin"}');
+ERROR:  Roles specified are invalid. Only readAnyDatabase or readWriteAnyDatabase+clusterAdmin are allowed built-in roles.
+-- Case 5: clusterAdmin on its own stays rejected regardless of the flag.
+SELECT documentdb_api.create_user('{"createUser":"gatingUserClusterOnly", "pwd":"test_password", "roles":[{"role":"clusterAdmin","db":"admin"}], "$db":"admin"}');
+ERROR:  Roles specified are invalid. Only readAnyDatabase or readWriteAnyDatabase+clusterAdmin are allowed built-in roles.
+-- Case 6: turning the flag on accepts readWriteAnyDatabase on its own, which is how
+-- a read-write-only user is provisioned, and widens the message for other cases.
+SET documentdb.enable_readwrite_any_database_role_enforcement TO ON;
+SELECT documentdb_api.create_user('{"createUser":"gatingUserRwOnly", "pwd":"test_password", "roles":[{"role":"readWriteAnyDatabase","db":"admin"}], "$db":"admin"}');
+            create_user            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.create_user('{"createUser":"gatingUserClusterOnly", "pwd":"test_password", "roles":[{"role":"clusterAdmin","db":"admin"}], "$db":"admin"}');
+ERROR:  Roles specified are invalid. Only readAnyDatabase, readWriteAnyDatabase, or readWriteAnyDatabase+clusterAdmin are allowed built-in roles.
+SELECT documentdb_api.drop_user('{"dropUser":"gatingUserRwOnly", "$db":"admin"}');
+             drop_user             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+RESET documentdb.enable_readwrite_any_database_role_enforcement;
+-- Cleanup the user created by the accepted case.
+SELECT documentdb_api.drop_user('{"dropUser":"gatingUserAdmin", "$db":"admin"}');
+             drop_user             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- ***** Granting a custom role via createUser *****
+-- A custom role created through createRole can be granted to a user, provided
+-- the role name is not reserved and the role is not a login role.
+SET documentdb.enableRoleCrud TO ON;
+-- Create the custom role, which succeeds.
+SELECT documentdb_api.create_role('{"createRole":"customUserRole", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+            create_role            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Granting the custom role to a new user succeeds.
+SELECT documentdb_api.create_user('{"createUser":"customRoleUser", "pwd":"test_password", "roles":[{"role":"customUserRole","db":"admin"}], "$db":"admin"}');
+            create_user            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Combining the custom role with a built-in role is rejected: a user resolves
+-- to exactly one role.
+SELECT documentdb_api.create_user('{"createUser":"customRoleUser2", "pwd":"test_password", "roles":[{"role":"readAnyDatabase","db":"admin"},{"role":"customUserRole","db":"admin"}], "$db":"admin"}');
+ERROR:  Cannot specify both a custom role 'customUserRole' and built-in roles.
+-- Same input with readWriteAnyDatabase, whose standalone support is gated.
+-- With the flag off the gate is reported first; with it on, standalone
+-- readWriteAnyDatabase is allowed and the custom-role conflict is reported.
+-- Either way the request is rejected.
+SELECT documentdb_api.create_user('{"createUser":"customRoleUser2", "pwd":"test_password", "roles":[{"role":"readWriteAnyDatabase","db":"admin"},{"role":"customUserRole","db":"admin"}], "$db":"admin"}');
+ERROR:  Roles specified are invalid. Only readAnyDatabase or readWriteAnyDatabase+clusterAdmin are allowed built-in roles.
+SET documentdb.enable_readwrite_any_database_role_enforcement TO ON;
+SELECT documentdb_api.create_user('{"createUser":"customRoleUser2", "pwd":"test_password", "roles":[{"role":"readWriteAnyDatabase","db":"admin"},{"role":"customUserRole","db":"admin"}], "$db":"admin"}');
+ERROR:  Cannot specify both a custom role 'customUserRole' and built-in roles.
+RESET documentdb.enable_readwrite_any_database_role_enforcement;
+-- Specifying more than one custom role is rejected.
+SELECT documentdb_api.create_role('{"createRole":"customUserRole2", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+            create_role            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.create_user('{"createUser":"customRoleUser2", "pwd":"test_password", "roles":[{"role":"customUserRole","db":"admin"},{"role":"customUserRole2","db":"admin"}], "$db":"admin"}');
+ERROR:  Only one custom role may be specified.
+-- A role that does not exist is still rejected.
+SELECT documentdb_api.create_user('{"createUser":"customRoleUser2", "pwd":"test_password", "roles":[{"role":"noSuchRole","db":"admin"}], "$db":"admin"}');
+ERROR:  The specified value for the role is invalid: 'noSuchRole'.
+-- Another user may not be granted as if it were a role, since users are login
+-- roles. This prevents one user from inheriting another user's privileges.
+SELECT documentdb_api.create_user('{"createUser":"customRoleUser3", "pwd":"test_password", "roles":[{"role":"customRoleUser","db":"admin"}], "$db":"admin"}');
+ERROR:  The specified value for the role is invalid: 'customRoleUser'.
+-- Reserved role names are rejected even though they exist.
+SELECT documentdb_api.create_user('{"createUser":"customRoleUser3", "pwd":"test_password", "roles":[{"role":"documentdb_readonly_role","db":"admin"}], "$db":"admin"}');
+ERROR:  The specified value for the role is invalid: 'documentdb_readonly_role'.
+-- PostgreSQL predefined roles are not custom roles even though they cannot log
+-- in, so they may not be granted through createUser.
+SELECT documentdb_api.create_user('{"createUser":"customRoleUser3", "pwd":"test_password", "roles":[{"role":"pg_read_all_data","db":"admin"}], "$db":"admin"}');
+ERROR:  The specified value for the role is invalid: 'pg_read_all_data'.
+-- Verify the membership was actually created. usersInfo only reports built-in
+-- roles, so the custom role does not appear there.
+SELECT pg_has_role('customRoleUser', 'customUserRole', 'MEMBER');
+ pg_has_role 
+-------------
+ t
+(1 row)
+
+-- Cleanup
+SELECT documentdb_api.drop_user('{"dropUser":"customRoleUser", "$db":"admin"}');
+             drop_user             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.drop_role('{"dropRole":"customUserRole", "$db":"admin"}');
+             drop_role             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.drop_role('{"dropRole":"customUserRole2", "$db":"admin"}');
+             drop_role             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+RESET documentdb.enableRoleCrud;
 -- Reset the feature flag for db admin requirement
 RESET documentdb.enableUsersAdminDBCheck;
+-- Unit test for IS_BUILTIN_ROLE, IS_CUSTOM_RBAC_ROLE, IS_SYSTEM_LOGIN_ROLE, and IS_NATIVE_BUILTIN_ROLE macros
+CREATE OR REPLACE FUNCTION documentdb_test_helpers.test_is_reserved_role_name(text)
+RETURNS bool
+LANGUAGE C AS 'pg_documentdb', $$test_is_reserved_internal_role_name$$;
+-- IS_BUILTIN_ROLE: all builtin roles should be reserved
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_admin_role');
+ test_is_reserved_role_name 
+----------------------------
+ t
+(1 row)
+
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_cluster_admin_role');
+ test_is_reserved_role_name 
+----------------------------
+ t
+(1 row)
+
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_readonly_role');
+ test_is_reserved_role_name 
+----------------------------
+ t
+(1 row)
+
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_readwrite_role');
+ test_is_reserved_role_name 
+----------------------------
+ t
+(1 row)
+
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_root_role');
+ test_is_reserved_role_name 
+----------------------------
+ t
+(1 row)
+
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_user_admin_role');
+ test_is_reserved_role_name 
+----------------------------
+ t
+(1 row)
+
+-- IS_CUSTOM_RBAC_ROLE: all custom RBAC roles should be reserved
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_api_find_role');
+ test_is_reserved_role_name 
+----------------------------
+ t
+(1 row)
+
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_api_insert_role');
+ test_is_reserved_role_name 
+----------------------------
+ t
+(1 row)
+
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_api_remove_role');
+ test_is_reserved_role_name 
+----------------------------
+ t
+(1 row)
+
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_api_update_role');
+ test_is_reserved_role_name 
+----------------------------
+ t
+(1 row)
+
+-- IS_SYSTEM_LOGIN_ROLE: system login roles should be reserved
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_bg_worker_role');
+ test_is_reserved_role_name 
+----------------------------
+ t
+(1 row)
+
+-- Negative cases: normal usernames should NOT be reserved
+SELECT documentdb_test_helpers.test_is_reserved_role_name('normal_user');
+ test_is_reserved_role_name 
+----------------------------
+ f
+(1 row)
+
+SELECT documentdb_test_helpers.test_is_reserved_role_name('admin');
+ test_is_reserved_role_name 
+----------------------------
+ f
+(1 row)
+
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_some_other_thing');
+ test_is_reserved_role_name 
+----------------------------
+ f
+(1 row)
+
+-- dropUser with IS_BUILTIN_ROLE name
+SELECT documentdb_api.drop_user('{"dropUser":"documentdb_readonly_role", "$db":"admin"}');
+ERROR:  The specified user does not exist.
+-- updateUser with IS_BUILTIN_ROLE name
+SELECT documentdb_api.update_user('{"updateUser":"documentdb_readonly_role", "pwd":"New$123Pass", "$db":"admin"}');
+ERROR:  The specified user does not exist.
+-- usersInfo with a reserved name should still work (read-only, no blocking)
+SELECT documentdb_api.users_info('{"usersInfo":"documentdb_readonly_role", "$db":"admin"}');
+            users_info             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+DROP FUNCTION documentdb_test_helpers.test_is_reserved_role_name(text);

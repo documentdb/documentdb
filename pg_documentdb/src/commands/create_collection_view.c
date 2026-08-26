@@ -60,6 +60,12 @@ typedef struct CreateSpec
 
 	/* enable or disable change stream pre and post images */
 	bool changeStreamPreAndPostImageEnabled;
+
+	/* enable or disable change stream update descriptions */
+	bool enableUpdateDescription;
+
+	/* Whether or not the collection has stats enabled */
+	bool statsEnabled;
 } CreateSpec;
 
 static const StringView SystemPrefix = { .string = "system.", .length = 7 };
@@ -83,6 +89,7 @@ PG_FUNCTION_INFO_V1(command_create_collection_view);
 
 extern bool EnableSchemaValidation;
 extern bool EnablePreImages;
+extern bool SkipFailOnCollation;
 
 /*
  * command_create_collection_view represents the wire
@@ -143,9 +150,52 @@ command_create_collection_view(PG_FUNCTION_ARGS)
 			 */
 			collection = GetMongoCollectionOrViewByNameDatum(
 				databaseDatum, createDatum, AccessShareLock);
+
+			if (collection == NULL)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+								errmsg("Collection not found after creation")));
+			}
+
 			UpdateChangeStreamPreAndPostImages(collection,
 											   createDefinition->
 											   changeStreamPreAndPostImageEnabled);
+		}
+
+		if (createDefinition->enableUpdateDescription)
+		{
+			if (collection == NULL)
+			{
+				collection = GetMongoCollectionOrViewByNameDatum(
+					databaseDatum, createDatum, AccessShareLock);
+			}
+
+			if (collection == NULL)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+								errmsg("Collection not found after creation")));
+			}
+
+			UpdateEnableUpdateDescription(collection,
+										  createDefinition->enableUpdateDescription);
+		}
+
+		if (createDefinition->statsEnabled)
+		{
+			if (collection == NULL)
+			{
+				collection = GetMongoCollectionOrViewByNameDatum(
+					databaseDatum, createDatum, AccessShareLock);
+			}
+
+			if (collection == NULL)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+								errmsg("Collection not found after creation")));
+			}
+
+			UpdateCollectionStatsEnabledOption(collection->collectionId,
+											   createDefinition->statsEnabled);
 		}
 	}
 
@@ -269,14 +319,9 @@ ParseCreateSpec(Datum *databaseDatum, pgbson *createSpec, bool *hasSchemaValidat
 			EnsureTopLevelFieldType("create.create", &createIter, BSON_TYPE_UTF8);
 
 			uint32_t strLength = 0;
-			spec->name = pstrdup(bson_iter_utf8(&createIter, &strLength));
-
-			if (strlen(spec->name) != (size_t) strLength)
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
-								errmsg(
-									"Namespaces are not allowed to contain any embedded null characters")));
-			}
+			const char *name = bson_iter_utf8(&createIter, &strLength);
+			ValidateNamespaceStringForEmbeddedNull(name, strLength);
+			spec->name = pstrdup(name);
 		}
 		else if (strcmp(key, "viewOn") == 0)
 		{
@@ -284,17 +329,13 @@ ParseCreateSpec(Datum *databaseDatum, pgbson *createSpec, bool *hasSchemaValidat
 														 BSON_TYPE_UTF8))
 			{
 				uint32_t strLength = 0;
-				spec->viewOn = pstrdup(bson_iter_utf8(&createIter, &strLength));
+				const char *viewOn = bson_iter_utf8(&createIter, &strLength);
+				ValidateNamespaceStringForEmbeddedNull(viewOn, strLength);
+				spec->viewOn = pstrdup(viewOn);
 				if (strlen(spec->viewOn) == 0)
 				{
 					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 									errmsg("The 'viewOn' field must not be empty")));
-				}
-				else if (strlen(spec->viewOn) != (size_t) strLength)
-				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
-									errmsg(
-										"Namespaces are not allowed to contain any embedded null characters")));
 				}
 			}
 		}
@@ -311,6 +352,11 @@ ParseCreateSpec(Datum *databaseDatum, pgbson *createSpec, bool *hasSchemaValidat
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
 								errmsg("Capped collections not supported yet")));
 			}
+		}
+		else if (strcmp(key, "statsEnabled") == 0)
+		{
+			EnsureTopLevelFieldIsBooleanLike("create.statsEnabled", &createIter);
+			spec->statsEnabled = BsonValueAsBool(bson_iter_value(&createIter));
 		}
 		else if (strcmp(key, "timeseries") == 0)
 		{
@@ -350,6 +396,12 @@ ParseCreateSpec(Datum *databaseDatum, pgbson *createSpec, bool *hasSchemaValidat
 					"create.changeStreamPreAndPostImages");
 				spec->changeStreamPreAndPostImageEnabled = enabled;
 			}
+		}
+		else if (strcmp(key, "enableUpdateDescription") == 0)
+		{
+			EnsureTopLevelFieldIsBooleanLike("create.enableUpdateDescription",
+											 &createIter);
+			spec->enableUpdateDescription = bson_iter_as_bool(&createIter);
 		}
 		else if (strcmp(key, "autoIndexId") == 0)
 		{
@@ -400,6 +452,16 @@ ParseCreateSpec(Datum *databaseDatum, pgbson *createSpec, bool *hasSchemaValidat
 			spec->validationAction = ParseAndGetValidationActionOption(&createIter,
 																	   "create.validationAction",
 																	   hasSchemaValidationSpec);
+		}
+		else if (strcmp(key, "collation") == 0)
+		{
+			ReportFeatureUsage(FEATURE_COLLATION_CREATE_COLLECTION);
+			if (!SkipFailOnCollation)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+								errmsg(
+									"Collation is currently not supported")));
+			}
 		}
 		else if (strcmp(key, "writeConcern") == 0)
 		{

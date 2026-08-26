@@ -1,0 +1,63 @@
+name: 'Resolve DocumentDB version'
+description: >-
+  Resolve the DocumentDB version from an explicit override or, failing that,
+  from pg_documentdb_core/documentdb_core.control, and emit BOTH version
+  grammars the packaging uses. Single-sources what was five near-identical
+  grep|sed snippets across the packaging workflows.
+
+inputs:
+  version:
+    description: >-
+      Explicit version in either grammar (X.Y-Z or X.Y.Z). Blank derives the
+      version from the control file.
+    required: false
+    default: ''
+
+outputs:
+  version:
+    description: 'Dotted packaging form X.Y.Z — what every builder --version expects.'
+    value: ${{ steps.resolve.outputs.version }}
+  version_dash:
+    description: >-
+      Control-file form X.Y-Z — release tags, CHANGELOG headings, and any
+      dependency floor that references an extension package (see
+      packaging/README.md, "Package version formats").
+    value: ${{ steps.resolve.outputs.version_dash }}
+
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        control="pg_documentdb_core/documentdb_core.control"
+
+        raw="${INPUT_VERSION}"
+        if [ -n "$raw" ]; then
+          echo "Using provided version: $raw"
+        else
+          if [ ! -f "$control" ]; then
+            echo "::error::${control} not found — did this job check out the repository first?"
+            exit 1
+          fi
+          raw=$(grep -E "^default_version" "$control" | sed -E "s/.*'([0-9]+\.[0-9]+-[0-9]+)'.*/\1/")
+          echo "Derived version from control file: $raw"
+        fi
+
+        # Validate rather than propagate a silently empty/garbled version into
+        # package filenames — the old inline snippets emitted whatever sed
+        # produced, so a control-file format change surfaced much later as an
+        # oddly named package instead of a failed step.
+        if [[ ! "$raw" =~ ^([0-9]+)\.([0-9]+)[.-]([0-9]+)$ ]]; then
+          echo "::error::Could not resolve a DocumentDB version (got '${raw}'); expected X.Y-Z or X.Y.Z."
+          exit 1
+        fi
+        dots="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+        dash="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}-${BASH_REMATCH[3]}"
+
+        echo "Resolved version: ${dots} (control-file form ${dash})"
+        echo "version=${dots}" >> "$GITHUB_OUTPUT"
+        echo "version_dash=${dash}" >> "$GITHUB_OUTPUT"

@@ -16,6 +16,11 @@ impl TransactionNumber {
     pub const fn new(transaction_number: i64) -> Self {
         Self(transaction_number)
     }
+
+    #[must_use]
+    pub const fn as_i64(self) -> i64 {
+        self.0
+    }
 }
 
 impl From<i64> for TransactionNumber {

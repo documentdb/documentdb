@@ -1,0 +1,39 @@
+name: DocumentDB local tests
+run-name: ${{ github.event.pull_request.title || '' }}
+concurrency:
+  group: documentdb-local-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "main"
+    paths-ignore:
+      - "**/*.md"
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths-ignore:
+      - "**/*.md"
+
+jobs:
+  documentdb-local-unit-tests:
+    runs-on: ubuntu-22.04
+    name: documentdb-local unit tests
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install Python test dependencies
+        run: python3 -m pip install pyyaml
+
+      - name: Run documentdb-local Python unit tests
+        # Single discovery run so a newly added test_*.py module is picked up
+        # automatically (no per-file YAML edit needed) and every test_*.py in
+        # documentdb_local_tests runs -- not just the emulator tests, but the
+        # setup/admin/package-contract suites too. test_image.py self-skips when
+        # DOCUMENTDB_LOCAL_IMAGE is unset, so it is a no-op here.
+        run: python3 -m unittest discover -s documentdb-local/scripts/documentdb_local_tests -p 'test_*.py' -v
+
+      - name: Run internal CI trigger contract tests
+        run: python3 -m unittest discover -s .github/workflows/tests -p 'test_internal_ci_trigger.py'

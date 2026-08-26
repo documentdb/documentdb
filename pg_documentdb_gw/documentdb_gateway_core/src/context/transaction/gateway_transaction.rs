@@ -7,17 +7,21 @@
  */
 
 use std::sync::Arc;
+
+use scc::HashSet;
 use tokio_postgres::IsolationLevel;
 
-use crate::context::transaction::TransactionNumber;
 use crate::{
-    configuration::DynamicConfiguration,
-    context::{CursorStore, SessionId},
-    error::{DocumentDBError, ErrorCode, Result},
+    context::{
+        transaction::{TransactionError, TransactionNumber},
+        CursorId, LogicalSessionId,
+    },
+    error::ErrorCode,
     postgres::{self, conn_mgmt::Connection},
+    security::principal::Principal,
 };
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct RequestTransactionInfo {
     pub transaction_number: TransactionNumber,
     pub auto_commit: bool,
@@ -28,9 +32,10 @@ pub struct RequestTransactionInfo {
 
 #[derive(Debug)]
 pub struct GatewayTransaction {
-    pub session_id: SessionId,
+    pub lsid: LogicalSessionId,
     pub transaction_number: TransactionNumber,
-    pub cursors: CursorStore,
+    _owner: Principal,
+    cursors: HashSet<CursorId>,
     pg_transaction: Option<postgres::Transaction>,
 }
 
@@ -39,17 +44,18 @@ impl GatewayTransaction {
     ///
     /// Returns an error if the operation fails.
     pub async fn start(
-        config: Arc<dyn DynamicConfiguration>,
         request: &RequestTransactionInfo,
         conn: Arc<Connection>,
         isolation_level: IsolationLevel,
-        session_id: SessionId,
-    ) -> Result<Self> {
+        lsid: LogicalSessionId,
+        owner: Principal,
+    ) -> Result<Self, TransactionError> {
         Ok(Self {
-            session_id,
+            lsid,
             transaction_number: request.transaction_number,
             pg_transaction: Some(postgres::Transaction::start(conn, isolation_level).await?),
-            cursors: CursorStore::new(config, false),
+            cursors: HashSet::new(),
+            _owner: owner,
         })
     }
 
@@ -61,18 +67,18 @@ impl GatewayTransaction {
     }
 
     #[must_use]
-    pub const fn get_session_id(&self) -> &SessionId {
-        &self.session_id
+    pub const fn get_lsid(&self) -> &LogicalSessionId {
+        &self.lsid
     }
 
     /// # Errors
     ///
     /// Returns an error if the operation fails.
-    pub async fn commit(&mut self) -> Result<()> {
+    pub async fn commit(&mut self) -> Result<(), TransactionError> {
         self.pg_transaction
             .as_mut()
             .ok_or_else(|| {
-                DocumentDBError::documentdb_error(
+                TransactionError::SimpleError(
                     ErrorCode::NoSuchTransaction,
                     "No transaction found to commit".to_owned(),
                 )
@@ -84,11 +90,11 @@ impl GatewayTransaction {
     /// # Errors
     ///
     /// Returns an error if the operation fails.
-    pub async fn abort(&mut self) -> Result<()> {
+    pub async fn abort(&mut self) -> Result<(), TransactionError> {
         self.pg_transaction
             .as_mut()
             .ok_or_else(|| {
-                DocumentDBError::documentdb_error(
+                TransactionError::SimpleError(
                     ErrorCode::NoSuchTransaction,
                     "No transaction found to abort".to_owned(),
                 )
@@ -100,6 +106,18 @@ impl GatewayTransaction {
     #[must_use]
     pub const fn transaction_number(&self) -> TransactionNumber {
         self.transaction_number
+    }
+
+    pub fn add_cursor(&self, cursor_id: CursorId) {
+        let _ = self.cursors.insert_sync(cursor_id);
+    }
+
+    pub fn remove_cursor(&self, cursor_id: CursorId) {
+        self.cursors.remove_sync(&cursor_id);
+    }
+
+    pub fn contains_cursor(&self, cursor_id: CursorId) -> bool {
+        self.cursors.contains_sync(&cursor_id)
     }
 }
 

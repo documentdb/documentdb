@@ -5,7 +5,7 @@ print("Initializing orders collection...");
 use('sampledb');
 
 // Create orders collection and insert sample orders
-db.orders.insertMany([
+const sampleOrders = [
     {
         _id: "order1",
         orderNumber: "ORD-2024-001",
@@ -163,15 +163,27 @@ db.orders.insertMany([
         },
         orderDate: new Date("2024-06-20T14:30:00Z")
     }
-]);
+];
 
-print("Created " + db.orders.countDocuments() + " orders in the orders collection");
+// Idempotent seed: insert each document only if its _id is not already present, so re-running
+// this script against a persistent volume is a no-op instead of crashing with a duplicate-key
+// error (#612). A partial first run is also repaired (only the missing documents are inserted).
+sampleOrders.forEach(function (doc) {
+    if (db.orders.countDocuments({ _id: doc._id }) === 0) {
+        db.orders.insertOne(doc);
+    }
+});
 
 // Create indexes for better query performance
-db.orders.createIndex({ "userId": 1 });
-db.orders.createIndex({ "orderNumber": 1 }, { unique: true });
-db.orders.createIndex({ "status": 1 });
-db.orders.createIndex({ "orderDate": 1 });
-db.orders.createIndex({ "customerInfo.email": 1 });
+db.runCommand({
+    createIndexes: "orders",
+    indexes: [
+        { key: { "userId": 1 }, name: "userId_1" },
+        { key: { "orderNumber": 1 }, name: "orderNumber_1", unique: true },
+        { key: { "status": 1 }, name: "status_1" },
+        { key: { "orderDate": 1 }, name: "orderDate_1" },
+        { key: { "customerInfo.email": 1 }, name: "customerInfo.email_1" }
+    ]
+});
 
 print("Created indexes on orders collection");

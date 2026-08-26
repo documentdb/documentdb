@@ -13,6 +13,21 @@
 
 #include "opclass/bson_gin_common.h"
 #include "access/reloptions.h"
+#include "nodes/primnodes.h"
+
+/*
+ * Tri-state multi-key status of an index path. Unknown means the multi-key state
+ * is not tracked/known (callers must treat the path conservatively as multi-key);
+ * HasArrays / HasNoArrays are the known states.
+ */
+typedef enum IndexMultiKeyStatus
+{
+	IndexMultiKeyStatus_Unknown = 0,
+
+	IndexMultiKeyStatus_HasArrays = 1,
+
+	IndexMultiKeyStatus_HasNoArrays = 2
+} IndexMultiKeyStatus;
 
 /*
  * Enum identifying the kind of index based on the options.
@@ -147,6 +162,7 @@ typedef struct
 {
 	BsonGinIndexOptionsBase base;
 	bool isWildcard;
+	bool enableDottedTerms;
 	int defaultLanguage;
 	int weights;
 	int languageOverride;
@@ -197,6 +213,9 @@ typedef struct
 	 * indexes.
 	 */
 	bool enableCompositeReducedCorrelatedTerms;
+
+	/* Whether or not to track per path multi-key terms*/
+	bool enableMetadataBasedTracking;
 } BsonGinCompositePathOptions;
 
 bool ValidateIndexForQualifierElement(bytea *indexOptions,
@@ -218,6 +237,7 @@ Size FillDeprecatedStringSpec(const char *value, void *ptr);
 
 struct PathKey;
 struct Expr;
+struct Const;
 typedef struct SortIndexInputDetails
 {
 	Oid funcOid;
@@ -225,17 +245,21 @@ typedef struct SortIndexInputDetails
 	struct Expr *sortVar;
 	struct Expr *sortDatum;
 	struct PathKey *sortPathKey;
+	struct Const *collationConst;
 } SortIndexInputDetails;
 
 
 struct IndexPath;
-bool CompositeIndexSupportsIndexOnlyScan(const struct IndexPath *indexPath);
+bool CompositeIndexSupportsIndexOnlyScan(const struct IndexPath *indexPath,
+										 bool skipTruncationCheck);
 
 int32_t GetCompositeOpClassColumnNumber(const char *currentPath, void *contextOptions,
 										int8_t *sortDirection);
 
 int32_t GetCompositeOpClassPathCount(void *contextOptions);
 const char * GetCompositeFirstIndexPath(void *contextOptions);
+const char * GetCompositeFirstIndexPathAndSortOrder(void *contextOptions,
+													int8_t *sortOrder);
 const char * GetFirstPathFromIndexOptionsIfApplicable(bytea *indexOptions,
 													  bool *isWildcardIndex);
 bool PathHasArrayIndexElements(const StringView *path);
@@ -243,9 +267,12 @@ bool SubPathHasArrayIndexElements(const StringView *path, StringView subPath);
 
 struct PlannerInfo;
 bool TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct
-										PlannerInfo *root, bool *canSupportIndexOnlyScan);
+										PlannerInfo *root,
+										bool *canSupportIndexOnlyScan);
 List * ExtractBoundaryQualsForOrderedIndexPath(struct IndexPath *indexPath,
 											   int *num_sa_scans);
+OpExpr * CreateFullScanOpExpr(Expr *documentExpr, const char *sourcePath, uint32_t
+							  sourcePathLength, int32_t orderByScanDirection);
 
 /* Helper macro to retrieve a length prefixed value in the index options */
 #define Get_Index_Path_Option(options, field, result, resultFieldLength) \

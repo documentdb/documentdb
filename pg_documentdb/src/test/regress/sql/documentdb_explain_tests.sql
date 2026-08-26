@@ -77,3 +77,51 @@ SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": 
 
 -- cannot test sort pushdown here (or Idxos)
 SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "coll1", "projection": { "c": 1 }, "filter": { "a": { "$gt": 1 }, "d": 1 }, "sort": { "a": 1, "d": 1 }, "limit": 2 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+
+-- Sanity test: the EXPLAIN hook enables extended explain plans by default.
+-- Returns whether a raw SQL EXPLAIN emits the extended explain custom scan node.
+CREATE OR REPLACE FUNCTION documentdb_test_helpers.explain_uses_extended(p_query text)
+ RETURNS boolean AS $$
+ DECLARE
+     line text;
+     found boolean := false;
+ BEGIN
+     FOR line IN EXECUTE 'EXPLAIN (COSTS OFF) ' || p_query LOOP
+         IF position('DocumentDBApiExplainQueryScan' in line) > 0 THEN
+             found := true;
+         END IF;
+     END LOOP;
+     RETURN found;
+ END;
+ $$ LANGUAGE plpgsql;
+
+-- The base extended-explain GUC is off; the hook is what turns it on for EXPLAIN.
+SHOW documentdb.enableExtendedExplainPlans;
+
+-- With the guard on, the hook injects extended explain even though the base GUC is off.
+SET documentdb.enable_default_extended_explain TO on;
+SELECT documentdb_test_helpers.explain_uses_extended($Q$ SELECT document FROM documentdb_api.collection('expdb', 'coll1') WHERE document OPERATOR(documentdb_api_catalog.@@) '{ "a": { "$gt": 1 } }' $Q$) AS extended_when_guard_on;
+
+-- Sequential scan wrapping can be disabled independently for performance-sensitive tests.
+SHOW documentdb.enable_explain_scan_seq_scan;
+SET enable_seqscan TO on;
+SET documentdb.forceDisableSeqScan TO off;
+SET enable_indexscan TO off;
+SET enable_indexonlyscan TO off;
+SET enable_bitmapscan TO off;
+SET documentdb.enable_explain_scan_seq_scan TO off;
+SELECT documentdb_test_helpers.explain_uses_extended($Q$ SELECT document FROM documentdb_api.collection('expdb', 'coll1') WHERE document OPERATOR(documentdb_api_catalog.@@) '{ "a": { "$gt": 1 } }' $Q$) AS seq_scan_extended_when_disabled;
+RESET documentdb.enable_explain_scan_seq_scan;
+SET enable_seqscan TO off;
+SET documentdb.forceDisableSeqScan TO on;
+RESET enable_indexscan;
+RESET enable_indexonlyscan;
+RESET enable_bitmapscan;
+
+-- With the guard off, the hook does not inject extended explain.
+SET documentdb.enable_default_extended_explain TO off;
+SELECT documentdb_test_helpers.explain_uses_extended($Q$ SELECT document FROM documentdb_api.collection('expdb', 'coll1') WHERE document OPERATOR(documentdb_api_catalog.@@) '{ "a": { "$gt": 1 } }' $Q$) AS extended_when_guard_off;
+
+-- Running EXPLAIN through the hook must not leak the base GUC onto later queries.
+SHOW documentdb.enableExtendedExplainPlans;
+RESET documentdb.enable_default_extended_explain;

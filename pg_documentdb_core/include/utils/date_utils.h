@@ -181,9 +181,13 @@ GetDateTimeFromTimestamp(TimestampTz timestamp)
 {
 	/* Get milliseconds from epoch (Timestamp has TS_PREC_INV units per seconds) */
 	Timestamp epoch = SetEpochTimestamp();
+#if PG_VERSION_NUM >= 190000
+	TimestampTz epochTimestampTz = timestamp2timestamptz_safe(epoch, NULL);
+#else
 	int overFlow = 0;
 	TimestampTz epochTimestampTz = timestamp2timestamptz_opt_overflow(epoch,
 																	  &overFlow);
+#endif
 
 	/* Get the difference in milliseconds.*/
 	/* We do not use the TimestampDifferenceMilliseconds function provided by PG as its implementation in PG 16 */

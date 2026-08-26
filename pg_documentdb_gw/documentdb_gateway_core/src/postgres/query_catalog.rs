@@ -6,6 +6,8 @@
  *-------------------------------------------------------------------------
  */
 
+use std::collections::HashMap;
+
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, Default, Clone)]
@@ -22,8 +24,10 @@ pub struct QueryCatalog {
 
     // pg_configuration.rs
     pub pg_settings: String,
+    pub pg_file_settings: String,
     pub pg_is_in_recovery: String,
     pub extension_versions: String,
+    pub startup_validation_probe: String,
 
     // explain/mod.rs
     pub explain: String, // Has 2 params
@@ -50,6 +54,7 @@ pub struct QueryCatalog {
 
     // cursor.rs
     pub cursor_get_more: String,
+    pub cursor_get_more_v2: String,
     pub kill_cursors: String,
 
     // data_description.rs
@@ -66,6 +71,7 @@ pub struct QueryCatalog {
 
     // data_management.rs
     pub delete: String,
+    pub delete_txn_proc: String,
     pub find_cursor_first_page: String,
     pub insert: String,
     pub insert_txn_proc: String,
@@ -94,6 +100,8 @@ pub struct QueryCatalog {
     // indexing.rs
     pub create_indexes_background: String,
     pub check_build_index_status: String,
+    pub create_search_indexes_background: String,
+    pub check_build_search_index_status: String,
     pub re_index: String,
     pub drop_indexes: String,
     pub list_indexes_cursor_first_page: String,
@@ -115,6 +123,12 @@ pub struct QueryCatalog {
     pub create_db_user: String,
 
     pub scan_types: Vec<String>,
+
+    /// Maps a Custom Scan provider name to an explain stage name override.
+    /// Entries here take precedence over the default `"FETCH"` mapping
+    /// applied to providers listed in `scan_types`.
+    #[serde(default)]
+    pub scan_type_stage_overrides: HashMap<String, String>,
 }
 
 impl QueryCatalog {
@@ -157,6 +171,11 @@ impl QueryCatalog {
     }
 
     #[must_use]
+    pub fn pg_file_settings(&self) -> &str {
+        &self.pg_file_settings
+    }
+
+    #[must_use]
     pub fn pg_is_in_recovery(&self) -> &str {
         &self.pg_is_in_recovery
     }
@@ -165,6 +184,11 @@ impl QueryCatalog {
     #[must_use]
     pub fn extension_versions(&self) -> &str {
         &self.extension_versions
+    }
+
+    #[must_use]
+    pub fn startup_validation_probe(&self) -> &str {
+        &self.startup_validation_probe
     }
 
     // Explain getters
@@ -265,6 +289,11 @@ impl QueryCatalog {
         &self.cursor_get_more
     }
 
+    #[must_use]
+    pub fn cursor_get_more_v2(&self) -> &str {
+        &self.cursor_get_more_v2
+    }
+
     // Delete getters
     #[must_use]
     pub fn drop_database(&self) -> &str {
@@ -282,6 +311,11 @@ impl QueryCatalog {
     }
 
     #[must_use]
+    pub fn delete_txn_proc(&self) -> &str {
+        &self.delete_txn_proc
+    }
+
+    #[must_use]
     pub fn set_allow_write(&self) -> &str {
         &self.set_allow_write
     }
@@ -295,6 +329,16 @@ impl QueryCatalog {
     #[must_use]
     pub fn check_build_index_status(&self) -> &str {
         &self.check_build_index_status
+    }
+
+    #[must_use]
+    pub fn create_search_indexes_background(&self) -> &str {
+        &self.create_search_indexes_background
+    }
+
+    #[must_use]
+    pub fn check_build_search_index_status(&self) -> &str {
+        &self.check_build_search_index_status
     }
 
     #[must_use]
@@ -487,6 +531,14 @@ impl QueryCatalog {
         &self.scan_types
     }
 
+    /// Returns the stage name override for a custom scan provider, if any.
+    #[must_use]
+    pub fn scan_type_stage_override(&self, provider: &str) -> Option<&str> {
+        self.scan_type_stage_overrides
+            .get(provider)
+            .map(String::as_str)
+    }
+
     #[must_use]
     pub fn unshard_collection(&self) -> &str {
         &self.unshard_collection
@@ -545,6 +597,7 @@ pub fn create_query_catalog() -> QueryCatalog {
             pg_settings: "SELECT name, setting FROM pg_settings WHERE name LIKE 'documentdb.%' OR name IN ('max_connections', 'default_transaction_read_only')".to_owned(),
             pg_is_in_recovery: "SELECT pg_is_in_recovery()".to_owned(),
             extension_versions: "SELECT documentdb_core.bson_build_document('internal', ARRAY[ (SELECT extversion FROM pg_extension WHERE extname = 'documentdb' LIMIT 1), documentdb_api.binary_version() ])".to_owned(),
+            startup_validation_probe: "SELECT documentdb_core.bson_build_document('a', 1)".to_owned(),
 
             // explain/mod.rs
             explain: "EXPLAIN (FORMAT JSON, ANALYZE {analyze}, VERBOSE True, BUFFERS {analyze}, TIMING {analyze}) SELECT document FROM documentdb_api_catalog.bson_aggregation_{query_base}($1, $2)".to_owned(),
@@ -556,10 +609,10 @@ pub fn create_query_catalog() -> QueryCatalog {
 
             // query_diagnostics.rs
             bson_dollar_project_output_regex: "(documentdb_api_catalog.)?bson_dollar_([^\\(]+)\\([^,]+, 'BSONHEX([\\w\\d]+)'::documentdb_core.bson".to_owned(),
-            index_condition_split_regex: "\\(?((\\s+AND\\s+)?(?<expr>\\S+ (OPERATOR\\(\\S+\\)|(@\\S+)) '[^']+'::(documentdb_core.)?bson))+\\)?".to_owned(),
-            runtime_condition_split_regex: "\\(?((\\s+AND|OR\\s+)?(?<expr>\\S+ (OPERATOR\\(\\S+\\)|(@\\S+)) '[^']+'::(documentdb_core.)?bson))+\\)?".to_owned(),
-            sort_condition_split_regex: "(documentdb_api_catalog\\.)?bson_orderby\\(([^,]+), 'BSONHEX([\\w\\d]+)'::documentdb_core.bson\\)".to_owned(),
-            single_index_condition_regex: "(OPERATOR\\()?(documentdb_api_catalog\\.)?(?<operator>@[^\\)\\s]+)\\)?\\s+'BSONHEX(?<queryBson>\\S+)'".to_owned(),
+            index_condition_split_regex: "\\(?((\\s+AND\\s+)?(?<expr>\\S+ (OPERATOR\\(\\S+\\)|(\\S+)) '[^']+'::(documentdb_core.)?bson))+\\)?".to_owned(),
+            runtime_condition_split_regex: "\\(?((\\s+AND|OR\\s+)?(?<expr>\\S+ (OPERATOR\\(\\S+\\)|(\\S+)) '[^']+'::(documentdb_core.)?bson))+\\)?".to_owned(),
+            sort_condition_split_regex: "(?:\\w+\\.)?bson_orderby(?:_index(?:_reverse)?)?\\(.*,\\s*'BSONHEX(?P<sortSpec>[\\w\\d]+)'::(?:documentdb_core\\.)?bson(?:,\\s*'(?P<collation>[^']*)'::(?:pg_catalog\\.)?text)?\\)".to_owned(),
+            single_index_condition_regex: "(?<field>\\S+) (OPERATOR\\()?(documentdb_api_catalog\\.)?(?<operator>[^\\)\\s]+)\\)?\\s+'BSONHEX(?<queryBson>\\S+)'".to_owned(),
             api_catalog_name_regex: "documentdb_api_catalog.".to_owned(),
             output_count_regex: "BSONSUM('{ \"\" : { \"$numberInt\" : \"1\" } }'::documentdb_core.bson)".to_owned(),
             output_bson_count_aggregate: "bsoncount(1)".to_owned(),
@@ -584,6 +637,7 @@ pub fn create_query_catalog() -> QueryCatalog {
 
             // data_management.rs
             delete: "SELECT * FROM documentdb_api.delete($1, $2, $3, NULL)".to_owned(),
+            delete_txn_proc: "CALL documentdb_api.delete_txn_proc($1, $2, $3, NULL)".to_owned(),
             find_cursor_first_page: "SELECT cursorPage, continuation, persistConnection, cursorId FROM documentdb_api.find_cursor_first_page($1, $2)".to_owned(),
             insert: "SELECT * FROM documentdb_api.insert($1, $2, $3, NULL)".to_owned(),
             insert_txn_proc: "CALL documentdb_api.insert_txn_proc($1, $2, $3, NULL)".to_owned(),
@@ -616,7 +670,6 @@ pub fn create_query_catalog() -> QueryCatalog {
             // indexing.rs
             create_indexes_background: "SELECT * FROM documentdb_api.create_indexes_background($1, $2)".to_owned(),
             check_build_index_status: "SELECT * FROM documentdb_api_internal.check_build_index_status($1)".to_owned(),
-            re_index: "CALL documentdb_api.re_index($1, $2)".to_owned(),
             drop_indexes: "CALL documentdb_api.drop_indexes($1, $2)".to_owned(),
             list_indexes_cursor_first_page: "SELECT cursorPage, continuation, persistConnection, cursorId FROM documentdb_api.list_indexes_cursor_first_page($1, $2)".to_owned(),
 
@@ -641,6 +694,7 @@ pub fn create_query_catalog() -> QueryCatalog {
             scan_types: vec![
                 "DocumentDBApiScan".to_owned(),
                 "DocumentDBApiQueryScan".to_owned(),
+                "DocumentDBApiCursorScan".to_owned(),
             ],
 
             ..Default::default()

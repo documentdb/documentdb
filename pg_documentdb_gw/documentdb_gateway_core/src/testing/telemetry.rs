@@ -14,9 +14,10 @@ use either::Either;
 
 use crate::{
     context::ConnectionContext,
+    error::DocumentDBError,
     protocol::header::Header,
-    requests::{request_tracker::RequestTracker, Request, RequestType},
-    responses::{CommandError, Response},
+    requests::{request_tracker::RequestTracker, RequestObservation, RequestType},
+    responses::Response,
     telemetry::TelemetryProvider,
 };
 
@@ -28,6 +29,7 @@ pub struct RecordedTelemetryEvent {
     request_type: Option<RequestType>,
     is_error: bool,
     error_code_name: Option<String>,
+    sub_status_code: i32,
 }
 
 impl RecordedTelemetryEvent {
@@ -54,6 +56,10 @@ impl RecordedTelemetryEvent {
     pub fn error_code_name(&self) -> Option<&str> {
         self.error_code_name.as_deref()
     }
+
+    pub fn sub_status_code(&self) -> i32 {
+        self.sub_status_code
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -75,16 +81,20 @@ impl TelemetryProvider for RecordingTelemetryProvider {
         &self,
         _: &ConnectionContext,
         _: &Header,
-        request: Option<&Request<'_>>,
-        response: Either<&Response, (&CommandError, usize)>,
-        collection: String,
+        request: Option<RequestObservation<'_, '_>>,
+        response: Either<&Response, (&DocumentDBError, usize)>,
+        collection: &str,
         _: &RequestTracker,
         activity_id: &str,
         user_agent: &str,
     ) {
-        let (is_error, error_code_name) = match response {
-            Either::Left(_) => (false, None),
-            Either::Right((error, _)) => (true, Some(error.code().to_string())),
+        let (is_error, error_code_name, sub_status_code) = match response {
+            Either::Left(_) => (false, None, 0),
+            Either::Right((error, _)) => (
+                true,
+                Some(error.error_code().to_string()),
+                error.sub_status_code().unwrap_or(0),
+            ),
         };
 
         self.events
@@ -92,11 +102,12 @@ impl TelemetryProvider for RecordingTelemetryProvider {
             .expect("telemetry events lock should not be poisoned")
             .push(RecordedTelemetryEvent {
                 activity_id: activity_id.to_owned(),
-                collection,
+                collection: collection.to_owned(),
                 user_agent: user_agent.to_owned(),
-                request_type: request.map(Request::request_type),
+                request_type: request.map(RequestObservation::request_type),
                 is_error,
                 error_code_name,
+                sub_status_code,
             });
     }
 }

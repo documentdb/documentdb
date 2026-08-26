@@ -11,6 +11,7 @@ categories.workspace = true
 
 [dependencies]
 bson.workspace = true
+deadpool-postgres.workspace = true
 documentdb_gateway_core.workspace = true
 futures.workspace = true
 mongodb.workspace = true

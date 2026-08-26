@@ -91,8 +91,10 @@ SELECT documentdb_api.insert_one('comp_ordind_db', 'query_orderby', '{ "_id": 7,
 ANALYZE documentdb_data.documents_:collection_id;
 set enable_seqscan to off;
 -- no pushdown
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby", "filter": { "a": { "$exists": true }}, "sort": { "a": 1 } }');
-                                        QUERY PLAN                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby", "filter": { "a": { "$exists": true }}, "sort": { "a": 1 } }')
+$cmd$);
+                                   run_explain_and_trim                                   
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
    indexName: a_c
@@ -108,8 +110,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
 (11 rows)
 
 -- now the order by succeeds with an index scan
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby", "filter": { "a": { "$exists": true }}, "sort": { "a": 1 } }');
-                                        QUERY PLAN                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby", "filter": { "a": { "$exists": true }}, "sort": { "a": 1 } }')
+$cmd$);
+                                   run_explain_and_trim                                   
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
    indexName: a_c
@@ -125,16 +129,20 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
 (11 rows)
 
 -- point read on _id with order by was broken initially and was fixed in 108 
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby", "filter": { "_id": 1}, "sort": { "_id": 1 } }');
-                                                  QUERY PLAN                                                   
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby", "filter": { "_id": 1}, "sort": { "_id": 1 } }')
+$cmd$);
+                                             run_explain_and_trim                                              
 ---------------------------------------------------------------------
  Index Scan using _id_ on documents_69201_6920002 collection (actual rows=1 loops=1)
    Index Cond: ((shard_key_value = '69201'::bigint) AND (object_id = '{ "" : { "$numberInt" : "1" } }'::bson))
 (2 rows)
 
 -- do a reverse walk
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby", "filter": { "a": { "$exists": true }}, "sort": { "a": -1 } }');
-                                        QUERY PLAN                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby", "filter": { "a": { "$exists": true }}, "sort": { "a": -1 } }')
+$cmd$);
+                                   run_explain_and_trim                                   
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
    indexName: a_c
@@ -298,7 +306,7 @@ SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_o
 
 -- validate that we use disjoint sets more efficiently
 SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db', '{ "createIndexes": "query_orderby_perf_arr", "indexes": [ { "key": { "a": 1, "_id": 1 }, "enableCompositeTerm": true, "name": "a_1_id_1" }] }', true);
-psql:sql/bson_composite_order_by_index_tests_core.sql:75: NOTICE:  creating collection
+psql:sql/bson_composite_order_by_index_tests_core.sql:83: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 ---------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -323,12 +331,14 @@ SELECT collection_id AS collection_id_2 FROM documentdb_api_catalog.collections 
 set documentdb.forceDisableSeqScan to on;
 ANALYZE documentdb_data.documents_:collection_id_2;
 -- should not use the index for sort (since it's a multi-key index)
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$lt": 3 }}, "sort": { "a": 1 } }');
-                                             QUERY PLAN                                              
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$lt": 3 }}, "sort": { "a": 1 } }')
+$cmd$);
+                                        run_explain_and_trim                                         
 ---------------------------------------------------------------------
  Sort (actual rows=5 loops=1)
    Sort Key: (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: 25kB
+   Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
          indexName: a_1_id_1
          indexKey: {"a": 1,"_id": 1}
@@ -389,12 +399,14 @@ SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_o
 (5 rows)
 
 set documentdb.enableExtendedExplainPlans to on;
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$in": [ 3, 49, 90 ] }}, "sort": { "a": 1 } }');
-                                                                                QUERY PLAN                                                                                 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$in": [ 3, 49, 90 ] }}, "sort": { "a": 1 } }')
+$cmd$);
+                                                                           run_explain_and_trim                                                                            
 ---------------------------------------------------------------------
  Sort (actual rows=6 loops=1)
    Sort Key: (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: 25kB
+   Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
          indexName: a_1_id_1
          indexKey: {"a": 1,"_id": 1}
@@ -408,12 +420,14 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
 (13 rows)
 
 -- scans 1 loop for checking multi-key - then scans 4 loops for entries 0, 1, 2, 3.
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$lt": 3 }}, "sort": { "a": 1 } }');
-                                             QUERY PLAN                                              
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$lt": 3 }}, "sort": { "a": 1 } }')
+$cmd$);
+                                        run_explain_and_trim                                         
 ---------------------------------------------------------------------
  Sort (actual rows=5 loops=1)
    Sort Key: (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: 25kB
+   Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
          indexName: a_1_id_1
          indexKey: {"a": 1,"_id": 1}
@@ -427,12 +441,14 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
 (13 rows)
 
 -- scans 1 loop for checking multi-key - then scans 5 loops for entries 96, 97, 98, 99, 100.
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$gt": 96 }}, "sort": { "a": 1 } }');
-                                             QUERY PLAN                                              
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$gt": 96 }}, "sort": { "a": 1 } }')
+$cmd$);
+                                        run_explain_and_trim                                         
 ---------------------------------------------------------------------
  Sort (actual rows=7 loops=1)
    Sort Key: (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: 25kB
+   Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
          indexName: a_1_id_1
          indexKey: {"a": 1,"_id": 1}
@@ -446,12 +462,14 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
 (13 rows)
 
 -- only pushes filter down
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$lt": 3, "$gt": 96 }}, "sort": { "a": 1 } }');
-                                                                   QUERY PLAN                                                                   
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$lt": 3, "$gt": 96 }}, "sort": { "a": 1 } }')
+$cmd$);
+                                                              run_explain_and_trim                                                              
 ---------------------------------------------------------------------
  Sort (actual rows=5 loops=1)
    Sort Key: (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: 25kB
+   Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
          indexName: a_1_id_1
          indexKey: {"a": 1,"_id": 1}
@@ -468,7 +486,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
 ---------------------------------------------------------------------
 -- validate that we use disjoint sets more efficiently
 SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db', '{ "createIndexes": "query_orderby_perf", "indexes": [ { "key": { "a": 1, "_id": 1 }, "enableCompositeTerm": true, "name": "a_1" }] }', true);
-psql:sql/bson_composite_order_by_index_tests_core.sql:119: NOTICE:  creating collection
+psql:sql/bson_composite_order_by_index_tests_core.sql:137: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 ---------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -486,8 +504,10 @@ SELECT collection_id AS collection_id_3 FROM documentdb_api_catalog.collections 
 set documentdb.forceDisableSeqScan to on;
 ANALYZE documentdb_data.documents_:collection_id_3;
 -- should use the index for sort
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3 }}, "sort": { "a": 1 } }');
-                                        QUERY PLAN                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3 }}, "sort": { "a": 1 } }')
+$cmd$);
+                                   run_explain_and_trim                                   
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
    indexName: a_1
@@ -502,8 +522,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
          Order By: (document |<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3 }}, "sort": { "a": -1 } }');
-                                        QUERY PLAN                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3 }}, "sort": { "a": -1 } }')
+$cmd$);
+                                   run_explain_and_trim                                   
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
    indexName: a_1
@@ -595,8 +617,10 @@ SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_o
 (0 rows)
 
 -- now check the performance
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$in": [ 3, 49, 90 ] }}, "sort": { "a": 1 } }');
-                                                                             QUERY PLAN                                                                              
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$in": [ 3, 49, 90 ] }}, "sort": { "a": 1 } }')
+$cmd$);
+                                                                        run_explain_and_trim                                                                         
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
    indexName: a_1
@@ -611,8 +635,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
          Order By: (document |<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$in": [ 3, 49, 90 ] }}, "sort": { "a": -1 } }');
-                                                                             QUERY PLAN                                                                              
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$in": [ 3, 49, 90 ] }}, "sort": { "a": -1 } }')
+$cmd$);
+                                                                        run_explain_and_trim                                                                         
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
    indexName: a_1
@@ -629,8 +655,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
 (12 rows)
 
 -- scans 1 loop for checking multi-key - then scans 4 loops for entries 0, 1, 2, 3.
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3 }}, "sort": { "a": 1 } }');
-                                        QUERY PLAN                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3 }}, "sort": { "a": 1 } }')
+$cmd$);
+                                   run_explain_and_trim                                   
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
    indexName: a_1
@@ -645,8 +673,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
          Order By: (document |<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3 }}, "sort": { "a": -1 } }');
-                                        QUERY PLAN                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3 }}, "sort": { "a": -1 } }')
+$cmd$);
+                                   run_explain_and_trim                                   
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
    indexName: a_1
@@ -663,8 +693,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
 (12 rows)
 
 -- scans 1 loop for checking multi-key - then scans 5 loops for entries 96, 97, 98, 99, 100.
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$gt": 96 }}, "sort": { "a": 1 } }');
-                                        QUERY PLAN                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$gt": 96 }}, "sort": { "a": 1 } }')
+$cmd$);
+                                   run_explain_and_trim                                   
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
    indexName: a_1
@@ -679,8 +711,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
          Order By: (document |<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$gt": 96 }}, "sort": { "a": -1 } }');
-                                        QUERY PLAN                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$gt": 96 }}, "sort": { "a": -1 } }')
+$cmd$);
+                                   run_explain_and_trim                                   
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
    indexName: a_1
@@ -697,8 +731,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
 (12 rows)
 
 -- only scans th relevant entries
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 94, "$gt": 90 }}, "sort": { "a": 1 } }');
-                                                                QUERY PLAN                                                                 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 94, "$gt": 90 }}, "sort": { "a": 1 } }')
+$cmd$);
+                                                           run_explain_and_trim                                                            
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
    indexName: a_1
@@ -713,8 +749,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
          Order By: (document |<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 94, "$gt": 90 }}, "sort": { "a": -1 } }');
-                                                                QUERY PLAN                                                                 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 94, "$gt": 90 }}, "sort": { "a": -1 } }')
+$cmd$);
+                                                           run_explain_and_trim                                                            
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
    indexName: a_1
@@ -731,8 +769,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
 (12 rows)
 
 -- scans only > 96 and stops.
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3, "$gt": 96 }}, "sort": { "a": 1 } }');
-                                                                QUERY PLAN                                                                
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3, "$gt": 96 }}, "sort": { "a": 1 } }')
+$cmd$);
+                                                           run_explain_and_trim                                                           
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
    indexName: a_1
@@ -747,8 +787,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
          Order By: (document |<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3, "$gt": 96 }}, "sort": { "a": -1 } }');
-                                                                QUERY PLAN                                                                
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3, "$gt": 96 }}, "sort": { "a": -1 } }')
+$cmd$);
+                                                           run_explain_and_trim                                                           
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
    indexName: a_1
@@ -765,8 +807,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
 (12 rows)
 
 -- groupby pushdown works for non-multi-key indexes
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$exists": true } } }, { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
-                                                                   QUERY PLAN                                                                   
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$exists": true } } }, { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }')
+$cmd$);
+                                                              run_explain_and_trim                                                              
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=100 loops=1)
    Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -778,14 +822,17 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
          innerScanLoops: 100 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100)]
-         ->  Index Scan using a_1 on documents_69203_6920006 collection (actual rows=100 loops=1)
+         ->  Index Only Scan using a_1 on documents_69203_6920006 collection (actual rows=100 loops=1)
                Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
                Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
-(13 rows)
+               Heap Fetches: 100
+(14 rows)
 
 set enable_bitmapscan to off;
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
-                                                                   QUERY PLAN                                                                   
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }')
+$cmd$);
+                                                              run_explain_and_trim                                                              
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=100 loops=1)
    Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -797,14 +844,17 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
          innerScanLoops: 100 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100)]
-         ->  Index Scan using a_1 on documents_69203_6920006 collection (actual rows=100 loops=1)
+         ->  Index Only Scan using a_1 on documents_69203_6920006 collection (actual rows=100 loops=1)
                Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
                Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
-(13 rows)
+               Heap Fetches: 100
+(14 rows)
 
 -- the same does not work on multi-key indexes
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$exists": true } } }, { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
-                                                                   QUERY PLAN                                                                   
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$exists": true } } }, { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }')
+$cmd$);
+                                                              run_explain_and_trim                                                              
 ---------------------------------------------------------------------
  HashAggregate (actual rows=101 loops=1)
    Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -822,18 +872,20 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
                Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
 (14 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
-psql:sql/bson_composite_order_by_index_tests_core.sql:179: ERROR:  Could not find any valid index to push down for query
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
+psql:sql/bson_composite_order_by_index_tests_core.sql:227: ERROR:  Could not find any valid index to push down for query
 set enable_bitmapscan to off;
 -- for non-multi-key requires, prefix equality until the min order by key only.
 -- can't push this
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "_id": 1 } } ] }');
-                                                         QUERY PLAN                                                          
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "_id": 1 } } ] }')
+$cmd$);
+                                                    run_explain_and_trim                                                     
 ---------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
    Sort Key: (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: 25kB
+   Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          indexName: a_1
          indexKey: {"a": 1,"_id": 1}
@@ -846,13 +898,15 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
                Index Cond: (document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson)
 (13 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
     SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$sort": { "_id": 1 } } ] }');
-psql:sql/bson_composite_order_by_index_tests_core.sql:187: ERROR:  Could not find any valid index to push down for query
+psql:sql/bson_composite_order_by_index_tests_core.sql:237: ERROR:  Could not find any valid index to push down for query
 -- can push this
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$eq": 1 } } }, { "$sort": { "_id": 1 } } ] }');
-                                        QUERY PLAN                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$eq": 1 } } }, { "$sort": { "_id": 1 } } ] }')
+$cmd$);
+                                   run_explain_and_trim                                   
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
    indexName: a_1
@@ -867,9 +921,11 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
          Order By: (document |<> '{ "_id" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "a": 1, "_id": 1 } } ] }');
-                                                                QUERY PLAN                                                                 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "a": 1, "_id": 1 } } ] }')
+$cmd$);
+                                                           run_explain_and_trim                                                            
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
    indexName: a_1
@@ -884,9 +940,11 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
          Order By: ((document |<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document |<> '{ "_id" : { "$numberInt" : "1" } }'::bson))
 (11 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$gte": 1 } } }, { "$sort": { "a": 1, "_id": 1 } } ] }');
-                                                                QUERY PLAN                                                                 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$gte": 1 } } }, { "$sort": { "a": 1, "_id": 1 } } ] }')
+$cmd$);
+                                                           run_explain_and_trim                                                            
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=100 loops=1)
    indexName: a_1
@@ -901,9 +959,11 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
          Order By: ((document |<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document |<> '{ "_id" : { "$numberInt" : "1" } }'::bson))
 (11 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$sort": { "a": 1, "_id": 1 } } ] }');
-                                                                                     QUERY PLAN                                                                                      
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$sort": { "a": 1, "_id": 1 } } ] }')
+$cmd$);
+                                                                                run_explain_and_trim                                                                                 
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=100 loops=1)
    indexName: a_1
@@ -919,13 +979,15 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
 (11 rows)
 
 -- but not these
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "_id": 1, "a": 1 } } ] }');
-                                                                                        QUERY PLAN                                                                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "_id": 1, "a": 1 } } ] }')
+$cmd$);
+                                                                                   run_explain_and_trim                                                                                   
 ---------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
    Sort Key: (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: 25kB
+   Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          indexName: a_1
          indexKey: {"a": 1,"_id": 1}
@@ -939,13 +1001,15 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
 (13 rows)
 
 -- for multi-key indexes, we can push down the order by only if there's equality until the max order by key.
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "_id": 1 } } ] }');
-                                                         QUERY PLAN                                                          
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "_id": 1 } } ] }')
+$cmd$);
+                                                    run_explain_and_trim                                                     
 ---------------------------------------------------------------------
  Sort (actual rows=4 loops=1)
    Sort Key: (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: 25kB
+   Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
          indexName: a_1_id_1
          indexKey: {"a": 1,"_id": 1}
@@ -958,13 +1022,15 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
                Index Cond: (document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson)
 (13 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
     SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$sort": { "_id": 1 } } ] }');
-psql:sql/bson_composite_order_by_index_tests_core.sql:208: ERROR:  Could not find any valid index to push down for query
+psql:sql/bson_composite_order_by_index_tests_core.sql:270: ERROR:  Could not find any valid index to push down for query
 -- can push this
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$eq": 1 } } }, { "$sort": { "_id": 1 } } ] }');
-                                          QUERY PLAN                                           
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$eq": 1 } } }, { "$sort": { "_id": 1 } } ] }')
+$cmd$);
+                                     run_explain_and_trim                                      
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
    indexName: a_1_id_1
@@ -979,9 +1045,11 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
          Order By: (document |<> '{ "_id" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$sort": { "a": 1, "_id": 1 } } ] }');
-                                                                                     QUERY PLAN                                                                                      
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$sort": { "a": 1, "_id": 1 } } ] }')
+$cmd$);
+                                                                                run_explain_and_trim                                                                                 
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=101 loops=1)
    indexName: a_1_id_1
@@ -997,9 +1065,11 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
          Order By: ((document |<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document |<> '{ "_id" : { "$numberInt" : "1" } }'::bson))
 (12 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$sort": { "a": 1 } } ] }');
-                                           QUERY PLAN                                            
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$sort": { "a": 1 } } ] }')
+$cmd$);
+                                      run_explain_and_trim                                       
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=101 loops=1)
    indexName: a_1_id_1
@@ -1016,13 +1086,15 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
 (12 rows)
 
 -- but not these
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "a": 1, "_id": 1 } } ] }');
-                                                                                        QUERY PLAN                                                                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "a": 1, "_id": 1 } } ] }')
+$cmd$);
+                                                                                   run_explain_and_trim                                                                                   
 ---------------------------------------------------------------------
  Sort (actual rows=4 loops=1)
    Sort Key: (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: 25kB
+   Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
          indexName: a_1_id_1
          indexKey: {"a": 1,"_id": 1}
@@ -1035,13 +1107,15 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
                Index Cond: (document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson)
 (13 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$gte": 1 } } }, { "$sort": { "a": 1, "_id": 1 } } ] }');
-                                                                                        QUERY PLAN                                                                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$gte": 1 } } }, { "$sort": { "a": 1, "_id": 1 } } ] }')
+$cmd$);
+                                                                                   run_explain_and_trim                                                                                   
 ---------------------------------------------------------------------
  Sort (actual rows=100 loops=1)
    Sort Key: (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: 35kB
+   Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=100 loops=1)
          indexName: a_1_id_1
          indexKey: {"a": 1,"_id": 1}
@@ -1055,13 +1129,13 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
                Index Cond: (document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
 (14 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
     SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$sort": { "_id": 1, "a": 1 } } ] }');
-psql:sql/bson_composite_order_by_index_tests_core.sql:224: ERROR:  Could not find any valid index to push down for query
+psql:sql/bson_composite_order_by_index_tests_core.sql:296: ERROR:  Could not find any valid index to push down for query
     
 -- now insert composite rows that cause truncation and assert that it gets ordered properly.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db', '{ "createIndexes": "query_orderby_perf2", "indexes": [ { "key": { "b": 1, "c": 1 }, "enableCompositeTerm": true, "name": "b_1" }] }', true);
-psql:sql/bson_composite_order_by_index_tests_core.sql:229: NOTICE:  creating collection
+psql:sql/bson_composite_order_by_index_tests_core.sql:301: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 ---------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -1077,8 +1151,10 @@ SELECT collection_id AS collection_id_4 FROM documentdb_api_catalog.collections 
 ANALYZE documentdb_data.documents_:collection_id_4;
 set documentdb.forceUseIndexIfAvailable to on;
 set enable_bitmapscan to off;
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": 1 } } ] }');
-                                QUERY PLAN                                 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": 1 } } ] }')
+$cmd$);
+                           run_explain_and_trim                            
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
    indexName: b_1
@@ -1091,10 +1167,12 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_
          Order By: (document |<> '{ "b" : { "$numberInt" : "1" } }'::bson)
 (9 rows)
 
-EXPLAIN (COSTS OFF) WITH s1 AS (SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": 1 } } ] }')),
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) WITH s1 AS (SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": 1 } } ] }')),
 s2 AS (SELECT COALESCE(document -> 'b' >= (LAG(document, 1) OVER ()) -> 'b', true) AS greater_check FROM s1)
-SELECT MIN(greater_check::int4), MAX(greater_check::int4) FROM s2;
-                                         QUERY PLAN                                          
+SELECT MIN(greater_check::int4), MAX(greater_check::int4) FROM s2
+$cmd$, false, false, true);
+                                    run_explain_and_trim                                     
 ---------------------------------------------------------------------
  Aggregate
    ->  WindowAgg
@@ -1110,8 +1188,10 @@ SELECT MIN(greater_check::int4), MAX(greater_check::int4) FROM s2;
                            Order By: (document |<> '{ "b" : { "$numberInt" : "1" } }'::bson)
 (12 rows)
 
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": -1 } } ] }');
-                                 QUERY PLAN                                 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": -1 } } ] }')
+$cmd$);
+                            run_explain_and_trim                            
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
    indexName: b_1
@@ -1124,10 +1204,12 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_
          Order By: (document |<> '{ "b" : { "$numberInt" : "-1" } }'::bson)
 (9 rows)
 
-EXPLAIN (COSTS OFF) WITH s1 AS (SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": -1 } } ] }')),
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) WITH s1 AS (SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": -1 } } ] }')),
 s2 AS (SELECT COALESCE(document -> 'b' <= (LAG(document, 1) OVER ()) -> 'b', true) AS greater_check FROM s1)
-SELECT MIN(greater_check::int4), MAX(greater_check::int4) FROM s2;
-                                          QUERY PLAN                                          
+SELECT MIN(greater_check::int4), MAX(greater_check::int4) FROM s2
+$cmd$, false, false, true);
+                                     run_explain_and_trim                                     
 ---------------------------------------------------------------------
  Aggregate
    ->  WindowAgg
@@ -1163,7 +1245,7 @@ SELECT MIN(greater_check::int4), MAX(greater_check::int4) FROM s2;
 reset documentdb.forceDisableSeqScan;
 -- add the complex tests that were in the composite filter order by
 select * from documentdb_api.insert_one('comp_ordind_db', 'sortcoll', '{ "_id": 1, "a": { "b": 1 } }');
-psql:sql/bson_composite_order_by_index_tests_core.sql:264: NOTICE:  creating collection
+psql:sql/bson_composite_order_by_index_tests_core.sql:344: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1301,8 +1383,10 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db',
 -- now sort manually (we can't rely on the index pushdown feature yet since that requires a filter)
 set documentdb.forceDisableSeqScan to on;
 set documentdb.enableExtendedExplainPlans to on;
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$sort": { "a.b": 1 } } ] }');
-                                            QUERY PLAN                                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$sort": { "a.b": 1 } } ] }')
+$cmd$);
+                                       run_explain_and_trim                                        
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=21 loops=1)
    indexName: a.b_1
@@ -1371,15 +1455,17 @@ SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate":
 (21 rows)
 
 -- can't push this down (no equality prefix)
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$sort": { "_id": 1 } } ] }');
-psql:sql/bson_composite_order_by_index_tests_core.sql:303: ERROR:  Could not find any valid index to push down for query
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$sort": { "_id": 1 } } ] }');
+psql:sql/bson_composite_order_by_index_tests_core.sql:385: ERROR:  Could not find any valid index to push down for query
 -- can't push order by down here:
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$exists": true } } }, { "$sort": { "_id": 1 } } ] }');
-                                             QUERY PLAN                                              
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$exists": true } } }, { "$sort": { "_id": 1 } } ] }')
+$cmd$);
+                                        run_explain_and_trim                                         
 ---------------------------------------------------------------------
  Sort (actual rows=17 loops=1)
    Sort Key: (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: 26kB
+   Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
          indexName: a.b_1
          indexKey: {"a.b": 1,"_id": 1}
@@ -1393,12 +1479,14 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
                Index Cond: (document @>= '{ "a.b" : { "$minKey" : 1 } }'::bson)
 (14 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$gt": 5 } } }, { "$sort": { "_id": 1 } } ] }');
-                                             QUERY PLAN                                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$gt": 5 } } }, { "$sort": { "_id": 1 } } ] }')
+$cmd$);
+                                        run_explain_and_trim                                        
 ---------------------------------------------------------------------
  Sort (actual rows=0 loops=1)
    Sort Key: (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: 25kB
+   Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
          indexName: a.b_1
          indexKey: {"a.b": 1,"_id": 1}
@@ -1412,8 +1500,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
 (13 rows)
 
 -- but this is okay
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$eq": 1 } } }, { "$sort": { "_id": 1 } } ] }');
-                                          QUERY PLAN                                          
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$eq": 1 } } }, { "$sort": { "_id": 1 } } ] }')
+$cmd$);
+                                     run_explain_and_trim                                     
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
    indexName: a.b_1
@@ -1429,12 +1519,14 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
 (11 rows)
 
 -- this one isn't okay since we need to resort across a.b
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$in": [ 1, 2 ] } } }, { "$sort": { "_id": 1 } } ] }');
-                                                         QUERY PLAN                                                          
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$in": [ 1, 2 ] } } }, { "$sort": { "_id": 1 } } ] }')
+$cmd$);
+                                                    run_explain_and_trim                                                     
 ---------------------------------------------------------------------
  Sort (actual rows=4 loops=1)
    Sort Key: (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: 25kB
+   Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
          indexName: a.b_1
          indexKey: {"a.b": 1,"_id": 1}
@@ -1448,8 +1540,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
 (13 rows)
 
 -- but this is fine:
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$in": [ 1 ] } } }, { "$sort": { "_id": 1 } } ] }');
-                                          QUERY PLAN                                          
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$in": [ 1 ] } } }, { "$sort": { "_id": 1 } } ] }')
+$cmd$);
+                                     run_explain_and_trim                                     
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
    indexName: a.b_1
@@ -1466,13 +1560,15 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
 
 -- allows incremental sorting
 set enable_sort to off;
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$eq": 1 } } }, { "$sort": { "_id": 1, "c": 1 } } ] }');
-                                                                                        QUERY PLAN                                                                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$eq": 1 } } }, { "$sort": { "_id": 1, "c": 1 } } ] }')
+$cmd$);
+                                                                                   run_explain_and_trim                                                                                   
 ---------------------------------------------------------------------
  Incremental Sort (actual rows=4 loops=1)
    Sort Key: (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby_index(document, '{ "c" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Presorted Key: (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
-   Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
+   Full-sort Groups: 1  Sort Method: quicksort  Average Memory: xxxkB  Peak Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
          indexName: a.b_1
          indexKey: {"a.b": 1,"_id": 1}
@@ -1488,8 +1584,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
 
 -- forced order by pushdown respects ordering when there is none.
 set documentdb_rum.forceRumOrderedIndexScan to on;
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$exists": true } } } ] }');
-                                          QUERY PLAN                                           
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$exists": true } } } ] }')
+$cmd$);
+                                     run_explain_and_trim                                      
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
    indexName: a.b_1
@@ -1529,7 +1627,7 @@ SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate":
 -- test order by with primary key _id and composite index on _id with _id filter & order
 reset documentdb.forceDisableSeqScan;
 select COUNT(documentdb_api.insert_one('comp_ordind_db', 'idIndexOrder', FORMAT('{ "_id": %s, "a": %s }', i , i)::bson)) FROM generate_series(1, 100) AS i;
-psql:sql/bson_composite_order_by_index_tests_core.sql:330: NOTICE:  creating collection
+psql:sql/bson_composite_order_by_index_tests_core.sql:426: NOTICE:  creating collection
  count 
 ---------------------------------------------------------------------
    100
@@ -1543,8 +1641,10 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db',
 
 -- now validate pushdown
 set documentdb.forceDisableSeqScan to on;
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "idIndexOrder", "pipeline": [ { "$match": { "_id": { "$gte": 10, "$lte": 25 } } }, { "$sort": { "_id": 1 } }, { "$skip": 5 }, { "$limit": 5 } ] }');
-                                                                                                                                             QUERY PLAN                                                                                                                                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "idIndexOrder", "pipeline": [ { "$match": { "_id": { "$gte": 10, "$lte": 25 } } }, { "$sort": { "_id": 1 } }, { "$skip": 5 }, { "$limit": 5 } ] }')
+$cmd$);
+                                                                                                                                        run_explain_and_trim                                                                                                                                        
 ---------------------------------------------------------------------
  Limit (actual rows=5 loops=1)
    ->  Subquery Scan on agg_stage_3 (actual rows=5 loops=1)
@@ -1576,7 +1676,7 @@ SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate":
 -- now repeat sort for nulls with 3 dotted paths
 set documentdb.forceDisableSeqScan to off;
 SELECT * FROM documentdb_api.insert_one('comp_ordind_db', 'sortcoll3', '{ "_id": 1, "a": { "b": { "c": 1 } } }');
-psql:sql/bson_composite_order_by_index_tests_core.sql:341: NOTICE:  creating collection
+psql:sql/bson_composite_order_by_index_tests_core.sql:439: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1684,7 +1784,7 @@ SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll3", "f
 -- with forced order by scans, recheck of the index on the runtime needs to happen.
 reset documentdb.forceDisableSeqScan;
 SELECT documentdb_api.insert_one('comp_ordind_db', 'large_keys', FORMAT('{ "_id": 1, "a": "%s" }', repeat('a', 9999) || 'bb')::bson);
-psql:sql/bson_composite_order_by_index_tests_core.sql:368: NOTICE:  creating collection
+psql:sql/bson_composite_order_by_index_tests_core.sql:466: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1716,8 +1816,10 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db',
 (1 row)
 
 set documentdb.forceDisableSeqScan to on;
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "large_keys", "pipeline": [ { "$match": { "a": { "$regex": ".+b$" } } }, { "$sort": { "a": 1 } }, { "$project": { "_id": 1 } } ] }');
-                                                                                   QUERY PLAN                                                                                   
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "large_keys", "pipeline": [ { "$match": { "a": { "$regex": ".+b$" } } }, { "$sort": { "a": 1 } }, { "$project": { "_id": 1 } } ] }')
+$cmd$);
+                                                                              run_explain_and_trim                                                                              
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
    indexName: a_2
@@ -1756,8 +1858,10 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db',
 (1 row)
 
 set documentdb.forceDisableSeqScan to on;
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll3", "filter": {}, "sort": { "a.b.c": -1, "_id": -1 } }');
-                                                                                        QUERY PLAN                                                                                         
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll3", "filter": {}, "sort": { "a.b.c": -1, "_id": -1 } }')
+$cmd$);
+                                                                                   run_explain_and_trim                                                                                    
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=13 loops=1)
    indexName: a.b.c_-1
@@ -1773,8 +1877,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
          Order By: ((document |<> '{ "a.b.c" : { "$numberInt" : "-1" } }'::bson) AND (document |<> '{ "_id" : { "$numberInt" : "-1" } }'::bson))
 (12 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "filter": {}, "sort": { "a.b": -1, "_id": -1 } }');
-                                                                                       QUERY PLAN                                                                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "filter": {}, "sort": { "a.b": -1, "_id": -1 } }')
+$cmd$);
+                                                                                  run_explain_and_trim                                                                                   
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=21 loops=1)
    indexName: a.b_-1
@@ -1835,13 +1941,15 @@ SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "fi
 (21 rows)
 
 -- partial sort pushdown
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll3", "filter": {}, "sort": { "a.b.c": -1, "_id": 1 } }');
-                                                                                                QUERY PLAN                                                                                                
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll3", "filter": {}, "sort": { "a.b.c": -1, "_id": 1 } }')
+$cmd$);
+                                                                                           run_explain_and_trim                                                                                           
 ---------------------------------------------------------------------
  Incremental Sort (actual rows=13 loops=1)
    Sort Key: (bson_orderby_index_reverse(document, '{ "a.b.c" : { "$numberInt" : "1" } }'::bson)) DESC NULLS LAST, (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Presorted Key: (bson_orderby_index_reverse(document, '{ "a.b.c" : { "$numberInt" : "1" } }'::bson))
-   Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 26kB  Peak Memory: 26kB
+   Full-sort Groups: 1  Sort Method: quicksort  Average Memory: xxxkB  Peak Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=13 loops=1)
          indexName: a.b.c_-1
          indexKey: {"a.b.c": -1,"_id": -1}
@@ -1856,13 +1964,15 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
                Order By: (document |<> '{ "a.b.c" : { "$numberInt" : "-1" } }'::bson)
 (16 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "filter": {}, "sort": { "a.b": -1, "_id": 1 } }');
-                                                                                               QUERY PLAN                                                                                               
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "filter": {}, "sort": { "a.b": -1, "_id": 1 } }')
+$cmd$);
+                                                                                          run_explain_and_trim                                                                                          
 ---------------------------------------------------------------------
  Incremental Sort (actual rows=21 loops=1)
    Sort Key: (bson_orderby_index_reverse(document, '{ "a.b" : { "$numberInt" : "1" } }'::bson)) DESC NULLS LAST, (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Presorted Key: (bson_orderby_index_reverse(document, '{ "a.b" : { "$numberInt" : "1" } }'::bson))
-   Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 27kB  Peak Memory: 27kB
+   Full-sort Groups: 1  Sort Method: quicksort  Average Memory: xxxkB  Peak Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=21 loops=1)
          indexName: a.b_-1
          indexKey: {"a.b": -1,"_id": -1}
@@ -1905,8 +2015,10 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db',
 (1 row)
 
 set documentdb.forceDisableSeqScan to on;
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll3", "filter": {}, "sort": { "a.b.c": 1, "_id": -1 } }');
-                                                                                        QUERY PLAN                                                                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll3", "filter": {}, "sort": { "a.b.c": 1, "_id": -1 } }')
+$cmd$);
+                                                                                   run_explain_and_trim                                                                                   
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=13 loops=1)
    indexName: a.b.c_1_id-1
@@ -1922,8 +2034,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
          Order By: ((document |<> '{ "a.b.c" : { "$numberInt" : "1" } }'::bson) AND (document |<> '{ "_id" : { "$numberInt" : "-1" } }'::bson))
 (12 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "filter": {}, "sort": { "a.b": -1, "_id": 1 } }');
-                                                                                       QUERY PLAN                                                                                       
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "filter": {}, "sort": { "a.b": -1, "_id": 1 } }')
+$cmd$);
+                                                                                  run_explain_and_trim                                                                                  
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=21 loops=1)
    indexName: a.b_-1_id_1
@@ -1986,7 +2100,7 @@ SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "fi
 -- test order by functionality with group
 reset documentdb.forceDisableSeqScan;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db', '{ "createIndexes": "ordering_groups", "indexes": [ { "key": { "a": 1 }, "enableOrderedIndex": true, "name": "a_1" }] }', true);
-psql:sql/bson_composite_order_by_index_tests_core.sql:415: NOTICE:  creating collection
+psql:sql/bson_composite_order_by_index_tests_core.sql:527: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 ---------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -2002,8 +2116,10 @@ select COUNT(documentdb_api.insert_one('comp_ordind_db', 'ordering_groups', FORM
 SELECT collection_id AS collection_id_5 FROM documentdb_api_catalog.collections WHERE collection_name = 'ordering_groups' AND database_name = 'comp_ordind_db' \gset
 ANALYZE documentdb_data.documents_:collection_id_5;
 set documentdb.forceDisableSeqScan to on;
-EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "ordering_groups", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
-                                                                   QUERY PLAN                                                                   
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "ordering_groups", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }')
+$cmd$);
+                                                              run_explain_and_trim                                                              
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
    Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -2015,10 +2131,11 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
          innerScanLoops: 3 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100)]
-         ->  Index Scan using a_1 on documents_69209_6920018 collection (actual rows=100 loops=1)
+         ->  Index Only Scan using a_1 on documents_69209_6920018 collection (actual rows=100 loops=1)
                Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
                Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
-(13 rows)
+               Heap Fetches: 100
+(14 rows)
 
 SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "ordering_groups", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
                              document                              
@@ -2030,7 +2147,7 @@ SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate":
 
 -- sorting on prefix with missing path is not allowed unless it's equality.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db', '{ "createIndexes": "compOrderSkip", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1, "d": 1}, "name": "idx1", "enableOrderedIndex": true } ] }');
-psql:sql/bson_composite_order_by_index_tests_core.sql:429: NOTICE:  creating collection
+psql:sql/bson_composite_order_by_index_tests_core.sql:543: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 ---------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -2043,8 +2160,10 @@ select COUNT(documentdb_api.insert_one('comp_ordind_db', 'compOrderSkip', FORMAT
 (1 row)
 
 -- now given that it's not multi-key, we can push down sorts to the index fully *iff* missing fields are equality.
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "compOrderSkip", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "c": 2 }, "sort": { "a": 1, "b": 1, "d": 1 } }');
-                                                                                                                                  QUERY PLAN                                                                                                                                   
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "compOrderSkip", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "c": 2 }, "sort": { "a": 1, "b": 1, "d": 1 } }')
+$cmd$);
+                                                                                                                             run_explain_and_trim                                                                                                                              
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
    indexName: idx1
@@ -2060,13 +2179,15 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
 (11 rows)
 
 -- cannot push non equality in the non-sorted prefix
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "compOrderSkip", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "c": { "$in": [ 5, 6 ]} }, "sort": { "a": 1, "b": 1, "d": 1 } }');
-                                                                                                                                                                                                                                                                     QUERY PLAN                                                                                                                                                                                                                                                                      
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "compOrderSkip", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "c": { "$in": [ 5, 6 ]} }, "sort": { "a": 1, "b": 1, "d": 1 } }')
+$cmd$);
+                                                                                                                                                                                                                                                                run_explain_and_trim                                                                                                                                                                                                                                                                 
 ---------------------------------------------------------------------
  Incremental Sort (actual rows=0 loops=1)
    Sort Key: (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby_index(document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby_index(document, '{ "d" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Presorted Key: (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)), (bson_orderby_index(document, '{ "b" : { "$numberInt" : "1" } }'::bson))
-   Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
+   Full-sort Groups: 1  Sort Method: quicksort  Average Memory: xxxkB  Peak Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
          indexName: idx1
          indexKey: {"a": 1,"b": 1,"c": 1,"d": 1}
@@ -2087,12 +2208,14 @@ SELECT documentdb_api.insert_one('comp_ordind_db', 'compOrderSkip', FORMAT('{ "_
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "compOrderSkip", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "c": 2 }, "sort": { "a": 1, "b": 1, "d": 1 } }');
-                                                                                                                                     QUERY PLAN                                                                                                                                      
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "compOrderSkip", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "c": 2 }, "sort": { "a": 1, "b": 1, "d": 1 } }')
+$cmd$);
+                                                                                                                                run_explain_and_trim                                                                                                                                 
 ---------------------------------------------------------------------
  Sort (actual rows=1 loops=1)
    Sort Key: (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby_index(document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby_index(document, '{ "d" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: 25kB
+   Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
          indexName: idx1
          indexKey: {"a": 1,"b": 1,"c": 1,"d": 1}
@@ -2107,7 +2230,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
 
 --composite index selection with order by.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db', '{ "createIndexes": "index_orderby_selection", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1, "d": 1 }, "enableOrderedIndex": true, "name": "a_b_c_d_1" }] }', true);
-psql:sql/bson_composite_order_by_index_tests_core.sql:444: NOTICE:  creating collection
+psql:sql/bson_composite_order_by_index_tests_core.sql:564: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 ---------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -2129,8 +2252,10 @@ select COUNT(documentdb_api.insert_one('comp_ordind_db', 'index_orderby_selectio
 SELECT collection_id AS collection_id_6 FROM documentdb_api_catalog.collections WHERE collection_name = 'index_orderby_selection' AND database_name = 'comp_ordind_db' \gset
 ANALYZE documentdb_data.documents_:collection_id_6;
 -- order by should use the order by filter index (a_b_c_1)
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "d": 10 }, "sort": { "a": 1, "b": 1, "c": 1 } }');
-                                                                                                                                      QUERY PLAN                                                                                                                                       
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "d": 10 }, "sort": { "a": 1, "b": 1, "c": 1 } }')
+$cmd$);
+                                                                                                                                 run_explain_and_trim                                                                                                                                  
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
    indexName: a_b_c_d_1
@@ -2146,8 +2271,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
 (11 rows)
 
 -- if we're querying just filters, use a_b_d since it's better
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "d": 10 } }');
-                                                                                                                          QUERY PLAN                                                                                                                           
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "d": 10 } }')
+$cmd$);
+                                                                                                                     run_explain_and_trim                                                                                                                      
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
    indexName: a_b_d_1
@@ -2161,8 +2288,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
          Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson) AND (document @*= '{ "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }'::bson) AND (document @= '{ "d" : { "$numberInt" : "10" } }'::bson))
 (10 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "d": 10 }, "sort": { "a": 1, "b": 1, "c": 1 } }');
-                                                                                                                                      QUERY PLAN                                                                                                                                       
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "d": 10 }, "sort": { "a": 1, "b": 1, "c": 1 } }')
+$cmd$);
+                                                                                                                                 run_explain_and_trim                                                                                                                                  
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
    indexName: a_b_c_d_1
@@ -2203,8 +2332,10 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db',
 (1 row)
 
 -- order by should use the order by filter index (a_b_c_1)
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "d": 10 }, "sort": { "a": 1, "b": 1, "c": 1 } }');
-                                                                                                                                      QUERY PLAN                                                                                                                                       
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "d": 10 }, "sort": { "a": 1, "b": 1, "c": 1 } }')
+$cmd$);
+                                                                                                                                 run_explain_and_trim                                                                                                                                  
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
    indexName: a_b_c_d_1
@@ -2220,8 +2351,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
 (11 rows)
 
 -- if we're querying just filters, use a_b_d since it's better
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "d": 10 } }');
-                                                                                                                          QUERY PLAN                                                                                                                           
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "a": { "$in": [ 1, 2 ] }, "b": { "$in": [ 2, 3 ] }, "d": 10 } }')
+$cmd$);
+                                                                                                                     run_explain_and_trim                                                                                                                      
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
    indexName: a_b_d_1
@@ -2237,7 +2370,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
 
 -- order by backward scan with unique index
 SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db', '{ "createIndexes": "unique_sort", "indexes": [ { "key": { "a": 1, "b": 1 }, "enableOrderedIndex": true, "name": "a_b_1", "unique": true }] }', true);
-psql:sql/bson_composite_order_by_index_tests_core.sql:475: NOTICE:  creating collection
+psql:sql/bson_composite_order_by_index_tests_core.sql:605: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 ---------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -2249,8 +2382,10 @@ select COUNT(documentdb_api.insert_one('comp_ordind_db', 'unique_sort', FORMAT('
    100
 (1 row)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "unique_sort", "sort": { "a": -1, "b": -1 }}');
-                                                                                     QUERY PLAN                                                                                      
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "unique_sort", "sort": { "a": -1, "b": -1 }}')
+$cmd$);
+                                                                                run_explain_and_trim                                                                                 
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=100 loops=1)
    indexName: a_b_1
@@ -2305,9 +2440,11 @@ SELECT COUNT(*) FROM ( SELECT documentdb_api.insert_one('comp_ordind_db', 'index
 reset enable_sort;
 ANALYZE documentdb_data.documents_:collection_id_6;
 -- this has all the paths matching.
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "filter1": "filter1-5", "filter2": "filter2-55", "filter3": { "$gt": 50 } }, "sort": { "orderKey": 1 }, "limit": 10 }');
-                                                                                               QUERY PLAN                                                                                               
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "filter1": "filter1-5", "filter2": "filter2-55", "filter3": { "$gt": 50 } }, "sort": { "orderKey": 1 }, "limit": 10 }')
+$cmd$);
+                                                                                          run_explain_and_trim                                                                                          
 ---------------------------------------------------------------------
  Limit (actual rows=1 loops=1)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
@@ -2324,9 +2461,11 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
 (12 rows)
 
 -- this one can't push the order by but should prefer the filter.
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "filter1": "filter1-5", "filter2": { "$gte": "filter2-55" }, "filter3": { "$gt": 50 } }, "sort": { "orderKey": 1 }, "limit": 10 }');
-                                                                                                  QUERY PLAN                                                                                                   
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "filter1": "filter1-5", "filter2": { "$gte": "filter2-55" }, "filter3": { "$gt": 50 } }, "sort": { "orderKey": 1 }, "limit": 10 }')
+$cmd$);
+                                                                                             run_explain_and_trim                                                                                              
 ---------------------------------------------------------------------
  Limit (actual rows=10 loops=1)
    ->  Sort (actual rows=10 loops=1)
@@ -2351,9 +2490,11 @@ SELECT documentdb_api.coll_mod('comp_ordind_db', 'index_orderby_selection', '{ "
 (1 row)
 
 -- now it picks the sort index
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
-    SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "filter1": "filter1-5", "filter2": { "$gte": "filter2-55" }, "filter3": { "$gt": 50 } }, "sort": { "orderKey": 1 }, "limit": 10 }');
-                                                                                             QUERY PLAN                                                                                              
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "filter1": "filter1-5", "filter2": { "$gte": "filter2-55" }, "filter3": { "$gt": 50 } }, "sort": { "orderKey": 1 }, "limit": 10 }')
+$cmd$);
+                                                                                        run_explain_and_trim                                                                                         
 ---------------------------------------------------------------------
  Limit (actual rows=10 loops=1)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=10 loops=1)
@@ -2373,7 +2514,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
 
 -- test filter pushdown with order by scan
 SELECT COUNT(documentdb_api.insert_one('comp_ordind_db', 'testbitmaponorder', FORMAT('{ "_id": %s, "a": "%s%s", "b": "%s%s" }', i, repeat('a', 10000), i, repeat('a', 10000), i)::bson)) FROM generate_series(1, 10000) i;
-psql:sql/bson_composite_order_by_index_tests_core.sql:513: NOTICE:  creating collection
+psql:sql/bson_composite_order_by_index_tests_core.sql:651: NOTICE:  creating collection
  count 
 ---------------------------------------------------------------------
  10000
@@ -2410,8 +2551,10 @@ set documentdb.enableExtendedExplainPlans to off;
 set enable_indexscan to off;
 set enable_bitmapscan to on;
 set seq_page_cost to 1000;
-EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "testbitmaponorder", "filter": { "a": { "$gt": "" }  }, "sort": { "b": 1 } }');
-                                                                              QUERY PLAN                                                                              
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (VERBOSE ON, COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "testbitmaponorder", "filter": { "a": { "$gt": "" }  }, "sort": { "b": 1 } }')
+$cmd$);
+                                                                         run_explain_and_trim                                                                         
 ---------------------------------------------------------------------
  Sort
    Output: document, (bson_orderby_index(document, '{ "b" : { "$numberInt" : "1" } }'::bson))
@@ -2433,7 +2576,7 @@ SELECT COUNT(*) FROM r1;
 
 -- reverse walk with no prefix.
 SELECT documentdb_api.insert_one('comp_ordind_db', 'no_prefix_scan', '{ "_id": 1, "a": 1, "b": "a" }');
-psql:sql/bson_composite_order_by_index_tests_core.sql:536: NOTICE:  creating collection
+psql:sql/bson_composite_order_by_index_tests_core.sql:676: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2487,7 +2630,7 @@ SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "no_pref
 (2 rows)
 
 SELECT documentdb_api.insert_one('comp_ordind_db', 'basic_sort_order', '{ "_id": 0, "data": [ { "value": { "$minKey": 1 } }, { "value": { "$maxKey": 1 } } ] }');
-psql:sql/bson_composite_order_by_index_tests_core.sql:551: NOTICE:  creating collection
+psql:sql/bson_composite_order_by_index_tests_core.sql:691: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2807,31 +2950,39 @@ SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_s
  { "_id" : { "$numberInt" : "0" }, "data" : [ { "value" : { "$minKey" : 1 } }, { "value" : { "$maxKey" : 1 } } ] }
 (19 rows)
 
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_sort_order", "filter": {}, "sort": { "data.value": 1 } }');
-                                             QUERY PLAN                                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_sort_order", "filter": {}, "sort": { "data.value": 1 } }')
+$cmd$);
+                                        run_explain_and_trim                                        
 ---------------------------------------------------------------------
  Index Scan using data_value_1 on documents_69215_6920030 collection
    Index Cond: (document @<> '{ "data.value" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
    Order By: (document |<> '{ "data.value" : { "$numberInt" : "1" } }'::bson)
 (3 rows)
 
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_sort_order", "filter": {}, "sort": { "data.value": -1 } }');
-                                             QUERY PLAN                                              
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_sort_order", "filter": {}, "sort": { "data.value": -1 } }')
+$cmd$);
+                                        run_explain_and_trim                                         
 ---------------------------------------------------------------------
  Index Scan using data_value_1 on documents_69215_6920030 collection
    Index Cond: (document @<> '{ "data.value" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson)
    Order By: (document |<> '{ "data.value" : { "$numberInt" : "-1" } }'::bson)
 (3 rows)
 
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_sort_order", "filter": {}, "sort": { "_id": 1 } }');
-                         QUERY PLAN                          
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_sort_order", "filter": {}, "sort": { "_id": 1 } }')
+$cmd$);
+                    run_explain_and_trim                     
 ---------------------------------------------------------------------
  Index Scan using _id_ on documents_69215_6920030 collection
    Index Cond: (shard_key_value = '69215'::bigint)
 (2 rows)
 
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_sort_order", "filter": {}, "sort": { "_id": -1 } }');
-                              QUERY PLAN                              
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_sort_order", "filter": {}, "sort": { "_id": -1 } }')
+$cmd$);
+                         run_explain_and_trim                         
 ---------------------------------------------------------------------
  Index Scan Backward using _id_ on documents_69215_6920030 collection
    Index Cond: (shard_key_value = '69215'::bigint)
@@ -2923,3 +3074,129 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db',
    Order By: (document |<> '{ "b" : { "$numberInt" : "-1" } }'::bson)
 (3 rows)
 
+\i sql/bson_composite_force_ordered_scan_tests_core.sql
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+-- A forced full-index scan must not replace the sort required across shards.
+reset enable_sort;
+reset documentdb_rum.forceRumOrderedIndexScan;
+reset documentdb.forceDisableSeqScan;
+set documentdb.enableExtendedExplainPlans to on;
+SELECT documentdb_api.shard_collection('comp_ordind_db', 'forced_order_sharded', '{ "_id": "hashed" }', false);
+psql:sql/bson_composite_force_ordered_scan_tests_core.sql:10: NOTICE:  creating collection
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_api.insert_one('comp_ordind_db', 'forced_order_sharded',
+	FORMAT('{ "_id": %s, "a": %s }', id, value)::bson)
+FROM (VALUES (1, 3), (2, 1), (3, 4), (4, 2), (5, 8), (6, 7), (7, 6), (8, 5)) AS docs(id, value);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(8 rows)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+	'comp_ordind_db',
+	'{ "createIndexes": "forced_order_sharded", "indexes": [ { "key": { "a": 1 }, "enableCompositeTerm": true, "name": "a_1" } ] }',
+	true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+set documentdb_rum.forceRumOrderedIndexScan to on;
+set documentdb.forceDisableSeqScan to on;
+SELECT regexp_replace(
+	regexp_replace(btrim(query_plan), 'documents_[0-9]+_[0-9]+', 'documents_x_x', 'g'),
+	'\(actual rows=[0-9.]+ loops=[0-9]+\)', '(actual rows=xxx loops=xxx)', 'g') AS plan_line
+FROM documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find(
+	'comp_ordind_db',
+	'{ "find": "forced_order_sharded", "filter": {}, "projection": { "_id": 0, "a": 1 }, "sort": { "a": -1 }, "hint": { "a": 1 } }')
+$cmd$) AS plan(query_plan)
+WHERE query_plan ~ '^\s*Sort( \(actual rows=[0-9.]+ loops=[0-9]+\))?$'
+	OR query_plan ~ '^\s*Task Count: 8$'
+	OR query_plan ~ 'Index Scan using a_1'
+	OR query_plan ~ 'Index Cond:.*orderByScan';
+                                                                 plan_line                                                                 
+---------------------------------------------------------------------
+ Sort (actual rows=xxx loops=xxx)
+ Task Count: 8
+ ->  Index Scan using a_1 on documents_x_x collection (actual rows=xxx loops=xxx)
+ Index Cond: (document OPERATOR(documentdb_api_catalog.@<>) '{ "a" : { "orderByScan" : { "$numberInt" : "-1" } } }'::documentdb_core.bson)
+(4 rows)
+
+SELECT document FROM bson_aggregation_find(
+	'comp_ordind_db',
+	'{ "find": "forced_order_sharded", "filter": {}, "projection": { "_id": 0, "a": 1 }, "sort": { "a": -1 }, "hint": { "a": 1 } }');
+             document             
+---------------------------------------------------------------------
+ { "a" : { "$numberInt" : "8" } }
+ { "a" : { "$numberInt" : "7" } }
+ { "a" : { "$numberInt" : "6" } }
+ { "a" : { "$numberInt" : "5" } }
+ { "a" : { "$numberInt" : "4" } }
+ { "a" : { "$numberInt" : "3" } }
+ { "a" : { "$numberInt" : "2" } }
+ { "a" : { "$numberInt" : "1" } }
+(8 rows)
+
+-- Forced ordered scans must retain runtime rechecks for every regex predicate.
+SELECT documentdb_api.insert_one(
+	'comp_ordind_db',
+	'forced_order_regex',
+	'{ "_id": 1, "a": "prefix-middle-suffix" }');
+psql:sql/bson_composite_force_ordered_scan_tests_core.sql:41: NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+	'comp_ordind_db',
+	'forced_order_regex',
+	'{ "_id": 2, "a": "prefix-middle" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+	'comp_ordind_db',
+	'forced_order_regex',
+	'{ "_id": 3, "a": "middle-suffix" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+	'comp_ordind_db',
+	'{ "createIndexes": "forced_order_regex", "indexes": [ { "key": { "a": 1 }, "enableCompositeTerm": true, "name": "a_1" } ] }',
+	true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find(
+	'comp_ordind_db',
+	'{ "find": "forced_order_regex", "filter": { "$and": [ { "a": { "$regex": "^prefix" } }, { "a": { "$regex": "suffix$" } } ] }, "projection": { "_id": 1 }, "hint": { "a": 1 } }');
+              document              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" } }
+(1 row)
+
+reset documentdb_rum.forceRumOrderedIndexScan;
+reset documentdb.forceDisableSeqScan;

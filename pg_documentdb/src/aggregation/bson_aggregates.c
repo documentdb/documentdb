@@ -31,7 +31,7 @@
 #include "operators/bson_expression_operators.h"
 #include "collation/collation.h"
 
-extern bool EnableAddToSetAggregationRewrite;
+extern bool EnableMinMaxSkipNullValues;
 extern bool BsonTextUseJsonRepresentation;
 
 /* --------------------------------------------------------- */
@@ -100,11 +100,12 @@ static MaxAlignedVarlena * AllocateBsonNumericAggState(void);
 static void CheckAggregateIntermediateResultSize(uint32_t size);
 static void CreateObjectAggTreeNodes(BsonObjectAggState *currentState,
 									 pgbson *currentValue);
-static void ValidateMergeObjectsInput(pgbson *input);
+static bool ValidateMergeObjectsInput(pgbson *input);
 static Datum ParseAndReturnMergeObjectsTree(BsonObjectAggState *state);
 static Datum bson_maxminn_transition(PG_FUNCTION_ARGS, bool isMaxN);
 static void BsonArrayAggFinalCore(BsonArrayAggState *state,
 								  pgbson_array_writer *arrayWriter);
+static bool CanSkipNullInMinMax(void);
 
 void DeserializeBinaryHeapState(bytea *byteArray, DynamicHeapState *state);
 bytea * SerializeBinaryHeapState(MemoryContext aggregateContext, DynamicHeapState *state,
@@ -152,6 +153,21 @@ PG_FUNCTION_INFO_V1(bson_max_with_expr_combine);
 PG_FUNCTION_INFO_V1(bson_min_with_expr_transition);
 PG_FUNCTION_INFO_V1(bson_min_with_expr_combine);
 PG_FUNCTION_INFO_V1(bson_min_max_with_expr_final);
+
+/*
+ * Internal-state variants of the $min/$max with-expr accumulators. These use an
+ * "internal" transition type together with serialize/deserialize functions so
+ * the pointer-bearing transition state is transferred across a parallel worker
+ * boundary through a self-contained byte buffer rather than a raw pointer copy.
+ */
+PG_FUNCTION_INFO_V1(bson_max_with_expr_transition_internal);
+PG_FUNCTION_INFO_V1(bson_max_with_expr_combine_internal);
+PG_FUNCTION_INFO_V1(bson_min_with_expr_transition_internal);
+PG_FUNCTION_INFO_V1(bson_min_with_expr_combine_internal);
+PG_FUNCTION_INFO_V1(bson_min_max_with_expr_final_internal);
+PG_FUNCTION_INFO_V1(bson_agg_value_serialize);
+PG_FUNCTION_INFO_V1(bson_agg_value_deserialize);
+
 PG_FUNCTION_INFO_V1(bson_sum_avg_with_expr_transition);
 PG_FUNCTION_INFO_V1(bson_sum_avg_with_expr_minvtransition);
 
@@ -401,7 +417,7 @@ bson_distinct_array_agg_final(PG_FUNCTION_ARGS)
  * Both have the same implementation but differ in validations made inside the caller method.
  */
 inline static Datum
-AggregateObjectsCore(PG_FUNCTION_ARGS)
+AggregateObjectsCore(PG_FUNCTION_ARGS, bool mergeObjectsInputIsNullOrMissing)
 {
 	BsonObjectAggState *currentState;
 	MaxAlignedVarlena *bytes;
@@ -433,7 +449,11 @@ AggregateObjectsCore(PG_FUNCTION_ARGS)
 	}
 
 	pgbson *currentValue = PG_GETARG_MAYBE_NULL_PGBSON(1);
-	if (currentValue != NULL)
+	if (mergeObjectsInputIsNullOrMissing)
+	{
+		currentState->addEmptyPath = true;
+	}
+	else if (currentValue != NULL)
 	{
 		CheckAggregateIntermediateResultSize(currentState->currentSizeWritten +
 											 PgbsonGetBsonSize(currentValue));
@@ -456,7 +476,8 @@ AggregateObjectsCore(PG_FUNCTION_ARGS)
 Datum
 bson_object_agg_transition(PG_FUNCTION_ARGS)
 {
-	return AggregateObjectsCore(fcinfo);
+	bool mergeObjectsInputIsNullOrMissing = false;
+	return AggregateObjectsCore(fcinfo, mergeObjectsInputIsNullOrMissing);
 }
 
 
@@ -467,8 +488,8 @@ Datum
 bson_merge_objects_transition_on_sorted(PG_FUNCTION_ARGS)
 {
 	pgbson *input = PG_GETARG_MAYBE_NULL_PGBSON(1);
-	ValidateMergeObjectsInput(input);
-	return AggregateObjectsCore(fcinfo);
+	bool mergeObjectsInputIsNullOrMissing = ValidateMergeObjectsInput(input);
+	return AggregateObjectsCore(fcinfo, mergeObjectsInputIsNullOrMissing);
 }
 
 
@@ -544,7 +565,12 @@ bson_merge_objects_final(PG_FUNCTION_ARGS)
 			pgbson *evaluatedDoc = PgbsonWriterGetPgbson(&writer);
 
 			/* We need to validate the result here since we sorted the original documents first. */
-			ValidateMergeObjectsInput(evaluatedDoc);
+			bool inputIsNullOrMissing = ValidateMergeObjectsInput(evaluatedDoc);
+			if (inputIsNullOrMissing)
+			{
+				mergeObjectsState.addEmptyPath = true;
+				continue;
+			}
 
 			/* Feed the tree with the evaluated bson. */
 			CreateObjectAggTreeNodes(&mergeObjectsState,
@@ -764,6 +790,18 @@ bson_avg_final(PG_FUNCTION_ARGS)
 
 
 /*
+ * Gate null-skipping on the cluster version so all nodes change behavior together
+ * during a rolling upgrade.
+ */
+static bool
+CanSkipNullInMinMax(void)
+{
+	return EnableMinMaxSkipNullValues &&
+		   IsClusterVersionAtleast(DocDB_V0, 115, 0);
+}
+
+
+/*
  * Applies the "final calculation" (FINALFUNC) for min and max.
  * This takes the final value fills in a null bson for empty sets
  */
@@ -801,6 +839,22 @@ bson_max_transition(PG_FUNCTION_ARGS)
 {
 	pgbson *left = PG_GETARG_MAYBE_NULL_PGBSON(0);
 	pgbson *right = PG_GETARG_MAYBE_NULL_PGBSON(1);
+
+	/*
+	 * Treat an explicit null candidate as a skipped value so only non-null,
+	 * non-missing values are considered. Missing values already arrive as null
+	 * here (projected with isNullOnEmpty), so this covers both cases.
+	 */
+	if (right != NULL && CanSkipNullInMinMax())
+	{
+		pgbsonelement candidateElement;
+		PgbsonToSinglePgbsonElement(right, &candidateElement);
+		if (candidateElement.bsonValue.value_type == BSON_TYPE_NULL)
+		{
+			right = NULL;
+		}
+	}
+
 	if (left == NULL)
 	{
 		if (right == NULL)
@@ -837,6 +891,22 @@ bson_min_transition(PG_FUNCTION_ARGS)
 {
 	pgbson *left = PG_GETARG_MAYBE_NULL_PGBSON(0);
 	pgbson *right = PG_GETARG_MAYBE_NULL_PGBSON(1);
+
+	/*
+	 * Treat an explicit null candidate as a skipped value so only non-null,
+	 * non-missing values are considered. Missing values already arrive as null
+	 * here (projected with isNullOnEmpty), so this covers both cases.
+	 */
+	if (right != NULL && CanSkipNullInMinMax())
+	{
+		pgbsonelement candidateElement;
+		PgbsonToSinglePgbsonElement(right, &candidateElement);
+		if (candidateElement.bsonValue.value_type == BSON_TYPE_NULL)
+		{
+			right = NULL;
+		}
+	}
+
 	if (left == NULL)
 	{
 		if (right == NULL)
@@ -1157,19 +1227,15 @@ bson_add_to_set_transition(PG_FUNCTION_ARGS)
 						HASH_ENTER, &found);
 
 			/*
-			 * If the BSON was not found in the hash table, add its size to the current
-			 * state object.
+			 * If the BSON was not found in the hash table, add its size to the
+			 * current state object and append it to the ordered list. The list
+			 * lets the final function emit values in insertion order without
+			 * iterating the hash table.
 			 */
 			if (!found)
 			{
 				currentState->currentSizeWritten += PgbsonGetBsonSize(currentValue);
-			}
 
-			/*
-			 * If rewrite is enabled, append to list to avoid hash table iteration in final function.
-			 */
-			if (!found && EnableAddToSetAggregationRewrite)
-			{
 				bson_value_t *bsonValueCopy = palloc(sizeof(bson_value_t));
 				*bsonValueCopy = singleBsonElement.bsonValue;
 				currentState->aggregateList = lappend(currentState->aggregateList,
@@ -1206,56 +1272,30 @@ bson_add_to_set_final(PG_FUNCTION_ARGS)
 		pgbson_array_writer arrayWriter;
 		PgbsonWriterStartArray(&writer, "", 0, &arrayWriter);
 
-		if (EnableAddToSetAggregationRewrite)
+		ListCell *cell;
+		foreach(cell, state->aggregateList)
 		{
-			ListCell *cell;
-			foreach(cell, state->aggregateList)
-			{
-				bson_value_t *currentValue = (bson_value_t *) lfirst(cell);
-				PgbsonArrayWriterWriteValue(&arrayWriter, currentValue);
-			}
-
-			/*
-			 * For window aggregation, we must not destroy the hash table as it may be needed
-			 * for subsequent calls to this final function when processing other groups with
-			 * certain window bounds such as ["unbounded", constant]. In such cases, the window
-			 * frame head does not advance and the aggregation state is not reinitialized, so
-			 * the table must remain valid for continued use.
-			 *
-			 * For non-window aggregation, we can safely destroy the hash table here if it exists.
-			 * However, we intentionally do not free the aggregateList. This list may need to be
-			 * traversed again if a ReScan operation occurs following a HoldPortal operation.
-			 * Since the aggregateList is allocated within the aggregation memory context, it
-			 * will be automatically freed when that context is destroyed after aggregation completes.
-			 */
-			if (!state->isWindowAggregation && state->set != NULL)
-			{
-				hash_destroy(state->set);
-				state->set = NULL;
-			}
+			bson_value_t *currentValue = (bson_value_t *) lfirst(cell);
+			PgbsonArrayWriterWriteValue(&arrayWriter, currentValue);
 		}
-		else
+
+		/*
+		 * For window aggregation, we must not destroy the hash table as it may be needed
+		 * for subsequent calls to this final function when processing other groups with
+		 * certain window bounds such as ["unbounded", constant]. In such cases, the window
+		 * frame head does not advance and the aggregation state is not reinitialized, so
+		 * the table must remain valid for continued use.
+		 *
+		 * For non-window aggregation, we can safely destroy the hash table here if it exists.
+		 * However, we intentionally do not free the aggregateList. This list may need to be
+		 * traversed again if a ReScan operation occurs following a HoldPortal operation.
+		 * Since the aggregateList is allocated within the aggregation memory context, it
+		 * will be automatically freed when that context is destroyed after aggregation completes.
+		 */
+		if (!state->isWindowAggregation && state->set != NULL)
 		{
-			HASH_SEQ_STATUS seq_status;
-			const bson_value_t *entry;
-			hash_seq_init(&seq_status, state->set);
-
-			while ((entry = hash_seq_search(&seq_status)) != NULL)
-			{
-				PgbsonArrayWriterWriteValue(&arrayWriter, entry);
-			}
-
-			/*
-			 * For window aggregation, with the HASHCTL destroyed (on the call for the first group),
-			 * subsequent calls to this final function for other groups will fail
-			 * for certain bounds such as ["unbounded", constant].
-			 * This is because the head never moves and the aggregation is not restarted.
-			 * Thus, the table is expected to hold something valid.
-			 */
-			if (!state->isWindowAggregation)
-			{
-				hash_destroy(state->set);
-			}
+			hash_destroy(state->set);
+			state->set = NULL;
 		}
 
 		PgbsonWriterEndArray(&writer, &arrayWriter);
@@ -1289,7 +1329,7 @@ bson_add_to_set_final(PG_FUNCTION_ARGS)
 /* --------------------------------------------------------- */
 
 static MaxAlignedVarlena *
-AllocateBsonNumericAggState()
+AllocateBsonNumericAggState(void)
 {
 	MaxAlignedVarlena *combinedStateBytes =
 		AllocateMaxAlignedVarlena(sizeof(BsonNumericAggState));
@@ -1409,10 +1449,15 @@ CreateObjectAggTreeNodes(BsonObjectAggState *currentState, pgbson *currentValue)
 /*
  * Validates $mergeObject input. It must be a non-null document.
  */
-static void
+static bool
 ValidateMergeObjectsInput(pgbson *input)
 {
 	pgbsonelement singleBsonElement;
+
+	if (input != NULL && IsPgbsonEmptyDocument(input))
+	{
+		return true;
+	}
 
 	/*
 	 * The $mergeObjects accumulator expects a document in the form of
@@ -1433,7 +1478,7 @@ ValidateMergeObjectsInput(pgbson *input)
 		singleBsonElement.bsonValue.value_type != BSON_TYPE_NULL)
 	{
 		ereport(ERROR,
-				errcode(ERRCODE_DOCUMENTDB_DOLLARMERGEOBJECTSINVALIDTYPE),
+				errcode(ERRCODE_DOCUMENTDB_LOCATION5911200),
 				errmsg(
 					"$mergeObjects needs both inputs to be objects, but the provided input %s has the type %s",
 					BsonValueToJsonForLogging(&singleBsonElement.bsonValue),
@@ -1442,6 +1487,8 @@ ValidateMergeObjectsInput(pgbson *input)
 					"$mergeObjects needs both inputs to be objects, but the provided input has the type %s",
 					BsonTypeName(singleBsonElement.bsonValue.value_type)));
 	}
+
+	return singleBsonElement.bsonValue.value_type == BSON_TYPE_NULL;
 }
 
 
@@ -2201,8 +2248,14 @@ BsonMinMaxWithExprTransitionCore(PG_FUNCTION_ARGS, bool isMax)
 									  &expressionResult, false /* isNullOnEmpty */);
 	bson_value_t evaluatedValue = expressionResult.value;
 
-	/* Check for empty/missing property in document with BSON_TYPE_EOD */
-	if (evaluatedValue.value_type == BSON_TYPE_EOD)
+	/*
+	 * Skip missing values (BSON_TYPE_EOD), and explicit null values when
+	 * null-skipping is enabled, so only non-null, non-missing values are
+	 * considered. If all values are skipped the state stays NULL and the final
+	 * function returns null.
+	 */
+	if (evaluatedValue.value_type == BSON_TYPE_EOD ||
+		(evaluatedValue.value_type == BSON_TYPE_NULL && CanSkipNullInMinMax()))
 	{
 		if (PG_ARGISNULL(0))
 		{
@@ -2370,6 +2423,55 @@ bson_min_max_with_expr_final(PG_FUNCTION_ARGS)
 	finalValue.pathLength = 0;
 	finalValue.bsonValue = state->value;
 	PG_RETURN_POINTER(PgbsonElementToPgbson(&finalValue));
+}
+
+
+/*
+ * Internal-state SFUNC for $max with expr. Shares the transition logic with the
+ * bsonaggvalue variant; the only difference is the declared transition type
+ * ("internal") which lets the aggregate be parallel-safe via serialize /
+ * deserialize instead of a raw varlena copy.
+ */
+Datum
+bson_max_with_expr_transition_internal(PG_FUNCTION_ARGS)
+{
+	bool isMax = true;
+	return BsonMinMaxWithExprTransitionCore(fcinfo, isMax);
+}
+
+
+/* Internal-state SFUNC for $min with expr. */
+Datum
+bson_min_with_expr_transition_internal(PG_FUNCTION_ARGS)
+{
+	bool isMax = false;
+	return BsonMinMaxWithExprTransitionCore(fcinfo, isMax);
+}
+
+
+/* Internal-state COMBINEFUNC for $max with expr. */
+Datum
+bson_max_with_expr_combine_internal(PG_FUNCTION_ARGS)
+{
+	bool isMax = true;
+	return BsonMinMaxWithExprCombineCore(fcinfo, isMax);
+}
+
+
+/* Internal-state COMBINEFUNC for $min with expr. */
+Datum
+bson_min_with_expr_combine_internal(PG_FUNCTION_ARGS)
+{
+	bool isMax = false;
+	return BsonMinMaxWithExprCombineCore(fcinfo, isMax);
+}
+
+
+/* Internal-state FINALFUNC shared by $min/$max with expr. */
+Datum
+bson_min_max_with_expr_final_internal(PG_FUNCTION_ARGS)
+{
+	return bson_min_max_with_expr_final(fcinfo);
 }
 
 
@@ -2714,6 +2816,70 @@ bsonaggvalue_recv(PG_FUNCTION_ARGS)
 	bson_value_copy(&element.bsonValue, &state->value);
 	state->collationString = collationString != NULL ?
 							 pstrdup(collationString) : NULL;
+
+	PG_RETURN_POINTER(state);
+}
+
+
+/*
+ * bson_agg_value_serialize: generic SERIALFUNC for internal-state aggregates
+ * whose transition state is a BsonAggValue (the $min/$max and $first/$last
+ * with-expr accumulators). Flattens the pointer-bearing BsonAggValue transition
+ * state into a self-contained byte buffer so it can be moved across a parallel
+ * worker boundary. The encoding matches bsonaggvalue_send. Declared STRICT: a
+ * NULL transition state serializes to a NULL bytea, so this is never called
+ * with a NULL argument.
+ */
+Datum
+bson_agg_value_serialize(PG_FUNCTION_ARGS)
+{
+	BsonAggValue *state = (BsonAggValue *) PG_GETARG_POINTER(0);
+
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	AppendBsonAggValueToWriter(&writer, &state->value);
+	if (state->collationString != NULL)
+	{
+		PgbsonWriterAppendUtf8(&writer, "collation", strlen("collation"),
+							   state->collationString);
+	}
+
+	pgbson *serialized = PgbsonWriterGetPgbson(&writer);
+	PG_RETURN_BYTEA_P((bytea *) serialized);
+}
+
+
+/*
+ * bson_agg_value_deserialize: generic DESERIALFUNC matching
+ * bson_agg_value_serialize. Rebuilds the BsonAggValue transition state in the
+ * aggregate memory context from the buffer produced by the serialize function.
+ * Declared STRICT so it is never called with a NULL serialized argument.
+ */
+Datum
+bson_agg_value_deserialize(PG_FUNCTION_ARGS)
+{
+	MemoryContext aggregateContext;
+	if (!AggCheckCallContext(fcinfo, &aggregateContext))
+	{
+		ereport(ERROR, errmsg(
+					"aggregate function bson_agg_value_deserialize called in non-aggregate context"));
+	}
+
+	bytea *serialized = PG_GETARG_BYTEA_PP(0);
+	pgbson *bson = PgbsonInitFromBuffer(VARDATA_ANY(serialized),
+										VARSIZE_ANY_EXHDR(serialized));
+
+	pgbsonelement element;
+	const char *collationString =
+		PgbsonToSinglePgbsonElementWithCollation(bson, &element);
+
+	MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
+	BsonAggValue *state = (BsonAggValue *) palloc0(sizeof(BsonAggValue));
+	SET_VARSIZE(state, sizeof(BsonAggValue));
+	bson_value_copy(&element.bsonValue, &state->value);
+	state->collationString = collationString != NULL ?
+							 pstrdup(collationString) : NULL;
+	MemoryContextSwitchTo(oldContext);
 
 	PG_RETURN_POINTER(state);
 }

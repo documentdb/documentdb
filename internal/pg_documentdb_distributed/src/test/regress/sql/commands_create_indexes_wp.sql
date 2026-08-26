@@ -140,15 +140,15 @@ BEGIN;
   set local enable_seqscan TO OFF;
 
   -- can use idx_1
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a.b": 1}';
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": 1}';
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": {"b": 1}}';
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"_id": 1}';
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a.b": 1}'$$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": 1}'$$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": {"b": 1}}'$$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"_id": 1}'$$);
 
   -- cannot use idx_1
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b.d": 1}';
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b": {"d": 1}}';
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"e": 1}';
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b.d": 1}'$$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b": {"d": 1}}'$$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_3') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"e": 1}'$$);
 COMMIT;
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently('wp_test',
@@ -173,16 +173,16 @@ BEGIN;
   set local enable_seqscan TO OFF;
 
   -- cannot use idx_1
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a.b": 1}';
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": 1}';
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": {"b": 1}}';
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"_id": 1}';
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a.b": 1}'$$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": 1}'$$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": {"b": 1}}'$$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"_id": 1}'$$);
 
   -- can use idx_1
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b.d": 1}';
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b": {"d": 1}}';
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"e": 1}';
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"f.g": 1}';
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b.d": 1}'$$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b": {"d": 1}}'$$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"e": 1}'$$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"f.g": 1}'$$);
 COMMIT;
 
 SELECT 1 FROM documentdb_api.insert_one('wp_test', 'ok_test_4', '{"b": {"d": 1}, "a": {"k": 1}}');
@@ -193,8 +193,8 @@ BEGIN;
   set local enable_seqscan TO OFF;
 
   -- can use idx_1
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b.d": 1, "a.k": 1}';
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a.k": 1, "b.d": 1}';
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b.d": 1, "a.k": 1}'$$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a.k": 1, "b.d": 1}'$$);
 
   SELECT COUNT(*)=1 FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b.d": 1, "a.k": 1}';
   SELECT COUNT(*)=1 FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a.k": 1, "b.d": 1}';
@@ -204,13 +204,13 @@ BEGIN;
   set local enable_seqscan TO OFF;
 
   -- can use idx_1
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b.d": {"$in": [1,2,3]}}';
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"b.d": {"$in": [1,2,3]}}'$$);
 
   -- cannot use idx_1 due to filter on "a.z.r" in "$or"
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"$or": [{"b.d": {"$eq": [1,2,3]}}, {"a.z": {"r": {"$gte": 5}}}]}';
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"$or": [{"b.d": {"$eq": [1,2,3]}}, {"a.z": {"r": {"$gte": 5}}}]}'$$);
 
   -- can use idx_1 since none of the quals in "$or" are excluded
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"$or": [{"b.d": {"$eq": [1,2,3]}}, {"k": 5}]}';
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_4') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"$or": [{"b.d": {"$eq": [1,2,3]}}, {"k": 5}]}'$$);
 COMMIT;
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently('wp_test',
@@ -235,7 +235,7 @@ BEGIN;
   set local enable_seqscan TO OFF;
 
   -- can use idx_1
-  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_5') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"d.e.f": 1, "_id": 0}';
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$  EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('wp_test', 'ok_test_5') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"d.e.f": 1, "_id": 0}'$$);
 COMMIT;
 
 -- not the same index since this doesn't specify wildcardProjection

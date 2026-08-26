@@ -54,3 +54,81 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('collmod', '{ "fi
 
 -- the row shows up from the index 
 SELECT document FROM bson_aggregation_find('collmod', '{ "find": "coll_mod_test_hidden", "filter": { "a": 101 } }');
+
+-- ============================================================================
+-- Tests for multiple collection options interaction
+--
+-- Verify that enabling/disabling different options (statsEnabled,
+-- changeStreamPreAndPostImages, enableUpdateDescription) works correctly
+-- with the append/remove semantics and that enabling one does not overwrite
+-- the other.
+-- ============================================================================
+SET documentdb.enablePerCollectionPlannerStatistics to on;
+SET documentdb.enablePreImages to on;
+
+SELECT documentdb_api.create_collection('collmod', 'multi_opts');
+
+-- Enable statsEnabled first.
+SELECT documentdb_api.coll_mod('collmod', 'multi_opts', '{ "collMod": "multi_opts", "enableStats": true }');
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'collmod' AND collection_name = 'multi_opts';
+
+-- Enable changeStreamPreAndPostImages — both options should coexist.
+SELECT documentdb_api.coll_mod('collmod', 'multi_opts', '{ "collMod": "multi_opts", "changeStreamPreAndPostImages": { "enabled": true } }');
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'collmod' AND collection_name = 'multi_opts';
+
+-- Enable enableUpdateDescription — three options should coexist.
+SELECT documentdb_api.coll_mod('collmod', 'multi_opts', '{ "collMod": "multi_opts", "enableUpdateDescription": true }');
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'collmod' AND collection_name = 'multi_opts';
+
+-- Disable stats — changeStreamPreAndPostImages and enableUpdateDescription remain.
+SELECT documentdb_api.coll_mod('collmod', 'multi_opts', '{ "collMod": "multi_opts", "enableStats": false }');
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'collmod' AND collection_name = 'multi_opts';
+
+-- Re-enable stats — all three present again.
+SELECT documentdb_api.coll_mod('collmod', 'multi_opts', '{ "collMod": "multi_opts", "enableStats": true }');
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'collmod' AND collection_name = 'multi_opts';
+
+-- Disable changeStreamPreAndPostImages — statsEnabled and enableUpdateDescription remain.
+SELECT documentdb_api.coll_mod('collmod', 'multi_opts', '{ "collMod": "multi_opts", "changeStreamPreAndPostImages": { "enabled": false } }');
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'collmod' AND collection_name = 'multi_opts';
+
+-- Disable enableUpdateDescription — only stats should remain.
+SELECT documentdb_api.coll_mod('collmod', 'multi_opts', '{ "collMod": "multi_opts", "enableUpdateDescription": false }');
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'collmod' AND collection_name = 'multi_opts';
+
+-- Disable stats — options should be NULL (empty).
+SELECT documentdb_api.coll_mod('collmod', 'multi_opts', '{ "collMod": "multi_opts", "enableStats": false }');
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'collmod' AND collection_name = 'multi_opts';
+
+-- Test creation with enablePlannerStatisticsNewCollections + then add other options
+SET documentdb.enablePlannerStatisticsNewCollections to on;
+SELECT documentdb_api.create_collection('collmod', 'multi_opts2');
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'collmod' AND collection_name = 'multi_opts2';
+
+SELECT documentdb_api.coll_mod('collmod', 'multi_opts2', '{ "collMod": "multi_opts2", "changeStreamPreAndPostImages": { "enabled": true } }');
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'collmod' AND collection_name = 'multi_opts2';
+
+SELECT documentdb_api.coll_mod('collmod', 'multi_opts2', '{ "collMod": "multi_opts2", "enableUpdateDescription": true }');
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'collmod' AND collection_name = 'multi_opts2';
+
+-- Oversized expireAfterSeconds values clamp before updating the int32 metadata field.
+SELECT documentdb_api.create_collection('collmod', 'coll_mod_test_ttl');
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'collmod',
+    '{ "createIndexes": "coll_mod_test_ttl", "indexes": [{ "key": { "expiresAt": 1 }, "name": "expires_ttl", "expireAfterSeconds": 100 }]}',
+    TRUE);
+SELECT documentdb_api.coll_mod(
+    'collmod',
+    'coll_mod_test_ttl',
+    '{ "collMod": "coll_mod_test_ttl", "index": { "name": "expires_ttl", "expireAfterSeconds": { "$numberLong": "2147483648" } } }');
+SELECT (index_spec).index_expire_after_seconds
+FROM documentdb_api_catalog.collection_indexes
+WHERE collection_id = (
+    SELECT collection_id
+    FROM documentdb_api_catalog.collections
+    WHERE database_name = 'collmod' AND collection_name = 'coll_mod_test_ttl')
+AND (index_spec).index_name = 'expires_ttl';
+
+RESET documentdb.enablePerCollectionPlannerStatistics;
+RESET documentdb.enablePlannerStatisticsNewCollections;
+RESET documentdb.enablePreImages;

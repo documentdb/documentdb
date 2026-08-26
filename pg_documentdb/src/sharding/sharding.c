@@ -31,20 +31,18 @@
 #include "collation/collation.h"
 #include "utils/guc_utils.h"
 #include "utils/version_utils.h"
-#include "utils/version_utils.h"
 #include "utils/list_utils.h"
-#include "index_am/index_am_extend.h"
+#include "index_am/index_am_extend_create.h"
 #include "index_am/index_am_utils.h"
 #include "metadata/index.h"
+#include "commands/retryable_writes.h"
+#include "rbac_hooks.h"
 
 extern bool EnableNativeColocation;
 extern int ShardingMaxChunks;
-extern bool RecreateRetryTableOnSharding;
 extern char *ApiGucPrefixV2;
 extern bool EnableRbacCompliantSchemas;
 extern bool EnablePrepareUnique;
-extern bool ForceUpdateIndexInline;
-extern bool EnablePerCollectionPlannerStatistics;
 
 /* Metadata about shard keys - this is unchanged through
  * iterating though the query for the shard key.
@@ -191,6 +189,10 @@ command_shard_collection(PG_FUNCTION_ARGS)
 
 		if (!result.success)
 		{
+			/* Parse locally to surface a user-friendly validation error */
+			ShardCollectionArgs localArgs = { 0 };
+			ParseShardCollectionRequest(shardArg, &localArgs);
+
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
 							errmsg(
 								"Internal error sharding collection in metadata coordinator"),
@@ -230,6 +232,10 @@ command_reshard_collection(PG_FUNCTION_ARGS)
 
 		if (!result.success)
 		{
+			/* Parse locally to surface a user-friendly validation error */
+			ShardCollectionArgs localArgs = { 0 };
+			ParseReshardCollectionRequest(shardArg, &localArgs);
+
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
 							errmsg(
 								"Metadata coordinator encountered internal error while resharding the collection"),
@@ -269,6 +275,10 @@ command_unshard_collection(PG_FUNCTION_ARGS)
 
 		if (!result.success)
 		{
+			/* Parse locally to surface a user-friendly validation error */
+			ShardCollectionArgs localArgs = { 0 };
+			ParseUnshardCollectionRequest(shardArg, &localArgs);
+
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
 							errmsg(
 								"Internal error unsharding collection in metadata coordinator"),
@@ -359,7 +369,7 @@ ComputeShardKeyHashForDocument(pgbson *shardKeyDoc, uint64_t collectionId,
 static bson_value_t
 FindShardKeyFieldValue(bson_iter_t *docIter, const char *path)
 {
-	char *dot = NULL;
+	const char *dot = NULL;
 	size_t fieldLength;
 
 	if ((dot = strchr(path, '.')))
@@ -1211,21 +1221,21 @@ ExtractAmNameFromCreateIndexCmd(const char *createIndexCmd)
 	}
 
 	/* Find " USING " clause in the command */
-	char *usingPos = strstr(createIndexCmd, " USING ");
+	const char *usingPos = strstr(createIndexCmd, " USING ");
 	if (usingPos == NULL)
 	{
 		return NULL;
 	}
 
 	/* Skip past " USING " and any additional whitespace */
-	char *amNameStart = usingPos + 7; /* strlen(" USING ") = 7 */
+	const char *amNameStart = usingPos + 7; /* strlen(" USING ") = 7 */
 	while (*amNameStart == ' ' || *amNameStart == '\t')
 	{
 		amNameStart++;
 	}
 
 	/* Find the end of the AM name (space, tab, opening parenthesis, or null terminator) */
-	char *amNameEnd = amNameStart;
+	const char *amNameEnd = amNameStart;
 	while (*amNameEnd != '\0' && *amNameEnd != ' ' && *amNameEnd != '\t' && *amNameEnd !=
 		   '(')
 	{
@@ -1321,11 +1331,41 @@ GetExtendedIndexCreationCmds(MongoCollection *collection)
 		/* Check if this is an extended index AM */
 		if (IsExtendedIndexAmByName(amName))
 		{
+			/*
+			 * Queue commands may contain CONCURRENTLY (from background builds).
+			 * Remove 'CONCURRENTLY' since ShardCollectionCore executes commands via SPI inside a function,
+			 * where CREATE INDEX CONCURRENTLY is not allowed.
+			 */
+			char *cmd = request->cmd;
+			char *concurrentlyStart = strstr(cmd, "CONCURRENTLY");
+
+			if (concurrentlyStart != NULL)
+			{
+				/* Find the position of the index name format prefix after the CONCURRENTLY */
+				char *indexNameStart = strstr(concurrentlyStart + 12, /* strlen("CONCURRENTLY") = 12 */
+											  DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT_PREFIX);
+				if (indexNameStart != NULL)
+				{
+					/* Move the index name and everything after it to the left to overwrite "CONCURRENTLY" */
+					memmove(concurrentlyStart,
+							indexNameStart,
+							strlen(indexNameStart) + 1);
+				}
+				else
+				{
+					ereport(WARNING, (errmsg(
+										  "Unexpected format of CREATE INDEX command in index queue: index_id=%d, am=%s \ndefinition: %s",
+										  request->indexId, amName, cmd)));
+
+					continue;
+				}
+			}
+
 			ereport(DEBUG1, (errmsg(
 								 "Found in-progress extended index: index_id=%d, am=%s \ndefinition: %s",
-								 request->indexId, amName, request->cmd)));
-			existingExtendedIndexesCmds = lappend(existingExtendedIndexesCmds,
-												  request->cmd);
+								 request->indexId, amName, cmd)));
+
+			existingExtendedIndexesCmds = lappend(existingExtendedIndexesCmds, cmd);
 		}
 		else
 		{
@@ -1459,10 +1499,6 @@ ShardCollectionCore(ShardCollectionArgs *args)
 		existingExtendedIndexesCmds = GetExtendedIndexCreationCmds(collection);
 	}
 
-	bool isCollectionStatisticsEnabled = EnablePerCollectionPlannerStatistics &&
-										 CollectionHasStatisticsEnabled(
-		collection->collectionId);
-
 	int nargs = 3;
 	Oid argTypes[3] = { BsonTypeId(), TEXTOID, TEXTOID };
 	bool isNull = true;
@@ -1495,12 +1531,15 @@ ShardCollectionCore(ShardCollectionArgs *args)
 	char tmpDataTableName[NAMEDATALEN + 20];
 	sprintf(tmpDataTableName, "%s.%s_reshard", ApiDataSchemaName, collection->tableName);
 
-	/* Before sharding, drop stats (they're created after) */
-	if (isCollectionStatisticsEnabled)
-	{
-		bool disableStats = false;
-		UpdateCollectionPlannerStatistics(collection->collectionId, disableStats);
-	}
+	/*
+	 * Planner statistics are intentionally not touched here. The statsEnabled
+	 * collection metadata is left enabled throughout, so this flow performs no
+	 * options update on the collections reference table (which would otherwise
+	 * deadlock against the commutative shard_key update above). The statistics
+	 * objects on the old data table are dropped when that table is dropped, and
+	 * the index recreation below recreates them on the rebuilt table because the
+	 * collection still has statistics enabled.
+	 */
 
 	/* create a new table to reinsert the data into */
 	StringInfo queryInfo = makeStringInfo();
@@ -1625,7 +1664,7 @@ ShardCollectionCore(ShardCollectionArgs *args)
 	ExtensionExecuteQueryViaSPI(queryInfo->data, readOnly, SPI_OK_UTILITY, &isNull);
 
 	/* TODO: Remove GUC before migrating ownership of old documents to to documentdb_readwrite_role*/
-	if (EnableRbacCompliantSchemas && IsClusterVersionAtleast(DocDB_V0, 110, 0))
+	if (EnableRbacCompliantSchemas)
 	{
 		/* Update new table owner to readwrite role */
 		resetStringInfo(queryInfo);
@@ -1645,30 +1684,20 @@ ShardCollectionCore(ShardCollectionArgs *args)
 
 	ExtensionExecuteQueryViaSPI(queryInfo->data, readOnly, SPI_OK_UTILITY, &isNull);
 
-	/* Make GUC default eventually: Recreate retry_table here with new shards */
-	if (RecreateRetryTableOnSharding)
-	{
-		StringInfo retryTableNameInfo = makeStringInfo();
-		appendStringInfo(retryTableNameInfo, "%s.retry_%lu", ApiDataSchemaName,
-						 collection->collectionId);
-
-		/* Recreate the retry table */
-		resetStringInfo(queryInfo);
-		appendStringInfo(queryInfo, "DROP TABLE %s", retryTableNameInfo->data);
-		ExtensionExecuteQueryViaSPI(queryInfo->data, readOnly, SPI_OK_UTILITY, &isNull);
-
-		/* Since we're colocating with, shardCount should be 0 */
-		int shardCountForRetry = 0;
-		CreateRetryTable(retryTableNameInfo->data, qualifiedDataTableName,
-						 distributionColumn, shardCountForRetry);
-	}
+	/*
+	 * The data table was rebuilt above, and relation privileges are not carried
+	 * over by CREATE TABLE ... (LIKE ...), so the baseline grants applied when
+	 * the collection was created are gone. Reapply them to the replacement
+	 * table. The retry table is not rebuilt here and keeps its own grants.
+	 */
+	bool includeRetryTable = false;
+	GrantCollectionPrivilegesToBaselineRoles(collection->collectionId,
+											 includeRetryTable);
 
 	bool isPrepareUniqueArrayNull = true;
 	Datum prepareUniqueNamesArray = (Datum) 0;
 
-	bool isPrepareUniqueSupported = EnablePrepareUnique &&
-									IsClusterVersionAtleast(DocDB_V0, 109, 0);
-	if (isPrepareUniqueSupported)
+	if (EnablePrepareUnique)
 	{
 		/* Get prepareUnique index names that need to be converted after rebuilt. */
 		resetStringInfo(queryInfo);
@@ -1771,7 +1800,7 @@ ShardCollectionCore(ShardCollectionArgs *args)
 		int savedGUCLevel = NewGUCNestLevel();
 		SetGUCLocally(psprintf("%s.defaultUseCompositeOpClass", ApiGucPrefixV2), "false");
 
-		bool buildAsUniqueForPrepareUnique = isPrepareUniqueSupported;
+		bool buildAsUniqueForPrepareUnique = EnablePrepareUnique;
 		CreateIndexesArg createIndexesArg = ParseCreateIndexesArg(&databaseDatum,
 																  createIndexesMsg,
 																  buildAsUniqueForPrepareUnique);
@@ -1831,13 +1860,6 @@ ShardCollectionCore(ShardCollectionArgs *args)
 			RunPrepareUniqueForCollectionIndexes(args->databaseName,
 												 args->collectionName,
 												 prepareUniqueNamesArray);
-		}
-
-		if (isCollectionStatisticsEnabled)
-		{
-			/* Enable statistics on the collection if it was enabled before. */
-			UpdateCollectionPlannerStatistics(collection->collectionId,
-											  isCollectionStatisticsEnabled);
 		}
 	}
 }

@@ -1,0 +1,13 @@
+s/dynamic_cursor_selection_tests_pg17//
+s/bson_expr_index_pushdown_tests/bson_expr_index_pushdown_tests_pg19/
+s/bson_aggregation_pipeline_tests //
+s/bson_aggregation_pipeline_tests_graphlookup//
+s/bson_aggregation_pipeline_tests_inverse_match_explain_pg19//
+s/bson_aggregation_pipeline_tests_firstlast_group_pg16//
+s/bson_aggregation_pipeline_tests_sumavg_group_pg16//
+s/extended_statistics_mgmt_tests//
+s/bson_aggregation_pipeline_diagnostic_command_tests//
+s/bson_collation_query_tests_explain_index_pg17//
+s/bson_collation_operators_tests_explain_index//
+s/bson_aggregation_stage_merge_tests_pg17//
+/bson_aggregation_stage_reservoir_sample_tests/d

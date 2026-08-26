@@ -29,6 +29,12 @@ async fn abort() -> Result<(), Error> {
 }
 
 #[tokio::test]
+async fn end_transaction_without_active_transaction() -> Result<(), Error> {
+    let client = initialize::initialize().await?;
+    transaction::validate_end_transaction_without_active_transaction(&client).await
+}
+
+#[tokio::test]
 async fn list_collections_blocked_in_transaction() -> Result<(), Error> {
     let client = initialize::initialize().await?;
     transaction::validate_list_collections_blocked_in_transaction(&client).await
@@ -68,4 +74,10 @@ async fn create_index_blocked_in_transaction() -> Result<(), Error> {
 async fn create_indexes_blocked_in_transaction() -> Result<(), Error> {
     let client = initialize::initialize().await?;
     transaction::validate_create_indexes_blocked_in_transaction(&client).await
+}
+
+#[tokio::test]
+async fn move_collection_blocked_in_transaction() -> Result<(), Error> {
+    let client = initialize::initialize().await?;
+    transaction::validate_move_collection_blocked_in_transaction(&client).await
 }

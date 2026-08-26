@@ -57,7 +57,7 @@ awk -v ver="$RPM_VER" -v rel="$RPM_REL" 'BEGIN{v=ver;r=rel} /^Version:/{printf "
 mv "$spec_tmp_ver" "$SPEC"
 
 
-# Find header lines that look like: ### documentdb v0.106-0 ...
+# Find header lines that look like: ### documentdb v0.106-0...
 # We'll search for the header that contains the target version and then
 # extract from that header through EOF (so target + older entries).
 
@@ -73,12 +73,40 @@ if grep -q "^### .*v1\.[0-9]\+-[0-9]\+" "$CHANGELOG"; then
 fi
 
 target_header_line=""
-# Find first header line that contains the version string
-target_header_line=$(grep -n '^### ' "$CHANGELOG" | grep -m1 "v${VER_DASH}" | cut -d: -f1 || true)
+# Find the first header line that documents this exact version. Use a fixed-string
+# match so the version's '.' and '-' are not treated as regex metacharacters.
+target_header_line=$(grep -n '^### ' "$CHANGELOG" | grep -m1 -F "v${VER_DASH}" | cut -d: -f1 || true)
 
+# Returns success when version $1 is strictly newer than version $2. Versions use
+# the 'X.Y-Z' form; the dash is normalized to a dot so `sort -V` orders them.
+version_is_newer() {
+    local a="${1//-/.}" b="${2//-/.}"
+    [[ "$a" != "$b" ]] && [[ "$(printf '%s\n%s\n' "$a" "$b" | sort -V | tail -n1)" == "$a" ]]
+}
+
+synthesize_version=""
 if [[ -z "$target_header_line" ]]; then
-    echo "ERROR: Could not find section for version v$VER_DASH in $CHANGELOG" >&2
-    exit 1
+    # The build version is not documented in CHANGELOG.md. Synthesize a top entry
+    # for it ONLY when we can confirm it is a genuine new release -- i.e. strictly
+    # newer than the newest documented version (e.g. during a release sync before
+    # its entry is added). If the newest documented version cannot be determined,
+    # or the build version is not strictly newer (older, equal, a typo, or a
+    # header written in an unexpected format), fail loudly rather than ship a
+    # mislabeled, out-of-order, or history-less package.
+    top_header=$(grep -n -m1 '^### ' "$CHANGELOG" || true)
+    # Extract the first 'v<version>' token from the header (the line still carries
+    # grep -n's 'LINENUM:' prefix). Anchoring to the first token avoids picking up
+    # a later ' v...' token such as '(Preview v2)'.
+    top_version=$(printf '%s' "$top_header" | sed -n 's/^[0-9]*:###[[:space:]][^0-9]*v\([0-9][^ (]*\).*/\1/p')
+    if [[ -z "$top_version" ]] || ! version_is_newer "$VER_DASH" "$top_version"; then
+        echo "ERROR: Version v$VER_DASH is not documented in $CHANGELOG and could not be confirmed newer than the latest documented version${top_version:+ v$top_version}" >&2
+        exit 1
+    fi
+    echo "WARNING: v$VER_DASH not found in $CHANGELOG but is newer than the latest documented version v$top_version -- synthesizing a placeholder entry" >&2
+    synthesize_version="$VER_DASH"
+    # Existing sections (newest first) go below the synthetic entry, starting at
+    # the first section header (reusing the scan above) so any preamble is skipped.
+    target_header_line=${top_header%%:*}
 fi
 
 start_line=$target_header_line
@@ -88,16 +116,20 @@ end_line=$(wc -l < "$CHANGELOG")
 echo "Extracting lines $start_line..$end_line from $CHANGELOG"
 temp_changelog=$(mktemp)
 trap 'rm -f "$temp_changelog"' EXIT
-sed -n "${start_line},${end_line}p" "$CHANGELOG" > "$temp_changelog"
+{
+    if [[ -n "$synthesize_version" ]]; then
+        printf '### documentdb v%s (Unreleased) ###\n' "$synthesize_version"
+    fi
+    sed -n "${start_line},${end_line}p" "$CHANGELOG"
+} > "$temp_changelog"
 
 # Determine packager (try git config, else default)
-GIT_NAME=$(git config user.name 2>/dev/null || true)
-GIT_EMAIL=$(git config user.email 2>/dev/null || true)
-if [[ -n "$GIT_NAME" && -n "$GIT_EMAIL" ]]; then
-    PACKAGER="$GIT_NAME <$GIT_EMAIL>"
-else
-    PACKAGER="documentdb packager <packaging@documentdb.local>"
-fi
+# Stable release identity: shipped changelog metadata must not depend on
+# which machine or account happened to run the build (git config gave each
+# build a different author; the old fallback was a fake domain). Matches the
+# DEB_MAINTAINER default used by the dpkg-deb-built packages. Override via
+# DOCUMENTDB_PACKAGER when a different identity is genuinely intended.
+PACKAGER="${DOCUMENTDB_PACKAGER:-DocumentDB Packaging <documentdb-packaging-maintainers@microsoft.com>}"
 
 # Convert extracted markdown into RPM %changelog format.
 # We expect sections that start with '###' containing 'v<version>' and
@@ -135,7 +167,9 @@ flush_section() {
     else
         for it in "${items[@]}"; do
             # make sure each item is a single line starting with '- '
-            new_changelog_block+="- ${it}\n"
+            # Escape % for rpm: in %changelog a bare % can start a macro
+            # reference and expand or warn at rpmbuild time; %% is literal.
+            new_changelog_block+="- ${it//%/%%}\n"
         done
     fi
     new_changelog_block+=$'\n'

@@ -38,28 +38,35 @@ typedef struct RumPageGetEntriesContext
 	Page page;
 } RumPageGetEntriesContext;
 
+#if PG_VERSION_NUM >= 190000
+typedef JsonbInState RumJsonbBuildState;
+#else
+typedef JsonbParseState *RumJsonbBuildState;
+#endif
+
 static Jsonb * GetResultJsonB(int count, char **keys, JsonbValue *values);
+static JsonbValue * RumPushJsonbValue(RumJsonbBuildState *state,
+									  JsonbIteratorToken token, JsonbValue *value);
 static Page get_page_from_raw(bytea *raw_page);
 static Jsonb * RumPrintEntryToJsonB(RumPageGetEntriesContext *context, uint64 counter);
 static Jsonb * RumPrintDataPageLineToJsonB(Page page, uint64 counter);
 
-PG_FUNCTION_INFO_V1(documentdb_rum_get_meta_page_info);
-PG_FUNCTION_INFO_V1(documentdb_rum_page_get_stats);
-PG_FUNCTION_INFO_V1(documentdb_rum_page_get_entries);
-PG_FUNCTION_INFO_V1(documentdb_rum_page_get_data_items);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_get_meta_page_info);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_page_get_stats);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_page_get_entries);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_page_get_data_items);
 
 
-PGDLLEXPORT Datum
-documentdb_rum_get_meta_page_info(PG_FUNCTION_ARGS)
+RMGR_PG_FUNCTION_DEF(documentdb_rum_get_meta_page_info)
 {
 	bytea *page = PG_GETARG_BYTEA_P(0);
 
 	Page meta_page = get_page_from_raw(page);
 
 	RumMetaPageData *pageData = RumPageGetMeta(meta_page);
-	int nargs = 5;
-	char *args[5] = { 0 };
-	JsonbValue values[5] = { 0 };
+	int nargs = 6;
+	char *args[6] = { 0 };
+	JsonbValue values[6] = { 0 };
 
 	if (pageData->rumVersion != RUM_CURRENT_VERSION)
 	{
@@ -89,6 +96,22 @@ documentdb_rum_get_meta_page_info(PG_FUNCTION_ARGS)
 	args[4] = "pendingHeapTuples";
 	values[4].type = jbvNumeric;
 	values[4].val.numeric = int64_to_numeric(pageData->nPendingHeapTuples);
+
+	args[5] = "pendingHeapTuplesHex";
+	if (pageData->nPendingHeapTuples != 0)
+	{
+		values[5].type = jbvString;
+		values[5].val.string.len = snprintf(NULL, 0, "0x%lx", (unsigned
+															   long) pageData->
+											nPendingHeapTuples);
+		values[5].val.string.val = palloc(values[5].val.string.len + 1);
+		snprintf(values[5].val.string.val, values[5].val.string.len + 1, "0x%lx",
+				 (unsigned long) pageData->nPendingHeapTuples);
+	}
+	else
+	{
+		values[5].type = jbvNull;
+	}
 
 	PG_RETURN_POINTER(GetResultJsonB(nargs, args, values));
 }
@@ -140,8 +163,7 @@ RumPageFlagsToString(Page page)
 }
 
 
-PGDLLEXPORT Datum
-documentdb_rum_page_get_stats(PG_FUNCTION_ARGS)
+RMGR_PG_FUNCTION_DEF(documentdb_rum_page_get_stats)
 {
 	bytea *raw_page = PG_GETARG_BYTEA_P(0);
 	Page page = get_page_from_raw(raw_page);
@@ -210,9 +232,7 @@ documentdb_rum_page_get_stats(PG_FUNCTION_ARGS)
 	PG_RETURN_POINTER(GetResultJsonB(nargs, args, values));
 }
 
-
-PGDLLEXPORT Datum
-documentdb_rum_page_get_entries(PG_FUNCTION_ARGS)
+RMGR_PG_FUNCTION_DEF(documentdb_rum_page_get_entries)
 {
 	Oid indexOid = PG_GETARG_OID(1);
 
@@ -258,8 +278,7 @@ documentdb_rum_page_get_entries(PG_FUNCTION_ARGS)
 }
 
 
-PGDLLEXPORT Datum
-documentdb_rum_page_get_data_items(PG_FUNCTION_ARGS)
+RMGR_PG_FUNCTION_DEF(documentdb_rum_page_get_data_items)
 {
 	FuncCallContext *fctx;
 	Page page;
@@ -302,10 +321,10 @@ static Jsonb *
 GetResultJsonB(int count, char **keys, JsonbValue *values)
 {
 	int i = 0;
-	JsonbParseState *state = NULL;
+	RumJsonbBuildState state = { 0 };
 	JsonbValue *res;
 
-	(void) pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
+	(void) RumPushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
 
 	for (i = 0; i < count; i++)
 	{
@@ -313,13 +332,26 @@ GetResultJsonB(int count, char **keys, JsonbValue *values)
 		key.type = jbvString;
 		key.val.string.val = keys[i];
 		key.val.string.len = strlen(keys[i]);
-		(void) pushJsonbValue(&state, WJB_KEY, &key);
-		(void) pushJsonbValue(&state, WJB_VALUE, &values[i]);
+		(void) RumPushJsonbValue(&state, WJB_KEY, &key);
+		(void) RumPushJsonbValue(&state, WJB_VALUE, &values[i]);
 	}
 
-	res = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
+	res = RumPushJsonbValue(&state, WJB_END_OBJECT, NULL);
 
 	return JsonbValueToJsonb(res);
+}
+
+
+static JsonbValue *
+RumPushJsonbValue(RumJsonbBuildState *state, JsonbIteratorToken token,
+				  JsonbValue *value)
+{
+#if PG_VERSION_NUM >= 190000
+	pushJsonbValue(state, token, value);
+	return state->result;
+#else
+	return pushJsonbValue(state, token, value);
+#endif
 }
 
 

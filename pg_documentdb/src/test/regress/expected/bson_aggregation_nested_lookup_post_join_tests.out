@@ -1,0 +1,1369 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_api_internal,documentdb_core;
+SET documentdb.next_collection_id TO 25720000;
+SET documentdb.next_collection_index_id TO 25720000;
+-- The fixture combines multiple outer rows, array join keys, duplicate foreign
+-- matches, multiple nested matches, sibling lookups, and a three-level lookup
+-- chain. This catches cross-row correlation and row loss while post-join
+-- results are aggregated, unwound, processed, and aggregated again.
+SELECT COUNT(documentdb_api.insert_one(
+    'lookup_post_join_db',
+    'orders',
+    document::bson
+))
+FROM (
+    VALUES
+        ('{ "_id": 1, "itemCodes": [10, 20] }'),
+        ('{ "_id": 2, "itemCodes": [20] }'),
+        ('{ "_id": 3, "itemCodes": [999] }'),
+        ('{ "_id": 4, "supplierCode": "S1" }')
+) AS docs(document);
+NOTICE:  creating collection
+ count 
+-------
+     4
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one(
+    'lookup_post_join_db',
+    'items',
+    document::bson
+))
+FROM (
+    VALUES
+        ('{ "_id": 101, "code": 10, "enabled": true,  "supplierCode": "S1", "supplier": { "code": "S1" } }'),
+        ('{ "_id": 102, "code": 20, "enabled": true,  "supplierCode": "S2", "supplier": { "code": "S2" } }'),
+        ('{ "_id": 103, "code": 20, "enabled": false, "supplierCode": "S3", "supplier": { "code": "S3" } }'),
+        ('{ "_id": 104, "code": 20, "enabled": true,  "supplierCode": "S3", "supplier": { "code": "S3" } }')
+) AS docs(document);
+NOTICE:  creating collection
+ count 
+-------
+     4
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one(
+    'lookup_post_join_db',
+    'suppliers',
+    document::bson
+))
+FROM (
+    VALUES
+        ('{ "_id": 201, "code": "S1", "regionCode": "R1" }'),
+        ('{ "_id": 202, "code": "S1", "regionCode": "R2" }'),
+        ('{ "_id": 203, "code": "S2", "regionCode": "R2" }'),
+        ('{ "_id": 204, "code": "S3", "regionCode": "R3" }')
+) AS docs(document);
+NOTICE:  creating collection
+ count 
+-------
+     4
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one(
+    'lookup_post_join_db',
+    'regions',
+    document::bson
+))
+FROM (
+    VALUES
+        ('{ "_id": 301, "code": "R1" }'),
+        ('{ "_id": 302, "code": "R2" }'),
+        ('{ "_id": 303, "code": "R3" }')
+) AS docs(document);
+NOTICE:  creating collection
+ count 
+-------
+     3
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one(
+    'lookup_post_join_db',
+    'stock',
+    document::bson
+))
+FROM (
+    VALUES
+        ('{ "_id": 401, "itemCode": 10, "warehouse": "A" }'),
+        ('{ "_id": 402, "itemCode": 20, "warehouse": "A" }'),
+        ('{ "_id": 403, "itemCode": 20, "warehouse": "B" }')
+) AS docs(document);
+NOTICE:  creating collection
+ count 
+-------
+     3
+(1 row)
+
+SHOW documentdb.force_nested_lookup_pipeline_after_join;
+ documentdb.force_nested_lookup_pipeline_after_join 
+----------------------------------------------------
+ off
+(1 row)
+
+-- Flag off establishes the semantic baseline.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$sort": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              { "$match": { "enabled": true } },
+              { "$sort": { "_id": 1 } },
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "pipeline": [
+                    { "$sort": { "_id": 1 } },
+                    {
+                      "$lookup": {
+                        "from": "regions",
+                        "localField": "regionCode",
+                        "foreignField": "code",
+                        "pipeline": [
+                          { "$sort": { "_id": 1 } }
+                        ],
+                        "as": "region"
+                      }
+                    }
+                  ],
+                  "as": "suppliers"
+                }
+              },
+              {
+                "$lookup": {
+                  "from": "stock",
+                  "localField": "code",
+                  "foreignField": "itemCode",
+                  "pipeline": [
+                    { "$sort": { "_id": 1 } }
+                  ],
+                  "as": "stock"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          document                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "101" }, "code" : { "$numberInt" : "10" }, "enabled" : true, "supplierCode" : "S1", "supplier" : { "code" : "S1" }, "suppliers" : [ { "_id" : { "$numberInt" : "201" }, "code" : "S1", "regionCode" : "R1", "region" : [ { "_id" : { "$numberInt" : "301" }, "code" : "R1" } ] }, { "_id" : { "$numberInt" : "202" }, "code" : "S1", "regionCode" : "R2", "region" : [ { "_id" : { "$numberInt" : "302" }, "code" : "R2" } ] } ], "stock" : [ { "_id" : { "$numberInt" : "401" }, "itemCode" : { "$numberInt" : "10" }, "warehouse" : "A" } ] }, { "_id" : { "$numberInt" : "102" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S2", "supplier" : { "code" : "S2" }, "suppliers" : [ { "_id" : { "$numberInt" : "203" }, "code" : "S2", "regionCode" : "R2", "region" : [ { "_id" : { "$numberInt" : "302" }, "code" : "R2" } ] } ], "stock" : [ { "_id" : { "$numberInt" : "402" }, "itemCode" : { "$numberInt" : "20" }, "warehouse" : "A" }, { "_id" : { "$numberInt" : "403" }, "itemCode" : { "$numberInt" : "20" }, "warehouse" : "B" } ] }, { "_id" : { "$numberInt" : "104" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S3", "supplier" : { "code" : "S3" }, "suppliers" : [ { "_id" : { "$numberInt" : "204" }, "code" : "S3", "regionCode" : "R3", "region" : [ { "_id" : { "$numberInt" : "303" }, "code" : "R3" } ] } ], "stock" : [ { "_id" : { "$numberInt" : "402" }, "itemCode" : { "$numberInt" : "20" }, "warehouse" : "A" }, { "_id" : { "$numberInt" : "403" }, "itemCode" : { "$numberInt" : "20" }, "warehouse" : "B" } ] } ] }
+ { "_id" : { "$numberInt" : "2" }, "itemCodes" : [ { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "102" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S2", "supplier" : { "code" : "S2" }, "suppliers" : [ { "_id" : { "$numberInt" : "203" }, "code" : "S2", "regionCode" : "R2", "region" : [ { "_id" : { "$numberInt" : "302" }, "code" : "R2" } ] } ], "stock" : [ { "_id" : { "$numberInt" : "402" }, "itemCode" : { "$numberInt" : "20" }, "warehouse" : "A" }, { "_id" : { "$numberInt" : "403" }, "itemCode" : { "$numberInt" : "20" }, "warehouse" : "B" } ] }, { "_id" : { "$numberInt" : "104" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S3", "supplier" : { "code" : "S3" }, "suppliers" : [ { "_id" : { "$numberInt" : "204" }, "code" : "S3", "regionCode" : "R3", "region" : [ { "_id" : { "$numberInt" : "303" }, "code" : "R3" } ] } ], "stock" : [ { "_id" : { "$numberInt" : "402" }, "itemCode" : { "$numberInt" : "20" }, "warehouse" : "A" }, { "_id" : { "$numberInt" : "403" }, "itemCode" : { "$numberInt" : "20" }, "warehouse" : "B" } ] } ] }
+ { "_id" : { "$numberInt" : "3" }, "itemCodes" : [ { "$numberInt" : "999" } ], "items" : [  ] }
+ { "_id" : { "$numberInt" : "4" }, "supplierCode" : "S1", "items" : [  ] }
+(4 rows)
+
+SET documentdb.force_nested_lookup_pipeline_after_join TO on;
+-- Flag on must preserve the same result after each parent equality join
+-- narrows the rows consumed by the nested lookups.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$sort": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              { "$match": { "enabled": true } },
+              { "$sort": { "_id": 1 } },
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "pipeline": [
+                    { "$sort": { "_id": 1 } },
+                    {
+                      "$lookup": {
+                        "from": "regions",
+                        "localField": "regionCode",
+                        "foreignField": "code",
+                        "pipeline": [
+                          { "$sort": { "_id": 1 } }
+                        ],
+                        "as": "region"
+                      }
+                    }
+                  ],
+                  "as": "suppliers"
+                }
+              },
+              {
+                "$lookup": {
+                  "from": "stock",
+                  "localField": "code",
+                  "foreignField": "itemCode",
+                  "pipeline": [
+                    { "$sort": { "_id": 1 } }
+                  ],
+                  "as": "stock"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          document                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "101" }, "code" : { "$numberInt" : "10" }, "enabled" : true, "supplierCode" : "S1", "supplier" : { "code" : "S1" }, "suppliers" : [ { "_id" : { "$numberInt" : "201" }, "code" : "S1", "regionCode" : "R1", "region" : [ { "_id" : { "$numberInt" : "301" }, "code" : "R1" } ] }, { "_id" : { "$numberInt" : "202" }, "code" : "S1", "regionCode" : "R2", "region" : [ { "_id" : { "$numberInt" : "302" }, "code" : "R2" } ] } ], "stock" : [ { "_id" : { "$numberInt" : "401" }, "itemCode" : { "$numberInt" : "10" }, "warehouse" : "A" } ] }, { "_id" : { "$numberInt" : "102" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S2", "supplier" : { "code" : "S2" }, "suppliers" : [ { "_id" : { "$numberInt" : "203" }, "code" : "S2", "regionCode" : "R2", "region" : [ { "_id" : { "$numberInt" : "302" }, "code" : "R2" } ] } ], "stock" : [ { "_id" : { "$numberInt" : "402" }, "itemCode" : { "$numberInt" : "20" }, "warehouse" : "A" }, { "_id" : { "$numberInt" : "403" }, "itemCode" : { "$numberInt" : "20" }, "warehouse" : "B" } ] }, { "_id" : { "$numberInt" : "104" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S3", "supplier" : { "code" : "S3" }, "suppliers" : [ { "_id" : { "$numberInt" : "204" }, "code" : "S3", "regionCode" : "R3", "region" : [ { "_id" : { "$numberInt" : "303" }, "code" : "R3" } ] } ], "stock" : [ { "_id" : { "$numberInt" : "402" }, "itemCode" : { "$numberInt" : "20" }, "warehouse" : "A" }, { "_id" : { "$numberInt" : "403" }, "itemCode" : { "$numberInt" : "20" }, "warehouse" : "B" } ] } ] }
+ { "_id" : { "$numberInt" : "2" }, "itemCodes" : [ { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "102" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S2", "supplier" : { "code" : "S2" }, "suppliers" : [ { "_id" : { "$numberInt" : "203" }, "code" : "S2", "regionCode" : "R2", "region" : [ { "_id" : { "$numberInt" : "302" }, "code" : "R2" } ] } ], "stock" : [ { "_id" : { "$numberInt" : "402" }, "itemCode" : { "$numberInt" : "20" }, "warehouse" : "A" }, { "_id" : { "$numberInt" : "403" }, "itemCode" : { "$numberInt" : "20" }, "warehouse" : "B" } ] }, { "_id" : { "$numberInt" : "104" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S3", "supplier" : { "code" : "S3" }, "suppliers" : [ { "_id" : { "$numberInt" : "204" }, "code" : "S3", "regionCode" : "R3", "region" : [ { "_id" : { "$numberInt" : "303" }, "code" : "R3" } ] } ], "stock" : [ { "_id" : { "$numberInt" : "402" }, "itemCode" : { "$numberInt" : "20" }, "warehouse" : "A" }, { "_id" : { "$numberInt" : "403" }, "itemCode" : { "$numberInt" : "20" }, "warehouse" : "B" } ] } ] }
+ { "_id" : { "$numberInt" : "3" }, "itemCodes" : [ { "$numberInt" : "999" } ], "items" : [  ] }
+ { "_id" : { "$numberInt" : "4" }, "supplierCode" : "S1", "items" : [  ] }
+(4 rows)
+
+-- Lookup followed immediately by unwind uses the combined lookup-unwind path.
+-- Full documents verify that the nested results remain correlated after the
+-- combined stage expands the parent matches.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$sort": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              { "$match": { "enabled": true } },
+              { "$sort": { "_id": 1 } },
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "pipeline": [
+                    { "$sort": { "_id": 1 } }
+                  ],
+                  "as": "suppliers"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        },
+        {
+          "$unwind": {
+            "path": "$items",
+            "preserveNullAndEmptyArrays": true
+          }
+        },
+        { "$sort": { "_id": 1, "items._id": 1 } }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                                                                                                document                                                                                                                                                                                                                 
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : { "_id" : { "$numberInt" : "101" }, "code" : { "$numberInt" : "10" }, "enabled" : true, "supplierCode" : "S1", "supplier" : { "code" : "S1" }, "suppliers" : [ { "_id" : { "$numberInt" : "201" }, "code" : "S1", "regionCode" : "R1" }, { "_id" : { "$numberInt" : "202" }, "code" : "S1", "regionCode" : "R2" } ] } }
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : { "_id" : { "$numberInt" : "102" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S2", "supplier" : { "code" : "S2" }, "suppliers" : [ { "_id" : { "$numberInt" : "203" }, "code" : "S2", "regionCode" : "R2" } ] } }
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : { "_id" : { "$numberInt" : "104" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S3", "supplier" : { "code" : "S3" }, "suppliers" : [ { "_id" : { "$numberInt" : "204" }, "code" : "S3", "regionCode" : "R3" } ] } }
+ { "_id" : { "$numberInt" : "2" }, "itemCodes" : [ { "$numberInt" : "20" } ], "items" : { "_id" : { "$numberInt" : "102" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S2", "supplier" : { "code" : "S2" }, "suppliers" : [ { "_id" : { "$numberInt" : "203" }, "code" : "S2", "regionCode" : "R2" } ] } }
+ { "_id" : { "$numberInt" : "2" }, "itemCodes" : [ { "$numberInt" : "20" } ], "items" : { "_id" : { "$numberInt" : "104" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S3", "supplier" : { "code" : "S3" }, "suppliers" : [ { "_id" : { "$numberInt" : "204" }, "code" : "S3", "regionCode" : "R3" } ] } }
+ { "_id" : { "$numberInt" : "3" }, "itemCodes" : [ { "$numberInt" : "999" } ] }
+ { "_id" : { "$numberInt" : "4" }, "supplierCode" : "S1" }
+(7 rows)
+
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              { "$match": { "enabled": true } },
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "suppliers"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        },
+        { "$unwind": "$items" },
+        { "$count": "matchedOnlyCount" }
+      ]
+    }
+    $pipeline$
+);
+                    document                     
+-------------------------------------------------
+ { "matchedOnlyCount" : { "$numberInt" : "5" } }
+(1 row)
+
+-- let remains correlated with the matched item rather than the outer order or
+-- another matched item.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$match": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              { "$match": { "code": 10 } },
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "let": {
+                    "supplierCode": "$supplierCode"
+                  },
+                  "pipeline": [
+                    {
+                      "$match": {
+                        "$expr": {
+                          "$eq": [ "$code", "$$supplierCode" ]
+                        }
+                      }
+                    },
+                    { "$sort": { "_id": 1 } }
+                  ],
+                  "as": "suppliersViaLet"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                                                                                                     document                                                                                                                                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "101" }, "code" : { "$numberInt" : "10" }, "enabled" : true, "supplierCode" : "S1", "supplier" : { "code" : "S1" }, "suppliersViaLet" : [ { "_id" : { "$numberInt" : "201" }, "code" : "S1", "regionCode" : "R1" }, { "_id" : { "$numberInt" : "202" }, "code" : "S1", "regionCode" : "R2" } ] } ] }
+(1 row)
+
+-- The nested lookup output replaces the parent foreign path. The equality
+-- match must consume the original supplier.code before that replacement.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$match": { "_id": 4 } },
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "supplierCode",
+            "foreignField": "supplier.code",
+            "pipeline": [
+              { "$sort": { "_id": 1 } },
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplier.code",
+                  "foreignField": "code",
+                  "pipeline": [
+                    { "$sort": { "_id": 1 } }
+                  ],
+                  "as": "supplier"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                                                           document                                                                                                                                                                            
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "4" }, "supplierCode" : "S1", "items" : [ { "_id" : { "$numberInt" : "101" }, "code" : { "$numberInt" : "10" }, "enabled" : true, "supplierCode" : "S1", "supplier" : [ { "_id" : { "$numberInt" : "201" }, "code" : "S1", "regionCode" : "R1" }, { "_id" : { "$numberInt" : "202" }, "code" : "S1", "regionCode" : "R2" } ] } ] }
+(1 row)
+
+-- A missing nested namespace contributes an empty array without removing the
+-- parent foreign document.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$match": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              { "$match": { "code": 10 } },
+              {
+                "$lookup": {
+                  "from": "missing_nested_collection",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "missing"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                        document                                                                                                                                         
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "101" }, "code" : { "$numberInt" : "10" }, "enabled" : true, "supplierCode" : "S1", "supplier" : { "code" : "S1" }, "missing" : [  ] } ] }
+(1 row)
+
+RESET documentdb.force_nested_lookup_pipeline_after_join;
+-- Flag-off controls for the specialized paths exercised above with the flag
+-- enabled.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$sort": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              { "$match": { "enabled": true } },
+              { "$sort": { "_id": 1 } },
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "pipeline": [
+                    { "$sort": { "_id": 1 } }
+                  ],
+                  "as": "suppliers"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        },
+        {
+          "$unwind": {
+            "path": "$items",
+            "preserveNullAndEmptyArrays": true
+          }
+        },
+        { "$sort": { "_id": 1, "items._id": 1 } }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                                                                                                document                                                                                                                                                                                                                 
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : { "_id" : { "$numberInt" : "101" }, "code" : { "$numberInt" : "10" }, "enabled" : true, "supplierCode" : "S1", "supplier" : { "code" : "S1" }, "suppliers" : [ { "_id" : { "$numberInt" : "201" }, "code" : "S1", "regionCode" : "R1" }, { "_id" : { "$numberInt" : "202" }, "code" : "S1", "regionCode" : "R2" } ] } }
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : { "_id" : { "$numberInt" : "102" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S2", "supplier" : { "code" : "S2" }, "suppliers" : [ { "_id" : { "$numberInt" : "203" }, "code" : "S2", "regionCode" : "R2" } ] } }
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : { "_id" : { "$numberInt" : "104" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S3", "supplier" : { "code" : "S3" }, "suppliers" : [ { "_id" : { "$numberInt" : "204" }, "code" : "S3", "regionCode" : "R3" } ] } }
+ { "_id" : { "$numberInt" : "2" }, "itemCodes" : [ { "$numberInt" : "20" } ], "items" : { "_id" : { "$numberInt" : "102" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S2", "supplier" : { "code" : "S2" }, "suppliers" : [ { "_id" : { "$numberInt" : "203" }, "code" : "S2", "regionCode" : "R2" } ] } }
+ { "_id" : { "$numberInt" : "2" }, "itemCodes" : [ { "$numberInt" : "20" } ], "items" : { "_id" : { "$numberInt" : "104" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S3", "supplier" : { "code" : "S3" }, "suppliers" : [ { "_id" : { "$numberInt" : "204" }, "code" : "S3", "regionCode" : "R3" } ] } }
+ { "_id" : { "$numberInt" : "3" }, "itemCodes" : [ { "$numberInt" : "999" } ] }
+ { "_id" : { "$numberInt" : "4" }, "supplierCode" : "S1" }
+(7 rows)
+
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              { "$match": { "enabled": true } },
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "suppliers"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        },
+        { "$unwind": "$items" },
+        { "$count": "matchedOnlyCount" }
+      ]
+    }
+    $pipeline$
+);
+                    document                     
+-------------------------------------------------
+ { "matchedOnlyCount" : { "$numberInt" : "5" } }
+(1 row)
+
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$match": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              { "$match": { "code": 10 } },
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "let": {
+                    "supplierCode": "$supplierCode"
+                  },
+                  "pipeline": [
+                    {
+                      "$match": {
+                        "$expr": {
+                          "$eq": [ "$code", "$$supplierCode" ]
+                        }
+                      }
+                    },
+                    { "$sort": { "_id": 1 } }
+                  ],
+                  "as": "suppliersViaLet"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                                                                                                     document                                                                                                                                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "101" }, "code" : { "$numberInt" : "10" }, "enabled" : true, "supplierCode" : "S1", "supplier" : { "code" : "S1" }, "suppliersViaLet" : [ { "_id" : { "$numberInt" : "201" }, "code" : "S1", "regionCode" : "R1" }, { "_id" : { "$numberInt" : "202" }, "code" : "S1", "regionCode" : "R2" } ] } ] }
+(1 row)
+
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$match": { "_id": 4 } },
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "supplierCode",
+            "foreignField": "supplier.code",
+            "pipeline": [
+              { "$sort": { "_id": 1 } },
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplier.code",
+                  "foreignField": "code",
+                  "pipeline": [
+                    { "$sort": { "_id": 1 } }
+                  ],
+                  "as": "supplier"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                                                           document                                                                                                                                                                            
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "4" }, "supplierCode" : "S1", "items" : [ { "_id" : { "$numberInt" : "101" }, "code" : { "$numberInt" : "10" }, "enabled" : true, "supplierCode" : "S1", "supplier" : [ { "_id" : { "$numberInt" : "201" }, "code" : "S1", "regionCode" : "R1" }, { "_id" : { "$numberInt" : "202" }, "code" : "S1", "regionCode" : "R2" } ] } ] }
+(1 row)
+
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$match": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              { "$match": { "code": 10 } },
+              {
+                "$lookup": {
+                  "from": "missing_nested_collection",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "missing"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                        document                                                                                                                                         
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "101" }, "code" : { "$numberInt" : "10" }, "enabled" : true, "supplierCode" : "S1", "supplier" : { "code" : "S1" }, "missing" : [  ] } ] }
+(1 row)
+
+-- Immediate outer, parent-foreign, and nested views use order-sensitive view
+-- pipelines so placement mistakes cannot be hidden by equivalent row sets.
+SELECT documentdb_api.create_collection_view(
+    'lookup_post_join_db',
+    '{
+      "create": "orders_first_view",
+      "viewOn": "orders",
+      "pipeline": [
+        { "$sort": { "_id": 1 } },
+        { "$limit": 1 }
+      ]
+    }'
+);
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.create_collection_view(
+    'lookup_post_join_db',
+    '{
+      "create": "items_last_view",
+      "viewOn": "items",
+      "pipeline": [
+        { "$match": { "enabled": true } },
+        { "$sort": { "_id": -1 } },
+        { "$limit": 1 }
+      ]
+    }'
+);
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.create_collection_view(
+    'lookup_post_join_db',
+    '{
+      "create": "suppliers_ordered_view",
+      "viewOn": "suppliers",
+      "pipeline": [
+        { "$sort": { "_id": 1 } }
+      ]
+    }'
+);
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Flag-off view baselines.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders_first_view",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              { "$sort": { "_id": 1 } },
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "suppliers"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      document                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "101" }, "code" : { "$numberInt" : "10" }, "enabled" : true, "supplierCode" : "S1", "supplier" : { "code" : "S1" }, "suppliers" : [ { "_id" : { "$numberInt" : "201" }, "code" : "S1", "regionCode" : "R1" }, { "_id" : { "$numberInt" : "202" }, "code" : "S1", "regionCode" : "R2" } ] }, { "_id" : { "$numberInt" : "102" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S2", "supplier" : { "code" : "S2" }, "suppliers" : [ { "_id" : { "$numberInt" : "203" }, "code" : "S2", "regionCode" : "R2" } ] }, { "_id" : { "$numberInt" : "103" }, "code" : { "$numberInt" : "20" }, "enabled" : false, "supplierCode" : "S3", "supplier" : { "code" : "S3" }, "suppliers" : [ { "_id" : { "$numberInt" : "204" }, "code" : "S3", "regionCode" : "R3" } ] }, { "_id" : { "$numberInt" : "104" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S3", "supplier" : { "code" : "S3" }, "suppliers" : [ { "_id" : { "$numberInt" : "204" }, "code" : "S3", "regionCode" : "R3" } ] } ] }
+(1 row)
+
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$match": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "items_last_view",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "suppliers"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                                                             document                                                                                                                                                                              
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "104" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S3", "supplier" : { "code" : "S3" }, "suppliers" : [ { "_id" : { "$numberInt" : "204" }, "code" : "S3", "regionCode" : "R3" } ] } ] }
+(1 row)
+
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$match": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              { "$match": { "code": 10 } },
+              {
+                "$lookup": {
+                  "from": "suppliers_ordered_view",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "suppliers"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                                                                                                  document                                                                                                                                                                                                                   
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "101" }, "code" : { "$numberInt" : "10" }, "enabled" : true, "supplierCode" : "S1", "supplier" : { "code" : "S1" }, "suppliers" : [ { "_id" : { "$numberInt" : "201" }, "code" : "S1", "regionCode" : "R1" }, { "_id" : { "$numberInt" : "202" }, "code" : "S1", "regionCode" : "R2" } ] } ] }
+(1 row)
+
+SET documentdb.force_nested_lookup_pipeline_after_join TO on;
+-- Flag-on view comparisons.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders_first_view",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              { "$sort": { "_id": 1 } },
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "suppliers"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      document                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "101" }, "code" : { "$numberInt" : "10" }, "enabled" : true, "supplierCode" : "S1", "supplier" : { "code" : "S1" }, "suppliers" : [ { "_id" : { "$numberInt" : "201" }, "code" : "S1", "regionCode" : "R1" }, { "_id" : { "$numberInt" : "202" }, "code" : "S1", "regionCode" : "R2" } ] }, { "_id" : { "$numberInt" : "102" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S2", "supplier" : { "code" : "S2" }, "suppliers" : [ { "_id" : { "$numberInt" : "203" }, "code" : "S2", "regionCode" : "R2" } ] }, { "_id" : { "$numberInt" : "103" }, "code" : { "$numberInt" : "20" }, "enabled" : false, "supplierCode" : "S3", "supplier" : { "code" : "S3" }, "suppliers" : [ { "_id" : { "$numberInt" : "204" }, "code" : "S3", "regionCode" : "R3" } ] }, { "_id" : { "$numberInt" : "104" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S3", "supplier" : { "code" : "S3" }, "suppliers" : [ { "_id" : { "$numberInt" : "204" }, "code" : "S3", "regionCode" : "R3" } ] } ] }
+(1 row)
+
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$match": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "items_last_view",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "suppliers"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                                                             document                                                                                                                                                                              
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "104" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S3", "supplier" : { "code" : "S3" }, "suppliers" : [ { "_id" : { "$numberInt" : "204" }, "code" : "S3", "regionCode" : "R3" } ] } ] }
+(1 row)
+
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$match": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              { "$match": { "code": 10 } },
+              {
+                "$lookup": {
+                  "from": "suppliers_ordered_view",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "suppliers"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                                                                                                  document                                                                                                                                                                                                                   
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "101" }, "code" : { "$numberInt" : "10" }, "enabled" : true, "supplierCode" : "S1", "supplier" : { "code" : "S1" }, "suppliers" : [ { "_id" : { "$numberInt" : "201" }, "code" : "S1", "regionCode" : "R1" }, { "_id" : { "$numberInt" : "202" }, "code" : "S1", "regionCode" : "R2" } ] } ] }
+(1 row)
+
+RESET documentdb.force_nested_lookup_pipeline_after_join;
+-- Parent-level let must remain bound to the correct outer row when its
+-- pipeline also contains a nested lookup.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$sort": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "let": {
+              "outerOrderId": "$_id"
+            },
+            "pipeline": [
+              {
+                "$match": {
+                  "$expr": {
+                    "$eq": [ "$$outerOrderId", 1 ]
+                  }
+                }
+              },
+              { "$sort": { "_id": 1 } },
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "suppliers"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      document                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "101" }, "code" : { "$numberInt" : "10" }, "enabled" : true, "supplierCode" : "S1", "supplier" : { "code" : "S1" }, "suppliers" : [ { "_id" : { "$numberInt" : "201" }, "code" : "S1", "regionCode" : "R1" }, { "_id" : { "$numberInt" : "202" }, "code" : "S1", "regionCode" : "R2" } ] }, { "_id" : { "$numberInt" : "102" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S2", "supplier" : { "code" : "S2" }, "suppliers" : [ { "_id" : { "$numberInt" : "203" }, "code" : "S2", "regionCode" : "R2" } ] }, { "_id" : { "$numberInt" : "103" }, "code" : { "$numberInt" : "20" }, "enabled" : false, "supplierCode" : "S3", "supplier" : { "code" : "S3" }, "suppliers" : [ { "_id" : { "$numberInt" : "204" }, "code" : "S3", "regionCode" : "R3" } ] }, { "_id" : { "$numberInt" : "104" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S3", "supplier" : { "code" : "S3" }, "suppliers" : [ { "_id" : { "$numberInt" : "204" }, "code" : "S3", "regionCode" : "R3" } ] } ] }
+ { "_id" : { "$numberInt" : "2" }, "itemCodes" : [ { "$numberInt" : "20" } ], "items" : [  ] }
+ { "_id" : { "$numberInt" : "3" }, "itemCodes" : [ { "$numberInt" : "999" } ], "items" : [  ] }
+ { "_id" : { "$numberInt" : "4" }, "supplierCode" : "S1", "items" : [  ] }
+(4 rows)
+
+SET documentdb.force_nested_lookup_pipeline_after_join TO on;
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$sort": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "let": {
+              "outerOrderId": "$_id"
+            },
+            "pipeline": [
+              {
+                "$match": {
+                  "$expr": {
+                    "$eq": [ "$$outerOrderId", 1 ]
+                  }
+                }
+              },
+              { "$sort": { "_id": 1 } },
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "suppliers"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      document                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "101" }, "code" : { "$numberInt" : "10" }, "enabled" : true, "supplierCode" : "S1", "supplier" : { "code" : "S1" }, "suppliers" : [ { "_id" : { "$numberInt" : "201" }, "code" : "S1", "regionCode" : "R1" }, { "_id" : { "$numberInt" : "202" }, "code" : "S1", "regionCode" : "R2" } ] }, { "_id" : { "$numberInt" : "102" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S2", "supplier" : { "code" : "S2" }, "suppliers" : [ { "_id" : { "$numberInt" : "203" }, "code" : "S2", "regionCode" : "R2" } ] }, { "_id" : { "$numberInt" : "103" }, "code" : { "$numberInt" : "20" }, "enabled" : false, "supplierCode" : "S3", "supplier" : { "code" : "S3" }, "suppliers" : [ { "_id" : { "$numberInt" : "204" }, "code" : "S3", "regionCode" : "R3" } ] }, { "_id" : { "$numberInt" : "104" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S3", "supplier" : { "code" : "S3" }, "suppliers" : [ { "_id" : { "$numberInt" : "204" }, "code" : "S3", "regionCode" : "R3" } ] } ] }
+ { "_id" : { "$numberInt" : "2" }, "itemCodes" : [ { "$numberInt" : "20" } ], "items" : [  ] }
+ { "_id" : { "$numberInt" : "3" }, "itemCodes" : [ { "$numberInt" : "999" } ], "items" : [  ] }
+ { "_id" : { "$numberInt" : "4" }, "supplierCode" : "S1", "items" : [  ] }
+(4 rows)
+
+RESET documentdb.force_nested_lookup_pipeline_after_join;
+-- Flag-off controls for pipelines with stages after the first nested lookup.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$match": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "suppliers"
+                }
+              },
+              { "$match": { "suppliers.regionCode": "R2" } },
+              { "$sort": { "_id": 1 } }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                                                                                                                                                                                                                         document                                                                                                                                                                                                                                                                                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "101" }, "code" : { "$numberInt" : "10" }, "enabled" : true, "supplierCode" : "S1", "supplier" : { "code" : "S1" }, "suppliers" : [ { "_id" : { "$numberInt" : "201" }, "code" : "S1", "regionCode" : "R1" }, { "_id" : { "$numberInt" : "202" }, "code" : "S1", "regionCode" : "R2" } ] }, { "_id" : { "$numberInt" : "102" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S2", "supplier" : { "code" : "S2" }, "suppliers" : [ { "_id" : { "$numberInt" : "203" }, "code" : "S2", "regionCode" : "R2" } ] } ] }
+(1 row)
+
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$sort": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "suppliers"
+                }
+              },
+              { "$sort": { "_id": 1 } },
+              { "$skip": 1 },
+              { "$limit": 1 }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                                                             document                                                                                                                                                                              
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "102" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S2", "supplier" : { "code" : "S2" }, "suppliers" : [ { "_id" : { "$numberInt" : "203" }, "code" : "S2", "regionCode" : "R2" } ] } ] }
+ { "_id" : { "$numberInt" : "2" }, "itemCodes" : [ { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "103" }, "code" : { "$numberInt" : "20" }, "enabled" : false, "supplierCode" : "S3", "supplier" : { "code" : "S3" }, "suppliers" : [ { "_id" : { "$numberInt" : "204" }, "code" : "S3", "regionCode" : "R3" } ] } ] }
+ { "_id" : { "$numberInt" : "3" }, "itemCodes" : [ { "$numberInt" : "999" } ], "items" : [  ] }
+ { "_id" : { "$numberInt" : "4" }, "supplierCode" : "S1", "items" : [  ] }
+(4 rows)
+
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$sort": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "suppliers"
+                }
+              },
+              {
+                "$group": {
+                  "_id": "$supplierCode",
+                  "itemCount": { "$sum": 1 }
+                }
+              },
+              { "$sort": { "_id": 1 } }
+            ],
+            "as": "groups"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                           document                                                                                                                                            
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "groups" : [ { "_id" : "S1", "itemCount" : { "$numberInt" : "1" } }, { "_id" : "S2", "itemCount" : { "$numberInt" : "1" } }, { "_id" : "S3", "itemCount" : { "$numberInt" : "2" } } ] }
+ { "_id" : { "$numberInt" : "2" }, "itemCodes" : [ { "$numberInt" : "20" } ], "groups" : [ { "_id" : "S2", "itemCount" : { "$numberInt" : "1" } }, { "_id" : "S3", "itemCount" : { "$numberInt" : "2" } } ] }
+ { "_id" : { "$numberInt" : "3" }, "itemCodes" : [ { "$numberInt" : "999" } ], "groups" : [  ] }
+ { "_id" : { "$numberInt" : "4" }, "supplierCode" : "S1", "groups" : [  ] }
+(4 rows)
+
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$match": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              { "$match": { "code": 10 } },
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "supplier"
+                }
+              },
+              { "$unwind": "$supplier" },
+              { "$sort": { "supplier._id": 1 } }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                                                                                                                                               document                                                                                                                                                                                                                                                               
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "101" }, "code" : { "$numberInt" : "10" }, "enabled" : true, "supplierCode" : "S1", "supplier" : { "_id" : { "$numberInt" : "201" }, "code" : "S1", "regionCode" : "R1" } }, { "_id" : { "$numberInt" : "101" }, "code" : { "$numberInt" : "10" }, "enabled" : true, "supplierCode" : "S1", "supplier" : { "_id" : { "$numberInt" : "202" }, "code" : "S1", "regionCode" : "R2" } } ] }
+(1 row)
+
+SET documentdb.force_nested_lookup_pipeline_after_join TO on;
+-- The force setting keeps the nested lookup post-join for these suffix-stage
+-- pipelines.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$match": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "suppliers"
+                }
+              },
+              { "$match": { "suppliers.regionCode": "R2" } },
+              { "$sort": { "_id": 1 } }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                                                                                                                                                                                                                         document                                                                                                                                                                                                                                                                                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "101" }, "code" : { "$numberInt" : "10" }, "enabled" : true, "supplierCode" : "S1", "supplier" : { "code" : "S1" }, "suppliers" : [ { "_id" : { "$numberInt" : "201" }, "code" : "S1", "regionCode" : "R1" }, { "_id" : { "$numberInt" : "202" }, "code" : "S1", "regionCode" : "R2" } ] }, { "_id" : { "$numberInt" : "102" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S2", "supplier" : { "code" : "S2" }, "suppliers" : [ { "_id" : { "$numberInt" : "203" }, "code" : "S2", "regionCode" : "R2" } ] } ] }
+(1 row)
+
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$sort": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "suppliers"
+                }
+              },
+              { "$sort": { "_id": 1 } },
+              { "$skip": 1 },
+              { "$limit": 1 }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                                                             document                                                                                                                                                                              
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "102" }, "code" : { "$numberInt" : "20" }, "enabled" : true, "supplierCode" : "S2", "supplier" : { "code" : "S2" }, "suppliers" : [ { "_id" : { "$numberInt" : "203" }, "code" : "S2", "regionCode" : "R2" } ] } ] }
+ { "_id" : { "$numberInt" : "2" }, "itemCodes" : [ { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "103" }, "code" : { "$numberInt" : "20" }, "enabled" : false, "supplierCode" : "S3", "supplier" : { "code" : "S3" }, "suppliers" : [ { "_id" : { "$numberInt" : "204" }, "code" : "S3", "regionCode" : "R3" } ] } ] }
+ { "_id" : { "$numberInt" : "3" }, "itemCodes" : [ { "$numberInt" : "999" } ], "items" : [  ] }
+ { "_id" : { "$numberInt" : "4" }, "supplierCode" : "S1", "items" : [  ] }
+(4 rows)
+
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$sort": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "suppliers"
+                }
+              },
+              {
+                "$group": {
+                  "_id": "$supplierCode",
+                  "itemCount": { "$sum": 1 }
+                }
+              },
+              { "$sort": { "_id": 1 } }
+            ],
+            "as": "groups"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                           document                                                                                                                                            
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "groups" : [ { "_id" : "S1", "itemCount" : { "$numberInt" : "1" } }, { "_id" : "S2", "itemCount" : { "$numberInt" : "1" } }, { "_id" : "S3", "itemCount" : { "$numberInt" : "2" } } ] }
+ { "_id" : { "$numberInt" : "2" }, "itemCodes" : [ { "$numberInt" : "20" } ], "groups" : [ { "_id" : "S2", "itemCount" : { "$numberInt" : "1" } }, { "_id" : "S3", "itemCount" : { "$numberInt" : "2" } } ] }
+ { "_id" : { "$numberInt" : "3" }, "itemCodes" : [ { "$numberInt" : "999" } ], "groups" : [  ] }
+ { "_id" : { "$numberInt" : "4" }, "supplierCode" : "S1", "groups" : [  ] }
+(4 rows)
+
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        { "$match": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "pipeline": [
+              { "$match": { "code": 10 } },
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "supplier"
+                }
+              },
+              { "$unwind": "$supplier" },
+              { "$sort": { "supplier._id": 1 } }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                                                                                                                                                               document                                                                                                                                                                                                                                                               
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCodes" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ], "items" : [ { "_id" : { "$numberInt" : "101" }, "code" : { "$numberInt" : "10" }, "enabled" : true, "supplierCode" : "S1", "supplier" : { "_id" : { "$numberInt" : "201" }, "code" : "S1", "regionCode" : "R1" } }, { "_id" : { "$numberInt" : "101" }, "code" : { "$numberInt" : "10" }, "enabled" : true, "supplierCode" : "S1", "supplier" : { "_id" : { "$numberInt" : "202" }, "code" : "S1", "regionCode" : "R2" } } ] }
+(1 row)
+
+RESET documentdb.force_nested_lookup_pipeline_after_join;

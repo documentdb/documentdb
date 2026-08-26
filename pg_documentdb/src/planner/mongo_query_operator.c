@@ -17,6 +17,7 @@
 
 #include "planner/mongo_query_operator.h"
 #include "metadata/metadata_cache.h"
+#include "utils/version_utils.h"
 
 /* --------------------------------------------------------- */
 /* Top level declarations */
@@ -63,6 +64,11 @@ static const MongoQueryOperator UnknownOperator = {
 };
 static const MongoIndexOperatorInfo UnknownIndexOperator = {
 	NULL, BSON_INDEX_STRATEGY_INVALID, false
+};
+static const ObjectIdMongoOperatorInfo UnknownObjectIdOperator = {
+	{ NULL, QUERY_OPERATOR_UNKNOWN, NULL, NULL, NULL, NULL,
+	  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+	{ NULL, BSON_INDEX_STRATEGY_INVALID, false },
 };
 
 /*
@@ -127,16 +133,6 @@ static const MongoOperatorInfo QueryOperators[] = {
 		true,
 	},
 	{
-		{ "$ne", QUERY_OPERATOR_NE, BsonTypeId, BsonNotEqualMatchFunctionId, NULL,
-		  BsonNotEqualMatchFunctionId,
-		  FEATURE_QUERY_OPERATOR_NE },
-		{ "$ne", QUERY_OPERATOR_NE, BsonTypeId, BsonValueNotEqualMatchFunctionId, NULL,
-		  BsonValueNotEqualMatchFunctionId,
-		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
-		{ "@!=", BSON_INDEX_STRATEGY_DOLLAR_NOT_EQUAL, false },
-		true,
-	},
-	{
 		{ "$in", QUERY_OPERATOR_IN, BsonTypeId, BsonInMatchFunctionId, NULL,
 		  BsonInMatchFunctionId,
 		  FEATURE_QUERY_OPERATOR_IN },
@@ -144,6 +140,26 @@ static const MongoOperatorInfo QueryOperators[] = {
 		  BsonValueInMatchFunctionId,
 		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
 		{ "@*=", BSON_INDEX_STRATEGY_DOLLAR_IN, false },
+		true,
+	},
+	{
+		{ "$regex", QUERY_OPERATOR_REGEX, BsonTypeId, BsonRegexMatchFunctionId, NULL,
+		  BsonRegexMatchFunctionId,
+		  FEATURE_QUERY_OPERATOR_REGEX },
+		{ "$regex", QUERY_OPERATOR_REGEX, BsonTypeId, BsonValueRegexMatchFunctionId, NULL,
+		  BsonValueRegexMatchFunctionId,
+		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+		{ "@~", BSON_INDEX_STRATEGY_DOLLAR_REGEX, false },
+		true,
+	},
+	{
+		{ "$ne", QUERY_OPERATOR_NE, BsonTypeId, BsonNotEqualMatchFunctionId, NULL,
+		  BsonNotEqualMatchFunctionId,
+		  FEATURE_QUERY_OPERATOR_NE },
+		{ "$ne", QUERY_OPERATOR_NE, BsonTypeId, BsonValueNotEqualMatchFunctionId, NULL,
+		  BsonValueNotEqualMatchFunctionId,
+		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+		{ "@!=", BSON_INDEX_STRATEGY_DOLLAR_NOT_EQUAL, false },
 		true,
 	},
 	{
@@ -276,16 +292,6 @@ static const MongoOperatorInfo QueryOperators[] = {
 
 	/* evaluation */
 	{
-		{ "$regex", QUERY_OPERATOR_REGEX, BsonTypeId, BsonRegexMatchFunctionId, NULL,
-		  BsonRegexMatchFunctionId,
-		  FEATURE_QUERY_OPERATOR_REGEX },
-		{ "$regex", QUERY_OPERATOR_REGEX, BsonTypeId, BsonValueRegexMatchFunctionId, NULL,
-		  BsonValueRegexMatchFunctionId,
-		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
-		{ "@~", BSON_INDEX_STRATEGY_DOLLAR_REGEX, false },
-		true,
-	},
-	{
 		{ "$mod", QUERY_OPERATOR_MOD, BsonTypeId, BsonModMatchFunctionId, NULL,
 		  BsonModMatchFunctionId,
 		  FEATURE_QUERY_OPERATOR_MOD },
@@ -404,8 +410,8 @@ static const MongoOperatorInfo QueryOperators[] = {
 	{
 		{ "$within", QUERY_OPERATOR_WITHIN, BsonTypeId, BsonDollarGeowithinFunctionOid,
 		  NULL, BsonDollarGeowithinFunctionOid, FEATURE_QUERY_OPERATOR_GEOWITHIN },
-		{ "$within", QUERY_OPERATOR_WITHIN, BsonTypeId, InvalidQueryOperatorFuncOid,
-		  NULL, InvalidQueryOperatorFuncOid, INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+		{ "$within", QUERY_OPERATOR_WITHIN, BsonTypeId, BsonValueGeoWithinFunctionId,
+		  NULL, BsonValueGeoWithinFunctionId, INVALID_QUERY_OPERATOR_FEATURE_TYPE },
 		{ "@|-|", BSON_INDEX_STRATEGY_DOLLAR_GEOWITHIN, false },
 		true,
 	},
@@ -414,8 +420,9 @@ static const MongoOperatorInfo QueryOperators[] = {
 		{ "$geoWithin", QUERY_OPERATOR_GEOWITHIN, BsonTypeId,
 		  BsonDollarGeowithinFunctionOid, NULL, BsonDollarGeowithinFunctionOid,
 		  FEATURE_QUERY_OPERATOR_GEOWITHIN },
-		{ "$geoWithin", QUERY_OPERATOR_GEOWITHIN, BsonTypeId, InvalidQueryOperatorFuncOid,
-		  NULL, InvalidQueryOperatorFuncOid, INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+		{ "$geoWithin", QUERY_OPERATOR_GEOWITHIN, BsonTypeId,
+		  BsonValueGeoWithinFunctionId,
+		  NULL, BsonValueGeoWithinFunctionId, INVALID_QUERY_OPERATOR_FEATURE_TYPE },
 		{ "@|-|", BSON_INDEX_STRATEGY_DOLLAR_GEOWITHIN, false },
 		true,
 	},
@@ -426,8 +433,8 @@ static const MongoOperatorInfo QueryOperators[] = {
 		  NULL, BsonDollarGeoIntersectsFunctionOid,
 		  FEATURE_QUERY_OPERATOR_GEOINTERSECTS },
 		{ "$geoIntersects", QUERY_OPERATOR_GEOINTERSECTS, BsonTypeId,
-		  InvalidQueryOperatorFuncOid,
-		  NULL, InvalidQueryOperatorFuncOid, INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+		  BsonValueGeoIntersectsFunctionId,
+		  NULL, BsonValueGeoIntersectsFunctionId, INVALID_QUERY_OPERATOR_FEATURE_TYPE },
 		{ "@|#|", BSON_INDEX_STRATEGY_DOLLAR_GEOINTERSECTS, false },
 		true,
 	},
@@ -535,6 +542,78 @@ static const MongoOperatorInfo QueryOperators[] = {
 
 static const int QueryOperatorSize = sizeof(QueryOperators) / sizeof(MongoOperatorInfo);
 
+/*
+ * Operators that are pushed down to the object_id btree index via the
+ * ObjectId-specific runtime function ids. The entries MUST appear in the same
+ * order as the leading MongoQueryOperatorType values
+ * (QUERY_OPERATOR_EQ .. QUERY_OPERATOR_OBJECT_ID_MAX) so the array can be
+ * indexed directly by MongoQueryOperatorType -- see
+ * GetObjectIdMongoQueryOperatorByQueryOperatorType.
+ */
+static const ObjectIdMongoOperatorInfo ObjectIdQueryOperators[] = {
+	{
+		{ "$eq", QUERY_OPERATOR_EQ, GetClusterBsonQueryTypeId,
+		  BsonEqualMatchObjectIdRuntimeFunctionId,
+		  InvalidQueryOperatorFuncOid, BsonEqualMatchRuntimeFunctionId,
+		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+		{ "@=", BSON_INDEX_STRATEGY_DOLLAR_EQUAL, false },
+	},
+	{
+		{ "$gt", QUERY_OPERATOR_GT, GetClusterBsonQueryTypeId,
+		  BsonGreaterThanMatchObjectIdRuntimeFunctionId,
+		  InvalidQueryOperatorFuncOid, BsonGreaterThanMatchRuntimeFunctionId,
+		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+		{ "@>", BSON_INDEX_STRATEGY_DOLLAR_GREATER, false },
+	},
+	{
+		{ "$gte", QUERY_OPERATOR_GTE, GetClusterBsonQueryTypeId,
+		  BsonGreaterThanEqualMatchObjectIdRuntimeFunctionId,
+		  InvalidQueryOperatorFuncOid, BsonGreaterThanEqualMatchRuntimeFunctionId,
+		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+		{ "@>=", BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL, false },
+	},
+	{
+		{ "$lt", QUERY_OPERATOR_LT, GetClusterBsonQueryTypeId,
+		  BsonLessThanMatchObjectIdRuntimeFunctionId,
+		  InvalidQueryOperatorFuncOid, BsonLessThanMatchRuntimeFunctionId,
+		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+		{ "@<", BSON_INDEX_STRATEGY_DOLLAR_LESS, false },
+	},
+	{
+		{ "$lte", QUERY_OPERATOR_LTE, GetClusterBsonQueryTypeId,
+		  BsonLessThanEqualMatchObjectIdRuntimeFunctionId,
+		  InvalidQueryOperatorFuncOid, BsonLessThanEqualMatchRuntimeFunctionId,
+		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+		{ "@<=", BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL, false },
+	},
+	{
+		{ "$in", QUERY_OPERATOR_IN, GetClusterBsonQueryTypeId,
+		  BsonInObjectIdMatchFunctionId,
+		  InvalidQueryOperatorFuncOid, BsonInMatchFunctionId,
+		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+		{ "@*=", BSON_INDEX_STRATEGY_DOLLAR_IN, false },
+	},
+	{
+		{ "$regex", QUERY_OPERATOR_REGEX, GetClusterBsonQueryTypeId,
+		  BsonRegexObjectIdMatchFunctionId,
+		  InvalidQueryOperatorFuncOid, BsonRegexMatchFunctionId,
+		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+		{ "@~", BSON_INDEX_STRATEGY_DOLLAR_REGEX, false },
+	},
+};
+
+static const int ObjectIdQueryOperatorSize = sizeof(ObjectIdQueryOperators) /
+											 sizeof(ObjectIdMongoOperatorInfo);
+
+/*
+ * The ObjectIdQueryOperators array must be indexable by MongoQueryOperatorType
+ * for the leading ObjectId-supported operators, i.e. entry [i] must correspond
+ * to MongoQueryOperatorType value i for i in [0, QUERY_OPERATOR_OBJECT_ID_MAX].
+ */
+StaticAssertDecl(sizeof(ObjectIdQueryOperators) / sizeof(ObjectIdMongoOperatorInfo) ==
+				 QUERY_OPERATOR_OBJECT_ID_MAX + 1,
+				 "ObjectIdQueryOperators must cover [0, QUERY_OPERATOR_OBJECT_ID_MAX]");
+
 
 /*
  * Inline function that takes a MongoOperatorInfo and returns the appropriate
@@ -637,6 +716,30 @@ GetMongoQueryOperatorByPostgresFuncId(Oid functionId)
 }
 
 
+const ObjectIdMongoOperatorInfo *
+GetObjectIdMongoQueryOperatorByNonObjectIdFuncId(Oid functionId)
+{
+	if (!IsClusterVersionAtleast(DocDB_V0, 112, 1))
+	{
+		return &UnknownObjectIdOperator;
+	}
+
+	for (int operatorIndex = 0; operatorIndex < ObjectIdQueryOperatorSize;
+		 operatorIndex++)
+	{
+		const ObjectIdMongoOperatorInfo *operator =
+			&(ObjectIdQueryOperators[operatorIndex]);
+		if (operator->indexOperator.postgresOperatorName &&
+			functionId == operator->queryOperator.postgresIndexFunctionOidLookup())
+		{
+			return operator;
+		}
+	}
+
+	return &UnknownObjectIdOperator;
+}
+
+
 const MongoIndexOperatorInfo *
 GetMongoIndexOperatorByPostgresOperatorId(Oid operatorId)
 {
@@ -682,6 +785,30 @@ GetMongoIndexOperatorInfoByPostgresFuncId(Oid functionId)
 }
 
 
+const ObjectIdMongoOperatorInfo *
+GetObjectIdMongoIndexOperatorByPostgresFuncId(Oid functionId)
+{
+	if (!IsClusterVersionAtleast(DocDB_V0, 112, 1))
+	{
+		return &UnknownObjectIdOperator;
+	}
+
+	for (int operatorIndex = 0; operatorIndex < ObjectIdQueryOperatorSize;
+		 operatorIndex++)
+	{
+		const ObjectIdMongoOperatorInfo *operator =
+			&(ObjectIdQueryOperators[operatorIndex]);
+		if (operator->indexOperator.postgresOperatorName &&
+			(functionId == operator->queryOperator.postgresRuntimeFunctionOidLookup()))
+		{
+			return operator;
+		}
+	}
+
+	return &UnknownObjectIdOperator;
+}
+
+
 /*
  * Returns a MongoQueryOperator based on the query operator
  *
@@ -693,6 +820,13 @@ GetMongoQueryOperatorByQueryOperatorType(MongoQueryOperatorType type,
 										 MongoQueryOperatorInputType inputType)
 {
 	return GetQueryOperatorCore(&QueryOperators[type], inputType);
+}
+
+
+const MongoIndexOperatorInfo *
+GetMongoIndexOperatorInfoByOperatorType(MongoQueryOperatorType type)
+{
+	return &QueryOperators[type].indexQueryOperator;
 }
 
 
@@ -805,7 +939,7 @@ GetMongoIndexQueryOperatorFromNode(Node *expr, List **args)
  * to a valid bson_dollar_<op> function.
  */
 static Oid
-InvalidQueryOperatorFuncOid()
+InvalidQueryOperatorFuncOid(void)
 {
 	return InvalidOid;
 }

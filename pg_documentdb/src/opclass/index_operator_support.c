@@ -49,8 +49,6 @@
 #include "aggregation/bson_query_common.h"
 #include "operators/bson_expression.h"
 
-extern bool EnableExprLookupIndexPushdown;
-
 /* --------------------------------------------------------- */
 /* Top level exports */
 /* --------------------------------------------------------- */
@@ -94,22 +92,27 @@ dollar_expr_support(PG_FUNCTION_ARGS)
 }
 
 
+bool
+CompositeIndexOptInfoIsMultiKey(IndexOptInfo *indexOptInfo, uint32_t *multiKeyBitMask)
+{
+	CompositeOpClassMetadataInfo metadata = { 0 };
+	CompositeOpClassMetadataReadResult result = TryGetCompositeOpClassMetadataInfo(
+		indexOptInfo->indexoid, NoLock, &metadata);
+	*multiKeyBitMask = metadata.multiKeyPathBitMask;
+	return result != CompositeOpClassMetadataReadResult_None && metadata.isMultiKey;
+}
+
+
 static bool
 ExprCanBePushedToIndex(SupportRequestIndexCondition *supportRequest)
 {
-	if (!EnableExprLookupIndexPushdown)
-	{
-		return false;
-	}
-
-	/* A $expr can be pushed to the index iff the index is non-multikey */
-	GetMultikeyStatusFunc getMultiKeyStatusFunc = GetMultiKeyStatusByRelAm(
-		supportRequest->index->relam);
-	if (getMultiKeyStatusFunc == NULL)
-	{
-		return false;
-	}
-
+	/*
+	 * A $expr can be pushed only to a composite index, and only when that
+	 * index is non-multikey. CompositeIndexOptInfoIsMultiKey returns false both
+	 * for a non-composite index and for a composite index that is not multikey,
+	 * so an explicit composite-family check is required first to avoid treating
+	 * a non-composite (e.g. single-path) index as pushable.
+	 */
 	if (!IsCompositeOpFamilyOid(
 			supportRequest->index->relam,
 			supportRequest->index->opfamily[supportRequest->indexcol]))
@@ -117,12 +120,9 @@ ExprCanBePushedToIndex(SupportRequestIndexCondition *supportRequest)
 		return false;
 	}
 
-	bool isMultiKeyIndex = false;
-	Relation indexRel = index_open(supportRequest->index->indexoid, NoLock);
-	isMultiKeyIndex = getMultiKeyStatusFunc(indexRel);
-	index_close(indexRel, NoLock);
-
-	return !isMultiKeyIndex;
+	uint32_t multiKeyBitMaskIgnore = 0;
+	return !CompositeIndexOptInfoIsMultiKey(supportRequest->index,
+											&multiKeyBitMaskIgnore);
 }
 
 
@@ -273,9 +273,9 @@ PushBinaryExpressionQuals(bson_iter_t *outerIter, List *inputQuals,
 		secondArg = (Expr *) queryBsonConst;
 	}
 
-	List *args = list_make2(documentExpr, secondArg);
 	Expr *finalExpression =
-		(Expr *) GetOpExprClauseFromIndexOperator(operator, args, indexOptions);
+		(Expr *) GetOpExprClauseFromIndexOperator(operator, documentExpr, secondArg,
+												  indexOptions);
 	return lappend(inputQuals, finalExpression);
 }
 
@@ -404,9 +404,28 @@ PushExprToIndex(SupportRequestIndexCondition *supportRequest)
 
 	pgbsonelement exprElement = { 0 };
 	bson_iter_t exprIter;
-	PgbsonToSinglePgbsonElement(exprBson, &exprElement);
-	BsonValueInitIterator(&exprElement.bsonValue, &exprIter);
+	const char *collationString = PgbsonToSinglePgbsonElementWithCollation(exprBson,
+																		   &exprElement);
+
 	bytea *indexOptions = supportRequest->index->opclassoptions[supportRequest->indexcol];
+
+	/* TODO_COLLATION: skip pushdown when the query or candidate index is collated. */
+	if (IsCollationPresentOnQueryOrIndex(collationString, indexOptions))
+	{
+		return NULL;
+	}
+
+	/* $expr accepts scalar expressions (constants, field paths); only a
+	 * document can carry operator conditions we know how to push down.
+	 * BsonValueInitIterator throws for anything else, taking the whole
+	 * query down with it.
+	 */
+	if (exprElement.bsonValue.value_type != BSON_TYPE_DOCUMENT)
+	{
+		return NULL;
+	}
+
+	BsonValueInitIterator(&exprElement.bsonValue, &exprIter);
 
 	List *supportedQuals = NIL;
 	return WalkExprIterForSupportedQuals(&exprIter, indexOptions, documentExpr,

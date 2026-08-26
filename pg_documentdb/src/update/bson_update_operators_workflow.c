@@ -30,6 +30,8 @@
 
 #include "api_hooks_def.h"
 
+extern bool EnableArrayFilterLogicalOperators;
+
 /* --------------------------------------------------------- */
 /* Data types */
 /* --------------------------------------------------------- */
@@ -239,8 +241,6 @@ NotifyPositionalMatchIndex_HookType notify_positional_match_index_hook = NULL;
 RemoveLastMatchedIndex_HookType remove_last_matched_index_hook = NULL;
 EndPositionalUpdate_HookType end_positional_update_hook = NULL;
 
-extern bool MultiplePositionalNotAllowed;
-
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -299,6 +299,10 @@ static void WriteCurrentArrayFilterValue(pgbson_writer *writer, bson_value_t *en
 static HTAB * BuildExpressionForArrayFilters(const bson_value_t *arrayFilters);
 static void PostValidateArrayFilters(HTAB *arrayFiltersHash, const
 									 bson_value_t *updateSpec);
+static StringView ProcessArrayFilterDocument(bson_iter_t *documentIterator,
+											 pgbson_writer *writer,
+											 bool isNestedInLogicalOp);
+static bool IsArrayFilterLogicalOperator(const StringView *key);
 
 /* Functions for writing values */
 static bool HandleUpdateDocumentId(pgbson_writer *writer,
@@ -612,7 +616,7 @@ WriteCurrentNode(const BsonUpdateLeafNode *leaf, const bson_value_t *currentValu
 	/* If the update operator did not modify the document
 	 * and there is a value to be written,
 	 * write out the original value.
-	 * Exclude MODIFY_TYPE_ORIGINAL_REWRITE since that means the existing
+	 * Exclude MODIFY_TYPE_OPERATOR_WRITTEN since that means the existing
 	 * value is already written on the new document.
 	 */
 	if (updateWriter.modifyType == MODIFY_TYPE_NOCHANGE &&
@@ -625,9 +629,8 @@ WriteCurrentNode(const BsonUpdateLeafNode *leaf, const bson_value_t *currentValu
 }
 
 
-inline static void
-pg_attribute_noreturn()
-ThrowDollarPathNotAllowedError(const BsonPathNode * node)
+pg_noreturn inline static void
+ThrowDollarPathNotAllowedError(const BsonPathNode *node)
 {
 	const char *relativePath = GetRelativePathFromNode(node);
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
@@ -915,7 +918,11 @@ UpdateWriterGetArrayWriter(UpdateOperatorWriter *writer)
 	{
 		PgbsonElementWriterStartArray(writer->writer, &writer->updateArrayWriter.writer);
 		writer->updateArrayWriter.isValid = true;
-		writer->updateArrayWriter.modifyType = MODIFY_TYPE_NOCHANGE;
+
+		/* Set the modify type to MODIFY_TYPE_OPERATOR_WRITTEN since we've already
+		 * opened the array writer. This prevents the field from being rewritten.
+		 * The handler can subsequently update this to MODIFY_TYPE_CHANGED if modifications occur. */
+		writer->updateArrayWriter.modifyType = MODIFY_TYPE_OPERATOR_WRITTEN;
 	}
 
 	return &writer->updateArrayWriter;
@@ -1445,33 +1452,30 @@ ValidateSpecPathForUpdateTree(const StringView *updatePath)
 		}
 	}
 
-	if (MultiplePositionalNotAllowed)
+	/* Reject paths that contain multiple positional segments (".$"). */
+	int positionalDotDollarCount = 0;
+	for (uint32_t i = 0; i + 1 < updatePath->length; i++)
 	{
-		/* Reject paths that contain multiple positional segments (".$"). */
-		int positionalDotDollarCount = 0;
-		for (uint32_t i = 0; i + 1 < updatePath->length; i++)
+		if (updatePath->string[i] == '.' && updatePath->string[i + 1] == '$')
 		{
-			if (updatePath->string[i] == '.' && updatePath->string[i + 1] == '$')
+			if ((i + 1) == (updatePath->length - 1))
 			{
-				if ((i + 1) == (updatePath->length - 1))
-				{
-					/* If we are at the end, this is positional */
-					positionalDotDollarCount++;
-				}
-				else if (updatePath->string[i + 2] == '.')
-				{
-					/* If not the next char needs to be a dot for this to be positional */
-					positionalDotDollarCount++;
-				}
+				/* If we are at the end, this is positional */
+				positionalDotDollarCount++;
+			}
+			else if (updatePath->string[i + 2] == '.')
+			{
+				/* If not the next char needs to be a dot for this to be positional */
+				positionalDotDollarCount++;
+			}
 
-				if (positionalDotDollarCount > 1)
-				{
-					/* TODO: Check error code */
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-									errmsg(
-										"Too many positional (i.e. '$') elements found in path '%s'",
-										updatePath->string)));
-				}
+			if (positionalDotDollarCount > 1)
+			{
+				/* TODO: Check error code */
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"Too many positional (i.e. '$') elements found in path '%s'",
+									updatePath->string)));
 			}
 		}
 	}
@@ -1596,8 +1600,17 @@ GetNodePositionalDataFromPath(const StringView *path,
 		/* Mark the filter as used in the query */
 		hashEntry->filterUsed = true;
 
-		ExprEvalState *expr = GetExpressionEvalState(&hashEntry->queryValue,
-													 CurrentMemoryContext);
+		ExprEvalState *expr;
+		if (EnableArrayFilterLogicalOperators)
+		{
+			expr = GetExpressionEvalStateForArrayFilter(&hashEntry->queryValue,
+														CurrentMemoryContext);
+		}
+		else
+		{
+			expr = GetExpressionEvalState(&hashEntry->queryValue,
+										  CurrentMemoryContext);
+		}
 		return (PositionalData) {
 				   .expression = expr,
 				   .type = PositionalType_ArrayFilter
@@ -2039,11 +2052,10 @@ HandleCurrentIteratorPosition(bson_iter_t *documentIterator,
 /*
  * Throws the error for having a positional path on a non-array field.
  */
-inline static void
-pg_attribute_noreturn()
-ThrowPositionalOnNonArrayPathError(const BsonPathNode * node,
-								   const StringView * fieldPath,
-								   const bson_value_t * currentValue)
+pg_noreturn inline static void
+ThrowPositionalOnNonArrayPathError(const BsonPathNode *node,
+								   const StringView *fieldPath,
+								   const bson_value_t *currentValue)
 {
 	const char *elementValue = BsonValueToJsonForLogging(currentValue);
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
@@ -2138,11 +2150,22 @@ IsNodeMatchForIteratorPath(const BsonPathNode *node,
 				int32_t arrayIndex = StringViewToPositiveInteger(&node->field);
 				if (arrayIndex < 0)
 				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+					/*
+					 * A dotted update path is trying to descend into an array
+					 * using a non-numeric key, which is not a viable path.
+					 */
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_PATHNOTVIABLE),
 									errmsg("Invalid array index path %.*s",
 										   node->field.length,
 										   node->field.string)));
 				}
+
+				/*
+				 * Compare array indices numerically so that padded-zero paths
+				 * like "0000" correctly match the canonical key "0".
+				 */
+				int32_t fieldPathIndex = StringViewToPositiveInteger(fieldPath);
+				return arrayIndex == fieldPathIndex;
 			}
 
 			/* Standard fields match based on field path. */
@@ -2303,7 +2326,7 @@ HandleUnresolvedArrayFields(const BsonUpdateIntermediatePathNode *tree,
 	/* we need to walk the arrays in index order and handle each field that way. */
 	/* to do that, we need the maximal array index we need to handle. */
 	const BsonPathNode *child;
-	int32_t maxIndex = 0;
+	int32_t maxIndex = INT32_MIN;
 	bool modified = false;
 
 	/* First walk the tree and figure out the max index that needs to be written */
@@ -2312,10 +2335,22 @@ HandleUnresolvedArrayFields(const BsonUpdateIntermediatePathNode *tree,
 		const PositionalData *positionalData = GetPositionalData(child);
 
 		/* If it's not a field node, then skip it - this includes things like
-		 * $unset - they shouldn't contribute to growing the array if necessary
+		 * $unset - they shouldn't contribute to growing the array if necessary.
+		 *
+		 * $rename is modeled as a union of a $unset on the source path and a
+		 * $set on the target path: the source becomes a NodeType_LeafExcluded
+		 * node and the target a NodeType_LeafIncluded node. We must therefore
+		 * treat NodeType_LeafIncluded (and intermediate nodes that carry
+		 * included children) like field nodes here so a $rename target that
+		 * resolves to an array element reaches the array write-loop and
+		 * triggers the proper array-element error handling, instead of being
+		 * skipped and silently dropped (issue #502).
 		 */
 		if (child->nodeType != NodeType_LeafField &&
-			!IsIntermediateNodeWithField(child))
+			child->nodeType != NodeType_LeafIncluded &&
+			!IsIntermediateNodeWithField(child) &&
+			!(IsIntermediateNode(child) &&
+			  CastAsUpdateIntermediateNode(child)->HasIntermediateIncludeChildren))
 		{
 			continue;
 		}
@@ -2341,7 +2376,7 @@ HandleUnresolvedArrayFields(const BsonUpdateIntermediatePathNode *tree,
 	bson_value_t nullValue;
 	nullValue.value_type = BSON_TYPE_NULL;
 
-	if (maxIndex - currentMaxIndex > 1500000)
+	if (maxIndex > currentMaxIndex && maxIndex - currentMaxIndex > 1500000)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTBACKFILLARRAY), errmsg(
 							"Backfilling is not possible for more than 1500000 elements.")));
@@ -2370,10 +2405,11 @@ HandleUnresolvedArrayFields(const BsonUpdateIntermediatePathNode *tree,
 			{
 				case NodeType_Intermediate:
 				{
-					if (IsIntermediateNodeWithField(child))
+					const BsonUpdateIntermediatePathNode *intermediate =
+						CastAsUpdateIntermediateNode(child);
+					if (IsIntermediateNodeWithField(child) ||
+						intermediate->HasIntermediateIncludeChildren)
 					{
-						const BsonUpdateIntermediatePathNode *intermediate =
-							CastAsUpdateIntermediateNode(child);
 						pgbson_writer childWriter;
 						PgbsonElementWriterStartDocument(arrayElementWriter,
 														 &childWriter);
@@ -2576,58 +2612,69 @@ BuildExpressionForArrayFilters(const bson_value_t *arrayFilters)
 
 		bool hasElements = false;
 		StringView topLevelKey = { 0 };
-		while (bson_iter_next(&documentIterator))
+
+		if (EnableArrayFilterLogicalOperators)
 		{
-			hasElements = true;
-			BsonIterToPgbsonElement(&documentIterator, &singleElement);
-			StringView keyView = {
-				.length = singleElement.pathLength, .string = singleElement.path
-			};
-
-			if (keyView.length == 0 || !isalnum(keyView.string[0]))
+			topLevelKey = ProcessArrayFilterDocument(&documentIterator,
+													 &writer, false);
+			hasElements = (topLevelKey.length > 0);
+		}
+		else
+		{
+			while (bson_iter_next(&documentIterator))
 			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-								errmsg(
-									"The top level field name must be alphanumeric string. Found '%.*s'",
-									keyView.length, keyView.string)));
-			}
+				hasElements = true;
+				BsonIterToPgbsonElement(&documentIterator, &singleElement);
+				StringView keyView = {
+					.length = singleElement.pathLength, .string = singleElement.path
+				};
 
-			StringView fieldPath = StringViewFindPrefix(&keyView, '.');
+				if (keyView.length == 0 || !isalnum(keyView.string[0]))
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+									errmsg(
+										"The top level field name must be alphanumeric string. Found '%.*s'",
+										keyView.length, keyView.string)));
+				}
 
-			StringView suffix = { 0 };
-			if (fieldPath.length == 0)
-			{
-				/* No dots in path */
-				fieldPath = keyView;
-			}
-			else
-			{
-				suffix = StringViewSubstring(&keyView, fieldPath.length + 1);
-			}
+				StringView fieldPath = StringViewFindPrefix(&keyView, '.');
 
-			if (topLevelKey.length > 0 && !StringViewEquals(&fieldPath, &topLevelKey))
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
-								errmsg(
-									"Error parsing array filter :: caused by :: "
-									"Expected a single top-level field name, found %.*s and %.*s",
-									topLevelKey.length, topLevelKey.string,
-									fieldPath.length, fieldPath.string)));
-			}
+				StringView suffix = { 0 };
+				if (fieldPath.length == 0)
+				{
+					/* No dots in path */
+					fieldPath = keyView;
+				}
+				else
+				{
+					suffix = StringViewSubstring(&keyView, fieldPath.length + 1);
+				}
 
-			topLevelKey = fieldPath;
+				if (topLevelKey.length > 0 && !StringViewEquals(&fieldPath, &topLevelKey))
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
+									errmsg(
+										"Error parsing array filter :: caused by :: "
+										"Expected a single top-level field name, found %.*s and %.*s",
+										topLevelKey.length, topLevelKey.string,
+										fieldPath.length, fieldPath.string)));
+				}
 
-			if (suffix.length == 0)
-			{
-				WriteCurrentArrayFilterValue(&writer, &singleElement.bsonValue);
-			}
-			else
-			{
-				pgbson_writer childWriter;
-				PgbsonWriterStartDocument(&writer, suffix.string, suffix.length,
-										  &childWriter);
-				WriteCurrentArrayFilterValue(&childWriter, &singleElement.bsonValue);
-				PgbsonWriterEndDocument(&writer, &childWriter);
+				topLevelKey = fieldPath;
+
+				if (suffix.length == 0)
+				{
+					WriteCurrentArrayFilterValue(&writer, &singleElement.bsonValue);
+				}
+				else
+				{
+					pgbson_writer childWriter;
+					PgbsonWriterStartDocument(&writer, suffix.string, suffix.length,
+											  &childWriter);
+					WriteCurrentArrayFilterValue(&childWriter,
+												 &singleElement.bsonValue);
+					PgbsonWriterEndDocument(&writer, &childWriter);
+				}
 			}
 		}
 
@@ -2704,6 +2751,197 @@ WriteCurrentArrayFilterValue(pgbson_writer *writer, bson_value_t *entryValue)
 			}
 		}
 	}
+}
+
+
+/*
+ * Checks if the given key is a logical operator ($or, $and, $nor)
+ * that can appear at the top level of an arrayFilter element.
+ */
+static bool
+IsArrayFilterLogicalOperator(const StringView *key)
+{
+	return (key->length == 3 && strncmp(key->string, "$or", 3) == 0) ||
+		   (key->length == 4 && strncmp(key->string, "$and", 4) == 0) ||
+		   (key->length == 4 && strncmp(key->string, "$nor", 4) == 0);
+}
+
+
+/*
+ * Recursively processes an arrayFilter document, handling both field-path
+ * keys (e.g., "g.field") and logical operators ($or, $and, $nor).
+ *
+ * For field-path keys: strips the identifier prefix (e.g., "g") and writes
+ * the remaining path with its filter value to the writer.
+ *
+ * For logical operators: recurses into each sub-document of the operator's
+ * array and rebuilds the logical structure with identifiers stripped.
+ *
+ * Returns the extracted identifier (e.g., "g"). All branches must reference
+ * the same identifier.
+ */
+static StringView
+ProcessArrayFilterDocument(bson_iter_t *documentIterator, pgbson_writer *writer,
+						   bool isNestedInLogicalOp)
+{
+	check_stack_depth();
+	CHECK_FOR_INTERRUPTS();
+
+	bool hasElements = false;
+	StringView topLevelKey = { 0 };
+
+	while (bson_iter_next(documentIterator))
+	{
+		hasElements = true;
+		pgbsonelement singleElement;
+		BsonIterToPgbsonElement(documentIterator, &singleElement);
+		StringView keyView = {
+			.length = singleElement.pathLength, .string = singleElement.path
+		};
+
+		if (IsArrayFilterLogicalOperator(&keyView))
+		{
+			/* Logical operator: value must be an array of documents */
+			if (singleElement.bsonValue.value_type != BSON_TYPE_ARRAY)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"%.*s must be an array",
+									keyView.length, keyView.string)));
+			}
+
+			bson_iter_t arrayIter;
+			BsonValueInitIterator(&singleElement.bsonValue, &arrayIter);
+
+			pgbson_array_writer arrayWriter;
+			PgbsonWriterStartArray(writer, keyView.string, keyView.length,
+								   &arrayWriter);
+
+			int idx = 0;
+			while (bson_iter_next(&arrayIter))
+			{
+				if (bson_iter_type(&arrayIter) != BSON_TYPE_DOCUMENT)
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+									errmsg(
+										"%.*s entries need to be full objects",
+										keyView.length, keyView.string)));
+				}
+
+				bson_iter_t subDocIter;
+				bson_iter_recurse(&arrayIter, &subDocIter);
+
+				pgbson_writer subDocWriter;
+				PgbsonArrayWriterStartDocument(&arrayWriter, &subDocWriter);
+
+				StringView subIdentifier = ProcessArrayFilterDocument(&subDocIter,
+																	  &subDocWriter,
+																	  true);
+
+				PgbsonArrayWriterEndDocument(&arrayWriter, &subDocWriter);
+
+				if (subIdentifier.length > 0)
+				{
+					if (topLevelKey.length > 0 &&
+						!StringViewEquals(&subIdentifier, &topLevelKey))
+					{
+						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
+										errmsg(
+											"Expected a single top-level field name in array filter, "
+											"but found '%.*s' and '%.*s'",
+											topLevelKey.length, topLevelKey.string,
+											subIdentifier.length,
+											subIdentifier.string)));
+					}
+					topLevelKey = subIdentifier;
+				}
+
+				idx++;
+			}
+
+			PgbsonWriterEndArray(writer, &arrayWriter);
+
+			if (idx == 0)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"%.*s array must have at least one entry",
+									keyView.length, keyView.string)));
+			}
+		}
+		else
+		{
+			/* Field-path key: existing behavior */
+			if (keyView.length == 0 || !isalnum(keyView.string[0]))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"The top level field name must be alphanumeric string. Found '%.*s'",
+									keyView.length, keyView.string)));
+			}
+
+			StringView fieldPath = StringViewFindPrefix(&keyView, '.');
+
+			StringView suffix = { 0 };
+			if (fieldPath.length == 0)
+			{
+				/* No dots in path */
+				fieldPath = keyView;
+			}
+			else
+			{
+				suffix = StringViewSubstring(&keyView, fieldPath.length + 1);
+			}
+
+			if (topLevelKey.length > 0 && !StringViewEquals(&fieldPath, &topLevelKey))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
+								errmsg(
+									"Expected a single top-level field name in array filter, "
+									"but found '%.*s' and '%.*s'",
+									topLevelKey.length, topLevelKey.string,
+									fieldPath.length, fieldPath.string)));
+			}
+
+			topLevelKey = fieldPath;
+
+			if (suffix.length == 0)
+			{
+				if (isNestedInLogicalOp)
+				{
+					/*
+					 * Inside $or/$and/$nor, bare operators like { "$gte": 200 }
+					 * are not valid query sub-documents. Wrap under empty-string
+					 * path so the query engine processes them as field-level
+					 * operators on the element itself.
+					 */
+					PgbsonWriterAppendValue(writer, "", 0, &singleElement.bsonValue);
+				}
+				else
+				{
+					WriteCurrentArrayFilterValue(writer, &singleElement.bsonValue);
+				}
+			}
+			else
+			{
+				pgbson_writer childWriter;
+				PgbsonWriterStartDocument(writer, suffix.string, suffix.length,
+										  &childWriter);
+				WriteCurrentArrayFilterValue(&childWriter, &singleElement.bsonValue);
+				PgbsonWriterEndDocument(writer, &childWriter);
+			}
+		}
+	}
+
+	if (!hasElements)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
+						errmsg(
+							"Cannot use an expression without a top-level field name in"
+							" arrayFilters")));
+	}
+
+	return topLevelKey;
 }
 
 

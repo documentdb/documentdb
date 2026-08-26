@@ -18,8 +18,8 @@ MongoCollection * CreateCollectionForInsert(Datum databaseNameDatum,
 bool InsertDocument(uint64 collectionId, const char *shardTableName, int64 shardKeyValue,
 					pgbson *objectId, pgbson *document);
 
-bool InsertOrReplaceDocument(uint64 collectionId, const char *shardTableName, int64
-							 shardKeyValue,
+bool InsertOrReplaceDocument(MongoCollection *collection, const char *shardTableName,
+							 int64 shardKeyValue,
 							 pgbson *objectId, pgbson *document,
 							 const bson_value_t *updateSpecValue);
 #endif

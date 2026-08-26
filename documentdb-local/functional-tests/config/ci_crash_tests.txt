@@ -1,0 +1,30 @@
+# Engine-crasher tests: applied as pytest.mark.skip by conftest_known_failures.
+# NEVER RUN. xfail is not enough — an xfailed test still executes, and these
+# crash the backend, restart the cluster, and cascade connection errors onto
+# every concurrent test. The crasher itself often scores green (retryable reads
+# re-send the command), so the only symptom is unrelated tests failing at random.
+#
+# Entry forms (full-prefix paths, as in oss_ci_failing_tests.txt):
+#   exact node ID   .../test_x.py::test_case[documentdb-param]
+#   file            .../test_x.py     (skips every test in the file)
+#   directory       .../some_dir/     (skips everything under it)
+# Prefer the directory form for a crashing family: it survives suite pin bumps.
+# Prefixes are crash-list-only, and failing/flaky entries under one stay in their
+# lists, shadowed until it is removed — conftest_known_failures.py explains why.
+#
+# Deliberately NOT here: the geospatial / index-build families. They wedge only
+# where runner capacity is the constraint (index builds queue on the engine's
+# two background executors), not through any engine defect: enabled on run
+# 30667428483 they cost ~1-2 min per leg, none exceeded 60s, and 1,323 passed.
+
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/commands/createIndexes/test_createIndexes_field_behavior.py::test_createIndexes_field_behavior[documentdb-bindata_values]
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/string/regexFindAll/test_regexFindAll_size_limit.py
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/string/replaceAll/test_replaceAll_size_limit.py
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/merge/test_stages_merge_on_matching.py
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/redact/
+
+# Not a crasher: this case wedges ~12 min on an index build that never
+# completes, then fails. Kept here rather than in oss_ci_failing_tests.txt,
+# which is shared with lanes that already skip this ID — conftest_known_failures
+# requires an exact node ID to live in exactly one list.
+docdb_functional_tests/documentdb_tests/compatibility/tests/system/administration/commands/setIndexCommitQuorum/test_smoke_setIndexCommitQuorum.py::test_smoke_setIndexCommitQuorum[documentdb]

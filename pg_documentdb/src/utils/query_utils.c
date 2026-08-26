@@ -18,6 +18,7 @@
 #include <storage/latch.h>
 #include <utils/array.h>
 #include <utils/datum.h>
+#include <utils/lsyscache.h>
 #include <utils/syscache.h>
 #include <utils/wait_event.h>
 

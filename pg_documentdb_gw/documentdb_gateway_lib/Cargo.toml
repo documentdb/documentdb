@@ -1,0 +1,18 @@
+[package]
+name = "documentdb_gateway_lib"
+description = "DocumentDb Component Abstraction Library"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+criterion.workspace = true
+
+[lints]
+workspace = true

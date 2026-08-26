@@ -1,7 +1,14 @@
 name: Build deb packages
 concurrency:
   group: build-packages-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Supersede only on PRs, where a new push makes the previous build moot.
+  # A called workflow keeps its OWN concurrency, so cancelling unconditionally
+  # here would silently defeat build_all_packages.yml's `cancel-in-progress:
+  # false` (its child builds share this ref-keyed group): a second dispatch on
+  # the same ref would cancel the in-flight release-candidate build the parent
+  # deliberately protects. github.event_name is the caller's event for
+  # workflow_call, so release/tag/dispatch runs all evaluate to false here.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
   workflow_call:
@@ -22,7 +29,9 @@ on:
       - 'release/**'
     paths-ignore:
       - '.devcontainer/**'
-      - '*.md'
+      # '*.md' would match ONLY root-level markdown — GitHub's filter globs do
+      # not let '*' cross '/', so docs/**.md still triggered a full build.
+      - '**/*.md'
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
 
@@ -31,46 +40,106 @@ permissions:
   contents: read
   id-token: write
 
+# The paved-road PostgreSQL major (packaging-design.md §9.1). Single-sourced
+# here because it couples several decisions that MUST agree: which cell builds
+# and uploads the `documentdb` meta package, and which major that meta pins via
+# --default-pg-major. The strategy matrix below cannot read this (the `env`
+# context is not available to `jobs.<id>.strategy`), so its pg_version list
+# stays literal — when this value changes, the matrix must still contain it.
+env:
+  PAVED_PG_MAJOR: '18'
+
 jobs:
   build-deb-packages:
     runs-on: ${{ matrix.runner }}
+    # A hung step otherwise burns GitHub's 360-minute default before the
+    # runner is reclaimed; healthy runs finish well inside this budget.
+    timeout-minutes: 60
     name: Debian ${{ matrix.os }}-${{ matrix.arch }}-pg${{ matrix.pg_version }}
-    if: github.event.pull_request.draft == false
+    # Skip draft PRs; build on every non-PR event. The explicit event_name
+    # test is redundant — GitHub coerces both an absent `draft` and `false`
+    # to 0, so the bare comparison is already true on push/tag/dispatch and
+    # on workflow_call (verified: every push run of this workflow builds all
+    # matrix cells) — but it states the intent so the guard is not misread as
+    # gating the release path.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     strategy:
       fail-fast: false
-      # Use reduced matrix for PRs to speed up checks
-      # Use full matrix for pushes to main/manual triggers/workflow_call with use_full_matrix=true
+      # Tier 1 (first-party build + test + host): the newest, most-used
+      # PostgreSQL majors on the paved-road distro only. Full matrix (push /
+      # release / manual use_full_matrix) = Ubuntu 24.04 × {amd64, arm64} ×
+      # PG {17, 18}. Other distros (Debian 11/12/13, Ubuntu 22.04) and majors
+      # (PG 15/16) are Tier 2/3: build on demand with
+      # `packaging/build_packages.sh --os <os> --pg <N>` (see packaging/README.md).
+      # PRs use a 3-cell subset to stay fast: amd64 runs the paved-road
+      # default (PG 18) so the PR-gating install E2E below runs on the proven
+      # path; arm64 covers the PG 17 build; the ubuntu26.04 cell gates the
+      # incoming LTS toolchain (GCC 15, const-correct glibc), which accepts
+      # strictly less than 24.04's. 26.04 stays out of the full/release
+      # matrix until promoted per packaging/distribution-design.md.
       matrix:
         ${{ fromJson(
           (github.event_name == 'pull_request' && !inputs.use_full_matrix) &&
-          '{"include":[{"os":"deb12","arch":"amd64","runner":"ubuntu-24.04","pg_version":"17"},{"os":"ubuntu22.04","arch":"arm64","runner":"ubuntu-24.04-arm","pg_version":"18"}]}' ||
-          '{"os":["deb11","deb12","deb13","ubuntu22.04","ubuntu24.04"],"arch":["amd64","arm64"],"include":[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}],"pg_version":["16","17","18"]}'
+          '{"include":[{"os":"ubuntu24.04","arch":"amd64","runner":"ubuntu-24.04","pg_version":"18"},{"os":"ubuntu24.04","arch":"arm64","runner":"ubuntu-24.04-arm","pg_version":"17"},{"os":"ubuntu26.04","arch":"amd64","runner":"ubuntu-24.04","pg_version":"18"}]}' ||
+          '{"os":["ubuntu24.04"],"arch":["amd64","arm64"],"include":[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}],"pg_version":["17","18"]}'
         ) }}
+
+    # Every matrix cell builds the gateway package; only E2E cells
+    # additionally run the install/start suite. matrix/github contexts are
+    # valid in job env.
+    env:
+      # Install/start E2E (install -> documentdb-setup -> wire protocol).
+      # Full matrix (push / release / manual full): EVERY Tier-1 cell, so
+      # every combination we ship has its own install proof — including
+      # documentdb-17 on arm64, whose PG <= 17 dependency path genuinely
+      # differs (external postgresql-N-rum vs built-in on PG 18) and which
+      # an earlier "PG 18 on both arches + amd64/PG 17" predicate left
+      # unexercised. Tier 1 means a cell we ship is a cell we installed.
+      # PRs keep the fast single-cell signal (amd64 paved cell only).
+      # Cells run in parallel, so full coverage costs ~no extra wall clock.
+      E2E_CELL: ${{ github.event_name != 'pull_request' || inputs.use_full_matrix || matrix.arch == 'amd64' }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Extract and Format Default Version
-        id: extract_version
-        run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            DOCUMENTDB_VERSION="${{ inputs.version }}"
-            echo "Using provided version: $DOCUMENTDB_VERSION"
-          else
-            DOCUMENTDB_VERSION=$(grep -E "^default_version" pg_documentdb_core/documentdb_core.control | sed -E "s/.*'([0-9]+\.[0-9]+-[0-9]+)'.*/\1/")
-            DOCUMENTDB_VERSION=$(echo $DOCUMENTDB_VERSION | sed "s/-/./g")
-            echo "Extracted Version: $DOCUMENTDB_VERSION"
-          fi
-          echo "DOCUMENTDB_VERSION=$DOCUMENTDB_VERSION" >> $GITHUB_ENV
+      - name: Resolve DocumentDB version
+        id: version
+        uses: ./.github/actions/resolve-documentdb-version
+        with:
+          version: ${{ inputs.version }}
 
-          GATEWAY_VERSION=$(grep '^version' pg_documentdb_gw/Cargo.toml | head -n1 | sed 's/version *= *"\(.*\)"/\1/')
-          echo "Extracted Gateway Version: $GATEWAY_VERSION"
-          echo "GATEWAY_VERSION=$GATEWAY_VERSION" >> $GITHUB_ENV
+      # Pin every build-generated timestamp to the commit. Without this,
+      # deb_install_changelog stamps the current HH:MM:SS into the shipped
+      # /usr/share/doc/<pkg>/changelog.gz, so the SAME noarch package built in
+      # two matrix cells seconds apart differs in payload — which both makes
+      # the release date meaningless ("whenever this cell happened to run")
+      # and trips the aggregate bundle's cross-cell identity check. dpkg-deb
+      # additionally clamps payload mtimes to this value, moving the packages
+      # toward byte-reproducibility. Every cell checks out the same SHA, so
+      # every cell derives the same epoch.
+      - name: Pin SOURCE_DATE_EPOCH to the commit timestamp
+        run: |
+          echo "DOCUMENTDB_VERSION=${{ steps.version.outputs.version }}" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
 
       - name: Build Debian Package
         run: |
-          ./packaging/build_packages.sh --os ${{ matrix.os }} --pg ${{ matrix.pg_version }} --version ${{ env.DOCUMENTDB_VERSION }}
+          # Build the extension .deb only. `build_packages.sh
+          # --test-clean-install` -- a DIFFERENT flag from the identically
+          # named one on build_gateway_packages.sh below -- would additionally
+          # run the full `make check` (pg_regress, isolation, and the
+          # extended-rum recovery TAP tests) inside the package test container
+          # via test_packages/test-install-entrypoint.sh. That is intentionally
+          # not run here: this workflow produces packages, and the regression
+          # suite is owned by regress_tests.yml across PG 15-18.
+          #
+          # PR artifacts are never released, so skip the -dbgsym package
+          # there; full-matrix/release runs keep it for the debug-artifact
+          # collection in build_all_packages.yml.
+          NO_DBGSYM_FLAG=""
+          if [ "${{ github.event_name }}" = "pull_request" ]; then NO_DBGSYM_FLAG="--no-dbgsym"; fi
+          ./packaging/build_packages.sh --os ${{ matrix.os }} --pg ${{ matrix.pg_version }} --version ${{ env.DOCUMENTDB_VERSION }} $NO_DBGSYM_FLAG
 
       - name: Upload Debian Package as Artifact
         uses: actions/upload-artifact@v4
@@ -84,19 +153,143 @@ jobs:
 
 
       - name: Build Gateway Debian Package
-        # Just to avoid building gateway packages twice for pg version.
-        # keep pg version when building gateway in case we need it for gateway build process in the future.
-        if: matrix.pg_version == '17'
         run: |
-          ./packaging/gateway/build_gateway_packages.sh --os ${{ matrix.os }} --pg 17 --version ${{ env.DOCUMENTDB_VERSION }} --test-clean-install
+          # Every matrix cell builds the gateway package. E2E cells
+          # additionally pass --test-clean-install to build_gateway_packages.sh,
+          # which installs the extension+gateway+tools+common+stand-alone stack
+          # in a clean container, runs documentdb-setup, starts the local
+          # instance, and exercises the wire protocol end to end -- the "a user
+          # can start a local DocumentDB from these packages" test. This flag is
+          # NOT the extension script's same-named flag: the gateway entrypoints
+          # never run the source `make check` regression suite, so a green
+          # package E2E must not be read as regression coverage (that is
+          # regress_tests.yml).
+          E2E_FLAG=""
+          if [ "${{ env.E2E_CELL }}" = "true" ]; then E2E_FLAG="--test-clean-install"; fi
+          # E2E cells get exactly one automatic retry: the install E2E pulls
+          # base images and PGDG/apt packages over the network, so a transient
+          # infrastructure failure should not fail package production. Cells
+          # that only build (the PR-reduced matrix's non-paved cell) never
+          # retry — a build failure there is always a real bug. Note a retry
+          # only annotates a warning, so a genuinely flaky install shows up as
+          # a green run; the nightly paved E2E is the backstop that surfaces it.
+          if ! ./packaging/gateway/build_gateway_packages.sh --os ${{ matrix.os }} --pg ${{ matrix.pg_version }} --version ${{ env.DOCUMENTDB_VERSION }} $E2E_FLAG; then
+            if [ -n "$E2E_FLAG" ]; then
+              echo "::warning::Gateway build + install E2E failed; retrying once to absorb infrastructure flakes."
+              ./packaging/gateway/build_gateway_packages.sh --os ${{ matrix.os }} --pg ${{ matrix.pg_version }} --version ${{ env.DOCUMENTDB_VERSION }} $E2E_FLAG
+            else
+              exit 1
+            fi
+          fi
 
       - name: Upload Gateway Debian Package as Artifact
-        if: matrix.pg_version == '17'
         uses: actions/upload-artifact@v4
         with:
-          name: archive-${{ matrix.os }}-${{ matrix.arch }}-documentdb-gateway-${{ env.GATEWAY_VERSION }}
+          # Keep artifact names unique across the full matrix even though the gateway package filename is PG-agnostic.
+          name: archive-${{ matrix.os }}-${{ matrix.arch }}-pg${{ matrix.pg_version }}-documentdb-gateway-${{ env.DOCUMENTDB_VERSION }}
           path: |
             packaging/*gateway*.deb
           retention-days: 7
           if-no-files-found: error
           compression-level: 0
+
+      # Build the remaining three packages from packaging-design.md §4:
+      # documentdb-postgresql-tools (admin helpers, arch:all),
+      # documentdb-<N> (per-major stand-alone, arch:all), and
+      # documentdb (meta, arch:all, pinned to the paved-road default major).
+      # These are lightweight pure-shell builders. Runs in EVERY cell, because
+      # only E2E cells assemble the extras as a side effect (the gateway step's
+      # --test-clean-install internally invokes build_extra_packages.sh to
+      # populate its test container) — which is every cell in the full matrix
+      # but not in the PR-reduced one, whose non-paved cell would otherwise
+      # produce no extras at all and trip this step's upload
+      # (if-no-files-found: error). On an E2E cell this step is an idempotent
+      # rebuild with the same arguments and output dir, which is cheap (pure
+      # shell, no compilation). The extras are noarch/identical across cells;
+      # the aggregate bundle dedups them by basename after verifying that
+      # cross-cell identity holds.
+      - name: Build Extra Debian Packages (tools + stand-alone + meta)
+        run: |
+          ./packaging/build_extra_packages.sh \
+            --type deb \
+            --pg ${{ matrix.pg_version }} \
+            --version ${{ env.DOCUMENTDB_VERSION }} \
+            --output-dir "$(pwd)/packaging" \
+            --default-pg-major ${{ env.PAVED_PG_MAJOR }} \
+            --os-prefix ${{ matrix.os }}
+
+      # Package lint, v1 = informational only (continue-on-error): the first
+      # runs establish the real lintian baseline; the follow-up is a curated
+      # suppression list + --fail-on error gate once that baseline exists.
+      # One cell is enough — the packages are identical across cells. Gate on
+      # the paved cell explicitly rather than on E2E_CELL: E2E now runs on
+      # EVERY full-matrix cell, so piggybacking on it would install lintian
+      # and emit a duplicate report four times per run.
+      - name: Package lint (lintian, informational)
+        if: matrix.os == 'ubuntu24.04' && matrix.arch == 'amd64' && matrix.pg_version == env.PAVED_PG_MAJOR
+        continue-on-error: true
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lintian
+          lintian --no-tag-display-limit packaging/*.deb 2>&1 | tee lintian-report.txt || true
+          {
+            echo "### lintian report (informational)"
+            echo '```'
+            tail -n 200 lintian-report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # tools + per-major stand-alone are produced by every matrix cell.
+      - name: Upload Extra Debian Packages as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-extras-${{ matrix.os }}-${{ matrix.arch }}-pg${{ matrix.pg_version }}-${{ env.DOCUMENTDB_VERSION }}
+          path: |
+            packaging/*documentdb-postgresql-tools*.deb
+            packaging/*documentdb-common_*.deb
+            packaging/*documentdb-${{ matrix.pg_version }}_*.deb
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
+
+      # The meta package pins to the paved-road default major and is only
+      # built when this matrix cell matches that major — gating both the
+      # build (in build_extra_packages.sh) and the upload here keeps the
+      # artifact set honest: a "deb-extras-...-pg17" archive should not
+      # claim to ship a meta that is identical to the pg18 one.
+      # The glob is intentionally narrow ("${OS}-documentdb_VER_all.deb"
+      # only): an earlier broader glob "*documentdb_VER_*.deb" also
+      # matched the extension package
+      # ("${OS}-postgresql-N-documentdb_VER_amd64.deb"), so the upload
+      # would silently succeed even when build-meta-deb.sh produced nothing.
+      - name: Upload Meta Debian Package as Artifact
+        if: matrix.pg_version == env.PAVED_PG_MAJOR
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-meta-${{ matrix.os }}-${{ matrix.arch }}-${{ env.DOCUMENTDB_VERSION }}
+          path: |
+            packaging/${{ matrix.os }}-documentdb_${{ env.DOCUMENTDB_VERSION }}_all.deb
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
+
+  # Behavioral regression for the documentdb-common shared-payload split: build
+  # documentdb-common + documentdb-17 + documentdb-18, co-install them, remove
+  # one major, and assert the shared payload (documentdb-setup, template units,
+  # …) survives for the surviving major — plus the pre-split → split upgrade
+  # takeover. Runs once (not per matrix cell) in a clean Debian container so the
+  # dpkg install/remove lifecycle is isolated from the runner.
+  documentdb-common-coinstall-deb:
+    name: documentdb-common DEB co-install regression
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: documentdb-common co-install lifecycle (DEB)
+        run: |
+          docker run --rm -v "$PWD:/repo" debian:12 bash -c '
+            set -e
+            apt-get update -qq
+            apt-get install -y -qq dpkg-dev >/dev/null
+            bash /repo/packaging/test_packages/test-documentdb-common-coinstall.sh --type deb'

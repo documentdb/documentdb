@@ -66,89 +66,123 @@ SELECT COUNT(documentdb_api.insert_one('comp_pfe', 'query_orderby_pfe',
 ANALYZE documentdb_data.documents_68701;
 set enable_seqscan to off;
 -- cannot push down
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "b": 1 } }');
-                            QUERY PLAN                            
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "b": 1 } }')
+$cmd$);
+                          run_explain_and_trim                          
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_68701_687002 collection
-   Recheck Cond: (shard_key_value = '68701'::bigint)
-   Filter: (document @= '{ "b" : { "$numberInt" : "1" } }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '68701'::bigint)
-(5 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_68701_687002 collection
+         Recheck Cond: (shard_key_value = '68701'::bigint)
+         Filter: (document @= '{ "b" : { "$numberInt" : "1" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '68701'::bigint)
+(7 rows)
 
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "b": 1, "pfe_a": 5 } }');
-                                                            QUERY PLAN                                                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "b": 1, "pfe_a": 5 } }')
+$cmd$);
+                                                          run_explain_and_trim                                                           
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_68701_687002 collection
-   Recheck Cond: (shard_key_value = '68701'::bigint)
-   Filter: ((document @= '{ "b" : { "$numberInt" : "1" } }'::bson) AND (document @= '{ "pfe_a" : { "$numberInt" : "5" } }'::bson))
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '68701'::bigint)
-(5 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_68701_687002 collection
+         Recheck Cond: (shard_key_value = '68701'::bigint)
+         Filter: ((document @= '{ "b" : { "$numberInt" : "1" } }'::bson) AND (document @= '{ "pfe_a" : { "$numberInt" : "5" } }'::bson))
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '68701'::bigint)
+(7 rows)
 
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "d": 1, "pfe_a": 15 } }');
-                                                             QUERY PLAN                                                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "d": 1, "pfe_a": 15 } }')
+$cmd$);
+                                                           run_explain_and_trim                                                           
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_68701_687002 collection
-   Recheck Cond: (shard_key_value = '68701'::bigint)
-   Filter: ((document @= '{ "d" : { "$numberInt" : "1" } }'::bson) AND (document @= '{ "pfe_a" : { "$numberInt" : "15" } }'::bson))
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '68701'::bigint)
-(5 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_68701_687002 collection
+         Recheck Cond: (shard_key_value = '68701'::bigint)
+         Filter: ((document @= '{ "d" : { "$numberInt" : "1" } }'::bson) AND (document @= '{ "pfe_a" : { "$numberInt" : "15" } }'::bson))
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '68701'::bigint)
+(7 rows)
 
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "e": 15 } }');
-                            QUERY PLAN                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "e": 15 } }')
+$cmd$);
+                          run_explain_and_trim                           
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_68701_687002 collection
-   Recheck Cond: (shard_key_value = '68701'::bigint)
-   Filter: (document @= '{ "e" : { "$numberInt" : "15" } }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '68701'::bigint)
-(5 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_68701_687002 collection
+         Recheck Cond: (shard_key_value = '68701'::bigint)
+         Filter: (document @= '{ "e" : { "$numberInt" : "15" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '68701'::bigint)
+(7 rows)
 
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "f": 10 } }');
-                            QUERY PLAN                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "f": 10 } }')
+$cmd$);
+                          run_explain_and_trim                           
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_68701_687002 collection
-   Recheck Cond: (shard_key_value = '68701'::bigint)
-   Filter: (document @= '{ "f" : { "$numberInt" : "10" } }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '68701'::bigint)
-(5 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_68701_687002 collection
+         Recheck Cond: (shard_key_value = '68701'::bigint)
+         Filter: (document @= '{ "f" : { "$numberInt" : "10" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '68701'::bigint)
+(7 rows)
 
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "g": { "$gt": 10 } } }');
-                            QUERY PLAN                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "g": { "$gt": 10 } } }')
+$cmd$);
+                          run_explain_and_trim                           
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_68701_687002 collection
-   Recheck Cond: (shard_key_value = '68701'::bigint)
-   Filter: (document @> '{ "g" : { "$numberInt" : "10" } }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '68701'::bigint)
-(5 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_68701_687002 collection
+         Recheck Cond: (shard_key_value = '68701'::bigint)
+         Filter: (document @> '{ "g" : { "$numberInt" : "10" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '68701'::bigint)
+(7 rows)
 
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "g": { "$gt": 10 }, "h": 11 } }');
-                                                           QUERY PLAN                                                            
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "g": { "$gt": 10 }, "h": 11 } }')
+$cmd$);
+                                                         run_explain_and_trim                                                          
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_68701_687002 collection
-   Recheck Cond: (shard_key_value = '68701'::bigint)
-   Filter: ((document @> '{ "g" : { "$numberInt" : "10" } }'::bson) AND (document @= '{ "h" : { "$numberInt" : "11" } }'::bson))
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '68701'::bigint)
-(5 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_68701_687002 collection
+         Recheck Cond: (shard_key_value = '68701'::bigint)
+         Filter: ((document @> '{ "g" : { "$numberInt" : "10" } }'::bson) AND (document @= '{ "h" : { "$numberInt" : "11" } }'::bson))
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '68701'::bigint)
+(7 rows)
 
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "g": { "$gt": 10 }, "h": 11, "i": { "$gt": 15 } } }');
-                                                                                         QUERY PLAN                                                                                          
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "g": { "$gt": 10 }, "h": 11, "i": { "$gt": 15 } } }')
+$cmd$);
+                                                                                       run_explain_and_trim                                                                                        
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_68701_687002 collection
-   Recheck Cond: (shard_key_value = '68701'::bigint)
-   Filter: ((document @> '{ "g" : { "$numberInt" : "10" } }'::bson) AND (document @= '{ "h" : { "$numberInt" : "11" } }'::bson) AND (document @> '{ "i" : { "$numberInt" : "15" } }'::bson))
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '68701'::bigint)
-(5 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_68701_687002 collection
+         Recheck Cond: (shard_key_value = '68701'::bigint)
+         Filter: ((document @> '{ "g" : { "$numberInt" : "10" } }'::bson) AND (document @= '{ "h" : { "$numberInt" : "11" } }'::bson) AND (document @> '{ "i" : { "$numberInt" : "15" } }'::bson))
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '68701'::bigint)
+(7 rows)
 
 -- can push
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "b": 1, "pfe_a": 15 } }');
-                                 QUERY PLAN                                  
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "b": 1, "pfe_a": 15 } }')
+$cmd$);
+                            run_explain_and_trim                             
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
    indexName: b_1
@@ -160,8 +194,10 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "f
          Filter: (document @= '{ "pfe_a" : { "$numberInt" : "15" } }'::bson)
 (8 rows)
 
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "d": 10, "pfe_a": 10 } }');
-                                 QUERY PLAN                                  
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "d": 10, "pfe_a": 10 } }')
+$cmd$);
+                            run_explain_and_trim                             
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
    indexName: d_1
@@ -172,8 +208,10 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "f
          Index Cond: (document @= '{ "d" : { "$numberInt" : "10" } }'::bson)
 (7 rows)
 
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "e": 10 } }');
-                                  QUERY PLAN                                   
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "e": 10 } }')
+$cmd$);
+                             run_explain_and_trim                              
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
    indexName: e_1
@@ -185,8 +223,10 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "f
          ->  Bitmap Index Scan on e_1
 (8 rows)
 
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "f": 20 } }');
-                                 QUERY PLAN                                  
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "f": 20 } }')
+$cmd$);
+                            run_explain_and_trim                             
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
    indexName: f_1
@@ -197,8 +237,10 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "f
          Index Cond: (document @= '{ "f" : { "$numberInt" : "20" } }'::bson)
 (7 rows)
 
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "f": { "$gt": 10 } } }');
-                                  QUERY PLAN                                   
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "f": { "$gt": 10 } } }')
+$cmd$);
+                             run_explain_and_trim                              
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
    indexName: f_1
@@ -210,8 +252,10 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "f
          ->  Bitmap Index Scan on f_1
 (8 rows)
 
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "g": { "$gt": 10 }, "h": 10 } }');
-                                     QUERY PLAN                                     
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "g": { "$gt": 10 }, "h": 10 } }')
+$cmd$);
+                                run_explain_and_trim                                
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
    indexName: ghi_1
@@ -222,8 +266,10 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "f
          Index Cond: (document @> '{ "g" : { "$numberInt" : "10" } }'::bson)
 (7 rows)
 
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "g": { "$gt": 10 }, "h": 10, "i": { "$gt": 15 } } }');
-                                                                QUERY PLAN                                                                 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "g": { "$gt": 10 }, "h": 10, "i": { "$gt": 15 } } }')
+$cmd$);
+                                                           run_explain_and_trim                                                            
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
    indexName: ghi_1
@@ -235,8 +281,10 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "f
 (7 rows)
 
 -- retry the same ones with order by on the index fields 
-EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "b": 1, "pfe_a": 15 }, "sort": { "b": 1 } }');
-                                       QUERY PLAN                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "b": 1, "pfe_a": 15 }, "sort": { "b": 1 } }')
+$cmd$);
+                                  run_explain_and_trim                                   
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
    indexName: b_1
@@ -252,8 +300,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bs
          Filter: (document @= '{ "pfe_a" : { "$numberInt" : "15" } }'::bson)
 (12 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "d": 10, "pfe_a": 10 }, "sort": { "d": 1 } }');
-                                       QUERY PLAN                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "d": 10, "pfe_a": 10 }, "sort": { "d": 1 } }')
+$cmd$);
+                                  run_explain_and_trim                                   
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
    indexName: d_1
@@ -268,8 +318,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bs
          Order By: (document |-<> '{ "d" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "f": 20 }, "sort": { "f": 1 } }');
-                                       QUERY PLAN                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "f": 20 }, "sort": { "f": 1 } }')
+$cmd$);
+                                  run_explain_and_trim                                   
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
    indexName: f_1
@@ -284,12 +336,14 @@ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bs
          Order By: (document |-<> '{ "f" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "f": { "$gt": 10 } }, "sort": { "f": 1 } }');
-                                                                              QUERY PLAN                                                                               
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "f": { "$gt": 10 } }, "sort": { "f": 1 } }')
+$cmd$);
+                                                                         run_explain_and_trim                                                                          
 ---------------------------------------------------------------------
  Sort (actual rows=90 loops=1)
    Sort Key: (bson_orderby(document, '{ "f" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: 38kB
+   Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=90 loops=1)
          indexName: f_1
          indexKey: {"f": 1}
@@ -305,8 +359,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bs
                      Index Cond: (document @<> '{ "f" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
 (16 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "g": { "$gt": 10 }, "h": 10 }, "sort": { "g": 1 } }');
-                                        QUERY PLAN                                         
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "g": { "$gt": 10 }, "h": 10 }, "sort": { "g": 1 } }')
+$cmd$);
+                                   run_explain_and_trim                                    
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
    indexName: ghi_1
@@ -321,8 +377,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bs
          Order By: (document |-<> '{ "g" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "g": { "$gt": 10 }, "h": 10, "i": { "$gt": 15 } }, "sort": { "g": 1 } }');
-                                                                QUERY PLAN                                                                 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "g": { "$gt": 10 }, "h": 10, "i": { "$gt": 15 } }, "sort": { "g": 1 } }')
+$cmd$);
+                                                           run_explain_and_trim                                                            
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
    indexName: ghi_1
@@ -340,8 +398,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bs
 BEGIN;
 set local enable_bitmapscan to off;
 set local enable_seqscan to off;
-EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "e": 10 }, "sort": { "e": 1 } }');
-                                                                       QUERY PLAN                                                                       
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "e": 10 }, "sort": { "e": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -359,8 +419,10 @@ ROLLBACK;
 BEGIN;
 set local enable_bitmapscan to off;
 set local enable_seqscan to off;
-EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "f": { "$gt": 10 } }, "sort": { "f": 1 } }');
-                                                                       QUERY PLAN                                                                       
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "f": { "$gt": 10 } }, "sort": { "f": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=90 loops=1)
    Task Count: 1
@@ -376,8 +438,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bs
 
 ROLLBACK;
 -- this can be pushed since h is part of the PFE.
-EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "g": 10, "h": 10, "i": { "$gt": 15 } }, "sort": { "i": 1 } }');
-                                                                QUERY PLAN                                                                 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "g": 10, "h": 10, "i": { "$gt": 15 } }, "sort": { "i": 1 } }')
+$cmd$);
+                                                           run_explain_and_trim                                                            
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
    indexName: ghi_1

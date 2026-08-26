@@ -12,6 +12,7 @@
 #define BSON_GIN_COMPOSITE_H
 
 Datum * GenerateCompositeTermsFromIndexSpec(pgbson *document, pgbson *keySpec,
-											uint32_t *numTerms);
+											uint32_t *numTerms,
+											const StringView *collationStringView);
 
 #endif

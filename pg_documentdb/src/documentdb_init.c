@@ -30,8 +30,8 @@
 #include "infrastructure/cursor_store.h"
 #include "infrastructure/job_management.h"
 #include "background_worker/background_worker_job.h"
-#include "index_am/roaring_bitmap_adapter.h"
 #include "utils/error_utils.h"
+#include "utils/roaring_bitmap_utils.h"
 
 /* --------------------------------------------------------- */
 /* Data Types & Enum values */
@@ -94,12 +94,24 @@ InstallDocumentDBApiPostgresHooks(void)
 	ExtensionPreviousIndexNameHook = explain_get_index_name_hook;
 	explain_get_index_name_hook = ExtensionExplainGetIndexName;
 
+	/* override the explain hook to enable extended explain plans by default */
+	ExtensionPreviousExplainOneQueryHook = ExplainOneQuery_hook;
+	ExplainOneQuery_hook = DocumentDBApiExplainOneQuery;
+
 	/* override planner paths hook for overriding indexed and non-indexed paths. */
 	ExtensionPreviousSetRelPathlistHook = set_rel_pathlist_hook;
 	set_rel_pathlist_hook = ExtensionRelPathlistHook;
 
+	ExtensionPreviousPostParseAnalyzeHook = post_parse_analyze_hook;
+	post_parse_analyze_hook = DocumentDBPostParseAnalyzeHook;
+
+#if PG_VERSION_NUM >= 190000
+	ExtensionPreviousBuildSimpleRelHook = build_simple_rel_hook;
+	build_simple_rel_hook = ExtensionBuildSimpleRelHook;
+#else
 	ExtensionPreviousGetRelationInfoHook = get_relation_info_hook;
 	get_relation_info_hook = ExtensionGetRelationInfoHook;
+#endif
 
 	RegisterXactCallback(DocumentDBTransactionCallback, NULL);
 	RegisterSubXactCallback(DocumentDBSubTransactionCallback, NULL);
@@ -107,9 +119,17 @@ InstallDocumentDBApiPostgresHooks(void)
 	RegisterScanNodes();
 	RegisterQueryScanNodes();
 	RegisterExplainScanNodes();
+	RegisterDynamicCursorScanNodes();
+	RegisterDistinctScanNodes();
+	RegisterReservoirSampleScanNodes();
+	RegisterTidDedupScanNodes();
+	RegisterRumIndexOnlyScanNodes();
 
 	/* Load the rum routine in the shared_preload_libraries to avoid LoadLibrary calls all the time */
 	LoadRumRoutine();
+
+	/* Register Roaring bitmap memory alloc hooks */
+	RegisterDocumentDBRoaringBitmapUtilHooks();
 
 	SetupCursorStorage();
 }
@@ -156,11 +176,22 @@ UninstallDocumentDBApiPostgresHooks(void)
 	explain_get_index_name_hook = ExtensionPreviousIndexNameHook;
 	ExtensionPreviousIndexNameHook = NULL;
 
+	ExplainOneQuery_hook = ExtensionPreviousExplainOneQueryHook;
+	ExtensionPreviousExplainOneQueryHook = NULL;
+
 	set_rel_pathlist_hook = ExtensionPreviousSetRelPathlistHook;
 	ExtensionPreviousSetRelPathlistHook = NULL;
 
+	post_parse_analyze_hook = ExtensionPreviousPostParseAnalyzeHook;
+	ExtensionPreviousPostParseAnalyzeHook = NULL;
+
+#if PG_VERSION_NUM >= 190000
+	build_simple_rel_hook = ExtensionPreviousBuildSimpleRelHook;
+	ExtensionPreviousBuildSimpleRelHook = NULL;
+#else
 	get_relation_info_hook = ExtensionPreviousGetRelationInfoHook;
 	ExtensionPreviousGetRelationInfoHook = NULL;
+#endif
 
 	UnregisterXactCallback(DocumentDBTransactionCallback, NULL);
 	UnregisterSubXactCallback(DocumentDBSubTransactionCallback, NULL);

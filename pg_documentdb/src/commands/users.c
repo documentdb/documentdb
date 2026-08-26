@@ -39,9 +39,6 @@ extern int ScramDefaultSaltLen;
 /* GUC that controls the max number of users allowed*/
 extern int MaxUserLimit;
 
-/* GUC that controls the blocked role prefix list*/
-extern char *BlockedRolePrefixList;
-
 /* GUC that controls whether we use username/password validation*/
 extern bool EnableUsernamePasswordConstraints;
 
@@ -54,14 +51,19 @@ extern bool IsNativeAuthEnabled;
 /* GUC that controls whether the DB admin check is enabled*/
 extern bool EnableUsersAdminDBCheck;
 
+/* GUC that controls whether readWriteAnyDatabase can be assigned on its own */
+extern bool EnableReadWriteAnyDatabaseRoleEnforcement;
+
 PG_FUNCTION_INFO_V1(documentdb_extension_create_user);
 PG_FUNCTION_INFO_V1(documentdb_extension_drop_user);
 PG_FUNCTION_INFO_V1(documentdb_extension_update_user);
 PG_FUNCTION_INFO_V1(documentdb_extension_get_users);
 PG_FUNCTION_INFO_V1(command_connection_status);
 
+/* Flag enum of built-in roles; values are bitmask flags that can be OR'd together */
 enum DocumentDB_BuiltInRoles
 {
+	DocumentDB_Role_Invalid = 0x0,
 	DocumentDB_Role_Read_AnyDatabase = 0x1,
 	DocumentDB_Role_ReadWrite_AnyDatabase = 0x2,
 	DocumentDB_Role_Cluster_Admin = 0x4,
@@ -81,7 +83,13 @@ typedef struct
 	/* "identityProvider" field*/
 	bson_value_t identityProviderData;
 
-	/* pgRole the passed in role maps to */
+	/*
+	 * The single pg role that the input roles resolve to. Each accepted request
+	 * maps to exactly one pg role: a lone built-in role, the one accepted
+	 * two-role combination (readWriteAnyDatabase + clusterAdmin together map to
+	 * the admin role), or a single custom role. Any other combination is
+	 * rejected during validation, so this always holds one resolved pg role name.
+	 */
 	char *pgRole;
 
 	/* principalType */
@@ -209,17 +217,24 @@ documentdb_extension_create_user(PG_FUNCTION_ARGS)
 		PG_RETURN_POINTER(PgbsonWriterGetPgbson(&finalWriter));
 	}
 
-	/*Verify that we have not yet hit the limit of users allowed */
+	/*
+	 * Verify that we have not yet hit the limit of users allowed. A user is any
+	 * login role that has been granted a role, excluding the internal system
+	 * login roles. We intentionally do not restrict the parent role to a subset
+	 * of the built-in roles here: previously only members of the admin and
+	 * read-only roles were counted, so a user granted only readWriteAnyDatabase
+	 * bypassed the limit entirely.
+	 */
 	const char *cmdStr = FormatSqlQuery(
-		"SELECT COUNT(*) "
+		"SELECT COUNT(DISTINCT child.oid) "
 		"FROM pg_roles parent "
 		"JOIN pg_auth_members am ON parent.oid = am.roleid "
 		"JOIN pg_roles child ON am.member = child.oid "
 		"WHERE child.rolcanlogin = true "
-		"  AND parent.rolname IN ('%s', '%s') "
-		"  AND child.rolname NOT IN ('%s', '%s', '%s');",
-		ApiAdminRoleV2, ApiReadOnlyRole,
-		ApiAdminRoleV2, ApiReadOnlyRole, ApiBgWorkerRole);
+		"  AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s', '%s', '%s');",
+		ApiAdminRole, ApiAdminRoleV2, ApiAdminRoleV3,
+		ApiBgWorkerRole, ApiBgWorkerRoleV3,
+		ApiReplicationRole, ApiSettingsManagerRole);
 
 	bool readOnly = true;
 	bool isNull = false;
@@ -330,7 +345,15 @@ ParseCreateUserSpec(pgbson *createSpec, CreateUserSpec *spec)
 			}
 
 			if (ContainsReservedPgRoleNamePrefix(spec->createUser) ||
-				(EnableUsernamePasswordConstraints && !IsUsernameValid(spec->createUser)))
+				IsReservedInternalRoleName(spec->createUser))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"Username is reserved, use a different username.")));
+			}
+
+			if (EnableUsernamePasswordConstraints &&
+				!IsUsernameValid(spec->createUser))
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 								errmsg("Invalid username, use a different username.")));
@@ -617,10 +640,10 @@ ParseDropUserSpec(pgbson *dropSpec)
 			}
 
 			if (ContainsReservedPgRoleNamePrefix(dropUser) ||
-				IS_SYSTEM_LOGIN_ROLE(dropUser))
+				IsReservedInternalRoleName(dropUser))
 			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-								errmsg("Invalid username.")));
+				ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
+								errmsg("The specified user does not exist.")));
 			}
 		}
 		else if (strcmp(key, "$db") == 0 && EnableUsersAdminDBCheck)
@@ -790,6 +813,13 @@ ParseUpdateUserSpec(pgbson *updateSpec, UpdateUserSpec *spec)
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 								errmsg(
 									"'updateUser' is a required field.")));
+			}
+
+			if (ContainsReservedPgRoleNamePrefix(spec->updateUser) ||
+				IsReservedInternalRoleName(spec->updateUser))
+			{
+				ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
+								errmsg("The specified user does not exist.")));
 			}
 
 			userFound = true;
@@ -1344,7 +1374,7 @@ PrehashPassword(const char *password)
  * Verify that the calling user is native
  */
 static bool
-IsCallingUserExternal()
+IsCallingUserExternal(void)
 {
 	const char *currentUser = GetUserNameFromId(GetUserId(), true);
 	return IsUserExternal(currentUser);
@@ -1398,26 +1428,27 @@ WriteSingleUserDocument(UserRoleHashEntry *userEntry, bool showPrivileges,
 
 
 /*
- *  At the moment we only allow ApiAdminRole and ApiReadOnlyRole
- *  1. ApiAdminRole corresponds to
- *      roles: [
- *          { role: "clusterAdmin", db: "admin" },
- *          { role: "readWriteAnyDatabase", db: "admin" }
- *      ]
+ * Validates and maps the "roles" array from createUser to an internal PG role.
  *
- *  2. ApiReadOnlyRole corresponds to
- *      roles: [
- *          { role: "readAnyDatabase", db: "admin" }
- *      ]
+ * Currently only a single internal PG role is supported per user, whether it is
+ * a built-in role or a custom role created through create_role.
  *
- *  Reject all other combinations.
+ * Accepted built-in role combinations:
+ *  1. { "clusterAdmin", "readWriteAnyDatabase" } → ApiAdminRoleV2
+ *  2. { "readWriteAnyDatabase" }                 → ApiReadWriteRole
+ *  3. { "readAnyDatabase" }                      → ApiReadOnlyRole
+ *
+ * Any other combination of built-in roles is rejected rather than being
+ * silently reduced to one of the above, and a custom role may not be combined
+ * with any built-in role.
  */
 static char *
 ValidateAndObtainUserRole(const bson_value_t *rolesDocument)
 {
 	bson_iter_t rolesIterator;
 	BsonValueInitIterator(rolesDocument, &rolesIterator);
-	int userRoles = 0;
+	int userRoles = DocumentDB_Role_Invalid;
+	char *customRoleName = NULL;
 
 	while (bson_iter_next(&rolesIterator))
 	{
@@ -1447,6 +1478,17 @@ ValidateAndObtainUserRole(const bson_value_t *rolesDocument)
 				{
 					/*This would indicate the ApiAdminRole provided the db is "admin" and there is another role "readWriteAnyDatabase" */
 					userRoles |= DocumentDB_Role_Cluster_Admin;
+				}
+				else if (IsCustomRole(role))
+				{
+					/* For now, we only allow single roles to be assigned */
+					if (customRoleName != NULL)
+					{
+						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+										errmsg(
+											"Only one custom role may be specified.")));
+					}
+					customRoleName = pstrdup(role);
 				}
 				else
 				{
@@ -1482,27 +1524,103 @@ ValidateAndObtainUserRole(const bson_value_t *rolesDocument)
 		}
 	}
 
-	if ((userRoles & DocumentDB_Role_ReadWrite_AnyDatabase) != 0 &&
-		(userRoles & DocumentDB_Role_Cluster_Admin) != 0)
+	/*
+	 * Resolve the system role from the exact set of built-in role bits. Only the
+	 * accepted combinations map to a role; any other combination (for example
+	 * readAnyDatabase together with readWriteAnyDatabase, or clusterAdmin on its
+	 * own) is rejected rather than silently reduced to a single role, so the
+	 * privileges granted are always exactly what the caller requested.
+	 */
+	char *systemRoleName = NULL;
+	switch (userRoles)
 	{
-		return ApiAdminRoleV2;
+		case DocumentDB_Role_Invalid:
+		{
+			/*
+			 * No built-in role was supplied. This is only valid when a custom
+			 * role was given; the check after the switch reports the error
+			 * otherwise.
+			 */
+			break;
+		}
+
+		case DocumentDB_Role_Read_AnyDatabase:
+		{
+			systemRoleName = ApiReadOnlyRole;
+			break;
+		}
+
+		case DocumentDB_Role_ReadWrite_AnyDatabase:
+		{
+			if (!EnableReadWriteAnyDatabaseRoleEnforcement)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_ROLENOTFOUND),
+								errmsg(
+									"Roles specified are invalid. Only readAnyDatabase or readWriteAnyDatabase+clusterAdmin are allowed built-in roles."),
+								errdetail_log(
+									"Roles specified are invalid. Only readAnyDatabase or readWriteAnyDatabase+clusterAdmin are allowed built-in roles.")));
+			}
+
+			systemRoleName = ApiReadWriteRole;
+			break;
+		}
+
+		case (DocumentDB_Role_ReadWrite_AnyDatabase | DocumentDB_Role_Cluster_Admin):
+		{
+			systemRoleName = ApiAdminRoleV2;
+			break;
+		}
+
+		default:
+		{
+			/* Covers every unsupported combination of built-in roles. */
+			if (EnableReadWriteAnyDatabaseRoleEnforcement)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_ROLENOTFOUND),
+								errmsg(
+									"Roles specified are invalid. Only readAnyDatabase, readWriteAnyDatabase, or readWriteAnyDatabase+clusterAdmin are allowed built-in roles."),
+								errdetail_log(
+									"Roles specified are invalid. Only readAnyDatabase, readWriteAnyDatabase, or readWriteAnyDatabase+clusterAdmin are allowed built-in roles.")));
+			}
+			else
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_ROLENOTFOUND),
+								errmsg(
+									"Roles specified are invalid. Only readAnyDatabase or readWriteAnyDatabase+clusterAdmin are allowed built-in roles."),
+								errdetail_log(
+									"Roles specified are invalid. Only readAnyDatabase or readWriteAnyDatabase+clusterAdmin are allowed built-in roles.")));
+			}
+			break;
+		}
 	}
 
-	if ((userRoles & DocumentDB_Role_ReadWrite_AnyDatabase) != 0)
+	/*
+	 * A user resolves to exactly one role, so a custom role cannot be combined
+	 * with the built-in roles.
+	 */
+	if (customRoleName != NULL && systemRoleName != NULL)
 	{
-		return ApiReadWriteRole;
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg(
+							"Cannot specify both a custom role '%s' and built-in roles.",
+							customRoleName)));
 	}
 
-	if ((userRoles & DocumentDB_Role_Read_AnyDatabase) != 0)
+	/*
+	 * Neither a built-in nor a custom role was supplied, which means the roles
+	 * array carried no usable "role" field at all. That is a distinct failure
+	 * from an unsupported built-in combination, so it gets its own message.
+	 */
+	if (customRoleName == NULL && systemRoleName == NULL)
 	{
-		return ApiReadOnlyRole;
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_ROLENOTFOUND),
+						errmsg(
+							"No role specified."),
+						errdetail_log(
+							"No role specified.")));
 	}
 
-	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_ROLENOTFOUND),
-					errmsg(
-						"Roles specified are invalid. Only [{role: \"readAnyDatabase\", db: \"admin\"}] or [{role: \"clusterAdmin\", db: \"admin\"}, {role: \"readWriteAnyDatabase\", db: \"admin\"}] are allowed."),
-					errdetail_log(
-						"Roles specified are invalid. Only [{role: \"readAnyDatabase\", db: \"admin\"}] or [{role: \"clusterAdmin\", db: \"admin\"}, {role: \"readWriteAnyDatabase\", db: \"admin\"}] are allowed.")));
+	return customRoleName != NULL ? customRoleName : systemRoleName;
 }
 
 
@@ -1887,7 +2005,7 @@ BuildUserRoleEntryTable(Datum *userDatums, int userCount)
  * Creates a hash table that maps strings to HTAB pointers.
  */
 static HTAB *
-CreateUserEntryHashSet()
+CreateUserEntryHashSet(void)
 {
 	HASHCTL hashInfo = CreateExtensionHashCTL(
 		sizeof(UserRoleHashEntry),

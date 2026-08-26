@@ -1,0 +1,514 @@
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
+SET documentdb.next_collection_id TO 25711000;
+SET documentdb.next_collection_index_id TO 25711000;
+-- Insert test data
+SELECT documentdb_api.insert_one('sampledb','samplePlanTest',' { "_id" : 1, "product" : "p1", "unitPrice" : 5, "stock" : 100 }', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('sampledb','samplePlanTest',' { "_id" : 2, "product" : "p2", "unitPrice" : 4, "stock" : 200 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('sampledb','samplePlanTest',' { "_id" : 3, "product" : "p3", "unitPrice" : 6, "stock" : 50 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('sampledb','samplePlanTest',' { "_id" : 4, "product" : "p4", "unitPrice" : 5, "stock" : 150 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('sampledb','samplePlanTest',' { "_id" : 5, "product" : "p5", "unitPrice" : 7, "stock" : 75 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('sampledb','samplePlanTest',' { "_id" : 6, "product" : "p6", "unitPrice" : 4, "stock" : 180 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('sampledb','samplePlanTest',' { "_id" : 7, "product" : "p7", "unitPrice" : 5, "stock" : 90 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('sampledb','samplePlanTest',' { "_id" : 8, "product" : "p8", "unitPrice" : 6, "stock" : 120 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('sampledb','samplePlanTest',' { "_id" : 9, "product" : "p9", "unitPrice" : 7, "stock" : 60 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('sampledb','samplePlanTest',' { "_id" : 10, "product" : "p10", "unitPrice" : 4, "stock" : 140 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- UNSHARDED COLLECTION TESTS
+-- $sample alone
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": 3 } } ] }');
+                        QUERY PLAN                        
+----------------------------------------------------------
+ Limit
+   ->  Sort
+         Sort Key: (random())
+         ->  Sample Scan on documents_25711001 collection
+               Sampling: system_rows ('3'::bigint)
+(5 rows)
+
+-- $sample + $project + $sort (Spark partitioner shape without empty $match)
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": 3 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (bson_orderby(bson_dollar_project(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Subquery Scan on agg_stage_1
+         ->  Limit
+               ->  Sort
+                     Sort Key: (random())
+                     ->  Sample Scan on documents_25711001 collection
+                           Sampling: system_rows ('3'::bigint)
+(8 rows)
+
+-- Empty $match + $sample (should produce same plan as $sample alone)
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 3 } } ] }');
+                        QUERY PLAN                        
+----------------------------------------------------------
+ Limit
+   ->  Sort
+         Sort Key: (random())
+         ->  Sample Scan on documents_25711001 collection
+               Sampling: system_rows ('3'::bigint)
+(5 rows)
+
+-- Empty $match + $sample + $project + $sort (exact Spark connector partitioner query)
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 3 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (bson_orderby(bson_dollar_project(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Subquery Scan on agg_stage_2
+         ->  Limit
+               ->  Sort
+                     Sort Key: (random())
+                     ->  Sample Scan on documents_25711001 collection
+                           Sampling: system_rows ('3'::bigint)
+(8 rows)
+
+-- Multiple empty $match stages + $sample + $project + $sort
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$match": {} }, { "$match": {} }, { "$sample": { "size": 3 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (bson_orderby(bson_dollar_project(agg_stage_3.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Subquery Scan on agg_stage_3
+         ->  Limit
+               ->  Sort
+                     Sort Key: (random())
+                     ->  Sample Scan on documents_25711001 collection
+                           Sampling: system_rows ('3'::bigint)
+(8 rows)
+
+-- Non-empty $match + $sample (filter constrains input, TABLESAMPLE not expected)
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$match": { "product": "p1" } }, { "$sample": { "size": 2 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
+                                                                                                                   QUERY PLAN                                                                                                                    
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (bson_orderby(bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Custom Scan (DocumentDBApiReservoirSample)
+         Sample Size: 2
+         Sample Reservoir Method: Materialize
+         ->  Bitmap Heap Scan on documents_25711001 collection
+               Recheck Cond: (shard_key_value = '25711001'::bigint)
+               Filter: (document @= '{ "product" : "p1" }'::bson)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (shard_key_value = '25711001'::bigint)
+(10 rows)
+
+-- $sample + $match (filter applied after sampling, TABLESAMPLE expected)
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": 5 } }, { "$match": { "unitPrice": { "$gt": 4 } } } ] }');
+                                        QUERY PLAN                                         
+-------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_1
+   Filter: (agg_stage_1.document #> '{ "unitPrice" : { "$numberInt" : "4" } }'::bsonquery)
+   ->  Limit
+         ->  Sort
+               Sort Key: (random())
+               ->  Sample Scan on documents_25711001 collection
+                     Sampling: system_rows ('5'::bigint)
+(7 rows)
+
+-- SHARDED COLLECTION TESTS
+SELECT documentdb_api.shard_collection('sampledb','samplePlanTest', '{"product":"hashed"}', false);
+ shard_collection 
+------------------
+ 
+(1 row)
+
+-- $sample alone on sharded collection
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": 3 } } ] }');
+                        QUERY PLAN                        
+----------------------------------------------------------
+ Limit
+   ->  Sort
+         Sort Key: (random())
+         ->  Sample Scan on documents_25711001 collection
+               Sampling: system_rows ('3'::bigint)
+(5 rows)
+
+-- $sample + $project + $sort on sharded collection (no empty $match)
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": 3 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (bson_orderby(bson_dollar_project(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Subquery Scan on agg_stage_1
+         ->  Limit
+               ->  Sort
+                     Sort Key: (random())
+                     ->  Sample Scan on documents_25711001 collection
+                           Sampling: system_rows ('3'::bigint)
+(8 rows)
+
+-- Empty $match + $sample on sharded collection (TABLESAMPLE expected)
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 3 } } ] }');
+                        QUERY PLAN                        
+----------------------------------------------------------
+ Limit
+   ->  Sort
+         Sort Key: (random())
+         ->  Sample Scan on documents_25711001 collection
+               Sampling: system_rows ('3'::bigint)
+(5 rows)
+
+-- Empty $match + $sample + $project + $sort on sharded collection (TABLESAMPLE expected)
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 3 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (bson_orderby(bson_dollar_project(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Subquery Scan on agg_stage_2
+         ->  Limit
+               ->  Sort
+                     Sort Key: (random())
+                     ->  Sample Scan on documents_25711001 collection
+                           Sampling: system_rows ('3'::bigint)
+(8 rows)
+
+-- Multiple empty $match + $sample + $project + $sort on sharded collection (TABLESAMPLE expected)
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$match": {} }, { "$match": {} }, { "$sample": { "size": 3 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (bson_orderby(bson_dollar_project(agg_stage_3.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Subquery Scan on agg_stage_3
+         ->  Limit
+               ->  Sort
+                     Sort Key: (random())
+                     ->  Sample Scan on documents_25711001 collection
+                           Sampling: system_rows ('3'::bigint)
+(8 rows)
+
+-- Non-empty $match + $sample on sharded collection (TABLESAMPLE not expected)
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$match": { "product": "p1" } }, { "$sample": { "size": 2 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (bson_orderby(bson_dollar_project(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Subquery Scan on agg_stage_2
+         ->  Limit
+               ->  Sort
+                     Sort Key: (random())
+                     ->  Seq Scan on documents_25711001 collection
+                           Filter: ((document @= '{ "product" : "p1" }'::bson) AND (shard_key_value = '1597515006297442624'::bigint))
+(8 rows)
+
+-- $sample + $match on sharded collection (filter after sampling)
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": 5 } }, { "$match": { "unitPrice": { "$gt": 4 } } } ] }');
+                                        QUERY PLAN                                         
+-------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_1
+   Filter: (agg_stage_1.document #> '{ "unitPrice" : { "$numberInt" : "4" } }'::bsonquery)
+   ->  Limit
+         ->  Sort
+               Sort Key: (random())
+               ->  Sample Scan on documents_25711001 collection
+                     Sampling: system_rows ('5'::bigint)
+(7 rows)
+
+-- OVERSIZED SAMPLE SIZE TESTS (regression: size >= 2^63 must not produce a negative LIMIT)
+-- samplePlanTest is sharded above, so $sample on it uses the TABLESAMPLE path:
+-- an oversized size returns all documents, sorted deterministically.
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDouble": "1e19" } } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+              document               
+-------------------------------------
+ { "_id" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "5" } }
+ { "_id" : { "$numberInt" : "6" } }
+ { "_id" : { "$numberInt" : "7" } }
+ { "_id" : { "$numberInt" : "8" } }
+ { "_id" : { "$numberInt" : "9" } }
+ { "_id" : { "$numberInt" : "10" } }
+(10 rows)
+
+-- order-by-random LIMIT path (subquery RTE after $limit): oversized size must not error
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$limit": 1000 }, { "$sample": { "size": { "$numberDouble": "1e19" } } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+              document               
+-------------------------------------
+ { "_id" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "5" } }
+ { "_id" : { "$numberInt" : "6" } }
+ { "_id" : { "$numberInt" : "7" } }
+ { "_id" : { "$numberInt" : "8" } }
+ { "_id" : { "$numberInt" : "9" } }
+ { "_id" : { "$numberInt" : "10" } }
+(10 rows)
+
+-- order-by-random LIMIT path with size just above INT64_MAX
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$limit": 1000 }, { "$sample": { "size": { "$numberDouble": "9.3e18" } } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+              document               
+-------------------------------------
+ { "_id" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "5" } }
+ { "_id" : { "$numberInt" : "6" } }
+ { "_id" : { "$numberInt" : "7" } }
+ { "_id" : { "$numberInt" : "8" } }
+ { "_id" : { "$numberInt" : "9" } }
+ { "_id" : { "$numberInt" : "10" } }
+(10 rows)
+
+-- Unsharded collection eligible for the reservoir: eligibility is capped by
+-- work_mem (the reservoir buffers K HeapTuple copies), so a size whose buffer
+-- would exceed that budget skips the reservoir and falls back to an
+-- ORDER BY random() sort, returning all matching documents instead of erroring.
+SET work_mem TO '1MB';
+SELECT documentdb_api.insert_one('sampledb','sampleOversizeUnsharded', FORMAT('{ "_id": %s, "v": %s }', g, g)::documentdb_core.bson, NULL) FROM generate_series(1, 5) g;
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(5 rows)
+
+-- size within the INT32 range but above the cap derived from work_mem (and above
+-- the palloc capacity): must fall back to an ORDER BY random() sort and return
+-- all 5 documents rather than failing the reservoir allocation at execution time.
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "sampleOversizeUnsharded", "pipeline": [ { "$sample": { "size": 200000000 } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+              document              
+------------------------------------
+ { "_id" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "5" } }
+(5 rows)
+
+-- size just above INT32_MAX: falls back, returns all 5 documents
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "sampleOversizeUnsharded", "pipeline": [ { "$sample": { "size": 2200000000 } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+              document              
+------------------------------------
+ { "_id" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "5" } }
+(5 rows)
+
+-- huge double size: clamped, falls back, returns all 5 documents
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "sampleOversizeUnsharded", "pipeline": [ { "$sample": { "size": { "$numberDouble": "1e19" } } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+              document              
+------------------------------------
+ { "_id" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "5" } }
+(5 rows)
+
+-- small size stays within the work_mem cap and uses the reservoir, returning exactly K documents
+SELECT count(*) AS reservoir_k FROM (SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "sampleOversizeUnsharded", "pipeline": [ { "$sample": { "size": 3 } } ] }')) t;
+ reservoir_k 
+-------------
+           3
+(1 row)
+
+RESET work_mem;
+-- SHARDED COLLECTION TESTS WITH FIX DISABLED (regression)
+SET documentdb.enableSampleScanFixOnSharded TO off;
+SET documentdb.enableDollarSampleReservoirScan TO off;
+-- Empty $match + $sample on sharded collection (no TABLESAMPLE without fix)
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 3 } } ] }');
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Limit
+   ->  Sort
+         Sort Key: (random())
+         ->  Seq Scan on documents_25711001 collection
+(4 rows)
+
+-- Empty $match + $sample + $project + $sort on sharded collection (no TABLESAMPLE without fix)
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 3 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (bson_orderby(bson_dollar_project(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Subquery Scan on agg_stage_2
+         ->  Limit
+               ->  Sort
+                     Sort Key: (random())
+                     ->  Seq Scan on documents_25711001 collection
+(7 rows)
+
+-- Multiple empty $match + $sample + $project + $sort on sharded collection (no TABLESAMPLE without fix)
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$match": {} }, { "$match": {} }, { "$sample": { "size": 3 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (bson_orderby(bson_dollar_project(agg_stage_3.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Subquery Scan on agg_stage_3
+         ->  Limit
+               ->  Sort
+                     Sort Key: (random())
+                     ->  Seq Scan on documents_25711001 collection
+(7 rows)
+
+RESET documentdb.enableSampleScanFixOnSharded;
+RESET documentdb.enableDollarSampleReservoirScan;
+-- SIZE VALIDATION TESTS
+-- size 0 must be a positive integer and is rejected (error 28747)
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": 0 } } ] }');
+ERROR:  size argument to $sample must be a positive integer
+-- negative size is rejected (error 28747)
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": -5 } } ] }');
+ERROR:  size argument to $sample must be a positive integer
+-- a fractional size that rounds down to zero is rejected (error 28747)
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDouble": "0.5" } } } ] }');
+ERROR:  size argument to $sample must be a positive integer
+-- NaN coerces to zero and is rejected (error 28747)
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDouble": "NaN" } } } ] }');
+ERROR:  size argument to $sample must be a positive integer
+-- negative infinity clamps to the int64 lower bound and is rejected (error 28747)
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDouble": "-Infinity" } } } ] }');
+ERROR:  size argument to $sample must be a positive integer
+-- positive infinity clamps to the int64 upper bound: returns all documents rather than erroring
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDouble": "Infinity" } } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+              document               
+-------------------------------------
+ { "_id" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "5" } }
+ { "_id" : { "$numberInt" : "6" } }
+ { "_id" : { "$numberInt" : "7" } }
+ { "_id" : { "$numberInt" : "8" } }
+ { "_id" : { "$numberInt" : "9" } }
+ { "_id" : { "$numberInt" : "10" } }
+(10 rows)
+
+-- non-numeric size is rejected (error 28746)
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": "five" } } ] }');
+ERROR:  size argument to $sample must be a number
+-- missing size is rejected (error 28749)
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { } } ] }');
+ERROR:  The $sample stage must explicitly define a size value
+-- unrecognized option is rejected (error 28748)
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": 2, "foo": 1 } } ] }');
+ERROR:  Option not recognized for $sample
+-- a non-numeric size takes precedence over a later unrecognized option (error 28746, not 28748)
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": "bad", "foo": 1 } } ] }');
+ERROR:  size argument to $sample must be a number
+-- non-object specification is rejected (error 28745)
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": 3 } ] }');
+ERROR:  The $sample stage specification is required to be provided as an object.
+-- SIZE NUMERIC COERCION TESTS (use COUNT so the result is deterministic regardless of which rows are sampled)
+-- doubles truncate toward zero: 1.9 -> 1
+SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDouble": "1.9" } } } ] }')) q;
+ count 
+-------
+     1
+(1 row)
+
+-- doubles truncate toward zero: 2.1 -> 2
+SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDouble": "2.1" } } } ] }')) q;
+ count 
+-------
+     2
+(1 row)
+
+-- Decimal128 uses round-half-to-even: 1.5 -> 2
+SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDecimal": "1.5" } } } ] }')) q;
+ count 
+-------
+     2
+(1 row)
+
+-- Decimal128 uses round-half-to-even: 2.5 -> 2
+SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDecimal": "2.5" } } } ] }')) q;
+ count 
+-------
+     2
+(1 row)
+
+-- Decimal128 uses round-half-to-even: 3.5 -> 4
+SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDecimal": "3.5" } } } ] }')) q;
+ count 
+-------
+     4
+(1 row)
+
+-- Decimal128 just above the half rounds up: 0.51 -> 1
+SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDecimal": "0.51" } } } ] }')) q;
+ count 
+-------
+     1
+(1 row)
+
+-- Decimal128 exactly one half rounds to even (zero): a valid empty sample (no error)
+SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDecimal": "0.5" } } } ] }')) q;
+ERROR:  size argument to $sample must be a positive integer
+-- Decimal128 overflow saturates and returns all documents rather than erroring
+SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDecimal": "1E6144" } } } ] }')) q;
+ count 
+-------
+    10
+(1 row)
+
+-- Decimal128 infinity saturates and returns all documents rather than erroring
+SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDecimal": "Infinity" } } } ] }')) q;
+ count 
+-------
+    10
+(1 row)
+

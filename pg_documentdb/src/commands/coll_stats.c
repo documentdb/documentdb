@@ -26,6 +26,7 @@
 #include "utils/version_utils.h"
 #include "commands/parse_error.h"
 #include "commands/commands_common.h"
+#include "io/bsonvalue_utils.h"
 #include "commands/diagnostic_commands_common.h"
 #include "api_hooks.h"
 
@@ -152,11 +153,19 @@ command_coll_stats_aggregation(PG_FUNCTION_ARGS)
 	Datum collectionName = PG_GETARG_DATUM(1);
 	pgbson *collStatsSpec = PG_GETARG_PGBSON(2);
 
+	/*
+	 * When $collStats runs inside a $lookup/$unionWith sub-pipeline it can be
+	 * pushed onto a shard, and its catalog lookup and worker-stats gather are
+	 * then nested distributed queries. Opt into nesting so they aren't rejected.
+	 * No-op on single node.
+	 */
+	AllowNestedDistributionInCurrentTransaction();
+
 	/* We either support count or storage stats currently */
 	bson_iter_t collStatsSpecIter;
 	PgbsonInitIterator(collStatsSpec, &collStatsSpecIter);
 
-	int64 storageScale = 1;
+	int32 storageScale = 1;
 	CollStatsAggMode aggregateMode = CollStatsAggMode_None;
 	while (bson_iter_next(&collStatsSpecIter))
 	{
@@ -192,7 +201,8 @@ command_coll_stats_aggregation(PG_FUNCTION_ARGS)
 			}
 			else
 			{
-				storageScale = BsonValueAsInt64(&storageStatsElement.bsonValue);
+				storageScale = BsonValueAsInt32Clamped(
+					&storageStatsElement.bsonValue);
 			}
 
 			aggregateMode |= CollStatsAggMode_Storage;
@@ -233,12 +243,14 @@ command_coll_stats_aggregation(PG_FUNCTION_ARGS)
 	PgbsonWriterInit(&writer);
 
 	/* Write the base info */
+	text *databaseNameText = DatumGetTextPP(databaseName);
+	text *collectionNameText = DatumGetTextPP(collectionName);
 	StringInfo namespaceString = makeStringInfo();
 	appendStringInfo(namespaceString, "%.*s.%.*s",
-					 (int) VARSIZE_ANY_EXHDR(databaseName),
-					 (char *) VARDATA_ANY(databaseName),
-					 (int) VARSIZE_ANY_EXHDR(collectionName),
-					 (char *) VARDATA_ANY(collectionName));
+					 (int) VARSIZE_ANY_EXHDR(databaseNameText),
+					 (char *) VARDATA_ANY(databaseNameText),
+					 (int) VARSIZE_ANY_EXHDR(collectionNameText),
+					 (char *) VARDATA_ANY(collectionNameText));
 	PgbsonWriterAppendUtf8(&writer, "ns", 2, namespaceString->data);
 
 	MongoCollection *collection =
@@ -261,6 +273,13 @@ command_coll_stats_aggregation(PG_FUNCTION_ARGS)
 	}
 
 	CollStatsResult result = { 0 };
+	result.scaleFactor = storageScale;
+	if (storageScale < 1)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION51024), errmsg(
+							"The BSON field 'scale' must have a value of at least 1, but the provided value is '%d'.",
+							storageScale)));
+	}
 	BuildResultData(databaseName, collectionName, &result, collection, storageScale,
 					aggregateMode);
 	if ((aggregateMode & CollStatsAggMode_Count) != 0)
@@ -327,12 +346,14 @@ CollStatsCoordinator(Datum databaseName, Datum collectionName, int scale)
 	}
 
 	StringInfo namespaceString = makeStringInfo();
+	text *databaseNameText = DatumGetTextPP(databaseName);
+	text *collectionNameText = DatumGetTextPP(collectionName);
 
 	appendStringInfo(namespaceString, "%.*s.%.*s",
-					 (int) VARSIZE_ANY_EXHDR(databaseName),
-					 (char *) VARDATA_ANY(databaseName),
-					 (int) VARSIZE_ANY_EXHDR(collectionName),
-					 (char *) VARDATA_ANY(collectionName));
+					 (int) VARSIZE_ANY_EXHDR(databaseNameText),
+					 (char *) VARDATA_ANY(databaseNameText),
+					 (int) VARSIZE_ANY_EXHDR(collectionNameText),
+					 (char *) VARDATA_ANY(collectionNameText));
 
 	CollStatsResult result = { 0 };
 	result.ns = namespaceString->data;

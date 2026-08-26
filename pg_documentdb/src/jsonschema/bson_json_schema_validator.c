@@ -187,6 +187,47 @@ ValidateBsonValueCommon(const bson_value_t *value, const SchemaNode *node)
 			return false;
 		}
 	}
+	if (flags & CommonValidationTypes_Enum)
+	{
+		bool found = false;
+		bson_iter_t enumIter;
+		BsonValueInitIterator(node->validations.common->enumValues, &enumIter);
+		while (bson_iter_next(&enumIter))
+		{
+			if (BsonValueEquals(value, bson_iter_value(&enumIter)))
+			{
+				found = true;
+				break;
+			}
+		}
+		if (!found)
+		{
+			return false;
+		}
+	}
+	if (flags & CommonValidationTypes_OneOf)
+	{
+		int matchCount = 0;
+		SchemaKeywordNode *subNode = node->validations.common->oneOfNodes;
+		while (subNode != NULL)
+		{
+			if (ValidateBsonValueAgainstSchemaTree(value,
+												   (const SchemaNode *) subNode))
+			{
+				matchCount++;
+				if (matchCount > 1)
+				{
+					/* Early exit: 'oneOf' requires exactly one match. */
+					return false;
+				}
+			}
+			subNode = (SchemaKeywordNode *) subNode->base.next;
+		}
+		if (matchCount != 1)
+		{
+			return false;
+		}
+	}
 
 	/* TODO: Add more common validations here */
 

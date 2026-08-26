@@ -19,9 +19,13 @@ use uuid::{Builder, Uuid};
 use crate::{
     auth::AuthState,
     configuration::DynamicConfiguration,
-    context::{Cursor, CursorKey, CursorStoreEntry, ServiceContext, SessionId, TransactionNumber},
+    context::{
+        session::SessionKey, Cursor, CursorKey, CursorRef, CursorStoreEntry, LogicalSessionId,
+        ServiceContext, TransactionNumber,
+    },
     error::Result,
     postgres::conn_mgmt::Connection,
+    security::principal::Principal,
     telemetry::TelemetryProvider,
 };
 
@@ -33,7 +37,7 @@ pub struct ConnectionContext {
     pub auth_state: AuthState,
     pub requires_response: bool,
     pub client_information: Option<RawDocumentBuf>,
-    pub transaction: Option<(SessionId, TransactionNumber)>,
+    pub transaction: Option<(LogicalSessionId, TransactionNumber)>,
     pub telemetry_provider: Option<Box<dyn TelemetryProvider>>,
     pub ip_address: String,
     pub cipher_type: i32,
@@ -82,21 +86,28 @@ impl ConnectionContext {
     }
 
     #[must_use]
-    pub fn get_cursor(&self, id: i64, username: &str) -> Option<CursorStoreEntry> {
-        let key = CursorKey {
-            cursor_id: id.into(),
-            username: username.to_owned(),
-        };
-        // If there is a transaction, get the cursor to its store
-        if let Some((session_id, _)) = self.transaction.as_ref() {
+    pub fn get_cursor(&self, id: i64, caller: &Principal) -> Option<CursorStoreEntry> {
+        let key = CursorKey::new(id.into(), caller.clone());
+
+        // If there is a transaction, validate that the transaction owns the cursor before using it
+        if let Some((lsid, _)) = self.transaction.as_ref() {
             let transaction_store = self.service_context.transaction_store();
-            if let Some(entry) = transaction_store.transactions.get(session_id) {
+            let session_key = SessionKey::new(lsid.clone(), caller.clone());
+            if let Some(entry) = transaction_store.transactions.get(&session_key) {
                 let (_, transaction) = entry.value();
-                return transaction.cursors.get_cursor(&key);
+                if !transaction.contains_cursor(id.into()) {
+                    return None;
+                }
             }
         }
 
         self.service_context.cursor_store().get_cursor(&key)
+    }
+
+    #[must_use]
+    pub fn get_cursor_ref(&self, id: i64, caller: &Principal) -> Option<CursorRef> {
+        let key = CursorKey::new(id.into(), caller.clone());
+        self.service_context.cursor_store().get_cursor_ref(&key)
     }
 
     #[expect(
@@ -107,16 +118,15 @@ impl ConnectionContext {
         &self,
         conn: Option<Arc<Connection>>,
         cursor: Cursor,
-        username: &str,
         db: &str,
         collection: &str,
         cursor_timeout: Duration,
-        session_id: Option<SessionId>,
+        lsid: Option<LogicalSessionId>,
+        transaction_number: Option<TransactionNumber>,
+        caller: &Principal,
     ) {
-        let key = CursorKey {
-            cursor_id: cursor.cursor_id,
-            username: username.to_owned(),
-        };
+        let key = CursorKey::new(cursor.cursor_id, caller.clone());
+
         let value = CursorStoreEntry {
             conn,
             cursor,
@@ -124,16 +134,18 @@ impl ConnectionContext {
             collection: collection.to_owned(),
             timestamp: Instant::now(),
             cursor_timeout,
-            session_id,
+            lsid,
+            transaction_number,
         };
 
-        // If there is a transaction, add the cursor to its store
-        if let Some((session_id, _)) = self.transaction.as_ref() {
+        // If there is a transaction, add it to the tracked cursors
+        if let Some((lsid, _)) = self.transaction.as_ref() {
             let transaction_store = self.service_context.transaction_store();
-            if let Some(entry) = transaction_store.transactions.get(session_id) {
+            let session_key: crate::context::StoreKey<LogicalSessionId> =
+                SessionKey::new(lsid.clone(), caller.clone());
+            if let Some(entry) = transaction_store.transactions.get(&session_key) {
                 let (_, transaction) = entry.value();
-                transaction.cursors.add_cursor(key, value);
-                return;
+                transaction.add_cursor(*key.id());
             }
         }
 
@@ -173,14 +185,12 @@ impl ConnectionContext {
     /// - `request_id`: 32-bit identifier to embed (stored big-endian in bytes 12–15).
     ///
     /// # Returns
-    /// A `String` containing the new UUID, e.g. `"550e8400-e29b-41d4-a716-446655440000"`.
+    /// The activity UUID itself. Use `hyphenated().encode_lower()` for string form.
     #[must_use]
-    pub fn generate_request_activity_id(&self, request_id: i32) -> String {
+    pub fn generate_request_activity_id(&self, request_id: i32) -> Uuid {
         let mut activity_id_bytes = *self.connection_id.as_bytes();
         activity_id_bytes[12..].copy_from_slice(&request_id.to_be_bytes());
-        Builder::from_bytes(activity_id_bytes)
-            .into_uuid()
-            .to_string()
+        Builder::from_bytes(activity_id_bytes).into_uuid()
     }
 
     #[must_use]

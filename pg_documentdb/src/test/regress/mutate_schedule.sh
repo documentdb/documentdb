@@ -32,3 +32,19 @@ if [ -f $mutateFile ]; then
 else
     echo "No version specific mutation. Skipping"
 fi
+
+# Mode-specific mutations. When the built-in rmgr core module is selected at
+# runtime, tests that inspect the on-disk RUM page/metapage format are stripped
+# from the schedule (the module intentionally uses a different, GIN-compatible
+# layout and metapage version).
+if [ "${RUM_USE_BUILTIN_RMGR:-}" == "yes" ]; then
+    builtinMutateFile="./test_mutate_builtin_rmgr"
+    if [ -f $builtinMutateFile ]; then
+        while read -r line
+        do
+            sed -i -e "$line" $targetFile
+        done < $builtinMutateFile
+    else
+        echo "No built-in rmgr mutation at $builtinMutateFile. Skipping"
+    fi
+fi

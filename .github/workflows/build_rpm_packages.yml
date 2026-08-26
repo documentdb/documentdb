@@ -1,7 +1,14 @@
 name: Build rpm packages
 concurrency:
   group: build-rpm-packages-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Supersede only on PRs, where a new push makes the previous build moot.
+  # A called workflow keeps its OWN concurrency, so cancelling unconditionally
+  # here would silently defeat build_all_packages.yml's `cancel-in-progress:
+  # false` (its child builds share this ref-keyed group): a second dispatch on
+  # the same ref would cancel the in-flight release-candidate build the parent
+  # deliberately protects. github.event_name is the caller's event for
+  # workflow_call, so release/tag/dispatch runs all evaluate to false here.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
   workflow_call:
@@ -22,41 +29,92 @@ on:
       - 'release/**'
     paths-ignore:
       - '.devcontainer/**'
-      - '*.md'
+      # '*.md' would match ONLY root-level markdown — GitHub's filter globs do
+      # not let '*' cross '/', so docs/**.md still triggered a full build.
+      - '**/*.md'
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
 
+# The paved-road PostgreSQL major (packaging-design.md §9.1). Single-sourced
+# here because it couples several decisions that MUST agree: which cell builds
+# and uploads the `documentdb` meta package, and which major that meta pins via
+# --default-pg-major. The strategy matrix below cannot read this (the `env`
+# context is not available to `jobs.<id>.strategy`), so its pg_version list
+# stays literal — when this value changes, the matrix must still contain it.
+env:
+  PAVED_PG_MAJOR: '18'
 
 jobs:
   build-rpm-packages:
     runs-on: ${{ matrix.runner }}
+    # A hung step otherwise burns GitHub's 360-minute default before the
+    # runner is reclaimed; healthy runs finish well inside this budget.
+    timeout-minutes: 60
     name: RPM packages for ${{ matrix.os }}-${{ matrix.arch }}-pg${{ matrix.pg_version }}
-    if: github.event.pull_request.draft == false
+    # Skip draft PRs; build on every non-PR event. The explicit event_name
+    # test is redundant — GitHub coerces both an absent `draft` and `false`
+    # to 0, so the bare comparison is already true on push/tag/dispatch and
+    # on workflow_call (verified: every push run of this workflow builds all
+    # matrix cells) — but it states the intent so the guard is not misread as
+    # gating the release path.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     strategy:
       fail-fast: false
-      # Use reduced matrix for PRs, full matrix for pushes/releases
-      matrix: ${{ fromJson((github.event_name == 'pull_request' && !inputs.use_full_matrix) && '{"include":[{"os":"rhel9","arch":"amd64","runner":"ubuntu-24.04","pg_version":"17"},{"os":"rhel9","arch":"arm64","runner":"ubuntu-24.04-arm","pg_version":"18"}]}' || '{"os":["rhel8","rhel9"],"arch":["amd64","arm64"],"include":[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}],"pg_version":["16","17","18"]}') }}
+      # Tier 1 (first-party build + test + host): the newest, most-used
+      # PostgreSQL majors on the paved-road RPM distro only. Full matrix (push /
+      # release / manual use_full_matrix) = RHEL/Rocky 9 × {amd64, arm64} ×
+      # PG {17, 18}. Other distros (RHEL 8) and majors (PG 15/16) are Tier 2/3:
+      # build on demand with `packaging/build_packages.sh --os <os> --pg <N>`
+      # (see packaging/README.md). PRs use a 2-cell subset to stay fast.
+      # PR cells: amd64 runs the paved-road default (PG 18) so the PR-gating
+      # install E2E below runs on the proven path; arm64 covers the PG 17
+      # build. The full matrix exercises every cell either way.
+      matrix: ${{ fromJson((github.event_name == 'pull_request' && !inputs.use_full_matrix) && '{"include":[{"os":"rhel9","arch":"amd64","runner":"ubuntu-24.04","pg_version":"18"},{"os":"rhel9","arch":"arm64","runner":"ubuntu-24.04-arm","pg_version":"17"}]}' || '{"os":["rhel9"],"arch":["amd64","arm64"],"include":[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}],"pg_version":["17","18"]}') }}
+
+    # Every matrix cell builds the gateway package; only E2E cells
+    # additionally run the install/start suite. matrix/github contexts are
+    # valid in job env.
+    env:
+      # Install/start E2E (install -> documentdb-setup -> wire protocol).
+      # Full matrix (push / release / manual full): EVERY Tier-1 cell, so
+      # every combination we ship has its own install proof — including
+      # documentdb-17 on aarch64, whose PG <= 17 dependency path genuinely
+      # differs (external rum_N vs built-in on PG 18) and which an earlier
+      # "PG 18 on both arches + amd64/PG 17" predicate left unexercised.
+      # Tier 1 means a cell we ship is a cell we installed.
+      # PRs keep the fast single-cell signal (amd64 paved cell only).
+      # Cells run in parallel, so full coverage costs ~no extra wall clock.
+      E2E_CELL: ${{ github.event_name != 'pull_request' || inputs.use_full_matrix || matrix.arch == 'amd64' }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Extract and Format Default Version
-        id: extract_version
+      - name: Resolve DocumentDB version
+        id: version
+        uses: ./.github/actions/resolve-documentdb-version
+        with:
+          version: ${{ inputs.version }}
+
+      # Pin every build-generated timestamp to the commit — see the matching
+      # step in build_deb_packages.yml. RPM keeps its changelog in the header
+      # rather than the payload, so this matters less here than for DEB, but
+      # it keeps BUILDTIME deterministic and the two formats symmetric.
+      - name: Pin SOURCE_DATE_EPOCH to the commit timestamp
         run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            DOCUMENTDB_VERSION="${{ inputs.version }}"
-            echo "Using provided version: $DOCUMENTDB_VERSION"
-          else
-            DOCUMENTDB_VERSION=$(grep -E "^default_version" pg_documentdb_core/documentdb_core.control | sed -E "s/.*'([0-9]+\.[0-9]+-[0-9]+)'.*/\1/")
-            DOCUMENTDB_VERSION=$(echo $DOCUMENTDB_VERSION | sed "s/-/./g")
-            echo "Extracted Version: $DOCUMENTDB_VERSION"
-          fi
-          echo "DOCUMENTDB_VERSION=$DOCUMENTDB_VERSION" >> $GITHUB_ENV
+          echo "DOCUMENTDB_VERSION=${{ steps.version.outputs.version }}" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
 
       - name: Build RPM Package
         run: |
-          ./packaging/build_packages.sh --os ${{ matrix.os }} --pg ${{ matrix.pg_version }} --version ${{ env.DOCUMENTDB_VERSION }} --test-clean-install
+          # Build the extension .rpm only. `build_packages.sh
+          # --test-clean-install` -- a DIFFERENT flag from the identically
+          # named one on build_gateway_packages.sh below -- would additionally
+          # run the full `make check` inside the package test container via
+          # test_packages/test-install-entrypoint-rpm.sh. That is intentionally
+          # not run here: this workflow produces packages, and the regression
+          # suite is owned by regress_tests.yml across PG 15-18.
+          ./packaging/build_packages.sh --os ${{ matrix.os }} --pg ${{ matrix.pg_version }} --version ${{ env.DOCUMENTDB_VERSION }}
 
       - name: Upload RPM Package as Artifact
         uses: actions/upload-artifact@v4
@@ -67,3 +125,143 @@ jobs:
           retention-days: 7
           if-no-files-found: error
           compression-level: 0
+      # rpmbuild must be present before the gateway clean-install test, which
+      # exercises the RPM extras path (build_extra_packages.sh --type rpm) on
+      # the runner. It is also reused by the noarch extras build below.
+      - name: Install rpmbuild
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rpm
+
+      - name: Build Gateway RPM Package
+        run: |
+          # Every matrix cell builds the gateway package. E2E cells
+          # additionally pass --test-clean-install to build_gateway_packages.sh:
+          # the RHEL E2E suite installs the four Track-1 RPMs, runs
+          # documentdb-setup greenfield provisioning, checks ident-map/peer-auth,
+          # exercises the wire protocol (CRUD + --load-sample-data), and rpm -e
+          # cleanup -- the "a user can start a local DocumentDB from these
+          # packages" test. This flag is NOT the extension script's same-named
+          # flag: it does NOT run the source `make check` regression suite, so a
+          # green package E2E must not be read as regression coverage (that is
+          # regress_tests.yml).
+          E2E_FLAG=""
+          if [ "${{ env.E2E_CELL }}" = "true" ]; then E2E_FLAG="--test-clean-install"; fi
+          # E2E cells get exactly one automatic retry: the install E2E pulls
+          # base images and PGDG/EPEL packages over the network, so a transient
+          # infrastructure failure should not fail package production. Cells
+          # that only build (the PR-reduced matrix's non-paved cell) never
+          # retry — a build failure there is always a real bug. Note a retry
+          # only annotates a warning, so a genuinely flaky install shows up as
+          # a green run; the nightly paved E2E is the backstop that surfaces it.
+          if ! ./packaging/gateway/build_gateway_packages.sh --os ${{ matrix.os }} --pg ${{ matrix.pg_version }} --version ${{ env.DOCUMENTDB_VERSION }} $E2E_FLAG; then
+            if [ -n "$E2E_FLAG" ]; then
+              echo "::warning::Gateway build + install E2E failed; retrying once to absorb infrastructure flakes."
+              ./packaging/gateway/build_gateway_packages.sh --os ${{ matrix.os }} --pg ${{ matrix.pg_version }} --version ${{ env.DOCUMENTDB_VERSION }} $E2E_FLAG
+            else
+              exit 1
+            fi
+          fi
+
+      - name: Upload Gateway RPM Package as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          # Keep artifact names unique across the full matrix even though the gateway package filename is PG-agnostic.
+          name: archive-${{ matrix.os }}-${{ matrix.arch }}-pg${{ matrix.pg_version }}-documentdb-gateway-${{ env.DOCUMENTDB_VERSION }}
+          path: |
+            packaging/*gateway*.rpm
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
+
+      # Build the remaining three packages from packaging-design.md §4:
+      # documentdb-postgresql-tools (admin helpers, noarch),
+      # documentdb-<N> (per-major stand-alone, noarch), and
+      # documentdb (meta, noarch, only built when pg_version == default major).
+      # All three are pure-shell/noarch — no compilation — so rpmbuild runs
+      # directly on the Ubuntu runner (installed above, unconditionally, so the
+      # step never depends on an earlier one having installed it). Runs in
+      # EVERY cell, because only E2E cells assemble the extras as a side effect
+      # (the gateway step's --test-clean-install internally invokes
+      # build_extra_packages.sh to populate its test container) — which is
+      # every cell in the full matrix but not in the PR-reduced one, whose
+      # non-paved cell would otherwise produce no extras at all and trip this
+      # step's upload (if-no-files-found: error). On an E2E cell this step is
+      # an idempotent rebuild with the same arguments and output dir. The
+      # extras are noarch/identical across cells; the aggregate bundle dedups
+      # them by basename after verifying that cross-cell identity holds.
+      - name: Build Extra RPM Packages (tools + stand-alone + meta)
+        run: |
+          ./packaging/build_extra_packages.sh \
+            --type rpm \
+            --pg ${{ matrix.pg_version }} \
+            --version ${{ env.DOCUMENTDB_VERSION }} \
+            --output-dir "$(pwd)/packaging" \
+            --default-pg-major ${{ env.PAVED_PG_MAJOR }}
+
+      # Package lint, v1 = informational only (continue-on-error): the first
+      # runs establish the real rpmlint baseline; the follow-up is a curated
+      # rpmlint config + hard gate once that baseline exists. One cell is
+      # enough — the packages are identical across cells. Gate on the paved
+      # cell explicitly rather than on E2E_CELL: E2E now runs on EVERY
+      # full-matrix cell, so piggybacking on it would install rpmlint and emit
+      # a duplicate report four times per run.
+      - name: Package lint (rpmlint, informational)
+        if: matrix.arch == 'amd64' && matrix.pg_version == env.PAVED_PG_MAJOR
+        continue-on-error: true
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rpmlint
+          rpmlint packaging/*.rpm 2>&1 | tee rpmlint-report.txt || true
+          {
+            echo "### rpmlint report (informational)"
+            echo '```'
+            tail -n 200 rpmlint-report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Extra RPM Packages as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-extras-${{ matrix.os }}-${{ matrix.arch }}-pg${{ matrix.pg_version }}-${{ env.DOCUMENTDB_VERSION }}
+          path: |
+            packaging/documentdb-postgresql-tools-*.rpm
+            packaging/documentdb-common-*.rpm
+            packaging/documentdb-${{ matrix.pg_version }}-*.rpm
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
+
+      # The meta RPM (Name: documentdb) is only produced for the paved-road
+      # default major — gating both the build (in build_extra_packages.sh)
+      # and the upload keeps the artifact set honest.
+      - name: Upload Meta RPM Package as Artifact
+        if: matrix.pg_version == env.PAVED_PG_MAJOR
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-meta-${{ matrix.os }}-${{ matrix.arch }}-${{ env.DOCUMENTDB_VERSION }}
+          path: |
+            packaging/documentdb-${{ env.DOCUMENTDB_VERSION }}-*.noarch.rpm
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
+
+  # Behavioral regression for the documentdb-common shared-payload split: build
+  # documentdb-common + documentdb-17 + documentdb-18, co-install them, remove
+  # one major, and assert the shared payload survives for the surviving major —
+  # plus the pre-split → split upgrade takeover. Runs once (not per matrix cell)
+  # in a clean RHEL-family container so the rpm install/remove lifecycle is
+  # isolated from the runner.
+  documentdb-common-coinstall-rpm:
+    name: documentdb-common RPM co-install regression
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: documentdb-common co-install lifecycle (RPM)
+        run: |
+          docker run --rm -v "$PWD:/repo" rockylinux:9 bash -c '
+            set -e
+            dnf -q install -y rpm-build findutils >/dev/null 2>&1
+            bash /repo/packaging/test_packages/test-documentdb-common-coinstall.sh --type rpm'

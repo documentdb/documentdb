@@ -42,6 +42,7 @@ WORKDIR /scripts
 
 COPY scripts/start_oss_server.sh /scripts/
 COPY scripts/utils.sh /scripts/
+COPY scripts/preload_libraries.sh /scripts/
 COPY scripts/setup_psqlrc.sh /scripts/
 
 RUN mkdir -p /tmp/install_setup

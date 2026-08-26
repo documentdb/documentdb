@@ -38,6 +38,7 @@ bool IsBsonValueNaN(const bson_value_t *value);
 int IsBsonValueInfinity(const bson_value_t *value);
 
 int32_t BsonValueAsInt32(const bson_value_t *value);
+int32_t BsonValueAsInt32Clamped(const bson_value_t *value);
 int32_t BsonValueAsInt32WithRoundingMode(const bson_value_t *value,
 										 ConversionRoundingMode roundingMode);
 int64_t BsonValueAsInt64(const bson_value_t *value);

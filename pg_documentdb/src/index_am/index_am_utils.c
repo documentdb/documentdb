@@ -9,11 +9,15 @@
  *-------------------------------------------------------------------------
  */
 
+#include <postgres.h>
+#include <fmgr.h>
 #include "index_am/index_am_utils.h"
 #include "utils/feature_counter.h"
 #include "access/relscan.h"
 #include "index_am/documentdb_rum.h"
-#include "index_am/index_am_extend.h"
+#include "index_am/index_am_extend_create.h"
+#include "index_am/index_am_extend_query.h"
+#include "utils/documentdb_errors.h"
 
 #include <miscadmin.h>
 
@@ -21,38 +25,12 @@
 static BsonIndexAmEntry BsonAlternateAmRegistry[5] = { 0 };
 static int BsonNumAlternateAmEntries = 0;
 
-static const char * GetRumCatalogSchema(void);
-static const char * GetRumInternalSchemaV2(void);
-
-static bool RumScanOrderedFalse(IndexScanDesc scan);
 static inline void ValidateCreateIndexesSupportFuncs(
 	CreateIndexesSupportFuncs *createIndexSupport);
+static inline void ValidateQueryIndexPathSupportFuncs(
+	QueryIndexPathSupportFuncs *queryIndexPathSupport);
 
-/* Left non-static for internal use */
-BsonIndexAmEntry RumIndexAmEntry = {
-	.is_single_path_index_supported = true,
-	.is_wild_card_supported = true,
-	.is_wild_card_projection_supported = true,
-	.is_order_by_supported = false,
-	.is_backwards_scan_supported = false,
-	.is_index_only_scan_supported = false,
-	.can_support_parallel_scans = false,
-	.get_am_oid = RumIndexAmId,
-	.get_single_path_op_family_oid = BsonRumSinglePathOperatorFamily,
-	.get_composite_path_op_family_oid = BsonRumCompositeIndexOperatorFamily,
-	.get_text_path_op_family_oid = BsonRumTextPathOperatorFamily,
-	.get_unique_path_op_family_oid = BsonRumUniquePathOperatorFamily,
-	.get_hashed_path_op_family_oid = BsonRumHashPathOperatorFamily,
-	.add_explain_output = NULL, /* No explain output for RUM */
-	.am_name = "rum",
-	.get_opclass_catalog_schema = GetRumCatalogSchema,
-	.get_opclass_internal_catalog_schema = GetRumInternalSchemaV2,
-	.get_multikey_status = NULL,
-	.get_truncation_status = RumGetTruncationStatus,
-	.can_order_in_index_scans = RumScanOrderedFalse,
-	.supports_ordered_operator_scans = false,
-	.create_indexes_support_funcs = NULL,
-};
+extern BsonIndexAmEntry RumIndexAmEntry;
 
 /*
  * Registers an index access method in the index AM registry.
@@ -96,14 +74,19 @@ RegisterIndexAm(BsonIndexAmEntry indexAmEntry)
 		ValidateCreateIndexesSupportFuncs(indexAmEntry.create_indexes_support_funcs);
 	}
 
+	if (indexAmEntry.query_index_path_support_funcs != NULL)
+	{
+		ValidateQueryIndexPathSupportFuncs(indexAmEntry.query_index_path_support_funcs);
+	}
+
 	BsonAlternateAmRegistry[BsonNumAlternateAmEntries++] = indexAmEntry;
 }
 
 
-static const BsonIndexAmEntry *
+inline static const BsonIndexAmEntry *
 GetBsonIndexAmEntryByIndexOid(Oid indexAm)
 {
-	if (indexAm == RumIndexAmId())
+	if (likely(indexAm == RumIndexAmId()))
 	{
 		return &RumIndexAmEntry;
 	}
@@ -124,8 +107,9 @@ GetBsonIndexAmEntryByIndexOid(Oid indexAm)
 
 bool
 GetIndexAmSupportsIndexOnlyScan(Oid indexAm, Oid opFamilyOid,
-								GetMultikeyStatusFunc *getMultiKeyStatus,
-								GetTruncationStatusFunc *getTruncationStatus)
+								PGFunction *getMultiKeyStatus,
+								GetTruncationStatusFunc *getTruncationStatus,
+								PGFunction *getOpclassMetadata)
 {
 	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(indexAm);
 	if (amEntry == NULL)
@@ -143,8 +127,54 @@ GetIndexAmSupportsIndexOnlyScan(Oid indexAm, Oid opFamilyOid,
 		*getTruncationStatus = amEntry->get_truncation_status;
 	}
 
+	if (getOpclassMetadata != NULL)
+	{
+		*getOpclassMetadata = amEntry->get_opclass_metadata;
+	}
+
 	return amEntry->is_index_only_scan_supported &&
 		   opFamilyOid == amEntry->get_composite_path_op_family_oid();
+}
+
+
+bool
+GetIndexTruncationStatus(Relation indexRelation)
+{
+	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(
+		indexRelation->rd_rel->relam);
+	if (amEntry == NULL || amEntry->get_truncation_status == NULL)
+	{
+		return false;
+	}
+
+	return amEntry->get_truncation_status(indexRelation);
+}
+
+
+bool
+GetIndexReducedTermsStatus(Relation indexRelation)
+{
+	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(
+		indexRelation->rd_rel->relam);
+	if (amEntry == NULL || amEntry->get_reduced_terms_status == NULL)
+	{
+		return false;
+	}
+
+	return amEntry->get_reduced_terms_status(indexRelation);
+}
+
+
+bool
+IsPathKeySummarizationScan(Oid relam)
+{
+	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(relam);
+	if (amEntry == NULL || amEntry->is_path_key_summarization_scan == NULL)
+	{
+		return false;
+	}
+
+	return amEntry->is_path_key_summarization_scan();
 }
 
 
@@ -270,6 +300,45 @@ IsExtendedIndexAmByName(const char *amName)
 }
 
 
+QueryExtendedIndexContext *
+MatchRestrictionPathExprByExtendedIndex(Expr *expr,
+										ReplaceExtensionFunctionContext *context)
+{
+	QueryExtendedIndexContext *matchedContext = NULL;
+
+	for (int i = 0; i < BsonNumAlternateAmEntries; i++)
+	{
+		if (BsonAlternateAmRegistry[i].query_index_path_support_funcs == NULL)
+		{
+			continue;
+		}
+
+		QueryIndexPathSupportFuncs *supportFuncs =
+			BsonAlternateAmRegistry[i].query_index_path_support_funcs;
+
+		void *queryState = supportFuncs->matchExprFunc(expr, context);
+		if (queryState != NULL)
+		{
+			if (matchedContext != NULL &&
+				matchedContext->indexAmEntry != &BsonAlternateAmRegistry[i])
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"Expr matched multiple extended index: '%s' and '%s'",
+									matchedContext->indexAmEntry->am_name,
+									BsonAlternateAmRegistry[i].am_name)));
+			}
+
+			matchedContext = palloc0(sizeof(QueryExtendedIndexContext));
+			matchedContext->indexAmEntry = &BsonAlternateAmRegistry[i];
+			matchedContext->indexAmQueryState = queryState;
+		}
+	}
+
+	return matchedContext;
+}
+
+
 bool
 BsonIndexAmRequiresRangeOptimization(Oid indexAm, Oid opFamilyOid)
 {
@@ -302,7 +371,8 @@ TryExplainByIndexAm(struct IndexScanDescData *scan, ExplainWriterFuncs *writeFun
 		return;
 	}
 
-	amEntry->add_explain_output(scan, writerState, writeFuncs);
+	DirectFunctionCall3(amEntry->add_explain_output, PointerGetDatum(scan),
+						PointerGetDatum(writerState), PointerGetDatum(writeFuncs));
 }
 
 
@@ -452,19 +522,6 @@ IsOrderBySupportedOnOpClass(Oid indexAm, Oid columnOpFamilyAm)
 }
 
 
-GetMultikeyStatusFunc
-GetMultiKeyStatusByRelAm(Oid relam)
-{
-	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(relam);
-	if (amEntry == NULL)
-	{
-		return NULL;
-	}
-
-	return amEntry->get_multikey_status;
-}
-
-
 bool
 GetIndexSupportsBackwardsScan(Oid relam, bool *indexCanOrder)
 {
@@ -480,11 +537,83 @@ GetIndexSupportsBackwardsScan(Oid relam, bool *indexCanOrder)
 }
 
 
+PGFunction
+GetIndexKeyCurrentKeyFunc(Oid relam, Oid opFamily)
+{
+	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(relam);
+
+	if (amEntry == NULL)
+	{
+		return NULL;
+	}
+
+	if (amEntry->is_order_by_supported &&
+		amEntry->get_composite_path_op_family_oid() == opFamily)
+	{
+		return amEntry->get_current_index_key;
+	}
+
+	return NULL;
+}
+
+
+PGFunction
+GetSkipTidsOnCurrentEntryFunc(Oid relam, Oid opFamily)
+{
+	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(relam);
+
+	if (amEntry == NULL)
+	{
+		return NULL;
+	}
+
+	if (amEntry->is_order_by_supported &&
+		amEntry->get_composite_path_op_family_oid() == opFamily)
+	{
+		return amEntry->skip_tids_on_current_entry;
+	}
+
+	return NULL;
+}
+
+
+PGFunction
+GetIndexStatsFunc(Oid relam)
+{
+	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(relam);
+	return amEntry == NULL ? NULL : amEntry->get_stats;
+}
+
+
+bool
+GetCompositeOpClassPropsByOid(Oid relAm, Oid opFamilyOid,
+							  bool *supportsOrderedOperatorScans,
+							  PGFunction *multiKeyStatusFunc,
+							  PGFunction *getOpclassMetadata)
+{
+	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(relAm);
+	if (amEntry == NULL)
+	{
+		return false;
+	}
+
+	if (opFamilyOid == amEntry->get_composite_path_op_family_oid())
+	{
+		*supportsOrderedOperatorScans = amEntry->supports_ordered_operator_scans;
+		*multiKeyStatusFunc = amEntry->get_multikey_status;
+		*getOpclassMetadata = amEntry->get_opclass_metadata;
+		return true;
+	}
+
+	return false;
+}
+
+
 bool
 GetCompositeOpClassWithProps(Relation indexRelation,
 							 bool *supportsOrderedOperatorScans,
-							 GetMultikeyStatusFunc *multiKeyStatusFunc,
-							 CanOrderInIndexScan *canOrderInIndexScans)
+							 PGFunction *multiKeyStatusFunc,
+							 PGFunction *getOpclassMetadata)
 {
 	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(
 		indexRelation->rd_rel->relam);
@@ -505,7 +634,7 @@ GetCompositeOpClassWithProps(Relation indexRelation,
 	{
 		*supportsOrderedOperatorScans = amEntry->supports_ordered_operator_scans;
 		*multiKeyStatusFunc = amEntry->get_multikey_status;
-		*canOrderInIndexScans = amEntry->can_order_in_index_scans;
+		*getOpclassMetadata = amEntry->get_opclass_metadata;
 		return true;
 	}
 
@@ -565,22 +694,73 @@ ValidateCreateIndexesSupportFuncs(CreateIndexesSupportFuncs *createIndexSupport)
 }
 
 
-static const char *
-GetRumCatalogSchema(void)
+/*
+ * Validates that all required functions are provided in QueryIndexPathSupportFuncs.
+ */
+static inline void
+ValidateQueryIndexPathSupportFuncs(QueryIndexPathSupportFuncs *queryIndexPathSupport)
 {
-	return ApiCatalogSchemaName;
-}
+	if (queryIndexPathSupport->matchExprFunc == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with query_index_path_support_funcs "
+							"but NULL matchExprFunc function")));
+	}
 
+	if (queryIndexPathSupport->rewriteFuncExprFunc == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with query_index_path_support_funcs "
+							"but NULL rewriteFuncExprFunc function")));
+	}
 
-static const char *
-GetRumInternalSchemaV2(void)
-{
-	return ApiInternalSchemaNameV2;
-}
+	if (queryIndexPathSupport->addExtendedQueryScanFunc == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with query_index_path_support_funcs "
+							"but NULL addExtendedQueryScanFunc function")));
+	}
 
+	if (queryIndexPathSupport->forceIndexSupportFuncs == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with query_index_path_support_funcs "
+							"but NULL forceIndexSupportFuncs")));
+	}
 
-static bool
-RumScanOrderedFalse(IndexScanDesc scan)
-{
-	return false;
+	/* All the functions inside forceIndexSupportFuncs are mandatory and will be called by the planner */
+	if (queryIndexPathSupport->forceIndexSupportFuncs->updateIndexes == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with query_index_path_support_funcs "
+							"that has non-NULL forceIndexSupportFuncs but NULL updateIndexes function")));
+	}
+
+	if (queryIndexPathSupport->forceIndexSupportFuncs->matchIndexPath == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with query_index_path_support_funcs "
+							"that has non-NULL forceIndexSupportFuncs but NULL matchIndexPath function")));
+	}
+
+	if (queryIndexPathSupport->forceIndexSupportFuncs->alternatePath == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with query_index_path_support_funcs "
+							"that has non-NULL forceIndexSupportFuncs but NULL alternatePath function")));
+	}
+
+	if (queryIndexPathSupport->forceIndexSupportFuncs->enableForceIndexPushdown == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with query_index_path_support_funcs "
+							"that has non-NULL forceIndexSupportFuncs but NULL enableForceIndexPushdown function")));
+	}
+
+	if (queryIndexPathSupport->forceIndexSupportFuncs->noIndexHandler == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with query_index_path_support_funcs "
+							"that has non-NULL forceIndexSupportFuncs but NULL noIndexHandler function")));
+	}
 }

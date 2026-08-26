@@ -555,7 +555,7 @@ static float8 GetEpochDiffForDateDiff(DateUnit dateUnitEnum, ExtensionTimezone
 									  endDateEpoch);
 static Datum GetIntervalFromBinSize(int64_t binSize, DateTruncUnit dateTruncUnit);
 static int GetIsoWeeksForYear(int64 year);
-static inline int GetCurrentCentury();
+static inline int GetCurrentCentury(void);
 static inline int GetMonthIndexFromString(char *monthName, bool isAbbreviated);
 static Datum GetPgTimestampAdjustedToTimezone(Datum timestamp, ExtensionTimezone
 											  timezoneToApply);
@@ -724,9 +724,8 @@ static const DateFormatMap dateFormats[] = {
 };
 
 /* Helper method that throws the error for an invalid timezone argument. */
-static inline void
-pg_attribute_noreturn()
-ThrowInvalidTimezoneIdentifier(const char * identifier)
+pg_noreturn static inline void
+ThrowInvalidTimezoneIdentifier(const char *identifier)
 {
 	/*
 	 * Compatibility Notice: The text in this error string is copied verbatim from MongoDB output to maintain
@@ -739,9 +738,9 @@ ThrowInvalidTimezoneIdentifier(const char * identifier)
 						"unrecognized time zone identifier: \"%s\"", identifier)));
 }
 
+
 /* Helper method that throws common Location40517 when a string is not provided for the timezone argument. */
-static inline void
-pg_attribute_noreturn()
+pg_noreturn static inline void
 ThrowLocation40517Error(bson_type_t foundType)
 {
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION40517), errmsg(
@@ -766,8 +765,8 @@ ThrowLocation40517Error(bson_type_t foundType)
 /*
  * This is a helper method to throw error when unit does not matches the type of utf8 for date
  */
-static inline void
-pg_attribute_noreturn() ThrowLocation5439013Error(bson_type_t foundType, char * opName)
+pg_noreturn static inline void
+ThrowLocation5439013Error(bson_type_t foundType, char *opName)
 {
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION5439013), errmsg(
 						"%s needs 'unit' as a string, but received %s instead",
@@ -776,11 +775,12 @@ pg_attribute_noreturn() ThrowLocation5439013Error(bson_type_t foundType, char * 
 								  opName, BsonTypeName(foundType))));
 }
 
+
 /*
  * This is a helper method to throw error when startOfWeek does not matches the type of utf8 for date
  */
-static inline void
-pg_attribute_noreturn() ThrowLocation5439015Error(bson_type_t foundType, char * opName)
+pg_noreturn static inline void
+ThrowLocation5439015Error(bson_type_t foundType, char *opName)
 {
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION5439015), errmsg(
 						"%s needs 'startOfWeek' as a string, but received %s instead",
@@ -790,12 +790,12 @@ pg_attribute_noreturn() ThrowLocation5439015Error(bson_type_t foundType, char * 
 						opName, BsonTypeName(foundType))));
 }
 
+
 /* Helper method that throws common ConversionFailure when a timezone string is not parseable by format. */
-static inline void
-pg_attribute_noreturn() ThrowDocumentDbConversionErrorForTimezoneIdentifier(
-	char * dateString,
-	int sizeOfDateString,
-	int * indexOfDateStringIter)
+pg_noreturn static inline void
+ThrowDocumentDbConversionErrorForTimezoneIdentifier(char *dateString,
+													int sizeOfDateString,
+													int *indexOfDateStringIter)
 {
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CONVERSIONFAILURE), errmsg(
 						"Date string parsing failed for '%s'; %d: including a time zone identifier within the string is prohibited '%c'",
@@ -804,6 +804,7 @@ pg_attribute_noreturn() ThrowDocumentDbConversionErrorForTimezoneIdentifier(
 						"Date string parsing failed, including a time zone identifier within the string is prohibited '%c'",
 						dateString[*indexOfDateStringIter])));
 }
+
 
 /* Helper that validates a date value is in the valid range 0-9999. */
 static inline void
@@ -5113,7 +5114,7 @@ ValidateInputForDollarDateAddSubtract(char *opName, bool isDateAdd,
 
 	if (unit->value_type != BSON_TYPE_UTF8)
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION5166404), errmsg(
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION5439013), errmsg(
 							"%s expects string defining the time unit",
 							opName),
 						errdetail_log("%s expects string defining the time unit",
@@ -5883,7 +5884,7 @@ ValidateInputArgumentForDateDiff(bson_value_t *startDate, bson_value_t *endDate,
 	*dateUnitEnum = GetDateUnitFromString(unit->value.v_utf8.str);
 	if (*dateUnitEnum == DateUnit_Invalid)
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION5439014), errmsg(
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE), errmsg(
 							"The 'unit' parameter in $dateDiff has an unrecognized time unit value: %s",
 							unit->value.v_utf8.str),
 						errdetail_log(
@@ -6336,6 +6337,40 @@ CheckIfRequiredPartsArePresent(DollarDateFromPartsBsonValue *dateFromParts,
 			*isInputValid = false;
 			return;
 		}
+
+		/*
+		 * Reject impossible calendar dates (e.g. Feb 29 in a non-leap year)
+		 * before they are handed to to_timestamp. Without this check the
+		 * underlying datetime conversion raises a raw out-of-range error that
+		 * surfaces as an internal error instead of honoring onError or
+		 * throwing the documented conversion failure. Reuse the PostgreSQL
+		 * date validator (correct leap-year and month-length handling) rather
+		 * than reimplementing the calendar rules here.
+		 */
+		struct pg_tm tmToValidate = { 0 };
+		tmToValidate.tm_year = dateFromParts->year.value.v_int32;
+		tmToValidate.tm_mon = dateFromParts->month.value.v_int32;
+		tmToValidate.tm_mday = dateFromParts->day.value.v_int32;
+
+		/* Named args mirror ValidateDate's signature: the parsed parts are a
+		 * plain Gregorian date, so they are not Julian, not a two-digit year,
+		 * and not BC. */
+		bool isJulianDate = false;
+		bool isTwoDigitYear = false;
+		bool isBcEra = false;
+		if (ValidateDate(DTK_DATE_M, isJulianDate, isTwoDigitYear, isBcEra,
+						 &tmToValidate) != 0)
+		{
+			CONDITIONAL_EREPORT(isOnErrorPresent, ereport(ERROR, (errcode(
+																	  ERRCODE_DOCUMENTDB_CONVERSIONFAILURE),
+																  errmsg(
+																	  "Error parsing date string '%s';The parsed date was invalid",
+																	  dateString),
+																  errdetail_log(
+																	  "Error parsing date string ;The parsed date was invalid"))));
+			*isInputValid = false;
+			return;
+		}
 	}
 }
 
@@ -6359,9 +6394,9 @@ IsFormatSpecifierExist(char *formatSpecifier)
 {
 	DateFormatMap key;
 	key.mongoFormat = formatSpecifier;
-	DateFormatMap *result = bsearch(&key, dateFormats, sizeof(dateFormats) /
-									sizeof(DateFormatMap), sizeof(DateFormatMap),
-									CompareDateFormatMap);
+	const DateFormatMap *result = bsearch(&key, dateFormats, sizeof(dateFormats) /
+										  sizeof(DateFormatMap), sizeof(DateFormatMap),
+										  CompareDateFormatMap);
 	if (result != NULL)
 	{
 		return result - dateFormats;
@@ -6375,9 +6410,9 @@ GetOffsetFromTimezoneAbbr(char *timezoneAbbr)
 {
 	TimezoneMap key;
 	key.abbreviation = timezoneAbbr;
-	TimezoneMap *result = bsearch(&key, timezoneMap, sizeof(timezoneMap) /
-								  sizeof(TimezoneMap), sizeof(TimezoneMap),
-								  CompareTimezoneMap);
+	const TimezoneMap *result = bsearch(&key, timezoneMap, sizeof(timezoneMap) /
+										sizeof(TimezoneMap), sizeof(TimezoneMap),
+										CompareTimezoneMap);
 	if (result != NULL)
 	{
 		return result->offset;
@@ -6772,7 +6807,7 @@ ValidateInputForDateFromString(bson_value_t *dateString,
 
 
 static inline int
-GetCurrentCentury()
+GetCurrentCentury(void)
 {
 	TimestampTz now = GetCurrentTimestamp();
 	struct pg_tm tm;

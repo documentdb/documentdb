@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-use rand::Rng;
+use rand::RngExt;
 use tokio::time::Duration;
 
 /// For the short retry policy we use the Decorrelated Jitter backoff algorithm which generates
@@ -72,7 +72,7 @@ impl ShortRetryPolicy {
         }
 
         if self.current_interval_delay != self.max_retry_delay {
-            let t = f64::from(self.current_retry) + rand::thread_rng().gen_range(0.0..1.0);
+            let t = f64::from(self.current_retry) + rand::rng().random_range(0.0..1.0);
             let next = t.exp2() * (Self::P_FACTOR * t).sqrt().tanh();
 
             let formula_intrinsic_value = next - self.previous_interval;
@@ -171,7 +171,7 @@ impl LongRetryPolicy {
             min_total_ms as f64
         } else {
             ((ceiling_ms - min_total_ms) as f64)
-                .mul_add(rand::thread_rng().gen_range(0.0..1.0), min_total_ms as f64)
+                .mul_add(rand::rng().random_range(0.0..1.0), min_total_ms as f64)
         };
 
         self.current_interval_delay = Duration::from_millis(ms as u64);
@@ -234,7 +234,7 @@ mod tests {
     #[test]
     fn short_retry_policy_returns_none_when_exhausted() {
         let mut policy =
-            ShortRetryPolicy::new(3, Duration::from_millis(100), Duration::from_millis(1000));
+            ShortRetryPolicy::new(3, Duration::from_millis(100), Duration::from_secs(1));
 
         assert!(policy.next_interval().is_some());
         assert!(policy.next_interval().is_some());
@@ -258,7 +258,7 @@ mod tests {
     #[test]
     fn long_retry_policy_returns_none_when_exhausted() {
         let mut policy =
-            LongRetryPolicy::new(3, Duration::from_millis(100), Duration::from_millis(1000));
+            LongRetryPolicy::new(3, Duration::from_millis(100), Duration::from_secs(1));
 
         assert!(policy.next_interval().is_some());
         assert!(policy.next_interval().is_some());
@@ -306,7 +306,7 @@ mod tests {
     #[test]
     fn builder_short_policy_respects_max_delay() {
         let mut policy = RetryPolicyBuilder::build_short();
-        let max_delay = Duration::from_millis(1000);
+        let max_delay = Duration::from_secs(1);
 
         for _ in 0..10 {
             if let Some(interval) = policy.next_interval() {

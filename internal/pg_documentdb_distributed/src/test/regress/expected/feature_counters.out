@@ -83,7 +83,7 @@ RESET client_min_messages;
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
                                                                                                                                                                             get_feature_counter_pretty                                                                                                                                                                            
 ---------------------------------------------------------------------
- {"Feature_usage":[{"command_collmod" : 1}, {"command_create_collection" : 1}, {"command_create_view" : 1}, {"collMod_view" : 1}, {"create_index_text" : 1}, {"create_index_unique" : 1}, {"create_index_vector" : 4}, {"create_index_vector_cos" : 1}, {"create_index_vector_ip" : 1}, {"create_index_vector_l2" : 1}, {"create_index_vector_type_ivfflat" : 3}, {"limit" : 1}]}
+ {"Feature_usage":[{"command_collmod" : 1}, {"collMod_view" : 1}, {"command_create_collection" : 1}, {"command_create_view" : 1}, {"create_index_text" : 1}, {"create_index_unique" : 1}, {"create_index_vector" : 4}, {"create_index_vector_cos" : 1}, {"create_index_vector_ip" : 1}, {"create_index_vector_l2" : 1}, {"create_index_vector_type_ivfflat" : 3}, {"limit" : 1}]}
 (1 row)
 
 SELECT document -> 'a' FROM documentdb_api.collection('db', 'feature_counter_col') ORDER BY documentdb_api_internal.bson_extract_vector(document, 'elem') <=> '[10, 1, 2]';
@@ -175,6 +175,8 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_co
 (0 rows)
 
 -- $group
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
  document 
 ---------------------------------------------------------------------
@@ -186,19 +188,21 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_co
 ---------------------------------------------------------------------
 (0 rows)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 -- $group with $count with non-empty arg (tracks group_count_with_arg feature counter)
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": null, "e": { "$count": 1 } } }], "cursor": {} }');
+ERROR:  $count:{} accumulator requires 0 arguments
+-- $group scalar aggregate: constant _id with a simple $field accumulator (tracks group_scalar_agg_index_pushdown feature counter)
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col", "pipeline": [ { "$group": { "_id": null, "m": { "$max": "$a" } } }], "cursor": {} }');
  document 
 ---------------------------------------------------------------------
 (0 rows)
 
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$sum": "$_id" }, "e": { "$count": 1 } } }], "cursor": {} }');
- document 
----------------------------------------------------------------------
-(0 rows)
-
+ERROR:  $count:{} accumulator requires 0 arguments
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 -- $group with first/last
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$first": "$_id" }, "e": { "$last":  "$_id" } } }], "cursor": {} }');
@@ -230,6 +234,20 @@ SELECT document FROM bson_aggregation_find('db', '{ "find": "feature_counter_col
 ---------------------------------------------------------------------
 (0 rows)
 
+-- $group accumulator that cannot honor the collation. The WithExpr accumulators
+-- must be on to get past the stage check, and skipFailOnCollation lets the
+-- accumulator run so the counter is reported without the error.
+SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
+SET documentdb.skipFailOnCollation TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": null, "a": { "$addToSet": "$a" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+ document 
+---------------------------------------------------------------------
+(0 rows)
+
+RESET documentdb.skipFailOnCollation;
+RESET documentdb.enableNewMinMaxAccumulators;
+RESET documentdb.enableNewWithExprAccumulators;
 RESET documentdb_core.enablecollation;
 -- Create TTL index
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "feature_counter_col2", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
@@ -244,16 +262,16 @@ SELECT documentdb_api.validate('db', '{ "validate" : "validatecoll", "repair" : 
 ERROR:  Running the validate command with { repair: true } is not supported yet.
 -- Print without resetting the counters
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(false);
-                                                                                                                                                                                                                                                                                                                                                                                              get_feature_counter_pretty                                                                                                                                                                                                                                                                                                                                                                                              
+                                                                                                                                                                                                                                                                                                                                                                                                                                                        get_feature_counter_pretty                                                                                                                                                                                                                                                                                                                                                                                                                                                         
 ---------------------------------------------------------------------
- {"Feature_usage":[{"agg_operator_eq" : 1}, {"agg_operator_mod" : 7}, {"agg_operator_toint" : 7}, {"group_count" : 4}, {"group_count_with_arg" : 2}, {"group_first" : 1}, {"group_first_n" : 2}, {"group_last" : 1}, {"group_last_n" : 2}, {"group_max" : 2}, {"group_sum" : 2}, {"collation" : 2}, {"validate_repair" : 1}, {"create_index_composite_based_term" : 1}, {"create_index_ttl" : 1}, {"query_operator_eq" : 4}, {"query_operator_gt" : 4}, {"query_operator_or" : 2}, {"add_fields" : 5}, {"count" : 1}, {"group" : 8}, {"firstN_acc_GT10" : 1}, {"lastN_acc_GT10" : 1}, {"limit" : 3}, {"lookup" : 2}, {"match" : 6}, {"project" : 3}, {"replace_root" : 2}, {"replace_with" : 1}, {"skip" : 3}, {"sort" : 6}, {"sort_by_count" : 1}, {"sort_by_id" : 5}, {"unset" : 1}, {"vector_search_native" : 3}]}
+ {"Feature_usage":[{"agg_operator_eq" : 1}, {"agg_operator_mod" : 7}, {"agg_operator_toint" : 7}, {"group_add_to_set" : 1}, {"group_count" : 4}, {"group_count_with_arg" : 2}, {"group_first" : 1}, {"group_first_n" : 2}, {"group_last" : 1}, {"group_last_n" : 2}, {"group_max" : 3}, {"group_scalar_agg_index_pushdown" : 1}, {"group_sum" : 2}, {"collation" : 3}, {"collation_unsupported_group_accumulator" : 1}, {"validate_repair" : 1}, {"create_index_composite_based_term" : 1}, {"create_index_ttl" : 1}, {"query_operator_eq" : 4}, {"query_operator_gt" : 4}, {"query_operator_or" : 2}, {"add_fields" : 5}, {"count" : 1}, {"group" : 10}, {"firstN_acc_GT10" : 1}, {"lastN_acc_GT10" : 1}, {"limit" : 3}, {"lookup" : 2}, {"match" : 6}, {"project" : 3}, {"replace_root" : 2}, {"replace_with" : 1}, {"skip" : 3}, {"sort" : 6}, {"sort_by_count" : 1}, {"sort_by_id" : 5}, {"unset" : 1}, {"vector_search_native" : 3}]}
 (1 row)
 
 -- print and reset the counters
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
-                                                                                                                                                                                                                                                                                                                                                                                              get_feature_counter_pretty                                                                                                                                                                                                                                                                                                                                                                                              
+                                                                                                                                                                                                                                                                                                                                                                                                                                                        get_feature_counter_pretty                                                                                                                                                                                                                                                                                                                                                                                                                                                         
 ---------------------------------------------------------------------
- {"Feature_usage":[{"agg_operator_eq" : 1}, {"agg_operator_mod" : 7}, {"agg_operator_toint" : 7}, {"group_count" : 4}, {"group_count_with_arg" : 2}, {"group_first" : 1}, {"group_first_n" : 2}, {"group_last" : 1}, {"group_last_n" : 2}, {"group_max" : 2}, {"group_sum" : 2}, {"collation" : 2}, {"validate_repair" : 1}, {"create_index_composite_based_term" : 1}, {"create_index_ttl" : 1}, {"query_operator_eq" : 4}, {"query_operator_gt" : 4}, {"query_operator_or" : 2}, {"add_fields" : 5}, {"count" : 1}, {"group" : 8}, {"firstN_acc_GT10" : 1}, {"lastN_acc_GT10" : 1}, {"limit" : 3}, {"lookup" : 2}, {"match" : 6}, {"project" : 3}, {"replace_root" : 2}, {"replace_with" : 1}, {"skip" : 3}, {"sort" : 6}, {"sort_by_count" : 1}, {"sort_by_id" : 5}, {"unset" : 1}, {"vector_search_native" : 3}]}
+ {"Feature_usage":[{"agg_operator_eq" : 1}, {"agg_operator_mod" : 7}, {"agg_operator_toint" : 7}, {"group_add_to_set" : 1}, {"group_count" : 4}, {"group_count_with_arg" : 2}, {"group_first" : 1}, {"group_first_n" : 2}, {"group_last" : 1}, {"group_last_n" : 2}, {"group_max" : 3}, {"group_scalar_agg_index_pushdown" : 1}, {"group_sum" : 2}, {"collation" : 3}, {"collation_unsupported_group_accumulator" : 1}, {"validate_repair" : 1}, {"create_index_composite_based_term" : 1}, {"create_index_ttl" : 1}, {"query_operator_eq" : 4}, {"query_operator_gt" : 4}, {"query_operator_or" : 2}, {"add_fields" : 5}, {"count" : 1}, {"group" : 10}, {"firstN_acc_GT10" : 1}, {"lastN_acc_GT10" : 1}, {"limit" : 3}, {"lookup" : 2}, {"match" : 6}, {"project" : 3}, {"replace_root" : 2}, {"replace_with" : 1}, {"skip" : 3}, {"sort" : 6}, {"sort_by_count" : 1}, {"sort_by_id" : 5}, {"unset" : 1}, {"vector_search_native" : 3}]}
 (1 row)
 
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
@@ -399,9 +417,9 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "vectorInde
 
 ROLLBACK;
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
-                                                                                                                                                                                                                                                                            get_feature_counter_pretty                                                                                                                                                                                                                                                                             
+                                                                                                                                                                                                                                                                                                get_feature_counter_pretty                                                                                                                                                                                                                                                                                                
 ---------------------------------------------------------------------
- {"Feature_usage":[{"command_insert" : 2}, {"command_insert_one" : 2}, {"create_index_vector" : 4}, {"create_index_vector_cos" : 2}, {"create_index_vector_compression_half" : 2}, {"create_index_vector_l2" : 2}, {"create_index_vector_type_hnsw" : 2}, {"create_index_vector_type_ivfflat" : 2}, {"query_operator_gt" : 2}, {"match" : 2}, {"search" : 6}, {"search_vector_compression_half" : 2}, {"search_vector_default_nprobes" : 1}, {"search_vector_default_efsearch" : 1}, {"search_vector_hnsw" : 3}, {"search_vector_ivfflat" : 3}, {"search_vector_pre_filter" : 2}]}
+ {"Feature_usage":[{"command_insert" : 2}, {"command_insert_one" : 2}, {"create_index_vector" : 4}, {"create_index_vector_compression_half" : 2}, {"create_index_vector_cos" : 2}, {"create_index_vector_l2" : 2}, {"create_index_vector_type_hnsw" : 2}, {"create_index_vector_type_ivfflat" : 2}, {"query_operator_gt" : 2}, {"search_operator_cosmos_search" : 6}, {"match" : 2}, {"search" : 6}, {"search_vector_compression_half" : 2}, {"search_vector_default_efsearch" : 1}, {"search_vector_default_nprobes" : 1}, {"search_vector_hnsw" : 3}, {"search_vector_ivfflat" : 3}, {"search_vector_pre_filter" : 2}]}
 (1 row)
 
 -- aggregation operators counters
@@ -740,9 +758,9 @@ SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id
 (1 row)
 
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
-                                                                                                          get_feature_counter_pretty                                                                                                          
+                                                                                                                    get_feature_counter_pretty                                                                                                                     
 ---------------------------------------------------------------------
- {"Feature_usage":[{"command_insert" : 2}, {"command_insert_one" : 1}, {"command_insert_100" : 1}, {"command_update" : 3}, {"command_update_one" : 2}, {"command_update_100" : 1}, {"update_operator_inc" : 1}, {"update_operator_set" : 3}]}
+ {"Feature_usage":[{"command_insert" : 2}, {"command_insert_100" : 1}, {"command_insert_one" : 1}, {"command_update" : 3}, {"command_update_100" : 1}, {"command_update_one" : 2}, {"update_many" : 3}, {"update_operator_inc" : 1}, {"update_operator_set" : 3}]}
 (1 row)
 
 SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$min":{"year": 3000 }},"multi":false}]}');
@@ -847,6 +865,42 @@ SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
  {"Feature_usage":[{"command_update" : 4}, {"command_update_one" : 4}, {"update_operator_bit" : 1}, {"update_operator_currentdate" : 1}, {"update_operator_mul" : 1}, {"update_operator_unset" : 1}]}
 (1 row)
 
+CALL documentdb_api.delete_txn_proc('db', '{"delete":"writeFC", "deletes":[{"q":{"_id":{"$eq":4}},"limit":0}]}');
+                               p_result                               | p_success 
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } } | t
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                       get_feature_counter_pretty                                       
+---------------------------------------------------------------------
+ {"Feature_usage":[{"command_delete_one" : 1}, {"command_delete_proc" : 1}, {"query_operator_eq" : 1}]}
+(1 row)
+
+-- Test delete batch size feature counters.
+SELECT documentdb_api.delete(
+    'db',
+    FORMAT(
+        '{"delete":"missingDeleteBatchCounter","deletes":[%s]}',
+        (SELECT string_agg('{"q":{},"limit":0}', ',') FROM generate_series(1, batch_size))
+    )::documentdb_core.bson
+)
+FROM unnest(ARRAY[1, 2, 101, 501, 1001]) AS batch_size;
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(5 rows)
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                                                                  get_feature_counter_pretty                                                                                  
+---------------------------------------------------------------------
+ {"Feature_usage":[{"command_delete" : 5}, {"command_delete_100" : 1}, {"command_delete_1000" : 1}, {"command_delete_500" : 1}, {"command_delete_extended" : 1}, {"command_delete_one" : 1}]}
+(1 row)
+
 -- Test: Feature counter for list_databases command
 -- Reset feature counters
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
@@ -928,5 +982,343 @@ SELECT documentdb_api.drop_database('saop_feature');
  drop_database 
 ---------------------------------------------------------------------
  
+(1 row)
+
+-- Test: Feature counter for cursor topology
+-- Reset feature counters
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+ get_feature_counter_pretty 
+---------------------------------------------------------------------
+ {"Feature_usage":[]}
+(1 row)
+
+-- Local unsharded: find on an unsharded collection (first page)
+SELECT documentdb_api.insert_one('topo_db', 'unshard_coll', '{"_id": 1, "a": 1}');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('topo_db', 'unshard_coll', '{"_id": 2, "a": 2}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('topo_db', '{"find": "unshard_coll", "filter": {}}');
+                             document                             
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "2" } }
+(2 rows)
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                              get_feature_counter_pretty                               
+---------------------------------------------------------------------
+ {"Feature_usage":[{"command_insert" : 2}, {"command_insert_one" : 2}, {"match" : 1}]}
+(1 row)
+
+-- Local unsharded: getMore path
+CREATE TEMP TABLE topo_first_page AS
+SELECT continuation FROM find_cursor_first_page(database => 'topo_db',
+    commandSpec => '{"find": "unshard_coll", "filter": {}, "batchSize": 1}', cursorId => 4294967294);
+SELECT continuation AS r1_continuation FROM topo_first_page \gset
+SELECT cursorPage FROM cursor_get_more(database => 'topo_db',
+    getMoreSpec => '{"getMore": {"$numberLong": "4294967294"}, "collection": "unshard_coll"}'::bson,
+    continuationSpec => :'r1_continuation');
+                                                                                                cursorpage                                                                                                
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "topo_db.unshard_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "2" } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+DROP TABLE topo_first_page;
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                                                     get_feature_counter_pretty                                                                     
+---------------------------------------------------------------------
+ {"Feature_usage":[{"command_find_cursor_first_page" : 1}, {"command_get_more" : 1}, {"cursor_local_unsharded" : 2}, {"cursor_type_streaming" : 1}, {"match" : 2}]}
+(1 row)
+
+-- Sharded with shard key equality (first page)
+SELECT documentdb_api.shard_collection('topo_db', 'shard_coll', '{"sk": "hashed"}', false);
+NOTICE:  creating collection
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_api.insert_one('topo_db', 'shard_coll', '{"_id": 1, "sk": "val1", "a": 1}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('topo_db', 'shard_coll', '{"_id": 2, "sk": "val1", "a": 2}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('topo_db', '{"find": "shard_coll", "filter": {"sk": "val1"}}');
+                                    document                                     
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "sk" : "val1", "a" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" }, "sk" : "val1", "a" : { "$numberInt" : "2" } }
+(2 rows)
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                                get_feature_counter_pretty                                                
+---------------------------------------------------------------------
+ {"Feature_usage":[{"command_insert" : 2}, {"command_insert_one" : 2}, {"create_index_alternate_am" : 1}, {"match" : 1}]}
+(1 row)
+
+-- Sharded with shard key equality: getMore path
+CREATE TEMP TABLE topo_first_page AS
+SELECT continuation FROM find_cursor_first_page(database => 'topo_db',
+    commandSpec => '{"find": "shard_coll", "filter": {"sk": "val1"}, "batchSize": 1}', cursorId => 4294967294);
+SELECT continuation AS r1_continuation FROM topo_first_page \gset
+SELECT cursorPage FROM cursor_get_more(database => 'topo_db',
+    getMoreSpec => '{"getMore": {"$numberLong": "4294967294"}, "collection": "shard_coll"}'::bson,
+    continuationSpec => :'r1_continuation');
+                                                                                                      cursorpage                                                                                                       
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "topo_db.shard_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "2" }, "sk" : "val1", "a" : { "$numberInt" : "2" } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+DROP TABLE topo_first_page;
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                                                            get_feature_counter_pretty                                                                            
+---------------------------------------------------------------------
+ {"Feature_usage":[{"command_find_cursor_first_page" : 1}, {"command_get_more" : 1}, {"cursor_sharded_equality_on_shard_key" : 2}, {"cursor_type_streaming" : 1}, {"match" : 2}]}
+(1 row)
+
+-- Sharded with $in on shard key (first page and getMore)
+SELECT document FROM bson_aggregation_find('topo_db', '{"find": "shard_coll", "filter": {"sk": {"$in": ["val1", "val2"]}}}');
+                                    document                                     
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "sk" : "val1", "a" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" }, "sk" : "val1", "a" : { "$numberInt" : "2" } }
+(2 rows)
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                  get_feature_counter_pretty                  
+---------------------------------------------------------------------
+ {"Feature_usage":[{"query_operator_in" : 1}, {"match" : 1}]}
+(1 row)
+
+CREATE TEMP TABLE topo_first_page AS
+SELECT continuation FROM find_cursor_first_page(database => 'topo_db',
+    commandSpec => '{"find": "shard_coll", "filter": {"sk": {"$in": ["val1", "val2"]}}, "batchSize": 1}', cursorId => 4294967294);
+SELECT continuation AS r1_continuation FROM topo_first_page \gset
+SELECT cursorPage FROM cursor_get_more(database => 'topo_db',
+    getMoreSpec => '{"getMore": {"$numberLong": "4294967294"}, "collection": "shard_coll"}'::bson,
+    continuationSpec => :'r1_continuation');
+                                                                                                      cursorpage                                                                                                       
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "topo_db.shard_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "2" }, "sk" : "val1", "a" : { "$numberInt" : "2" } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+DROP TABLE topo_first_page;
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                                                                                         get_feature_counter_pretty                                                                                                          
+---------------------------------------------------------------------
+ {"Feature_usage":[{"command_find_cursor_first_page" : 1}, {"command_get_more" : 1}, {"cursor_can_use_fast_bitmap" : 1}, {"cursor_sharded_saop_on_shard_key" : 2}, {"cursor_type_streaming" : 1}, {"query_operator_in" : 2}, {"match" : 2}]}
+(1 row)
+
+-- General sharded (no shard key in filter) first page and getMore
+SELECT document FROM bson_aggregation_find('topo_db', '{"find": "shard_coll", "filter": {"a": 1}}');
+                                    document                                     
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "sk" : "val1", "a" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+    get_feature_counter_pretty     
+---------------------------------------------------------------------
+ {"Feature_usage":[{"match" : 1}]}
+(1 row)
+
+CREATE TEMP TABLE topo_first_page AS
+SELECT continuation FROM find_cursor_first_page(database => 'topo_db',
+    commandSpec => '{"find": "shard_coll", "filter": {}, "batchSize": 1}', cursorId => 4294967294);
+SELECT continuation AS r1_continuation FROM topo_first_page \gset
+SELECT cursorPage FROM cursor_get_more(database => 'topo_db',
+    getMoreSpec => '{"getMore": {"$numberLong": "4294967294"}, "collection": "shard_coll"}'::bson,
+    continuationSpec => :'r1_continuation');
+                                                                                                      cursorpage                                                                                                       
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "topo_db.shard_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "2" }, "sk" : "val1", "a" : { "$numberInt" : "2" } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+DROP TABLE topo_first_page;
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                                                 get_feature_counter_pretty                                                                 
+---------------------------------------------------------------------
+ {"Feature_usage":[{"command_find_cursor_first_page" : 1}, {"command_get_more" : 1}, {"cursor_sharded" : 2}, {"cursor_type_streaming" : 1}, {"match" : 2}]}
+(1 row)
+
+SELECT documentdb_api.drop_database('topo_db');
+ drop_database 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+-- $sample heap skip feature counter: an Index Scan child with no residual filter engages heap
+-- skip, recording sample_heap_skip. Oversampling then sorting keeps the output deterministic.
+SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('feature_counter_hs_db', 'sampleHeapSkipColl', FORMAT('{ "_id": %s, "a": %s }', g, g)::documentdb_core.bson) FROM generate_series(1, 40) g) ig;
+NOTICE:  creating collection
+ count 
+---------------------------------------------------------------------
+    40
+(1 row)
+
+-- Reset the counters by making a call to the counter and discarding the results
+SELECT count(*) * 0 AS count FROM documentdb_api_internal.command_feature_counter_stats(true);
+ count 
+---------------------------------------------------------------------
+     0
+(1 row)
+
+SET documentdb.enableDollarSampleReservoirScan TO on;
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
+SELECT document FROM bson_aggregation_pipeline('feature_counter_hs_db', '{ "aggregate": "sampleHeapSkipColl", "pipeline": [ { "$match": { "_id": { "$gte": 0 } } }, { "$sample": { "size": 40 } }, { "$sort": { "_id": 1 } }, { "$limit": 3 }, { "$project": { "_id": 1 } } ], "cursor": {} }');
+              document              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "3" } }
+(3 rows)
+
+RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
+RESET documentdb.enableDollarSampleReservoirScan;
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                                                        get_feature_counter_pretty                                                                         
+---------------------------------------------------------------------
+ {"Feature_usage":[{"query_operator_gte" : 1}, {"limit" : 1}, {"match" : 1}, {"project" : 1}, {"sample" : 1}, {"sample_heap_skip" : 1}, {"sort" : 1}, {"sort_by_id" : 1}]}
+(1 row)
+
+-- $sample heap skip eligibility counter: when the heap skip flag is off but the plan is
+-- structurally heap skip capable (a plain Index Scan child with no residual filter),
+-- sample_heap_skip_eligible records the query as a candidate for turning the flag on.
+-- Reset the counters by making a call to the counter and discarding the results
+SELECT count(*) * 0 AS count FROM documentdb_api_internal.command_feature_counter_stats(true);
+ count 
+---------------------------------------------------------------------
+     0
+(1 row)
+
+SET documentdb.enableDollarSampleReservoirScan TO on;
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO off;
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+SELECT document FROM bson_aggregation_pipeline('feature_counter_hs_db', '{ "aggregate": "sampleHeapSkipColl", "pipeline": [ { "$match": { "_id": { "$gte": 0 } } }, { "$sample": { "size": 40 } }, { "$sort": { "_id": 1 } }, { "$limit": 3 }, { "$project": { "_id": 1 } } ], "cursor": {} }');
+              document              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "3" } }
+(3 rows)
+
+RESET enable_bitmapscan;
+RESET enable_seqscan;
+RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
+RESET documentdb.enableDollarSampleReservoirScan;
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                                                             get_feature_counter_pretty                                                                             
+---------------------------------------------------------------------
+ {"Feature_usage":[{"query_operator_gte" : 1}, {"limit" : 1}, {"match" : 1}, {"project" : 1}, {"sample" : 1}, {"sample_heap_skip_eligible" : 1}, {"sort" : 1}, {"sort_by_id" : 1}]}
+(1 row)
+
+SELECT documentdb_api.drop_database('feature_counter_hs_db');
+ drop_database 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+-- Update many noop feature flags
+SELECT documentdb_api.insert('db', '{"insert":"updateMany", "documents":[
+    { "_id" : 1, "a": 1, "b": "noChange", "c": 1 },
+    { "_id" : 2, "a": 1, "b": "noChange", "c": 2 },
+    { "_id" : 3, "a": 1, "b": "noChange", "c": 3 },
+    { "_id" : 4, "a": 1, "b": "noChange", "c": 4 },
+    { "_id" : 5, "a": 1, "b": "noChange", "c": 5 },
+    { "_id" : 6, "a": 1, "b": "noChange", "c": 6 },
+    { "_id" : 7, "a": 1, "b": "noChange", "c": 7 },
+    { "_id" : 8, "a": 1, "b": "noChange", "c": 8 },
+    { "_id" : 9, "a": 1, "b": "noChange", "c": 9 },
+    { "_id" : 10, "a": 1, "b": "noChange", "c": 10 },
+    { "_id" : 11, "a": 1, "b": "noChange", "c": 11 },
+    { "_id" : 12, "a": 1, "b": "noChange", "c": 12 },
+    { "_id" : 13, "a": 1, "b": "noChange", "c": 13 },
+    { "_id" : 14, "a": 1, "b": "noChange", "c": 14 },
+    { "_id" : 15, "a": 1, "b": "noChange", "c": 15 }
+]}');
+NOTICE:  creating collection
+                                         insert                                          
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""15"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('db', '{"update": "updateMany", "updates":[{"q": {"_id": {"$lte": 10}},"u":{"$set":{"b": "noChange" }},"multi":true}]}');
+                                                               update                                                                
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""10"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('db', '{"update": "updateMany", "updates":[{"q": {"_id": {"$lte": 11}},"u":{"$set":{"b": "noChange" }},"multi":true}]}');
+                                                               update                                                                
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""11"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('db', '{"update": "updateMany", "updates":[{"q": {"_id": {"$lte": 11}},"u":{"$set":{"b": "change" }},"multi":true}]}');
+                                                                update                                                                
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""11"" }, ""n"" : { ""$numberInt"" : ""11"" } }",t)
+(1 row)
+
+-- index_only_scan_for_find_project_candidate: with enableIndexOnlyScanForFindProject
+-- disabled (default) a find with a covered projection over an ordered index is
+-- recorded as a candidate so accounts that would benefit can be identified.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "updateMany", "indexes": [ { "key": { "c": 1 }, "storageEngine": { "enableOrderedIndex": true }, "name": "iosfp_c_1" } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+SELECT document FROM bson_aggregation_find('db', '{ "find": "updateMany", "filter": { "c": { "$gte": 1 } }, "projection": { "c": 1, "_id": 0 } }');
+             document              
+---------------------------------------------------------------------
+ { "c" : { "$numberInt" : "1" } }
+ { "c" : { "$numberInt" : "2" } }
+ { "c" : { "$numberInt" : "3" } }
+ { "c" : { "$numberInt" : "4" } }
+ { "c" : { "$numberInt" : "5" } }
+ { "c" : { "$numberInt" : "6" } }
+ { "c" : { "$numberInt" : "7" } }
+ { "c" : { "$numberInt" : "8" } }
+ { "c" : { "$numberInt" : "9" } }
+ { "c" : { "$numberInt" : "10" } }
+ { "c" : { "$numberInt" : "11" } }
+ { "c" : { "$numberInt" : "12" } }
+ { "c" : { "$numberInt" : "13" } }
+ { "c" : { "$numberInt" : "14" } }
+ { "c" : { "$numberInt" : "15" } }
+(15 rows)
+
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                                                                                                                                                                                                              get_feature_counter_pretty                                                                                                                                                                                                                              
+---------------------------------------------------------------------
+ {"Feature_usage":[{"command_insert" : 1}, {"command_insert_100" : 1}, {"command_update" : 3}, {"command_updatemany_100_noop" : 1}, {"command_updatemany_10_noop" : 1}, {"command_update_one" : 3}, {"create_index_alternate_am" : 1}, {"create_index_composite_based_term" : 1}, {"index_only_scan_for_find_project_candidate" : 1}, {"query_operator_gte" : 1}, {"query_operator_lte" : 3}, {"match" : 1}, {"project_find" : 1}, {"update_many" : 3}, {"update_operator_set" : 3}]}
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'updateMany');
+ drop_collection 
+---------------------------------------------------------------------
+ t
 (1 row)
 

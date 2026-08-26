@@ -117,9 +117,6 @@ typedef struct OutArgs
 } OutArgs;
 
 
-/* GUC to enable $out aggregation stage */
-extern bool EnableCollation;
-
 /* GUC to enable schema validation */
 extern bool EnableSchemaValidation;
 
@@ -166,6 +163,9 @@ static inline void AddTargetCollectionRTEDollarMerge(Query *query,
 static HTAB * InitHashTableFromStringArray(const bson_value_t *onValues, int
 										   onValuesArraySize);
 static inline void ValidatePreOutputStages(Query *query, char *stageName);
+static Query * MigrateQueryToFilteredOutputSubQuery(Query *query,
+													AggregationPipelineBuildContext *
+													context);
 static bool MergeQueryCTEWalker(Node *node, void *context);
 static inline void ValidateFinalPgbsonBeforeWriting(const pgbson *finalBson, const
 													pgbson *targetDocument,
@@ -264,22 +264,21 @@ bson_dollar_merge_add_object_id(PG_FUNCTION_ARGS)
 	{
 		pgbson *schemaValidatorInfo = PG_GETARG_MAYBE_NULL_PGBSON(2);
 
-		if (!IsPgbsonEmptyDocument(schemaValidatorInfo))
+		if (schemaValidatorInfo != NULL && !IsPgbsonEmptyDocument(schemaValidatorInfo))
 		{
-			int argPositions = 2;
-			SetCachedFunctionState(
-				stateForSchemaValidation,
-				ExprEvalState,
-				argPositions,
-				AssignSchemaValidationState,
-				schemaValidatorInfo,
-				CurrentMemoryContext);
-			if (stateForSchemaValidation == NULL)
+			SchemaValidationCache *cache = NULL;
+			int argPosition = 2;
+			SetCachedFunctionState(cache, SchemaValidationCache, argPosition,
+								   PopulateSchemaValidationCache,
+								   schemaValidatorInfo);
+
+			if (cache == NULL)
 			{
-				stateForSchemaValidation = palloc0(sizeof(ExprEvalState));
-				AssignSchemaValidationState(stateForSchemaValidation, schemaValidatorInfo,
-											CurrentMemoryContext);
+				cache = palloc0(sizeof(SchemaValidationCache));
+				PopulateSchemaValidationCache(cache, schemaValidatorInfo);
 			}
+
+			stateForSchemaValidation = cache->evalState;
 		}
 	}
 
@@ -333,7 +332,7 @@ bson_dollar_merge_handle_when_matched(PG_FUNCTION_ARGS)
 	{
 		pgbson *schemaValidatorInfo = PG_GETARG_MAYBE_NULL_PGBSON(3);
 
-		if (!IsPgbsonEmptyDocument(schemaValidatorInfo))
+		if (schemaValidatorInfo != NULL && !IsPgbsonEmptyDocument(schemaValidatorInfo))
 		{
 			performSchemaValidation = true;
 			validationLevel = PG_ARGISNULL(4) ? ValidationLevel_Invalid : PG_GETARG_INT32(
@@ -541,23 +540,25 @@ bson_dollar_merge_handle_when_matched(PG_FUNCTION_ARGS)
 			performSchemaValidation = PgbsonEquals(sourceDocument, targetDocument) ?
 									  false : true;
 		}
-
 		if (performSchemaValidation)
 		{
-			pgbson *schemaValidatorInfo = PG_GETARG_PGBSON(3);
-			int argPositions = 3;
-			SetCachedFunctionState(
-				stateForSchemaValidation,
-				ExprEvalState,
-				argPositions,
-				AssignSchemaValidationState,
-				schemaValidatorInfo,
-				CurrentMemoryContext);
-			if (stateForSchemaValidation == NULL)
+			pgbson *schemaValidatorInfo = PG_GETARG_MAYBE_NULL_PGBSON(3);
+			if (schemaValidatorInfo != NULL && !IsPgbsonEmptyDocument(
+					schemaValidatorInfo))
 			{
-				stateForSchemaValidation = palloc0(sizeof(ExprEvalState));
-				AssignSchemaValidationState(stateForSchemaValidation, schemaValidatorInfo,
-											CurrentMemoryContext);
+				SchemaValidationCache *cache = NULL;
+				int argPosition = 3;
+				SetCachedFunctionState(cache, SchemaValidationCache, argPosition,
+									   PopulateSchemaValidationCache,
+									   schemaValidatorInfo);
+
+				if (cache == NULL)
+				{
+					cache = palloc0(sizeof(SchemaValidationCache));
+					PopulateSchemaValidationCache(cache, schemaValidatorInfo);
+				}
+
+				stateForSchemaValidation = cache->evalState;
 			}
 		}
 	}
@@ -645,6 +646,10 @@ HandleMerge(const bson_value_t *existingValue, Query *query,
 	MergeArgs mergeArgs;
 	memset(&mergeArgs, 0, sizeof(mergeArgs));
 	ParseMergeStage(existingValue, context->namespaceName, &mergeArgs);
+	ValidateNamespaceStringForEmbeddedNull(mergeArgs.targetDB.string,
+										   mergeArgs.targetDB.length);
+	ValidateNamespaceStringForEmbeddedNull(mergeArgs.targetCollection.string,
+										   mergeArgs.targetCollection.length);
 
 	/* Look for target collection details */
 	Datum databaseNameDatum = StringViewGetTextDatum(&mergeArgs.targetDB);
@@ -715,8 +720,7 @@ HandleMerge(const bson_value_t *existingValue, Query *query,
 									&mergeArgs.on);
 	}
 
-	context->expandTargetList = true;
-	query = MigrateQueryToSubQuery(query, context);
+	query = MigrateQueryToFilteredOutputSubQuery(query, context);
 	query->commandType = CMD_MERGE;
 	AddTargetCollectionRTEDollarMerge(query, targetCollection);
 
@@ -1961,6 +1965,10 @@ HandleOut(const bson_value_t *existingValue, Query *query,
 
 	memset(&outArgs, 0, sizeof(outArgs));
 	ParseOutStage(existingValue, context->namespaceName, &outArgs);
+	ValidateNamespaceStringForEmbeddedNull(outArgs.targetDB.string,
+										   outArgs.targetDB.length);
+	ValidateNamespaceStringForEmbeddedNull(outArgs.targetCollection.string,
+										   outArgs.targetCollection.length);
 	ValidatePreOutputStages(query, "$out");
 
 	MongoCollection *targetCollection =
@@ -2014,8 +2022,7 @@ HandleOut(const bson_value_t *existingValue, Query *query,
 	}
 
 	RearrangeTargetListForMerge(query, targetCollection, false, NULL);
-	context->expandTargetList = true;
-	query = MigrateQueryToSubQuery(query, context);
+	query = MigrateQueryToFilteredOutputSubQuery(query, context);
 	query->commandType = CMD_MERGE;
 	AddTargetCollectionRTEDollarMerge(query, targetCollection);
 
@@ -2082,6 +2089,49 @@ HandleOut(const bson_value_t *existingValue, Query *query,
 
 
 /*
+ * Output stages must discard rows pruned by stages such as $redact before
+ * constructing the MERGE source relation.
+ */
+static Query *
+MigrateQueryToFilteredOutputSubQuery(Query *query,
+									 AggregationPipelineBuildContext *context)
+{
+	context->expandTargetList = true;
+	query = MigrateQueryToSubQuery(query, context);
+
+	TargetEntry *documentEntry = linitial(query->targetList);
+	NullTest *documentNotNull = makeNode(NullTest);
+	documentNotNull->arg = documentEntry->expr;
+	documentNotNull->nulltesttype = IS_NOT_NULL;
+	documentNotNull->argisrow = false;
+	query->jointree->quals = (Node *) documentNotNull;
+
+	RangeTblEntry *sourceRte = linitial(query->rtable);
+	ListCell *cell;
+	foreach(cell, sourceRte->subquery->targetList)
+	{
+		TargetEntry *sourceEntry = lfirst(cell);
+		if (sourceEntry->resjunk || sourceEntry->resno == documentEntry->resno)
+		{
+			continue;
+		}
+
+		Var *sourceVar = makeVar(1, sourceEntry->resno,
+								 exprType((Node *) sourceEntry->expr),
+								 exprTypmod((Node *) sourceEntry->expr),
+								 exprCollation((Node *) sourceEntry->expr), 0);
+		query->targetList = lappend(
+			query->targetList,
+			makeTargetEntry((Expr *) sourceVar, sourceEntry->resno,
+							sourceEntry->resname, false));
+	}
+
+	context->expandTargetList = true;
+	return MigrateQueryToSubQuery(query, context);
+}
+
+
+/*
  * Truncate data table corresponding to the input collection id.
  */
 static void
@@ -2122,7 +2172,7 @@ ParseOutStage(const bson_value_t *existingValue, const char *currentNameSpace,
 	if (existingValue->value_type == BSON_TYPE_UTF8)
 	{
 		char *dbName = NULL;
-		char *dotPosition = strchr(currentNameSpace, '.');
+		const char *dotPosition = strchr(currentNameSpace, '.');
 		if (dotPosition != NULL)
 		{
 			size_t dbNameLength = dotPosition - currentNameSpace;

@@ -12,7 +12,10 @@
  #define BSON_GIN_COMPOSITE_PRIVATE_H
 
  #include "io/bson_core.h"
- #include "opclass/bson_gin_index_mgmt.h"
+ #include "opclass/bson_gin_index_term.h"
+
+/* Internal marker shared by the planner and composite $elemMatch bounds parser. */
+#define ReducedCorrelatedBoundsPlanAppliedKey "rctBoundsPlanApplied"
 
 typedef struct CompositeSingleBound
 {
@@ -29,6 +32,13 @@ typedef struct IndexRecheckArgs
 	Pointer queryDatum;
 
 	BsonIndexStrategy queryStrategy;
+
+	/*
+	 * Multi-key status of the queried path. On a HasNoArrays path the $ne/$nin null
+	 * recheck is exact (an undefined term can only be missing/literal null);
+	 * otherwise it defers to the heap recheck (empty array matches $ne null).
+	 */
+	IndexMultiKeyStatus pathMultiKeyState;
 } IndexRecheckArgs;
 
 typedef struct CompositeIndexBounds
@@ -70,10 +80,28 @@ typedef struct CompositeIndexBoundsSet
 	CompositeIndexBounds bounds[FLEXIBLE_ARRAY_MEMBER];
 } CompositeIndexBoundsSet;
 
+typedef struct CompositeRowBounds
+{
+	/* Cached only when the complete non-wildcard row term can be reused. */
+	bytea *serializedTerm;
+	CompositeSingleBound bounds[INDEX_MAX_KEYS];
+} CompositeRowBounds;
+
 typedef struct VariableIndexBounds
 {
 	/* List of CompositeIndexBoundsSet */
 	List *variableBoundsList;
+
+	/* OPTIONAL: row level bounds that are applied to the query */
+	CompositeRowBounds *minBounds;
+
+	/* OPTIONAL: serialized deduplication state (row-pointer bitmap) carried
+	 * across dynamic cursor pages, as a BSON binary value. Present when
+	 * dedupState.value_type is BSON_TYPE_BINARY. */
+	bson_value_t dedupState;
+
+	/* Whether planning already handled reduced-correlated bound pruning. */
+	bool isReducedCorrelatedBoundsPlanApplied;
 } VariableIndexBounds;
 
 /* A processed set of index bounds for a given path
@@ -151,11 +179,21 @@ typedef struct CompositeQueryMetaInfo
 	int32_t numScanKeys;
 	bool hasMultipleScanKeysPerPath;
 	bool isBackwardScan;
+	bool hasMinMaxBounds;
 	PathScanKeyMap *scanKeyMap;
 	int32_t wildcardPathIndex;
 	CompositeOrderedScanEntryData *orderedScanEntryData;
 	bool isOrderedScan;
+	bool hasArrayPaths;
+
+	/* Whether the runtime requested the index to project out the raw index tuple */
+	bool projectRawIndexTuple;
 	const char *collation;
+
+	/* OPTIONAL: serialized deduplication state (row-pointer bitmap) supplied by
+	 * the continuation to restore an ordered scan's dedup tracker, as a BSON
+	 * binary value. Present when dedupState.value_type is BSON_TYPE_BINARY. */
+	bson_value_t dedupState;
 } CompositeQueryMetaInfo;
 
 typedef struct CompositeQueryRunData
@@ -184,6 +222,7 @@ bool IsValidRecheckForIndexValue(SerializedCompositeTermPair *compareTerm,
 
 bytea * BuildLowerBoundTermFromIndexBounds(CompositeQueryRunData *runData,
 										   IndexTermCreateMetadata *metadata,
+										   CompositeRowBounds *minBounds,
 										   bool *hasInequalityMatch, const
 										   char **indexPaths,
 										   uint32_t *indexPathLengths,
@@ -195,10 +234,14 @@ bool UpdateBoundsForTruncation(CompositeQueryRunData *runData,
 							   int8_t *sortOrders);
 
 void ParseOperatorStrategy(const char **indexPaths, uint32_t *indexPathLengths,
-						   int32_t numPaths, int32_t wildcardIndex,
+						   int8_t *sortOrders, int32_t numPaths, int32_t wildcardIndex,
 						   pgbsonelement *queryElement,
 						   BsonIndexStrategy queryStrategy,
-						   VariableIndexBounds *indexBounds);
+						   ScanDirection *scanDirection,
+						   VariableIndexBounds *indexBounds,
+						   const char *indexCollation,
+						   bool hasArrayPaths, uint32_t multiKeyBitMask,
+						   bool isGlobalIndexMetadataTracked);
 
 void UpdateRunDataForVariableBounds(CompositeQueryRunData *runData,
 									PathScanTermMap *termMap,
@@ -208,6 +251,9 @@ void UpdateRunDataForVariableBounds(CompositeQueryRunData *runData,
 void UpdateRunDataForOrderedBounds(CompositeQueryRunData *runData,
 								   CompositeOrderedScanEntryData *orderedScanEntryData,
 								   int32_t *unsatisfiablePathIndex);
+void UpdateRunDataForMinMaxBounds(CompositeQueryRunData *runData,
+								  CompositeRowBounds *minBounds,
+								  CompositeRowBounds *maxBounds);
 
 bool TryUpdateBoundsForTruncation(CompositeQueryRunData *runData,
 								  IndexTermCreateMetadata *basePathMetadata,
@@ -216,13 +262,20 @@ bool TryUpdateBoundsForTruncation(CompositeQueryRunData *runData,
 
 List * MergeSingleVariableBounds(List *variableBounds, const char **wildcardPath,
 								 CompositeIndexBounds *mergedBounds,
-								 const char *indexCollation);
+								 const char *indexCollation,
+								 bool hasArrayPaths, uint32_t multiKeyBitMask);
 List * MergeWildCardSingleVariableBounds(List *variableBounds);
 
 void TrimSecondaryVariableBounds(VariableIndexBounds *variableBounds,
-								 CompositeQueryRunData *runData);
+								 CompositeQueryRunData *runData,
+								 const char *indexPaths[INDEX_MAX_KEYS],
+								 bool hasArrayPaths,
+								 uint32_t multiKeyBitMask,
+								 bool enableMetadataBasedTracking);
 void PickVariableBoundsForOrderedScan(VariableIndexBounds *variableBounds,
 									  CompositeQueryRunData *runData);
+void PickVariableBoundsForWildcardOrderedScan(VariableIndexBounds *variableBounds,
+											  CompositeQueryRunData *runData);
 void PopulateTermMetadataForTruncation(IndexTermCreateMetadata *metadata, const
 									   IndexTermCreateMetadata *baseMetadata,
 									   CompositeQueryRunData *runData,

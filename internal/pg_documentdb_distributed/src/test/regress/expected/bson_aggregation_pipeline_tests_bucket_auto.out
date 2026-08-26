@@ -2,6 +2,8 @@ SET search_path TO documentdb_api_catalog;
 SET citus.next_shard_id TO 5110000;
 SET documentdb.next_collection_id TO 51100;
 SET documentdb.next_collection_index_id TO 51100;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 /* Insert data */
 SELECT documentdb_api.insert_one('db','dollarBucketAuto',' { "_id" : 1, "product" : "apple", "price" : 1, "year": 2021 }', NULL);
 NOTICE:  creating collection
@@ -599,7 +601,7 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 280_1
+   ->  Distributed Subplan 281_1
          ->  WindowAgg
                Output: remote_scan.document, documentdb_api_internal.bson_dollar_bucket_auto(documentdb_api_internal.bson_expression_get(remote_scan.bucket_id, '{ "" : "$price" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), '{ "groupBy" : "$price", "buckets" : { "$numberInt" : "3" } }'::documentdb_core.bson) OVER (?), remote_scan.worker_column_3
                ->  Sort
@@ -617,7 +619,7 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT '_id'::text AS c1, documentdb_api_internal.bson_expression_get(documentdb_api_catalog.bson_dollar_add_fields(agg_stage_0_1.document, agg_stage_0_1.bucket_id), '{ "" : "$bucket_id" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c2, 'count'::text AS c3, documentdb_api_catalog.bsonsum(documentdb_api_internal.bson_expression_get('{ }'::documentdb_core.bson, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)) AS c4 FROM (SELECT intermediate_result.document, intermediate_result.bucket_id FROM read_intermediate_result('280_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, bucket_id documentdb_core.bson)) agg_stage_0_1 GROUP BY (documentdb_api_internal.bson_expression_get(documentdb_api_catalog.bson_dollar_add_fields(agg_stage_0_1.document, agg_stage_0_1.bucket_id), '{ "" : "$bucket_id" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))) agg_stage_0
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT '_id'::text AS c1, documentdb_api_internal.bson_expression_get(documentdb_api_catalog.bson_dollar_add_fields(agg_stage_0_1.document, agg_stage_0_1.bucket_id), '{ "" : "$bucket_id" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c2, 'count'::text AS c3, documentdb_api_catalog.bsonsum(documentdb_api_internal.bson_expression_get('{ }'::documentdb_core.bson, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)) AS c4 FROM (SELECT intermediate_result.document, intermediate_result.bucket_id FROM read_intermediate_result('281_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, bucket_id documentdb_core.bson)) agg_stage_0_1 GROUP BY (documentdb_api_internal.bson_expression_get(documentdb_api_catalog.bson_dollar_add_fields(agg_stage_0_1.document, agg_stage_0_1.bucket_id), '{ "" : "$bucket_id" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Subquery Scan on agg_stage_0
                Output: documentdb_core.bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4)
@@ -626,6 +628,6 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson
                      Group Key: documentdb_api_internal.bson_expression_get(documentdb_api_catalog.bson_dollar_add_fields(intermediate_result.document, intermediate_result.bucket_id), '{ "" : "$bucket_id" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
                      ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                            Output: documentdb_api_internal.bson_expression_get(documentdb_api_catalog.bson_dollar_add_fields(intermediate_result.document, intermediate_result.bucket_id), '{ "" : "$bucket_id" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
-                           Function Call: read_intermediate_result('280_1'::text, 'binary'::citus_copy_format)
+                           Function Call: read_intermediate_result('281_1'::text, 'binary'::citus_copy_format)
 (30 rows)
 

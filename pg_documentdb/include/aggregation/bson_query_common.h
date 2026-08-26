@@ -30,6 +30,29 @@ typedef struct DollarRangeParams
 
 	bool isElemMatch;
 	bson_value_t elemMatchValue;
+
+	bool isMinIndexKey;
+	bool isMaxIndexKey;
+	bson_value_t minOrMaxIndexKey;
+
+	/* Serialized deduplication state (row-pointer bitmap) carried across
+	 * dynamic cursor pages so an ordered scan can suppress documents already
+	 * returned on an earlier page. Present when value_type is BSON_TYPE_BINARY. */
+	bson_value_t dedupState;
+
+	/* Reservoir sampling: when true, the range signals the planner to wrap
+	 * scan paths with a reservoir sampling CustomScan. */
+	bool isSample;
+	int64_t sampleSize;
+
+	/* Internal $in-prefix merge-sort marker. It must be stripped before
+	 * execution, so the index-bounds and runtime paths throw if it is ever
+	 * seen. */
+	bool isMergeSortInPrefixMarker;
+
+	/* Index projection metadata conveyed to the index */
+	bool isIndexProjectionMetadata;
+	bson_value_t indexProjectionMetadata;
 } DollarRangeParams;
 
 DollarRangeParams * ParseQueryDollarRange(pgbsonelement *filterElement);
@@ -37,6 +60,7 @@ DollarRangeParams * ParseQueryDollarRange(pgbsonelement *filterElement);
 bool IsBsonRangeArgsForFullScan(List *args);
 bool IsBsonRangeArgsForFullScanOrElemMatch(List *args);
 bool TryGetRangeParamsForRangeArgs(List *args, DollarRangeParams *params);
+bool IsBsonRangeArgsForReservoirSample(List *args);
 void InitializeQueryDollarRange(const bson_value_t *rangeValue,
 								DollarRangeParams *params);
 

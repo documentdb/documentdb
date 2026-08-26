@@ -963,6 +963,22 @@ select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateStr
 select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateString": "Jenuery 1 2024", "format": "%B %d %Y" } } }');
 select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateString": "act 1 2024", "format": "%b %d %Y" } } }');
 
+-- invalid calendar dates: impossible day/month combinations should report a conversion failure
+-- rather than leaking a raw datetime out-of-range error.
+-- Feb 29 in a non-leap year (1900 is divisible by 100 but not 400, so not a leap year)
+select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateString": "1900-02-29", "format": "%Y-%m-%d" } } }');
+-- Feb 29 in another non-leap year
+select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateString": "2019-02-29", "format": "%Y-%m-%d" } } }');
+-- April has only 30 days
+select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateString": "2021-04-31", "format": "%Y-%m-%d" } } }');
+-- day 0 is invalid
+select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateString": "2021-01-00", "format": "%Y-%m-%d" } } }');
+-- valid leap year Feb 29 (2000 is divisible by 400) should succeed
+select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateString": "2000-02-29", "format": "%Y-%m-%d" } } }');
+-- invalid calendar date with onError should return the onError value instead of throwing
+select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateString": "1900-02-29", "format": "%Y-%m-%d", "onError": "error handled" } } }');
+select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateString": "2021-04-31", "format": "%Y-%m-%d", "onError": "error handled" } } }');
+
 -- unkown argument in input
 select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateString": "2022-10-12", "format": " %Y-%m-%d", "unknown":1} } }');
 -- passing timezone as input with existing timezone in string

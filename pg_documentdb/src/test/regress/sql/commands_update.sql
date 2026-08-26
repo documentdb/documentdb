@@ -2,7 +2,6 @@ SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 SET documentdb.next_collection_id TO 1500;
 SET documentdb.next_collection_index_id TO 1500;
 
-SET documentdb.enableupdatebsondocument TO false;
 select 1 from documentdb_api.insert_one('db', 'updateme', '{"a":1,"_id":1,"b":1}');
 select 1 from documentdb_api.insert_one('db', 'updateme', '{"a":2,"_id":2,"b":2}');
 select 1 from documentdb_api.insert_one('db', 'updateme', '{"a":3,"_id":3,"b":3}');
@@ -186,6 +185,28 @@ select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"_id"
 select count(*) from documentdb_api.collection('db', 'updateme') where document @@ '{"_id":33, "b":1}';
 rollback;
 
+-- $in on an UNSHARDED collection must return a clean result on this single-node
+-- (non-distributed) deployment, whether the $in has values or is empty. Insert
+-- one row, then run updateMany and deleteMany with a filled $in (number, string,
+-- mixed) and an empty $in; each should return a clean result.
+begin;
+-- insert a row
+select 1 from documentdb_api.insert_one('db', 'updateme', '{"a":5, "_id":52, "c":"abc"}');
+-- updateMany, non-empty $in that matches: number
+select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"a":5, "b":{"$in":[5]}},"u":{"$set":{"u1":1}},"multi":true}]}');
+-- updateMany, non-empty $in that matches: string
+select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"a":5, "c":{"$in":["abc"]}},"u":{"$set":{"u2":1}},"multi":true}]}');
+-- updateMany, non-empty $in that matches: mixed types (number and string)
+select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"a":5, "b":{"$in":[5,"foo"]}},"u":{"$set":{"u3":1}},"multi":true}]}');
+-- updateMany, empty $in matches nothing and is a clean no-op
+select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"a":5, "c":{"$in":[]}},"u":{"$set":{"u4":1}},"multi":true}]}');
+-- deleteMany, empty $in matches nothing, still routes
+select documentdb_api.delete('db', '{"delete":"updateme", "deletes":[{"q":{"a":5, "c":{"$in":[]}},"limit":0}]}');
+-- deleteMany, non-empty $in removes the inserted row
+select documentdb_api.delete('db', '{"delete":"updateme", "deletes":[{"q":{"a":5, "c":{"$in":["abc"]}},"limit":0}]}');
+select count(*) from documentdb_api.collection('db', 'updateme') where document @@ '{"a":5}';
+rollback;
+
 -- shard the collection
 select documentdb_api.shard_collection('db', 'updateme', '{"a":"hashed"}', false);
 
@@ -208,6 +229,30 @@ begin;
 select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"$and":[{"a":5},{"a":{"$gt":0}}]},"u":{"$set":{"b":0}},"multi":true}]}');
 select document from documentdb_api.collection('db', 'updateme') where document @@ '{"a":5}';
 select count(*) from documentdb_api.collection('db', 'updateme') where document @@ '{"b":0}';
+rollback;
+
+-- $in with a shard key filter must route to the shard for updateMany,
+-- whether the $in has values or is empty. Before the fix an empty $in became a
+-- plain false, which dropped the shard key filter and made the write hit zero
+-- shards (a shard-routing error). Insert one row, then run updateMany and
+-- deleteMany with a filled $in (number, string, mixed) and an empty $in; each
+-- should route to the shard and return a clean result.
+begin;
+-- insert a row on shard a=5
+select 1 from documentdb_api.insert_one('db', 'updateme', '{"a":5, "_id":50, "c":"abc"}');
+-- updateMany, non-empty $in that matches: number
+select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"a":5, "b":{"$in":[5]}},"u":{"$set":{"u1":1}},"multi":true}]}');
+-- updateMany, non-empty $in that matches: string
+select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"a":5, "c":{"$in":["abc"]}},"u":{"$set":{"u2":1}},"multi":true}]}');
+-- updateMany, non-empty $in that matches: mixed types (number and string)
+select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"a":5, "b":{"$in":[5,"foo"]}},"u":{"$set":{"u3":1}},"multi":true}]}');
+-- updateMany, empty $in matches nothing (the routing regression case)
+select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"a":5, "c":{"$in":[]}},"u":{"$set":{"u4":1}},"multi":true}]}');
+-- deleteMany, empty $in matches nothing, still routes
+select documentdb_api.delete('db', '{"delete":"updateme", "deletes":[{"q":{"a":5, "c":{"$in":[]}},"limit":0}]}');
+-- deleteMany, non-empty $in removes the inserted row
+select documentdb_api.delete('db', '{"delete":"updateme", "deletes":[{"q":{"a":5, "c":{"$in":["abc"]}},"limit":0}]}');
+select count(*) from documentdb_api.collection('db', 'updateme') where document @@ '{"a":5}';
 rollback;
 
 -- update 1 without filters is unsupported for sharded collections
@@ -621,4 +666,34 @@ select documentdb_api.update('update', '{"update":"server1470_noref", "updates":
 select documentdb_api.update('update', '{"update":"server1470_extraf_1", "updates":[{"q": {"name": "first", "pic": {"$ref": "foo", "extraField": "extraField", "$id": {"$oid": "4c48d04cd33a5a92628c9af6"} } }, "u":{"$set": {"refx": 1}}, "multi": true, "upsert": true} ] }');
 select documentdb_api.update('update', '{"update":"server1470_extraf_2", "updates":[{"q": {"name": "first", "pic": {"$id": {"$oid": "4c48d04cd33a5a92628c9af6"}, "extraField": "extraFiele", "$ref": "foo" } }, "u":{"$set": {"refx": 1}}, "multi": true, "upsert": true} ] }');
 
-SET documentdb.enableupdatebsondocument TO true;
+-- update 'multi'/'upsert' accept a bool, or null/undefined for the default (false)
+select 1 from documentdb_api.insert_one('db', 'update_bool_validation', '{"_id":1,"r":"a"}');
+select 1 from documentdb_api.insert_one('db', 'update_bool_validation', '{"_id":2,"r":"b"}');
+select 1 from documentdb_api.insert_one('db', 'update_bool_validation', '{"_id":3,"r":"b"}');
+
+-- multi:null defaults to false (updates one)
+begin;
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"r":"b"},"u":{"$set":{"t":1}},"multi":null}]}');
+rollback;
+
+-- upsert:null defaults to false (no upsert)
+begin;
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"_id":99},"u":{"$set":{"t":1}},"upsert":null}]}');
+select count(*) from documentdb_api.collection('db', 'update_bool_validation');
+rollback;
+
+-- multi true updates all matches, false updates one
+begin;
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"r":"b"},"u":{"$set":{"t":1}},"multi":true}]}');
+rollback;
+begin;
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"r":"b"},"u":{"$set":{"t":1}},"multi":false}]}');
+rollback;
+
+-- non-boolean multi/upsert is rejected
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"r":"b"},"u":{"$set":{"t":1}},"multi":1}]}');
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"r":"b"},"u":{"$set":{"t":1}},"multi":0.5}]}');
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"r":"b"},"u":{"$set":{"t":1}},"upsert":1}]}');
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"r":"b"},"u":{"$set":{"t":1}},"upsert":"x"}]}');
+
+select documentdb_api.drop_collection('db', 'update_bool_validation');

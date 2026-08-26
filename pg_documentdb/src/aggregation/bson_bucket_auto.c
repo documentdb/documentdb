@@ -15,6 +15,7 @@
 #include <windowapi.h>
 
 #include "aggregation/bson_project.h"
+#include "collation/collation.h"
 #include "commands/parse_error.h"
 #include "io/bson_core.h"
 #include "metadata/metadata_cache.h"
@@ -285,6 +286,13 @@ HandleBucketAuto(const bson_value_t *existingValue, Query *query,
 							"$bucketAuto requires an object argument, but a value of type %s was provided instead.",
 							BsonTypeName(
 								existingValue->value_type))));
+	}
+
+	if (IsCollationApplicable(context->collationString))
+	{
+		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						errmsg(
+							"collation is not supported in the $bucketAuto stage yet.")));
 	}
 
 	/* Push prior stuff to a subquery first since we're gonna aggregate our way */
@@ -836,6 +844,12 @@ ValidateValueIsNumberic(pgbson *value)
 						errmsg(
 							"$bucketAuto only allows specifying a 'granularity' with numeric boundaries, but encountered a value of type: %s",
 							BsonTypeName(current.value_type))));
+	}
+	if (IsBsonValueNaN(&current))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION40259),
+						errmsg(
+							"$bucketAuto can specify a 'granularity' with numeric boundaries only, but found a NaN")));
 	}
 	double currentValueDouble = BsonValueAsDouble(&current);
 	if (currentValueDouble < 0)

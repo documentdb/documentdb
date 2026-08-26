@@ -1,0 +1,188 @@
+SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog, documentdb_api_internal, public;
+
+SET documentdb.next_collection_id TO 13300;
+SET documentdb.next_collection_index_id TO 13300;
+
+-- Composite (ordered) index planner: pushes equality prefixes and order-by
+-- clauses down into ordered composite index scans.
+set documentdb.enableCompositeIndexPlanner to on;
+-- Track per-path multi-key state in the composite index opclass metadata so the
+-- planner can tell which individual index paths are multi-key.
+set documentdb.enableIndexMetadataGlobalTracking to on;
+-- Independent multi-key paths are exercised here; parallel-array rejection is
+-- covered by dedicated tests.
+set documentdb.enable_failure_on_parallel_index_arrays_for_metadata_tracking to off;
+
+set documentdb.enableExtendedExplainPlans to on;
+-- Suppress per-index cost details so explain output is stable across runs.
+set documentdb.enableExplainScanIndexCosts to off;
+-- Force index usage and reject bitmap scans so the ordered index-scan shape (and
+-- any order-by pushdown) surfaces deterministically. A bitmap scan cannot carry
+-- the index ordering, so it would force a Sort/HashAggregate regardless.
+set enable_seqscan to off;
+set enable_bitmapscan to off;
+
+-- ============================================================================
+-- A per-path multi-key composite ordered index: the leading dotted prefix
+-- (region.city, region.area, region.grade) is an array path (multi-key), while
+-- the trailing (cat, subcat, score) columns are scalar (not multi-key).
+--
+-- Each document carries a two-element region array whose second element differs
+-- from the first, which is what drives region.city/area/grade to be recorded as
+-- multi-key while cat/subcat/score stay scalar.
+-- ============================================================================
+SELECT COUNT(documentdb_api.insert_one('gbmk_db', 'recs',
+    FORMAT('{ "_id": %s, "cat": "%s", "subcat": "m%s", "score": %s, "region": [ { "city": "%s", "area": "central grid", "grade": "pass" }, { "city": "annex", "area": "zone9", "grade": "plain" } ] }',
+        i,
+        (ARRAY['alpha','beta','gamma'])[1 + (i % 3)],
+        (i % 4),
+        (i % 50),
+        CASE WHEN i % 9 = 0 THEN 'northgate' ELSE 'c' || (i % 17)::text END
+    )::documentdb_core.bson))
+FROM generate_series(1, 400) i;
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('gbmk_db',
+    '{ "createIndexes": "recs", "indexes": [ { "key": { "region.city": 1, "region.area": 1, "region.grade": 1, "cat": 1, "subcat": 1, "score": 1 }, "name": "idx_esr", "enableOrderedIndex": 1 } ] }',
+    true);
+
+ANALYZE;
+
+-- Confirm the per-path multi-key shape: only the region.* paths are multi-key;
+-- cat/subcat/score are scalar.
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (VERBOSE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('gbmk_db', '{ "find": "recs", "filter": { "region": { "$elemMatch": { "city": "northgate", "area": "central grid", "grade": "pass" } }, "cat": "alpha" } }') $cmd$);
+
+-- ============================================================================
+-- Grouping-only $group whose _id is the scalar (non-multi-key) column "cat",
+-- sitting on top of a multi-key-prefix equality ($elemMatch on region). The
+-- grouped column is scalar, so ordering it after the equality prefix is sound.
+--
+-- Reading the plans:
+--   * Order-by pushed  => the index scan carries an "Order By:" line and the
+--     group streams via a GroupAggregate (no Sort/HashAggregate).
+--   * Order-by blocked => a HashAggregate (or a Sort under GroupAggregate)
+--     appears and the index scan has no "Order By:" line.
+-- ============================================================================
+
+-- Flag OFF (default): a group-by over a multi-key index blocks order-by
+-- pushdown, so the grouping falls back to a HashAggregate.
+set documentdb.enable_group_by_multi_key_sort_pushdown to off;
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs", "pipeline": [ { "$match": { "region": { "$elemMatch": { "city": "northgate", "area": "central grid", "grade": "pass" } } } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } } ], "cursor": {} }') $cmd$);
+
+-- Flag ON: even though per-path tracking proves "cat" is scalar, idx_esr is a
+-- reduced-correlated index (its region.city/area/grade prefix shares a common
+-- subpath) and bounds planning is off here, so the intermediate region.area and
+-- region.grade equality terms may be pruned at runtime and collapse to
+-- (MinKey, MaxKey). That leaves the trailing "cat" key non-contiguous in index
+-- order, so the reduced-correlated soundness guard blocks the order-by pushdown
+-- and the group falls back to a HashAggregate (no "Order By:" line). The flag's
+-- positive effect -- pushing the order-by when the equality prefix is genuinely
+-- bound -- is exercised by the recs2 and recs3 sections below.
+set documentdb.enable_group_by_multi_key_sort_pushdown to on;
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs", "pipeline": [ { "$match": { "region": { "$elemMatch": { "city": "northgate", "area": "central grid", "grade": "pass" } } } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } } ], "cursor": {} }') $cmd$);
+
+-- Result values are identical regardless of the flag (each document matches the
+-- region equality via a single array element, so no over-count occurs here).
+SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs", "pipeline": [ { "$match": { "region": { "$elemMatch": { "city": "northgate", "area": "central grid", "grade": "pass" } } } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
+
+SELECT documentdb_api.drop_collection('gbmk_db', 'recs');
+
+-- ============================================================================
+-- The relaxation only applies when the multi-key path is in the equality prefix
+-- of the group; a multi-key path that is itself the grouped/ordered (sort)
+-- column is still rejected, because a multi-key sort column yields one index
+-- tuple per array element with a distinct sort value (unsound group order and
+-- group keys). This scenario contrasts:
+--   * idx_prefix_mk (labels, cat): "labels" is a multi-key array in the equality
+--     prefix, "cat" is the scalar group column -> order-by pushed (GroupAggregate).
+--   * idx_sort_mk  (key, labels):  "key" is a scalar equality prefix, "labels" is
+--     the multi-key group column -> order-by NOT pushed (HashAggregate), even with
+--     the flag on.
+-- ============================================================================
+SELECT COUNT(documentdb_api.insert_one('gbmk_db', 'recs2',
+    FORMAT('{ "_id": %s, "key": "k%s", "cat": "%s", "labels": [ "L%s", "Lz" ] }',
+        i, (i % 3),
+        (ARRAY['alpha','beta','gamma'])[1 + (i % 3)],
+        (i % 4)
+    )::documentdb_core.bson))
+FROM generate_series(1, 300) i;
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('gbmk_db',
+    '{ "createIndexes": "recs2", "indexes": [ { "key": { "labels": 1, "cat": 1 }, "name": "idx_prefix_mk", "enableOrderedIndex": 1 } ] }',
+    true);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('gbmk_db',
+    '{ "createIndexes": "recs2", "indexes": [ { "key": { "key": 1, "labels": 1 }, "name": "idx_sort_mk", "enableOrderedIndex": 1 } ] }',
+    true);
+
+ANALYZE;
+
+set documentdb.enable_group_by_multi_key_sort_pushdown to on;
+
+-- Multi-key path ("labels") in the equality prefix, scalar group column ("cat"):
+-- order-by IS pushed (GroupAggregate with an "Order By:" line).
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs2", "pipeline": [ { "$match": { "labels": "Lz" } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } } ], "cursor": {}, "hint": "idx_prefix_mk" }') $cmd$);
+
+-- Multi-key path ("labels") is the group column itself: order-by is NOT pushed
+-- (HashAggregate, no "Order By:" line) even though the flag is on.
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs2", "pipeline": [ { "$match": { "key": "k1" } }, { "$group": { "_id": "$labels", "n": { "$sum": 1 } } } ], "cursor": {}, "hint": "idx_sort_mk" }') $cmd$);
+
+SELECT documentdb_api.drop_collection('gbmk_db', 'recs2');
+
+-- ============================================================================
+-- Secondary-path order-by pushdown over a reduced-correlated multi-key prefix.
+--
+-- A composite index whose leading columns are several correlated dotted paths
+-- under a common subpath (tags.k, tags.v) followed by a top-level scalar path
+-- (cat). With reduced-correlated-terms planning on, an $elemMatch equality on
+-- the "tags" prefix binds the leading columns, and a $group/$sort on the
+-- trailing top-level "cat" path can stream its order out of the ordered index
+-- scan -- but only a NON-leading (secondary) top-level path, which is gated by
+-- documentdb.enable_composite_secondary_path_order_pushdown.
+--
+-- Because the prefix is multi-key, a single document can match the $elemMatch
+-- through more than one array element, so the streamed scan can emit that
+-- document more than once; correctness therefore requires the grouped result to
+-- be identical whether or not the order-by is pushed down.
+-- ============================================================================
+SET documentdb.enableCompositeReducedCorrelatedTermsOnCommonSubPath TO on;
+SET documentdb.enable_composite_reduced_correlated_bounds_planning TO on;
+SET documentdb.enable_group_by_multi_key_sort_pushdown TO on;
+
+-- _id 1 has TWO elements matching {k:x,v:1}; a naive streamed group over the
+-- multi-key prefix could count it twice.
+SELECT documentdb_api.insert_one('gbmk_db', 'recs3', '{ "_id": 1, "tags": [ { "k": "x", "v": 1 }, { "k": "x", "v": 1 } ], "cat": "alpha" }');
+SELECT documentdb_api.insert_one('gbmk_db', 'recs3', '{ "_id": 2, "tags": [ { "k": "x", "v": 1 } ], "cat": "alpha" }');
+SELECT documentdb_api.insert_one('gbmk_db', 'recs3', '{ "_id": 3, "tags": [ { "k": "x", "v": 1 } ], "cat": "beta" }');
+SELECT documentdb_api.insert_one('gbmk_db', 'recs3', '{ "_id": 4, "tags": [ { "k": "y", "v": 2 } ], "cat": "gamma" }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('gbmk_db',
+    '{ "createIndexes": "recs3", "indexes": [ { "key": { "tags.k": 1, "tags.v": 1, "cat": 1 }, "name": "idx_tags_cat", "enableOrderedIndex": 1 } ] }',
+    true);
+
+ANALYZE;
+
+-- Flag OFF: the order-by on the secondary top-level "cat" path is NOT pushed
+-- into the ordered index scan, so a blocking Sort appears and the index scan
+-- has no "Order By:" line.
+set documentdb.enable_composite_secondary_path_order_pushdown to off;
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs3", "pipeline": [ { "$match": { "tags": { "$elemMatch": { "k": "x", "v": 1 } } } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } } ], "cursor": {}, "hint": "idx_tags_cat" }') $cmd$);
+
+-- Flag ON: the order-by streams out of the ordered index scan (an "Order By:"
+-- line, no blocking Sort).
+set documentdb.enable_composite_secondary_path_order_pushdown to on;
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs3", "pipeline": [ { "$match": { "tags": { "$elemMatch": { "k": "x", "v": 1 } } } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } } ], "cursor": {}, "hint": "idx_tags_cat" }') $cmd$);
+
+-- Correctness: the grouped counts are identical with the pushdown off and on.
+-- _id 1 (two matching elements) must contribute exactly once to "alpha", so the
+-- expected result is alpha:2, beta:1 regardless of the flag.
+set documentdb.enable_composite_secondary_path_order_pushdown to off;
+SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs3", "pipeline": [ { "$match": { "tags": { "$elemMatch": { "k": "x", "v": 1 } } } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
+set documentdb.enable_composite_secondary_path_order_pushdown to on;
+SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs3", "pipeline": [ { "$match": { "tags": { "$elemMatch": { "k": "x", "v": 1 } } } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
+
+SELECT documentdb_api.drop_collection('gbmk_db', 'recs3');

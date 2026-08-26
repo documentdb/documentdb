@@ -343,6 +343,8 @@ CompareBsonIter(bson_iter_t *leftIter, bson_iter_t *rightIter, bool compareField
 	check_stack_depth();
 	while (true)
 	{
+		CHECK_FOR_INTERRUPTS();
+
 		bool leftNext = bson_iter_next(leftIter);
 		bool rightNext = bson_iter_next(rightIter);
 		int32_t cmp;
@@ -646,6 +648,38 @@ int32_t
 BsonValueAsInt32(const bson_value_t *value)
 {
 	return BsonValueAsInt32WithRoundingMode(value, ConversionRoundingMode_Floor);
+}
+
+
+/*
+ * Converts a numeric BSON value to int32, saturating out-of-range values.
+ * Decimal128 rounds half to even, other types truncate toward zero, and NaN
+ * converts to zero.
+ */
+int32_t
+BsonValueAsInt32Clamped(const bson_value_t *value)
+{
+	double valueDouble = BsonValueAsDoubleQuiet(value);
+
+	if (isnan(valueDouble))
+	{
+		return 0;
+	}
+
+	if (valueDouble >= (double) PG_INT32_MAX)
+	{
+		return PG_INT32_MAX;
+	}
+
+	if (valueDouble <= (double) PG_INT32_MIN)
+	{
+		return PG_INT32_MIN;
+	}
+
+	return value->value_type == BSON_TYPE_DECIMAL128 ?
+		   (int32_t) GetBsonDecimal128AsInt64(value,
+											  ConversionRoundingMode_NearestEven) :
+		   (int32_t) BsonValueAsInt64(value);
 }
 
 
@@ -1187,20 +1221,24 @@ CompareBsonValue(const bson_value_t *left, const bson_value_t *right,
 
 		case BSON_TYPE_CODE:
 		{
+			/* Code is never collated. */
+			const char *codeCollationString = NULL;
 			return CompareStrings(
 				left->value.v_code.code,
 				left->value.v_code.code_len,
 				right->value.v_code.code,
-				right->value.v_code.code_len, collationString);
+				right->value.v_code.code_len, codeCollationString);
 		}
 
 		case BSON_TYPE_CODEWSCOPE:
 		{
+			/* Neither the code nor the scope document is collated. */
+			const char *codeCollationString = NULL;
 			int cmp = CompareStrings(
 				left->value.v_codewscope.code,
 				left->value.v_codewscope.code_len,
 				right->value.v_codewscope.code,
-				right->value.v_codewscope.code_len, collationString);
+				right->value.v_codewscope.code_len, codeCollationString);
 			if (cmp != 0)
 			{
 				return cmp;
@@ -1226,16 +1264,18 @@ CompareBsonValue(const bson_value_t *left, const bson_value_t *right,
 
 			bool compareFields = true;
 			return CompareBsonIter(&leftInnerIt, &rightInnerIt, compareFields,
-								   collationString);
+								   codeCollationString);
 		}
 
 		case BSON_TYPE_DBPOINTER:
 		{
+			/* The collection name is never collated. */
+			const char *dbPointerCollationString = NULL;
 			int cmp = CompareStrings(
 				left->value.v_dbpointer.collection,
 				left->value.v_dbpointer.collection_len,
 				right->value.v_dbpointer.collection,
-				right->value.v_dbpointer.collection_len, collationString);
+				right->value.v_dbpointer.collection_len, dbPointerCollationString);
 			if (cmp != 0)
 			{
 				return cmp;
@@ -1467,26 +1507,32 @@ CompareStrings(const char *left, uint32_t leftLength, const char *right, uint32_
 		return leftLength - rightLength;
 	}
 
-	int32_t cmp;
-
 	/* simple collation also uses binary comparison */
 	if (!IsCollationValid(collationString) ||
 		IsSimpleCollation(collationString))
 	{
-		cmp = memcmp(left, right, minLength);
-	}
-	else
-	{
-		cmp = StringCompareWithCollation(left, leftLength, right, rightLength,
-										 collationString);
+		int32_t cmp = memcmp(left, right, minLength);
+		if (cmp != 0)
+		{
+			return cmp;
+		}
+
+		/*
+		 * memcmp only inspects the first minLength bytes; if those are equal,
+		 * the longer string sorts after the shorter one (e.g. "cafe" < "cafes").
+		 */
+		return leftLength - rightLength;
 	}
 
-	if (cmp != 0)
-	{
-		return cmp;
-	}
-
-	return leftLength - rightLength;
+	/*
+	 * ucol_strcollUTF8 already takes the full strings into account and applies
+	 * the configured collation strength, so its result is final. Applying a
+	 * byte-length tiebreaker here would incorrectly report collation-equal
+	 * strings of different byte lengths (e.g. "cafe" vs "café" at strength 1)
+	 * as unequal.
+	 */
+	return StringCompareWithCollation(left, leftLength, right, rightLength,
+									  collationString);
 }
 
 

@@ -111,6 +111,21 @@ typedef struct BsonQueryOperatorContext
 	 * $expr with $function expressions / $near / $nearSphere / $text / $where
 	 */
 	bool hasOperatorRestrictions;
+
+	/*
+	 * When true, skip the object/array type filter added for $or/$and/$nor
+	 * expressions in BsonValue context. Used by arrayFilter evaluation where
+	 * logical operators may apply to scalar array elements.
+	 */
+	bool skipObjectArrayFilter;
+
+	/*
+	 * When true, skip coercing _id field expressions to OpExpr for btree
+	 * operators ($eq, $gt, $gte, $lt, $lte). Used when operating on the
+	 * base table so that _id pushdown is handled via support function
+	 * instead of coerced OpExpr. Does not affect $in SAOP generation.
+	 */
+	bool skipIdBtreeCoercion;
 } BsonQueryOperatorContext;
 
 Var * MakeSimpleDocumentVar(void);
@@ -128,7 +143,8 @@ Node * EvaluateBoundParameters(Node *expression, ParamListInfo boundParams);
 List * CreateQualsForBsonValueTopLevelQueryIter(bson_iter_t *queryIter,
 												const char *collationString);
 Expr * CreateQualForBsonValueExpression(const bson_value_t *expression, const
-										char *collationString);
+										char *collationString,
+										bool skipObjectArrayFilter);
 Expr * CreateQualForBsonValueArrayExpression(const bson_value_t *expression);
 void BsonQueryOperatorContextCommonBuilder(BsonQueryOperatorContext *context);
 Expr * CreateQualForBsonExpression(const bson_value_t *expression, const char *queryPath,
@@ -141,7 +157,7 @@ Expr * CreateShardKeyFiltersForQuery(const bson_value_t *queryDocument, pgbson *
 									 bool *isShardKeyCollationAware);
 Expr * CreateIdFilterForQuery(List *existingQuals,
 							  Index collectionVarno, bool *isCollationAware,
-							  bool *isPointRead);
+							  bool *isPointRead, bool *hasObjectIdFuncExprs);
 Expr * MakeSimpleIdExpr(const bson_value_t *filterValue, Index collectionVarno, Oid
 						operatorId);
 Expr * MakeLowerBoundIdExpr(const bson_value_t *filterValue, Index collectionVarno);
@@ -156,5 +172,10 @@ void UpdateQueryOperatorContextSortList(Query *query, List *sortClauses,
 pgbson * FindNamespaceFiltersInMatchSpec(bson_iter_t *specIter, List **nsFilters,
 										 bool *multipleNSFilters,
 										 bool *invalidNSFilters);
+
+Expr * CreateScalarArrayOpExprForInWithBsonIndexBounds(Expr *documentExpr, const
+													   char *path,
+													   const char *collationString,
+													   bson_iter_t *arrayIter);
 
 #endif

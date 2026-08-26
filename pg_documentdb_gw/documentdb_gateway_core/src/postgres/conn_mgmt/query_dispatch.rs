@@ -8,20 +8,22 @@
  *-------------------------------------------------------------------------
  */
 
-use std::{backtrace::Backtrace, future::Future, io, sync::Arc};
+use std::{future::Future, io, sync::Arc};
 
-use deadpool_postgres::{HookError, PoolError};
 use tokio::time::{Duration, Instant};
 use tokio_postgres::error::SqlState;
 
 use crate::{
-    error::{DocumentDBError, ErrorCode, ErrorKind, Result},
+    context::RequestContext,
+    error::{DocumentDBError, ErrorCode, Result},
     postgres::conn_mgmt::{
         connection::{Connection, QueryOptions, RequestOptions},
         retry_policies::{LongRetryPolicy, RetryPolicyBuilder, ShortRetryPolicy},
-        ConnectionPool,
+        ConnectionPool, StatementError,
     },
     requests::{request_tracker::RequestTracker, RequestIntervalKind},
+    responses::map_pg_error,
+    telemetry::context_propagation::mark_span_error,
 };
 
 /// Caller-facing enum describing how to obtain a connection for a query.
@@ -183,15 +185,22 @@ fn retry_policy(
 /// Extracts a `tokio_postgres::Error` from a `DocumentDBError`, if present.
 ///
 /// Works for both pool-related errors and direct postgres errors
-const fn extract_pg_error(error: &DocumentDBError) -> Option<&tokio_postgres::Error> {
-    match error.kind() {
-        ErrorKind::PoolError(
-            PoolError::Backend(e) | PoolError::PostCreateHook(HookError::Backend(e)),
-            _,
-        )
-        | ErrorKind::PostgresError(e, _) => Some(e),
-        _ => None,
+fn extract_pg_error(error: &DocumentDBError) -> Option<&tokio_postgres::Error> {
+    if let Some(pg_error) = error.as_postgres_error() {
+        return Some(pg_error);
     }
+
+    if let Some(pool_error) = error.as_pool_error() {
+        return match pool_error {
+            deadpool_postgres::PoolError::Backend(e)
+            | deadpool_postgres::PoolError::PostCreateHook(
+                deadpool_postgres::HookError::Backend(e),
+            ) => Some(e),
+            _ => None,
+        };
+    }
+
+    None
 }
 
 /// Returns the retry interval for the given retry classification, or `None` if exhausted.
@@ -213,18 +222,61 @@ fn get_retry_interval(retry: &Retry, retry_context: &mut RetryContext) -> Option
     }
 }
 
+// For auth-related requests, request_options.command_timeout() will be None
+// and the postgres client timeout is used instead.
+fn check_for_command_timeout_error(
+    request_options: &RequestOptions,
+    elapsed: Duration,
+) -> Result<()> {
+    match request_options.command_timeout() {
+        Some(command_timeout) if elapsed >= command_timeout => {
+            Err(DocumentDBError::documentdb_error(
+                ErrorCode::ExceededTimeLimit,
+                format!(
+                    "Query exceeded command timeout of {}ms",
+                    command_timeout.as_millis()
+                ),
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Maps a [`StatementError`] into a [`DocumentDBError`], applying the same
+/// context-aware Postgres error mapping used elsewhere in this module for the
+/// raw Postgres variant and surfacing a deadline expiry as an exceeded time
+/// limit.
+fn map_statement_error(
+    error: StatementError,
+    in_transaction: bool,
+    is_replica_cluster: bool,
+    activity_id: &str,
+) -> DocumentDBError {
+    match error {
+        StatementError::Postgres(e) => {
+            map_pg_error(e, in_transaction, is_replica_cluster, activity_id)
+        }
+        StatementError::Timeout(duration) => DocumentDBError::documentdb_error(
+            ErrorCode::ExceededTimeLimit,
+            format!("Statement timed out after {duration:?}"),
+        ),
+    }
+}
+
 /// Sets the `PostgreSQL` statement timeout
 ///
 /// Returns `true` if a gateway transaction was started (caller must COMMIT/ROLLBACK).
 async fn set_statement_timeout(
     connection: &Connection,
-    max_time_ms: Option<i64>,
+    max_time: Option<Duration>,
     query_options: &QueryOptions,
     in_user_transaction: bool,
     request_tracker: &RequestTracker,
-) -> std::result::Result<bool, tokio_postgres::Error> {
-    let max_time_ms = match max_time_ms {
-        Some(ms) if !in_user_transaction && !query_options.supports_backend_timeout() => ms,
+) -> std::result::Result<bool, StatementError> {
+    let max_time_ms = match max_time {
+        Some(d) if !in_user_transaction && !query_options.supports_backend_timeout() => {
+            d.as_millis()
+        }
         _ => return Ok(false),
     };
 
@@ -236,10 +288,13 @@ async fn set_statement_timeout(
     // Start a gateway transaction if needed
     if use_transaction {
         let start = Instant::now();
+        // Marked before the statement is issued. If the request is cancelled
+        // while `BEGIN` is in flight the server may still have started the
+        // transaction, and only a set flag triggers the rollback that keeps the
+        // connection from being released to the pool dirty.
+        connection.set_in_transaction(true);
         connection.batch_execute("BEGIN").await?;
         request_tracker.record_duration(RequestIntervalKind::PostgresBeginTransaction, start);
-
-        connection.set_in_transaction(true);
     }
 
     // SET [LOCAL] statement_timeout
@@ -251,8 +306,11 @@ async fn set_statement_timeout(
 
     let set_start = Instant::now();
     if let Err(e) = connection.batch_execute(&set_cmd).await {
-        if use_transaction {
-            let _ = connection.batch_execute("ROLLBACK").await;
+        // Only clear the flag once the ROLLBACK is acknowledged. Clearing it
+        // after a failed ROLLBACK would suppress the backstop rollback in
+        // `Connection::drop` and return a connection with an open transaction
+        // to the pool.
+        if use_transaction && connection.batch_execute("ROLLBACK").await.is_ok() {
             connection.set_in_transaction(false);
         }
         return Err(e);
@@ -277,22 +335,33 @@ async fn set_statement_timeout(
     clippy::too_many_lines,
     reason = "complex logic that would be harder to read if split across multiple functions"
 )]
+#[cfg_attr(
+    feature = "request-tracing",
+    tracing::instrument(
+        name = "postgres.execute",
+        skip_all,
+        fields(
+            span.kind = "client",
+            span.status_code = tracing::field::Empty,
+            span.status_message = tracing::field::Empty,
+            db.system.name = "postgresql",
+            retry.count = tracing::field::Empty,
+        )
+    )
+)]
 pub async fn run_request_with_retries<T, F, Fut>(
     source: ConnectionSource<'_>,
     query_options: QueryOptions,
     request_options: RequestOptions,
-    max_time_ms: Option<i64>,
-    request_tracker: &RequestTracker,
+    max_time: Duration,
+    request_context: &RequestContext<'_>,
     run_func: F,
 ) -> Result<T>
 where
     F: Fn(Arc<Connection>) -> Fut,
-    Fut: Future<Output = std::result::Result<T, tokio_postgres::Error>>,
+    Fut: Future<Output = std::result::Result<T, StatementError>>,
 {
-    let command_timeout = max_time_ms.map_or_else(
-        || request_options.command_timeout(),
-        |ms| Duration::from_millis(ms.cast_unsigned()),
-    );
+    let overall_command_timeout = request_options.command_timeout().unwrap_or(max_time);
 
     let mut retry_context = RetryContext {
         stopwatch: Instant::now(),
@@ -305,8 +374,9 @@ where
 
     // Pre-compute whether set_statement_timeout can ever apply. When false
     // (the common path) we skip the function call entirely on every iteration.
-    let needs_gateway_timeout =
-        max_time_ms.is_some() && !in_transaction && !query_options.supports_backend_timeout();
+    let needs_gateway_timeout = request_options.command_timeout().is_some()
+        && !in_transaction
+        && !query_options.supports_backend_timeout();
 
     // Use the timeout pool only when session-level SET statement_timeout will
     // be issued (no transaction wrapping). SET LOCAL auto-reverts on COMMIT so
@@ -326,13 +396,15 @@ where
                     } else {
                         pool.acquire_connection().await
                     };
-                    request_tracker.record_duration(
+                    request_context.tracker.record_duration(
                         RequestIntervalKind::OpenBackendConnection,
                         open_backend_connection_start,
                     );
 
                     match acquire {
-                        Ok(pool_conn) => Arc::new(Connection::new(pool_conn, false)),
+                        Ok(pool_conn) => {
+                            Arc::new(Connection::new(pool_conn, false, pool.command_deadline()))
+                        }
                         Err(e) => {
                             if needs_timeout_pool {
                                 tracing::warn!(
@@ -340,10 +412,7 @@ where
                                 );
                             }
 
-                            break 'attempt Err(DocumentDBError::new(ErrorKind::PoolError(
-                                e,
-                                Backtrace::capture(),
-                            )));
+                            break 'attempt Err(DocumentDBError::from(e));
                         }
                     }
                 }
@@ -352,23 +421,30 @@ where
                 }
             };
 
+            // Applied per attempt because a cursor or transaction connection
+            // outlives the request that opened it and must not keep serving
+            // later requests under a bound they never asked for.
+            connection.set_command_deadline(request_options.command_timeout());
+
             // Set statement timeout (only when needed)
             let in_gateway_txn = if needs_gateway_timeout {
                 match set_statement_timeout(
                     &connection,
-                    max_time_ms,
+                    request_options.command_timeout(),
                     &query_options,
                     in_transaction,
-                    request_tracker,
+                    request_context.tracker,
                 )
                 .await
                 {
                     Ok(v) => v,
                     Err(e) => {
-                        break 'attempt Err(DocumentDBError::new(ErrorKind::PostgresError(
+                        break 'attempt Err(map_statement_error(
                             e,
-                            Backtrace::capture(),
-                        )))
+                            in_transaction,
+                            request_options.in_replica_cluster_mode(),
+                            request_context.activity_id,
+                        ))
                     }
                 }
             } else {
@@ -381,46 +457,66 @@ where
                 // Gateway transaction active — clone Arc because we need
                 // the connection afterwards for COMMIT/ROLLBACK.
                 let query_result = run_func(Arc::clone(&connection)).await;
-                request_tracker.record_duration(RequestIntervalKind::ProcessRequest, request_start);
+                request_context
+                    .tracker
+                    .record_duration(RequestIntervalKind::ProcessRequest, request_start);
 
                 match query_result {
                     Ok(value) => {
                         let commit_start = Instant::now();
                         match connection.batch_execute("COMMIT").await {
                             Ok(()) => {
-                                request_tracker.record_duration(
+                                connection.set_in_transaction(false);
+                                request_context.tracker.record_duration(
                                     RequestIntervalKind::PostgresCommitTransaction,
                                     commit_start,
                                 );
                                 Ok(value)
                             }
                             Err(e) => {
-                                // PostgreSQL auto-rolls-back a failed COMMIT, so the
-                                // connection is no longer in a transaction.
+                                // The gateway owns this transaction and nothing
+                                // else will touch the connection, so clear
+                                // unconditionally.
                                 connection.set_in_transaction(false);
-                                Err(DocumentDBError::new(ErrorKind::PostgresError(
+                                let mapped_error = map_statement_error(
                                     e,
-                                    Backtrace::capture(),
-                                )))
+                                    in_transaction,
+                                    request_options.in_replica_cluster_mode(),
+                                    request_context.activity_id,
+                                );
+                                Err(mapped_error)
                             }
                         }
                     }
                     Err(e) => {
-                        let _ = connection.batch_execute("ROLLBACK").await;
-                        connection.set_in_transaction(false);
-                        Err(DocumentDBError::new(ErrorKind::PostgresError(
+                        // Only clear the flag once the ROLLBACK is acknowledged,
+                        // so a failed ROLLBACK still leaves the backstop armed.
+                        if connection.batch_execute("ROLLBACK").await.is_ok() {
+                            connection.set_in_transaction(false);
+                        }
+                        let mapped_error = map_statement_error(
                             e,
-                            Backtrace::capture(),
-                        )))
+                            in_transaction,
+                            request_options.in_replica_cluster_mode(),
+                            request_context.activity_id,
+                        );
+                        Err(mapped_error)
                     }
                 }
             } else {
                 // No gateway transaction -> move the Arc directly into the
                 // closure call, avoiding an Arc::clone + drop pair.
                 let query_result = run_func(connection).await;
-                request_tracker.record_duration(RequestIntervalKind::ProcessRequest, request_start);
+                request_context
+                    .tracker
+                    .record_duration(RequestIntervalKind::ProcessRequest, request_start);
                 query_result.map_err(|e| {
-                    DocumentDBError::new(ErrorKind::PostgresError(e, Backtrace::capture()))
+                    map_statement_error(
+                        e,
+                        in_transaction,
+                        request_options.in_replica_cluster_mode(),
+                        request_context.activity_id,
+                    )
                 })
             }
         };
@@ -447,10 +543,12 @@ where
                             );
                         }
                     } else if query_options.retry_request()
-                        && retry_context.stopwatch.elapsed() < command_timeout
+                        && retry_context.stopwatch.elapsed() < overall_command_timeout
                     {
                         if let Some(interval) = get_retry_interval(&retry, &mut retry_context) {
                             retry_context.retry_count += 1;
+                            tracing::Span::current()
+                                .record("retry.count", retry_context.retry_count);
                             tracing::warn!(
                                 "Retrying request (attempt {}): {}",
                                 retry_context.retry_count,
@@ -466,16 +564,15 @@ where
                     }
                 }
 
-                if retry_context.stopwatch.elapsed() >= command_timeout {
-                    return Err(DocumentDBError::documentdb_error(
-                        ErrorCode::ExceededTimeLimit,
-                        format!(
-                            "Query exceeded command timeout of {}ms",
-                            command_timeout.as_millis()
-                        ),
-                    ));
+                if let Err(timeout_error) = check_for_command_timeout_error(
+                    &request_options,
+                    retry_context.stopwatch.elapsed(),
+                ) {
+                    mark_span_error(&tracing::Span::current());
+                    return Err(timeout_error);
                 }
 
+                mark_span_error(&tracing::Span::current());
                 return Err(error);
             }
         }
@@ -495,11 +592,11 @@ mod tests {
     }
 
     fn non_replica_options() -> RequestOptions {
-        RequestOptions::new(false, 30)
+        RequestOptions::new(false, Some(30))
     }
 
     fn replica_options() -> RequestOptions {
-        RequestOptions::new(true, 30)
+        RequestOptions::new(true, Some(30))
     }
 
     // ── is_transient_io_error ──────────────────────────────────────────
@@ -862,5 +959,50 @@ mod tests {
             false,
         );
         assert_eq!(result, Retry::Short);
+    }
+
+    #[test]
+    fn test_command_timeout_error_with_timeout_disabled_returns_none() {
+        let result = check_for_command_timeout_error(
+            &RequestOptions::new(false, None),
+            Duration::from_secs(1),
+        );
+
+        result.unwrap();
+    }
+
+    #[test]
+    fn test_command_timeout_error_with_elapsed_below_timeout_returns_none() {
+        let result = check_for_command_timeout_error(
+            &RequestOptions::new(false, Some(30)),
+            Duration::from_millis(29),
+        );
+
+        result.unwrap();
+    }
+
+    #[test]
+    fn test_command_timeout_error_with_elapsed_at_timeout_returns_exceeded_time_limit() {
+        let error = check_for_command_timeout_error(
+            &RequestOptions::new(false, Some(30)),
+            Duration::from_millis(30),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.error_code(), ErrorCode::ExceededTimeLimit);
+        assert!(error
+            .to_string()
+            .contains("Query exceeded command timeout of 30ms"));
+    }
+
+    #[test]
+    fn test_command_timeout_error_with_zero_timeout_returns_exceeded_time_limit() {
+        let error = check_for_command_timeout_error(
+            &RequestOptions::new(false, Some(1)),
+            Duration::from_millis(1),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.error_code(), ErrorCode::ExceededTimeLimit);
     }
 }

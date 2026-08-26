@@ -29,3 +29,5 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db',
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "test_order_pushdown_explain", "sort": { "b": 1 } }');
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "test_order_pushdown_explain", "sort": { "b": -1 } }');
+
+\i sql/bson_composite_force_ordered_scan_tests_core.sql

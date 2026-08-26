@@ -35,6 +35,8 @@ extern int TTLPurgerStatementTimeout;
 extern int MaxTTLDeleteBatchSize;
 extern int TTLPurgerLockTimeout;
 extern char *ApiGucPrefix;
+extern char *ApiRumGucPrefix;
+extern bool EnableDeadIndexEntryMarkingByTTLTask;
 extern int SingleTTLTaskTimeBudget;
 extern int TTLTaskMaxRunTimeInMS;
 extern bool EnableTtlJobsOnReadOnly;
@@ -43,9 +45,6 @@ extern bool EnableTTLDescSort;
 extern bool EnableTTLBatchObservability;
 extern bool SkipRepeatDeleteForUnOrderedIndex;
 extern int MaxTTLBatchSizeUnorderedIndex;
-
-extern bool TTLSkipCaughtUpIndexes;
-
 
 /* --------------------------------------------------------- */
 /* Data-types */
@@ -139,7 +138,7 @@ delete_expired_rows(PG_FUNCTION_ARGS)
 					 "SELECT index_id, collection_id, (index_spec).index_key, "
 					 "(index_spec).index_pfe, (index_spec).index_expire_after_seconds,"
 					 "(index_spec).index_is_sparse, "
-					 "COALESCE(%s.bson_get_value_text((index_spec).index_options::%s,'enableCompositeTerm'::text)::bool, %s.bson_get_value_text((index_spec).index_options::%s, 'enableOrderedIndex'::text)::bool, false) as index_is_ordered, "
+					 "COALESCE(%s.bson_get_value_text((index_spec).index_options::%s,'enableCompositeTerm'::text)::int, %s.bson_get_value_text((index_spec).index_options::%s, 'enableOrderedIndex'::text)::int, 0) > 0 as index_is_ordered, "
 					 "(index_spec).index_name FROM %s.collection_indexes "
 					 "WHERE index_is_valid AND (index_spec).index_expire_after_seconds >= 0 "
 					 "ORDER BY collection_id, index_id",
@@ -282,6 +281,13 @@ delete_expired_rows(PG_FUNCTION_ARGS)
 		PG_RETURN_VOID();
 	}
 
+	if (XactReadOnly && !EnableTtlJobsOnReadOnly)
+	{
+		ereport(INFO, errmsg(
+					"TTL job skipping because transaction is read-only."));
+		PG_RETURN_VOID();
+	}
+
 	/* We have the TTL index records, now cleanup as much as we can in individual transactions before the time budget expires. */
 	instr_time startTime;
 	INSTR_TIME_SET_CURRENT(startTime);
@@ -405,12 +411,6 @@ delete_expired_rows(PG_FUNCTION_ARGS)
 					StartTransactionCommand();
 					SetGUCLocally("transaction_read_only", "false");
 				}
-				else
-				{
-					ereport(INFO, errmsg(
-								"TTL job skipping because transaction is read-only."));
-					continue;
-				}
 			}
 
 			volatile bool shouldStop = false;
@@ -497,7 +497,7 @@ delete_expired_rows(PG_FUNCTION_ARGS)
 			 *  expired rows. Even if large number of documents start expiring for that index within
 			 *  that minute, in the worst case we delay processing by 60 seconds.
 			 */
-			if (TTLSkipCaughtUpIndexes && rowsDeletedForCurrentIndex == 0)
+			if (rowsDeletedForCurrentIndex == 0)
 			{
 				if (LogTTLProgressActivity)
 				{
@@ -603,6 +603,10 @@ DeleteExpiredRowsForIndexCore(char *tableName, TtlIndexEntry *indexEntry, int64
 							  budget, bool *isTaskTimeBudgetExceeded,
 							  void *ttlMetricsContext)
 {
+	/* Per-batch timer for TTL deletion */
+	instr_time batchStart;
+	INSTR_TIME_SET_CURRENT(batchStart);
+
 	int32 defaultBatchSize = (SkipRepeatDeleteForUnOrderedIndex &&
 							  !indexEntry->indexIsOrdered) ?
 							 MaxTTLBatchSizeUnorderedIndex : MaxTTLDeleteBatchSize;
@@ -737,6 +741,11 @@ DeleteExpiredRowsForIndexCore(char *tableName, TtlIndexEntry *indexEntry, int64
 	}
 
 	SetGUCLocally(psprintf("%s.forceUseIndexIfAvailable", ApiGucPrefix), "true");
+	if (EnableDeadIndexEntryMarkingByTTLTask && indexEntry->indexIsOrdered)
+	{
+		SetGUCLocally(psprintf("%s.enable_support_dead_index_items", ApiRumGucPrefix),
+					  "true");
+	}
 
 	uint64 rowsCount = ExtensionExecuteCappedStatementWithArgsViaSPI(
 		cmdStrDeleteRows->data,
@@ -746,7 +755,6 @@ DeleteExpiredRowsForIndexCore(char *tableName, TtlIndexEntry *indexEntry, int64
 		readOnly,
 		SPI_OK_DELETE,
 		TTLPurgerStatementTimeout, TTLPurgerLockTimeout);
-
 
 	double saturationRatio = 0.0;
 	double batchDeleteElapsedTime = 0.0;
@@ -790,6 +798,11 @@ DeleteExpiredRowsForIndexCore(char *tableName, TtlIndexEntry *indexEntry, int64
 		}
 	}
 
+	instr_time batchEnd;
+	INSTR_TIME_SET_CURRENT(batchEnd);
+	INSTR_TIME_SUBTRACT(batchEnd, batchStart);
+	double batchDurationMs = INSTR_TIME_GET_MILLISEC(batchEnd);
+
 	if (*isTaskTimeBudgetExceeded || LogTTLProgressActivity)
 	{
 		elog_unredacted(
@@ -797,20 +810,23 @@ DeleteExpiredRowsForIndexCore(char *tableName, TtlIndexEntry *indexEntry, int64
 			"batch_size=%d, expiry_cutoff=%ld, "
 			"LogTTLProgressActivity=%d, "
 			"has_pfe=%d, isTaskTimeBudgetExceeded=%d, "
-			"duration= %.2f, saturation_ratio=%.2f, "
+			"duration= %.2f, batch_duration=%.2f, saturation_ratio=%.2f, "
 			"statement_timeout=%d, lock_timeout=%d, used_hints=%d, "
 			"index_is_ordered=%d, use_desc_sort=%d",
 			(int64) rowsCount, indexEntry->collectionId,
 			shardId, indexEntry->indexId, ttlDeleteBatchSize,
 			currentTime - indexExpiryMilliseconds, LogTTLProgressActivity,
 			indexPfe != NULL, *isTaskTimeBudgetExceeded,
-			batchDeleteElapsedTime, saturationRatio,
+			batchDeleteElapsedTime, batchDurationMs, saturationRatio,
 			TTLPurgerStatementTimeout, TTLPurgerLockTimeout,
 			useIndexHintsForTTLQuery,
 			indexEntry->indexIsOrdered, useDescendingSort);
 	}
 
-	/* Record TTL metric via the hook if metrics context is provided */
+	/* Record TTL metric via the hook if metrics context is provided.
+	 * Pass the per-batch duration (batchDurationMs) rather than the
+	 * cumulative elapsed time so that aggregated metrics (avg/max
+	 * duration) reflect the cost of individual DELETE batches. */
 	if (ttlMetricsContext != NULL)
 	{
 		RecordTtlMetric(ttlMetricsContext,
@@ -819,7 +835,7 @@ DeleteExpiredRowsForIndexCore(char *tableName, TtlIndexEntry *indexEntry, int64
 						shardId,
 						indexEntry->indexName,
 						saturationRatio,
-						batchDeleteElapsedTime,
+						batchDurationMs,
 						rowsCount);
 	}
 

@@ -12,7 +12,9 @@
 #define EXTENSION_API_HOOKS_H
 
 #include <access/amapi.h>
+#include <executor/spi.h>
 #include <utils/memutils.h>
+#include <nodes/execnodes.h>
 
 #include "api_hooks_common.h"
 #include "metadata/collection.h"
@@ -20,12 +22,17 @@
 
 /* Section: General Extension points */
 
-
 /*
  * Returns true if the current Postgres server is a Query Coordinator
  * that also owns the metadata management of schema (DDL).
  */
 bool IsMetadataCoordinator(void);
+
+/*
+ * Returns true if the cluster is fully initialized and ready for
+ * background worker jobs. Defaults to true when no hook is set.
+ */
+bool IsClusterInitialized(void);
 
 
 /*
@@ -45,6 +52,20 @@ DistributedRunCommandResult RunCommandOnMetadataCoordinator(const char *query);
 Datum RunQueryWithCommutativeWrites(const char *query, int nargs, Oid *argTypes,
 									Datum *argValues, char *argNulls,
 									int expectedSPIOK, bool *isNull);
+
+/*
+ * Runs a multi-value query via SPI with commutative writes enabled for
+ * distributed scenarios. The GUC is scoped to just this query execution
+ * and rolled back afterwards. Supports both prepared plans and ad-hoc queries.
+ * Pass plan as NULL to use SPI_execute_with_args with the query text.
+ *
+ * Precondition: Caller must have an active SPI connection (via SPI_connect).
+ * Results are available in SPI_processed/SPI_tuptable after this call returns.
+ */
+void RunMultiValueQueryWithCommutativeWrites(const char *query, SPIPlanPtr plan,
+											 int nargs, Oid *argTypes,
+											 Datum *argValues, char *argNulls,
+											 bool readOnly, long maxTupleCount);
 
 
 /*
@@ -74,6 +95,10 @@ Datum RunQueryWithSequentialModification(const char *query, int expectedSPIOK,
  * the documents table name and the substring where the collectionId was found is provided as an input.
  */
 bool IsShardTableForDocumentDbTable(const char *relName, const char *numEndPointer);
+
+
+/* Whether or not non-blocking unique index build is supported */
+bool CanBuildNonBlockingUniqueIndex(void);
 
 
 /* Section: Create Table Extension points */
@@ -144,6 +169,17 @@ Query * MutateListCollectionsQueryForDistribution(Query *cosmosMetadataQuery);
 
 
 /*
+ * Hook wrapper for extended indexes result post-processing.
+ * Takes a base query that returns raw index data for extended indexes
+ * and transforms it to produce the desired output format.
+ * Returns NULL if no hook is registered.
+ */
+typedef struct AggregationPipelineBuildContext AggregationPipelineBuildContext;
+Query * RewriteListExtendedIndexesQuery(const bson_value_t *specValue, Query *query,
+										AggregationPipelineBuildContext *context);
+
+
+/*
  * Mutates the shards query for handling distributed scenario.
  */
 Query * MutateShardsQueryForDistribution(Query *metadataQuery);
@@ -162,7 +198,8 @@ Query * MutateChunksQueryForDistribution(Query *cosmosMetadataQuery);
  * NULL implies that the request can be tried again. "" implies that the shard cannot be resolved locally.
  */
 const char * TryGetShardNameForUnshardedCollection(Oid relationOid, uint64 collectionId,
-												   const char *tableName);
+												   const char *tableName,
+												   bool *isSingleShardTable);
 
 const char * GetDistributedApplicationName(void);
 
@@ -201,6 +238,7 @@ void TryCustomParseAndValidateVectorQuerySpec(const char *key,
 
 
 char * TryGetExtendedVersionRefreshQuery(void);
+char * TryGetExtendedInitializedVersionRefreshQuery(void);
 
 
 void AllowNestedDistributionInCurrentTransaction(void);
@@ -221,7 +259,7 @@ char * TryGetCancelIndexBuildQuery(int32_t indexId, char cmdType);
 
 bool ShouldScheduleIndexBuildJobs(void);
 
-List * GetShardIndexOids(uint64_t collectionId, int indexId, bool ignoreMissing);
+List * GetShardIndexOids(uint64_t collectionId, Oid indexOid, bool ignoreMissing);
 
 void UpdatePostgresIndexWithOverride(uint64_t collectionId, int indexId, int operation,
 									 bool value,
@@ -240,6 +278,7 @@ const char * GetOperationCancellationQuery(int64 shardId, StringView *opIdString
 																			argNulls));
 
 bool ShouldUseCompositeOpClassByDefault(void);
+bool ShouldEnablePlannerStatisticsNewCollections(void);
 
 
 /*
@@ -270,5 +309,14 @@ void RecordTtlMetric(void *metricsContext,
  * Called after the TTL purge loop completes to aggregate, emit, and free resources.
  */
 void FinalizeTtlMetrics(void *metricsContext);
+
+
+/*
+ * Update statistics for a single extended index type.
+ * Passes already-available index metadata to avoid redundant catalog lookups.
+ * No-op if no hook is registered.
+ */
+void UpdateExtendedIndexStats(uint64 collectionId, int indexId,
+							  const char *pgIndexName, IndexInfo *indexInfo);
 
 #endif
