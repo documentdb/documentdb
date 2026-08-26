@@ -284,7 +284,7 @@ bson_dollar_merge_add_object_id(PG_FUNCTION_ARGS)
 
 	/* Add and validate _id */
 	pgbson *outputBson = RewriteDocumentWithCustomObjectId(sourceDocument,
-														   generatedObjectID);
+														   generatedObjectID, true);
 	ValidateFinalPgbsonBeforeWriting(outputBson, NULL, stateForSchemaValidation,
 									 ValidationLevel_Strict);
 

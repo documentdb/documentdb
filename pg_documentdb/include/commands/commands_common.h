@@ -139,10 +139,11 @@ pgbson * GetObjectIdFilterFromQueryDocument(pgbson *queryDoc, bool *hasNonIdFiel
 											bool *isIdValueCollationAware);
 
 
-pgbson * RewriteDocumentAddObjectId(pgbson *document);
-pgbson * RewriteDocumentValueAddObjectId(const bson_value_t *value);
+pgbson * RewriteDocumentAddObjectId(pgbson *document, bool replaceEmptyTimestamps);
+pgbson * RewriteDocumentValueAddObjectId(const bson_value_t *value, bool replaceEmptyTimestamps);
 pgbson * RewriteDocumentWithCustomObjectId(pgbson *document,
-										   pgbson *objectIdToWrite);
+										   pgbson *objectIdToWrite,
+										   bool replaceEmptyTimestamps);
 
 void ValidateIdField(const bson_value_t *idValue);
 void SetExplicitStatementTimeout(int timeoutMilliseconds);

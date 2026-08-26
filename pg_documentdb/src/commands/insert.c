@@ -71,6 +71,9 @@ typedef struct BatchInsertionSpec
 
 	/* if true, bypass document validation */
 	bool bypassDocumentValidation;
+
+	/* if true, block replacing empty timestamps */
+	bool bypassEmptyTsReplacement;
 } BatchInsertionSpec;
 
 /*
@@ -118,7 +121,7 @@ static void DoBatchInsertNoTransactionId(MongoCollection *collection,
 
 static uint64 ProcessInsertion(MongoCollection *collection, Oid insertShardOid, const
 							   bson_value_t *document,
-							   text *transactionId, ExprEvalState *evalState);
+							   text *transactionId, ExprEvalState *evalState, bool replaceEmptyTs);
 static pgbson * BuildResponseMessage(BatchInsertionResult *batchResult);
 static uint64_t RunInsertQuery(Query *insertQuery, ParamListInfo paramListInfo);
 static Query * CreateInsertQuery(MongoCollection *collection, Oid shardOid,
@@ -126,7 +129,8 @@ static Query * CreateInsertQuery(MongoCollection *collection, Oid shardOid,
 static pgbson * PreprocessInsertionDoc(const bson_value_t *docValue,
 									   MongoCollection *collection,
 									   int64 *shardKeyHash, pgbson **objectId,
-									   ExprEvalState *evalState);
+									   ExprEvalState *evalState,
+									   bool replaceEmptyTimestamps);
 static uint64 InsertOneWithTransactionCore(uint64 collectionId, const
 										   char *shardTableName,
 										   int64 shardKeyValue, text *transactionId,
@@ -295,6 +299,7 @@ BuildBatchInsertionSpec(bson_iter_t *insertCommandIter, pgbsonsequence *insertDo
 	bool hasDocuments = false;
 	bool hasSkippedDocuments = false;
 	bool bypassDocumentValidation = false;
+	bool bypassEmptyTsReplacement = false;
 
 	while (bson_iter_next(insertCommandIter))
 	{
@@ -351,6 +356,13 @@ BuildBatchInsertionSpec(bson_iter_t *insertCommandIter, pgbsonsequence *insertDo
 									BSON_TYPE_BOOL);
 
 			bypassDocumentValidation = bson_iter_bool(insertCommandIter);
+		}
+		else if (strcmp(field, "bypassEmptyTsReplacement") == 0)
+		{
+			EnsureTopLevelFieldType("insert.bypassEmptyTsReplacement", insertCommandIter,
+									BSON_TYPE_BOOL);
+
+			bypassEmptyTsReplacement = bson_iter_bool(insertCommandIter);
 		}
 		else if (strcmp(field, "maxTimeMS") == 0)
 		{
@@ -425,6 +437,7 @@ BuildBatchInsertionSpec(bson_iter_t *insertCommandIter, pgbsonsequence *insertDo
 	batchSpec->documents = documents;
 	batchSpec->isOrdered = isOrdered;
 	batchSpec->bypassDocumentValidation = bypassDocumentValidation;
+	batchSpec->bypassEmptyTsReplacement = bypassEmptyTsReplacement;
 
 	return batchSpec;
 }
@@ -583,6 +596,9 @@ static bool
 DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts, Oid
 								  shardOid,
 								  BatchInsertionResult *batchResult, int insertIndex,
+								  int *insertCountResult, ExprEvalState *evalState,
+								  WriteMode writeMode,
+								  bool replaceEmptyTimestamps)
 								  int *insertCountResult, int *insertIncrIndex,
 								  ExprEvalState *evalState, WriteMode writeMode)
 {
@@ -622,7 +638,7 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts, Oi
 			pgbson *objectId;
 			pgbson *insertDoc =
 				PreprocessInsertionDoc(documentValue, collection, &shardKeyValue,
-									   &objectId, evalState);
+									   &objectId, evalState, replaceEmptyTimestamps);
 
 			/* Generate a values lists for the insert as
 			 * VALUES(shard_key_value, object_id, document, creationTime)
@@ -728,7 +744,8 @@ DoSingleInsert(MongoCollection *collection,
 			   const bson_value_t *document,
 			   text *transactionId,
 			   BatchInsertionResult *batchResult, int insertIndex,
-			   ExprEvalState *evalState)
+			   ExprEvalState *evalState,
+			   bool replaceEmptyTimestamps)
 {
 	/* declared volatile because of the longjmp in PG_CATCH */
 	volatile bool isSuccess = false;
@@ -738,7 +755,7 @@ DoSingleInsert(MongoCollection *collection,
 	PG_TRY();
 	{
 		numDocsInserted = ProcessInsertion(collection, insertShardOid, document,
-										   transactionId, evalState);
+										   transactionId, evalState, replaceEmptyTimestamps);
 		batchResult->rowsInserted += numDocsInserted;
 		isSuccess = true;
 	}
@@ -780,7 +797,8 @@ DoSingleInsertWithSubTxn(MongoCollection *collection,
 						 const bson_value_t *document,
 						 text *transactionId,
 						 BatchInsertionResult *batchResult, int insertIndex,
-						 ExprEvalState *evalState)
+						 ExprEvalState *evalState,
+						 bool replaceEmptyTimestamps)
 {
 	/* declared volatile because of the longjmp in PG_CATCH */
 	volatile bool isSuccess = false;
@@ -794,7 +812,7 @@ DoSingleInsertWithSubTxn(MongoCollection *collection,
 	PG_TRY();
 	{
 		numDocsInserted = ProcessInsertion(collection, insertShardOid, document,
-										   transactionId, evalState);
+										   transactionId, evalState, replaceEmptyTimestamps);
 
 		/* Commit the inner transaction, return to outer xact context */
 		ReleaseCurrentSubTransaction();
@@ -874,14 +892,14 @@ ProcessBatchInsertion(MongoCollection *collection, BatchInsertionSpec *batchSpec
 		{
 			DoSingleInsert(collection, batchSpec->insertShardOid,
 						   linitial(batchSpec->documents), transactionId,
-						   batchResult, insertIndex, evalState);
+						   batchResult, insertIndex, evalState, !batchSpec->bypassEmptyTsReplacement);
 		}
 		else
 		{
 			ereport(DEBUG1, (errmsg("Using single insert with subtransaction")));
 			DoSingleInsertWithSubTxn(collection, batchSpec->insertShardOid,
 									 linitial(batchSpec->documents), transactionId,
-									 batchResult, insertIndex, evalState);
+									 batchResult, insertIndex, evalState, !batchSpec->bypassEmptyTsReplacement);
 		}
 	}
 	else
@@ -944,7 +962,8 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 																		  &
 																		  failedBatchIndexEnd,
 																		  evalState,
-																		  writeMode);
+																		  writeMode,
+																		  !batchSpec->bypassEmptyTsReplacement);
 
 			Assert(!performedBatchInsert || incrementCount > 0);
 			if (!performedBatchInsert)
@@ -966,7 +985,8 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 		bool isSuccess = DoSingleInsertWithSubTxn(collection, batchSpec->insertShardOid,
 												  document,
 												  transactionId, batchResult,
-												  insertIndex, evalState);
+												  insertIndex, evalState,
+												  !batchSpec->bypassEmptyTsReplacement);
 		insertIndex++;
 
 		if (!isSuccess && isOrdered)
@@ -992,7 +1012,7 @@ static uint64
 ProcessInsertion(MongoCollection *collection,
 				 Oid optionalInsertShardOid,
 				 const bson_value_t *documentValue,
-				 text *transactionId, ExprEvalState *evalState)
+				 text *transactionId, ExprEvalState *evalState, bool replaceEmptyTimestamps)
 {
 	if (transactionId != NULL &&
 		collection->shardKey != NULL &&
@@ -1019,7 +1039,7 @@ ProcessInsertion(MongoCollection *collection,
 	int64 shardKeyHash;
 	pgbson *objectIdPtr = NULL;
 	pgbson *insertDoc = PreprocessInsertionDoc(documentValue, collection, &shardKeyHash,
-											   &objectIdPtr, evalState);
+											   &objectIdPtr, evalState, replaceEmptyTimestamps);
 
 	/* make sure the document has an _id and it is in the right place */
 	if (transactionId == NULL)
@@ -1503,7 +1523,8 @@ BuildResponseMessage(BatchInsertionResult *batchResult)
  */
 static pgbson *
 PreprocessInsertionDoc(const bson_value_t *docValue, MongoCollection *collection,
-					   int64 *shardKeyHash, pgbson **objectId, ExprEvalState *evalState)
+					   int64 *shardKeyHash, pgbson **objectId, ExprEvalState *evalState,
+					   bool replaceEmptyTimestamps)
 {
 	if (evalState != NULL)
 	{
@@ -1512,7 +1533,7 @@ PreprocessInsertionDoc(const bson_value_t *docValue, MongoCollection *collection
 	}
 
 	/* make sure the document has an _id and it is in the right place */
-	pgbson *insertDoc = RewriteDocumentValueAddObjectId(docValue);
+	pgbson *insertDoc = RewriteDocumentValueAddObjectId(docValue, replaceEmptyTimestamps);
 
 	PgbsonValidateInputBson(insertDoc, BSON_VALIDATE_NONE);
 
