@@ -1146,6 +1146,9 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the bson_distinct_unwind function */
 	Oid BsonDistinctUnwindFunctionOid;
 
+	/* OID of the bson_distinct_unwind function with collation */
+	Oid BsonDistinctUnwindWithCollationFunctionOid;
+
 	/* OID of the bson_expression_partition_get function */
 	Oid BsonExpressionPartitionByFieldsGetFunctionOid;
 
@@ -5170,6 +5173,19 @@ BsonDistinctUnwindFunctionOid(void)
 	return GetBinaryOperatorFunctionId(&Cache.BsonDistinctUnwindFunctionOid,
 									   "bson_distinct_unwind",
 									   BsonTypeId(), TEXTOID);
+}
+
+
+Oid
+BsonDistinctUnwindWithCollationFunctionOid(void)
+{
+	Oid argTypes[3] = { BsonTypeId(), TEXTOID, TEXTOID };
+
+	bool missingOK = true;
+	return GetSchemaFunctionIdWithNargs(
+		&Cache.BsonDistinctUnwindWithCollationFunctionOid,
+		ApiCatalogSchemaName, "bson_distinct_unwind", 3, argTypes,
+		missingOK);
 }
 
 

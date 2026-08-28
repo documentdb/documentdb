@@ -2649,6 +2649,44 @@ CheckQueryForCollatedGroup(Query *query)
 
 
 static bool
+IsCollatedDistinctClause(Expr *node)
+{
+	if (!IsA(node, FuncExpr))
+	{
+		return false;
+	}
+
+	FuncExpr *funcExpr = (FuncExpr *) node;
+	if (funcExpr->funcid != BsonDistinctUnwindWithCollationFunctionOid() ||
+		list_length(funcExpr->args) != 3)
+	{
+		return false;
+	}
+
+	Expr *collationArg = lthird(funcExpr->args);
+	return IsA(collationArg, Const) && !((Const *) collationArg)->constisnull;
+}
+
+
+static void
+CheckQueryForCollatedDistinct(Query *query)
+{
+	ListCell *cell;
+	foreach(cell, query->distinctClause)
+	{
+		SortGroupClause *sgc = (SortGroupClause *) lfirst(cell);
+		TargetEntry *tle = get_sortgroupclause_tle(sgc, query->targetList);
+		if (IsCollatedDistinctClause(tle->expr))
+		{
+			sgc->eqop = BsonOrderyByEqOperatorId();
+			sgc->sortop = BsonOrderyByLtOperatorId();
+			sgc->hashable = false;
+		}
+	}
+}
+
+
+static bool
 CollationQueryTreeWalker(Node *node, void *context)
 {
 	if (node == NULL)
@@ -2662,6 +2700,10 @@ CollationQueryTreeWalker(Node *node, void *context)
 		if (childQuery->groupClause != NIL)
 		{
 			CheckQueryForCollatedGroup(childQuery);
+		}
+		if (childQuery->distinctClause != NIL)
+		{
+			CheckQueryForCollatedDistinct(childQuery);
 		}
 
 		return query_tree_walker((Query *) node, CollationQueryTreeWalker, NULL, 0);
@@ -2683,6 +2725,10 @@ ExtensionPostParseAnalyzeHookCore(ParseState *pstate, Query *query,
 	if (query->groupClause != NIL)
 	{
 		CheckQueryForCollatedGroup(query);
+	}
+	if (query->distinctClause != NIL)
+	{
+		CheckQueryForCollatedDistinct(query);
 	}
 
 	query_tree_walker(query, CollationQueryTreeWalker, NULL, QTW_DONT_COPY_QUERY);

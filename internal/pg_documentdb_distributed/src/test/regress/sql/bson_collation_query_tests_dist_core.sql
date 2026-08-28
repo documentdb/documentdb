@@ -290,11 +290,86 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db', '{ "aggregate":
 END;
 
 -- ======================================================================
+-- SECTION: distinct with collation across shards
+-- ======================================================================
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_distinct_d', '{ "_id": 1, "a": "cafe", "nested": { "a": "cafe" }, "arr": [ "cafe", "tea" ], "group": "one" }');
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_distinct_d', '{ "_id": 2, "a": "CAFE", "nested": { "a": "CAFE" }, "arr": [ "CAFE" ], "group": "ONE" }');
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_distinct_d', '{ "_id": 3, "a": "tea", "nested": { "a": "tea" }, "arr": [ "TEA", "coffee" ], "group": "two" }');
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_distinct_d', '{ "_id": 4, "a": "TEA", "nested": { "a": "TEA" }, "arr": [ "tea" ], "group": "TWO" }');
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_distinct_visible_d', '{ "_id": 1, "a": "cafe" }');
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_distinct_visible_d', '{ "_id": 2, "a": "caf\u00e9" }');
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_distinct_visible_d', '{ "_id": 3, "a": "th\u00e9" }');
+
+SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_distinct_d', '{ "_id": "hashed" }', false);
+SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_distinct_visible_d', '{ "_id": "hashed" }', false);
+
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL citus.enable_local_execution TO off;
+
+-- Scalar values in separate equivalence classes have a stable full response.
+SELECT document FROM documentdb_api.distinct_query(
+  'coll_q_dist_db',
+  '{ "distinct": "coll_distinct_visible_d", "key": "a", "collation": { "locale": "fr", "strength": 2 } }');
+
+-- Collated equivalence classes are combined after gathering rows from all shards.
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+  'coll_q_dist_db',
+  '{ "distinct": "coll_distinct_d", "key": "a", "collation": { "locale": "en", "strength": 1 } }');
+
+-- Strength 2 still folds case for these unaccented values.
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+  'coll_q_dist_db',
+  '{ "distinct": "coll_distinct_d", "key": "a", "collation": { "locale": "en", "strength": 2 } }');
+
+-- The command collation applies to both the query predicate and distinct values.
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+  'coll_q_dist_db',
+  '{ "distinct": "coll_distinct_d", "key": "a", "query": { "group": "ONE" }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- Dotted and array paths are deduplicated again after gathering shard results.
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+  'coll_q_dist_db',
+  '{ "distinct": "coll_distinct_d", "key": "nested.a", "collation": { "locale": "en", "strength": 1 } }');
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+  'coll_q_dist_db',
+  '{ "distinct": "coll_distinct_d", "key": "arr", "collation": { "locale": "en", "strength": 1 } }');
+
+-- Collated range filtering runs before global distinct deduplication.
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+  'coll_q_dist_db',
+  '{ "distinct": "coll_distinct_d", "key": "group", "query": { "a": { "$gte": "cafe", "$lt": "tea" } }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- Binary comparison keeps case variants separate.
+SELECT document AS uncollated_distinct_document
+FROM documentdb_api.distinct_query(
+  'coll_q_dist_db',
+  '{ "distinct": "coll_distinct_d", "key": "a" }') \gset
+
+SELECT jsonb_array_length(actual_values) = 4
+       AND actual_values @> '["CAFE", "TEA", "cafe", "tea"]'::jsonb
+       AND actual_values <@ '["CAFE", "TEA", "cafe", "tea"]'::jsonb AS values_match
+FROM (
+  SELECT (:'uncollated_distinct_document'::jsonb) -> 'values' AS actual_values
+) response;
+END;
+
+-- ======================================================================
 -- CLEANUP
 -- ======================================================================
 SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_agg_d');
 SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_minmax_d');
 SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_delete_d');
+SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_distinct_d');
+SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_distinct_visible_d');
 SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_graph_dst_d');
 SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_graph_src_d');
 SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_lookup_d');

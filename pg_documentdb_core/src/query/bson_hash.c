@@ -603,6 +603,10 @@ HashBsonValueCompare(const bson_value_t *value,
 					hash_bytes_func((uint8_t *) &int64Value, sizeof(int64_t), seed));
 			}
 
+			/*
+			 * TODO: Canonicalize equal non-integral numeric representations so
+			 * hash consumers preserve the equality contract.
+			 */
 			bson_decimal128_t decimalValue = GetBsonValueAsDecimal128(value);
 			return hash_combine_func(
 				hash_bytes_func((uint8_t *) &typeCodeInt, sizeof(int), seed),

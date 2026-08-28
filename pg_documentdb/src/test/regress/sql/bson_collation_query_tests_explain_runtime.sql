@@ -47,3 +47,42 @@ SET LOCAL documentdb_core.enableCollation TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_q_runtime_explain_db', '{ "find": "coll_id_simple", "filter": { "_id": "cat" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
 END;
+
+-- Distinct with collation performs semantic deduplication with complete
+-- collated keys.
+SELECT documentdb_api.insert_one('coll_q_runtime_explain_db', 'coll_distinct', '{ "_id": 1, "a": "cafe", "n": { "a": "cafe" }, "arr": [ "cafe", "tea" ] }');
+SELECT documentdb_api.insert_one('coll_q_runtime_explain_db', 'coll_distinct', '{ "_id": 2, "a": "CAFE", "n": { "a": "CAFE" }, "arr": [ "CAFE" ] }');
+SELECT documentdb_api.insert_one('coll_q_runtime_explain_db', 'coll_distinct', '{ "_id": 3, "a": "tea", "n": { "a": "tea" }, "arr": [ "TEA" ] }');
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+  'coll_q_runtime_explain_db',
+  '{ "distinct": "coll_distinct", "key": "a", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- Dotted paths use the same three-argument unwind expression.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+  'coll_q_runtime_explain_db',
+  '{ "distinct": "coll_distinct", "key": "n.a", "query": { "a": { "$in": [ "CAFE", "TEA" ] } }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- Arrays retain ProjectSet, Sort, and Unique when no ordered index is present.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+  'coll_q_runtime_explain_db',
+  '{ "distinct": "coll_distinct", "key": "arr", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- Without a collation, distinct uses hash aggregation with binary comparison.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+  'coll_q_runtime_explain_db',
+  '{ "distinct": "coll_distinct", "key": "a" }')
+$cmd$);
+
+SELECT documentdb_api.drop_collection('coll_q_runtime_explain_db', 'coll_distinct');

@@ -475,6 +475,7 @@ Oid BsonDollarLookupJoinFilterFunctionOid(void);
 Oid BsonLookupExtractFilterArrayFunctionOid(void);
 Oid BsonLookupUnwindFunctionOid(void);
 Oid BsonDistinctUnwindFunctionOid(void);
+Oid BsonDistinctUnwindWithCollationFunctionOid(void);
 Oid BsonDollarBucketAutoFunctionOid(void);
 Oid BsonDistinctAggregateFunctionOid(void);
 Oid RowGetBsonFunctionOid(void);

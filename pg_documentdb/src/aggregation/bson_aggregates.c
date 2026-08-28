@@ -98,6 +98,7 @@ const char charset[] = "abcdefghijklmnopqrstuvwxyz0123456789";
 
 static MaxAlignedVarlena * AllocateBsonNumericAggState(void);
 static void CheckAggregateIntermediateResultSize(uint32_t size);
+static bool TryGetCollationTaggedValue(pgbson *input, bson_value_t *value);
 static void CreateObjectAggTreeNodes(BsonObjectAggState *currentState,
 									 pgbson *currentValue);
 static bool ValidateMergeObjectsInput(pgbson *input);
@@ -195,7 +196,7 @@ bson_out_final(PG_FUNCTION_ARGS)
 
 inline static Datum
 BsonArrayAggTransitionCore(PG_FUNCTION_ARGS, bool handleSingleValueElement,
-						   const char *path)
+						   bool stripCollationMetadata, const char *path)
 {
 	BsonArrayAggState *currentState = { 0 };
 	MaxAlignedVarlena *bytes;
@@ -238,11 +239,26 @@ BsonArrayAggTransitionCore(PG_FUNCTION_ARGS, bool handleSingleValueElement,
 	}
 	else
 	{
-		uint32 currentValueSize = PgbsonGetBsonSize(currentValue);
-		CheckAggregateIntermediateResultSize(currentState->currentSizeWritten +
-											 currentValueSize);
-		pgbson *copiedPgbson = CopyPgbsonIntoMemoryContext(currentValue,
-														   aggregateContext);
+		pgbson *copiedPgbson;
+		uint32 currentValueSize;
+		bson_value_t distinctValue;
+		if (stripCollationMetadata &&
+			TryGetCollationTaggedValue(currentValue, &distinctValue))
+		{
+			copiedPgbson = BsonValueToDocumentPgbson(&distinctValue);
+			currentValueSize = PgbsonGetBsonSize(copiedPgbson);
+			CheckAggregateIntermediateResultSize(currentState->currentSizeWritten +
+												 currentValueSize);
+		}
+		else
+		{
+			currentValueSize = PgbsonGetBsonSize(currentValue);
+			CheckAggregateIntermediateResultSize(currentState->currentSizeWritten +
+												 currentValueSize);
+			copiedPgbson = CopyPgbsonIntoMemoryContext(currentValue,
+													   aggregateContext);
+		}
+
 		currentState->aggregateList = lappend(currentState->aggregateList,
 											  copiedPgbson);
 		currentState->currentSizeWritten += currentValueSize;
@@ -264,8 +280,10 @@ bson_array_agg_transition(PG_FUNCTION_ARGS)
 
 	/* We currently have 2 implementations of bson_array_agg. The newest has a parameter for handleSingleValueElement. */
 	bool handleSingleValueElement = PG_NARGS() == 4 ? PG_GETARG_BOOL(3) : false;
+	bool stripCollationMetadata = false;
 
-	return BsonArrayAggTransitionCore(fcinfo, handleSingleValueElement, path);
+	return BsonArrayAggTransitionCore(fcinfo, handleSingleValueElement,
+									  stripCollationMetadata, path);
 }
 
 
@@ -326,8 +344,10 @@ Datum
 bson_distinct_array_agg_transition(PG_FUNCTION_ARGS)
 {
 	bool handleSingleValueElement = true;
+	bool stripCollationMetadata = true;
 	char *path = "values";
-	return BsonArrayAggTransitionCore(fcinfo, handleSingleValueElement, path);
+	return BsonArrayAggTransitionCore(fcinfo, handleSingleValueElement,
+									  stripCollationMetadata, path);
 }
 
 
@@ -1327,6 +1347,23 @@ bson_add_to_set_final(PG_FUNCTION_ARGS)
 /* --------------------------------------------------------- */
 /* Private helper methods */
 /* --------------------------------------------------------- */
+
+static bool
+TryGetCollationTaggedValue(pgbson *input, bson_value_t *value)
+{
+	pgbsonelement element;
+	const char *collationString = NULL;
+	if (!TryGetSinglePgbsonElementFromPgbsonWithCollation(input, &element,
+														  &collationString) ||
+		collationString == NULL || element.pathLength != 0)
+	{
+		return false;
+	}
+
+	*value = element.bsonValue;
+	return true;
+}
+
 
 static MaxAlignedVarlena *
 AllocateBsonNumericAggState(void)

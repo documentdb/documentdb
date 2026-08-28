@@ -3051,7 +3051,20 @@ GenerateDistinctQuery(text *databaseDatum, pgbson *distinctSpec, bool setStateme
 		else if (StringViewEqualsCString(&keyView, "collation"))
 		{
 			ReportFeatureUsage(FEATURE_COLLATION);
-			if (!SkipFailOnCollation)
+			if (EnableCollation &&
+				IsClusterVersionAtleast(DocDB_V1, 0, 0))
+			{
+				if (!BSON_ITER_HOLDS_NULL(&distinctIter))
+				{
+					EnsureTopLevelFieldType("collation", &distinctIter,
+											BSON_TYPE_DOCUMENT);
+					if (!IsBsonValueEmptyDocument(value))
+					{
+						ParseAndGetCollationString(value, context.collationString);
+					}
+				}
+			}
+			else if (!SkipFailOnCollation)
 			{
 				ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 								errmsg(
@@ -5450,11 +5463,25 @@ HandleDistinct(const StringView *distinctKey, Query *query,
 	Expr *currentProjection = firstEntry->expr;
 	Const *unwindValue = MakeTextConst(distinctKey->string,
 									   distinctKey->length);
-	List *args = list_make2(currentProjection, unwindValue);
+	bool hasCollation = IsCollationApplicable(context->collationString);
+	List *args;
+	Oid distinctUnwindFunctionOid;
+	if (hasCollation)
+	{
+		args = list_make3(currentProjection, unwindValue,
+						  MakeTextConst(context->collationString,
+										strlen(context->collationString)));
+		distinctUnwindFunctionOid = BsonDistinctUnwindWithCollationFunctionOid();
+	}
+	else
+	{
+		args = list_make2(currentProjection, unwindValue);
+		distinctUnwindFunctionOid = BsonDistinctUnwindFunctionOid();
+	}
 
 	/* Create a distinct unwind - to expand arrays and such */
 	resultExpr = makeFuncExpr(
-		BsonDistinctUnwindFunctionOid(), BsonTypeId(), args, InvalidOid,
+		distinctUnwindFunctionOid, BsonTypeId(), args, InvalidOid,
 		InvalidOid, COERCE_EXPLICIT_CALL);
 	resultExpr->funcretset = true;
 	firstEntry->expr = (Expr *) resultExpr;
@@ -5462,8 +5489,13 @@ HandleDistinct(const StringView *distinctKey, Query *query,
 
 	/* Add the distinct */
 	SortGroupClause *distinctSortGroup = makeNode(SortGroupClause);
-	distinctSortGroup->eqop = BsonEqualOperatorId();
-	distinctSortGroup->sortop = BsonLessThanOperatorId();
+	distinctSortGroup->eqop = hasCollation ?
+							  BsonOrderyByEqOperatorId() :
+							  BsonEqualOperatorId();
+	distinctSortGroup->sortop = hasCollation ?
+								BsonOrderyByLtOperatorId() :
+								BsonLessThanOperatorId();
+	distinctSortGroup->hashable = false;
 	distinctSortGroup->tleSortGroupRef = assignSortGroupRef(firstEntry,
 															query->targetList);
 	query->distinctClause = list_make1(distinctSortGroup);
@@ -5518,6 +5550,7 @@ HandleDistinct(const StringView *distinctKey, Query *query,
 
 	query = MigrateQueryToSubQuery(query, context);
 	firstEntry = linitial(query->targetList);
+
 	Aggref *aggref = CreateSingleArgAggregate(BsonDistinctAggregateFunctionOid(),
 											  firstEntry->expr, parseState);
 

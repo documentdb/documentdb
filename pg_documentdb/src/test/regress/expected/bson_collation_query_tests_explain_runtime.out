@@ -176,3 +176,146 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SE
 (10 rows)
 
 END;
+-- Distinct with collation performs semantic deduplication with complete
+-- collated keys.
+SELECT documentdb_api.insert_one('coll_q_runtime_explain_db', 'coll_distinct', '{ "_id": 1, "a": "cafe", "n": { "a": "cafe" }, "arr": [ "cafe", "tea" ] }');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_runtime_explain_db', 'coll_distinct', '{ "_id": 2, "a": "CAFE", "n": { "a": "CAFE" }, "arr": [ "CAFE" ] }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_runtime_explain_db', 'coll_distinct', '{ "_id": 3, "a": "tea", "n": { "a": "tea" }, "arr": [ "TEA" ] }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+  'coll_q_runtime_explain_db',
+  '{ "distinct": "coll_distinct", "key": "a", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                               run_explain_and_trim                                               
+------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level1'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level1'::text))
+         ->  Sort
+               Output: (bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level1'::text))
+               Sort Key: (bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level1'::text)) USING <<<
+               ->  ProjectSet
+                     Output: bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level1'::text)
+                     ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                           Output: collection.document
+                           namespaceName: coll_q_runtime_explain_db.coll_distinct
+                           indexName: _id_
+                           ->  Bitmap Heap Scan on documentdb_data.documents_8903 collection
+                                 Output: collection.document
+                                 Recheck Cond: (collection.shard_key_value = '8903'::bigint)
+                                 ->  Bitmap Index Scan on _id_
+                                       Index Cond: (collection.shard_key_value = '8903'::bigint)
+(18 rows)
+
+-- Dotted paths use the same three-argument unwind expression.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+  'coll_q_runtime_explain_db',
+  '{ "distinct": "coll_distinct", "key": "n.a", "query": { "a": { "$in": [ "CAFE", "TEA" ] } }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                         run_explain_and_trim                                                          
+---------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'n.a'::text, 'en-u-ks-level1'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, 'n.a'::text, 'en-u-ks-level1'::text))
+         ->  Sort
+               Output: (bson_distinct_unwind(collection.document, 'n.a'::text, 'en-u-ks-level1'::text))
+               Sort Key: (bson_distinct_unwind(collection.document, 'n.a'::text, 'en-u-ks-level1'::text)) USING <<<
+               ->  ProjectSet
+                     Output: bson_distinct_unwind(collection.document, 'n.a'::text, 'en-u-ks-level1'::text)
+                     ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                           Output: collection.document
+                           namespaceName: coll_q_runtime_explain_db.coll_distinct
+                           indexName: _id_
+                           ->  Bitmap Heap Scan on documentdb_data.documents_8903 collection
+                                 Output: collection.document
+                                 Recheck Cond: (collection.shard_key_value = '8903'::bigint)
+                                 Filter: (collection.document @*= '{ "a" : [ "CAFE", "TEA" ], "collation" : "en-u-ks-level1" }'::bson)
+                                 ->  Bitmap Index Scan on _id_
+                                       Index Cond: (collection.shard_key_value = '8903'::bigint)
+(19 rows)
+
+-- Arrays retain ProjectSet, Sort, and Unique when no ordered index is present.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+  'coll_q_runtime_explain_db',
+  '{ "distinct": "coll_distinct", "key": "arr", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                run_explain_and_trim                                                
+--------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'arr'::text, 'en-u-ks-level1'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, 'arr'::text, 'en-u-ks-level1'::text))
+         ->  Sort
+               Output: (bson_distinct_unwind(collection.document, 'arr'::text, 'en-u-ks-level1'::text))
+               Sort Key: (bson_distinct_unwind(collection.document, 'arr'::text, 'en-u-ks-level1'::text)) USING <<<
+               ->  ProjectSet
+                     Output: bson_distinct_unwind(collection.document, 'arr'::text, 'en-u-ks-level1'::text)
+                     ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                           Output: collection.document
+                           namespaceName: coll_q_runtime_explain_db.coll_distinct
+                           indexName: _id_
+                           ->  Bitmap Heap Scan on documentdb_data.documents_8903 collection
+                                 Output: collection.document
+                                 Recheck Cond: (collection.shard_key_value = '8903'::bigint)
+                                 ->  Bitmap Index Scan on _id_
+                                       Index Cond: (collection.shard_key_value = '8903'::bigint)
+(18 rows)
+
+-- Without a collation, distinct uses hash aggregation with binary comparison.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+  'coll_q_runtime_explain_db',
+  '{ "distinct": "coll_distinct", "key": "a" }')
+$cmd$);
+                                      run_explain_and_trim                                       
+-------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, 'a'::text))
+         ->  Sort
+               Output: (bson_distinct_unwind(collection.document, 'a'::text))
+               Sort Key: (bson_distinct_unwind(collection.document, 'a'::text))
+               ->  ProjectSet
+                     Output: bson_distinct_unwind(collection.document, 'a'::text)
+                     ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                           Output: collection.document
+                           namespaceName: coll_q_runtime_explain_db.coll_distinct
+                           indexName: _id_
+                           ->  Bitmap Heap Scan on documentdb_data.documents_8903 collection
+                                 Output: collection.document
+                                 Recheck Cond: (collection.shard_key_value = '8903'::bigint)
+                                 ->  Bitmap Index Scan on _id_
+                                       Index Cond: (collection.shard_key_value = '8903'::bigint)
+(18 rows)
+
+SELECT documentdb_api.drop_collection('coll_q_runtime_explain_db', 'coll_distinct');
+ drop_collection 
+-----------------
+ t
+(1 row)
+

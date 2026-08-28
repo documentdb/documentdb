@@ -2993,7 +2993,9 @@ CheckFieldCoverage(Node *node, void *context)
 					return state->hasUncoveredField;
 				}
 				else if (EnableDistinctIndexPushdown &&
-						 funcExpr->funcid == BsonDistinctUnwindFunctionOid() &&
+						 (funcExpr->funcid == BsonDistinctUnwindFunctionOid() ||
+						  funcExpr->funcid ==
+						  BsonDistinctUnwindWithCollationFunctionOid()) &&
 						 IsA(secondArg, Const))
 				{
 					Const *constArg = (Const *) secondArg;
@@ -3814,7 +3816,8 @@ GetSortDetails(PlannerInfo *root, Index rti, bool *hasGroupby,
 			*hasGroupby = true;
 			isGroupByEntry = true;
 		}
-		else if (func->funcid == BsonDistinctUnwindFunctionOid() &&
+		else if ((func->funcid == BsonDistinctUnwindFunctionOid() ||
+				  func->funcid == BsonDistinctUnwindWithCollationFunctionOid()) &&
 				 EnableDistinctIndexPushdown)
 		{
 			/* Similar to $group case, reject if ORDER BY has already been seen */
@@ -3826,6 +3829,33 @@ GetSortDetails(PlannerInfo *root, Index rti, bool *hasGroupby,
 			hasDistinct = true;
 			*hasDistinctScan = true;
 			*hasGroupby = true;
+
+			if (func->funcid == BsonDistinctUnwindWithCollationFunctionOid())
+			{
+				if (list_length(func->args) != 3)
+				{
+					return NIL;
+				}
+
+				Expr *thirdArg = lthird(func->args);
+				if (IsA(thirdArg, RelabelType))
+				{
+					thirdArg = ((RelabelType *) thirdArg)->arg;
+				}
+
+				if (!IsA(thirdArg, Const))
+				{
+					return NIL;
+				}
+
+				Const *thirdConst = (Const *) thirdArg;
+				if (thirdConst->constisnull || thirdConst->consttype != TEXTOID)
+				{
+					return NIL;
+				}
+
+				collationConst = thirdConst;
+			}
 		}
 		else
 		{
