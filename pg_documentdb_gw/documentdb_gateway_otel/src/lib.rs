@@ -23,9 +23,8 @@ use documentdb_gateway_core::telemetry::sql_commenter::{
 use documentdb_gateway_core::{
     error::{DocumentDBError, Result},
     telemetry::{
-        consts::metric_names,
         context_propagation::{install_trace_context_bridge, TraceContextBridge},
-        TelemetrySettings,
+        describe_metrics, TelemetrySettings,
     },
 };
 use metrics_exporter_opentelemetry::Recorder;
@@ -284,59 +283,6 @@ fn create_tracer_provider(
         .build();
 
     Ok(Some(provider))
-}
-
-fn describe_metrics() {
-    metrics::describe_histogram!(
-        metric_names::DB_CLIENT_OPERATION_DURATION,
-        metrics::Unit::Seconds,
-        "Duration of database client operations"
-    );
-    metrics::describe_counter!(
-        metric_names::DB_CLIENT_OPERATIONS,
-        metrics::Unit::Count,
-        "Count of database client operations"
-    );
-    metrics::describe_counter!(
-        metric_names::DB_CLIENT_REQUEST_SIZE_TOTAL,
-        metrics::Unit::Bytes,
-        "Total size of database client request payloads"
-    );
-    metrics::describe_counter!(
-        metric_names::DB_CLIENT_RESPONSE_SIZE_TOTAL,
-        metrics::Unit::Bytes,
-        "Total size of database client response payloads"
-    );
-    metrics::describe_counter!(
-        metric_names::DB_CLIENT_DOCUMENTS_RETURNED,
-        metrics::Unit::Count,
-        "Documents returned by read operations"
-    );
-    metrics::describe_counter!(
-        metric_names::DB_CLIENT_DOCUMENTS_INSERTED,
-        metrics::Unit::Count,
-        "Documents inserted"
-    );
-    metrics::describe_counter!(
-        metric_names::DB_CLIENT_DOCUMENTS_UPDATED,
-        metrics::Unit::Count,
-        "Documents updated"
-    );
-    metrics::describe_counter!(
-        metric_names::DB_CLIENT_DOCUMENTS_DELETED,
-        metrics::Unit::Count,
-        "Documents deleted"
-    );
-    metrics::describe_histogram!(
-        metric_names::GATEWAY_STARTUP_DELAY_MS,
-        metrics::Unit::Milliseconds,
-        "Time until the gateway is ready to accept connections"
-    );
-    metrics::describe_counter!(
-        metric_names::GATEWAY_STARTS,
-        metrics::Unit::Count,
-        "Count of gateway readiness events"
-    );
 }
 
 #[derive(Debug)]

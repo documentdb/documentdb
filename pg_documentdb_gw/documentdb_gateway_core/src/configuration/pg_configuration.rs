@@ -19,8 +19,9 @@ use tokio::{
 use crate::{
     configuration::{
         dynamic::{parse_cluster_version, ClusterVersion, POSTGRES_RECOVERY_KEY},
-        DynamicConfiguration, SetupConfiguration, MAX_REQUEST_TIMEOUT_DEFAULT_SEC,
-        MAX_REQUEST_TIMEOUT_SEC_KEY, TRANSACTION_TIMEOUT_DEFAULT_SEC, TRANSACTION_TIMEOUT_SEC_KEY,
+        DynamicConfiguration, SetupConfiguration, ENABLE_REQUEST_METRICS_KEY,
+        MAX_REQUEST_TIMEOUT_DEFAULT_SEC, MAX_REQUEST_TIMEOUT_SEC_KEY,
+        TRANSACTION_TIMEOUT_DEFAULT_SEC, TRANSACTION_TIMEOUT_SEC_KEY,
     },
     error::{DocumentDBError, Result},
     postgres::{conn_mgmt::PoolManager, PgDocument},
@@ -421,6 +422,10 @@ impl DynamicConfiguration for PgConfiguration {
             }
             n => usize::try_from(n).unwrap_or(25),
         }
+    }
+
+    fn enable_request_metrics(&self) -> bool {
+        self.get_bool(ENABLE_REQUEST_METRICS_KEY, false)
     }
 
     fn allow_transaction_snapshot(&self) -> bool {

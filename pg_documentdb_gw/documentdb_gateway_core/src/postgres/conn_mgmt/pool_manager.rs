@@ -491,6 +491,10 @@ mod tests {
         fn gateway_connection_pruning_interval_sec(&self) -> u64 {
             1
         }
+
+        fn enable_request_metrics(&self) -> bool {
+            false
+        }
     }
 
     fn setup_configuration() -> DocumentDBSetupConfiguration {

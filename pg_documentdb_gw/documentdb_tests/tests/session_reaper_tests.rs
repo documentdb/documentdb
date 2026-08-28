@@ -18,8 +18,8 @@ use bson::RawDocumentBuf;
 use documentdb_gateway_core::{
     context::{
         Cursor, CursorId, CursorKey, CursorStore, CursorStoreEntry, GatewayTransaction,
-        LogicalSessionId, RequestTransactionInfo, SessionManager, StoreKey, TransactionNumber,
-        TransactionStore,
+        LogicalSessionId, RequestTransactionInfo, SessionManager, SessionResourceMetrics, StoreKey,
+        TransactionNumber, TransactionStore,
     },
     postgres::conn_mgmt::Connection,
     principal,
@@ -45,7 +45,8 @@ async fn session_reaper_rolls_back_expired_transactions_and_invalidates_their_cu
         build_connection_pool(&setup_config, &setup_config.postgres_system_user.clone(), 4).await;
 
     let owner = principal!("session-reaper-test", 1);
-    let transaction_store = TransactionStore::new(Duration::from_hours(1));
+    let transaction_store =
+        TransactionStore::new(Duration::from_hours(1), SessionResourceMetrics::new(false));
     // A store with no reaper of its own and a long cursor timeout, so only the
     // session manager's cleanup pass can remove these cursors.
     let cursor_store = CursorStore::new();
@@ -116,8 +117,12 @@ async fn session_reaper_rolls_back_expired_transactions_and_invalidates_their_cu
 
     // A large cleanup interval makes the reaper's first (immediate) tick the
     // only pass that runs during the test.
-    let session_manager =
-        SessionManager::new(transaction_store, cursor_store, Duration::from_hours(1));
+    let session_manager = SessionManager::new(
+        transaction_store,
+        cursor_store,
+        SessionResourceMetrics::new(false),
+        Duration::from_hours(1),
+    );
 
     // Poll until the single cleanup pass has invalidated every cursor, rolled
     // back every transaction, and drained the transaction store.

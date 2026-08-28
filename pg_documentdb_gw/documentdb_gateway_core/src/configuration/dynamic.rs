@@ -78,6 +78,7 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
     fn enable_developer_explain(&self) -> bool;
     fn max_connections(&self) -> usize;
     fn allow_transaction_snapshot(&self) -> bool;
+    fn enable_request_metrics(&self) -> bool;
 
     // Needed to downcast to concrete type
     fn as_any(&self) -> &dyn std::any::Any;

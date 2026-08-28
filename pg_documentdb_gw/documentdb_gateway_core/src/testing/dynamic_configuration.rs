@@ -111,6 +111,10 @@ impl DynamicConfiguration for TestDynamicConfiguration {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    fn enable_request_metrics(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]

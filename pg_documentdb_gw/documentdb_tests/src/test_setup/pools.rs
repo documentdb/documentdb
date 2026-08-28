@@ -101,6 +101,10 @@ impl DynamicConfiguration for TestConfiguration {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    fn enable_request_metrics(&self) -> bool {
+        false
+    }
 }
 
 /// Builds a single pool bound to `user`.

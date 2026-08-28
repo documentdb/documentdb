@@ -20,7 +20,7 @@ use crate::{
             transaction_error::map_transaction_error, GatewayTransaction, RequestTransactionInfo,
             TransactionError,
         },
-        ConnectionContext, LogicalSessionId, TransactionNumber,
+        ConnectionContext, LogicalSessionId, SessionResourceMetrics, TransactionNumber,
     },
     error::{DocumentDBError, ErrorCode, Result},
     postgres::{conn_mgmt::Connection, PgDataClient},
@@ -68,12 +68,13 @@ type TransactionEntry = (u64, GatewayTransaction);
 pub struct TransactionStore {
     pub transactions: Arc<DashMap<SessionKey, TransactionEntry>>,
     last_seen_transactions: Arc<TtlCache<SessionKey, LastSeenTransaction>>,
+    metrics: SessionResourceMetrics,
     default_ttl: Duration,
 }
 
 impl TransactionStore {
     #[must_use]
-    pub fn new(default_ttl: Duration) -> Self {
+    pub fn new(default_ttl: Duration, metrics: SessionResourceMetrics) -> Self {
         let transactions = Arc::new(DashMap::new());
         let last_seen_transactions =
             Arc::new(TtlCache::new(CacheConfiguration::with_ttl(default_ttl)));
@@ -81,8 +82,19 @@ impl TransactionStore {
         Self {
             default_ttl,
             transactions: Arc::clone(&transactions),
+            metrics,
             last_seen_transactions: Arc::clone(&last_seen_transactions),
         }
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.transactions.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.transactions.is_empty()
     }
 
     /// Removes every transaction whose lease has elapsed and hands ownership
@@ -111,6 +123,9 @@ impl TransactionStore {
         }
 
         let _ = self.last_seen_transactions.evict_expired_async().await;
+
+        // Track expiring transaction count
+        self.metrics.transactions_expired(evicted.len());
 
         evicted
     }
@@ -198,6 +213,8 @@ impl TransactionStore {
                         activity_id,
                     )
                 })?;
+
+                self.metrics.transaction_aborted();
             }
 
             let is_replica_cluster = connection_context
@@ -231,6 +248,9 @@ impl TransactionStore {
             let expires_at = EpochClock::almost_now_timestamp() + self.default_ttl.as_secs();
 
             self.transactions.insert(key, (expires_at, transaction));
+
+            // Track transaction start metric
+            self.metrics.transaction_started();
 
             return Ok(());
         }
@@ -295,6 +315,7 @@ impl TransactionStore {
         };
 
         transaction_entry.1.abort().await?;
+        self.metrics.transaction_aborted();
 
         let last_seen_transaction =
             LastSeenTransaction::aborted(transaction_entry.1.transaction_number());
@@ -352,6 +373,7 @@ impl TransactionStore {
                 )
                 .await;
 
+            self.metrics.transaction_committed();
             Ok(())
         } else {
             Err(TransactionError::SimpleError(

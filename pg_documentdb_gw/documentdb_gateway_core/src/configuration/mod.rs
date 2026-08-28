@@ -28,6 +28,7 @@ use crate::telemetry::TelemetrySettings;
 
 pub(crate) const SOCKET_CONNECTION_IDLE_TIMEOUT_KEY: &str = "SocketConnectionIdleTimeout";
 pub(crate) const SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS: u64 = 18_000;
+pub const ENABLE_REQUEST_METRICS_KEY: &str = "enable_request_metrics";
 
 /// These are the required configuration fields.
 ///
