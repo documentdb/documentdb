@@ -1,4 +1,5 @@
 ### documentdb v1.1-0 (Unreleased) ###
+* Support collation with `distinct` command *[Feature]*
 
 ### documentdb v1.0-0 (Unreleased) ###
 * Release executable memory allocated for PCRE2 JIT-compiled regular expressions when their memory context resets. *[Bugfix]* (work item 5530914)
@@ -17,7 +18,6 @@
 * Apply collation to the symbol BSON type, so symbols compare and hash like the equivalent string under the active collation. *[Feature]*
 * Fix collation-aware hashing and index term generation for code with scope. *[Bugfix]*
 * Support collation with `count` command *[Feature]*
-* Support collation with `distinct` command *[Feature]*
 * Persist and manage custom roles through the data plane: `createRole`/`dropRole`/`rolesInfo` are backed by the roles catalog (keyed by role name). Guarded by `documentdb.enableRoleCrud` feature flag, disabled by default. *[Feature]*
 * Report `compact`'s `bytesFreed` as the measured reduction in on-disk size across the VACUUM instead of a statistics-based bloat estimate, and stop running the expensive bloat estimate query when no `freeSpaceTargetMB` was requested. *[Bugfix/Perf]*
 

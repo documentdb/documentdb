@@ -3052,7 +3052,7 @@ GenerateDistinctQuery(text *databaseDatum, pgbson *distinctSpec, bool setStateme
 		{
 			ReportFeatureUsage(FEATURE_COLLATION);
 			if (EnableCollation &&
-				IsClusterVersionAtleast(DocDB_V1, 0, 0))
+				IsClusterVersionAtleast(DocDB_V1, 1, 0))
 			{
 				if (!BSON_ITER_HOLDS_NULL(&distinctIter))
 				{
