@@ -23,6 +23,7 @@
 #include "utils/feature_counter.h"
 #include "planner/documentdb_planner.h"
 #include "utils/hashset_utils.h"
+#include "utils/storage_utils.h"
 #include "utils/version_utils.h"
 #include "commands/parse_error.h"
 #include "commands/commands_common.h"
@@ -92,8 +93,6 @@ static void MergeWorkerResults(CollStatsResult *result, MongoCollection *collect
 static pgbson * MergeWorkerIndexDocs(MongoCollection *collection, List *workerIndexDocs,
 									 int32 scale, int *indexCount);
 static pgbson * CollStatsWorker(void *fcinfoPointer);
-static void GetPostgresRelationSizes(ArrayType *relationIds, int64 *totalRelationSize,
-									 int64 *totalTableSize);
 static int64 GetPostgresDocumentCountStats(ArrayType *relationIds,
 										   bool *isSmallCollection);
 static int64 GetPostgresLiveDocumentStats(ArrayType *relationIds);
@@ -752,7 +751,9 @@ CollStatsWorker(void *fcinfoPointer)
 		int64 totalRelationSize, totalTableSize;
 		if ((mode & CollStatsAggMode_Storage) != 0 || ForceCollStatsDataCollection)
 		{
-			GetPostgresRelationSizes(shardOids, &totalRelationSize, &totalTableSize);
+			CollectionStorageSize storageSize = GetPostgresRelationSizes(shardOids);
+			totalRelationSize = (int64) storageSize.totalRelationSize;
+			totalTableSize = (int64) storageSize.totalTableSize;
 
 			/* Write it out to the target writer */
 			PgbsonWriterAppendInt64(&writer, "total_rel_size", 14, totalRelationSize);
@@ -776,43 +777,6 @@ CollStatsWorker(void *fcinfoPointer)
 	}
 
 	return PgbsonWriterGetPgbson(&writer);
-}
-
-
-/*
- * Gets the sum of the relation sizes and table sizes for the shards located on the current node
- * for a given table and array of shards.
- */
-static void
-GetPostgresRelationSizes(ArrayType *relationIds, int64 *totalRelationSize,
-						 int64 *totalTableSize)
-{
-	const char *query =
-		"SELECT SUM(pg_catalog.pg_total_relation_size(r))::int8, SUM(pg_catalog.pg_table_size(r))::int8 FROM unnest($1) r";
-
-	int nargs = 1;
-	Oid argTypes[1] = { OIDARRAYOID };
-	Datum argValues[1] = { PointerGetDatum(relationIds) };
-
-	bool readOnly = true;
-	Datum resultValues[2];
-	bool nullValues[2];
-	int numResults = 2;
-	ExtensionExecuteMultiValueQueryWithArgsViaSPI(query, nargs, argTypes, argValues, NULL,
-												  readOnly,
-												  SPI_OK_SELECT, resultValues, nullValues,
-												  numResults);
-
-	*totalRelationSize = 0;
-	*totalTableSize = 0;
-
-	if (nullValues[0] || nullValues[1])
-	{
-		return;
-	}
-
-	*totalRelationSize = DatumGetInt64(resultValues[0]);
-	*totalTableSize = DatumGetInt64(resultValues[1]);
 }
 
 

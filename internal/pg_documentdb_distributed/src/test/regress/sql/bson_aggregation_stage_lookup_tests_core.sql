@@ -498,7 +498,6 @@ EXPLAIN(costs off) SELECT document from bson_aggregation_pipeline('db',
   '{ "aggregate": "menu", "pipeline": [ { "$lookup": { "from": "establishments", "localField": "_id", "foreignField": "_id", "as": "matched_docs_id" } } ], "cursor": {} }');
 ROLLBACK;
 
-
 BEGIN;
 SET LOCAL enable_seqscan TO off;
 EXPLAIN(costs off) SELECT document from bson_aggregation_pipeline('db', 
@@ -1312,6 +1311,259 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ], "cursor": {} }');
 ROLLBACK;
 
+-- A pipeline-only correlated lookup does not preserve an unused join document
+SELECT document FROM bson_aggregation_pipeline('dbAddField',
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$sort": {
+          "_id": 1
+        }
+      },
+      {
+        "$lookup": {
+          "from": "orders",
+          "let": {
+            "outerUserId": "$_id"
+          },
+          "pipeline": [
+            {
+              "$match": {
+                "price": {
+                  "$gt": 0
+                }
+              }
+            },
+            {
+              "$match": {
+                "$expr": {
+                  "$eq": [ "$userId", "$$outerUserId" ]
+                }
+              }
+            }
+          ],
+          "as": "matchingOrders"
+        }
+      }
+    ], "cursor": {} }');
 
+-- Explain plan, disabling linear pipeline index support retains the prior plan
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL documentdb.enable_lookup_join_index_with_linear_pipeline TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dbAddField',
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "_id",
+          "foreignField": "userId",
+          "as": "userOrders",
+          "pipeline": [
+            {
+              "$addFields": {
+                "isProcessed": true
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+ROLLBACK;
 
+-- Explain plan, an inner limit does not use the linear pipeline projection
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dbAddField',
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "_id",
+          "foreignField": "userId",
+          "as": "limitedOrders",
+          "pipeline": [
+            {
+              "$limit": 2
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+ROLLBACK;
 
+-- Explain plan, an inner skip does not use the linear pipeline projection
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dbAddField',
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "_id",
+          "foreignField": "userId",
+          "as": "remainingOrders",
+          "pipeline": [
+            {
+              "$skip": 1
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+ROLLBACK;
+
+-- Explain plan, an inner group does not use the linear pipeline projection
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dbAddField',
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "_id",
+          "foreignField": "userId",
+          "as": "groupedOrders",
+          "pipeline": [
+            {
+              "$group": {
+                "_id": "$userId",
+                "userId": { "$first": "$userId" },
+                "firstItem": { "$first": "$item" }
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+ROLLBACK;
+
+-- Explain plan, a deferred limit does not suppress an eligible inline projection
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dbAddField',
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "_id",
+          "foreignField": "userId",
+          "as": "limitedProcessedOrders",
+          "pipeline": [
+            {
+              "$addFields": {
+                "reviewed": true
+              }
+            },
+            {
+              "$limit": 3
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+ROLLBACK;
+
+-- Explain plan, unrelated inner pipeline stages retain join index usage
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dbAddField',
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "_id",
+          "foreignField": "userId",
+          "as": "userOrders",
+          "pipeline": [
+            {
+              "$addFields": {
+                "isProcessed": true
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+ROLLBACK;
+
+-- Explain plan, an inner match retains join index usage
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dbAddField',
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "_id",
+          "foreignField": "userId",
+          "as": "userOrders",
+          "pipeline": [
+            {
+              "$match": {
+                "price": { "$gt": 10000 }
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+ROLLBACK;
+
+-- Explain plan, an inner projection that preserves the join field retains index usage
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dbAddField',
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "_id",
+          "foreignField": "userId",
+          "as": "userOrders",
+          "pipeline": [
+            {
+              "$project": {
+                "userId": 1,
+                "item": 1
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+ROLLBACK;
+
+-- Explain plan, a mixed linear inner pipeline retains join index usage
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dbAddField',
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "_id",
+          "foreignField": "userId",
+          "as": "userOrders",
+          "pipeline": [
+            {
+              "$match": {
+                "price": { "$gt": 10000 }
+              }
+            },
+            {
+              "$addFields": {
+                "isProcessed": true
+              }
+            },
+            {
+              "$project": {
+                "userId": 1,
+                "item": 1,
+                "isProcessed": 1
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+ROLLBACK;

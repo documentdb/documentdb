@@ -12,7 +12,7 @@ use tokio_postgres::{error::SqlState, Row};
 
 use crate::{
     context::{ConnectionContext, Cursor, CursorId},
-    error::{DocumentDBError, ErrorCode, Result},
+    error::{DocumentDBError, ErrorCode, ErrorKind, Result},
     postgres::{document::ColumnByteLen, PgDocument},
     responses::{
         constant::{
@@ -76,7 +76,14 @@ pub fn map_pg_error(
     activity_id: &str,
 ) -> DocumentDBError {
     let Some(sql_state) = pg_error.code().cloned() else {
-        return DocumentDBError::internal_error(format!("Non db postgres error: {pg_error}"));
+        let internal_message = format!("Non db postgres error: {pg_error}");
+        return DocumentDBError::new_documentdb_error(
+            ErrorCode::InternalError,
+            generic_internal_error_message().to_owned(),
+            Some(internal_message),
+            Some(Box::new(pg_error)),
+            ErrorKind::Gateway,
+        );
     };
 
     let db_error_message = pg_error
@@ -100,11 +107,11 @@ pub fn map_pg_error(
 }
 
 /// First applies any registered custom error mapping logic,
-/// then falls back to the generic error mapping logic in `map_pg_error_generic`
+/// then falls back to the generic error mapping logic in `map_pg_db_error_fallback`
 /// if the custom mapper returns `None`.
 ///
 /// Errors which are related to open sourced documentdb extension functionality
-/// should be mapped in `map_pg_error_generic`.
+/// should be mapped in `map_pg_db_error_fallback`.
 #[must_use]
 pub fn map_pg_db_error<'a>(
     is_in_transaction: bool,
@@ -120,7 +127,7 @@ pub fn map_pg_db_error<'a>(
         }
     }
 
-    map_pg_error_generic(
+    map_pg_db_error_fallback(
         is_in_transaction,
         is_replica_cluster,
         sql_state,
@@ -131,7 +138,7 @@ pub fn map_pg_db_error<'a>(
 
 /// Errors which are related to open sourced documentdb extension functionality should be mapped in this function.
 #[expect(clippy::too_many_lines, reason = "complex error mapping logic")]
-fn map_pg_error_generic<'a>(
+fn map_pg_db_error_fallback<'a>(
     is_in_transaction: bool,
     is_replica_cluster: bool,
     sql_state: &'a SqlState,

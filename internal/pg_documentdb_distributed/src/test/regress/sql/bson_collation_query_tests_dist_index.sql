@@ -62,4 +62,16 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_dist_db',
      "indexes": [{ "key": {"_id": 1}, "name": "idx_id_en_s1",
                    "collation": {"locale": "en", "strength": 1} }] }', TRUE);
 
+-- coll_distinct_d: scalar, dotted, and multikey distinct paths.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_dist_db',
+  '{ "createIndexes": "coll_distinct_d",
+     "indexes": [
+       { "key": {"a": 1}, "name": "idx_a_en_s1",
+         "collation": {"locale": "en", "strength": 1} },
+       { "key": {"nested.a": 1}, "name": "idx_nested_a_en_s1",
+         "collation": {"locale": "en", "strength": 1} },
+       { "key": {"arr": 1}, "name": "idx_arr_en_s1",
+         "collation": {"locale": "en", "strength": 1} }
+     ] }', TRUE);
+
 \i sql/bson_collation_query_tests_dist_core.sql

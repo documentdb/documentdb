@@ -91,6 +91,21 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
      "indexes": [{ "key": {"_id": 1, "v": 1}, "name": "idx_id_v_en_s1",
                    "collation": {"locale": "en", "strength": 1} }] }', TRUE);
 
+-- Section 20 coll_distinct: scalar, dotted, numeric-ordering, and multikey
+-- collation-aware distinct paths.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "coll_distinct",
+     "indexes": [
+       { "key": {"value": 1}, "name": "idx_value_en_s1",
+         "collation": {"locale": "en", "strength": 1} },
+       { "key": {"nested.value": 1}, "name": "idx_nested_value_en_s1",
+         "collation": {"locale": "en", "strength": 1} },
+       { "key": {"numeric": 1}, "name": "idx_numeric_en_s1",
+         "collation": {"locale": "en", "strength": 1, "numericOrdering": true} },
+       { "key": {"items.label": 1}, "name": "idx_items_label_en_s1",
+         "collation": {"locale": "en", "strength": 1} }
+     ] }', TRUE);
+
 -- Section 22 coll_minmax_idx: collated index on the "grp" match field so the
 -- $match in the aggregate is served by the index under the matching collation.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',

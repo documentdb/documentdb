@@ -1751,12 +1751,40 @@ $cmd$);
 (13 rows)
 
 ROLLBACK;
--- ============================================================
--- Cleanup
--- ============================================================
--- SELECT documentdb_api.drop_collection('db', 'dist_push');
--- SELECT documentdb_api.drop_collection('db', 'dist_push_mk');
--- SELECT documentdb_api.drop_collection('db', 'dist_trunc');
--- SELECT documentdb_api.drop_collection('db', 'dist_cscan');
--- SELECT documentdb_api.drop_collection('db', 'dist_cscan_mk');
--- SELECT documentdb_api.drop_collection('db', 'dist_ios');
+-- Cleanup.
+SELECT documentdb_api.drop_collection('db', 'dist_push');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'dist_push_mk');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'dist_trunc');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'dist_cscan');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'dist_cscan_mk');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'dist_ios');
+ drop_collection 
+-----------------
+ t
+(1 row)
+

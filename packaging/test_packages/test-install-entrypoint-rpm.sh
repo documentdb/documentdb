@@ -119,6 +119,11 @@ echo "=== Environment tests passed! ==="
 PG_SAMPLE_CONF="$($PG_CONFIG --sharedir)/postgresql.conf.sample"
 if [ -f "$PG_SAMPLE_CONF" ]; then
     sed -i 's/^[[:space:]]*logging_collector[[:space:]]*=.*/#logging_collector = off/' "$PG_SAMPLE_CONF"
+    # Verbose server-side error reporting: every ereport then carries its
+    # SQLSTATE and originating file:line:function, often identifying the
+    # failing C site straight from postmaster.log. Server log only; pg_regress
+    # compares client output, so expected results are unaffected.
+    echo "log_error_verbosity = verbose" >> "$PG_SAMPLE_CONF"
 fi
 
 # Ensure the documentdb user has permissions to run tests
@@ -128,21 +133,7 @@ chown -R documentdb:documentdb .
 # Switch to the documentdb user and run the tests
 echo "Running make check as documentdb user..."
 if ! su documentdb -c "export PG_CONFIG=/usr/pgsql-${POSTGRES_VERSION}/bin/pg_config && export PATH=/usr/pgsql-${POSTGRES_VERSION}/bin:\$PATH && make check"; then
-    echo "make check failed. Displaying any postmaster.log found:"
-    # make check recurses into several suites (pg_documentdb_core,
-    # pg_documentdb, ...), each with its own regress log dir. The old
-    # hard-coded pg_documentdb path printed "not found" whenever a different
-    # suite failed, discarding the crash evidence -- search the whole tree.
-    FOUND_LOGS=$(find /usr/src/documentdb -type f -name postmaster.log 2>/dev/null)
-    if [ -n "$FOUND_LOGS" ]; then
-        for LOG_FILE in $FOUND_LOGS; do
-            echo "=== Contents of $LOG_FILE ==="
-            cat "$LOG_FILE"
-            echo "==============================="
-        done
-    else
-        echo "No postmaster.log found under /usr/src/documentdb."
-    fi
+    report-test-failure.sh /usr/src/documentdb
     exit 1
 fi
 

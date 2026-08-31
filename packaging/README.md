@@ -196,6 +196,37 @@ This script checks:
 ./packaging/build_packages.sh --os rhel8 --pg 17 --test-clean-install
 ```
 
+### Test failure diagnostics
+
+The `--test-clean-install` container runs with `docker run --rm`, so on failure
+it copies its diagnostics (`regression.diffs`, `regression.out`, server logs)
+into a directory bind-mounted from the host. Set `TEST_ARTIFACTS_DIR` to keep
+those files somewhere specific; otherwise a temporary directory is used, which
+is archived to a `test-diagnostics-*.tar.gz` next to it on failure and removed
+on success. On Azure Pipelines the tarball is additionally published as a
+pipeline artifact; anywhere else it simply stays on disk at the path printed in
+the log.
+
+A failed run also reads the host kernel ring buffer, which is where a backend
+SIGSEGV leaves its faulting instruction pointer. That buffer is host-wide, so
+it is never archived as-is: it is captured outside the artifacts directory and
+narrowed to records that match a crash pattern and that fall inside this run's
+time window. The window is the container's start time, taken from
+`/proc/uptime` just before it launches and given a few seconds of margin to
+absorb the skew between that clock and the one printk stamps records with.
+Only those lines are written to `dmesg-crash-records.txt`, and the file is
+created only when something matched; matches outside the window are reported
+as a count instead, so an all-clear is never confused with an out-of-window
+crash. When the window cannot be established at all, matching lines are
+printed to the log, clearly labelled, but are neither archived nor raised as
+errors for the run.
+
+A time window is a heuristic, not proof of ownership. On a hosted agent that
+runs one job per VM it is sufficient, but on a shared or self-hosted agent a
+concurrent workload's records can fall inside the window too, so treat the
+`out of memory` and `killed process` matches in particular as leads rather
+than verdicts.
+
 ## Output
 
 Packages can be found at the `packages` directory by default, but it can be configured with the `--output-dir` option.

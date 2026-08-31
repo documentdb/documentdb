@@ -184,6 +184,28 @@ RegisterQueryScanNodes(void)
 
 
 /*
+ * Clears the backend-global text query state pointer.
+ *
+ * The pointer is normally set for the duration of a text-index scan and cleared
+ * when that scan ends. If a statement aborts mid-execution the scan's EndCustomScan
+ * never runs, leaving the pointer referencing the aborted statement's per-query
+ * memory (which is then freed). Call this on transaction abort so a later
+ * statement that reads text-score metadata does not dereference freed memory.
+ *
+ * HACK: This is a stopgap. The real fix is to remove the backend-global text
+ * query state entirely and thread the text-score metadata through the query
+ * plan as explicit arguments (see bson_orderby_meta). Once every text-score
+ * read path is migrated off the global, this defensive reset (and the global
+ * itself) should be deleted.
+ */
+void
+ResetQueryTextData(void)
+{
+	QueryTextData = NULL;
+}
+
+
+/*
  * Registers a Custom Path Scan for a Vector search query.
  * TODO: Add any Vector search information here.
  */

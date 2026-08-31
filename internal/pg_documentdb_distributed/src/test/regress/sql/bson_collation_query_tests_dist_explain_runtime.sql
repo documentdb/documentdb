@@ -31,6 +31,48 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('coll_q_runtime_dist_explain_db', '{ "aggregate": "coll_simple_d", "pipeline": [ { "$match": { "a": "DOG" } }, { "$sort": { "_id": 1 } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
 END;
 
+-- distinct with collation gathers shard rows before semantic deduplication.
+SELECT documentdb_api.insert_one('coll_q_runtime_dist_explain_db', 'coll_distinct_d', '{ "_id": 1, "a": "cafe", "n": { "a": "cafe" }, "arr": [ "cafe", "tea" ] }');
+SELECT documentdb_api.insert_one('coll_q_runtime_dist_explain_db', 'coll_distinct_d', '{ "_id": 2, "a": "CAFE", "n": { "a": "CAFE" }, "arr": [ "CAFE" ] }');
+SELECT documentdb_api.insert_one('coll_q_runtime_dist_explain_db', 'coll_distinct_d', '{ "_id": 3, "a": "tea", "n": { "a": "tea" }, "arr": [ "TEA" ] }');
+SELECT documentdb_api.shard_collection(
+  'coll_q_runtime_dist_explain_db', 'coll_distinct_d', '{ "_id": "hashed" }', false);
+
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+  'coll_q_runtime_dist_explain_db',
+  '{ "distinct": "coll_distinct_d", "key": "a", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+END;
+
+-- Dotted paths preserve the collated distinct operators after distribution rewrites.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+  'coll_q_runtime_dist_explain_db',
+  '{ "distinct": "coll_distinct_d", "key": "n.a", "query": { "a": "CAFE" }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+END;
+
+-- Array unwinding remains below coordinator-level semantic deduplication.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+  'coll_q_runtime_dist_explain_db',
+  '{ "distinct": "coll_distinct_d", "key": "arr", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+END;
+
 -- count command with collation fans out and scans each shard
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;

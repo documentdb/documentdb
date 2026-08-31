@@ -1,0 +1,218 @@
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+SET documentdb.next_collection_id TO 25802000;
+SET documentdb.next_collection_index_id TO 25802000;
+SELECT documentdb_api.create_collection('db', 'aggregation_delete');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api.insert_one(
+	'db',
+	'aggregation_delete',
+	'{ "_id": 1, "a": 1, "b": 0 }',
+	NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+	'db',
+	'aggregation_delete',
+	'{ "_id": 2, "a": 1, "b": 1 }',
+	NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document
+FROM bson_aggregation_delete(
+	'db',
+	'{ "delete": "aggregation_delete", "deletes": [] }');
+ERROR:  Write batch size must fall within the range of 1 to 25000, but 0 operations were provided.
+SELECT document
+FROM bson_aggregation_delete(
+	'db',
+	'{ "delete": "aggregation_delete", "deletes": [ { "q": { "a": 1 }, "limit": 0 }, { "q": { "a": 2 }, "limit": 0 } ] }');
+ERROR:  delete request must contain exactly one delete document
+SELECT document
+FROM bson_aggregation_delete(
+	'db',
+	'{ "delete": "missing_collection", "deletes": [ { "q": { "a": 1 }, "limit": 0 } ] }');
+ERROR:  Cannot find collection "missing_collection" in database for delete request
+SELECT document
+FROM bson_aggregation_delete(
+	'db',
+	'{ "delete": "missing_collection", "deletes": [ { "q": { "a": { "$invalid": 1 } }, "limit": 0 } ] }');
+ERROR:  Unrecognized operator specified: $invalid
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document
+FROM bson_aggregation_delete(
+	'db',
+	'{ "delete": "aggregation_delete", "deletes": [ { "q": { "a": 1 }, "limit": 0 } ] }');
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'ok'::text, '1'::double precision)
+   CTE d
+     ->  Delete on documentdb_data.documents_25802000
+           Output: 1
+           ->  Bitmap Heap Scan on documentdb_data.documents_25802000
+                 Output: documents_25802000.ctid
+                 Recheck Cond: (documents_25802000.shard_key_value = '25802000'::bigint)
+                 Filter: (documents_25802000.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
+                 ->  Bitmap Index Scan on _id_
+                       Index Cond: (documents_25802000.shard_key_value = '25802000'::bigint)
+   ->  CTE Scan on d
+         Output: d."?column?"
+(13 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document
+FROM bson_aggregation_delete(
+	'db',
+	'{ "delete": "aggregation_delete", "deletes": [ { "q": { "_id": 1 }, "limit": 1 } ] }');
+                                                                                 QUERY PLAN                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Delete on documentdb_data.documents_25802000 d
+   Output: d.object_id
+   CTE s
+     ->  Limit
+           Output: documents_25802000.ctid, documents_25802000.ctid
+           ->  LockRows
+                 Output: documents_25802000.ctid, documents_25802000.ctid
+                 ->  Index Scan using _id_ on documentdb_data.documents_25802000
+                       Output: documents_25802000.ctid, documents_25802000.ctid
+                       Index Cond: ((documents_25802000.shard_key_value = '25802000'::bigint) AND (documents_25802000.object_id = '{ "" : { "$numberInt" : "1" } }'::bson))
+   ->  Nested Loop
+         Output: d.ctid, s.*
+         ->  CTE Scan on s
+               Output: s.*, s.ctid
+         ->  Tid Scan on documentdb_data.documents_25802000 d
+               Output: d.ctid
+               TID Cond: (d.ctid = s.ctid)
+(17 rows)
+
+DO $$
+BEGIN
+	FOR document_id IN 3..102 LOOP
+		PERFORM documentdb_api.insert_one(
+			'db',
+			'aggregation_delete',
+			format('{ "_id": %s, "a": 2, "b": 0 }', document_id)::documentdb_core.bson,
+			NULL);
+	END LOOP;
+END;
+$$;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+	'db',
+	'{ "createIndexes": "aggregation_delete", "indexes": [ { "key": { "a": 1 }, "name": "a_1" } ] }',
+	true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SET enable_seqscan TO off;
+SET enable_indexscan TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document
+FROM bson_aggregation_delete(
+	'db',
+	'{ "delete": "aggregation_delete", "deletes": [ { "q": { "a": 1 }, "limit": 0 } ] }');
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'ok'::text, '1'::double precision)
+   CTE d
+     ->  Delete on documentdb_data.documents_25802000
+           Output: 1
+           ->  Bitmap Heap Scan on documentdb_data.documents_25802000
+                 Output: documents_25802000.ctid
+                 Recheck Cond: (documents_25802000.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
+                 ->  Bitmap Index Scan on a_1
+                       Index Cond: (documents_25802000.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
+   ->  CTE Scan on d
+         Output: d."?column?"
+(12 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document
+FROM bson_aggregation_delete(
+	'db',
+	'{ "delete": "aggregation_delete", "deletes": [ { "q": { "a": 1 }, "limit": 1 } ] }');
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
+ Delete on documentdb_data.documents_25802000 d
+   Output: d.object_id
+   CTE s
+     ->  Limit
+           Output: documents_25802000.ctid, documents_25802000.ctid
+           ->  LockRows
+                 Output: documents_25802000.ctid, documents_25802000.ctid
+                 ->  Bitmap Heap Scan on documentdb_data.documents_25802000
+                       Output: documents_25802000.ctid, documents_25802000.ctid
+                       Recheck Cond: (documents_25802000.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
+                       ->  Bitmap Index Scan on a_1
+                             Index Cond: (documents_25802000.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
+   ->  Nested Loop
+         Output: d.ctid, s.*
+         ->  CTE Scan on s
+               Output: s.*, s.ctid
+         ->  Tid Scan on documentdb_data.documents_25802000 d
+               Output: d.ctid
+               TID Cond: (d.ctid = s.ctid)
+(19 rows)
+
+RESET enable_seqscan;
+RESET enable_indexscan;
+SELECT document
+FROM bson_aggregation_delete(
+	'db',
+	'{ "delete": "aggregation_delete", "deletes": [ { "q": { "a": 1 }, "limit": 1 } ] }');
+            object_id            
+---------------------------------
+ { "" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT COUNT(*)
+FROM documentdb_api.collection('db', 'aggregation_delete')
+WHERE document OPERATOR(documentdb_api_catalog.@=) '{ "a": 1 }';
+ count 
+-------
+     1
+(1 row)
+
+SELECT document
+FROM bson_aggregation_delete(
+	'db',
+	'{ "delete": "aggregation_delete", "deletes": [ { "q": { "a": 1 }, "limit": 0 } ] }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT COUNT(*)
+FROM documentdb_api.collection('db', 'aggregation_delete')
+WHERE document OPERATOR(documentdb_api_catalog.@=) '{ "a": 1 }';
+ count 
+-------
+     0
+(1 row)
+
+SELECT document
+FROM bson_aggregation_delete(
+	'db',
+	'{ "delete": "aggregation_delete", "deletes": [ { "q": { "a": 99 }, "limit": 0 } ] }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT bson_aggregation_delete(
+	'db',
+	'{ "delete": "aggregation_delete", "deletes": [] }');
+ERROR:  bson_aggregation_delete must be replaced by the planner. This is an internal error

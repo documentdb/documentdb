@@ -100,6 +100,15 @@ impl PoolManager {
         dynamic_configuration: &dyn DynamicConfiguration,
     ) -> Result<()> {
         let settings = PgPoolSettings::from_configuration(dynamic_configuration);
+        self.allocate_data_pool_with_settings(username, password, settings)
+    }
+
+    pub(crate) fn allocate_data_pool_with_settings(
+        &self,
+        username: &str,
+        password: &str,
+        settings: PgPoolSettings,
+    ) -> Result<()> {
         let key = (username.to_owned(), settings);
 
         // Holding the entry serialises concurrent authentications for the same user.
@@ -144,7 +153,14 @@ impl PoolManager {
         dynamic_configuration: &dyn DynamicConfiguration,
     ) -> Result<Arc<ConnectionPool>> {
         let settings = PgPoolSettings::from_configuration(dynamic_configuration);
+        self.get_data_pool_with_settings(username, settings)
+    }
 
+    pub(crate) fn get_data_pool_with_settings(
+        &self,
+        username: &str,
+        settings: PgPoolSettings,
+    ) -> Result<Arc<ConnectionPool>> {
         match self.user_data_pools.get(&(username.to_owned(), settings)) {
             None => Err(DocumentDBError::internal_error(
                 "Connection pool missing for user.".to_owned(),
@@ -360,7 +376,7 @@ pub async fn create_connection_pool_manager(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
     use bson::{rawbson, RawBson};
     use tokio::{task::yield_now, time::sleep};
@@ -376,15 +392,33 @@ mod tests {
     struct MaxConnectionConfig {
         // Needed for interior mutability in tests.
         max_conn: AtomicUsize,
+        max_request_timeout_sec: AtomicU64,
+        transaction_timeout_sec: AtomicU64,
     }
 
     impl MaxConnectionConfig {
+        fn new(max_conn: usize) -> Self {
+            Self {
+                max_conn: max_conn.into(),
+                max_request_timeout_sec: 60.into(),
+                transaction_timeout_sec: 60.into(),
+            }
+        }
+
         fn max_conn(&self) -> usize {
             self.max_conn.load(Ordering::Relaxed)
         }
 
         fn set_max_conn(&self, value: usize) {
             self.max_conn.store(value, Ordering::Relaxed);
+        }
+
+        fn set_max_request_timeout_sec(&self, value: u64) {
+            self.max_request_timeout_sec.store(value, Ordering::Relaxed);
+        }
+
+        fn set_transaction_timeout_sec(&self, value: u64) {
+            self.transaction_timeout_sec.store(value, Ordering::Relaxed);
         }
     }
 
@@ -425,6 +459,14 @@ mod tests {
             false
         }
 
+        fn max_request_timeout_sec(&self) -> u64 {
+            self.max_request_timeout_sec.load(Ordering::Relaxed)
+        }
+
+        fn transaction_timeout_sec(&self) -> u64 {
+            self.transaction_timeout_sec.load(Ordering::Relaxed)
+        }
+
         fn as_any(&self) -> &dyn std::any::Any {
             self
         }
@@ -448,6 +490,10 @@ mod tests {
         /// this function to return non-zero value
         fn gateway_connection_pruning_interval_sec(&self) -> u64 {
             1
+        }
+
+        fn enable_request_metrics(&self) -> bool {
+            false
         }
     }
 
@@ -521,9 +567,7 @@ mod tests {
             "by default only 2 system pools exist"
         );
 
-        let dynamic_configuration = MaxConnectionConfig {
-            max_conn: 100.into(),
-        };
+        let dynamic_configuration = MaxConnectionConfig::new(100);
 
         for _ in 0..10 {
             let shared_pool_result = pool_manager.get_system_shared_pool(&dynamic_configuration);
@@ -555,9 +599,7 @@ mod tests {
         // so we can use yield_now to just get into async context and then proceed with sync code.
         yield_now().await;
 
-        let dynamic_configuration = MaxConnectionConfig {
-            max_conn: 100.into(),
-        };
+        let dynamic_configuration = MaxConnectionConfig::new(100);
         let pool_manager = test_pool_manager();
 
         let shared_pool = pool_manager
@@ -591,9 +633,7 @@ mod tests {
         // so we can use yield_now to just get into async context and then proceed with sync code.
         yield_now().await;
 
-        let dynamic_configuration = MaxConnectionConfig {
-            max_conn: 100.into(),
-        };
+        let dynamic_configuration = MaxConnectionConfig::new(100);
         let pool_manager = test_pool_manager();
 
         // on first iteration it will allocate the user pool and all the rest iterations will be no-op
@@ -642,9 +682,7 @@ mod tests {
         // so we can use yield_now to just get into async context and then proceed with sync code.
         yield_now().await;
 
-        let dynamic_configuration = MaxConnectionConfig {
-            max_conn: 100.into(),
-        };
+        let dynamic_configuration = MaxConnectionConfig::new(100);
         let pool_manager = test_pool_manager();
 
         let err = pool_manager
@@ -662,9 +700,7 @@ mod tests {
         // so we can use yield_now to just get into async context and then proceed with sync code.
         yield_now().await;
 
-        let dynamic_configuration = MaxConnectionConfig {
-            max_conn: 100.into(),
-        };
+        let dynamic_configuration = MaxConnectionConfig::new(100);
         let pool_manager = test_pool_manager();
 
         pool_manager
@@ -685,9 +721,7 @@ mod tests {
     async fn test_allocate_data_pool_reuses_pool_until_credential_changes() {
         yield_now().await;
 
-        let dynamic_configuration = MaxConnectionConfig {
-            max_conn: 100.into(),
-        };
+        let dynamic_configuration = MaxConnectionConfig::new(100);
         let pool_manager = test_pool_manager();
         let pool_for = |password: &str| {
             pool_manager
@@ -716,9 +750,7 @@ mod tests {
     async fn test_get_data_pool_uses_data_application_name() {
         yield_now().await;
 
-        let dynamic_configuration = MaxConnectionConfig {
-            max_conn: 100.into(),
-        };
+        let dynamic_configuration = MaxConnectionConfig::new(100);
         let pool_manager = test_pool_manager();
 
         pool_manager
@@ -737,6 +769,90 @@ mod tests {
         assert!(
             !identifier.contains("UserData"),
             "Data pool identifier should not contain the legacy UserData suffix: '{identifier}'"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_request_timeout_change_creates_pool_with_updated_deadline() {
+        yield_now().await;
+
+        let dynamic_configuration = MaxConnectionConfig::new(100);
+        let pool_manager = test_pool_manager();
+
+        let initial_pool = pool_manager
+            .get_system_shared_pool(&dynamic_configuration)
+            .unwrap();
+        assert_eq!(initial_pool.command_deadline(), Duration::from_secs(61));
+
+        dynamic_configuration.set_max_request_timeout_sec(30);
+
+        let updated_pool = pool_manager
+            .get_system_shared_pool(&dynamic_configuration)
+            .unwrap();
+        assert!(
+            !Arc::ptr_eq(&initial_pool, &updated_pool),
+            "a request-timeout change must create a pool with updated connection settings"
+        );
+        assert_eq!(updated_pool.command_deadline(), Duration::from_secs(31));
+    }
+
+    #[tokio::test]
+    async fn test_authenticated_user_pool_uses_cached_settings() {
+        yield_now().await;
+
+        let dynamic_configuration = MaxConnectionConfig::new(100);
+        let pool_manager = test_pool_manager();
+        let cached_settings = PgPoolSettings::from_configuration(&dynamic_configuration);
+
+        pool_manager
+            .allocate_data_pool("user", "password", &dynamic_configuration)
+            .unwrap();
+        let initial_pool = pool_manager
+            .get_data_pool_with_settings("user", cached_settings)
+            .unwrap();
+
+        dynamic_configuration.set_max_request_timeout_sec(30);
+
+        let existing_pool = pool_manager
+            .get_data_pool_with_settings("user", cached_settings)
+            .unwrap();
+        assert!(
+            Arc::ptr_eq(&initial_pool, &existing_pool),
+            "an authenticated session must retain the pool settings captured during authentication"
+        );
+
+        pool_manager
+            .allocate_data_pool("user", "password", &dynamic_configuration)
+            .unwrap();
+        let updated_pool = pool_manager
+            .get_data_pool("user", &dynamic_configuration)
+            .unwrap();
+        assert!(
+            !Arc::ptr_eq(&initial_pool, &updated_pool),
+            "re-authentication must create a pool with refreshed settings"
+        );
+        assert_eq!(updated_pool.command_deadline(), Duration::from_secs(31));
+    }
+
+    #[tokio::test]
+    async fn test_transaction_timeout_change_creates_new_pool() {
+        yield_now().await;
+
+        let dynamic_configuration = MaxConnectionConfig::new(100);
+        let pool_manager = test_pool_manager();
+
+        let initial_pool = pool_manager
+            .get_system_shared_pool(&dynamic_configuration)
+            .unwrap();
+
+        dynamic_configuration.set_transaction_timeout_sec(30);
+
+        let updated_pool = pool_manager
+            .get_system_shared_pool(&dynamic_configuration)
+            .unwrap();
+        assert!(
+            !Arc::ptr_eq(&initial_pool, &updated_pool),
+            "a transaction-timeout change must create a pool with updated connection settings"
         );
     }
 
@@ -786,9 +902,7 @@ mod tests {
         // so we can use yield_now to just get into async context and then proceed with sync code.
         yield_now().await;
 
-        let dynamic_configuration = MaxConnectionConfig {
-            max_conn: 100.into(),
-        };
+        let dynamic_configuration = MaxConnectionConfig::new(100);
         let pool_manager = test_pool_manager();
 
         pool_manager

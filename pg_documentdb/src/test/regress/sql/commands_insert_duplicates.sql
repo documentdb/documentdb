@@ -312,6 +312,60 @@ SELECT documentdb_api.drop_collection('insertdupdb', 'dup_test');
 
 
 -- ============================================================
+-- Part 7: Repeated duplicates on the same secondary index
+-- ============================================================
+\echo '--- Part 7: Secondary-index duplicate errors ---'
+
+SELECT documentdb_api.create_collection('insertdupdb', 'secondary_dup_test');
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'insertdupdb',
+    '{"createIndexes": "secondary_dup_test", "indexes": [
+        {"key": {"a": 1}, "name": "a_1", "unique": true},
+        {"key": {"b": 1}, "name": "b_1", "unique": true}
+    ]}',
+    true);
+
+SELECT * FROM pg_temp.do_insert('insertdupdb',
+    '{"insert": "secondary_dup_test", "ordered": false, "documents": [
+        {"_id": 1, "a": 1, "b": 1}
+    ]}');
+
+-- a_1 insert to cache get DEBUG log
+-- a_1 reuse cache
+-- b_1 insert to cache get DEBUG log
+-- b_1 reuse cache
+-- a_1 reuse cache
+SET client_min_messages TO DEBUG1;
+SELECT p_result -> 'writeErrors' AS write_errors
+FROM documentdb_api.insert(
+    'insertdupdb',
+    '{"insert": "secondary_dup_test", "ordered": false, "documents": [
+        {"_id": 2, "a": 1, "b": 2},
+        {"_id": 3, "a": 1, "b": 3},
+        {"_id": 4, "a": 4, "b": 1},
+        {"_id": 5, "a": 5, "b": 1},
+        {"_id": 6, "a": 1, "b": 6}
+    ]}');
+RESET client_min_messages;
+
+-- With caching disabled, each duplicate performs the original direct lookup.
+SET documentdb.enable_request_index_name_cache TO OFF;
+SET client_min_messages TO DEBUG1;
+SELECT p_result -> 'writeErrors' AS write_errors
+FROM documentdb_api.insert(
+    'insertdupdb',
+    '{"insert": "secondary_dup_test", "ordered": false, "documents": [
+        {"_id": 5, "a": 1, "b": 5},
+        {"_id": 6, "a": 1, "b": 6},
+        {"_id": 7, "a": 7, "b": 1}
+    ]}');
+RESET client_min_messages;
+RESET documentdb.enable_request_index_name_cache;
+
+SELECT documentdb_api.drop_collection('insertdupdb', 'secondary_dup_test');
+
+
+-- ============================================================
 -- Cleanup
 -- ============================================================
 SELECT documentdb_api.drop_database('insertdupdb');

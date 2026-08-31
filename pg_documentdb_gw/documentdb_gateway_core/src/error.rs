@@ -151,7 +151,7 @@ impl DocumentDBError {
             .and_then(|source| source.downcast_ref::<PoolError>())
     }
 
-    fn new_documentdb_error(
+    pub(crate) fn new_documentdb_error(
         error_code: ErrorCode,
         error_message_user: String,
         error_message_internal: Option<String>,
@@ -445,6 +445,36 @@ impl From<bson::raw::Error> for DocumentDBError {
     }
 }
 
+/// Maps a backend `SqlState` from a `PoolError` to the client-facing
+/// `ErrorCode` and builds the corresponding error. Recognized states (e.g.
+/// connection exhaustion) use a fixed override message; every other state
+/// keeps the generic `InternalError` code and the provided `error_message`.
+fn map_pool_db_error_code(
+    state: &SqlState,
+    error_message: String,
+    source: Box<dyn std::error::Error + Send + Sync>,
+) -> DocumentDBError {
+    let (error_code, internal_message) = match *state {
+        SqlState::TOO_MANY_CONNECTIONS => (
+            ErrorCode::TooManyLogicalSessions,
+            "There are too many open connections.".to_owned(),
+        ),
+        SqlState::CANNOT_CONNECT_NOW => (
+            ErrorCode::ShutdownInProgress,
+            "Request terminated due to shutdown on the server.".to_owned(),
+        ),
+        _ => (ErrorCode::InternalError, error_message),
+    };
+
+    DocumentDBError::new_documentdb_error(
+        error_code,
+        generic_internal_error_message().to_owned(),
+        Some(internal_message),
+        Some(source),
+        ErrorKind::Pool,
+    )
+}
+
 impl From<PoolError> for DocumentDBError {
     fn from(error: PoolError) -> Self {
         // Backend errors carrying a recognized SqlState (e.g. connection
@@ -478,32 +508,6 @@ impl From<PoolError> for DocumentDBError {
             ),
         }
     }
-}
-
-/// Maps a backend `SqlState` from a `PoolError` to the client-facing
-/// `ErrorCode` and builds the corresponding error. Recognized states (e.g.
-/// connection exhaustion) use a fixed override message; every other state
-/// keeps the generic `InternalError` code and the provided `error_message`.
-fn map_pool_db_error_code(
-    state: &SqlState,
-    error_message: String,
-    source: Box<dyn std::error::Error + Send + Sync>,
-) -> DocumentDBError {
-    let (error_code, internal_message) = match *state {
-        SqlState::TOO_MANY_CONNECTIONS => (
-            ErrorCode::TooManyLogicalSessions,
-            "Too many clients.".to_owned(),
-        ),
-        _ => (ErrorCode::InternalError, error_message),
-    };
-
-    DocumentDBError::new_documentdb_error(
-        error_code,
-        generic_internal_error_message().to_owned(),
-        Some(internal_message),
-        Some(source),
-        ErrorKind::Pool,
-    )
 }
 
 impl From<CreatePoolError> for DocumentDBError {
@@ -660,7 +664,10 @@ mod tests {
         assert_eq!(error.error_code(), ErrorCode::TooManyLogicalSessions);
         assert_eq!(*error.kind(), ErrorKind::Pool);
         assert_eq!(error.error_message_user(), generic_internal_error_message());
-        assert_eq!(error.error_message_internal(), Some("Too many clients."));
+        assert_eq!(
+            error.error_message_internal(),
+            Some("There are too many open connections.")
+        );
     }
 
     /// Any other `SqlState` keeps the generic `InternalError` code and passes

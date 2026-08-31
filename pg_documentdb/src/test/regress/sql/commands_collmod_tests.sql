@@ -129,6 +129,70 @@ WHERE collection_id = (
     WHERE database_name = 'collmod' AND collection_name = 'coll_mod_test_ttl')
 AND (index_spec).index_name = 'expires_ttl';
 
+-- Convert an existing single-field index to a TTL index.
+SELECT documentdb_api.create_collection('collmod', 'coll_mod_convert_ttl');
+SELECT documentdb_api.insert_one(
+    'collmod',
+    'coll_mod_convert_ttl',
+    '{ "_id": 1, "expiresAt": { "$date": { "$numberLong": "100" } } }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'collmod',
+    '{ "createIndexes": "coll_mod_convert_ttl", "indexes": [{ "key": { "expiresAt": 1 }, "name": "expires_idx" }]}',
+    TRUE);
+
+-- The document remains while the index is not a TTL index.
+CALL documentdb_api_internal.delete_expired_rows();
+SELECT COUNT(*) FROM documentdb_api.collection('collmod', 'coll_mod_convert_ttl');
+
+SELECT documentdb_api.coll_mod(
+    'collmod',
+    'coll_mod_convert_ttl',
+    '{ "collMod": "coll_mod_convert_ttl", "index": { "name": "expires_idx", "expireAfterSeconds": 10 } }');
+SELECT (index_spec).index_expire_after_seconds
+FROM documentdb_api_catalog.collection_indexes
+WHERE collection_id = (
+    SELECT collection_id
+    FROM documentdb_api_catalog.collections
+    WHERE database_name = 'collmod' AND collection_name = 'coll_mod_convert_ttl')
+AND (index_spec).index_name = 'expires_idx';
+
+-- TTL processing discovers the converted index and deletes the expired document.
+CALL documentdb_api_internal.delete_expired_rows();
+SELECT COUNT(*) FROM documentdb_api.collection('collmod', 'coll_mod_convert_ttl');
+
+-- Existing indexes must meet the same eligibility requirements as new TTL indexes.
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'collmod',
+    '{ "createIndexes": "coll_mod_convert_ttl", "indexes": [
+        { "key": { "a": 1, "b": 1 }, "name": "compound_idx" },
+        { "key": { "$**": 1 }, "name": "wildcard_idx" },
+        { "key": { "byPattern": 1 }, "name": "key_pattern_idx" }
+    ]}',
+    TRUE);
+SELECT documentdb_api.coll_mod(
+    'collmod',
+    'coll_mod_convert_ttl',
+    '{ "collMod": "coll_mod_convert_ttl", "index": { "keyPattern": { "byPattern": 1 }, "expireAfterSeconds": 10 } }');
+SELECT (index_spec).index_expire_after_seconds
+FROM documentdb_api_catalog.collection_indexes
+WHERE collection_id = (
+    SELECT collection_id
+    FROM documentdb_api_catalog.collections
+    WHERE database_name = 'collmod' AND collection_name = 'coll_mod_convert_ttl')
+AND (index_spec).index_name = 'key_pattern_idx';
+SELECT documentdb_api.coll_mod(
+    'collmod',
+    'coll_mod_convert_ttl',
+    '{ "collMod": "coll_mod_convert_ttl", "index": { "name": "compound_idx", "expireAfterSeconds": 10 } }');
+SELECT documentdb_api.coll_mod(
+    'collmod',
+    'coll_mod_convert_ttl',
+    '{ "collMod": "coll_mod_convert_ttl", "index": { "name": "_id_", "expireAfterSeconds": 10 } }');
+SELECT documentdb_api.coll_mod(
+    'collmod',
+    'coll_mod_convert_ttl',
+    '{ "collMod": "coll_mod_convert_ttl", "index": { "name": "wildcard_idx", "expireAfterSeconds": 10 } }');
+
 RESET documentdb.enablePerCollectionPlannerStatistics;
 RESET documentdb.enablePlannerStatisticsNewCollections;
 RESET documentdb.enablePreImages;

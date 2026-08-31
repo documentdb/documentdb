@@ -1838,6 +1838,9 @@ fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocume
             "executionStartAtTimeMillis",
             smallest_from_f64(truncate_latency(plan.actual_startup_time.unwrap_or(0.0))),
         );
+        if let Some(actual_loops) = plan.actual_loops.filter(|value| *value > 1.0) {
+            doc.append("actualLoops", smallest_from_f64(actual_loops));
+        }
         if plan.index_name.is_none()
             || plan.filter.is_some()
             || plan.rows_removed_by_filter.unwrap_or(0) > 0
@@ -1963,6 +1966,10 @@ fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocume
         }
         if let Some(workers) = plan.workers.as_ref() {
             if !workers.is_empty() {
+                doc.append(
+                    "stageWorkerCount",
+                    i32::try_from(workers.len()).unwrap_or(i32::MAX),
+                );
                 let mut worker_array = RawArrayBuf::new();
                 for worker in workers {
                     worker_array.push(build_worker_doc(worker));
@@ -2486,14 +2493,19 @@ mod tests {
         .expect("PostgreSQL worker data should deserialize");
         let plan = ExplainPlan {
             node_type: "Gather".to_owned(),
-            workers: Some(vec![worker]),
+            actual_loops: Some(2.0),
+            actual_rows: Some(2),
+            workers: Some(vec![worker, ExplainWorker::default()]),
             ..Default::default()
         };
 
         let stats = execution_stats(plan, &QueryCatalog::default());
-        let workers = stats
+        let execution_stage = stats
             .get_document("executionStages")
-            .expect("execution stages should be present")
+            .expect("execution stages should be present");
+        assert_eq!(execution_stage.get_i32("actualLoops"), Ok(2));
+        assert_eq!(execution_stage.get_i32("stageWorkerCount"), Ok(2));
+        let workers = execution_stage
             .get_array("stageWorkerData")
             .expect("stage worker data should be present");
         let worker = workers

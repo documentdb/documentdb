@@ -29,6 +29,7 @@
 #include "metadata/collection.h"
 #include "metadata/metadata_cache.h"
 #include "metadata/index.h"
+#include "planner/documentdb_planner.h"
 #include "utils/error_utils.h"
 #include "utils/documentdb_errors.h"
 #include "utils/query_utils.h"
@@ -110,6 +111,13 @@ static void CancelIndexBuildRequest(int indexId);
 Datum
 command_drop_indexes(PG_FUNCTION_ARGS)
 {
+	/*
+	 * dropIndexes is a write command, so reject it up front before parsing
+	 * arguments, taking any lock, or performing any work when writes are not
+	 * currently allowed.
+	 */
+	ThrowIfWriteCommandNotAllowed();
+
 	if (PG_ARGISNULL(1))
 	{
 		ereport(ERROR, (errmsg("Argument value must not be NULL")));
@@ -153,10 +161,44 @@ ProcessDropIndexesRequest(char *dbName, DropIndexesArg dropIndexesArg, bool
 						  dropIndexConcurrently)
 {
 	char *collectionName = dropIndexesArg.collectionName;
+
+	/*
+	 * Locking strategy: at collection-resolution time, directly acquire the
+	 * exact lock the subsequent DROP will need on the collection table.
+	 *
+	 * We do not take a weaker lock first and upgrade it once the DDL runs. A
+	 * weak-then-upgrade pattern can deadlock: two commands each hold a weak lock,
+	 * then each blocks upgrading into a mode the other's weak lock conflicts
+	 * with. Acquiring the final lock up front makes conflicting commands
+	 * serialize at acquisition -- while each still holds nothing else on the
+	 * collection -- so no upgrade cycle can form.
+	 *
+	 * We also do not settle for an intermediate lock that merely happens to be
+	 * enough today: if a later change adds a step needing a stronger mode, the
+	 * weak-then-upgrade hazard silently returns. Acquiring the operation's final
+	 * lock outright keeps this path robust.
+	 *
+	 * Final lock per path:
+	 *   - non-concurrent: AccessExclusiveLock, because it runs the physical
+	 *     DROP INDEX / ALTER TABLE DROP CONSTRAINT inside this transaction.
+	 *   - concurrent: ShareUpdateExclusiveLock. This path commits this
+	 *     transaction (releasing the lock) before running DROP INDEX CONCURRENTLY
+	 *     over a separate libpq session, so the lock governs only the metadata
+	 *     phase and does not span the physical drop.
+	 *
+	 * Because this path takes its final lock in a single acquisition while
+	 * holding nothing else, it cannot form an upgrade cycle with any other DDL
+	 * on the same collection (createIndexes included): whoever loses the race
+	 * simply waits at acquisition. It also does not take the createIndexes
+	 * advisory lock, which only serializes concurrent createIndexes metadata
+	 * insertions -- dropIndexes inserts no such metadata.
+	 */
+	LOCKMODE collectionLockMode = dropIndexConcurrently ? ShareUpdateExclusiveLock :
+								  AccessExclusiveLock;
 	MongoCollection *collection =
 		GetMongoCollectionByNameDatum(PointerGetDatum(cstring_to_text(dbName)),
 									  PointerGetDatum(cstring_to_text(collectionName)),
-									  AccessShareLock);
+									  collectionLockMode);
 	if (collection == NULL)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_NAMESPACENOTFOUND),

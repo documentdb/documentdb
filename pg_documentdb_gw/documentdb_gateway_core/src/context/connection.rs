@@ -20,11 +20,11 @@ use crate::{
     auth::AuthState,
     configuration::DynamicConfiguration,
     context::{
-        session::SessionKey, Cursor, CursorKey, CursorRef, CursorStoreEntry, LogicalSessionId,
-        ServiceContext, TransactionNumber,
+        session::SessionKey, Cursor, CursorId, CursorKey, CursorRef, CursorStoreEntry,
+        LogicalSessionId, ServiceContext, TransactionNumber,
     },
     error::Result,
-    postgres::conn_mgmt::Connection,
+    postgres::conn_mgmt::{Connection, PgPoolSettings},
     security::principal::Principal,
     telemetry::TelemetryProvider,
 };
@@ -125,8 +125,106 @@ impl ConnectionContext {
         transaction_number: Option<TransactionNumber>,
         caller: &Principal,
     ) {
-        let key = CursorKey::new(cursor.cursor_id, caller.clone());
+        let cursor_id = cursor.cursor_id;
 
+        // If there is a transaction, add it to the tracked cursors
+        if let Some((lsid, _)) = self.transaction.as_ref() {
+            let transaction_store = self.service_context.transaction_store();
+            let session_key: crate::context::StoreKey<LogicalSessionId> =
+                SessionKey::new(lsid.clone(), caller.clone());
+            if let Some(entry) = transaction_store.transactions.get(&session_key) {
+                let (_, transaction) = entry.value();
+                transaction.add_cursor(cursor_id);
+            }
+        }
+
+        self.store_cursor(
+            conn,
+            cursor,
+            db,
+            collection,
+            cursor_timeout,
+            lsid,
+            transaction_number,
+            caller,
+        );
+        self.service_context
+            .session_manager()
+            .metrics()
+            .cursor_opened();
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "cursor reinsertion requires the stored cursor state"
+    )]
+    pub fn return_cursor(
+        &self,
+        conn: Option<Arc<Connection>>,
+        cursor: Cursor,
+        db: &str,
+        collection: &str,
+        cursor_timeout: Duration,
+        lsid: Option<LogicalSessionId>,
+        transaction_number: Option<TransactionNumber>,
+        caller: &Principal,
+    ) {
+        self.store_cursor(
+            conn,
+            cursor,
+            db,
+            collection,
+            cursor_timeout,
+            lsid,
+            transaction_number,
+            caller,
+        );
+    }
+
+    pub fn close_cursor(
+        &self,
+        lsid: Option<&LogicalSessionId>,
+        transaction_number: Option<TransactionNumber>,
+        cursor_id: CursorId,
+        caller: &Principal,
+    ) {
+        if let (Some(lsid), Some(transaction_number)) = (lsid, transaction_number) {
+            let session_key = SessionKey::new(lsid.clone(), caller.clone());
+            if let Some(entry) = self
+                .service_context
+                .transaction_store()
+                .transactions
+                .get(&session_key)
+            {
+                let (_, transaction) = entry.value();
+                if transaction.transaction_number() == transaction_number {
+                    transaction.remove_cursor(cursor_id);
+                }
+            }
+        }
+
+        self.service_context
+            .session_manager()
+            .metrics()
+            .cursor_exhausted();
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "cursor storage requires the complete cursor state"
+    )]
+    fn store_cursor(
+        &self,
+        conn: Option<Arc<Connection>>,
+        cursor: Cursor,
+        db: &str,
+        collection: &str,
+        cursor_timeout: Duration,
+        lsid: Option<LogicalSessionId>,
+        transaction_number: Option<TransactionNumber>,
+        caller: &Principal,
+    ) {
+        let key = CursorKey::new(cursor.cursor_id, caller.clone());
         let value = CursorStoreEntry {
             conn,
             cursor,
@@ -138,34 +236,23 @@ impl ConnectionContext {
             transaction_number,
         };
 
-        // If there is a transaction, add it to the tracked cursors
-        if let Some((lsid, _)) = self.transaction.as_ref() {
-            let transaction_store = self.service_context.transaction_store();
-            let session_key: crate::context::StoreKey<LogicalSessionId> =
-                SessionKey::new(lsid.clone(), caller.clone());
-            if let Some(entry) = transaction_store.transactions.get(&session_key) {
-                let (_, transaction) = entry.value();
-                transaction.add_cursor(*key.id());
-            }
-        }
-
-        // Otherwise add it to the service context
         self.service_context.cursor_store().add_cursor(key, value);
     }
 
     /// # Errors
     ///
     /// Returns an error if the operation fails.
-    pub fn allocate_data_pool(&self, password: &str) -> Result<()> {
+    pub fn allocate_data_pool(&mut self, password: &str) -> Result<()> {
         let username = self.auth_state.username()?;
+        let settings = PgPoolSettings::from_configuration(
+            self.service_context.dynamic_configuration().as_ref(),
+        );
 
         self.service_context
             .connection_pool_manager()
-            .allocate_data_pool(
-                username,
-                password,
-                self.service_context.dynamic_configuration().as_ref(),
-            )
+            .allocate_data_pool_with_settings(username, password, settings)?;
+        self.auth_state.set_data_pool_settings(settings);
+        Ok(())
     }
 
     #[must_use]

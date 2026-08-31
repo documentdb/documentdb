@@ -36,6 +36,71 @@ extern int32 MaxSegmentVertices;
 #define POSTGIS_BOUNDING_BOX_DISTANCE_INDEX_STRATEGY 13
 
 /*
+ * Slack, in meters, subtracted from the spherical index bound before it is handed to a
+ * nearest neighbour index scan.
+ *
+ * A $near scan over a 2dsphere index runs in two stages. The index walks bounding boxes
+ * and returns a cheap approximate distance, then the executor recomputes the real
+ * spherical distance for each candidate row and re-sorts. PostgreSQL requires the cheap
+ * value to be a true lower bound, and aborts the whole query with the internal error
+ * "index returned tuples in wrong order" the moment the recomputed distance comes back
+ * smaller than what the index promised.
+ *
+ * Two quirks of the underlying geography library break that guarantee for locations that
+ * sit extremely close together. Both are tiny and absolute, meaning they do not grow with
+ * the distance being measured, so one fixed allowance covers both. The source references
+ * below are PostGIS 3.6.0, https://github.com/postgis/postgis/tree/3.6.0.
+ *
+ * The index side of both quirks is the same call, a plain Euclidean distance between two
+ * float32 bounding boxes scaled by the earth radius, with no tolerance handling at all:
+ *   gserialized_gist_nd.c:1307  distance = WGS84_RADIUS * gidx_distance(...)
+ *   https://github.com/postgis/postgis/blob/3.6.0/postgis/gserialized_gist_nd.c#L1307
+ *   https://github.com/postgis/postgis/blob/3.6.0/postgis/gserialized_gist_nd.c#L569
+ *
+ * 1. Near-coincident locations. The exact distance is snapped to exactly zero once two
+ *    locations agree in latitude and longitude to within 5e-14 radians, roughly 320
+ *    nanometers on the ground. The box distance is not snapped, and can still report up
+ *    to 450 nanometers for the same pair.
+ *
+ *    Example: a document at [0, 0] queried from [1e-12, 1e-12], which is about 111
+ *    nanometers away on each axis. The exact distance is 0 while the boxes are not,
+ *    so the index over-reports and the scan fails.
+ *
+ *    lwgeodetic.c:901  sphere_distance() returns 0.0 outright when FP_EQUALS holds for
+ *                      both latitude and longitude
+ *    https://github.com/postgis/postgis/blob/3.6.0/liblwgeom/lwgeodetic.c#L901
+ *    lwgeodetic.h:43   that file redefines FP_TOLERANCE to 5e-14, overriding the 1e-12
+ *                      that the rest of liblwgeom uses, which is where 5e-14 comes from
+ *    https://github.com/postgis/postgis/blob/3.6.0/liblwgeom/lwgeodetic.h#L43
+ *
+ * 2. Locations written with longitude -180. Bounding boxes convert degrees to radians
+ *    directly, so -180 becomes -pi. The exact distance normalizes -pi to +pi first. Since
+ *    sin(-pi) and sin(+pi) differ by 2.4e-16 in double precision, the two disagree about
+ *    where that location sits by roughly 1.6 nanometers.
+ *
+ *    Example: a document at [-180, 0] queried from [180, 0]. Both name the same place,
+ *    so the exact distance is 0, but the boxes are about 1.6 nanometers apart. The same
+ *    thing happens for reference points merely near the meridian, such as
+ *    [179.99999999999997, 0], until the float32 rounding of the bounding box grows wide
+ *    enough to absorb the difference.
+ *
+ *    lwgeodetic.c:423  ll2cart() builds the box coordinates with a bare degree to radian
+ *                      conversion and no normalization
+ *    https://github.com/postgis/postgis/blob/3.6.0/liblwgeom/lwgeodetic.c#L423
+ *    lwgeodetic.c:180  the exact path instead goes through geographic_point_init(), which
+ *                      calls longitude_radians_normalize() at line 50 and maps -pi to +pi
+ *    https://github.com/postgis/postgis/blob/3.6.0/liblwgeom/lwgeodetic.c#L180
+ *    https://github.com/postgis/postgis/blob/3.6.0/liblwgeom/lwgeodetic.c#L50
+ *
+ * Ten micrometers is more than twenty times the larger of the two, so it covers both with
+ * a wide margin. The only cost is that the bound is 10 micrometers looser than it could
+ * be. That is far below any distance a geospatial query can resolve, so no useful index
+ * pruning is lost.
+ *
+ */
+#define GEOGRAPHY_INDEX_DISTANCE_SLACK_METERS 1e-5
+
+/*
  * Defines the area of 2d cartesian plane that roughly corresponds to the hemisphere of earth
  * i.e. [0 to 180] and [90 to 90] => 180 * 180
  */
@@ -899,6 +964,19 @@ GeonearGISTDistanceWithState(PG_FUNCTION_ARGS, const GeonearDistanceState *state
 										  POSTGIS_BOUNDING_BOX_DISTANCE_INDEX_STRATEGY),
 									  PG_GETARG_DATUM(3),
 									  PG_GETARG_DATUM(4)));
+
+		/*
+		 * The allowance is only needed on the ORDER BY path. That is the value
+		 * PostgreSQL rechecks against the exact distance, so it is the only one that
+		 * can raise "index returned tuples in wrong order". The consistent path
+		 * instead compares this value against $minDistance and $maxDistance, and
+		 * lowering it there would let $minDistance reject a document that sits within
+		 * the allowance above the boundary.
+		 */
+		if (fcinfo->flinfo->fn_oid == BsonGistGeographyDistanceFunctionOid())
+		{
+			distance = Max(distance - GEOGRAPHY_INDEX_DISTANCE_SLACK_METERS, 0.0);
+		}
 	}
 	else
 	{
@@ -985,6 +1063,7 @@ GeonearRangeConsistent(PG_FUNCTION_ARGS)
 	pgbson *query = PG_GETARG_PGBSON(1);
 
 	const GeonearDistanceState *state;
+	GeonearDistanceState localState;
 	int argPosition = 1;
 	float8 gistBoxDistance = 0.0;
 
@@ -997,15 +1076,12 @@ GeonearRangeConsistent(PG_FUNCTION_ARGS)
 
 	if (state == NULL)
 	{
-		GeonearDistanceState distanceState;
-		memset(&distanceState, 0, sizeof(GeonearDistanceState));
-		BuildGeoNearRangeDistanceState(&distanceState, query);
-		gistBoxDistance = GeonearGISTDistanceWithState(fcinfo, &distanceState);
+		memset(&localState, 0, sizeof(GeonearDistanceState));
+		BuildGeoNearRangeDistanceState(&localState, query);
+		state = &localState;
 	}
-	else
-	{
-		gistBoxDistance = GeonearGISTDistanceWithState(fcinfo, state);
-	}
+
+	gistBoxDistance = GeonearGISTDistanceWithState(fcinfo, state);
 
 	if (state->maxDistance != NULL && gistBoxDistance > *(state->maxDistance) &&
 		!DOUBLE_EQUALS(gistBoxDistance, *(state->maxDistance)))

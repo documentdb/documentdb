@@ -24,6 +24,113 @@ use crate::{
 // Gateway Metrics
 // ============================================================================
 
+/// Registers metadata for the gateway's provider-neutral metric instruments.
+///
+/// Call this after installing the process-wide [`metrics::Recorder`] so each
+/// exporter can receive the shared instrument kinds, units, and descriptions.
+pub fn describe_metrics() {
+    metrics::describe_histogram!(
+        metric_names::OPERATION_DURATION,
+        metrics::Unit::Seconds,
+        "Duration of gateway request handling and its recorded backend phases"
+    );
+    metrics::describe_counter!(
+        metric_names::OPERATIONS,
+        metrics::Unit::Count,
+        "Gateway operations completed, including failed operations"
+    );
+    metrics::describe_counter!(
+        metric_names::REQUEST_SIZE_TOTAL,
+        metrics::Unit::Bytes,
+        "Cumulative size of request messages received by the gateway"
+    );
+    metrics::describe_counter!(
+        metric_names::RESPONSE_SIZE_TOTAL,
+        metrics::Unit::Bytes,
+        "Cumulative size of response messages produced by the gateway"
+    );
+    metrics::describe_counter!(
+        metric_names::DOCUMENTS_RETURNED,
+        metrics::Unit::Count,
+        "Documents returned by successful find, aggregate, and get-more operations"
+    );
+    metrics::describe_counter!(
+        metric_names::DOCUMENTS_INSERTED,
+        metrics::Unit::Count,
+        "Documents reported as inserted by successful insert operations"
+    );
+    metrics::describe_counter!(
+        metric_names::DOCUMENTS_UPDATED,
+        metrics::Unit::Count,
+        "Documents reported as modified by successful update and find-and-modify operations"
+    );
+    metrics::describe_counter!(
+        metric_names::DOCUMENTS_DELETED,
+        metrics::Unit::Count,
+        "Documents reported as deleted by successful delete operations"
+    );
+    metrics::describe_gauge!(
+        metric_names::SESSION_ACTIVE,
+        metrics::Unit::Count,
+        "Logical sessions currently tracked by the gateway"
+    );
+    metrics::describe_counter!(
+        metric_names::SESSION_OPENED,
+        metrics::Unit::Count,
+        "Logical sessions opened by the gateway"
+    );
+    metrics::describe_counter!(
+        metric_names::SESSION_CLOSED,
+        metrics::Unit::Count,
+        "Logical sessions closed normally by the gateway"
+    );
+    metrics::describe_counter!(
+        metric_names::SESSION_EXPIRED,
+        metrics::Unit::Count,
+        "Logical sessions removed after their lifetime expired"
+    );
+    metrics::describe_gauge!(
+        metric_names::TRANSACTION_ACTIVE,
+        metrics::Unit::Count,
+        "Transactions currently held in the gateway transaction store"
+    );
+    metrics::describe_counter!(
+        metric_names::TRANSACTION_STARTED,
+        metrics::Unit::Count,
+        "Transactions successfully started and inserted into the transaction store"
+    );
+    metrics::describe_counter!(
+        metric_names::TRANSACTION_ENDED,
+        metrics::Unit::Count,
+        "Transactions removed after commit, abort, or expiration"
+    );
+    metrics::describe_gauge!(
+        metric_names::CURSOR_ACTIVE,
+        metrics::Unit::Count,
+        "Cursors currently held in the gateway cursor store"
+    );
+    metrics::describe_counter!(
+        metric_names::CURSOR_OPENED,
+        metrics::Unit::Count,
+        "Logical cursors opened from an initial query continuation"
+    );
+    metrics::describe_counter!(
+        metric_names::CURSOR_ENDED,
+        metrics::Unit::Count,
+        "Logical cursors ended by exhaustion, explicit kill, invalidation, or expiration"
+    );
+    metrics::describe_histogram!(
+        metric_names::GATEWAY_STARTUP_DELAY_MS,
+        metrics::Unit::Milliseconds,
+        "Time until the gateway is ready to accept connections"
+    );
+    metrics::describe_counter!(
+        metric_names::GATEWAY_STARTS,
+        metrics::Unit::Count,
+        "Count of gateway readiness events"
+    );
+}
+
 /// Records request-level metrics directly in the request handling path.
 ///
 /// Called unconditionally for every request. When no global [`metrics::Recorder`]
@@ -60,18 +167,12 @@ pub fn record_gateway_metrics(
         ));
     }
 
-    metrics::counter!(metric_names::DB_CLIENT_OPERATIONS, base_labels.clone()).increment(1);
-    metrics::histogram!(
-        metric_names::DB_CLIENT_OPERATION_DURATION,
-        base_labels.clone()
-    )
-    .record(duration_to_secs(duration_ns));
+    metrics::counter!(metric_names::OPERATIONS, base_labels.clone()).increment(1);
+    metrics::histogram!(metric_names::OPERATION_DURATION, base_labels.clone())
+        .record(duration_to_secs(duration_ns));
 
-    metrics::counter!(
-        metric_names::DB_CLIENT_REQUEST_SIZE_TOTAL,
-        base_labels.clone()
-    )
-    .increment(u64::from(header.message_length().max(0).cast_unsigned()));
+    metrics::counter!(metric_names::REQUEST_SIZE_TOTAL, base_labels.clone())
+        .increment(u64::from(header.message_length().max(0).cast_unsigned()));
 
     let response_size_bytes = match &response {
         Either::Left(resp) => resp
@@ -79,11 +180,8 @@ pub fn record_gateway_metrics(
             .map_or(0, |doc| doc.as_bytes().len() as u64),
         Either::Right((_, size)) => *size as u64,
     };
-    metrics::counter!(
-        metric_names::DB_CLIENT_RESPONSE_SIZE_TOTAL,
-        base_labels.clone()
-    )
-    .increment(response_size_bytes);
+    metrics::counter!(metric_names::RESPONSE_SIZE_TOTAL, base_labels.clone())
+        .increment(response_size_bytes);
 
     // Record document throughput counters based on operation type
     if let Some(req) = request {
@@ -100,11 +198,8 @@ pub fn record_gateway_metrics(
             phase_labels.clear();
             phase_labels.extend_from_slice(&base_labels);
             phase_labels.push(metrics::Label::new(labels::DB_OPERATION_PHASE, phase));
-            metrics::histogram!(
-                metric_names::DB_CLIENT_OPERATION_DURATION,
-                phase_labels.clone()
-            )
-            .record(duration_to_secs(ns));
+            metrics::histogram!(metric_names::OPERATION_DURATION, phase_labels.clone())
+                .record(duration_to_secs(ns));
         }
     };
 
@@ -141,7 +236,7 @@ fn record_document_counts(
                     .or_else(|_| cursor.get_array("nextBatch"))
                     .map_or(0, |arr| arr.into_iter().count() as u64);
                 if batch_len > 0 {
-                    metrics::counter!(metric_names::DB_CLIENT_DOCUMENTS_RETURNED, labels.to_vec())
+                    metrics::counter!(metric_names::DOCUMENTS_RETURNED, labels.to_vec())
                         .increment(batch_len);
                 }
             }
@@ -149,21 +244,21 @@ fn record_document_counts(
         RequestType::Insert => {
             // Insert response: { n: <count> }
             if let Ok(n) = doc.get_i32("n") {
-                metrics::counter!(metric_names::DB_CLIENT_DOCUMENTS_INSERTED, labels.to_vec())
+                metrics::counter!(metric_names::DOCUMENTS_INSERTED, labels.to_vec())
                     .increment(u64::from(n.max(0).cast_unsigned()));
             }
         }
         RequestType::Update | RequestType::FindAndModify => {
             // Update response: { nModified: <count> }
             if let Ok(n) = doc.get_i32("nModified") {
-                metrics::counter!(metric_names::DB_CLIENT_DOCUMENTS_UPDATED, labels.to_vec())
+                metrics::counter!(metric_names::DOCUMENTS_UPDATED, labels.to_vec())
                     .increment(u64::from(n.max(0).cast_unsigned()));
             }
         }
         RequestType::Delete => {
             // Delete response: { n: <count> }
             if let Ok(n) = doc.get_i32("n") {
-                metrics::counter!(metric_names::DB_CLIENT_DOCUMENTS_DELETED, labels.to_vec())
+                metrics::counter!(metric_names::DOCUMENTS_DELETED, labels.to_vec())
                     .increment(u64::from(n.max(0).cast_unsigned()));
             }
         }

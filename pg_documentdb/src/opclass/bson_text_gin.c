@@ -84,6 +84,10 @@ static Size FillWeightsSpec(const char *weightsSpec, void *buffer);
 static TSVector GenerateTsVectorWithOptions(pgbson *doc,
 											BsonGinTextPathOptions *options);
 
+static double ComputeMetaTextScore(pgbson *document,
+								   BsonGinTextPathOptions *textOptions,
+								   Datum query);
+
 /*
  * Returns the language settings based on the index options.
  * If not provided, uses the system default TextSearch config.
@@ -168,6 +172,7 @@ PG_FUNCTION_INFO_V1(rum_bson_single_path_extract_tsvector);
 PG_FUNCTION_INFO_V1(command_bson_query_to_tsquery);
 PG_FUNCTION_INFO_V1(rum_bson_text_path_options);
 PG_FUNCTION_INFO_V1(bson_dollar_text_meta_qual);
+PG_FUNCTION_INFO_V1(bson_orderby_meta);
 
 /*
  * Implements the extract tsvector function that extracts index terms
@@ -438,6 +443,19 @@ EvaluateMetaTextScore(pgbson *document)
 
 	BsonGinTextPathOptions *textOptions =
 		(BsonGinTextPathOptions *) QueryTextData->indexOptions;
+
+	return ComputeMetaTextScore(document, textOptions, QueryTextData->query);
+}
+
+
+/*
+ * Computes the ts_rank text score for a document given the text index options
+ * and the TSQuery Datum to rank against. Shared by the global-state
+ * $meta evaluation path and the bson_orderby_meta order by function.
+ */
+static double
+ComputeMetaTextScore(pgbson *document, BsonGinTextPathOptions *textOptions, Datum query)
+{
 	TSVector vector = GenerateTsVectorWithOptions(document, textOptions);
 
 	if (vector == NULL)
@@ -466,9 +484,52 @@ EvaluateMetaTextScore(pgbson *document)
 	Datum result = OidFunctionCall3(TsRankFunctionId(),
 									PointerGetDatum(rankArray),
 									PointerGetDatum(vector),
-									QueryTextData->query);
+									query);
 
 	return (double) DatumGetFloat4(result);
+}
+
+
+/*
+ * Order by function that computes the text score ($meta: "textScore") for a
+ * document from an explicitly supplied text index options blob and TSQuery.
+ * Unlike EvaluateMetaTextScore, this does not rely on global query state: the
+ * index options and query are passed as arguments so the score can be computed
+ * directly during ordering.
+ */
+Datum
+bson_orderby_meta(PG_FUNCTION_ARGS)
+{
+	bytea *indexOptions = PG_ARGISNULL(1) ? NULL : PG_GETARG_BYTEA_P(1);
+	Datum query = PG_ARGISNULL(2) ? (Datum) 0 : PG_GETARG_DATUM(2);
+
+	if (indexOptions == NULL ||
+		query == (Datum) 0)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION40218),
+						errmsg(
+							"The query needs text score metadata, but this required information is currently unavailable.")));
+	}
+
+	/* The function is non-strict so that the null property checks above are
+	 * reachable. A null document has no text score, so return null rather than
+	 * dereferencing it. */
+	if (PG_ARGISNULL(0))
+	{
+		PG_RETURN_NULL();
+	}
+
+	pgbson *document = PG_GETARG_PGBSON(0);
+	double score = ComputeMetaTextScore(document,
+										(BsonGinTextPathOptions *) indexOptions,
+										query);
+
+	/* Mirror the bson_orderby contract by returning a single { "rank": <score> }
+	 * document so the ordering comparison uses the same bson representation. */
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	PgbsonWriterAppendDouble(&writer, "rank", 4, score);
+	PG_RETURN_POINTER(PgbsonWriterGetPgbson(&writer));
 }
 
 

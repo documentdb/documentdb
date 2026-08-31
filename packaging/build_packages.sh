@@ -201,6 +201,152 @@ echo "Packages built successfully!!"
 if [[ $TEST_CLEAN_INSTALL == true ]]; then
     echo "Testing clean installation in a Docker container..."
 
+    # The test container is started with --rm, so everything the regression
+    # suite writes is destroyed the moment it exits. Bind-mount a directory so
+    # the entrypoint can copy the regression diffs and server logs somewhere
+    # that outlives it. TEST_ARTIFACTS_DIR overrides the location; otherwise a
+    # temporary directory is used and removed again when the tests pass.
+    if [[ -n "${TEST_ARTIFACTS_DIR:-}" ]]; then
+        mkdir -p "$TEST_ARTIFACTS_DIR"
+        test_artifacts_temporary=false
+    else
+        TEST_ARTIFACTS_DIR="$(mktemp -d)"
+        test_artifacts_temporary=true
+    fi
+    abs_test_artifacts_dir="$(cd "$TEST_ARTIFACTS_DIR" && pwd)"
+    test_run_args=(-v "$abs_test_artifacts_dir:/test-artifacts"
+                   --env TEST_ARTIFACTS_DIR=/test-artifacts)
+
+    # Boot-relative watermark for tying dmesg records to this run: dmesg stamps
+    # each record with seconds since boot, the clock /proc/uptime also reports.
+    # Empty on a host without /proc/uptime.
+    test_start_uptime=""
+    function mark_test_start {
+        test_start_uptime="$(cut -d' ' -f1 /proc/uptime 2>/dev/null || true)"
+    }
+
+    # Host-side diagnostics for a failed test container. Must never abort part
+    # way: the container's own evidence is already in the bind mount waiting to
+    # be archived, so every step below degrades instead of failing.
+    function report_host_diagnostics {
+        local label="$1"
+        local dmesg_out="$abs_test_artifacts_dir/dmesg-crash-records.txt"
+        local matches="" tarball had_container_artifacts=false
+        local crash_pattern raw_dmesg window_start window_note outside uncorrelated window_margin
+
+        # Drop a stale capture from an earlier leg sharing an explicit
+        # TEST_ARTIFACTS_DIR before probing what the container left behind.
+        rm -f "$dmesg_out" 2>/dev/null || true
+        if [[ -n "$(ls -A "$abs_test_artifacts_dir" 2>/dev/null)" ]]; then
+            had_container_artifacts=true
+        fi
+
+        # A backend SIGSEGV leaves its faulting ip and the object it landed in
+        # here, e.g. "segfault at 0 ip ... in documentdb.so[...+0x2a000]", which
+        # addr2line resolves without a core dump or debug symbols in the image.
+        # Only the host can read it, and -n keeps sudo from prompting on a dev
+        # machine. The buffer is host-wide, so it is captured to a scratch file
+        # outside the artifacts directory and only the filtered result is ever
+        # written where the archive step can see it.
+        crash_pattern='segfault|general protection|traps:|out of memory|killed process'
+        # Named once so the window and the text describing it cannot drift.
+        window_margin=5
+        raw_dmesg=""
+        # SC2024: only dmesg needs the privilege, and the target is a file we
+        # created. The directive must precede the whole compound command here,
+        # not the elif.
+        # shellcheck disable=SC2024
+        if ! raw_dmesg="$(mktemp 2>/dev/null)"; then
+            raw_dmesg=""
+            echo "Could not create a scratch file for the kernel ring buffer; skipping kernel crash records."
+        elif dmesg 2>/dev/null > "$raw_dmesg" || sudo -n dmesg 2>/dev/null > "$raw_dmesg"; then
+            # The margin covers sampling and container startup jitter only. It
+            # cannot cover suspend: /proc/uptime is CLOCK_BOOTTIME (counts
+            # suspended time), printk uses local_clock (does not), so a host
+            # that has slept is off by its whole suspend time. CI agents do not
+            # suspend; a laptop that has falls through to the uncorrelated
+            # branch and says so. awk runs inside the condition so that a
+            # failure degrades there too instead of aborting.
+            if [[ -n "$test_start_uptime" ]] \
+               && grep -qE '^\[[[:space:]]*[0-9]+\.[0-9]+\]' "$raw_dmesg" \
+               && window_start="$(awk -v u="$test_start_uptime" -v m="$window_margin" 'BEGIN { s = u - m; printf "%.6f", (s > 0 ? s : 0) }')" \
+               && [[ -n "$window_start" ]]; then
+                matches="$(awk -v start="$window_start" '
+                            match($0, /^\[[[:space:]]*[0-9]+\.[0-9]+\]/) {
+                                if (substr($0, RSTART + 1, RLENGTH - 2) + 0 >= start) { print }
+                            }' "$raw_dmesg" \
+                          | grep -Ei "$crash_pattern" | tail -n 40 || true)"
+                if [[ -n "$matches" ]]; then
+                    window_note="kernel records from boot second $window_start onward (test container start, less a ${window_margin}s clock margin)"
+                    # Log first: this copy survives an unwritable artifacts dir.
+                    echo "##[group]Kernel crash records ($window_note)"
+                    printf '%s\n' "$matches"
+                    echo ""
+                    echo "##[endgroup]"
+                    printf '%s\n' "$matches" | head -n 3 | while IFS= read -r line; do
+                        echo "##vso[task.logissue type=error]kernel: ${line:0:300}"
+                    done || true
+                    # Must stay a simple command with 2>/dev/null BEFORE the
+                    # redirect. A failed redirect on a brace group or subshell
+                    # is neither propagated to `if !` nor fatal, and its
+                    # standalone $? is still 1, which is why the group form
+                    # looks safe and is not; a trailing 2>/dev/null also fails
+                    # to suppress the shell's own message for it.
+                    if ! printf '# %s\n# Matching: %s\n\n%s\n' \
+                            "$window_note" "$crash_pattern" "$matches" \
+                            2>/dev/null > "$dmesg_out"; then
+                        # ENOSPC opens fine and fails on write; drop the empty file.
+                        rm -f "$dmesg_out" 2>/dev/null || true
+                        echo "Could not write $dmesg_out; the records above are in this log only."
+                        matches=""
+                    fi
+                else
+                    # Do not let "crashed outside the window" read as an all-clear.
+                    outside=$(grep -Eci "$crash_pattern" "$raw_dmesg" || true)
+                    if [[ "${outside:-0}" -gt 0 ]]; then
+                        echo "No kernel crash records inside this run's window (boot second $window_start onward). The buffer holds ${outside} match(es) outside it, which this run cannot claim, so they are not archived."
+                    else
+                        echo "No kernel-level crash records matched in dmesg (not a hard crash, or the ring buffer already wrapped past it)."
+                    fi
+                fi
+            else
+                # No watermark, an unstamped kernel, or no usable awk: show the
+                # lines, but never archive or annotate what cannot be tied to
+                # this run.
+                uncorrelated="$(grep -Ei "$crash_pattern" "$raw_dmesg" | tail -n 40 || true)"
+                if [[ -n "$uncorrelated" ]]; then
+                    echo "##[group]Kernel crash records, uncorrelated - these cannot be tied to this run, so they are not archived"
+                    printf '%s\n' "$uncorrelated"
+                    echo ""
+                    echo "##[endgroup]"
+                else
+                    echo "No kernel-level crash records matched in dmesg (not a hard crash, or the ring buffer already wrapped past it)."
+                fi
+            fi
+        else
+            echo "dmesg is unavailable here; skipping kernel crash records."
+        fi
+        if [[ -n "$raw_dmesg" ]]; then
+            rm -f "$raw_dmesg" 2>/dev/null || true
+        fi
+
+        # artifact.upload is a stdout logging command, so no CI task definition
+        # is needed and it is inert text elsewhere, where the tarball just
+        # stays on disk at the path printed above. The timestamp+PID suffix
+        # keeps a retried run from uploading under the same name.
+        if [[ $had_container_artifacts == true || -n "$matches" ]]; then
+            tarball="$(dirname "$abs_test_artifacts_dir")/test-diagnostics-${label}-$(date -u +%Y%m%d%H%M%S)-$$.tar.gz"
+            if tar -czf "$tarball" -C "$abs_test_artifacts_dir" . 2>/dev/null; then
+                echo "Test diagnostics archived at $tarball"
+                echo "##vso[artifact.upload artifactname=test-diagnostics-${label}]${tarball}"
+            else
+                echo "Could not archive $abs_test_artifacts_dir; the files are still there."
+            fi
+        else
+            echo "No test diagnostics worth archiving under $abs_test_artifacts_dir (the container copied nothing out and nothing archivable matched in dmesg)."
+        fi
+    }
+
     if [[ "$PACKAGE_TYPE" == "deb" ]]; then
         deb_package_name=$(ls "$abs_output_dir" | grep -E "${OS}-postgresql-$PG-documentdb_${DOCUMENTDB_VERSION}.*\.deb" | grep -v "dbg" | head -n 1)
         deb_package_rel_path="$OUTPUT_DIR/$deb_package_name"
@@ -213,7 +359,11 @@ if [[ $TEST_CLEAN_INSTALL == true ]]; then
             --build-arg POSTGRES_VERSION="$PG" \
             --build-arg DEB_PACKAGE_REL_PATH="$deb_package_rel_path" "$script_dir"
         # Run the Docker container to test the packages
-        docker run --rm documentdb-test-packages:latest
+        mark_test_start
+        if ! docker run --rm "${test_run_args[@]}" documentdb-test-packages:latest; then
+            report_host_diagnostics "deb-${OS}-pg${PG}"
+            exit 1
+        fi
 
     elif [[ "$PACKAGE_TYPE" == "rpm" ]]; then
     rpm_package_name=$(ls "$abs_output_dir" | grep -E "${OS}-postgresql${PG}-documentdb-${DOCUMENTDB_VERSION}.*\.(x86_64|aarch64)\.rpm" | head -n 1)
@@ -240,7 +390,16 @@ if [[ $TEST_CLEAN_INSTALL == true ]]; then
             --build-arg RPM_PACKAGE_REL_PATH="$package_rel_path" "$script_dir"
             
         # Run the Docker container to test the packages
-        docker run --rm --env POSTGRES_VERSION="$PG" documentdb-test-rpm-packages:latest
+        mark_test_start
+        if ! docker run --rm "${test_run_args[@]}" --env POSTGRES_VERSION="$PG" documentdb-test-rpm-packages:latest; then
+            report_host_diagnostics "rpm-${OS}-pg${PG}"
+            exit 1
+        fi
+    fi
+
+    # Nothing failed, so the diagnostics directory holds nothing worth keeping.
+    if [[ $test_artifacts_temporary == true ]]; then
+        rm -rf "$abs_test_artifacts_dir"
     fi
 
     echo "Clean installation test successful!!"

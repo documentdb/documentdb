@@ -15,10 +15,16 @@
 #include "metadata/collection.h"
 #include "api_hooks_def.h"
 
+
+ShouldRunOptionalCatalogUpgrades_HookType should_run_optional_catalog_upgrades_hook =
+	NULL;
+RunOptionalUpgradeDataTables_HookType run_optional_upgrade_data_tables_hook = NULL;
+
 static inline bool IsUpdateForVersion(ExtensionVersion inputVersion,
 									  MajorVersion expectedMajor, int expectedMinor, int
 									  expectedPatch);
 static ArrayType * GetCollectionIdsCore(const char *conditions);
+static void RunOptionalUpgradeDataTables(ExtensionVersion inputVersion);
 
 PG_FUNCTION_INFO_V1(apply_extension_data_table_upgrade);
 
@@ -51,6 +57,7 @@ apply_extension_data_table_upgrade(PG_FUNCTION_ARGS)
 	if (!ShouldUpgradeDataTables)
 	{
 		/* No upgrade required for data tables */
+		RunOptionalUpgradeDataTables(inputVersion);
 		PG_RETURN_VOID();
 	}
 
@@ -64,6 +71,8 @@ apply_extension_data_table_upgrade(PG_FUNCTION_ARGS)
 	{
 		AlterRolesTablePrimaryKey();
 	}
+
+	RunOptionalUpgradeDataTables(inputVersion);
 
 	PG_RETURN_VOID();
 }
@@ -203,4 +212,69 @@ GetCollectionIdsCore(const char *conditions)
 	}
 
 	return DatumGetArrayTypeP(versionDatum);
+}
+
+
+/*
+ * Create validate_dbname trigger on the collections table.
+ */
+void
+CreateValidateDbNameTrigger(void)
+{
+	bool isNull = false;
+	bool readOnly = false;
+
+	StringInfo cmdStr = makeStringInfo();
+	appendStringInfo(cmdStr,
+					 "CREATE OR REPLACE TRIGGER collections_trigger_validate_dbname "
+					 "BEFORE INSERT OR UPDATE ON %s.collections "
+					 "FOR EACH ROW EXECUTE FUNCTION "
+					 "%s.trigger_validate_dbname();", ApiCatalogSchemaName,
+					 ApiCatalogToApiInternalSchemaName);
+	ExtensionExecuteQueryViaSPI(cmdStr->data, readOnly, SPI_OK_UTILITY,
+								&isNull);
+}
+
+
+static void
+RunOptionalUpgradeDataTables(ExtensionVersion inputVersion)
+{
+	/* Check if the optional upgrades for catalog tables should be run. */
+	if (should_run_optional_catalog_upgrades_hook != NULL &&
+		!should_run_optional_catalog_upgrades_hook())
+	{
+		return;
+	}
+
+	if (IsUpdateForVersion(inputVersion, DocDB_V1, 0, 0))
+	{
+		bool readOnly = false;
+		bool isNull = false;
+		ExtensionExecuteQueryViaSPI(
+			psprintf("ALTER TABLE %s.collections "
+					 "ADD COLUMN IF NOT EXISTS view_definition %s.bson DEFAULT NULL, "
+					 "ADD COLUMN IF NOT EXISTS validator %s.bson DEFAULT NULL, "
+					 "ADD COLUMN IF NOT EXISTS validation_level text DEFAULT NULL "
+					 "CONSTRAINT validation_level_check "
+					 "CHECK (validation_level IN ('off', 'strict', 'moderate')), "
+					 "ADD COLUMN IF NOT EXISTS validation_action text DEFAULT NULL "
+					 "CONSTRAINT validation_action_check "
+					 "CHECK (validation_action IN ('warn', 'error')), "
+					 "ADD COLUMN IF NOT EXISTS options %s.bson DEFAULT NULL",
+					 ApiCatalogSchemaName, CoreSchemaName, CoreSchemaName,
+					 CoreSchemaName),
+			readOnly,
+			SPI_OK_UTILITY,
+			&isNull);
+
+		CreateValidateDbNameTrigger();
+		AlterRolesTablePrimaryKey();
+	}
+
+	if (run_optional_upgrade_data_tables_hook != NULL)
+	{
+		run_optional_upgrade_data_tables_hook(inputVersion.Major,
+											  inputVersion.Minor,
+											  inputVersion.Patch);
+	}
 }

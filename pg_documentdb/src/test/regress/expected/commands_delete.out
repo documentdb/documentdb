@@ -1300,3 +1300,45 @@ select documentdb_api.drop_collection('db', 'del_limit');
  t
 (1 row)
 
+-- Deletes cannot violate a unique index and must not populate the name cache.
+select 1 from documentdb_api.insert_one('db', 'delete_index_name_cache', '{"_id":1,"a":1}');
+NOTICE:  creating collection
+ ?column? 
+----------
+        1
+(1 row)
+
+select 1 from documentdb_api.insert_one('db', 'delete_index_name_cache', '{"_id":2,"a":2}');
+ ?column? 
+----------
+        1
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'db',
+    '{"createIndexes":"delete_index_name_cache","indexes":[
+        {"key":{"a":1},"name":"a_1","unique":true}
+    ]}',
+    true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SET client_min_messages TO DEBUG1;
+select documentdb_api.delete('db', '{"delete":"delete_index_name_cache","ordered":false,"deletes":[
+    {"q":{"_id":1},"limit":1},
+    {"q":{"_id":2},"limit":1}
+]}');
+                                         delete                                         
+----------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""2"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+RESET client_min_messages;
+select documentdb_api.drop_collection('db', 'delete_index_name_cache');
+ drop_collection 
+-----------------
+ t
+(1 row)
+

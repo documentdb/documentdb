@@ -1,0 +1,72 @@
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documentdb_api_internal;
+SET documentdb.next_collection_id TO 2600;
+SET documentdb.next_collection_index_id TO 2600;
+SET documentdb.enableDynamicCursors TO on;
+SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
+SET documentdb.enableExtendedIndexes TO on;
+SELECT documentdb_api.create_collection('large_in_db', 'items');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'large_in_db', 'items', '{ "_id": 1, "a": 1, "b": 1 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'large_in_db',
+    '{ "createIndexes": "items", "indexes": [
+        { "key": { "b": 1, "a": 1 }, "name": "b_1_a_1", "enableOrderedIndex": true },
+        { "key": { "b": 1 }, "name": "b_1", "enableOrderedIndex": true },
+        { "key": { "a": 1 }, "name": "a_1", "enableOrderedIndex": true }
+    ] }',
+    true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SET documentdb.forceDisableSeqScan TO on;
+WITH in_values AS
+(
+    SELECT string_agg(i::text, ',' ORDER BY i) AS values
+    FROM generate_series(1, 50000) i
+),
+command_spec AS
+(
+    SELECT format(
+        '{ "aggregate": "items", "pipeline": [
+            { "$match": { "$and": [
+                { "a": { "$in": [%1$s] } },
+                { "b": { "$in": [%1$s] } }
+            ] } }
+        ], "cursor": { "batchSize": 1 } }',
+        values)::documentdb_core.bson AS command_spec
+    FROM in_values
+)
+SELECT first_page.cursorPage IS NOT NULL AS query_succeeded
+FROM command_spec,
+LATERAL aggregate_cursor_first_page(
+    database => 'large_in_db',
+    commandSpec => command_spec.command_spec,
+    cursorId => 25001) first_page;
+ query_succeeded 
+-----------------
+ t
+(1 row)
+
+RESET documentdb.forceDisableSeqScan;
+RESET documentdb.enableExtendedIndexes;
+RESET documentdb.enableCursorsOnAggregationQueryRewrite;
+RESET documentdb.enableDynamicCursors;
+SELECT documentdb_api.drop_collection('large_in_db', 'items');
+ drop_collection 
+-----------------
+ t
+(1 row)
+

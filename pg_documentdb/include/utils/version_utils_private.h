@@ -40,4 +40,6 @@ bool IsInitializedVersionAtLeast(MajorVersion major, int minor, int patch);
 bool IsExtensionVersionAtleast(ExtensionVersion extVersion, MajorVersion major, int minor,
 							   int
 							   patch);
+bool IsExtensionVersionAtLeastVersion(ExtensionVersion extVersion, ExtensionVersion
+									  targetVersion);
 #endif

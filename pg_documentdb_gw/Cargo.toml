@@ -48,6 +48,7 @@ metrics = "0.24.6"
 # This is currently pinned to this git commit in order to support OpenTelemetry 0.32+
 metrics-exporter-opentelemetry = { git = "https://github.com/Noelware/metrics-exporter-opentelemetry", rev = "493caa6f428013dcab57a89883671e3d46969ccf" }
 mimalloc = "0.1.52"
+nacelle = { version = "0.3.1", default-features = false, features = ["buffer-rotation", "openssl", "tcp"] }
 # mongodb rust driver that we use to write test cases for DocumentDB
 mongodb = { version = "3.6.0", default-features = false, features = [
     "openssl-tls",

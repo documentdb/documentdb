@@ -12,6 +12,7 @@ mod consts;
 use std::{
     borrow::Cow,
     collections::HashMap,
+    str::FromStr,
     time::{Duration, SystemTime},
 };
 
@@ -22,9 +23,8 @@ use documentdb_gateway_core::telemetry::sql_commenter::{
 use documentdb_gateway_core::{
     error::{DocumentDBError, Result},
     telemetry::{
-        consts::metric_names,
         context_propagation::{install_trace_context_bridge, TraceContextBridge},
-        TelemetrySettings,
+        describe_metrics, TelemetrySettings,
     },
 };
 use metrics_exporter_opentelemetry::Recorder;
@@ -285,59 +285,6 @@ fn create_tracer_provider(
     Ok(Some(provider))
 }
 
-fn describe_metrics() {
-    metrics::describe_histogram!(
-        metric_names::DB_CLIENT_OPERATION_DURATION,
-        metrics::Unit::Seconds,
-        "Duration of database client operations"
-    );
-    metrics::describe_counter!(
-        metric_names::DB_CLIENT_OPERATIONS,
-        metrics::Unit::Count,
-        "Count of database client operations"
-    );
-    metrics::describe_counter!(
-        metric_names::DB_CLIENT_REQUEST_SIZE_TOTAL,
-        metrics::Unit::Bytes,
-        "Total size of database client request payloads"
-    );
-    metrics::describe_counter!(
-        metric_names::DB_CLIENT_RESPONSE_SIZE_TOTAL,
-        metrics::Unit::Bytes,
-        "Total size of database client response payloads"
-    );
-    metrics::describe_counter!(
-        metric_names::DB_CLIENT_DOCUMENTS_RETURNED,
-        metrics::Unit::Count,
-        "Documents returned by read operations"
-    );
-    metrics::describe_counter!(
-        metric_names::DB_CLIENT_DOCUMENTS_INSERTED,
-        metrics::Unit::Count,
-        "Documents inserted"
-    );
-    metrics::describe_counter!(
-        metric_names::DB_CLIENT_DOCUMENTS_UPDATED,
-        metrics::Unit::Count,
-        "Documents updated"
-    );
-    metrics::describe_counter!(
-        metric_names::DB_CLIENT_DOCUMENTS_DELETED,
-        metrics::Unit::Count,
-        "Documents deleted"
-    );
-    metrics::describe_histogram!(
-        metric_names::GATEWAY_STARTUP_DELAY_MS,
-        metrics::Unit::Milliseconds,
-        "Time until the gateway is ready to accept connections"
-    );
-    metrics::describe_counter!(
-        metric_names::GATEWAY_STARTS,
-        metrics::Unit::Count,
-        "Count of gateway readiness events"
-    );
-}
-
 #[derive(Debug)]
 struct OpenTelemetryTraceContextBridge;
 
@@ -375,13 +322,16 @@ fn format_traceparent_comment(span_context: &SpanContext) -> String {
 }
 
 impl TraceContextBridge for OpenTelemetryTraceContextBridge {
-    fn set_parent(&self, span: &tracing::Span, traceparent: &str) -> bool {
-        let Some(parent) = parse_traceparent(traceparent) else {
+    fn set_parent(
+        &self,
+        span: &tracing::Span,
+        traceparent: &str,
+        tracestate: Option<&str>,
+    ) -> bool {
+        let Some(span_context) = parse_remote_span_context(traceparent, tracestate) else {
             return false;
         };
 
-        let span_context =
-            SpanContext::new(parent.0, parent.1, parent.2, true, TraceState::default());
         span.set_parent(Context::current().with_remote_span_context(span_context))
             .is_ok()
     }
@@ -575,6 +525,22 @@ fn parse_traceparent(traceparent: &str) -> Option<(TraceId, SpanId, TraceFlags)>
     Some((trace_id, span_id, flags))
 }
 
+fn parse_remote_span_context(traceparent: &str, tracestate: Option<&str>) -> Option<SpanContext> {
+    let (trace_id, span_id, flags) = parse_traceparent(traceparent)?;
+    // A malformed tracestate must not invalidate an otherwise valid traceparent.
+    let remote_state = tracestate
+        .and_then(|value| TraceState::from_str(value).ok())
+        .unwrap_or_default();
+
+    Some(SpanContext::new(
+        trace_id,
+        span_id,
+        flags,
+        true,
+        remote_state,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -678,6 +644,47 @@ mod tests {
         assert!(
             parse_traceparent("01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01").is_none()
         );
+    }
+
+    #[test]
+    fn preserves_valid_w3c_tracestate() {
+        let span_context = parse_remote_span_context(
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+            Some("vendor1=opaqueValue1,vendor2=opaqueValue2"),
+        )
+        .expect("valid trace context should parse");
+
+        assert_eq!(
+            span_context.trace_state().header(),
+            "vendor1=opaqueValue1,vendor2=opaqueValue2"
+        );
+    }
+
+    #[test]
+    fn uses_default_w3c_tracestate_when_absent() {
+        let span_context = parse_remote_span_context(
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+            None,
+        )
+        .expect("valid traceparent should parse");
+
+        assert_eq!(span_context.trace_state(), &TraceState::default());
+    }
+
+    #[test]
+    fn ignores_partially_malformed_w3c_tracestate() {
+        let span_context = parse_remote_span_context(
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+            Some("vendor1=opaqueValue1,invalid"),
+        )
+        .expect("valid traceparent should parse");
+
+        assert_eq!(
+            span_context.trace_id().to_string(),
+            "4bf92f3577b34da6a3ce929d0e0e4736"
+        );
+        assert_eq!(span_context.span_id().to_string(), "00f067aa0ba902b7");
+        assert_eq!(span_context.trace_state(), &TraceState::default());
     }
 
     #[cfg(feature = "postgres-sql-commenter")]

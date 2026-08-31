@@ -72,6 +72,7 @@ WORKDIR /usr/src/documentdb
 COPY . /usr/src/documentdb
 COPY ${RPM_PACKAGE_REL_PATH} /tmp/documentdb.rpm
 COPY packaging/test_packages/test-install-entrypoint-rpm.sh /usr/local/bin/test-install-entrypoint-rpm.sh
-RUN chmod +x /usr/local/bin/test-install-entrypoint-rpm.sh
+COPY packaging/test_packages/report-test-failure.sh /usr/local/bin/report-test-failure.sh
+RUN chmod +x /usr/local/bin/test-install-entrypoint-rpm.sh /usr/local/bin/report-test-failure.sh
 
 ENTRYPOINT ["test-install-entrypoint-rpm.sh"]

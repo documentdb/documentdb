@@ -1,0 +1,1149 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documentdb_api_internal,public;
+-- Pin the default-on custom scan off; each custom-scan case enables it locally.
+SET documentdb.enableDistinctCustomScan TO off;
+SET documentdb.defaultUseCompositeOpClass TO on;
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+-- Keep the fixed ID range stable when this file runs alone.
+SELECT documentdb_api.insert_one('db', 'collation_distinct_setup_sentinel', '{ "_id": 0 }');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'collation_distinct_setup_sentinel');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SET documentdb.next_collection_id TO 20200;
+SET documentdb.next_collection_index_id TO 20200;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'db',
+  '{ "createIndexes": "dist_collation", "indexes": [ { "key": { "value": 1 }, "name": "idx_value_en_s1", "collation": { "locale": "en", "strength": 1 } } ] }',
+  true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one(
+  'db',
+  'dist_collation',
+  bson_build_document(
+    '_id', i,
+    'value', CASE i % 4
+               WHEN 0 THEN 'cafe'
+               WHEN 1 THEN convert_from(decode('434146c389', 'hex'), 'UTF8')
+               WHEN 2 THEN 'tea'
+               ELSE 'TEA'
+             END)))
+FROM generate_series(1, 400) AS i;
+ count 
+-------
+   400
+(1 row)
+
+ANALYZE documentdb_data.documents_20200;
+-- Test 1: Ordered pushdown without the custom scan.
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                           run_explain_and_trim                                                            
+-------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text))
+         ->  ProjectSet
+               Output: bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text)
+               ->  Index Scan using idx_value_en_s1 on documentdb_data.documents_20200 collection
+                     Output: collection.shard_key_value, collection.object_id, collection.document
+                     Index Cond: (collection.document @<> '{ "value" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                     Order By: (collection.document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
+(10 rows)
+
+ROLLBACK;
+-- Test 2: The custom scan skips duplicate collated index entries.
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                           run_explain_and_trim                                                            
+-------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text)))
+   ->  Unique (actual rows=2 loops=1)
+         Output: (bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text))
+         ->  ProjectSet (actual rows=2 loops=1)
+               Output: bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=2 loops=1)
+                     Output: collection.document
+                     ->  Index Scan using idx_value_en_s1 on documentdb_data.documents_20200 collection (actual rows=2 loops=1)
+                           Output: collection.document
+                           Index Cond: (collection.document @<> '{ "value" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (collection.document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
+(12 rows)
+
+WITH result AS (
+  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
+)
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "2" } }
+(1 row)
+
+ROLLBACK;
+-- Test 3: A strength mismatch falls back to a runtime Sort.
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 2 } }')
+$cmd$);
+                                                           run_explain_and_trim                                                            
+-------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level2'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level2'::text))
+         ->  Sort
+               Output: (bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level2'::text))
+               Sort Key: (bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level2'::text)) USING <<<
+               ->  ProjectSet
+                     Output: bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level2'::text)
+                     ->  Index Scan using _id_ on documentdb_data.documents_20200 collection
+                           Output: collection.shard_key_value, collection.object_id, collection.document
+                           Index Cond: (collection.shard_key_value = '20200'::bigint)
+(12 rows)
+
+WITH result AS (
+  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 2 } }')
+)
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "3" } }
+(1 row)
+
+ROLLBACK;
+-- Test 4: A binary distinct cannot use collated index ordering.
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value" }')
+$cmd$);
+                                          run_explain_and_trim                                           
+---------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'value'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, 'value'::text))
+         ->  Sort
+               Output: (bson_distinct_unwind(collection.document, 'value'::text))
+               Sort Key: (bson_distinct_unwind(collection.document, 'value'::text))
+               ->  ProjectSet
+                     Output: bson_distinct_unwind(collection.document, 'value'::text)
+                     ->  Index Scan using _id_ on documentdb_data.documents_20200 collection
+                           Output: collection.shard_key_value, collection.object_id, collection.document
+                           Index Cond: (collection.shard_key_value = '20200'::bigint)
+(12 rows)
+
+WITH result AS (
+  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value" }')
+)
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "4" } }
+(1 row)
+
+ROLLBACK;
+-- Test 5: Disabling collated ordered indexes forces a runtime Sort.
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                           run_explain_and_trim                                                            
+-------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text))
+         ->  Sort
+               Output: (bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text))
+               Sort Key: (bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text)) USING <<<
+               ->  ProjectSet
+                     Output: bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text)
+                     ->  Index Scan using _id_ on documentdb_data.documents_20200 collection
+                           Output: collection.shard_key_value, collection.object_id, collection.document
+                           Index Cond: (collection.shard_key_value = '20200'::bigint)
+(12 rows)
+
+WITH result AS (
+  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
+)
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "2" } }
+(1 row)
+
+ROLLBACK;
+-- Test 6: Truncated index terms preserve two collation equivalence classes.
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'db',
+  '{ "createIndexes": "dist_collation_truncated", "indexes": [ { "key": { "value": 1 }, "name": "idx_value_en_s1_truncated", "collation": { "locale": "en", "strength": 1 } } ] }',
+  true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_truncated',
+  bson_build_document('_id', 1, 'value', concat(repeat('A', 4000), 'one')));
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_truncated',
+  bson_build_document('_id', 2, 'value', concat(repeat('a', 4000), 'two')));
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_truncated',
+  bson_build_document('_id', 3, 'value', concat(repeat('a', 4000), 'ONE')));
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+ANALYZE documentdb_data.documents_20201;
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_truncated", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                      run_explain_and_trim                                                      
+--------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Unique (actual rows=2 loops=1)
+         ->  ProjectSet (actual rows=3 loops=1)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+                     namespaceName: db.dist_collation_truncated
+                     indexName: idx_value_en_s1_truncated
+                     indexKey: {"value": 1}
+                     indexCollation: en-u-ks-level1
+                     isMultiKey: false
+                     hasTruncation: true
+                     indexBounds: ["value": (MinKey, MaxKey)]
+                     innerScanLoops: 1 loops
+                     scanType: ordered
+                     scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+                     ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
+                           ->  Index Scan using idx_value_en_s1_truncated on documents_20201 collection (actual rows=3 loops=1)
+                                 Index Cond: (document @<> '{ "value" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                                 Order By: (document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
+(18 rows)
+
+WITH result AS (
+  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_truncated", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
+)
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "2" } }
+(1 row)
+
+ROLLBACK;
+-- Test 7: A multikey collated index falls back to sorting unwound array values.
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'db',
+  '{ "createIndexes": "dist_collation_array", "indexes": [ { "key": { "value": 1 }, "name": "idx_value_en_s1_array", "collation": { "locale": "en", "strength": 1 } } ] }',
+  true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_array',
+  '{ "_id": 1, "value": [ "cafe", "tea" ] }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_array',
+  '{ "_id": 2, "value": [ "CAFE", "coffee" ] }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_array',
+  '{ "_id": 3, "value": [ "TEA", "cafe" ] }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_array',
+  '{ "_id": 4, "value": [ "cafe", "coffee", "CAFE" ] }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+ANALYZE documentdb_data.documents_20202;
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_array", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                 run_explain_and_trim                                                 
+----------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Unique (actual rows=3 loops=1)
+         ->  Sort (actual rows=9 loops=1)
+               Sort Key: (bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text)) USING <<<
+               Sort Method: quicksort  Memory: xxxkB
+               ->  ProjectSet (actual rows=9 loops=1)
+                     ->  Index Scan using _id_ on documents_20202 collection (actual rows=4 loops=1)
+                           Index Cond: (shard_key_value = '20202'::bigint)
+(8 rows)
+
+WITH result AS (
+  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_array", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
+)
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "3" } }
+(1 row)
+
+ROLLBACK;
+-- Test 8: Disabling distinct pushdown retains the runtime Sort.
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                           run_explain_and_trim                                                            
+-------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text))
+         ->  Sort
+               Output: (bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text))
+               Sort Key: (bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text)) USING <<<
+               ->  ProjectSet
+                     Output: bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text)
+                     ->  Index Scan using _id_ on documentdb_data.documents_20200 collection
+                           Output: collection.shard_key_value, collection.object_id, collection.document
+                           Index Cond: (collection.shard_key_value = '20200'::bigint)
+(12 rows)
+
+ROLLBACK;
+-- Test 9: A matching collated index supports a dotted distinct path.
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'db',
+  '{ "createIndexes": "dist_collation_nested", "indexes": [ { "key": { "nested.value": 1 }, "name": "idx_nested_value_en_s1", "collation": { "locale": "en", "strength": 1 } } ] }',
+  true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_nested',
+  '{ "_id": 1, "nested": { "value": "cafe" } }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_nested',
+  '{ "_id": 2, "nested": { "value": "CAFE" } }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_nested',
+  '{ "_id": 3, "nested": { "value": "tea" } }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+ANALYZE documentdb_data.documents_20203;
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_nested", "key": "nested.value", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                     run_explain_and_trim                                                     
+------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Unique (actual rows=2 loops=1)
+         ->  ProjectSet (actual rows=2 loops=1)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=2 loops=1)
+                     ->  Index Scan using idx_nested_value_en_s1 on documents_20203 collection (actual rows=2 loops=1)
+                           Index Cond: (document @<> '{ "nested.value" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (document |-<> '{ "nested.value" : { "$numberInt" : "1" } }'::bson)
+(7 rows)
+
+WITH result AS (
+  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_nested", "key": "nested.value", "collation": { "locale": "en", "strength": 1 } }')
+)
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "2" } }
+(1 row)
+
+SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
+WITH result AS (
+  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_nested", "key": "nested.value", "collation": { "locale": "en", "strength": 1 } }')
+)
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "2" } }
+(1 row)
+
+ROLLBACK;
+-- Test 10: A collated predicate and distinct ordering share one index.
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "query": { "value": { "$gte": "cafe" } }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$, p_ignore_heap_fetches => true);
+                                               run_explain_and_trim                                                
+-------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Unique (actual rows=2 loops=1)
+         ->  ProjectSet (actual rows=2 loops=1)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=2 loops=1)
+                     ->  Index Scan using idx_value_en_s1 on documents_20200 collection (actual rows=2 loops=1)
+                           Index Cond: (document @>= '{ "value" : "cafe", "collation" : "en-u-ks-level1" }'::bson)
+                           Order By: (document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
+(7 rows)
+
+WITH result AS (
+  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "query": { "value": { "$gte": "cafe" } }, "collation": { "locale": "en", "strength": 1 } }')
+)
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "2" } }
+(1 row)
+
+SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
+WITH result AS (
+  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "query": { "value": { "$gte": "cafe" } }, "collation": { "locale": "en", "strength": 1 } }')
+)
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "2" } }
+(1 row)
+
+ROLLBACK;
+-- Test 11: A lossy collated term requires Index Scan, not Index Only Scan.
+ALTER TABLE documentdb_data.documents_20200 SET (autovacuum_enabled = off);
+VACUUM (ANALYZE ON, FREEZE ON) documentdb_data.documents_20200;
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                 run_explain_and_trim                                                  
+-----------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Unique (actual rows=2 loops=1)
+         ->  ProjectSet (actual rows=2 loops=1)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=2 loops=1)
+                     ->  Index Scan using idx_value_en_s1 on documents_20200 collection (actual rows=2 loops=1)
+                           Index Cond: (document @<> '{ "value" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
+(7 rows)
+
+ROLLBACK;
+ALTER TABLE documentdb_data.documents_20200 RESET (autovacuum_enabled);
+-- Test 12: Mixed types preserve type boundaries while strings collate.
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'db',
+  '{ "createIndexes": "dist_collation_mixed", "indexes": [ { "key": { "value": 1 }, "name": "idx_value_en_s1_mixed", "collation": { "locale": "en", "strength": 1 } } ] }',
+  true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'dist_collation_mixed', '{ "_id": 1, "value": null }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'dist_collation_mixed', '{ "_id": 2, "value": 1 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'dist_collation_mixed', '{ "_id": 3, "value": "cafe" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'dist_collation_mixed', '{ "_id": 4, "value": "CAFE" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'dist_collation_mixed', '{ "_id": 5 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+ANALYZE documentdb_data.documents_20204;
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_mixed", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                 run_explain_and_trim                                                  
+-----------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Unique (actual rows=3 loops=1)
+         ->  ProjectSet (actual rows=3 loops=1)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=4 loops=1)
+                     ->  Index Scan using idx_value_en_s1_mixed on documents_20204 collection (actual rows=4 loops=1)
+                           Index Cond: (document @<> '{ "value" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
+(7 rows)
+
+WITH result AS (
+  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_mixed", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
+)
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "3" } }
+(1 row)
+
+SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
+WITH result AS (
+  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_mixed", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
+)
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "3" } }
+(1 row)
+
+ROLLBACK;
+-- Test 13: An incompatible distinct-exists index cannot supply ordering.
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SET LOCAL documentdb.enable_distinct_exists_filter_pushdown TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 2 } }')
+$cmd$);
+                                                           run_explain_and_trim                                                            
+-------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level2'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level2'::text))
+         ->  Sort
+               Output: (bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level2'::text))
+               Sort Key: (bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level2'::text)) USING <<<
+               ->  ProjectSet
+                     Output: bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level2'::text)
+                     ->  Index Scan using idx_value_en_s1 on documentdb_data.documents_20200 collection
+                           Output: collection.shard_key_value, collection.object_id, collection.document
+                           Index Cond: (collection.document @>= '{ "value" : { "$minKey" : 1 } }'::bson)
+(12 rows)
+
+WITH result AS (
+  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 2 } }')
+)
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "3" } }
+(1 row)
+
+ROLLBACK;
+-- Test 14: Each collation selects its matching index.
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'db',
+  '{ "createIndexes": "dist_collation", "indexes": [ { "key": { "value": 1 }, "name": "idx_value_en_s2", "collation": { "locale": "en", "strength": 2 } } ] }',
+  true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+ANALYZE documentdb_data.documents_20200;
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                 run_explain_and_trim                                                  
+-----------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Unique (actual rows=2 loops=1)
+         ->  ProjectSet (actual rows=2 loops=1)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=2 loops=1)
+                     ->  Index Scan using idx_value_en_s1 on documents_20200 collection (actual rows=2 loops=1)
+                           Index Cond: (document @<> '{ "value" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
+(7 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 2 } }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                 run_explain_and_trim                                                  
+-----------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Unique (actual rows=3 loops=1)
+         ->  ProjectSet (actual rows=3 loops=1)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
+                     ->  Index Scan using idx_value_en_s2 on documents_20200 collection (actual rows=3 loops=1)
+                           Index Cond: (document @<> '{ "value" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
+(7 rows)
+
+WITH result AS (
+  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 2 } }')
+)
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "3" } }
+(1 row)
+
+ROLLBACK;
+-- Test 15: A collated leading equality enables the compound index.
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'db',
+  '{ "createIndexes": "dist_collation_compound", "indexes": [ { "key": { "category": 1, "value": 1 }, "name": "idx_category_value_en_s1", "collation": { "locale": "en", "strength": 1 } } ] }',
+  true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_compound',
+  '{ "_id": 1, "category": "group", "value": "cafe" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_compound',
+  '{ "_id": 2, "category": "GROUP", "value": "CAFE" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_compound',
+  '{ "_id": 3, "category": "group", "value": "tea" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_compound',
+  '{ "_id": 4, "category": "other", "value": "coffee" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+ANALYZE documentdb_data.documents_20205;
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_compound", "key": "value", "query": { "category": "group" }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                  run_explain_and_trim                                                   
+-------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Unique (actual rows=2 loops=1)
+         ->  ProjectSet (actual rows=2 loops=1)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=2 loops=1)
+                     ->  Index Scan using idx_category_value_en_s1 on documents_20205 collection (actual rows=2 loops=1)
+                           Index Cond: (document @= '{ "category" : "group", "collation" : "en-u-ks-level1" }'::bson)
+                           Order By: (document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
+(7 rows)
+
+WITH result AS (
+  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_compound", "key": "value", "query": { "category": "group" }, "collation": { "locale": "en", "strength": 1 } }')
+)
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "2" } }
+(1 row)
+
+SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
+WITH result AS (
+  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_compound", "key": "value", "query": { "category": "group" }, "collation": { "locale": "en", "strength": 1 } }')
+)
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "2" } }
+(1 row)
+
+ROLLBACK;
+-- Full-response checks.
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'db',
+  '{ "createIndexes": "dist_collation_response", "indexes": [
+      { "key": { "value": 1 }, "name": "idx_value_fr_s2", "collation": { "locale": "fr", "strength": 2 } },
+      { "key": { "nested.value": 1 }, "name": "idx_nested_value_fr_s2", "collation": { "locale": "fr", "strength": 2 } },
+      { "key": { "numeric": 1 }, "name": "idx_numeric_en_s1_numeric", "collation": { "locale": "en", "strength": 1, "numericOrdering": true } }
+    ] }',
+  true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_response',
+  '{ "_id": 1, "value": "cafe", "nested": { "value": "cafe" }, "numeric": "2" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_response',
+  '{ "_id": 2, "value": "caf\u00e9", "nested": { "value": "caf\u00e9" }, "numeric": "10" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_response',
+  '{ "_id": 3, "value": "th\u00e9", "nested": { "value": "th\u00e9" }, "numeric": "20" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_response',
+  '{ "_id": 4, "value": "cafe", "nested": { "value": "cafe" }, "numeric": "2" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+ANALYZE documentdb_data.documents_20206;
+-- Test 16: Scalar results match with ordered pushdown and a runtime Sort.
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_response", "key": "value", "collation": { "locale": "fr", "strength": 2 } }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                 run_explain_and_trim                                                  
+-----------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Unique (actual rows=3 loops=1)
+         ->  ProjectSet (actual rows=3 loops=1)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
+                     ->  Index Scan using idx_value_fr_s2 on documents_20206 collection (actual rows=3 loops=1)
+                           Index Cond: (document @<> '{ "value" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
+(7 rows)
+
+SELECT document FROM documentdb_api.distinct_query(
+  'db',
+  '{ "distinct": "dist_collation_response", "key": "value", "collation": { "locale": "fr", "strength": 2 } }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "values" : [ "cafe", "café", "thé" ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
+SELECT document FROM documentdb_api.distinct_query(
+  'db',
+  '{ "distinct": "dist_collation_response", "key": "value", "collation": { "locale": "fr", "strength": 2 } }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "values" : [ "cafe", "café", "thé" ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+ROLLBACK;
+-- Test 17: Dotted values use their matching collated index.
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_response", "key": "nested.value", "collation": { "locale": "fr", "strength": 2 } }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                     run_explain_and_trim                                                     
+------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Unique (actual rows=3 loops=1)
+         ->  ProjectSet (actual rows=3 loops=1)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
+                     ->  Index Scan using idx_nested_value_fr_s2 on documents_20206 collection (actual rows=3 loops=1)
+                           Index Cond: (document @<> '{ "nested.value" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (document |-<> '{ "nested.value" : { "$numberInt" : "1" } }'::bson)
+(7 rows)
+
+SELECT document FROM documentdb_api.distinct_query(
+  'db',
+  '{ "distinct": "dist_collation_response", "key": "nested.value", "collation": { "locale": "fr", "strength": 2 } }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "values" : [ "cafe", "café", "thé" ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+ROLLBACK;
+-- Test 18: Numeric ordering controls the physical result order.
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_response", "key": "numeric", "collation": { "locale": "en", "strength": 1, "numericOrdering": true } }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                   run_explain_and_trim                                                   
+--------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Unique (actual rows=3 loops=1)
+         ->  ProjectSet (actual rows=3 loops=1)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
+                     ->  Index Scan using idx_numeric_en_s1_numeric on documents_20206 collection (actual rows=3 loops=1)
+                           Index Cond: (document @<> '{ "numeric" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (document |-<> '{ "numeric" : { "$numberInt" : "1" } }'::bson)
+(7 rows)
+
+SELECT document FROM documentdb_api.distinct_query(
+  'db',
+  '{ "distinct": "dist_collation_response", "key": "numeric", "collation": { "locale": "en", "strength": 1, "numericOrdering": true } }');
+                                document                                
+------------------------------------------------------------------------
+ { "values" : [ "2", "10", "20" ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+ROLLBACK;
+-- Test 19: A leading equality enables the compound collated index.
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'db',
+  '{ "createIndexes": "dist_collation_response_compound", "indexes": [
+      { "key": { "category": 1, "value": 1 }, "name": "idx_category_value_fr_s2", "collation": { "locale": "fr", "strength": 2 } }
+    ] }',
+  true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_response_compound',
+  '{ "_id": 1, "category": "group", "value": "cafe" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_response_compound',
+  '{ "_id": 2, "category": "GROUP", "value": "caf\u00e9" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_response_compound',
+  '{ "_id": 3, "category": "group", "value": "th\u00e9" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_response_compound',
+  '{ "_id": 4, "category": "group", "value": "cafe" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+  'db', 'dist_collation_response_compound',
+  '{ "_id": 5, "category": "other", "value": "coffee" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+ANALYZE documentdb_data.documents_20207;
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_response_compound", "key": "value", "query": { "category": "group" }, "collation": { "locale": "fr", "strength": 2 } }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                  run_explain_and_trim                                                   
+-------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Unique (actual rows=3 loops=1)
+         ->  ProjectSet (actual rows=3 loops=1)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
+                     ->  Index Scan using idx_category_value_fr_s2 on documents_20207 collection (actual rows=3 loops=1)
+                           Index Cond: (document @= '{ "category" : "group", "collation" : "fr-u-ks-level2" }'::bson)
+                           Order By: (document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
+(7 rows)
+
+SELECT document FROM documentdb_api.distinct_query(
+  'db',
+  '{ "distinct": "dist_collation_response_compound", "key": "value", "query": { "category": "group" }, "collation": { "locale": "fr", "strength": 2 } }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "values" : [ "cafe", "café", "thé" ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+ROLLBACK;
+-- Test 20: A collated _id distinct cannot use binary primary-key ordering.
+SELECT documentdb_api.insert_one('db', 'dist_collation_id', '{ "_id": "cafe" }');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'dist_collation_id', '{ "_id": "CAFE" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'dist_collation_id', '{ "_id": "tea" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'dist_collation_id', '{ "_id": "TEA" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+ANALYZE documentdb_data.documents_20208;
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_id", "key": "_id", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                          run_explain_and_trim                                                           
+-----------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, '_id'::text, 'en-u-ks-level1'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, '_id'::text, 'en-u-ks-level1'::text))
+         ->  Sort
+               Output: (bson_distinct_unwind(collection.document, '_id'::text, 'en-u-ks-level1'::text))
+               Sort Key: (bson_distinct_unwind(collection.document, '_id'::text, 'en-u-ks-level1'::text)) USING <<<
+               ->  ProjectSet
+                     Output: bson_distinct_unwind(collection.document, '_id'::text, 'en-u-ks-level1'::text)
+                     ->  Index Scan using _id_ on documentdb_data.documents_20208 collection
+                           Output: collection.shard_key_value, collection.object_id, collection.document
+                           Index Cond: (collection.shard_key_value = '20208'::bigint)
+(12 rows)
+
+WITH result AS (
+  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_id", "key": "_id", "collation": { "locale": "en", "strength": 1 } }')
+)
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "2" } }
+(1 row)
+
+ROLLBACK;
+-- Cleanup.
+SELECT documentdb_api.drop_collection('db', 'dist_collation');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'dist_collation_truncated');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'dist_collation_array');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'dist_collation_nested');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'dist_collation_mixed');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'dist_collation_compound');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'dist_collation_response');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'dist_collation_response_compound');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'dist_collation_id');
+ drop_collection 
+-----------------
+ t
+(1 row)
+

@@ -1,0 +1,40 @@
+Parsed test spec with 3 sessions
+
+starting permutation: s3-block-metadata s1-drop-title s2-drop-owner s3-release
+create_indexes_non_concurrently                                                                                                                                                                                                     
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+{ "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+step s3-block-metadata: 
+    BEGIN;
+    LOCK TABLE documentdb_api_catalog.collection_indexes IN ACCESS EXCLUSIVE MODE;
+
+step s1-drop-title: 
+    CALL documentdb_api.drop_indexes('isolation',
+        documentdb_core.bson_build_document('dropIndexes', 'dropIdxDeadlock'::text, 'index', ARRAY['title_1'::text]));
+ <waiting ...>
+step s2-drop-owner: 
+    CALL documentdb_api.drop_indexes('isolation',
+        documentdb_core.bson_build_document('dropIndexes', 'dropIdxDeadlock'::text, 'index', ARRAY['owner_1'::text]));
+ <waiting ...>
+step s3-release: 
+    COMMIT;
+
+step s1-drop-title: <... completed>
+retval                                                  
+--------------------------------------------------------
+{ "ok" : true, "nIndexesWas" : { "$numberLong" : "3" } }
+(1 row)
+
+step s2-drop-owner: <... completed>
+retval                                                  
+--------------------------------------------------------
+{ "ok" : true, "nIndexesWas" : { "$numberLong" : "3" } }
+(1 row)
+
+drop_collection
+---------------
+t              
+(1 row)
+

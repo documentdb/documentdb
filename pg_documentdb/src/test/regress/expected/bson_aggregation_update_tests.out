@@ -1,0 +1,331 @@
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+SET documentdb.next_collection_id TO 25800000;
+SET documentdb.next_collection_index_id TO 25800000;
+SELECT documentdb_api.create_collection('db', 'aggregation_update');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api.insert_one(
+	'db',
+	'aggregation_update',
+	'{ "_id": 1, "a": 1, "b": 0 }',
+	NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document
+FROM bson_aggregation_update(
+	'db',
+	'{ "update": "aggregation_update", "updates": [] }');
+ERROR:  Batch sizes should always fall between 1 and 25000. Got 0 operations.
+SELECT document
+FROM bson_aggregation_update(
+	'db',
+	'{ "update": "aggregation_update", "updates": [ { "q": { "a": 1 }, "u": { "$set": { "b": 1 } }, "multi": true }, { "q": { "a": 2 }, "u": { "$set": { "b": 2 } }, "multi": true } ] }');
+ERROR:  update request must contain exactly one update document
+SELECT document
+FROM bson_aggregation_update(
+	'db',
+	'{ "update": "aggregation_update", "updates": [ { "q": { "a": 99 }, "u": { "$invalid": { "b": 1 } }, "multi": true } ] }');
+ERROR:  Unknown modifier: $invalid. Please use a valid update modifier or pipeline-style update specified as an array
+SELECT document
+FROM bson_aggregation_update(
+	'db',
+	'{ "update": "aggregation_update", "updates": [ { "q": { "a": 1 }, "u": { "b": 1 }, "multi": true } ] }');
+ERROR:  multi=true and replace-style updates cannot be used together.
+SELECT document
+FROM bson_aggregation_update(
+	'db',
+	'{ "update": "aggregation_update", "updates": [ { "q": { "a": 1 }, "u": { "$set": { "b": 1 } }, "multi": true, "sort": { "a": 1 } } ] }');
+ERROR:  sort option can not be set when multi=true
+SELECT document
+FROM bson_aggregation_update(
+	'db',
+	'{ "update": "aggregation_update", "updates": [ { "q": { "a": 1 }, "u": { "$invalid": { "b": 1 } }, "multi": true, "sort": { "a": 1 } } ] }');
+ERROR:  sort option can not be set when multi=true
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document
+FROM bson_aggregation_update(
+	'db',
+	'{ "update": "aggregation_update", "updates": [ { "q": { "_id": 1 }, "u": { "$set": { "b": 1 } }, "multi": false } ] }');
+                                                                                 QUERY PLAN                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, '0'::bigint, 'ok'::text, '1'::double precision)
+   CTE base
+     ->  Limit
+           Output: documents_25800000.ctid, documents_25800000.object_id, documents_25800000.document, documents_25800000.tableoid, documents_25800000.ctid
+           ->  LockRows
+                 Output: documents_25800000.ctid, documents_25800000.object_id, documents_25800000.document, documents_25800000.tableoid, documents_25800000.ctid
+                 ->  Index Scan using _id_ on documentdb_data.documents_25800000
+                       Output: documents_25800000.ctid, documents_25800000.object_id, documents_25800000.document, documents_25800000.tableoid, documents_25800000.ctid
+                       Index Cond: ((documents_25800000.shard_key_value = '25800000'::bigint) AND (documents_25800000.object_id = '{ "" : { "$numberInt" : "1" } }'::bson))
+   ->  CTE Scan on base
+         Output: base.ctid, base.object_id, base.document, base.tableoid
+(12 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document
+FROM bson_aggregation_update(
+	'db',
+	'{ "update": "aggregation_update", "updates": [ { "q": { "_id": 1 }, "u": [ { "$set": { "b": 1 } } ], "multi": false } ] }');
+                                                                                 QUERY PLAN                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, '0'::bigint, 'ok'::text, '1'::double precision)
+   CTE base
+     ->  Limit
+           Output: documents_25800000.ctid, documents_25800000.object_id, documents_25800000.document, documents_25800000.tableoid, documents_25800000.ctid
+           ->  LockRows
+                 Output: documents_25800000.ctid, documents_25800000.object_id, documents_25800000.document, documents_25800000.tableoid, documents_25800000.ctid
+                 ->  Index Scan using _id_ on documentdb_data.documents_25800000
+                       Output: documents_25800000.ctid, documents_25800000.object_id, documents_25800000.document, documents_25800000.tableoid, documents_25800000.ctid
+                       Index Cond: ((documents_25800000.shard_key_value = '25800000'::bigint) AND (documents_25800000.object_id = '{ "" : { "$numberInt" : "1" } }'::bson))
+   ->  CTE Scan on base
+         Output: base.ctid, base.object_id, base.document, base.tableoid
+(12 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document
+FROM bson_aggregation_update(
+	'db',
+	'{ "update": "aggregation_update", "updates": [ { "q": { "a": 1 }, "u": { "$set": { "b": 1 } }, "multi": false } ] }');
+                                                                               QUERY PLAN                                                                               
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, '0'::bigint, 'ok'::text, '1'::double precision)
+   CTE base
+     ->  Limit
+           Output: documents_25800000.ctid, documents_25800000.object_id, documents_25800000.document, documents_25800000.tableoid, documents_25800000.ctid
+           ->  LockRows
+                 Output: documents_25800000.ctid, documents_25800000.object_id, documents_25800000.document, documents_25800000.tableoid, documents_25800000.ctid
+                 ->  Bitmap Heap Scan on documentdb_data.documents_25800000
+                       Output: documents_25800000.ctid, documents_25800000.object_id, documents_25800000.document, documents_25800000.tableoid, documents_25800000.ctid
+                       Recheck Cond: (documents_25800000.shard_key_value = '25800000'::bigint)
+                       Filter: (documents_25800000.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
+                       ->  Bitmap Index Scan on _id_
+                             Index Cond: (documents_25800000.shard_key_value = '25800000'::bigint)
+   ->  CTE Scan on base
+         Output: base.ctid, base.object_id, base.document, base.tableoid
+(15 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document
+FROM bson_aggregation_update(
+	'db',
+	'{ "update": "aggregation_update", "updates": [ { "q": { "a": 1 }, "u": [ { "$set": { "b": 1 } } ], "multi": false } ] }');
+                                                                               QUERY PLAN                                                                               
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, '0'::bigint, 'ok'::text, '1'::double precision)
+   CTE base
+     ->  Limit
+           Output: documents_25800000.ctid, documents_25800000.object_id, documents_25800000.document, documents_25800000.tableoid, documents_25800000.ctid
+           ->  LockRows
+                 Output: documents_25800000.ctid, documents_25800000.object_id, documents_25800000.document, documents_25800000.tableoid, documents_25800000.ctid
+                 ->  Bitmap Heap Scan on documentdb_data.documents_25800000
+                       Output: documents_25800000.ctid, documents_25800000.object_id, documents_25800000.document, documents_25800000.tableoid, documents_25800000.ctid
+                       Recheck Cond: (documents_25800000.shard_key_value = '25800000'::bigint)
+                       Filter: (documents_25800000.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
+                       ->  Bitmap Index Scan on _id_
+                             Index Cond: (documents_25800000.shard_key_value = '25800000'::bigint)
+   ->  CTE Scan on base
+         Output: base.ctid, base.object_id, base.document, base.tableoid
+(15 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document
+FROM bson_aggregation_update(
+	'db',
+	'{ "update": "aggregation_update", "updates": [ { "q": { "a": 1 }, "u": { "$set": { "b": 1 } }, "multi": true } ] }');
+                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, sum(u.updated), 'ok'::text, '1'::double precision)
+   CTE u
+     ->  Update on documentdb_data.documents_25800000
+           Output: documentdb_api_internal.bson_update_returned_value(documents_25800000.shard_key_value)
+           ->  Bitmap Heap Scan on documentdb_data.documents_25800000
+                 Output: COALESCE(documentdb_api_internal.update_bson_document(documents_25800000.document, '{ "" : { "$set" : { "b" : { "$numberInt" : "1" } } } }'::bson, '{ "a" : { "$numberInt" : "1" } }'::bson, NULL::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), documents_25800000.document), documents_25800000.ctid
+                 Recheck Cond: (documents_25800000.shard_key_value = '25800000'::bigint)
+                 Filter: (documents_25800000.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
+                 ->  Bitmap Index Scan on _id_
+                       Index Cond: (documents_25800000.shard_key_value = '25800000'::bigint)
+   ->  CTE Scan on u
+         Output: u.updated
+(13 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document
+FROM bson_aggregation_update(
+	'db',
+	'{ "update": "aggregation_update", "updates": [ { "q": { "a": 1 }, "u": [ { "$set": { "b": 1 } } ], "multi": true } ] }');
+                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                   
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, sum(u.updated), 'ok'::text, '1'::double precision)
+   CTE u
+     ->  Update on documentdb_data.documents_25800000
+           Output: documentdb_api_internal.bson_update_returned_value(documents_25800000.shard_key_value)
+           ->  Bitmap Heap Scan on documentdb_data.documents_25800000
+                 Output: COALESCE(documentdb_api_internal.update_bson_document(documents_25800000.document, '{ "" : [ { "$set" : { "b" : { "$numberInt" : "1" } } } ] }'::bson, '{ "a" : { "$numberInt" : "1" } }'::bson, NULL::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), documents_25800000.document), documents_25800000.ctid
+                 Recheck Cond: (documents_25800000.shard_key_value = '25800000'::bigint)
+                 Filter: (documents_25800000.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
+                 ->  Bitmap Index Scan on _id_
+                       Index Cond: (documents_25800000.shard_key_value = '25800000'::bigint)
+   ->  CTE Scan on u
+         Output: u.updated
+(13 rows)
+
+SELECT document
+FROM bson_aggregation_update(
+	'db',
+	'{ "update": "aggregation_update", "updates": [ { "q": { "a": 1 }, "u": { "$set": { "b": 1 } }, "multi": true } ] }');
+                                                  document                                                  
+------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "nModified" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document
+FROM documentdb_api.collection('db', 'aggregation_update');
+                                            document                                            
+------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "1" } }
+(1 row)
+
+DO $$
+BEGIN
+	FOR document_id IN 2..1001 LOOP
+		PERFORM documentdb_api.insert_one(
+			'db',
+			'aggregation_update',
+			format('{ "_id": %s, "a": 2, "b": 0 }', document_id)::documentdb_core.bson,
+			NULL);
+	END LOOP;
+END;
+$$;
+ANALYZE documentdb_data.documents_25800000;
+SET enable_seqscan TO off;
+SET enable_indexscan TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document
+FROM bson_aggregation_update(
+	'db',
+	'{ "update": "aggregation_update", "updates": [ { "q": { "a": 1 }, "u": { "$set": { "b": 2 } }, "multi": true } ] }');
+                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, sum(u.updated), 'ok'::text, '1'::double precision)
+   CTE u
+     ->  Update on documentdb_data.documents_25800000
+           Output: documentdb_api_internal.bson_update_returned_value(documents_25800000.shard_key_value)
+           ->  Bitmap Heap Scan on documentdb_data.documents_25800000
+                 Output: COALESCE(documentdb_api_internal.update_bson_document(documents_25800000.document, '{ "" : { "$set" : { "b" : { "$numberInt" : "2" } } } }'::bson, '{ "a" : { "$numberInt" : "1" } }'::bson, NULL::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), documents_25800000.document), documents_25800000.ctid
+                 Recheck Cond: (documents_25800000.shard_key_value = '25800000'::bigint)
+                 Filter: (documents_25800000.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
+                 ->  Bitmap Index Scan on _id_
+                       Index Cond: (documents_25800000.shard_key_value = '25800000'::bigint)
+   ->  CTE Scan on u
+         Output: u.updated
+(13 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document
+FROM bson_aggregation_update(
+	'db',
+	'{ "update": "aggregation_update", "updates": [ { "q": { "a": 1 }, "u": { "$set": { "b": 3 } }, "multi": false } ] }');
+                                                                               QUERY PLAN                                                                               
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, '0'::bigint, 'ok'::text, '1'::double precision)
+   CTE base
+     ->  Limit
+           Output: documents_25800000.ctid, documents_25800000.object_id, documents_25800000.document, documents_25800000.tableoid, documents_25800000.ctid
+           ->  LockRows
+                 Output: documents_25800000.ctid, documents_25800000.object_id, documents_25800000.document, documents_25800000.tableoid, documents_25800000.ctid
+                 ->  Bitmap Heap Scan on documentdb_data.documents_25800000
+                       Output: documents_25800000.ctid, documents_25800000.object_id, documents_25800000.document, documents_25800000.tableoid, documents_25800000.ctid
+                       Recheck Cond: (documents_25800000.shard_key_value = '25800000'::bigint)
+                       Filter: (documents_25800000.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
+                       ->  Bitmap Index Scan on _id_
+                             Index Cond: (documents_25800000.shard_key_value = '25800000'::bigint)
+   ->  CTE Scan on base
+         Output: base.ctid, base.object_id, base.document, base.tableoid
+(15 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document
+FROM bson_aggregation_update(
+	'db',
+	'{ "update": "aggregation_update", "updates": [ { "q": { "a": 1 }, "u": [ { "$set": { "b": 3 } } ], "multi": false } ] }');
+                                                                               QUERY PLAN                                                                               
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, '0'::bigint, 'ok'::text, '1'::double precision)
+   CTE base
+     ->  Limit
+           Output: documents_25800000.ctid, documents_25800000.object_id, documents_25800000.document, documents_25800000.tableoid, documents_25800000.ctid
+           ->  LockRows
+                 Output: documents_25800000.ctid, documents_25800000.object_id, documents_25800000.document, documents_25800000.tableoid, documents_25800000.ctid
+                 ->  Bitmap Heap Scan on documentdb_data.documents_25800000
+                       Output: documents_25800000.ctid, documents_25800000.object_id, documents_25800000.document, documents_25800000.tableoid, documents_25800000.ctid
+                       Recheck Cond: (documents_25800000.shard_key_value = '25800000'::bigint)
+                       Filter: (documents_25800000.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
+                       ->  Bitmap Index Scan on _id_
+                             Index Cond: (documents_25800000.shard_key_value = '25800000'::bigint)
+   ->  CTE Scan on base
+         Output: base.ctid, base.object_id, base.document, base.tableoid
+(15 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document
+FROM bson_aggregation_update(
+	'db',
+	'{ "update": "aggregation_update", "updates": [ { "q": { "a": 1, "b": 1 }, "u": { "$set": { "b": 3 } }, "multi": false } ] }');
+                                                                                       QUERY PLAN
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, '0'::bigint, 'ok'::text, '1'::double precision)
+   CTE base
+     ->  Limit
+           Output: documents_25800000.ctid, documents_25800000.object_id, documents_25800000.document, documents_25800000.tableoid, documents_25800000.ctid
+           ->  LockRows
+                 Output: documents_25800000.ctid, documents_25800000.object_id, documents_25800000.document, documents_25800000.tableoid, documents_25800000.ctid
+                 ->  Bitmap Heap Scan on documentdb_data.documents_25800000
+                       Output: documents_25800000.ctid, documents_25800000.object_id, documents_25800000.document, documents_25800000.tableoid, documents_25800000.ctid
+                       Recheck Cond: (documents_25800000.shard_key_value = '25800000'::bigint)
+                       Filter: ((documents_25800000.document @= '{ "a" : { "$numberInt" : "1" } }'::bson) AND (documents_25800000.document @= '{ "b" : { "$numberInt" : "1" } }'::bson))
+                       ->  Bitmap Index Scan on _id_
+                             Index Cond: (documents_25800000.shard_key_value = '25800000'::bigint)
+   ->  CTE Scan on base
+         Output: base.ctid, base.object_id, base.document, base.tableoid
+(15 rows)
+
+SELECT document
+FROM bson_aggregation_update(
+	'db',
+	'{ "update": "aggregation_update", "updates": [ { "q": { "a": 1 }, "u": { "$set": { "b": 2 } }, "multi": true } ] }');
+                                                  document                                                  
+------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "nModified" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET enable_seqscan;
+RESET enable_indexscan;
+SELECT document
+FROM documentdb_api.collection('db', 'aggregation_update')
+WHERE document OPERATOR(documentdb_api_catalog.@=) '{ "_id": 1 }';
+                                            document                                            
+------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "2" } }
+(1 row)
+
+SELECT bson_aggregation_update(
+	'db',
+	'{ "update": "aggregation_update", "updates": [] }');
+ERROR:  bson_aggregation_update must be replaced by the planner. This is an internal error

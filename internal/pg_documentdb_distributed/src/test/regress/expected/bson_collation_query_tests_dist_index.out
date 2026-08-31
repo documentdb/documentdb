@@ -99,6 +99,23 @@ NOTICE:  creating collection
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
+-- coll_distinct_d: scalar, dotted, and multikey distinct paths.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_dist_db',
+  '{ "createIndexes": "coll_distinct_d",
+     "indexes": [
+       { "key": {"a": 1}, "name": "idx_a_en_s1",
+         "collation": {"locale": "en", "strength": 1} },
+       { "key": {"nested.a": 1}, "name": "idx_nested_a_en_s1",
+         "collation": {"locale": "en", "strength": 1} },
+       { "key": {"arr": 1}, "name": "idx_arr_en_s1",
+         "collation": {"locale": "en", "strength": 1} }
+     ] }', TRUE);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
 \i sql/bson_collation_query_tests_dist_core.sql
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
 -- ======================================================================
@@ -729,6 +746,153 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db', '{ "aggregate":
 
 END;
 -- ======================================================================
+-- SECTION: distinct with collation across shards
+-- ======================================================================
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_distinct_d', '{ "_id": 1, "a": "cafe", "nested": { "a": "cafe" }, "arr": [ "cafe", "tea" ], "group": "one" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_distinct_d', '{ "_id": 2, "a": "CAFE", "nested": { "a": "CAFE" }, "arr": [ "CAFE" ], "group": "ONE" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_distinct_d', '{ "_id": 3, "a": "tea", "nested": { "a": "tea" }, "arr": [ "TEA", "coffee" ], "group": "two" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_distinct_d', '{ "_id": 4, "a": "TEA", "nested": { "a": "TEA" }, "arr": [ "tea" ], "group": "TWO" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_distinct_visible_d', '{ "_id": 1, "a": "cafe" }');
+psql:sql/bson_collation_query_tests_dist_core.sql:300: NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_distinct_visible_d', '{ "_id": 2, "a": "caf\u00e9" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_distinct_visible_d', '{ "_id": 3, "a": "th\u00e9" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_distinct_d', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_distinct_visible_d', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL citus.enable_local_execution TO off;
+-- Scalar values in separate equivalence classes have a stable full response.
+SELECT document FROM documentdb_api.distinct_query(
+  'coll_q_dist_db',
+  '{ "distinct": "coll_distinct_visible_d", "key": "a", "collation": { "locale": "fr", "strength": 2 } }');
+                                   document                                   
+---------------------------------------------------------------------
+ { "values" : [ "cafe", "café", "thé" ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Collated equivalence classes are combined after gathering rows from all shards.
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+  'coll_q_dist_db',
+  '{ "distinct": "coll_distinct_d", "key": "a", "collation": { "locale": "en", "strength": 1 } }');
+         bson_dollar_project          
+---------------------------------------------------------------------
+ { "count" : { "$numberInt" : "2" } }
+(1 row)
+
+-- Strength 2 still folds case for these unaccented values.
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+  'coll_q_dist_db',
+  '{ "distinct": "coll_distinct_d", "key": "a", "collation": { "locale": "en", "strength": 2 } }');
+         bson_dollar_project          
+---------------------------------------------------------------------
+ { "count" : { "$numberInt" : "2" } }
+(1 row)
+
+-- The command collation applies to both the query predicate and distinct values.
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+  'coll_q_dist_db',
+  '{ "distinct": "coll_distinct_d", "key": "a", "query": { "group": "ONE" }, "collation": { "locale": "en", "strength": 1 } }');
+         bson_dollar_project          
+---------------------------------------------------------------------
+ { "count" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Dotted and array paths are deduplicated again after gathering shard results.
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+  'coll_q_dist_db',
+  '{ "distinct": "coll_distinct_d", "key": "nested.a", "collation": { "locale": "en", "strength": 1 } }');
+         bson_dollar_project          
+---------------------------------------------------------------------
+ { "count" : { "$numberInt" : "2" } }
+(1 row)
+
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+  'coll_q_dist_db',
+  '{ "distinct": "coll_distinct_d", "key": "arr", "collation": { "locale": "en", "strength": 1 } }');
+         bson_dollar_project          
+---------------------------------------------------------------------
+ { "count" : { "$numberInt" : "3" } }
+(1 row)
+
+-- Collated range filtering runs before global distinct deduplication.
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+  'coll_q_dist_db',
+  '{ "distinct": "coll_distinct_d", "key": "group", "query": { "a": { "$gte": "cafe", "$lt": "tea" } }, "collation": { "locale": "en", "strength": 1 } }');
+         bson_dollar_project          
+---------------------------------------------------------------------
+ { "count" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Binary comparison keeps case variants separate.
+SELECT document AS uncollated_distinct_document
+FROM documentdb_api.distinct_query(
+  'coll_q_dist_db',
+  '{ "distinct": "coll_distinct_d", "key": "a" }') \gset
+SELECT jsonb_array_length(actual_values) = 4
+       AND actual_values @> '["CAFE", "TEA", "cafe", "tea"]'::jsonb
+       AND actual_values <@ '["CAFE", "TEA", "cafe", "tea"]'::jsonb AS values_match
+FROM (
+  SELECT (:'uncollated_distinct_document'::jsonb) -> 'values' AS actual_values
+) response;
+ values_match 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+END;
+-- ======================================================================
 -- CLEANUP
 -- ======================================================================
 SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_agg_d');
@@ -744,6 +908,18 @@ SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_minmax_d');
 (1 row)
 
 SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_delete_d');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_distinct_d');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_distinct_visible_d');
  drop_collection 
 ---------------------------------------------------------------------
  t

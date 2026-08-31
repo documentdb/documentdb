@@ -4352,3 +4352,142 @@ SELECT documentdb_api.drop_collection('coll_q_db','coll_minmax_idx');
  t
 (1 row)
 
+-- ======================================================================
+-- SECTION: distinct with a collation-aware index
+-- ======================================================================
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_distinct_explain', '{ "_id": 1, "a": "cafe" }');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_distinct_explain', '{ "_id": 2, "a": "CAFE" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_distinct_explain', '{ "_id": 3, "a": "tea" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_q_db',
+  '{ "createIndexes": "coll_distinct_explain", "indexes": [ { "key": { "a": 1 }, "name": "idx_a_en_s1", "collation": { "locale": "en", "strength": 1 } } ] }',
+  TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- This suite does not load documentdb_extended_rum, so it cannot exercise a
+-- physical ordered distinct scan. Without a selective predicate, the planner
+-- uses the _id index and retains the runtime distinct sort.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+  'coll_q_db',
+  '{ "distinct": "coll_distinct_explain", "key": "a", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                         run_explain_and_trim                                                          
+---------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level1'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level1'::text))
+         ->  Sort
+               Output: (bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level1'::text))
+               Sort Key: (bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level1'::text)) USING <<<
+               ->  ProjectSet
+                     Output: bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level1'::text)
+                     ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                           Output: collection.document
+                           namespaceName: coll_q_db.coll_distinct_explain
+                           indexName: _id_
+                           ->  Index Scan using _id_ on documentdb_data.documents_8819 collection
+                                 Output: collection.document
+                                 Index Cond: (collection.shard_key_value = '8819'::bigint)
+(16 rows)
+
+-- A matching collated predicate uses the collated index for its bounds, but
+-- that index cannot supply distinct ordering without documentdb_extended_rum,
+-- so the runtime sort remains.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+  'coll_q_db',
+  '{ "distinct": "coll_distinct_explain", "key": "a", "query": { "a": { "$gte": "cafe" } }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+                                                            regexp_replace                                                             
+---------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level1'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level1'::text))
+         ->  Sort
+               Output: (bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level1'::text))
+               Sort Key: (bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level1'::text)) USING <<<
+               ->  ProjectSet
+                     Output: bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level1'::text)
+                     ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                           Output: collection.document
+                           namespaceName: coll_q_db.coll_distinct_explain
+                           indexName: idx_a_en_s1
+                           indexKey: {"a": 1}
+                           indexCollation: en-u-ks-level1
+                           isMultiKey: false
+                           indexBounds: ["a": ["cafe", { })]
+                           ->  Index Scan using idx_a_en_s1 on documentdb_data.documents_x collection
+                                 Output: collection.document
+                                 Index Cond: (collection.document @>= '{ "a" : "cafe", "collation" : "en-u-ks-level1" }'::bson)
+(20 rows)
+
+-- A different collation cannot reuse the strength-1 index ordering. With the
+-- default-off distinct-exists filter enabled, the index may still scan
+-- MinKey-to-MaxKey to exclude missing values, but the Sort proves it does not
+-- supply distinct ordering.
+SET documentdb.enable_distinct_exists_filter_pushdown TO on;
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+  'coll_q_db',
+  '{ "distinct": "coll_distinct_explain", "key": "a", "collation": { "locale": "en", "strength": 2 } }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+                                                            regexp_replace                                                             
+---------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level2'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level2'::text))
+         ->  Sort
+               Output: (bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level2'::text))
+               Sort Key: (bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level2'::text)) USING <<<
+               ->  ProjectSet
+                     Output: bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level2'::text)
+                     ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                           Output: collection.document
+                           namespaceName: coll_q_db.coll_distinct_explain
+                           indexName: idx_a_en_s1
+                           indexKey: {"a": 1}
+                           indexCollation: en-u-ks-level1
+                           isMultiKey: false
+                           indexBounds: ["a": [MinKey, MaxKey]]
+                           ->  Index Scan using idx_a_en_s1 on documentdb_data.documents_x collection
+                                 Output: collection.document
+                                 Index Cond: (collection.document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+(20 rows)
+
+SET documentdb.enable_distinct_exists_filter_pushdown TO off;
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_distinct_explain');
+ drop_collection 
+-----------------
+ t
+(1 row)
+

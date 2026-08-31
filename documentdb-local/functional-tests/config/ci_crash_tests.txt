@@ -28,3 +28,32 @@ docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages
 # which is shared with lanes that already skip this ID — conftest_known_failures
 # requires an exact node ID to live in exactly one list.
 docdb_functional_tests/documentdb_tests/compatibility/tests/system/administration/commands/setIndexCommitQuorum/test_smoke_setIndexCommitQuorum.py::test_smoke_setIndexCommitQuorum[documentdb]
+
+# --- Tests the suite pin adds that reach engine defects and make the engine
+# --- log an InternalError. Skipped rather than xfailed: an xfailed test still
+# --- executes, so the engine still writes the line. Each defect is shared with
+# --- the other lanes, so the same entries appear in their skip list.
+
+# The covariance and standard-deviation accumulator saturates at INT64_MAX and
+# reports failure instead of producing a result. Only the large_int64 cases
+# supply values big enough to reach it.
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/window/covariancePop/test_window_covariancePop_numeric_precision.py::test_covariancePop_large_int64_near_max[documentdb]
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/window/covariancePop/test_window_covariancePop_numeric_precision.py::test_covariancePop_large_int64_spread[documentdb]
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/window/covarianceSamp/test_window_covarianceSamp_numeric_precision.py::test_covarianceSamp_large_int64_near_max[documentdb]
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/window/covarianceSamp/test_window_covarianceSamp_numeric_precision.py::test_covarianceSamp_large_int64_spread[documentdb]
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/window/stdDevPop/test_window_stdDevPop_numeric_precision.py::test_stdDevPop_large_int64_near_max[documentdb]
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/window/stdDevPop/test_window_stdDevPop_numeric_precision.py::test_stdDevPop_large_int64_spread[documentdb]
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/window/stdDevSamp/test_window_stdDevSamp_numeric_precision.py::test_stdDevSamp_large_int64_near_max[documentdb]
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/window/stdDevSamp/test_window_stdDevSamp_numeric_precision.py::test_stdDevSamp_large_int64_spread[documentdb]
+
+# A $facet sub-pipeline re-enters distributed execution from a query already
+# running on a shard, which the planner refuses. File level rather than one
+# case: the engine log names a fixture database shared by every case in the
+# file, and the cases finish within seconds of each other, so the log cannot
+# say which one it is. A file entry also keeps covering it once a pin bump
+# re-strides the legs.
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/facet/test_facet_errors.py
+
+# A non-inlined $lookup sub-pipeline leaves a correlated column out of the
+# GROUP BY it generates, so the query is rejected before it runs.
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/lookup/test_lookup_verbose_let_wiring.py

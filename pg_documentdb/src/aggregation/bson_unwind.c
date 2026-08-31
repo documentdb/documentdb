@@ -17,6 +17,7 @@
 
 #include "aggregation/bson_project.h"
 #include "aggregation/bson_projection_tree.h"
+#include "collation/collation.h"
 #include "io/bson_set_returning_functions.h"
 #include "io/bson_traversal.h"
 #include "metadata/metadata_cache.h"
@@ -51,6 +52,7 @@ typedef struct DistinctTraverseState
 {
 	Tuplestorestate *tupleStore;
 	TupleDesc tupleDescriptor;
+	const char *collationString;
 } DistinctTraverseState;
 
 
@@ -192,6 +194,11 @@ bson_distinct_unwind(PG_FUNCTION_ARGS)
 	Tuplestorestate *tupleStore = SetupBsonTuplestore(fcinfo, &descriptor);
 	pgbson *document = PG_GETARG_PGBSON(0);
 	char *path = text_to_cstring(PG_GETARG_TEXT_P(1));
+	const char *collationString = NULL;
+	if (EnableCollation && PG_NARGS() > 2)
+	{
+		collationString = text_to_cstring(PG_GETARG_TEXT_P(2));
+	}
 
 	bson_iter_t documentIterator;
 	PgbsonInitIterator(document, &documentIterator);
@@ -209,7 +216,8 @@ bson_distinct_unwind(PG_FUNCTION_ARGS)
 	DistinctTraverseState traverseState =
 	{
 		.tupleDescriptor = descriptor,
-		.tupleStore = tupleStore
+		.tupleStore = tupleStore,
+		.collationString = collationString
 	};
 
 	TraverseBson(&documentIterator, path, &traverseState, &distinctExecutionFuncs);
@@ -255,8 +263,10 @@ bson_distinct_unwind_support(PG_FUNCTION_ARGS)
 			 * (e.g. an inlined wrapper). If it is not bson_distinct_unwind,
 			 * fall through to the default estimate below.
 			 */
-			if (distinctUnwindExpr->funcid == BsonDistinctUnwindFunctionOid() &&
-				list_length(distinctUnwindExpr->args) == 2)
+			if ((distinctUnwindExpr->funcid == BsonDistinctUnwindFunctionOid() ||
+				 distinctUnwindExpr->funcid ==
+				 BsonDistinctUnwindWithCollationFunctionOid()) &&
+				list_length(distinctUnwindExpr->args) >= 2)
 			{
 				Node *documentArg = (Node *) linitial(distinctUnwindExpr->args);
 				Node *pathArg = (Node *) lsecond(distinctUnwindExpr->args);
@@ -734,7 +744,19 @@ AddToDistinctTupleStore(const bson_value_t *bsonValue,
 	Datum values[1];
 	bool nulls[1];
 
-	values[0] = PointerGetDatum(BsonValueToDocumentPgbson(bsonValue));
+	if (IsCollationApplicable(traverseState->collationString))
+	{
+		pgbson_writer writer;
+		PgbsonWriterInit(&writer);
+		PgbsonWriterAppendValue(&writer, "", 0, bsonValue);
+		PgbsonWriterAppendUtf8(&writer, "collation", 9,
+							   traverseState->collationString);
+		values[0] = PointerGetDatum(PgbsonWriterGetPgbson(&writer));
+	}
+	else
+	{
+		values[0] = PointerGetDatum(BsonValueToDocumentPgbson(bsonValue));
+	}
 	nulls[0] = false;
 	tuplestore_putvalues(traverseState->tupleStore, traverseState->tupleDescriptor,
 						 values, nulls);

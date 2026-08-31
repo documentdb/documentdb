@@ -42,3 +42,56 @@ SELECT COUNT(*) > 0 AS has_placements
 FROM pg_dist_shard s
 JOIN pg_dist_shard_placement p ON s.shardid = p.shardid
 WHERE s.logicalrelid = 'documentdb_api_catalog.roles'::regclass;
+
+-- =============================================================================
+-- Test: Verify createRole/dropRole writes reach every node
+--
+-- The checks above only assert the table's topology. These assert that writes
+-- issued through the API on the coordinator are actually visible in the shard
+-- placement on the worker, which is what makes a custom role usable from any
+-- node in the cluster.
+-- =============================================================================
+
+SET documentdb.enableRoleCrud TO ON;
+SET documentdb.enableRolesAdminDBCheck TO ON;
+
+SELECT documentdb_api.create_role('{"createRole":"mn_custom_role", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+
+-- The coordinator's logical table has the row.
+SELECT role_name FROM documentdb_api_catalog.roles WHERE role_name = 'mn_custom_role';
+
+-- Every worker placement has the row too. The shard id is resolved at runtime
+-- and injected with format() so the workers read the placement relation
+-- directly rather than going back through the logical table.
+SELECT success, result
+FROM run_command_on_workers(format(
+    'SELECT count(*) FROM documentdb_api_catalog.roles_%s WHERE role_name = %L',
+    (SELECT shardid FROM pg_dist_shard
+     WHERE logicalrelid = 'documentdb_api_catalog.roles'::regclass),
+    'mn_custom_role'));
+
+-- The stored document, not just the key, is replicated. The catalog stores the
+-- original createRole command, so the name is under "createRole".
+SELECT success, result
+FROM run_command_on_workers(format(
+    'SELECT documentdb_core.bson_get_value_text(role_bson, %L) FROM documentdb_api_catalog.roles_%s WHERE role_name = %L',
+    'createRole',
+    (SELECT shardid FROM pg_dist_shard
+     WHERE logicalrelid = 'documentdb_api_catalog.roles'::regclass),
+    'mn_custom_role'));
+
+-- rolesInfo reports the role from the coordinator.
+SELECT documentdb_api.roles_info('{"rolesInfo":"mn_custom_role", "$db":"admin"}');
+
+-- Deletes must propagate as well, otherwise a dropped role would linger on the
+-- workers and keep satisfying lookups routed there.
+SELECT documentdb_api.drop_role('{"dropRole":"mn_custom_role", "$db":"admin"}');
+
+SELECT count(*) AS coordinator_rows FROM documentdb_api_catalog.roles WHERE role_name = 'mn_custom_role';
+
+SELECT success, result
+FROM run_command_on_workers(format(
+    'SELECT count(*) FROM documentdb_api_catalog.roles_%s WHERE role_name = %L',
+    (SELECT shardid FROM pg_dist_shard
+     WHERE logicalrelid = 'documentdb_api_catalog.roles'::regclass),
+    'mn_custom_role'));

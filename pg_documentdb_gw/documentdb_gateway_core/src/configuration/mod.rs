@@ -16,7 +16,10 @@ use std::fmt::Debug;
 
 pub use certs::{CertInputType, CertificateOptions};
 use dyn_clone::{clone_trait_object, DynClone};
-pub use dynamic::{ClusterVersion, DynamicConfiguration};
+pub use dynamic::{
+    ClusterVersion, DynamicConfiguration, MAX_REQUEST_TIMEOUT_DEFAULT_SEC,
+    MAX_REQUEST_TIMEOUT_SEC_KEY, TRANSACTION_TIMEOUT_DEFAULT_SEC, TRANSACTION_TIMEOUT_SEC_KEY,
+};
 pub use pg_configuration::PgConfiguration;
 pub use setup::{env_keys, DocumentDBSetupConfiguration};
 pub use version::Version;
@@ -25,6 +28,7 @@ use crate::telemetry::TelemetrySettings;
 
 pub(crate) const SOCKET_CONNECTION_IDLE_TIMEOUT_KEY: &str = "SocketConnectionIdleTimeout";
 pub(crate) const SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS: u64 = 18_000;
+pub const ENABLE_REQUEST_METRICS_KEY: &str = "enable_request_metrics";
 
 /// These are the required configuration fields.
 ///
@@ -59,9 +63,6 @@ pub trait SetupConfiguration: DynClone + Send + Sync + Debug {
     /// Returns the password for the data user to connect to the backend `PostgreSQL` server.
     fn postgres_data_user_password(&self) -> Option<&str>;
 
-    /// Returns the timeout duration (in seconds) for transactions.
-    fn transaction_timeout_secs(&self) -> u64;
-
     /// Indicates whether the application should only serve on local host or
     /// be available from all addresses.
     fn use_local_host(&self) -> bool;
@@ -71,9 +72,6 @@ pub trait SetupConfiguration: DynClone + Send + Sync + Debug {
 
     /// Returns a list of role prefixes that are blocked.
     fn blocked_role_prefixes(&self) -> &[String];
-
-    /// Returns the timeout duration (in seconds) for `PostgreSQL` commands.
-    fn postgres_command_timeout_secs(&self) -> u64;
 
     /// Returns the hostname of the current node for the purposes of the `IsDBGrid` command.
     fn node_host_name(&self) -> &str;

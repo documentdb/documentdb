@@ -13,5 +13,7 @@ mod read_ahead;
 mod request_execution;
 mod request_pipeline;
 mod stream_driver;
+mod writer;
 
+pub use request_pipeline::process_request_message;
 pub use stream_driver::handle_stream;

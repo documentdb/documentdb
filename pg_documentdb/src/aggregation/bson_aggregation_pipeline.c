@@ -1198,6 +1198,9 @@ static const int MaxEvenFunctionArguments = ((int) (FUNC_MAX_ARGS / 2)) * 2;
 
 PG_FUNCTION_INFO_V1(command_bson_aggregation_pipeline);
 PG_FUNCTION_INFO_V1(command_bson_aggregation_getmore);
+PG_FUNCTION_INFO_V1(command_bson_aggregation_update);
+PG_FUNCTION_INFO_V1(command_bson_aggregation_delete);
+PG_FUNCTION_INFO_V1(command_bson_aggregation_find_and_modify);
 PG_FUNCTION_INFO_V1(command_api_collection);
 PG_FUNCTION_INFO_V1(command_aggregation_support);
 PG_FUNCTION_INFO_V1(documentdb_core_bson_to_bson);
@@ -1305,6 +1308,33 @@ command_bson_aggregation_getmore(PG_FUNCTION_ARGS)
 {
 	ereport(ERROR, (errmsg(
 						"bson_aggregation function should have been processed by the planner. This is an internal error")));
+	PG_RETURN_BOOL(false);
+}
+
+
+Datum
+command_bson_aggregation_update(PG_FUNCTION_ARGS)
+{
+	ereport(ERROR, (errmsg(
+						"bson_aggregation_update must be replaced by the planner. This is an internal error")));
+	PG_RETURN_BOOL(false);
+}
+
+
+Datum
+command_bson_aggregation_delete(PG_FUNCTION_ARGS)
+{
+	ereport(ERROR, (errmsg(
+						"bson_aggregation_delete must be replaced by the planner. This is an internal error")));
+	PG_RETURN_BOOL(false);
+}
+
+
+Datum
+command_bson_aggregation_find_and_modify(PG_FUNCTION_ARGS)
+{
+	ereport(ERROR, (errmsg(
+						"bson_aggregation_find_and_modify must be replaced by the planner. This is an internal error")));
 	PG_RETURN_BOOL(false);
 }
 
@@ -3021,7 +3051,20 @@ GenerateDistinctQuery(text *databaseDatum, pgbson *distinctSpec, bool setStateme
 		else if (StringViewEqualsCString(&keyView, "collation"))
 		{
 			ReportFeatureUsage(FEATURE_COLLATION);
-			if (!SkipFailOnCollation)
+			if (EnableCollation &&
+				IsClusterVersionAtleast(DocDB_V1, 1, 0))
+			{
+				if (!BSON_ITER_HOLDS_NULL(&distinctIter))
+				{
+					EnsureTopLevelFieldType("collation", &distinctIter,
+											BSON_TYPE_DOCUMENT);
+					if (!IsBsonValueEmptyDocument(value))
+					{
+						ParseAndGetCollationString(value, context.collationString);
+					}
+				}
+			}
+			else if (!SkipFailOnCollation)
 			{
 				ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 								errmsg(
@@ -5420,11 +5463,25 @@ HandleDistinct(const StringView *distinctKey, Query *query,
 	Expr *currentProjection = firstEntry->expr;
 	Const *unwindValue = MakeTextConst(distinctKey->string,
 									   distinctKey->length);
-	List *args = list_make2(currentProjection, unwindValue);
+	bool hasCollation = IsCollationApplicable(context->collationString);
+	List *args;
+	Oid distinctUnwindFunctionOid;
+	if (hasCollation)
+	{
+		args = list_make3(currentProjection, unwindValue,
+						  MakeTextConst(context->collationString,
+										strlen(context->collationString)));
+		distinctUnwindFunctionOid = BsonDistinctUnwindWithCollationFunctionOid();
+	}
+	else
+	{
+		args = list_make2(currentProjection, unwindValue);
+		distinctUnwindFunctionOid = BsonDistinctUnwindFunctionOid();
+	}
 
 	/* Create a distinct unwind - to expand arrays and such */
 	resultExpr = makeFuncExpr(
-		BsonDistinctUnwindFunctionOid(), BsonTypeId(), args, InvalidOid,
+		distinctUnwindFunctionOid, BsonTypeId(), args, InvalidOid,
 		InvalidOid, COERCE_EXPLICIT_CALL);
 	resultExpr->funcretset = true;
 	firstEntry->expr = (Expr *) resultExpr;
@@ -5432,8 +5489,13 @@ HandleDistinct(const StringView *distinctKey, Query *query,
 
 	/* Add the distinct */
 	SortGroupClause *distinctSortGroup = makeNode(SortGroupClause);
-	distinctSortGroup->eqop = BsonEqualOperatorId();
-	distinctSortGroup->sortop = BsonLessThanOperatorId();
+	distinctSortGroup->eqop = hasCollation ?
+							  BsonOrderyByEqOperatorId() :
+							  BsonEqualOperatorId();
+	distinctSortGroup->sortop = hasCollation ?
+								BsonOrderyByLtOperatorId() :
+								BsonLessThanOperatorId();
+	distinctSortGroup->hashable = false;
 	distinctSortGroup->tleSortGroupRef = assignSortGroupRef(firstEntry,
 															query->targetList);
 	query->distinctClause = list_make1(distinctSortGroup);
@@ -5488,6 +5550,7 @@ HandleDistinct(const StringView *distinctKey, Query *query,
 
 	query = MigrateQueryToSubQuery(query, context);
 	firstEntry = linitial(query->targetList);
+
 	Aggref *aggref = CreateSingleArgAggregate(BsonDistinctAggregateFunctionOid(),
 											  firstEntry->expr, parseState);
 
@@ -5897,6 +5960,7 @@ HandleSort(const bson_value_t *existingValue, Query *query,
 			Expr *sortInput = entry->expr;
 			pgbsonelement subOrderingElement;
 			bool isSortByMeta = false;
+			bool isSortByMetaTextScore = false;
 			if (element.bsonValue.value_type == BSON_TYPE_DOCUMENT &&
 				TryGetBsonValueToPgbsonElement(&element.bsonValue, &subOrderingElement) &&
 				subOrderingElement.pathLength == 5 &&
@@ -5904,6 +5968,10 @@ HandleSort(const bson_value_t *existingValue, Query *query,
 			{
 				RangeTblEntry *rte = linitial(query->rtable);
 				isSortByMeta = true;
+				isSortByMetaTextScore =
+					subOrderingElement.bsonValue.value_type == BSON_TYPE_UTF8 &&
+					strcmp(subOrderingElement.bsonValue.value.v_utf8.str,
+						   "textScore") == 0;
 				if (rte->rtekind == RTE_RELATION ||
 					rte->rtekind == RTE_FUNCTION)
 				{
@@ -5965,10 +6033,30 @@ HandleSort(const bson_value_t *existingValue, Query *query,
 				sortOrderConst = MakeBsonConst(updatedSortDoc);
 			}
 
+			/*
+			 * When enabled on a new-enough cluster, a $meta:"textScore" sort
+			 * uses an order by that receives the text index options and TSQuery
+			 * as explicit arguments instead of reading process-global query
+			 * state. The index options and TSQuery are only resolved during
+			 * planning, so they are emitted here as null placeholders and filled
+			 * in by the planner once the text index is matched.
+			 */
+			bool useOrderByMeta = isSortByMetaTextScore &&
+								  EnableSkipUseQueryTextData &&
+								  IsClusterVersionAtleast(DocDB_V1, 0, 0);
+
 			List *args = NIL;
 
+			if (useOrderByMeta)
+			{
+				funcOid = BsonOrderByMetaFunctionOid();
+				funcReturnType = BsonTypeId();
+				Const *indexOptionsConst = makeNullConst(BYTEAOID, -1, InvalidOid);
+				Const *queryConst = makeNullConst(TSQUERYOID, -1, InvalidOid);
+				args = list_make3(sortInput, indexOptionsConst, queryConst);
+			}
 			/* apply collation to the sort comparison */
-			if (IsCollationApplicable(context->collationString))
+			else if (IsCollationApplicable(context->collationString))
 			{
 				funcOid = funcOidWithCollation;
 				Const *collationConst = MakeTextConst(context->collationString,

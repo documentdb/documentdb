@@ -226,6 +226,7 @@ Oid ApiCatalogCollectionIndexIdSequenceId(void);
 
 /* order by */
 Oid BsonOrderByFunctionOid(void);
+Oid BsonOrderByMetaFunctionOid(void);
 Oid BsonOrderByWithCollationFunctionOid(void);
 Oid BsonOrderByIndexFunctionOid(void);
 Oid BsonOrderByIndexReverseFunctionOid(void);
@@ -376,6 +377,9 @@ Oid TsMatchFunctionOid(void);
 Oid ApiCatalogAggregationPipelineFunctionId(void);
 Oid ApiCatalogAggregationFindFunctionId(void);
 Oid ApiCatalogAggregationCountFunctionId(void);
+Oid ApiCatalogAggregationUpdateFunctionId(void);
+Oid ApiCatalogAggregationDeleteFunctionId(void);
+Oid ApiCatalogAggregationFindAndModifyFunctionId(void);
 Oid ApiCatalogAggregationDistinctFunctionId(void);
 Oid ApiCatalogAggregationGetMoreFunctionId(void);
 Oid BsonCovariancePopAggregateFunctionOid(void);
@@ -471,6 +475,7 @@ Oid BsonDollarLookupJoinFilterFunctionOid(void);
 Oid BsonLookupExtractFilterArrayFunctionOid(void);
 Oid BsonLookupUnwindFunctionOid(void);
 Oid BsonDistinctUnwindFunctionOid(void);
+Oid BsonDistinctUnwindWithCollationFunctionOid(void);
 Oid BsonDollarBucketAutoFunctionOid(void);
 Oid BsonDistinctAggregateFunctionOid(void);
 Oid RowGetBsonFunctionOid(void);

@@ -209,9 +209,26 @@ SELECT object_id from documentdb_api.collection('commands', 'collModTest');
  { "" : { "$numberInt" : "9" } }
 (4 rows)
 
+-- Convert an existing index to a TTL index.
+SELECT documentdb_api.coll_mod('commands', 'collModTest', '{"collMod": "collModTest", "index": {"name": "a_1", "expireAfterSeconds": 2000}}');
+                                           coll_mod                                           
+---------------------------------------------------------------------
+ { "ok" : { "$numberInt" : "1" }, "expireAfterSeconds_new" : { "$numberDouble" : "2000.0" } }
+(1 row)
+
+SELECT (index_spec).index_expire_after_seconds
+FROM documentdb_api_catalog.collection_indexes
+WHERE collection_id = (
+    SELECT collection_id
+    FROM documentdb_api_catalog.collections
+    WHERE database_name = 'commands' AND collection_name = 'collModTest')
+AND (index_spec).index_name = 'a_1';
+ index_expire_after_seconds 
+---------------------------------------------------------------------
+                       2000
+(1 row)
+
 -- Errors
-SELECT documentdb_api.coll_mod('commands', 'collModTest', '{"collMod": "collModTest", "index": {"name": "a_1", "expireAfterSeconds": 2000}}'); -- Not a TTL index to be modified
-ERROR:  no expireAfterSeconds field to update
 SELECT documentdb_api.coll_mod('commands', 'collModTest', '{"collMod": "collModTest", "index": {"name": "a_1", "hidden": true}}'); -- Hidden is not supported yet
                                    coll_mod                                   
 ---------------------------------------------------------------------

@@ -112,9 +112,9 @@ SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db"}'
 
 -- mode: "full" must be requested explicitly and runs a blocking vacuum full
 SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db", "mode": "full"}');
-                                    compact                                     
---------------------------------------------------------------------------------
- { "ok" : { "$numberDouble" : "1.0" }, "bytesFreed" : { "$numberLong" : "0" } }
+                                      compact                                       
+------------------------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" }, "bytesFreed" : { "$numberLong" : "32768" } }
 (1 row)
 
 -- mode: "standard" should run a regular (non-blocking) vacuum
@@ -154,6 +154,100 @@ SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db"}'
 (1 row)
 
 SELECT documentdb_api.drop_collection('compact_db','compact_coll');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- bytesFreed must be a measured delta of the on-disk size, not an estimate.
+-- Build a collection with real bloat: insert a large number of documents and
+-- then delete most of them, leaving the dead tuples behind for compact to reclaim.
+SELECT documentdb_api.create_collection('compact_db','compact_delta_coll');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api.insert_one('compact_db', 'compact_delta_coll',
+    FORMAT('{ "_id": %s, "a": "%s" }', g, repeat('x', 400))::documentdb_core.bson) IS NOT NULL AS inserted
+    FROM generate_series(1, 20000) g OFFSET 19999;
+ inserted 
+----------
+ t
+(1 row)
+
+SELECT documentdb_api.delete('compact_db',
+    '{"delete": "compact_delta_coll", "deletes": [{"q": {"_id": {"$lt": 18000}}, "limit": 0}]}');
+                                           delete                                           
+--------------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""17999"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SET documentdb.enableCompactVacuumFull TO on;
+-- Capture the size before and after so the assertion does not depend on an
+-- exact byte count, which varies with page layout and PostgreSQL version.
+SELECT documentdb_api_internal.get_storage_stats_worker(collection_id, '{ "physicalSize": true }') AS size_before
+    FROM documentdb_api_catalog.collections
+    WHERE database_name = 'compact_db' AND collection_name = 'compact_delta_coll' \gset
+-- VACUUM FULL rewrites the table, so the reported bytesFreed must be positive
+-- and must match the actual reduction in the on-disk size.
+SELECT documentdb_api.compact('{"compact": "compact_delta_coll", "$db": "compact_db", "mode": "full"}') AS compact_result \gset
+SELECT documentdb_api_internal.get_storage_stats_worker(collection_id, '{ "physicalSize": true }') AS size_after
+    FROM documentdb_api_catalog.collections
+    WHERE database_name = 'compact_db' AND collection_name = 'compact_delta_coll' \gset
+SELECT documentdb_core.bson_get_value_text((:'compact_result')::documentdb_core.bson, 'bytesFreed')::int8 > 0
+    AS reported_positive_bytes_freed;
+ reported_positive_bytes_freed 
+-------------------------------
+ t
+(1 row)
+
+SELECT documentdb_core.bson_get_value_text((:'compact_result')::documentdb_core.bson, 'bytesFreed')::int8 =
+       documentdb_core.bson_get_value_text((:'size_before')::documentdb_core.bson, 'total_rel_size')::int8 -
+       documentdb_core.bson_get_value_text((:'size_after')::documentdb_core.bson, 'total_rel_size')::int8
+    AS reported_delta_matches_measurement;
+ reported_delta_matches_measurement 
+------------------------------------
+ t
+(1 row)
+
+-- A second compact on an already compacted collection has nothing left to
+-- reclaim, so the measured delta must be 0 rather than a stale estimate.
+SELECT documentdb_api.compact('{"compact": "compact_delta_coll", "$db": "compact_db", "mode": "full"}');
+                                    compact                                     
+--------------------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" }, "bytesFreed" : { "$numberLong" : "0" } }
+(1 row)
+
+-- freeSpaceTarget larger than the remaining bloat must suppress the vacuum.
+SELECT documentdb_api.compact('{"compact": "compact_delta_coll", "$db": "compact_db", "mode": "full", "freeSpaceTargetMB": 1000000}');
+                                    compact                                     
+--------------------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" }, "bytesFreed" : { "$numberLong" : "0" } }
+(1 row)
+
+-- The spec selects which metric groups the single storage stats worker
+-- collects, so a spec that does not ask for the physical size must not report
+-- it and one that does must.
+SELECT documentdb_core.bson_get_value_text(
+           documentdb_api_internal.get_storage_stats_worker(collection_id, '{ "bloatEstimate": true }'),
+           'total_rel_size') IS NULL AS bloat_only_spec_omits_size,
+       documentdb_core.bson_get_value_text(
+           documentdb_api_internal.get_storage_stats_worker(collection_id, '{ "physicalSize": true }'),
+           'total_rel_size') IS NOT NULL AS size_spec_reports_size,
+       documentdb_core.bson_get_value_text(
+           documentdb_api_internal.get_storage_stats_worker(collection_id, '{}'),
+           'total_rel_size') IS NULL AS empty_spec_reports_nothing
+    FROM documentdb_api_catalog.collections
+    WHERE database_name = 'compact_db' AND collection_name = 'compact_delta_coll';
+ bloat_only_spec_omits_size | size_spec_reports_size | empty_spec_reports_nothing 
+----------------------------+------------------------+----------------------------
+ t                          | t                      | t
+(1 row)
+
+RESET documentdb.enableCompactVacuumFull;
+SELECT documentdb_api.drop_collection('compact_db','compact_delta_coll');
  drop_collection 
 -----------------
  t

@@ -18,6 +18,10 @@ use crate::{
 };
 
 pub const POSTGRES_RECOVERY_KEY: &str = "IsPostgresInRecovery";
+pub const MAX_REQUEST_TIMEOUT_DEFAULT_SEC: u64 = 120;
+pub const MAX_REQUEST_TIMEOUT_SEC_KEY: &str = "max_request_timeout_sec";
+pub const TRANSACTION_TIMEOUT_DEFAULT_SEC: u64 = 30;
+pub const TRANSACTION_TIMEOUT_SEC_KEY: &str = "transaction_timeout_sec";
 
 /// The deployed `documentdb` extension version parsed from the cluster topology,
 /// expressed as `major.minor-build` (for example, `1.114-0`).
@@ -74,9 +78,14 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
     fn enable_developer_explain(&self) -> bool;
     fn max_connections(&self) -> usize;
     fn allow_transaction_snapshot(&self) -> bool;
+    fn enable_request_metrics(&self) -> bool;
 
     // Needed to downcast to concrete type
     fn as_any(&self) -> &dyn std::any::Any;
+
+    fn max_request_timeout_sec(&self) -> u64;
+
+    fn transaction_timeout_sec(&self) -> u64;
 
     /// Returns the `DocumentDB` instance identifier surfaced in explain output as
     /// `instanceName`, or `None` when it is not configured. Reads the

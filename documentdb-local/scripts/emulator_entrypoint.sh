@@ -113,11 +113,25 @@ Optional arguments:
                         container (e.g. if KEY_FILE=/mykey.key, you'd add an option like the following to your
                         docker run: --mount type=bind,source=./mykey.key,target=/mykey.key)
                         Overrides KEY_FILE environment variable.
-  --data-path [PATH]    Specify a directory for data. Frequently used with docker run --mount option 
-                        (e.g. if DATA_PATH=/usr/documentdb/data, you'd add an option like the following to your 
+  --data-path [PATH]    Specify a directory for data. Frequently used with docker run --mount option
+                        (e.g. if DATA_PATH=/usr/documentdb/data, you'd add an option like the following to your
                         docker run: --mount type=bind,source=./.local/data,target=/usr/documentdb/data)
                         Defaults to /data
                         Overrides DATA_PATH environment variable.
+                        Fast first boot: the image ships a pre-initialized
+                        data directory that Docker copies into fresh NAMED or
+                        ANONYMOUS volumes on /data; empty custom paths are
+                        populated from it too. A bind-mounted host directory
+                        on /data is NOT populated by Docker, so its first
+                        boot runs full initialization and is slower. The
+                        cluster's locale/encoding are fixed inside the
+                        pre-built directory; only a full re-initialization
+                        (e.g. --disable-extended-rum on a fresh volume)
+                        re-reads locale environment variables.
+                        If PostgreSQL reports a permission error on files a
+                        previously interrupted start left behind, set
+                        DOCUMENTDB_FORCE_OWNERSHIP_REPAIR=true to force a
+                        full recursive ownership repair on the next start.
   --documentdb-port     The port of the DocumentDB endpoint on the container. 
                         You still need to publish this port (e.g. -p 10260:10260).
                         Defaults to 10260
@@ -183,6 +197,13 @@ Optional arguments:
   --disable-extended-rum
                         Disable the use of extended_rum for indexes.
                         By default, extended rum is enabled.
+                        The setting is fixed when a data directory is first
+                        initialized and cannot be changed for an existing one.
+                        On a fresh data volume this flag re-initializes the
+                        image's pre-built data directory (destroying only that
+                        untouched template); on a volume with existing data it
+                        has no effect and the volume's original setting stays
+                        active. Start with a fresh data volume to change it.
                         Overrides DISABLE_EXTENDED_RUM environment variable.
   --toast-compression [lz4|pglz|default]
                         Compression used for values the container's PostgreSQL
@@ -381,6 +402,23 @@ export POSTGRES_LOG_VERSION=${PG_VERSION_USED:-17}
 export SYSTEM_POSTGRES_LOG=${SYSTEM_POSTGRES_LOG:-/var/log/postgresql/postgresql-${POSTGRES_LOG_VERSION}-main.log}
 export DOCUMENTDB_RUNTIME_USER=${DOCUMENTDB_RUNTIME_USER:-documentdb}
 export DOCUMENTDB_RUNTIME_GROUP=${DOCUMENTDB_RUNTIME_GROUP:-$DOCUMENTDB_RUNTIME_USER}
+
+# Runtime state file consumed by healthcheck.sh. Written only once startup
+# completes (see the ready banner below), so its presence doubles as the
+# readiness marker. Remove any leftover from a previous boot of this
+# container (e.g. `docker restart`) so the healthcheck cannot report healthy
+# while this boot is still starting up — and verify both the removal and
+# that the path is writable, failing NOW rather than at the publish: a
+# failure discovered there would surface only after the full (up to
+# multi-minute) boot, as a container that works but never reports healthy.
+export DOCUMENTDB_RUNTIME_STATE_FILE=${DOCUMENTDB_RUNTIME_STATE_FILE:-/tmp/documentdb-local-runtime.env}
+rm -f "$DOCUMENTDB_RUNTIME_STATE_FILE" "${DOCUMENTDB_RUNTIME_STATE_FILE}.tmp" 2>/dev/null
+if [ -e "$DOCUMENTDB_RUNTIME_STATE_FILE" ] \
+        || ! : > "${DOCUMENTDB_RUNTIME_STATE_FILE}.tmp" 2>/dev/null; then
+    echo "Error: cannot reset or write the runtime state file at $DOCUMENTDB_RUNTIME_STATE_FILE, which the container health check depends on. Set DOCUMENTDB_RUNTIME_STATE_FILE to a writable path." >&2
+    exit 1
+fi
+rm -f "${DOCUMENTDB_RUNTIME_STATE_FILE}.tmp"
 
 # Resolve script and data directories.
 # Package-installed paths take priority over the legacy Docker layout.
@@ -604,18 +642,68 @@ if [ "$START_POSTGRESQL" = "true" ]; then
         echo "Creating data directory: $DATA_PATH"
         sudo mkdir -p "$DATA_PATH"
     fi
-    
-    # Change ownership to the runtime user to ensure we can write/delete files
-    echo "Setting ownership of $DATA_PATH to ${DOCUMENTDB_RUNTIME_USER}:${DOCUMENTDB_RUNTIME_GROUP}"
-    sudo chown -R "${DOCUMENTDB_RUNTIME_USER}:${DOCUMENTDB_RUNTIME_GROUP}" "$DATA_PATH"
-    
-    # Ensure we have full permissions on the directory
-    echo "Setting permissions on $DATA_PATH"
-    sudo chmod -R 750 "$DATA_PATH"
-    
+
+    # Repair ownership only when the data directory (or the PG_VERSION file
+    # inside it, which catches e.g. a root-restored backup under a correctly
+    # owned top-level directory) is not already owned by the runtime user. An
+    # unconditional recursive chown/chmod rewrites metadata for every file in
+    # the cluster on every boot, which gets slow on large data volumes
+    # (issue #480).
+    # Known residual: this two-sample probe can miss interior files left
+    # foreign-owned by a repair interrupted after the top directory was
+    # converted (GNU chown -R converts post-order, so this needs the top dir
+    # to have been correct already). PostgreSQL then fails with a clear
+    # permission error; DOCUMENTDB_FORCE_OWNERSHIP_REPAIR=true is the escape
+    # hatch that forces the full recursive repair without sacrificing the
+    # fast path for everyone else.
+    data_dir_owner=$(stat -c '%U' "$DATA_PATH" 2>/dev/null)
+    pg_version_owner="$DOCUMENTDB_RUNTIME_USER"
+    if [ -f "$DATA_PATH/PG_VERSION" ]; then
+        pg_version_owner=$(stat -c '%U' "$DATA_PATH/PG_VERSION" 2>/dev/null)
+    fi
+    if [ "${DOCUMENTDB_FORCE_OWNERSHIP_REPAIR:-false}" = "true" ] || \
+       [ "$data_dir_owner" != "${DOCUMENTDB_RUNTIME_USER}" ] || \
+       [ "$pg_version_owner" != "${DOCUMENTDB_RUNTIME_USER}" ]; then
+        # Change ownership to the runtime user to ensure we can write/delete files
+        echo "Setting ownership of $DATA_PATH to ${DOCUMENTDB_RUNTIME_USER}:${DOCUMENTDB_RUNTIME_GROUP}"
+        sudo chown -R "${DOCUMENTDB_RUNTIME_USER}:${DOCUMENTDB_RUNTIME_GROUP}" "$DATA_PATH"
+
+        # Ensure we have full permissions on the directory
+        echo "Setting permissions on $DATA_PATH"
+        sudo chmod -R 750 "$DATA_PATH"
+    else
+        # PostgreSQL refuses to start when the data directory itself is more
+        # permissive than 0750; keep that guarantee without a recursive walk.
+        chmod 750 "$DATA_PATH" 2>/dev/null || sudo chmod 750 "$DATA_PATH"
+    fi
+
+    # Adopt the image-baked, pre-initialized data directory when one is present
+    # so first boot skips initdb + CREATE EXTENSION (issue #480). Extracted to
+    # a sibling script to keep this entrypoint lean; see that script for the
+    # full rationale (marker lifecycle, pristineness rules, custom --data-path
+    # handling). Exit 10 means the requested options conflict with the baked
+    # template and the server bootstrap must force a clean re-initialization;
+    # any other nonzero status is a real failure.
+    force_reinit_args=()
+    bash "$(dirname "${BASH_SOURCE[0]}")/documentdb_prepare_data_directory.sh" "$DATA_PATH"
+    prepare_data_dir_rc=$?
+    case "$prepare_data_dir_rc" in
+        0) ;;
+        10) force_reinit_args+=(-c) ;;
+        *)
+            echo "Error: preparing the data directory failed (status ${prepare_data_dir_rc})." >&2
+            exit "$prepare_data_dir_rc" ;;
+    esac
+
+    # Deliberately an internal array, NOT the PGOPTIONS environment variable:
+    # PGOPTIONS is a standard libpq CLIENT variable users legitimately set for
+    # per-session GUCs, and word-splitting the ambient value into
+    # start_oss_server.sh's argv let unrelated content reach its getopts --
+    # where `-c` means "force cleanup" and destroys the data directory.
+    external_access_args=()
     if [ "${ALLOW_EXTERNAL_CONNECTIONS:-false}" = "true" ]; then
         echo "Allowing external connections to PostgreSQL..."
-        export PGOPTIONS="-e"
+        external_access_args+=(-e)
     fi
 
     # TOAST compression for this image's PostgreSQL. Applied here rather than in
@@ -877,17 +965,20 @@ if [ "$START_POSTGRESQL" = "true" ]; then
     done
 
     echo "Starting OSS server..."
-    EXTENDED_RUM_FLAG="-r"
+    # Pass an explicit `-r <bool>`: the server script now defaults to extended
+    # RUM *enabled*, so merely omitting -r no longer disables it -- that
+    # silently turned --disable-extended-rum into a no-op.
+    extended_rum_bool="true"
     if [ "$DISABLE_EXTENDED_RUM" = "true" ]; then
-        EXTENDED_RUM_FLAG=""
+        extended_rum_bool="false"
     fi
     start_oss_server_args=()
-    if [ -n "$EXTENDED_RUM_FLAG" ]; then
-        start_oss_server_args+=("$EXTENDED_RUM_FLAG")
+    if [ ${#force_reinit_args[@]} -gt 0 ]; then
+        start_oss_server_args+=("${force_reinit_args[@]}")
     fi
-    if [ -n "${PGOPTIONS:-}" ]; then
-        IFS=' ' read -r -a pgoptions_array <<< "$PGOPTIONS"
-        start_oss_server_args+=("${pgoptions_array[@]}")
+    start_oss_server_args+=(-r "$extended_rum_bool")
+    if [ ${#external_access_args[@]} -gt 0 ]; then
+        start_oss_server_args+=("${external_access_args[@]}")
     fi
     if [ "$CREATE_USER" = "false" ]; then
         start_oss_server_args+=(-u "")
@@ -897,6 +988,19 @@ if [ "$START_POSTGRESQL" = "true" ]; then
     start_oss_server_args+=(-d "$DATA_PATH" -p "$POSTGRESQL_PORT")
 
     "$SCRIPT_DIR/start_oss_server.sh" "${start_oss_server_args[@]}" | tee -a "$OSS_SERVER_LOG"
+    start_oss_server_rc=${PIPESTATUS[0]}
+    if [ "$start_oss_server_rc" -ne 0 ]; then
+        # $? here is tee's, so the script's own status has to be read
+        # explicitly. A setup step that fails *after* the postmaster
+        # daemonized (e.g. CREATE EXTENSION) otherwise leaves postmaster.pid
+        # in place and sails through every later gate into a healthy verdict
+        # on a half-configured server.
+        # Without this, a failed bootstrap (e.g. initdb dying after a forced
+        # cleanup) was only discovered a full postmaster.pid timeout later,
+        # under a misleading "failed to start within 60 seconds" headline.
+        echo "Error: start_oss_server.sh failed (status ${start_oss_server_rc}); see $OSS_SERVER_LOG and the PostgreSQL server log at $DATA_PATH/pglog.log." >&2
+        exit "$start_oss_server_rc"
+    fi
 
     echo "OSS server started."
     echo "[ENTRYPOINT] Setting up PostgreSQL log streaming..."
@@ -1282,21 +1386,27 @@ else
     # overridable so tests can exercise the timeout path without a long wait.
     if command -v pg_isready >/dev/null 2>&1; then
         pg_ready_timeout="$(sanitize_uint "${DOCUMENTDB_PG_READY_TIMEOUT:-600}" 600 DOCUMENTDB_PG_READY_TIMEOUT)"
-        pg_ready_interval="$(sanitize_uint "${DOCUMENTDB_PG_READY_INTERVAL:-5}" 5 DOCUMENTDB_PG_READY_INTERVAL)"
-        # Interval needs a >=1 lower bound (a 0 would busy-spin forever since
-        # elapsed never advances), then base-10 normalization so a zero-padded
-        # value (e.g. "08") is not parsed as invalid octal by the $(( )) below.
+        # 1s interval: the very first check usually succeeds (PostgreSQL was
+        # started above), so a coarser interval only adds startup latency on
+        # the rare retry path (issue #480).
+        pg_ready_interval="$(sanitize_uint "${DOCUMENTDB_PG_READY_INTERVAL:-1}" 1 DOCUMENTDB_PG_READY_INTERVAL)"
+        # Interval needs a >=1 lower bound (a 0 would busy-spin between
+        # probes), then base-10 normalization so a zero-padded value (e.g.
+        # "08") is not parsed as invalid octal by the $(( )) below.
         [ "$pg_ready_interval" -ge 1 ] || pg_ready_interval=1
         pg_ready_interval=$((10#$pg_ready_interval))
-        pg_ready_elapsed=0
+        # Measure real wall-clock time (bash's SECONDS), not accumulated sleep
+        # durations: pg_isready itself can block for seconds per probe, and
+        # counting only sleeps would stretch the effective bound far past the
+        # documented timeout.
+        pg_ready_start=$SECONDS
         echo "Waiting for PostgreSQL to be ready on localhost:$POSTGRESQL_PORT before creating the admin user..."
         while ! pg_isready -h localhost -p "$POSTGRESQL_PORT" >/dev/null 2>&1; do
-            if [ "$pg_ready_elapsed" -ge "$pg_ready_timeout" ]; then
+            if [ $((SECONDS - pg_ready_start)) -ge "$pg_ready_timeout" ]; then
                 echo "Error: PostgreSQL did not become ready on localhost:$POSTGRESQL_PORT within ${pg_ready_timeout}s; cannot create the admin user." >&2
                 exit 1
             fi
             sleep "$pg_ready_interval"
-            pg_ready_elapsed=$((pg_ready_elapsed + pg_ready_interval))
         done
         echo "PostgreSQL is ready."
     else
@@ -1354,22 +1464,26 @@ fi
 
 gateway_pid=$! # Capture the PID of the gateway process
 
-# Wait for the gateway to be ready before attempting initialization
+# Wait for the gateway to be ready before attempting initialization. Poll at a
+# sub-second interval so readiness is detected promptly (issue #480), but only
+# log once per second to keep the container log readable.
 echo "Waiting for gateway to be ready..."
-max_attempts=60
+max_attempts=240
 attempt=0
 while [ $attempt -lt $max_attempts ]; do
     if nc -z localhost "$DOCUMENTDB_PORT"; then
         echo "Gateway is ready on localhost:$DOCUMENTDB_PORT"
         break
     fi
-    echo "Attempt $((attempt + 1))/$max_attempts: Gateway not ready yet, waiting..."
-    sleep 1
+    if [ $((attempt % 4)) -eq 0 ]; then
+        echo "Attempt $((attempt / 4 + 1))/60: Gateway not ready yet, waiting..."
+    fi
+    sleep 0.25
     attempt=$((attempt + 1))
 done
 
 if [ $attempt -eq $max_attempts ]; then
-    echo "Error: Gateway failed to start within $max_attempts seconds"
+    echo "Error: Gateway failed to start within 60 seconds"
     exit 1
 fi
 
@@ -1488,6 +1602,24 @@ if [ -f "$GATEWAY_LOG" ]; then
 fi
 
 echo "Gateway started with PID: $gateway_pid"
+
+# Publish the resolved runtime settings for healthcheck.sh. This runs after
+# gateway readiness and data initialization so the healthcheck only reports
+# healthy on a fully initialized database, and it records the ports actually
+# in use — which may come from CLI flags that HEALTHCHECK / `docker exec`
+# sessions cannot see in their environment. Written via a temp file + mv so
+# the healthcheck never reads a partially written file. A write failure is
+# not fatal to the database, but the container will keep reporting unhealthy,
+# so warn loudly.
+if printf 'DOCUMENTDB_PORT=%s\nPOSTGRESQL_PORT=%s\n' \
+        "$DOCUMENTDB_PORT" "$POSTGRESQL_PORT" \
+        > "${DOCUMENTDB_RUNTIME_STATE_FILE}.tmp" \
+        && mv "${DOCUMENTDB_RUNTIME_STATE_FILE}.tmp" "$DOCUMENTDB_RUNTIME_STATE_FILE"; then
+    echo "Runtime state for the health check written to $DOCUMENTDB_RUNTIME_STATE_FILE"
+else
+    echo "Warning: could not write $DOCUMENTDB_RUNTIME_STATE_FILE; the container health check will keep reporting unhealthy." >&2
+fi
+
 echo ""
 echo "=== DocumentDB is ready ==="
 echo ""
@@ -1495,7 +1627,9 @@ echo "Connect with mongosh (replace <password> with the password you set):"
 echo "  mongosh 'mongodb://${USERNAME}:<password>@localhost:${DOCUMENTDB_PORT}/mydb?tls=true&tlsAllowInvalidCertificates=true'"
 echo "  (Replace mydb with any DB name; a fresh DB is created on first insert.)"
 echo ""
-echo "Data is stored in ${DATA_PATH}; mount a volume there (docker run -v <host-dir>:/data ...) to persist it across container recreation."
+echo "Data is stored in ${DATA_PATH}; mount a volume there to persist it across container recreation."
+echo "  Named volume (fast first boot, recommended): docker run -v mydata:${DATA_PATH} ..."
+echo "  Host directory (first boot runs a slower full initialization): docker run -v <host-dir>:${DATA_PATH} ..."
 echo ""
 echo "All logs are being streamed to docker logs with prefixes:"
 echo "  [POSTGRES] - PostgreSQL database logs ($PG_LOG_FILE)"

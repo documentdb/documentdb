@@ -9,6 +9,7 @@
  */
 #include <postgres.h>
 #include <nodes/parsenodes.h>
+#include <utils/array.h>
 
 #ifndef DOCDB_STORAGE_UTILS_H
 #define DOCDB_STORAGE_UTILS_H
@@ -27,6 +28,26 @@ typedef struct CollectionBloatStats
 	uint64 estimatedTableStorage;
 } CollectionBloatStats;
 
+/*
+ * Physical on-disk size of a collection, measured from the relation files
+ * rather than from planner statistics. Unlike CollectionBloatStats these
+ * numbers are exact at the time they are read, which is what allows callers
+ * to difference two samples and attribute the change to an operation.
+ */
+typedef struct CollectionStorageSize
+{
+	/* Whether a size could be determined for the collection */
+	bool nullStats;
+
+	/* Size of the collection including indexes, TOAST and the free space/visibility maps, in bytes */
+	uint64 totalRelationSize;
+
+	/* Size of the collection's heap and TOAST data, excluding indexes, in bytes */
+	uint64 totalTableSize;
+} CollectionStorageSize;
+
 CollectionBloatStats GetCollectionBloatEstimate(uint64 collectionId);
+CollectionStorageSize GetCollectionStorageSize(uint64 collectionId);
+CollectionStorageSize GetPostgresRelationSizes(ArrayType *relationIds);
 
 #endif

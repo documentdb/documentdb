@@ -19,6 +19,7 @@
 #include "commands/parse_error.h"
 #include "metadata/metadata_cache.h"
 #include "utils/documentdb_errors.h"
+#include "utils/error_utils.h"
 #include "utils/feature_counter.h"
 #include "utils/query_utils.h"
 #include "utils/storage_utils.h"
@@ -87,9 +88,13 @@ typedef struct CompactArgs
 
 static void ParseCompactCommandSpec(pgbson *compactSpec, CompactArgs *args);
 static void SelectCompactMode(CompactArgs *args, CompactMode mode);
-static void PerformCompactOperation(MongoCollection *collection, CompactMode mode);
+static void PerformCompactOperation(uint64 collectionId, CompactMode mode);
 static void ValidateCompactAccess(MongoCollection *collection, CompactMode mode);
 static void ValidateLocksAndCheckAccess(MongoCollection *collection, CompactMode mode);
+static uint64 RunVacuumAndMeasureFreedSpace(uint64 collectionId,
+											const CompactArgs *args);
+static uint64 RunVacuumAndEstimateFreedSpace(uint64 collectionId,
+											 const CompactArgs *args);
 
 
 PG_FUNCTION_INFO_V1(command_compact);
@@ -215,42 +220,18 @@ command_compact(PG_FUNCTION_ARGS)
 	{
 		elog(LOG, "Updating statistics for collection %s.%s",
 			 args.databaseName, args.collectionName);
-		PerformCompactOperation(collection, args.mode);
+		PerformCompactOperation(collection->collectionId, args.mode);
 		PgbsonWriterAppendInt64(&response, "bytesFreed", 10, 0);
 		PG_RETURN_POINTER(PgbsonWriterGetPgbson(&response));
 	}
 
-	/* Get the bloat stats before vacuuming */
-	CollectionBloatStats beforeVacuumStats;
-	memset(&beforeVacuumStats, 0, sizeof(CollectionBloatStats));
-
-	/* Get the bloat stats before vacuuming */
-	beforeVacuumStats = GetCollectionBloatEstimate(collection->collectionId);
-
-	uint64 freedSpace = 0;
-	if (!beforeVacuumStats.nullStats && (beforeVacuumStats.estimatedBloatStorage /
-										 BYTES_PER_MB) >= args.freeSpaceTargetMB)
-	{
-		/* Only perform vacuum if there are stats available and freeSpace target is met */
-		elog(LOG, "Performing compact (%s) on collection %s.%s",
-			 args.mode == COMPACT_MODE_FULL ? "vacuum full" : "vacuum",
-			 args.databaseName, args.collectionName);
-		PerformCompactOperation(collection, args.mode);
-
-		/*
-		 * Report the on-disk space returned to the OS. VACUUM FULL rewrites the
-		 * table and hands the bloat space back to the OS, so approximate the
-		 * freed space with the pre-vacuum bloat estimate. A standard VACUUM only
-		 * reclaims dead-tuple space for reuse within the relation and does not
-		 * shrink the file, so nothing is returned to the OS.
-		 *
-		 * Note: this is a rough estimate and does not account for index space.
-		 */
-		if (args.mode == COMPACT_MODE_FULL)
-		{
-			freedSpace = beforeVacuumStats.estimatedBloatStorage;
-		}
-	}
+	/*
+	 * Resolve everything that is needed from the collection before running any
+	 * query. The metadata cache entry must not be dereferenced past this point:
+	 * the VACUUM invalidates the relation and evicts the entry, and the size
+	 * queries run without holding a lock on the relation.
+	 */
+	uint64 freedSpace = RunVacuumAndMeasureFreedSpace(collection->collectionId, &args);
 
 	PgbsonWriterAppendInt64(&response, "bytesFreed", 10, freedSpace);
 	PG_RETURN_POINTER(PgbsonWriterGetPgbson(&response));
@@ -260,6 +241,97 @@ command_compact(PG_FUNCTION_ARGS)
 /*-------------------*/
 /* Private functions */
 /*-------------------*/
+
+/*
+ * Runs the requested VACUUM and returns the number of bytes that it actually
+ * returned to the OS.
+ *
+ * The size is sampled from the relation files immediately before and after the
+ * VACUUM, so the reported number is a measurement rather than an estimate. The
+ * statistics based bloat estimate is only consulted when the caller asked for a
+ * freeSpaceTarget, because that is the only case where a decision has to be made
+ * before any space has been reclaimed. With no target the estimate is pure
+ * overhead: it is one of the most expensive queries the extension issues, and
+ * its result would only ever be compared against zero.
+ */
+static uint64
+RunVacuumAndMeasureFreedSpace(uint64 collectionId, const CompactArgs *args)
+{
+	/*
+	 * get_storage_stats_worker is only present once every node has been upgraded.
+	 * During a rolling upgrade fall back to the estimate based accounting so
+	 * that compact keeps working instead of failing on a lagging worker.
+	 */
+	if (!IsClusterVersionAtleast(DocDB_V1, 0, 0))
+	{
+		return RunVacuumAndEstimateFreedSpace(collectionId, args);
+	}
+
+	if (args->freeSpaceTargetMB > 0)
+	{
+		CollectionBloatStats bloatStats = GetCollectionBloatEstimate(collectionId);
+
+		if (bloatStats.nullStats ||
+			(bloatStats.estimatedBloatStorage / BYTES_PER_MB) < args->freeSpaceTargetMB)
+		{
+			/* Not enough reclaimable space to justify the vacuum. */
+			return 0;
+		}
+	}
+
+	CollectionStorageSize sizeBeforeVacuum = GetCollectionStorageSize(collectionId);
+
+	elog_unredacted("Performing compact isFull=%d on collection %lu",
+					args->mode == COMPACT_MODE_FULL, collectionId);
+	PerformCompactOperation(collectionId, args->mode);
+
+	CollectionStorageSize sizeAfterVacuum = GetCollectionStorageSize(collectionId);
+
+	if (sizeBeforeVacuum.nullStats || sizeAfterVacuum.nullStats ||
+		sizeAfterVacuum.totalRelationSize >= sizeBeforeVacuum.totalRelationSize)
+	{
+		/*
+		 * Either a size could not be read, or the relation did not shrink. A
+		 * standard VACUUM usually cannot shrink the file at all, and concurrent
+		 * writes can grow it, so this is an expected outcome rather than an error.
+		 */
+		return 0;
+	}
+
+	return sizeBeforeVacuum.totalRelationSize - sizeAfterVacuum.totalRelationSize;
+}
+
+
+/*
+ * Pre-1.0 accounting, kept so that compact still behaves sanely while a
+ * cluster is partially upgraded and get_storage_stats_worker is not yet
+ * guaranteed to exist on every node.
+ */
+static uint64
+RunVacuumAndEstimateFreedSpace(uint64 collectionId, const CompactArgs *args)
+{
+	CollectionBloatStats beforeVacuumStats = GetCollectionBloatEstimate(collectionId);
+
+	if (beforeVacuumStats.nullStats ||
+		(beforeVacuumStats.estimatedBloatStorage / BYTES_PER_MB) <
+		args->freeSpaceTargetMB)
+	{
+		return 0;
+	}
+
+	elog_unredacted("Performing compact isFull=%d on collection %lu",
+					args->mode == COMPACT_MODE_FULL, collectionId);
+	PerformCompactOperation(collectionId, args->mode);
+
+	/*
+	 * VACUUM FULL rewrites the table and hands the bloat space back to the OS, so
+	 * approximate the freed space with the pre-vacuum bloat estimate. A standard
+	 * VACUUM only reclaims dead-tuple space for reuse within the relation, so
+	 * nothing is returned to the OS.
+	 */
+	return args->mode == COMPACT_MODE_FULL ? beforeVacuumStats.estimatedBloatStorage : 0;
+}
+
 
 /*
  * Validates that the current user has privileges to perform compact on the collection.
@@ -332,7 +404,7 @@ ValidateLocksAndCheckAccess(MongoCollection *collection, CompactMode mode)
 	 *
 	 * We only take the lock conditionally to test availability and then release
 	 * it immediately. The actual VACUUM runs on a separate libpq connection (see
-	 * PerformVacuum), so if this backend kept holding the lock, that connection
+	 * PerformCompactOperation), so if this backend kept holding the lock, that connection
 	 * would block on our own session and hang. Releasing here lets the subsequent
 	 * VACUUM acquire the lock itself.
 	 */
@@ -361,26 +433,24 @@ ValidateLocksAndCheckAccess(MongoCollection *collection, CompactMode mode)
  * local server via libpq, as VACUUM can't be executed in a transaction block.
  */
 static void
-PerformCompactOperation(MongoCollection *collection, CompactMode mode)
+PerformCompactOperation(uint64 collectionId, CompactMode mode)
 {
-	Assert(collection != NULL && collection->relationId != InvalidOid);
-
 	const char *maintenanceQuery;
 	if (mode == COMPACT_MODE_UPDATE_STATS)
 	{
 		maintenanceQuery = FormatSqlQuery("ANALYZE %s.documents_%ld",
 										  ApiDataSchemaName,
-										  collection->collectionId);
+										  collectionId);
 	}
 	else
 	{
 		maintenanceQuery = mode == COMPACT_MODE_FULL ?
 						   FormatSqlQuery("VACUUM FULL %s.documents_%ld",
 										  ApiDataSchemaName,
-										  collection->collectionId) :
+										  collectionId) :
 						   FormatSqlQuery("VACUUM %s.documents_%ld",
 										  ApiDataSchemaName,
-										  collection->collectionId);
+										  collectionId);
 	}
 
 	/* VACUUM needs to be performed at the top level */

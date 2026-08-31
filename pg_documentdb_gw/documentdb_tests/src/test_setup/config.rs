@@ -30,18 +30,6 @@ pub fn setup_configuration() -> DocumentDBSetupConfiguration {
     }
 }
 
-/// Returns a baseline configuration with `postgres_command_timeout_secs`
-/// overridden to the supplied value.
-#[must_use]
-pub fn setup_configuration_with_command_timeout(
-    postgres_command_timeout_secs: u64,
-) -> DocumentDBSetupConfiguration {
-    DocumentDBSetupConfiguration {
-        postgres_command_timeout_secs: Some(postgres_command_timeout_secs),
-        ..setup_configuration()
-    }
-}
-
 /// Returns a setup configuration that points at an unreachable `PostgreSQL`
 /// host so connection creation deterministically fails.
 #[must_use]
@@ -49,7 +37,6 @@ pub fn failing_setup_configuration() -> DocumentDBSetupConfiguration {
     DocumentDBSetupConfiguration {
         postgres_host_name: Some("127.0.0.1".to_owned()),
         postgres_port: Some(1),
-        postgres_command_timeout_secs: Some(1),
         ..setup_configuration()
     }
 }

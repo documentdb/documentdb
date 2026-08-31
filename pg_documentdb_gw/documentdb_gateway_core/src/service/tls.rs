@@ -373,8 +373,14 @@ impl TlsProvider {
     /// * If the cipher is `None`, the mapping function receives `None` and may return a default value
     #[must_use]
     pub fn ciphersuite_to_i32(&self, ciphersuite: Option<&SslCipherRef>) -> i32 {
+        self.ciphersuite_name_to_i32(ciphersuite.map(SslCipherRef::name))
+    }
+
+    /// Maps a ciphersuite name to its configured numeric identifier.
+    #[must_use]
+    pub fn ciphersuite_name_to_i32(&self, ciphersuite: Option<&str>) -> i32 {
         self.ciphersuite_mapping
-            .map_or(0, |mapping| mapping(ciphersuite.map(SslCipherRef::name)))
+            .map_or(0, |mapping| mapping(ciphersuite))
     }
 
     pub fn is_valid_certificate(&self) -> bool {

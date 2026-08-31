@@ -33,7 +33,7 @@ const BEYOND_RETENTION: Duration = Duration::from_millis(750);
 /// pool is never disposed no matter how long it sits unused.
 #[tokio::test]
 async fn sweep_keeps_pool_in_use_then_disposes_it_once_idle() {
-    let dynamic_configuration = TestConfiguration;
+    let dynamic_configuration = TestConfiguration::default();
     let setup_config = setup_configuration();
     let pool_manager = build_shared_pool_manager(&setup_config);
     // The pool opens a real backend connection, so it borrows the user the test
@@ -78,7 +78,7 @@ async fn sweep_keeps_pool_in_use_then_disposes_it_once_idle() {
 /// the interlock releases once the connection goes back.
 #[tokio::test]
 async fn sweep_spares_a_pool_with_a_connection_checked_out() {
-    let dynamic_configuration = TestConfiguration;
+    let dynamic_configuration = TestConfiguration::default();
     let setup_config = setup_configuration();
     let pool_manager = build_shared_pool_manager(&setup_config);
     let user = setup_config.postgres_system_user().to_owned();
@@ -120,7 +120,7 @@ async fn sweep_spares_a_pool_with_a_connection_checked_out() {
 /// window rather than being disposed on the timestamp of its last acquire.
 #[tokio::test]
 async fn handing_out_a_pool_refreshes_retention_without_acquiring_a_connection() {
-    let dynamic_configuration = TestConfiguration;
+    let dynamic_configuration = TestConfiguration::default();
     let setup_config = setup_configuration();
     let pool_manager = build_shared_pool_manager(&setup_config);
     let user = setup_config.postgres_system_user().to_owned();
@@ -164,7 +164,7 @@ async fn handing_out_a_pool_refreshes_retention_without_acquiring_a_connection()
 /// entry replaced mid-sweep, which has no deterministic hook.
 #[tokio::test]
 async fn sweep_disposes_only_pools_still_idle_at_removal_time() {
-    let dynamic_configuration = TestConfiguration;
+    let dynamic_configuration = TestConfiguration::default();
     let pool_manager = build_shared_pool_manager(&setup_configuration());
 
     pool_manager

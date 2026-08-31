@@ -144,3 +144,14 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest
 /*EXPLAIN*/
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "redactTest3", "pipeline": [ { "$redact": "$$KEEP" } ] }');
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "redactTest3", "pipeline": [ { "$redact": { "$cond": {"if": {"$eq": ["$level", 1]}, "then": "$$KEEP", "else": "$$PRUNE"} } } ] }');
+
+/*
+ * Parse-time constant folding of an operator whose input is a document that
+ * resolves to a system variable. This used to crash the backend because the
+ * null-check evaluation path evaluated the document without a lifetime tracker.
+ */
+SELECT documentdb_api.insert_one('db','redactTest4','{ "_id": 1, "level": 1 }', NULL);
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest4", "pipeline": [ { "$redact": { "$getField": { "field": "f", "input": { "f": "$$PRUNE" } } } } ], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest4", "pipeline": [ { "$redact": { "$getField": { "field": "f", "input": { "f": "$$KEEP" } } } } ], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest4", "pipeline": [ { "$redact": { "$getField": { "field": "f", "input": { "f": "$$DESCEND" } } } } ], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest4", "pipeline": [ { "$redact": { "$setField": { "field": "f", "input": { "f": "$$PRUNE" }, "value": "$$KEEP" } } } ], "cursor": {} }');

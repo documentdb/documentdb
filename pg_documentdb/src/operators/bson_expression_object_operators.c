@@ -995,17 +995,29 @@ IsAggregationExpressionEvaluatesToNull(AggregationExpressionData *expressionData
 		case AggregationExpressionKind_Document:
 		{
 			/* here we want to eval the input given to setfield using an agnostic env of root {} */
+
+			/* Evaluating a document can produce a value whose storage is not
+			 * inline (document, array, string, binary). Those are copied and
+			 * handed to the lifetime tracker, so one must be supplied here:
+			 * without it the evaluation dereferences a NULL tracker. */
+			ExpressionLifetimeTracker tracker = { 0 };
+
 			/* ExpressionResult expressionResult = { 0 }; results in gcc bug on centos */
 			ExpressionResult expressionResult;
 			memset(&expressionResult, 0, sizeof(ExpressionResult));
+			expressionResult.expressionResultPrivate.tracker = &tracker;
 			ExpressionResult childExpression = ExpressionResultCreateChild(
 				&expressionResult);
 			bool isNullOnEmpty = true;
-			pgbson doc = *(PgbsonInitEmpty());
+			pgbson *doc = PgbsonInitEmpty();
 
-			EvaluateAggregationExpressionData(expressionData, &doc, &childExpression,
+			EvaluateAggregationExpressionData(expressionData, doc, &childExpression,
 											  isNullOnEmpty);
-			return IsExpressionResultNullOrUndefined(&childExpression.value);
+
+			bool isNullOrUndefined = IsExpressionResultNullOrUndefined(
+				&childExpression.value);
+			list_free_deep(tracker.itemsToFree);
+			return isNullOrUndefined;
 		}
 
 		case AggregationExpressionKind_Constant:

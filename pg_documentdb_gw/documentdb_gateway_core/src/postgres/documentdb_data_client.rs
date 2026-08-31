@@ -149,12 +149,12 @@ impl DocumentDBDataClient {
 impl PgDataClient for DocumentDBDataClient {
     fn new_authorized(service_context: &ServiceContext, authorization: &AuthState) -> Result<Self> {
         let user = authorization.username()?;
-        let dynamic_configuration = service_context.dynamic_configuration();
+        let settings = authorization.data_pool_settings()?;
 
         let connection_pool = Some(
             service_context
                 .connection_pool_manager()
-                .get_data_pool(user, dynamic_configuration.as_ref())?,
+                .get_data_pool_with_settings(user, settings)?,
         );
 
         Ok(Self {

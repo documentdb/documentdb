@@ -38,7 +38,7 @@ static TrackedVersions *TrackedExtensionVersions = NULL;
 
 int FirstMajorVersionOffset = 0;
 
-#define MaxVersionAllowed DocDB_V0
+#define MaxVersionAllowed DocDB_V1
 
 static char *VersionRefreshQuery = NULL;
 static char * GetVersionRefreshQuery(void);
@@ -145,14 +145,16 @@ IsClusterVersionAtleast(MajorVersion majorVersion, int minor, int patch)
 	{
 		return false;
 	}
+	else if (version.Major > major)
+	{
+		return true;
+	}
 	else if (version.Minor < minor)
 	{
 		return false;
 	}
-	else if (version.Major != major || version.Minor != minor)
+	else if (version.Minor > minor)
 	{
-		/* if CurrentVersion.Major or CurrentVersion.Minor are greater than the expected version */
-		/* parts we are on a later version, no need to compare the patch. */
 		return true;
 	}
 
@@ -185,19 +187,50 @@ IsExtensionVersionAtleast(ExtensionVersion extVersion, MajorVersion majorVersion
 	{
 		return false;
 	}
+	else if (extVersion.Major > major)
+	{
+		return true;
+	}
 	else if (extVersion.Minor < minor)
 	{
 		return false;
 	}
-	else if (extVersion.Major != major || extVersion.Minor != minor)
+	else if (extVersion.Minor > minor)
 	{
-		/* if extVersion.Major or extVersion.Minor are greater than the expected version */
-		/* parts we are on a later version, no need to compare the patch. */
 		return true;
 	}
 
 	/* Major and Minor are the expected ones, we should compare the patch version. */
 	return extVersion.Patch >= patch;
+}
+
+
+/*
+ * Returns true if the given Extension Version is >= the given target Extension Version
+ */
+bool
+IsExtensionVersionAtLeastVersion(ExtensionVersion extVersion, ExtensionVersion
+								 targetVersion)
+{
+	if (extVersion.Major < targetVersion.Major)
+	{
+		return false;
+	}
+	else if (extVersion.Major > targetVersion.Major)
+	{
+		return true;
+	}
+	else if (extVersion.Minor < targetVersion.Minor)
+	{
+		return false;
+	}
+	else if (extVersion.Minor > targetVersion.Minor)
+	{
+		return true;
+	}
+
+	/* Major and Minor are the expected ones, we should compare the patch version. */
+	return extVersion.Patch >= targetVersion.Patch;
 }
 
 

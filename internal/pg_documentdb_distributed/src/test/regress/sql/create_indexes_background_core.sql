@@ -300,18 +300,20 @@ INSERT INTO documentdb_api_catalog.documentdb_index_queue (index_cmd, cmd_type, 
 VALUES ('CREATE INDEX CONCURRENTLY', 'C', 32105, 2, 10015415, 32000);
 INSERT INTO documentdb_api_catalog.documentdb_index_queue (index_cmd, cmd_type, index_id, index_cmd_status, collection_id) 
 VALUES ('CREATE INDEX CONCURRENTLY', 'R', 32105, 2, 32000);
--- this should return finish : 1, ok : 0 and error message due to index_id 32101
+-- retryable failed entries should return finish : 0, ok : 1 and retain the error for diagnostics
 SELECT * FROM documentdb_api_internal.check_build_index_status('{"indexRequest" : {"cmdType" : "C", "ids" :[32101,32102,32103,32104,32105,32106]}}');
 DELETE FROM documentdb_api_catalog.documentdb_index_queue;
 
--- test failure but no comment.
+-- test a retryable failed entry followed by a skippable entry with a retained error.
 INSERT INTO documentdb_api_catalog.documentdb_index_queue (index_cmd, cmd_type, index_id, index_cmd_status, collection_id) 
 VALUES ('CREATE INDEX CONCURRENTLY', 'C', 32102, 3, 32000);
-INSERT INTO documentdb_api_catalog.documentdb_index_queue (index_cmd, cmd_type, index_id, index_cmd_status, collection_id) 
-VALUES ('CREATE INDEX CONCURRENTLY', 'C', 32103, 4, 32000);
-INSERT INTO documentdb_api_catalog.documentdb_index_queue (index_cmd, cmd_type, index_id, index_cmd_status, collection_id) 
-VALUES ('CREATE INDEX CONCURRENTLY', 'C', 32104, 4, 32000);
--- this should return finish : 1, ok : 0 and error message due to empty comment of failed request
+INSERT INTO documentdb_api_catalog.documentdb_index_queue (index_cmd, cmd_type, index_id, index_cmd_status, collection_id, comment)
+VALUES ('CREATE INDEX CONCURRENTLY', 'C', 32103, 4, 32000, '{"err_msg" : "terminal error", "err_code" : { "$numberInt" : "2" }}');
+INSERT INTO documentdb_api_catalog.documentdb_index_queue (index_cmd, cmd_type, index_id, index_cmd_status, collection_id, comment)
+VALUES ('CREATE INDEX CONCURRENTLY', 'C', 32104, 4, 32000, '{}');
+INSERT INTO documentdb_api_catalog.documentdb_index_queue (index_cmd, cmd_type, index_id, index_cmd_status, collection_id)
+VALUES ('CREATE INDEX CONCURRENTLY', 'C', 32105, 4, 32000);
+-- any skippable entry should return finish : 1, ok : 0 and its retained error
 SELECT * FROM documentdb_api_internal.check_build_index_status('{"indexRequest" : {"cmdType" : "C", "ids" :[32101,32102,32103,32104,32105,32106]}}');
 DELETE FROM documentdb_api_catalog.documentdb_index_queue;
 
@@ -322,10 +324,10 @@ VALUES ('CREATE INDEX CONCURRENTLY', 'C', 32105, 2, 10015415, 32000);
 SELECT * FROM documentdb_api_internal.check_build_index_status('{"indexRequest" : {"cmdType" : "C", "ids" :[32101,32102,32103,32104,32105,32106]}}');
 DELETE FROM documentdb_api_catalog.documentdb_index_queue;
 
--- test with attempt > 1
+-- an in-progress entry at the final allowed attempt remains pending
 INSERT INTO documentdb_api_catalog.documentdb_index_queue (index_cmd, cmd_type, index_id, index_cmd_status, collection_id, attempt) 
-VALUES ('CREATE INDEX CONCURRENTLY', 'C', 32105, 2, 32000, 4);
--- this should return finish : 1, ok : 0 and error message due to one attempt is failed "Index creation attempt failed"
+VALUES ('CREATE INDEX CONCURRENTLY', 'C', 32105, 2, 32000, 3);
+-- this should return finish : 0, ok : 1 while the final attempt is active
 SELECT * FROM documentdb_api_internal.check_build_index_status('{"indexRequest" : {"cmdType" : "C", "ids" :[32101,32102,32103,32104,32105,32106]}}');
 DELETE FROM documentdb_api_catalog.documentdb_index_queue;
 

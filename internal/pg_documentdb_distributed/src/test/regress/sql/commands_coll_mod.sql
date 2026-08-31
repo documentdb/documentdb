@@ -86,8 +86,17 @@ SELECT pg_sleep(2);
 CALL documentdb_api_internal.delete_expired_rows();
 SELECT object_id from documentdb_api.collection('commands', 'collModTest');
 
+-- Convert an existing index to a TTL index.
+SELECT documentdb_api.coll_mod('commands', 'collModTest', '{"collMod": "collModTest", "index": {"name": "a_1", "expireAfterSeconds": 2000}}');
+SELECT (index_spec).index_expire_after_seconds
+FROM documentdb_api_catalog.collection_indexes
+WHERE collection_id = (
+    SELECT collection_id
+    FROM documentdb_api_catalog.collections
+    WHERE database_name = 'commands' AND collection_name = 'collModTest')
+AND (index_spec).index_name = 'a_1';
+
 -- Errors
-SELECT documentdb_api.coll_mod('commands', 'collModTest', '{"collMod": "collModTest", "index": {"name": "a_1", "expireAfterSeconds": 2000}}'); -- Not a TTL index to be modified
 SELECT documentdb_api.coll_mod('commands', 'collModTest', '{"collMod": "collModTest", "index": {"name": "a_1", "hidden": true}}'); -- Hidden is not supported yet
 SELECT documentdb_api.coll_mod('commands', 'collModTest',
                              '{"collMod": "collModTest", "index": {"name": "c_1", "expireAfterSeconds": 1000}}'); -- index not found

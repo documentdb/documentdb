@@ -1,0 +1,54 @@
+# DocumentDB Local via docker compose. See README.md in this directory for the
+# full walkthrough (credentials, health check, persistence, seeding).
+#
+# Credentials are read from the environment and are meant to be generated
+# fresh for every run, so no credential is ever stored in this directory.
+# README.md shows the one-liner that generates them.
+
+services:
+  documentdb:
+    image: ghcr.io/documentdb/documentdb/documentdb-local:latest
+    ports:
+      # Loopback only: Docker's port publishing bypasses host firewalls such
+      # as ufw/firewalld, so a bare "10260:10260" would expose the emulator to
+      # the local network. Drop the 127.0.0.1: prefix only on purpose.
+      - "127.0.0.1:10260:10260"
+    environment:
+      # Prefixed names (not USERNAME/PASSWORD) so values from the environment
+      # are not shadowed by shell variables — Windows always defines USERNAME.
+      USERNAME: ${DOCUMENTDB_USERNAME:?generate credentials first - see README.md}
+      PASSWORD: ${DOCUMENTDB_PASSWORD:?generate credentials first - see README.md}
+    volumes:
+      - documentdb-data:/data
+      # Uncomment to run your own mongosh .js seed scripts once per fresh
+      # data volume (alphabetical order):
+      # - ./init-data:/init_doc_db.d:ro
+    restart: unless-stopped
+    # No healthcheck block needed: the image ships a built-in probe
+    # (/usr/local/bin/documentdb-healthcheck) that reports healthy only after
+    # initialization finished, PostgreSQL accepts connections, and the
+    # gateway answers a TLS handshake.
+    # Override it only to tune timings, e.g.:
+    # healthcheck:
+    #   test: ["CMD", "/usr/local/bin/documentdb-healthcheck"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 3
+    #   start_period: 600s
+
+  # Demonstrates readiness gating, and is the template for your own service:
+  # `depends_on: condition: service_healthy` holds this back until DocumentDB
+  # reports healthy, so it never races a half-initialized database. Swap in
+  # your own image and command. Run with:
+  #   docker compose run --rm wait-for-healthy
+  wait-for-healthy:
+    image: ghcr.io/documentdb/documentdb/documentdb-local:latest
+    profiles: ["wait-for-healthy"]
+    depends_on:
+      documentdb:
+        condition: service_healthy
+    entrypoint: ["bash", "-c"]
+    command: ["echo 'DocumentDB reports healthy - a dependent service would start here.'"]
+
+volumes:
+  documentdb-data:

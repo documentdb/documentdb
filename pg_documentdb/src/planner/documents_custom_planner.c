@@ -23,6 +23,7 @@
 #include "planner/documents_custom_planner.h"
 #include "utils/version_utils.h"
 #include "opclass/bson_index_support.h"
+#include "rbac_hooks.h"
 
 static bool SetPointReadQualsOnIndexScan(IndexScan *indexScan, Expr *queryQuals);
 static List * FormatProjections(List *targetEntries);
@@ -155,6 +156,12 @@ TryCreatePointReadPlan(Query *query)
 	/* Add the permsInfo on the planned statement */
 	stmt->permInfos = query->rteperminfos;
 #endif
+
+	/*
+	 * This plan is returned without running the rest of the planner, so the
+	 * permission record it carries has not been evaluated.
+	 */
+	ApplyCollectionAccessIdentityToPlan(firstEntry, stmt);
 
 	return stmt;
 }

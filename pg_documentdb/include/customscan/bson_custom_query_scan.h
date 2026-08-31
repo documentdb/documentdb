@@ -16,6 +16,12 @@
 #include <utils/varlena.h>
 #include <opclass/bson_index_support.h>
 
+/*
+ * Feature flag gating whether to skip using per-statement text query state that
+ * a prior aborted statement may have left published on this backend.
+ */
+extern bool EnableSkipUseQueryTextData;
+
 void AddExtensionQueryScanForTextQuery(PlannerInfo *root, RelOptInfo *rel,
 									   RangeTblEntry *rte,
 									   QueryTextIndexData *textIndexOptions);

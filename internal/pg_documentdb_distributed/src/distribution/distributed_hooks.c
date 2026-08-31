@@ -33,6 +33,7 @@
 #include "distributed_hooks.h"
 
 #include "distributed_index_operations.h"
+#include "distributed_schema_operations.h"
 
 extern bool UseLocalExecutionShardQueries;
 extern char *ApiDistributedSchemaName;
@@ -47,6 +48,8 @@ extern char *DistributedApplicationNamePrefix;
  */
 #define INVALID_CITUS_INTERNAL_BACKEND_GPID 0
 static uint64 DocumentDBCitusGlobalPid = 0;
+
+static RunOptionalUpgradeDataTables_HookType PrevRunOptionalUpgradeDataTablesHook = NULL;
 
 /*
  * In Citus we query citus_is_coordinator() to get if
@@ -64,12 +67,8 @@ IsMetadataCoordinatorCore(void)
 }
 
 
-/*
- * Returns true if the cluster has been initialized (initialize_cluster has been called).
- * Checks for the presence of initialized_version in the cluster_data metadata table.
- */
 static bool
-IsClusterInitializedCore(void)
+CheckClusterInitializedCore(bool isreadOnly)
 {
 	StringInfoData cmdStr = { 0 };
 	initStringInfo(&cmdStr);
@@ -79,12 +78,23 @@ IsClusterInitializedCore(void)
 					 ExtensionObjectPrefix);
 
 	bool isNull = false;
-	bool readOnly = true;
-	ExtensionExecuteQueryViaSPI(cmdStr.data, readOnly, SPI_OK_SELECT, &isNull);
+	ExtensionExecuteQueryViaSPI(cmdStr.data, isreadOnly, SPI_OK_SELECT, &isNull);
 
 	pfree(cmdStr.data);
 
 	return !isNull;
+}
+
+
+/*
+ * Returns true if the cluster has been initialized (initialize_cluster has been called).
+ * Checks for the presence of initialized_version in the cluster_data metadata table.
+ */
+static bool
+IsClusterInitializedCore(void)
+{
+	bool readOnly = true;
+	return CheckClusterInitializedCore(readOnly);
 }
 
 
@@ -879,6 +889,66 @@ CanBuildNonBlockingUniqueIndexCore(void)
 }
 
 
+static bool
+ShouldRunOptionalCatalogUpgradesCore(void)
+{
+	bool missingOk = true;
+	if (get_namespace_oid(ApiCatalogSchemaName, missingOk) == InvalidOid)
+	{
+		/* A fresh latest-version install creates the catalog in its final form. */
+		return false;
+	}
+
+	/* We run the schema upgrades only in the case of creating a net new cluster, OR bringing up a new node
+	 * in a cluster. In both of these cases the InitializedClusterVersion will be null. So we key off of that
+	 * to run the schema upgrades.
+	 */
+	Oid namespaceOid = get_namespace_oid(ApiDistributedSchemaName, missingOk);
+
+	/* The namespace isn't there yet - we can't have been installed */
+	if (namespaceOid == InvalidOid)
+	{
+		return true;
+	}
+
+	Oid clusterDataTableOid = get_relname_relid(
+		psprintf("%s_cluster_data", ExtensionObjectPrefix), namespaceOid);
+
+	/* The cluster data table isn't there yet - install stuff */
+	if (clusterDataTableOid == InvalidOid)
+	{
+		return true;
+	}
+
+	bool readOnly = false;
+	return !CheckClusterInitializedCore(readOnly);
+}
+
+
+static void
+RunDistributedOptionalUpgradeDataTables(int major, int minor, int patch)
+{
+	bool missingOk = true;
+	Oid namespaceOid = get_namespace_oid(ApiDistributedSchemaName, missingOk);
+	Oid clusterDataTableOid = namespaceOid == InvalidOid
+							  ? InvalidOid
+							  : get_relname_relid(
+		psprintf("%s_cluster_data", ExtensionObjectPrefix), namespaceOid);
+
+	if (major == 1 && minor == 0 && patch == 0 &&
+		clusterDataTableOid != InvalidOid)
+	{
+		/* Ensure that the trigger is created for the versions table */
+		CreateExtensionVersionsTrigger();
+	}
+
+	if (PrevRunOptionalUpgradeDataTablesHook != NULL)
+	{
+		PrevRunOptionalUpgradeDataTablesHook(major, minor, patch);
+	}
+}
+
+
 /*
  * Register hook overrides for DocumentDB.
  */
@@ -929,9 +999,14 @@ InitializeDocumentDBDistributedHooks(void)
 
 	can_build_non_blocking_unique_index_hook = CanBuildNonBlockingUniqueIndexCore;
 
+	should_run_optional_catalog_upgrades_hook = ShouldRunOptionalCatalogUpgradesCore;
+
 	RegisterDistributedExplainStageHook();
 
 	DistributedOperationsQuery =
 		"SELECT * FROM pg_stat_activity LEFT JOIN pg_catalog.get_all_active_transactions() ON process_id = pid JOIN pg_catalog.pg_dist_local_group ON TRUE";
 	DistributedApplicationNamePrefix = "citus_internal";
+
+	PrevRunOptionalUpgradeDataTablesHook = run_optional_upgrade_data_tables_hook;
+	run_optional_upgrade_data_tables_hook = RunDistributedOptionalUpgradeDataTables;
 }

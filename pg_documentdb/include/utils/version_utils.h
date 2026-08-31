@@ -16,6 +16,10 @@
 typedef enum DocumentsMajorVersion
 {
 	DocDB_V0 = 0,
+	DocDB_V1 = 1,
+	DocDB_V2 = 2,
+	DocDB_V3 = 3,
+	DocDB_V4 = 4,
 } MajorVersion;
 
 bool IsClusterVersionAtleast(MajorVersion major, int minor, int patch);

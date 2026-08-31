@@ -762,32 +762,34 @@ psql:sql/create_indexes_background_core.sql:261: NOTICE:  creating collection
 -- test CheckForIndexCmdToFinish
 DELETE FROM documentdb_api_catalog.documentdb_index_queue;
 -- add dummy entries
-INSERT INTO documentdb_api_catalog.documentdb_index_queue (index_cmd, cmd_type, index_id, index_cmd_status, collection_id, comment) 
+INSERT INTO documentdb_api_catalog.documentdb_index_queue (index_cmd, cmd_type, index_id, index_cmd_status, collection_id, comment)
 VALUES ('CREATE INDEX CONCURRENTLY', 'C', 32101, 3, 32000, '{"err_msg" : "deadlock detected", "err_code" : { "$numberInt" : "16908292" }}');
 INSERT INTO documentdb_api_catalog.documentdb_index_queue (index_cmd, cmd_type, index_id, index_cmd_status, global_pid, collection_id) 
 VALUES ('CREATE INDEX CONCURRENTLY', 'C', 32105, 2, 10015415, 32000);
 INSERT INTO documentdb_api_catalog.documentdb_index_queue (index_cmd, cmd_type, index_id, index_cmd_status, collection_id) 
 VALUES ('CREATE INDEX CONCURRENTLY', 'R', 32105, 2, 32000);
--- this should return finish : 1, ok : 0 and error message due to index_id 32101
+-- retryable failed entries should return finish : 0, ok : 1 and retain the error for diagnostics
 SELECT * FROM documentdb_api_internal.check_build_index_status('{"indexRequest" : {"cmdType" : "C", "ids" :[32101,32102,32103,32104,32105,32106]}}');
-                                                                                                                                                      retval                                                                                                                                                       | ok | complete 
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----+----------
- { "raw" : { "defaultShard" : { "ok" : { "$numberInt" : "0" }, "errmsg" : "deadlock detected. createIndexes() command might cause deadlock when there is a concurrent operation that require exclusive access on the same collection", "code" : { "$numberInt" : "16908292" } } }, "ok" : { "$numberInt" : "0" } } | f  | t
+              retval               | ok | complete 
+-----------------------------------+----+----------
+ { "ok" : { "$numberInt" : "1" } } | t  | f
 (1 row)
 
 DELETE FROM documentdb_api_catalog.documentdb_index_queue;
--- test failure but no comment.
-INSERT INTO documentdb_api_catalog.documentdb_index_queue (index_cmd, cmd_type, index_id, index_cmd_status, collection_id) 
+-- test a retryable failed entry followed by a skippable entry with a retained error.
+INSERT INTO documentdb_api_catalog.documentdb_index_queue (index_cmd, cmd_type, index_id, index_cmd_status, collection_id)
 VALUES ('CREATE INDEX CONCURRENTLY', 'C', 32102, 3, 32000);
-INSERT INTO documentdb_api_catalog.documentdb_index_queue (index_cmd, cmd_type, index_id, index_cmd_status, collection_id) 
-VALUES ('CREATE INDEX CONCURRENTLY', 'C', 32103, 4, 32000);
-INSERT INTO documentdb_api_catalog.documentdb_index_queue (index_cmd, cmd_type, index_id, index_cmd_status, collection_id) 
-VALUES ('CREATE INDEX CONCURRENTLY', 'C', 32104, 4, 32000);
--- this should return finish : 1, ok : 0 and error message due to empty comment of failed request
+INSERT INTO documentdb_api_catalog.documentdb_index_queue (index_cmd, cmd_type, index_id, index_cmd_status, collection_id, comment)
+VALUES ('CREATE INDEX CONCURRENTLY', 'C', 32103, 4, 32000, '{"err_msg" : "terminal error", "err_code" : { "$numberInt" : "2" }}');
+INSERT INTO documentdb_api_catalog.documentdb_index_queue (index_cmd, cmd_type, index_id, index_cmd_status, collection_id, comment)
+VALUES ('CREATE INDEX CONCURRENTLY', 'C', 32104, 4, 32000, '{}');
+INSERT INTO documentdb_api_catalog.documentdb_index_queue (index_cmd, cmd_type, index_id, index_cmd_status, collection_id)
+VALUES ('CREATE INDEX CONCURRENTLY', 'C', 32105, 4, 32000);
+-- any skippable entry should return finish : 1, ok : 0 and its retained error
 SELECT * FROM documentdb_api_internal.check_build_index_status('{"indexRequest" : {"cmdType" : "C", "ids" :[32101,32102,32103,32104,32105,32106]}}');
-                                                                                  retval                                                                                  | ok | complete 
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----+----------
- { "raw" : { "defaultShard" : { "ok" : { "$numberInt" : "0" }, "errmsg" : "Failed to create index", "code" : { "$numberInt" : "29" } } }, "ok" : { "$numberInt" : "0" } } | f  | t
+                                                                             retval                                                                              | ok | complete 
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------+----+----------
+ { "raw" : { "defaultShard" : { "ok" : { "$numberInt" : "0" }, "errmsg" : "terminal error", "code" : { "$numberInt" : "2" } } }, "ok" : { "$numberInt" : "0" } } | f  | t
 (1 row)
 
 DELETE FROM documentdb_api_catalog.documentdb_index_queue;
@@ -802,14 +804,14 @@ SELECT * FROM documentdb_api_internal.check_build_index_status('{"indexRequest" 
 (1 row)
 
 DELETE FROM documentdb_api_catalog.documentdb_index_queue;
--- test with attempt > 1
+-- an in-progress entry at the final allowed attempt remains pending
 INSERT INTO documentdb_api_catalog.documentdb_index_queue (index_cmd, cmd_type, index_id, index_cmd_status, collection_id, attempt) 
-VALUES ('CREATE INDEX CONCURRENTLY', 'C', 32105, 2, 32000, 4);
--- this should return finish : 1, ok : 0 and error message due to one attempt is failed "Index creation attempt failed"
+VALUES ('CREATE INDEX CONCURRENTLY', 'C', 32105, 2, 32000, 3);
+-- this should return finish : 0, ok : 1 while the final attempt is active
 SELECT * FROM documentdb_api_internal.check_build_index_status('{"indexRequest" : {"cmdType" : "C", "ids" :[32101,32102,32103,32104,32105,32106]}}');
-                                                                                  retval                                                                                  | ok | complete 
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----+----------
- { "raw" : { "defaultShard" : { "ok" : { "$numberInt" : "0" }, "errmsg" : "Failed to create index", "code" : { "$numberInt" : "29" } } }, "ok" : { "$numberInt" : "0" } } | f  | t
+              retval               | ok | complete 
+-----------------------------------+----+----------
+ { "ok" : { "$numberInt" : "1" } } | t  | f
 (1 row)
 
 DELETE FROM documentdb_api_catalog.documentdb_index_queue;
@@ -824,7 +826,7 @@ SELECT * FROM documentdb_api_internal.check_build_index_status('{"indexRequest" 
 -- ============================================================
 -- Create the collection first so that indexes are queued in the background
 SELECT documentdb_api.create_collection('db', 'skip_wait_coll');
-psql:sql/create_indexes_background_core.sql:308: NOTICE:  creating collection
+psql:sql/create_indexes_background_core.sql:310: NOTICE:  creating collection
  create_collection 
 -------------------
  t
@@ -879,8 +881,8 @@ SELECT documentdb_api.drop_collection('db', 'skip_wait_coll');
 DELETE FROM documentdb_api_catalog.documentdb_index_queue;
 -- Disable cron jobs to prevent them from racing with manual build calls below.
 SELECT documentdb_test_helpers.change_index_jobs_status(false);
-psql:sql/create_indexes_background_core.sql:335: NOTICE:  Processing job_id: 2
-psql:sql/create_indexes_background_core.sql:335: NOTICE:  Processing job_id: 3
+psql:sql/create_indexes_background_core.sql:337: NOTICE:  Processing job_id: 2
+psql:sql/create_indexes_background_core.sql:337: NOTICE:  Processing job_id: 3
  change_index_jobs_status 
 --------------------------
  
@@ -888,7 +890,7 @@ psql:sql/create_indexes_background_core.sql:335: NOTICE:  Processing job_id: 3
 
 -- insert multiple index requests across multiple collections.
 SELECT documentdb_api.create_indexes_background('db', '{ "createIndexes": "backgroundcoll1", "indexes": [ { "key" : { "a": 1 }, "name": "a_1"}] }');
-psql:sql/create_indexes_background_core.sql:338: NOTICE:  creating collection
+psql:sql/create_indexes_background_core.sql:340: NOTICE:  creating collection
                                                                                                                            create_indexes_background                                                                                                                           
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ("{ ""raw"" : { ""defaultShard"" : { ""numIndexesBefore"" : { ""$numberInt"" : ""1"" }, ""numIndexesAfter"" : { ""$numberInt"" : ""2"" }, ""createdCollectionAutomatically"" : true, ""ok"" : { ""$numberInt"" : ""1"" } } }, ""ok"" : { ""$numberInt"" : ""1"" } }",t,"{ }")
@@ -907,7 +909,7 @@ SELECT documentdb_api.create_indexes_background('db', '{ "createIndexes": "backg
 (1 row)
 
 SELECT documentdb_api.create_indexes_background('db', '{ "createIndexes": "backgroundcoll2", "indexes": [ { "key" : { "a": 1 }, "name": "a_1"}] }');
-psql:sql/create_indexes_background_core.sql:342: NOTICE:  creating collection
+psql:sql/create_indexes_background_core.sql:344: NOTICE:  creating collection
                                                                                                                            create_indexes_background                                                                                                                           
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ("{ ""raw"" : { ""defaultShard"" : { ""numIndexesBefore"" : { ""$numberInt"" : ""1"" }, ""numIndexesAfter"" : { ""$numberInt"" : ""2"" }, ""createdCollectionAutomatically"" : true, ""ok"" : { ""$numberInt"" : ""1"" } } }, ""ok"" : { ""$numberInt"" : ""1"" } }",t,"{ }")
@@ -1017,8 +1019,8 @@ SELECT * FROM documentdb_api_catalog.documentdb_index_queue;
 
 -- Re-enable cron jobs for the schedule_background_index_build_jobs test below.
 SELECT documentdb_test_helpers.change_index_jobs_status(true);
-psql:sql/create_indexes_background_core.sql:384: NOTICE:  Processing job_id: 2
-psql:sql/create_indexes_background_core.sql:384: NOTICE:  Processing job_id: 3
+psql:sql/create_indexes_background_core.sql:386: NOTICE:  Processing job_id: 2
+psql:sql/create_indexes_background_core.sql:386: NOTICE:  Processing job_id: 3
  change_index_jobs_status 
 --------------------------
  

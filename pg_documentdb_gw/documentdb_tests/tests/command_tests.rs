@@ -11,7 +11,7 @@ use documentdb_tests::{
         aggregate, coll_stats, collection_cmd, constant, count, delete, distinct, find,
         find_and_modify, indexing, insert, list_collections, update, validate_cmd,
     },
-    test_setup::initialize,
+    test_setup::{configuration_utils, initialize},
 };
 use mongodb::error::Error;
 
@@ -122,9 +122,20 @@ async fn find_and_modify() -> Result<(), Error> {
 
 #[tokio::test]
 async fn distinct() -> Result<(), Error> {
-    let db = initialize::initialize_with_db("commands_tests_distinct").await?;
+    let guc = configuration_utils::set_guc("documentdb_core.enableCollation", "on")
+        .await
+        .expect("Failed to enable collation");
+    let result = async {
+        let db = initialize::initialize_with_db("commands_tests_distinct").await?;
 
-    distinct::validate_distinct(&db).await
+        distinct::validate_distinct(&db).await?;
+        distinct::validate_distinct_collations(&db).await
+    }
+    .await;
+    guc.restore()
+        .await
+        .expect("Failed to restore collation configuration");
+    result
 }
 
 #[tokio::test]

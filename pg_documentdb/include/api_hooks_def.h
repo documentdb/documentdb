@@ -385,4 +385,12 @@ typedef bool (*GetEffectiveAggregateFunctionOid_HookType)(Aggref *aggref,
 extern GetEffectiveAggregateFunctionOid_HookType
 	get_effective_aggregate_function_oid_hook;
 
+
+typedef bool (*ShouldRunOptionalCatalogUpgrades_HookType)(void);
+extern ShouldRunOptionalCatalogUpgrades_HookType
+	should_run_optional_catalog_upgrades_hook;
+
+
+typedef void (*RunOptionalUpgradeDataTables_HookType)(int major, int minor, int patch);
+extern RunOptionalUpgradeDataTables_HookType run_optional_upgrade_data_tables_hook;
 #endif

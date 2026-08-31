@@ -55,6 +55,7 @@
 
 const int MaximumLookupPipelineDepth = 20;
 extern bool ForceNestedLookupPipelineAfterJoin;
+extern bool EnableLookupJoinIndexWithLinearPipeline;
 
 /*
  * Struct having parsed view of the
@@ -2336,6 +2337,9 @@ ProcessLookupCoreWithLet(Query *query, AggregationPipelineBuildContext *context,
 	const Index joinQueryRteIndex = 3;
 
 	Query *rightQuery = optimizationArgs.rightBaseQuery;
+	TargetEntry *rightBaseDocumentEntry = linitial(rightQuery->targetList);
+	Var *rightBaseDocumentVar = IsA(rightBaseDocumentEntry->expr, Var) ?
+								(Var *) copyObject(rightBaseDocumentEntry->expr) : NULL;
 
 	/* Create a parse_state for this session */
 	ParseState *parseState = make_parsestate(NULL);
@@ -2361,6 +2365,7 @@ ProcessLookupCoreWithLet(Query *query, AggregationPipelineBuildContext *context,
 	/* Check if the pipeline can be pushed to the inner query (right collection)
 	 * If it can, then it's inlined. If not, we apply the pipeline post-join.
 	 */
+	AttrNumber rightQueryDocumentsOffset = InvalidAttrNumber;
 	if (lookupArgs->hasLookupMatch || optimizationArgs.nonInlinedMatchStage != NULL)
 	{
 		/* We can apply the optimization on this based on object_id if and only if
@@ -2409,6 +2414,31 @@ ProcessLookupCoreWithLet(Query *query, AggregationPipelineBuildContext *context,
 					newQuals = lappend(newQuals, zeroShardKeyFilter);
 					rightQuery->jointree->quals = (Node *) make_ands_explicit(newQuals);
 				}
+			}
+		}
+		else if (EnableLookupJoinIndexWithLinearPipeline &&
+				 lookupArgs->hasLookupMatch &&
+				 optimizationArgs.inlinedPipelineStages != NIL &&
+				 list_length(rightQuery->rtable) == 1 &&
+				 list_length(optimizationArgs.rightBaseQuery->rtable) == 1)
+		{
+			/* Inline stages can hide the indexed field from the join predicate.
+			 * Preserve the original document when they still read the same base relation.
+			 */
+			RangeTblEntry *entry = linitial(rightQuery->rtable);
+			RangeTblEntry *baseEntry = linitial(optimizationArgs.rightBaseQuery->rtable);
+			if (entry->rtekind == RTE_RELATION && baseEntry->rtekind == RTE_RELATION &&
+				entry->relid == baseEntry->relid && rightBaseDocumentVar != NULL)
+			{
+				rightBaseDocumentVar->varno = 1;
+				TargetEntry *documentEntry = makeTargetEntry(
+					(Expr *) rightBaseDocumentVar,
+					list_length(
+						rightQuery->targetList) +
+					1, "document", false);
+				rightQueryDocumentsOffset = documentEntry->resno;
+				rightQuery->targetList = lappend(rightQuery->targetList,
+												 documentEntry);
 			}
 		}
 
@@ -2486,6 +2516,7 @@ ProcessLookupCoreWithLet(Query *query, AggregationPipelineBuildContext *context,
 			/* add the WHERE bson_dollar_in(t2.document, t1.match) */
 			TargetEntry *currentRightEntry = linitial(rightQuery->targetList);
 			Var *rightVar = (Var *) currentRightEntry->expr;
+
 			int matchLevelsUp = 1;
 			Node *inClause;
 			if (optimizationArgs.isLookupJoinOnLeftId)
@@ -2525,6 +2556,16 @@ ProcessLookupCoreWithLet(Query *query, AggregationPipelineBuildContext *context,
 			}
 			else
 			{
+				if (rightQueryDocumentsOffset != InvalidAttrNumber)
+				{
+					Assert(list_length(rightQuery->targetList) ==
+						   rightQueryDocumentsOffset);
+					TargetEntry *rightDocumentsEntry = list_nth(
+						rightQuery->targetList, rightQueryDocumentsOffset - 1);
+					rightVar = (Var *) rightDocumentsEntry->expr;
+					rightQuery->targetList = list_make1(currentRightEntry);
+				}
+
 				Var *matchVar = makeVar(leftQueryRteIndex, newProjectorAttrNum,
 										BsonTypeId(),
 										-1,

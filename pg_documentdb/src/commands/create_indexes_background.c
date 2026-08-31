@@ -305,6 +305,8 @@ TryCleanupRequestFromQueue(IndexCmdRequest *request, bool skipIndexCleanup)
 static BackgroundIndexRunStatus
 build_index_concurrently_from_indexqueue_core(MemoryContext stableContext)
 {
+	HTAB *indexNameCache = NULL;
+
 	/* Prioritize pruning the index queue for old indexes */
 	if (PruneSkippableIndexes(stableContext))
 	{
@@ -686,7 +688,8 @@ build_index_concurrently_from_indexqueue_core(MemoryContext stableContext)
 		int errorCodeInternal = 0;
 		char *errorMessageInternal = NULL;
 		if (TryGetErrorMessageAndCode((ErrorData *) edata, &errorCodeInternal,
-									  &errorMessageInternal))
+									  &errorMessageInternal, stableContext,
+									  &indexNameCache))
 		{
 			errorCode = errorCodeInternal;
 			errorMessage = errorMessageInternal;
@@ -743,7 +746,7 @@ build_index_concurrently_from_indexqueue_core(MemoryContext stableContext)
 		PgbsonWriterAppendInt32(&writer, ErrCodeKey, ErrCodeLength, errorCode);
 		pgbson *newComment = PgbsonWriterGetPgbson(&writer);
 
-		if (indexCmdRequest->attemptCount > MaxIndexBuildAttempts)
+		if (indexCmdRequest->attemptCount >= MaxIndexBuildAttempts)
 		{
 			elog_unredacted("Removing request permanently index_id: %d and collectionId: "
 							UINT64_FORMAT,
@@ -994,10 +997,12 @@ GenerateIndexCreateSpecForUpdateOptions(IndexDetails *indexDef, bool
 	bson_iter_t indexSpecIter;
 	PgbsonInitIterator(indexSpecBson, &indexSpecIter);
 	bool ignoreUnknownIndexOptions = true;
+	const bool useTTLIndexInvalidOptionsError = false;
 	IndexDef *indexDefinition = ParseIndexDefDocumentInternal(&indexSpecIter,
 															  specJsonRepresentation,
 															  ignoreUnknownIndexOptions,
-															  buildAsUniqueForPrepareUnique);
+															  buildAsUniqueForPrepareUnique,
+															  useTTLIndexInvalidOptionsError);
 
 	bool isBackgroundBuild = true;
 	bool createIndexesConcurrently = true;
@@ -2095,12 +2100,9 @@ CreateLockTagAdvisoryForCreateIndexBackground(uint64 collectionId)
 
 /*
  * CheckForIndexCmdToFinish checks for the index command to finish for all indexIds present in indexIdList.
- * The count(indexId) will match the length(indexIdList) only if for each indexId in indexIdList, any one of following conditions are met:
- * 1. Request is already picked second time (attempt count >= 2) by cron-job before CheckForIndexCmdToFinish function could check its failure status.
- * 2. Request is not there in ApiCatalogSchemaName.{ExtensionObjectPrefix}_index_queue, which means it is completed successfully.
- * 3. Request is there in ApiCatalogSchemaName.{ExtensionObjectPrefix}_index_queue and index_cmd_status >= 3 (Failed, Skippable).
- * 4. Request is there in ApiCatalogSchemaName.{ExtensionObjectPrefix}_index_queue and index_cmd_status = 2 (InProgress)
- *    and corresponding global_pid (opid) is not present in pg_stat_activity. This means that process was abruptly failed.
+ * A skippable queue status reports an error immediately. Any other queue status
+ * remains pending. If no requested indexes remain in the queue, the metadata
+ * table determines whether the command completed successfully.
  */
 static BuildIndexesResult *
 CheckForIndexCmdToFinish(const List *indexIdList, char cmdType)
@@ -2113,14 +2115,14 @@ CheckForIndexCmdToFinish(const List *indexIdList, char cmdType)
 
 
 	/*  WITH query AS
-	 *      (SELECT index_cmd_status::int4, comment, attempt
+	 *      (SELECT index_cmd_status::int4, comment
 	 *      FROM ApiCatalogSchemaName.{ExtensionObjectPrefix}_index_queue piq
 	 *      WHERE cmd_type = 'C' AND index_id =ANY(ARRAY[32001, 32002, 32003, 32004, 32005, 32006])
 	 *  )
 	 *  SELECT COALESCE(CATALOG_SCHEMA.bson_array_agg(CoreSchemaNameV2.row_get_bson(query), ''), '{ "": [] }'::CORE_SCHEMA.bson) FROM query
 	 */
 	const char *query =
-		FormatSqlQuery("WITH query AS (SELECT index_cmd_status::int4, comment, attempt"
+		FormatSqlQuery("WITH query AS (SELECT index_cmd_status::int4, comment"
 					   " FROM %s piq "
 					   " WHERE cmd_type = $1 AND index_id =ANY($2)) "
 					   " SELECT COALESCE(%s.bson_array_agg(%s.row_get_bson(query), ''), '{ \"\": [] }'::%s) FROM query",
@@ -2168,7 +2170,6 @@ CheckForIndexCmdToFinish(const List *indexIdList, char cmdType)
 
 		int cmdStatus = IndexCmdStatus_Unknown;
 		bson_value_t comment = { 0 };
-		int attemptCount = 0;
 		while (bson_iter_next(&docIterator))
 		{
 			const char *key = bson_iter_key(&docIterator);
@@ -2180,33 +2181,19 @@ CheckForIndexCmdToFinish(const List *indexIdList, char cmdType)
 			{
 				comment = *bson_iter_value(&docIterator);
 			}
-			else if (strcmp(key, "attempt") == 0)
-			{
-				attemptCount = BsonValueAsInt32(bson_iter_value(&docIterator));
-			}
 		}
 
-		if (cmdStatus >= IndexCmdStatus_Failed)
+		if (cmdStatus == IndexCmdStatus_Skippable)
 		{
-			failedIndexComment = comment;
 			isAnyIndexFailed = true;
-		}
-
-		maxCmdStatus = Max(maxCmdStatus, cmdStatus);
-
-		if (attemptCount > MaxIndexBuildAttempts)
-		{
-			if (comment.value_type != BSON_TYPE_EOD)
+			if (comment.value_type != BSON_TYPE_EOD &&
+				!IsBsonValueEmptyDocument(&comment))
 			{
 				failedIndexComment = comment;
 			}
-			else
-			{
-				result->errmsg = "Failed to create index";
-				result->errcode = ERRCODE_DOCUMENTDB_INTERNALERROR;
-			}
-			isAnyIndexFailed = true;
 		}
+
+		maxCmdStatus = Max(maxCmdStatus, cmdStatus);
 
 		numIndexBuilds++;
 	}

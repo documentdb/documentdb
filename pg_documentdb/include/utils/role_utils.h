@@ -98,7 +98,7 @@ typedef struct
 } ConsolidatedPrivilege;
 
 /* Function to write a single role's privileges to a BSON array writer */
-void WritePrivileges(const char *internalRoleName,
+void WritePrivileges(const StringView *internalRoleName,
 					 pgbson_array_writer *privilegesArrayWriter);
 
 /* Function to write multiple roles' privileges from an HTAB to a BSON array writer*/

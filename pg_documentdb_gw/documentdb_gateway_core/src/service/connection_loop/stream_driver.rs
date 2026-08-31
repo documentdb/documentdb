@@ -58,7 +58,7 @@ where
             }
 
             Ok(None) => {
-                tracing::info!(
+                tracing::debug!(
                     activity_id = connection_activity_id_as_str,
                     "Connection closed."
                 );

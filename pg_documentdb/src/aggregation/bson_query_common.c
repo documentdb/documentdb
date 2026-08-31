@@ -101,6 +101,17 @@ InitializeQueryDollarRange(const bson_value_t *filterValue,
 		{
 			rangeParams->dedupState = *bson_iter_value(&rangeIter);
 		}
+		else if (strcmp(key, "numGroupKeyPaths") == 0)
+		{
+			rangeParams->isFullScan = true;
+			rangeParams->numGroupKeyPaths = BsonValueAsInt32(bson_iter_value(
+																 &rangeIter));
+			if (rangeParams->numGroupKeyPaths <= 0)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg("numGroupKeyPaths must be greater than zero")));
+			}
+		}
 		else if (strcmp(key, "sample") == 0)
 		{
 			rangeParams->isSample = true;

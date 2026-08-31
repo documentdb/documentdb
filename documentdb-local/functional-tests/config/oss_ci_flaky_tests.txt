@@ -1917,3 +1917,10 @@ docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/system
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/system-stages/currentOp/test_system_stage_currentOp_live_state.py::test_currentOp_live_state[documentdb-command_full_truncateOps_omitted_large]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/system-stages/currentOp/test_system_stage_currentOp_live_state.py::test_currentOp_live_state[documentdb-idle_connections_true_reports_inactive]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/system-stages/currentOp/test_system_stage_currentOp_live_state.py::test_currentOp_live_state[documentdb-inactive_op_document_fields]
+
+# Added after gate run 33414916605:
+#  - currentOp command_full_truncateOps_false_large: XPASS(strict) on one leg
+#    and failed on another within the SAME run, so neither strict direction
+#    holds. Same live-state race as the truncateOps_omitted_large sibling
+#    above: the case waits up to 10s for its own 'query' op to appear.
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/system-stages/currentOp/test_system_stage_currentOp_live_state.py::test_currentOp_live_state[documentdb-command_full_truncateOps_false_large]

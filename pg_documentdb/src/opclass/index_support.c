@@ -2993,7 +2993,9 @@ CheckFieldCoverage(Node *node, void *context)
 					return state->hasUncoveredField;
 				}
 				else if (EnableDistinctIndexPushdown &&
-						 funcExpr->funcid == BsonDistinctUnwindFunctionOid() &&
+						 (funcExpr->funcid == BsonDistinctUnwindFunctionOid() ||
+						  funcExpr->funcid ==
+						  BsonDistinctUnwindWithCollationFunctionOid()) &&
 						 IsA(secondArg, Const))
 				{
 					Const *constArg = (Const *) secondArg;
@@ -3814,7 +3816,8 @@ GetSortDetails(PlannerInfo *root, Index rti, bool *hasGroupby,
 			*hasGroupby = true;
 			isGroupByEntry = true;
 		}
-		else if (func->funcid == BsonDistinctUnwindFunctionOid() &&
+		else if ((func->funcid == BsonDistinctUnwindFunctionOid() ||
+				  func->funcid == BsonDistinctUnwindWithCollationFunctionOid()) &&
 				 EnableDistinctIndexPushdown)
 		{
 			/* Similar to $group case, reject if ORDER BY has already been seen */
@@ -3826,6 +3829,33 @@ GetSortDetails(PlannerInfo *root, Index rti, bool *hasGroupby,
 			hasDistinct = true;
 			*hasDistinctScan = true;
 			*hasGroupby = true;
+
+			if (func->funcid == BsonDistinctUnwindWithCollationFunctionOid())
+			{
+				if (list_length(func->args) != 3)
+				{
+					return NIL;
+				}
+
+				Expr *thirdArg = lthird(func->args);
+				if (IsA(thirdArg, RelabelType))
+				{
+					thirdArg = ((RelabelType *) thirdArg)->arg;
+				}
+
+				if (!IsA(thirdArg, Const))
+				{
+					return NIL;
+				}
+
+				Const *thirdConst = (Const *) thirdArg;
+				if (thirdConst->constisnull || thirdConst->consttype != TEXTOID)
+				{
+					return NIL;
+				}
+
+				collationConst = thirdConst;
+			}
 		}
 		else
 		{
@@ -3973,6 +4003,7 @@ GetSortDetails(PlannerInfo *root, Index rti, bool *hasGroupby,
 		sortDetailsInput->sortDatum = (Expr *) secondConst;
 		sortDetailsInput->funcOid = func->funcid;
 		sortDetailsInput->collationConst = collationConst;
+		sortDetailsInput->isGroupBy = isGroupByEntry;
 		sortDetails = lappend(sortDetails, sortDetailsInput);
 
 		*isOrderById = *isOrderById ||
@@ -4526,6 +4557,13 @@ GetInPrefixPointValues(OpExpr *inExpr, int maxUniqueValues, List **valueConstsOu
 }
 
 
+static inline int32_t
+SortDirectionCombine(int32_t leftDirection, int32_t rightDirection)
+{
+	return leftDirection * rightDirection;
+}
+
+
 /*
  * Builds the per-sort-column order-by index clauses (one $range "orderByScan"
  * clause per servable sort key) that drive the ordered index scan, for the
@@ -4573,6 +4611,45 @@ BuildMergeSortOrderByClauses(PlannerInfo *root, IndexOptInfo *indexInfo,
 	List *orderByClauses = NIL;
 	ListCell *sortCell;
 	int32_t determinedScanDirection = 0;
+
+	/*
+	 * Group keys do not constrain scan direction. When a sort suffix follows
+	 * them, use its direction for the whole index scan; otherwise scan forward.
+	 */
+	foreach(sortCell, sortDetails)
+	{
+		SortIndexInputDetails *sortInput = (SortIndexInputDetails *) lfirst(sortCell);
+		if (sortInput->isGroupBy)
+		{
+			continue;
+		}
+
+		int8_t indexSortDirection = 0;
+		int32_t columnNumber = GetCompositeOpClassColumnNumber(
+			sortInput->sortPath, opClassOptions, &indexSortDirection);
+		if (columnNumber < 0)
+		{
+			break;
+		}
+
+		int32_t querySortDirection =
+			SortPathKeyStrategy(sortInput->sortPathKey) == BTGreaterStrategyNumber ?
+			-1 : 1;
+		if (querySortDirection != indexSortDirection && !indexSupportsReverse)
+		{
+			break;
+		}
+
+		determinedScanDirection =
+			querySortDirection == indexSortDirection ? 1 : -1;
+		break;
+	}
+
+	if (determinedScanDirection == 0)
+	{
+		determinedScanDirection = 1;
+	}
+
 	int32_t expectedColumn = -1;
 	foreach(sortCell, sortDetails)
 	{
@@ -4602,9 +4679,18 @@ BuildMergeSortOrderByClauses(PlannerInfo *root, IndexOptInfo *indexInfo,
 			break;
 		}
 
-		int32_t querySortDirection =
-			SortPathKeyStrategy(sortInput->sortPathKey) == BTGreaterStrategyNumber ?
-			-1 : 1;
+		int32_t querySortDirection;
+		if (sortInput->isGroupBy)
+		{
+			querySortDirection = SortDirectionCombine(indexSortDirection,
+													  determinedScanDirection);
+		}
+		else
+		{
+			querySortDirection =
+				SortPathKeyStrategy(sortInput->sortPathKey) == BTGreaterStrategyNumber ?
+				-1 : 1;
+		}
 
 		/* A key whose direction the index cannot serve ends the prefix. */
 		if (querySortDirection != indexSortDirection && !indexSupportsReverse)
@@ -4613,11 +4699,7 @@ BuildMergeSortOrderByClauses(PlannerInfo *root, IndexOptInfo *indexInfo,
 		}
 
 		int32_t scanDirection = querySortDirection == indexSortDirection ? 1 : -1;
-		if (determinedScanDirection == 0)
-		{
-			determinedScanDirection = scanDirection;
-		}
-		else if (scanDirection != determinedScanDirection)
+		if (scanDirection != determinedScanDirection)
 		{
 			/* A scan-direction flip within the prefix cannot stream; stop here. */
 			break;
@@ -6271,7 +6353,42 @@ ProcessOrderByStatements(PlannerInfo *root,
 	List *indexOrderBys = NIL;
 	List *indexPathKeys = NIL;
 	List *indexOrderbyCols = NIL;
+
+	/*
+	 * Group keys only need equal values to be adjacent, so either direction is
+	 * valid. Let the first non-group sort key choose the physical scan direction.
+	 * Without a sort suffix, prefer the index's forward direction.
+	 */
 	int32_t determinedSortOrder = 0;
+	int32_t directionSortDetailsIndex = 0;
+	for (i = minOrderByColumn; i <= maxOrderByColumn; i++)
+	{
+		if (pathSortOrders[i] == 0)
+		{
+			continue;
+		}
+
+		SortIndexInputDetails *sortDetailsInput =
+			(SortIndexInputDetails *) list_nth(sortDetails,
+											   directionSortDetailsIndex++);
+		if (strcmp(sortDetailsInput->sortPath, queryOrderPaths[i]) != 0)
+		{
+			break;
+		}
+
+		if (!sortDetailsInput->isGroupBy)
+		{
+			determinedSortOrder = pathSortOrders[i];
+			break;
+		}
+	}
+
+	if (determinedSortOrder == 0)
+	{
+		determinedSortOrder = 1;
+	}
+
+	i = 0;
 	for (; i < minOrderByColumn; i++)
 	{
 		if (!equalityPrefixes[i])
@@ -6318,22 +6435,44 @@ ProcessOrderByStatements(PlannerInfo *root,
 		if (pathSortOrders[i] != 0)
 		{
 			/* This path has an order by */
-			if (determinedSortOrder == 0)
-			{
-				determinedSortOrder = pathSortOrders[i];
-			}
-			else if (pathSortOrders[i] != determinedSortOrder)
-			{
-				/* Can no longer push any further orderby to this index */
-				break;
-			}
-
 			SortIndexInputDetails *sortDetailsInput =
 				(SortIndexInputDetails *) list_nth(sortDetails, sortDetailsIndex);
 
 			if (strcmp(sortDetailsInput->sortPath, queryOrderPaths[i]) != 0)
 			{
 				/* The order by path does not match the index path */
+				break;
+			}
+
+			int32_t effectiveSortOrder = pathSortOrders[i];
+			Expr *sortDatum = sortDetailsInput->sortDatum;
+			if (sortDetailsInput->isGroupBy)
+			{
+				/*
+				 * Keep every group key on the physical direction selected above.
+				 * pathSortOrders is relative to the index column direction, so use
+				 * it to recover that direction and build the matching group datum.
+				 */
+				effectiveSortOrder = determinedSortOrder;
+				int32_t querySortDirection =
+					SortPathKeyStrategy(sortDetailsInput->sortPathKey) ==
+					BTGreaterStrategyNumber ? -1 : 1;
+				int32_t indexSortDirection =
+					SortDirectionCombine(querySortDirection, pathSortOrders[i]);
+				int32_t groupSortDirection =
+					SortDirectionCombine(indexSortDirection, effectiveSortOrder);
+
+				pgbsonelement groupSortElement;
+				groupSortElement.path = sortDetailsInput->sortPath;
+				groupSortElement.pathLength = strlen(sortDetailsInput->sortPath);
+				groupSortElement.bsonValue.value_type = BSON_TYPE_INT32;
+				groupSortElement.bsonValue.value.v_int32 = groupSortDirection;
+				sortDatum = (Expr *) MakeBsonConst(
+					PgbsonElementToPgbson(&groupSortElement));
+			}
+			else if (effectiveSortOrder != determinedSortOrder)
+			{
+				/* Can no longer push any further orderby to this index */
 				break;
 			}
 
@@ -6373,13 +6512,13 @@ ProcessOrderByStatements(PlannerInfo *root,
 			}
 			else
 			{
-				Oid indexOperator = pathSortOrders[i] < 0 ?
+				Oid indexOperator = effectiveSortOrder < 0 ?
 									BsonOrderByReverseIndexOperatorId() :
 									BsonOrderByIndexOperatorId();
 				orderElement = (OpExpr *) make_opclause(
 					indexOperator, BsonTypeId(), false,
 					(Expr *) sortDetailsInput->sortVar,
-					(Expr *) sortDetailsInput->sortDatum,
+					sortDatum,
 					InvalidOid, InvalidOid);
 				orderElement->opfuncid = get_opcode(indexOperator);
 			}
@@ -10071,9 +10210,10 @@ CreateExistsTrueOpExpr(Expr *documentExpr, const char *sourcePath,
 }
 
 
-OpExpr *
-CreateFullScanOpExpr(Expr *documentExpr, const char *sourcePath, uint32_t
-					 sourcePathLength, int32_t orderByDirection)
+static OpExpr *
+CreateFullScanOpExprCore(Expr *documentExpr, const char *sourcePath,
+						 uint32_t sourcePathLength, int32_t orderByDirection,
+						 int32_t numGroupKeyPaths)
 {
 	/* If the index is valid for the function, convert it to an OpExpr for a
 	 * $range full scan.
@@ -10092,6 +10232,12 @@ CreateFullScanOpExpr(Expr *documentExpr, const char *sourcePath, uint32_t
 		PgbsonWriterAppendInt32(&rangeWriter, "orderByScan", 11, orderByDirection);
 	}
 
+	if (numGroupKeyPaths > 0)
+	{
+		PgbsonWriterAppendInt32(&rangeWriter, "numGroupKeyPaths", 16,
+								numGroupKeyPaths);
+	}
+
 	PgbsonWriterEndDocument(&writer, &rangeWriter);
 
 	Const *bsonConst = makeConst(BsonTypeId(), -1, InvalidOid, -1, PointerGetDatum(
@@ -10104,6 +10250,27 @@ CreateFullScanOpExpr(Expr *documentExpr, const char *sourcePath, uint32_t
 											  InvalidOid);
 	opExpr->opfuncid = BsonRangeMatchFunctionId();
 	return opExpr;
+}
+
+
+OpExpr *
+CreateFullScanOpExpr(Expr *documentExpr, const char *sourcePath, uint32_t
+					 sourcePathLength, int32_t orderByDirection)
+{
+	int32_t numGroupKeyPaths = 0;
+	return CreateFullScanOpExprCore(documentExpr, sourcePath, sourcePathLength,
+									orderByDirection, numGroupKeyPaths);
+}
+
+
+OpExpr *
+CreateGroupKeyPathCountOpExpr(Expr *documentExpr, const char *sourcePath,
+							  uint32_t sourcePathLength,
+							  int32_t numGroupKeyPaths)
+{
+	int32_t orderByDirection = 0;
+	return CreateFullScanOpExprCore(documentExpr, sourcePath, sourcePathLength,
+									orderByDirection, numGroupKeyPaths);
 }
 
 

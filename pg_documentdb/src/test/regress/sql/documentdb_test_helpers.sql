@@ -95,6 +95,27 @@ END
 $$
 LANGUAGE plpgsql;
 
+-- Returns true when any row of the VERBOSE EXPLAIN plan for p_query matches the
+-- given regex. Used to assert that a specific expression (for example an
+-- order-by function and its resolved arguments) is present in the plan in a way
+-- that stays stable across PostgreSQL versions, whose full EXPLAIN text differs.
+CREATE OR REPLACE FUNCTION documentdb_test_helpers.explain_plan_contains(p_query text, p_pattern text)
+RETURNS boolean
+AS $$
+DECLARE
+  v_explain_row text;
+BEGIN
+  FOR v_explain_row IN EXECUTE 'EXPLAIN (VERBOSE, COSTS OFF) ' || p_query
+  LOOP
+    IF v_explain_row ~ p_pattern THEN
+      RETURN true;
+    END IF;
+  END LOOP;
+  RETURN false;
+END
+$$
+LANGUAGE plpgsql;
+
 -- query documentdb_api_catalog.collection_indexes for given collection
 CREATE OR REPLACE FUNCTION documentdb_test_helpers.get_collection_indexes(
     p_database_name text,

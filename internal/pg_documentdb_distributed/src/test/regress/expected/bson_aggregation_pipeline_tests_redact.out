@@ -607,3 +607,35 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson
                Output: documentdb_api_internal.bson_dollar_redact(document, '{ "$cond" : { "if" : { "$eq" : [ "$level", { "$numberInt" : "1" } ] }, "then" : "$$KEEP", "else" : "$$PRUNE" } }'::documentdb_core.bson, ''::text, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
 (9 rows)
 
+/*
+ * Parse-time constant folding of an operator whose input is a document that
+ * resolves to a system variable. This used to crash the backend because the
+ * null-check evaluation path evaluated the document without a lifetime tracker.
+ */
+SELECT documentdb_api.insert_one('db','redactTest4','{ "_id": 1, "level": 1 }', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest4", "pipeline": [ { "$redact": { "$getField": { "field": "f", "input": { "f": "$$PRUNE" } } } } ], "cursor": {} }');
+ document 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest4", "pipeline": [ { "$redact": { "$getField": { "field": "f", "input": { "f": "$$KEEP" } } } } ], "cursor": {} }');
+                               document                               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "level" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest4", "pipeline": [ { "$redact": { "$getField": { "field": "f", "input": { "f": "$$DESCEND" } } } } ], "cursor": {} }');
+                               document                               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "level" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest4", "pipeline": [ { "$redact": { "$setField": { "field": "f", "input": { "f": "$$PRUNE" }, "value": "$$KEEP" } } } ], "cursor": {} }');
+ERROR:  The $redact stage must evaluate to one of the variables $$KEEP, $$DESCEND, or $$PRUNE, but instead it produced '{ "f" : "$$KEEP" }'.

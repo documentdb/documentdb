@@ -9,6 +9,8 @@
 
 use std::fmt;
 
+use tokio_postgres::error::SqlState;
+
 use crate::{
     error::{DocumentDBError, ErrorCode},
     postgres::conn_mgmt::StatementError,
@@ -78,10 +80,22 @@ pub fn map_transaction_error(
 ) -> DocumentDBError {
     match err {
         TransactionError::SimpleError(code, msg) => DocumentDBError::documentdb_error(code, msg),
+        TransactionError::PostgresError(pg_err)
+            if transaction_backend_is_gone(pg_err.is_closed(), pg_err.code()) =>
+        {
+            DocumentDBError::documentdb_error(
+                ErrorCode::NoSuchTransaction,
+                "The transaction has been aborted because its backend session ended.".to_owned(),
+            )
+        }
         TransactionError::PostgresError(pg_err) => {
             map_pg_error(pg_err, true, is_replica_cluster, activity_id)
         }
     }
+}
+
+fn transaction_backend_is_gone(is_closed: bool, sql_state: Option<&SqlState>) -> bool {
+    is_closed || sql_state == Some(&SqlState::IDLE_IN_TRANSACTION_SESSION_TIMEOUT)
 }
 
 #[cfg(test)]
@@ -106,5 +120,18 @@ mod tests {
             }
             other => panic!("timeout must map to SimpleError(ExceededTimeLimit, _), got {other:?}"),
         }
+    }
+
+    #[test]
+    fn ended_transaction_backend_is_no_longer_resumable() {
+        assert!(transaction_backend_is_gone(true, None));
+        assert!(transaction_backend_is_gone(
+            false,
+            Some(&SqlState::IDLE_IN_TRANSACTION_SESSION_TIMEOUT)
+        ));
+        assert!(!transaction_backend_is_gone(
+            false,
+            Some(&SqlState::QUERY_CANCELED)
+        ));
     }
 }

@@ -21,6 +21,7 @@
 
 #include "commands/parse_error.h"
 #include "commands/commands_common.h"
+#include "commands/create_indexes.h"
 #include "io/bsonvalue_utils.h"
 #include "utils/documentdb_errors.h"
 #include "metadata/collection.h"
@@ -158,6 +159,8 @@ static void ModifyIndexSpecsInCollection(const MongoCollection *collection,
 										 const CollModIndexOptions *indexOption,
 										 const CollModSpecFlags *specFlags,
 										 pgbson_writer *writer);
+static void ValidateIndexForTTLConversion(const IndexSpec *indexSpec,
+										  int expireAfterSeconds);
 static void ModifyViewDefinition(Datum databaseDatum,
 								 const MongoCollection *collection,
 								 const ViewDefinition *viewDefinition,
@@ -724,9 +727,18 @@ ModifyIndexSpecsInCollection(const MongoCollection *collection,
 	appendStringInfo(cmdStr,
 					 "SELECT index_id, index_spec, index_is_valid "
 					 "FROM %s.collection_indexes "
-					 "WHERE collection_id = $2 AND (index_spec).%s = $1;",
-					 ApiCatalogSchemaName,
-					 searchWithName ? "index_name" : "index_key");
+					 "WHERE collection_id = $2 AND ",
+					 ApiCatalogSchemaName);
+	if (searchWithName)
+	{
+		appendStringInfoString(cmdStr, "(index_spec).index_name = $1;");
+	}
+	else
+	{
+		appendStringInfo(cmdStr,
+						 "(index_spec).index_key::%s OPERATOR(%s.=) $1::%s;",
+						 FullBsonTypeName, CoreSchemaName, FullBsonTypeName);
+	}
 
 	int argCount = 2;
 	Oid argTypes[2];
@@ -781,24 +793,30 @@ ModifyIndexSpecsInCollection(const MongoCollection *collection,
 	BoolIndexOption oldUnique = BoolIndexOption_Undefined;
 	BoolIndexOption newUnique = BoolIndexOption_Undefined;
 	int oldTTL = 0, newTTL = 0;
+	bool hadOldTTL = false;
 
 	bool updateNeeded = false;
 
 	if ((*specFlags & HAS_INDEX_OPTION_EXPIRE_AFTER_SECONDS) ==
 		HAS_INDEX_OPTION_EXPIRE_AFTER_SECONDS)
 	{
+		newTTL = indexOption->expireAfterSeconds;
 		if (indexDetails.indexSpec.indexExpireAfterSeconds == NULL)
 		{
-			/* we doesn't allow non-TTL index to be converted to TTL index */
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
-							errmsg("no expireAfterSeconds field to update")));
-		}
-		oldTTL = *(indexDetails.indexSpec.indexExpireAfterSeconds);
-		newTTL = indexOption->expireAfterSeconds;
-		if (oldTTL != newTTL)
-		{
+			ValidateIndexForTTLConversion(&indexDetails.indexSpec, newTTL);
+			indexDetails.indexSpec.indexExpireAfterSeconds = palloc(sizeof(int));
 			*(indexDetails.indexSpec.indexExpireAfterSeconds) = newTTL;
 			updateNeeded = true;
+		}
+		else
+		{
+			hadOldTTL = true;
+			oldTTL = *(indexDetails.indexSpec.indexExpireAfterSeconds);
+			if (oldTTL != newTTL)
+			{
+				*(indexDetails.indexSpec.indexExpireAfterSeconds) = newTTL;
+				updateNeeded = true;
+			}
 		}
 	}
 
@@ -1057,8 +1075,11 @@ ModifyIndexSpecsInCollection(const MongoCollection *collection,
 	if ((*specFlags & HAS_INDEX_OPTION_EXPIRE_AFTER_SECONDS) ==
 		HAS_INDEX_OPTION_EXPIRE_AFTER_SECONDS)
 	{
-		PgbsonWriterAppendInt64(writer, "expireAfterSeconds_old",
-								22, oldTTL);
+		if (hadOldTTL)
+		{
+			PgbsonWriterAppendInt64(writer, "expireAfterSeconds_old",
+									22, oldTTL);
+		}
 		PgbsonWriterAppendDouble(writer, "expireAfterSeconds_new",
 								 22, (double) newTTL);
 	}
@@ -1082,6 +1103,27 @@ ModifyIndexSpecsInCollection(const MongoCollection *collection,
 							   10, GetBoolFromBoolIndexOptionDefaultFalse(
 								   newUnique));
 	}
+}
+
+
+static void
+ValidateIndexForTTLConversion(const IndexSpec *indexSpec, int expireAfterSeconds)
+{
+	IndexSpec ttlIndexSpec = *indexSpec;
+	ttlIndexSpec.indexExpireAfterSeconds = &expireAfterSeconds;
+
+	pgbson *indexSpecBson = IndexSpecAsBson(&ttlIndexSpec);
+	const char *indexSpecRepresentation = PgbsonToJsonForLogging(indexSpecBson);
+	bson_iter_t indexSpecIter;
+	PgbsonInitIterator(indexSpecBson, &indexSpecIter);
+
+	bool ignoreUnknownIndexOptions = true;
+	bool buildAsUniqueForPrepareUnique = false;
+	const bool useTTLIndexInvalidOptionsError = true;
+	ParseIndexDefDocumentInternal(&indexSpecIter, indexSpecRepresentation,
+								  ignoreUnknownIndexOptions,
+								  buildAsUniqueForPrepareUnique,
+								  useTTLIndexInvalidOptionsError);
 }
 
 

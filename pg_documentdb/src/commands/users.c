@@ -27,6 +27,7 @@
 #include "utils/list_utils.h"
 #include "utils/string_view.h"
 #include "utils/role_utils.h"
+#include "utils/version_utils.h"
 
 #define SCRAM_MAX_SALT_LEN 64
 
@@ -1210,10 +1211,11 @@ connection_status(pgbson *showPrivilegesSpec)
 
 	if (showPrivileges)
 	{
+		StringView parentRoleView = CreateStringViewFromString(parentRole);
 		pgbson_array_writer privilegesArrayWriter;
 		PgbsonWriterStartArray(&authInfoWriter, "authenticatedUserPrivileges", 27,
 							   &privilegesArrayWriter);
-		WritePrivileges(parentRole, &privilegesArrayWriter);
+		WritePrivileges(&parentRoleView, &privilegesArrayWriter);
 		PgbsonWriterEndArray(&authInfoWriter, &privilegesArrayWriter);
 	}
 
@@ -1479,26 +1481,39 @@ ValidateAndObtainUserRole(const bson_value_t *rolesDocument)
 					/*This would indicate the ApiAdminRole provided the db is "admin" and there is another role "readWriteAnyDatabase" */
 					userRoles |= DocumentDB_Role_Cluster_Admin;
 				}
-				else if (IsCustomRole(role))
-				{
-					/* For now, we only allow single roles to be assigned */
-					if (customRoleName != NULL)
-					{
-						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-										errmsg(
-											"Only one custom role may be specified.")));
-					}
-					customRoleName = pstrdup(role);
-				}
 				else
 				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_ROLENOTFOUND),
-									errmsg(
-										"The specified value for the role is invalid: '%s'.",
-										role),
-									errdetail_log(
-										"The specified value for the role is invalid: '%s'.",
-										role)));
+					/*
+					 * createRole is gated on 0.116-0, so no custom role can
+					 * exist before then.
+					 */
+					bool isCustomRole = false;
+					if (IsClusterVersionAtleast(DocDB_V0, 116, 0))
+					{
+						isCustomRole = IsCustomRole(role);
+					}
+
+					if (isCustomRole)
+					{
+						/* For now, we only allow single roles to be assigned */
+						if (customRoleName != NULL)
+						{
+							ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+											errmsg(
+												"Only one custom role may be specified.")));
+						}
+						customRoleName = pstrdup(role);
+					}
+					else
+					{
+						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_ROLENOTFOUND),
+										errmsg(
+											"The specified value for the role is invalid: '%s'.",
+											role),
+										errdetail_log(
+											"The specified value for the role is invalid: '%s'.",
+											role)));
+					}
 				}
 			}
 			else if (strcmp(key, "db") == 0 || strcmp(key, "$db") == 0)

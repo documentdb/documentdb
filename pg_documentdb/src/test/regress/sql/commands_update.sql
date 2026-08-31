@@ -697,3 +697,26 @@ select documentdb_api.update('db', '{"update":"update_bool_validation", "updates
 select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"r":"b"},"u":{"$set":{"t":1}},"upsert":"x"}]}');
 
 select documentdb_api.drop_collection('db', 'update_bool_validation');
+
+-- A request caches each logical secondary-index name after its first conflict.
+select 1 from documentdb_api.insert_one('db', 'update_index_name_cache', '{"_id":1,"a":1,"b":1}');
+select 1 from documentdb_api.insert_one('db', 'update_index_name_cache', '{"_id":2,"a":2,"b":2}');
+select 1 from documentdb_api.insert_one('db', 'update_index_name_cache', '{"_id":3,"a":3,"b":3}');
+select 1 from documentdb_api.insert_one('db', 'update_index_name_cache', '{"_id":4,"a":4,"b":4}');
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'db',
+    '{"createIndexes":"update_index_name_cache","indexes":[
+        {"key":{"a":1},"name":"a_1","unique":true},
+        {"key":{"b":1},"name":"b_1","unique":true}
+    ]}',
+    true);
+
+SET client_min_messages TO DEBUG1;
+select documentdb_api.update('db', '{"update":"update_index_name_cache","ordered":false,"updates":[
+    {"q":{"_id":2},"u":{"$set":{"a":1}}},
+    {"q":{"_id":3},"u":{"$set":{"a":1}}},
+    {"q":{"_id":4},"u":{"$set":{"b":1}}}
+]}');
+RESET client_min_messages;
+
+select documentdb_api.drop_collection('db', 'update_index_name_cache');

@@ -52,6 +52,8 @@
 #include "opclass/bson_text_gin.h"
 #include "aggregation/bson_aggregation_pipeline.h"
 #include "aggregation/bson_query_common.h"
+#include "commands/update.h"
+#include "commands/write_commands.h"
 #include "utils/query_utils.h"
 #include "utils/guc_utils.h"
 #include "utils/docdb_make_funcs.h"
@@ -109,6 +111,9 @@ typedef struct DocumentDbQueryFlagsState
 
 	/* The current depth (intermediate state during walking) */
 	int queryDepth;
+
+	/* the bound parameters for the given request context */
+	ParamListInfo boundParams;
 } DocumentDbQueryFlagsState;
 
 static bool DocumentDbQueryFlagsWalker(Node *node, DocumentDbQueryFlagsState *queryFlags);
@@ -127,12 +132,16 @@ static bool IsRTEShardForDocumentDbCollection(RangeTblEntry *rte,
 static bool ProcessWorkerWriteQueryPath(PlannerInfo *root, RelOptInfo *rel, Index rti,
 										RangeTblEntry *rte);
 static Query * ExpandAggregationFunction(Query *node, ParamListInfo boundParams,
-										 PlannedStmt **plan, int *cursorOptions);
-static Query * ExpandNestedAggregationFunction(Query *node, ParamListInfo boundParams);
+										 PlannedStmt **plan, int *cursorOptions,
+										 int *queryFlags);
+static Query * ExpandNestedAggregationFunction(Query *node,
+											   DocumentDbQueryFlagsState *state);
 
 static void ForceExcludeNonIndexPaths(PlannerInfo *root, RelOptInfo *rel,
 									  Index rti, RangeTblEntry *rte);
 static List * AugmentBaseRestrictInfo(PlannerInfo *root, RelOptInfo *rel);
+static void PatchOrderByMetaWithTextIndexData(PlannerInfo *root, Index baseRteIndex,
+											  QueryTextIndexData *textIndexData);
 static void ExtensionPostParseAnalyzeHookCore(ParseState *pstate, Query *query,
 											  const JumbleState *jstate);
 
@@ -277,7 +286,7 @@ DocumentDBApiPlanner(Query *parse, const char *queryString, int cursorOptions,
 		if (queryFlags & HAS_AGGREGATION_FUNCTION)
 		{
 			parse = (Query *) ExpandAggregationFunction(parse, boundParams, &plan,
-														&cursorOptions);
+														&cursorOptions, &queryFlags);
 			if (plan != NULL)
 			{
 				return plan;
@@ -286,7 +295,11 @@ DocumentDBApiPlanner(Query *parse, const char *queryString, int cursorOptions,
 
 		if (queryFlags & HAS_NESTED_AGGREGATION_FUNCTION)
 		{
-			parse = (Query *) ExpandNestedAggregationFunction(parse, boundParams);
+			DocumentDbQueryFlagsState innerState = { 0 };
+			innerState.documentDbQueryFlags = queryFlags;
+			innerState.boundParams = boundParams;
+			parse = (Query *) ExpandNestedAggregationFunction(parse, &innerState);
+			queryFlags = innerState.documentDbQueryFlags;
 		}
 
 		/* replace the @@ operators and inject shard_key_value filters */
@@ -512,6 +525,131 @@ InMatchIsEquvalentTo(ScalarArrayOpExpr *opExpr, const bson_value_t *arrayValue)
 }
 
 
+/*
+ * Fills the placeholder index options and TSQuery arguments of a
+ * bson_orderby_meta order by with the values resolved from the matched text
+ * index. HandleSort emits a $meta:"textScore" sort as
+ * bson_orderby_meta(document, NULL, NULL) because the text index options and
+ * TSQuery are only known once the text index is chosen during planning.
+ *
+ * Both the sort target entry and the equivalence-class copy that backs the sort
+ * pathkey must be patched: the equivalence class stores a copyObject of the
+ * order by expression (see get_eclass_for_sort_expr), so patching only the
+ * target entry would make the two diverge and cause create_plan to append a
+ * duplicate sort column.
+ */
+static bool
+PatchOrderByMetaFuncExprArgs(Expr *expr, Oid orderByMetaFuncId, Index baseRteIndex,
+							 QueryTextIndexData *textIndexData)
+{
+	if (expr != NULL && IsA(expr, RelabelType))
+	{
+		expr = ((RelabelType *) expr)->arg;
+	}
+
+	if (expr == NULL || !IsA(expr, FuncExpr))
+	{
+		return false;
+	}
+
+	FuncExpr *funcExpr = (FuncExpr *) expr;
+	if (funcExpr->funcid != orderByMetaFuncId ||
+		list_length(funcExpr->args) != 3)
+	{
+		return false;
+	}
+
+	/*
+	 * The first argument is the document being scored. Only patch this
+	 * bson_orderby_meta if that argument is a Var referencing the current base
+	 * relation (the text-indexed table this hook invocation is planning). This
+	 * guards against patching an unrelated bson_orderby_meta that happens to
+	 * appear in the same target list or equivalence class (for example a
+	 * document sourced from a different range table entry), which would
+	 * incorrectly attach this relation's text index options and TSQuery to it.
+	 */
+	Node *documentArg = (Node *) linitial(funcExpr->args);
+	if (documentArg != NULL && IsA(documentArg, RelabelType))
+	{
+		documentArg = (Node *) ((RelabelType *) documentArg)->arg;
+	}
+
+	if (documentArg == NULL || !IsA(documentArg, Var))
+	{
+		return false;
+	}
+
+	Var *documentVar = (Var *) documentArg;
+	if ((Index) documentVar->varno != baseRteIndex || documentVar->varlevelsup != 0)
+	{
+		return false;
+	}
+
+	Const *indexOptionsConst = makeConst(BYTEAOID, -1, InvalidOid, -1,
+										 PointerGetDatum(textIndexData->indexOptions),
+										 false, false);
+	Const *queryConst = makeConst(TSQUERYOID, -1, InvalidOid, -1,
+								  textIndexData->query, false, false);
+
+	funcExpr->args = list_make3(linitial(funcExpr->args), indexOptionsConst,
+								queryConst);
+	return true;
+}
+
+
+static void
+PatchOrderByMetaWithTextIndexData(PlannerInfo *root, Index baseRteIndex,
+								  QueryTextIndexData *textIndexData)
+{
+	Oid orderByMetaFuncId = BsonOrderByMetaFunctionOid();
+	if (orderByMetaFuncId == InvalidOid)
+	{
+		return;
+	}
+
+	Query *query = root->parse;
+	bool patched = false;
+
+	/*
+	 * Patch any bson_orderby_meta in the query target list. On a single node the
+	 * function appears as the $meta:"textScore" sort target entry. On a sharded
+	 * query the sort is performed on the coordinator, so the per-shard query
+	 * projects bson_orderby_meta as a pulled-up target list column with no local
+	 * ORDER BY clause. Walking the target list (a superset of the sort target
+	 * entries) covers both shapes so the placeholder arguments are always filled.
+	 */
+	ListCell *tleCell;
+	foreach(tleCell, query->targetList)
+	{
+		TargetEntry *entry = (TargetEntry *) lfirst(tleCell);
+		if (PatchOrderByMetaFuncExprArgs(entry->expr, orderByMetaFuncId, baseRteIndex,
+										 textIndexData))
+		{
+			patched = true;
+		}
+	}
+
+	if (!patched)
+	{
+		return;
+	}
+
+	/* Keep the equivalence-class copies that back the sort pathkeys in sync. */
+	ListCell *ecCell;
+	foreach(ecCell, root->eq_classes)
+	{
+		EquivalenceClass *eqClass = (EquivalenceClass *) lfirst(ecCell);
+		ListCell *emCell;
+		foreach(emCell, eqClass->ec_members)
+		{
+			EquivalenceMember *eqMember = (EquivalenceMember *) lfirst(emCell);
+			PatchOrderByMetaFuncExprArgs(eqMember->em_expr, orderByMetaFuncId,
+										 baseRteIndex, textIndexData);
+		}
+	}
+}
+
+
 static void
 ExtensionRelPathlistHookCore(PlannerInfo *root, RelOptInfo *rel, Index rti,
 							 RangeTblEntry *rte)
@@ -657,6 +795,15 @@ ExtensionRelPathlistHookCore(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		if (textIndexData != NULL && textIndexData->indexOptions != NULL &&
 			textIndexData->query != (Datum) 0)
 		{
+			/* A $meta:"textScore" sort compiled to a bson_orderby_meta order by
+			 * carries placeholder index options and TSQuery arguments; now that
+			 * the text index is resolved, patch those arguments with the real
+			 * values so the sort does not depend on process-global query state. */
+			if (EnableSkipUseQueryTextData)
+			{
+				PatchOrderByMetaWithTextIndexData(root, rti, textIndexData);
+			}
+
 			AddExtensionQueryScanForTextQuery(root, rel, rte, textIndexData);
 		}
 	}
@@ -1079,6 +1226,9 @@ IsAggregationFunction(Oid funcId)
 	return funcId == ApiCatalogAggregationPipelineFunctionId() ||
 		   funcId == ApiCatalogAggregationFindFunctionId() ||
 		   funcId == ApiCatalogAggregationCountFunctionId() ||
+		   funcId == ApiCatalogAggregationUpdateFunctionId() ||
+		   funcId == ApiCatalogAggregationDeleteFunctionId() ||
+		   funcId == ApiCatalogAggregationFindAndModifyFunctionId() ||
 		   funcId == ApiCatalogAggregationDistinctFunctionId() ||
 		   funcId == ApiCatalogAggregationGetMoreFunctionId();
 }
@@ -1877,7 +2027,7 @@ ProcessWorkerWriteQueryPath(PlannerInfo *root, RelOptInfo *rel, Index rti,
  * query, replaces it with the post-processed query.
  */
 static Node *
-MutateQueryAggregatorFunction(Node *node, ParamListInfo boundParams)
+MutateQueryAggregatorFunction(Node *node, DocumentDbQueryFlagsState *state)
 {
 	if (node == NULL)
 	{
@@ -1900,25 +2050,27 @@ MutateQueryAggregatorFunction(Node *node, ParamListInfo boundParams)
 				{
 					PlannedStmt *stmt = NULL;
 					int cursorOptions = 0;
-					return (Node *) ExpandAggregationFunction(query, boundParams, &stmt,
-															  &cursorOptions);
+					return (Node *) ExpandAggregationFunction(query, state->boundParams,
+															  &stmt,
+															  &cursorOptions,
+															  &state->documentDbQueryFlags);
 				}
 			}
 		}
 
 		return (Node *) query_tree_mutator((Query *) node, MutateQueryAggregatorFunction,
-										   boundParams, QTW_DONT_COPY_QUERY |
+										   state, QTW_DONT_COPY_QUERY |
 										   QTW_EXAMINE_RTES_BEFORE);
 	}
 
-	return expression_tree_mutator(node, MutateQueryAggregatorFunction, boundParams);
+	return expression_tree_mutator(node, MutateQueryAggregatorFunction, state);
 }
 
 
 static Query *
-ExpandNestedAggregationFunction(Query *query, ParamListInfo boundParams)
+ExpandNestedAggregationFunction(Query *query, DocumentDbQueryFlagsState *state)
 {
-	return query_tree_mutator(query, MutateQueryAggregatorFunction, boundParams,
+	return query_tree_mutator(query, MutateQueryAggregatorFunction, state,
 							  QTW_DONT_COPY_QUERY | QTW_EXAMINE_RTES_BEFORE);
 }
 
@@ -1930,7 +2082,7 @@ ExpandNestedAggregationFunction(Query *query, ParamListInfo boundParams)
  */
 static Query *
 ExpandAggregationFunction(Query *query, ParamListInfo boundParams, PlannedStmt **plan,
-						  int *cursorOptions)
+						  int *cursorOptions, int *queryFlags)
 {
 	/* Top level validations - these are right now during development */
 	*plan = NULL;
@@ -2109,6 +2261,28 @@ ExpandAggregationFunction(Query *query, ParamListInfo boundParams, PlannedStmt *
 		finalQuery = GenerateCountQuery(databaseName,
 										pipeline,
 										setStatementTimeout);
+	}
+	else if (aggregationFunc->funcid == ApiCatalogAggregationUpdateFunctionId())
+	{
+		/* Force eval the query match code path */
+		*queryFlags = *queryFlags | HAS_QUERY_MATCH_FUNCTION;
+		finalQuery = GenerateUpdateQuery(databaseName,
+										 pipeline,
+										 setStatementTimeout);
+	}
+	else if (aggregationFunc->funcid == ApiCatalogAggregationDeleteFunctionId())
+	{
+		/* Force eval the query match code path */
+		*queryFlags = *queryFlags | HAS_QUERY_MATCH_FUNCTION;
+		finalQuery = GenerateDeleteQuery(databaseName,
+										 pipeline,
+										 setStatementTimeout);
+	}
+	else if (aggregationFunc->funcid == ApiCatalogAggregationFindAndModifyFunctionId())
+	{
+		finalQuery = GenerateFindAndModifyQuery(databaseName,
+												pipeline,
+												setStatementTimeout);
 	}
 	else if (aggregationFunc->funcid == ApiCatalogAggregationDistinctFunctionId())
 	{
@@ -2475,6 +2649,44 @@ CheckQueryForCollatedGroup(Query *query)
 
 
 static bool
+IsCollatedDistinctClause(Expr *node)
+{
+	if (!IsA(node, FuncExpr))
+	{
+		return false;
+	}
+
+	FuncExpr *funcExpr = (FuncExpr *) node;
+	if (funcExpr->funcid != BsonDistinctUnwindWithCollationFunctionOid() ||
+		list_length(funcExpr->args) != 3)
+	{
+		return false;
+	}
+
+	Expr *collationArg = lthird(funcExpr->args);
+	return IsA(collationArg, Const) && !((Const *) collationArg)->constisnull;
+}
+
+
+static void
+CheckQueryForCollatedDistinct(Query *query)
+{
+	ListCell *cell;
+	foreach(cell, query->distinctClause)
+	{
+		SortGroupClause *sgc = (SortGroupClause *) lfirst(cell);
+		TargetEntry *tle = get_sortgroupclause_tle(sgc, query->targetList);
+		if (IsCollatedDistinctClause(tle->expr))
+		{
+			sgc->eqop = BsonOrderyByEqOperatorId();
+			sgc->sortop = BsonOrderyByLtOperatorId();
+			sgc->hashable = false;
+		}
+	}
+}
+
+
+static bool
 CollationQueryTreeWalker(Node *node, void *context)
 {
 	if (node == NULL)
@@ -2488,6 +2700,10 @@ CollationQueryTreeWalker(Node *node, void *context)
 		if (childQuery->groupClause != NIL)
 		{
 			CheckQueryForCollatedGroup(childQuery);
+		}
+		if (childQuery->distinctClause != NIL)
+		{
+			CheckQueryForCollatedDistinct(childQuery);
 		}
 
 		return query_tree_walker((Query *) node, CollationQueryTreeWalker, NULL, 0);
@@ -2509,6 +2725,10 @@ ExtensionPostParseAnalyzeHookCore(ParseState *pstate, Query *query,
 	if (query->groupClause != NIL)
 	{
 		CheckQueryForCollatedGroup(query);
+	}
+	if (query->distinctClause != NIL)
+	{
+		CheckQueryForCollatedDistinct(query);
 	}
 
 	query_tree_walker(query, CollationQueryTreeWalker, NULL, QTW_DONT_COPY_QUERY);

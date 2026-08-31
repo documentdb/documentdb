@@ -40,6 +40,9 @@ typedef struct DollarRangeParams
 	 * returned on an earlier page. Present when value_type is BSON_TYPE_BINARY. */
 	bson_value_t dedupState;
 
+	/* Number of leading index paths that form the distinct group prefix. */
+	int32_t numGroupKeyPaths;
+
 	/* Reservoir sampling: when true, the range signals the planner to wrap
 	 * scan paths with a reservoir sampling CustomScan. */
 	bool isSample;

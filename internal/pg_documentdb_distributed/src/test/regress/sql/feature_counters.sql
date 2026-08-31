@@ -481,3 +481,25 @@ RESET enable_bitmapscan;
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 
 SELECT documentdb_api.drop_collection('db', 'updateMany');
+
+-- Ordered $first distinct-scan candidates suppressed by the feature flag.
+SELECT documentdb_api.insert_one('db', 'orderedFirstCandidate', '{ "_id": 1, "x": "a", "y": 10 }');
+SELECT documentdb_api.insert_one('db', 'orderedFirstCandidate', '{ "_id": 2, "x": "a", "y": 20 }');
+SELECT documentdb_api.insert_one('db', 'orderedFirstCandidate', '{ "_id": 3, "x": "b", "y": 30 }');
+SET documentdb.defaultUseCompositeOpClass TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "orderedFirstCandidate", "indexes": [ { "key": { "x": 1, "y": -1 }, "name": "idx_x_y_desc" } ] }', true);
+SELECT count(*) * 0 AS count FROM documentdb_api_internal.command_feature_counter_stats(true);
+
+SET documentdb.enable_distinct_scan_for_ordered_group_first TO off;
+SET documentdb.enableSortPushToAccumulatorWithPrefix TO on;
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "orderedFirstCandidate", "hint": "idx_x_y_desc", "pipeline": [ { "$sort": { "x": 1, "y": -1 } }, { "$group": { "_id": "$x", "f": { "$first": "$y" } } }, { "$sort": { "_id": 1 } } ] }');
+RESET enable_bitmapscan;
+RESET enable_seqscan;
+RESET documentdb.enableSortPushToAccumulatorWithPrefix;
+RESET documentdb.enable_distinct_scan_for_ordered_group_first;
+RESET documentdb.defaultUseCompositeOpClass;
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+SELECT documentdb_api.drop_collection('db', 'orderedFirstCandidate');

@@ -29,9 +29,22 @@ bool EnableSchemaValidation =
 bool EnableBypassDocumentValidation =
 	DEFAULT_ENABLE_BYPASSDOCUMENTVALIDATION;
 
-/* Added on v0.117, enabled in v0.117, remove after v0.120 */
+/* Added on v0.117, enabled in v0.117, remove after v1.2 */
 #define DEFAULT_ENABLE_NULL_COLLECTION_VALIDATION true
 bool EnableNullCollectionValidation = DEFAULT_ENABLE_NULL_COLLECTION_VALIDATION;
+
+/*
+ * SECTION: Text search flags
+ */
+
+/*
+ * Gates skipping the use of leaked per-statement text query state that a prior
+ * aborted statement may have left published on this backend.
+ */
+
+/* Added on v1.0, enabled on v1.0, remove after v1.2 */
+#define DEFAULT_ENABLE_SKIP_USE_QUERY_TEXT_DATA true
+bool EnableSkipUseQueryTextData = DEFAULT_ENABLE_SKIP_USE_QUERY_TEXT_DATA;
 
 /*
  * SECTION: Authentication & Authorization user flags
@@ -57,7 +70,7 @@ bool EnableRoleCrud = DEFAULT_ENABLE_ROLE_CRUD;
 #define DEFAULT_ENABLE_USERS_ADMIN_DB_CHECK false
 bool EnableUsersAdminDBCheck = DEFAULT_ENABLE_USERS_ADMIN_DB_CHECK;
 
-/* Added in v0.116, Pending stabilization, enable in v0.117 */
+/* Added in v0.116, Pending stabilization, enable in v1.0 */
 #define DEFAULT_ENABLE_READWRITE_ANY_DATABASE_ROLE_ENFORCEMENT false
 bool EnableReadWriteAnyDatabaseRoleEnforcement =
 	DEFAULT_ENABLE_READWRITE_ANY_DATABASE_ROLE_ENFORCEMENT;
@@ -111,11 +124,11 @@ bool EnableVectorCalculateDefaultSearchParameter =
 #define DEFAULT_USE_NEW_COMPOSITE_INDEX_OPCLASS true
 bool DefaultUseCompositeOpClass = DEFAULT_USE_NEW_COMPOSITE_INDEX_OPCLASS;
 
-/* Added in v0.109, Pending stabilization, enable in v0.120 */
+/* Added in v0.109, Pending stabilization, enable in v1.2 */
 #define DEFAULT_ENABLE_COMPOSITE_INDEX_PLANNER false
 bool EnableCompositeIndexPlanner = DEFAULT_ENABLE_COMPOSITE_INDEX_PLANNER;
 
-/* Added in v0.109, Pending stabilization, enable in v0.125 */
+/* Added in v0.109, Pending stabilization, enable in v1.7 */
 #define DEFAULT_ENABLE_ORDER_BY_ID_ON_COST false
 bool EnableOrderByIdOnCostFunction = DEFAULT_ENABLE_ORDER_BY_ID_ON_COST;
 
@@ -128,23 +141,23 @@ bool EnableOrderByIdOnCostFunction = DEFAULT_ENABLE_ORDER_BY_ID_ON_COST;
 bool EnableValueOnlyIndexTerms = DEFAULT_ENABLE_VALUE_ONLY_INDEX_TERMS;
 
 
-/* Added in v0.114, Pending stabilization, enable in v0.120 */
+/* Added in v0.114, Pending stabilization, enable in v1.2 */
 #define DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS false
 bool EnableFailureOnParallelIndexArrays = DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS;
 
-/* Added on v0.116, enabled on v0.116, remove after v0.119 */
+/* Added on v0.116, enabled on v0.116, remove after v1.1 */
 #define DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS_FOR_METADATA_TRACKING true
 bool EnableFailureOnParallelIndexArraysForMetadataTracking =
 	DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS_FOR_METADATA_TRACKING;
 
-/* Added in v0.114, Pending stabilization, enable in v0.120 */
+/* Added in v0.114, Pending stabilization, enable in v1.2 */
 #define DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT false
 bool EnableIndexOnlyScanForFindProject = DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT;
 
 /*
  * Temporary kill switch for candidate detection; when off, projection walking
  * stays fully guarded by EnableIndexOnlyScanForFindProject (the old behavior).
- * Added on v0.116, enabled on v0.116, remove after v0.120.
+ * Added on v0.116, enabled on v0.116, remove after v1.2.
  */
 #define DEFAULT_TRACK_INDEX_ONLY_SCAN_FIND_CANDIDATE true
 bool TrackIndexOnlyScanFindCandidate =
@@ -160,36 +173,40 @@ bool EmitEnableOrderedIndexFalseInResponse =
 bool EnableCompositeReducedCorrelatedPrefixTrim =
 	DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_PREFIX_TRIM;
 
-/* Added in v0.116, Pending stabilization, enable in v0.121 */
+/* Added in v0.116, Pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_BOUNDS_PLANNING false
 bool EnableCompositeReducedCorrelatedBoundsPlanning =
 	DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_BOUNDS_PLANNING;
 
-/* Added in v0.117, Pending stabilization, enable in v0.123 */
+/* Added in v0.117, Pending stabilization, enable in v1.5 */
 #define DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_FIRST_OWNER_FALLBACK false
 bool EnableCompositeReducedCorrelatedFirstOwnerFallback =
 	DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_FIRST_OWNER_FALLBACK;
 
-/* Added in v0.115, Pending stabilization, enable in v0.121 */
+/* Added in v0.115, Pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_INDEX_METADATA_GLOBAL_TRACKING false
 bool EnableIndexMetadataGlobalTracking = DEFAULT_ENABLE_INDEX_METADATA_GLOBAL_TRACKING;
 
-/* Added on v0.115, enabled on v0.115, remove after v0.118 */
+/* Added on v1.0, enabled on v1.0, remove after v1.3 */
+#define DEFAULT_ENABLE_REQUEST_INDEX_NAME_CACHE true
+bool EnableRequestIndexNameCache = DEFAULT_ENABLE_REQUEST_INDEX_NAME_CACHE;
+
+/* Added on v0.115, enabled on v0.115, remove after v1.0 */
 #define DEFAULT_ENABLE_PER_PATH_MULTI_KEY_SORT_PUSHDOWN true
 bool EnablePerPathMultiKeySortPushdown =
 	DEFAULT_ENABLE_PER_PATH_MULTI_KEY_SORT_PUSHDOWN;
 
-/* Added in v0.116, pending stabilization, enable in v0.118 */
+/* Added in v0.116, pending stabilization, enable in v1.0 */
 #define DEFAULT_ENABLE_GROUP_BY_MULTI_KEY_SORT_PUSHDOWN false
 bool EnableGroupByMultiKeySortPushdown =
 	DEFAULT_ENABLE_GROUP_BY_MULTI_KEY_SORT_PUSHDOWN;
 
-/* Added in v0.115, enabled in v0.115, remove after v0.118 */
+/* Added in v0.115, enabled in v0.115, remove after v1.0 */
 #define DEFAULT_ENABLE_INDEX_CORRELATION_FROM_STATISTICS true
 bool EnableIndexCorrelationFromStatistics =
 	DEFAULT_ENABLE_INDEX_CORRELATION_FROM_STATISTICS;
 
-/* Added in v0.116, Pending stabilization, enable in v0.122 */
+/* Added in v0.116, Pending stabilization, enable in v1.4 */
 #define DEFAULT_ENABLE_DISTINCT_UNWIND_ROWS_FROM_STATISTICS false
 bool EnableDistinctUnwindRowsFromStatistics =
 	DEFAULT_ENABLE_DISTINCT_UNWIND_ROWS_FROM_STATISTICS;
@@ -199,16 +216,16 @@ bool EnableDistinctUnwindRowsFromStatistics =
 #define DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT_TERMS true
 bool EnableCompositeShardDocumentTerms = DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT_TERMS;
 
-/* Added in v0.111, enabled in v0.115, remove after v0.118 */
+/* Added in v0.111, enabled in v0.115, remove after v1.0 */
 #define DEFAULT_ENABLE_PER_COLLECTION_PLANNER_STATISTICS true
 bool EnablePerCollectionPlannerStatistics =
 	DEFAULT_ENABLE_PER_COLLECTION_PLANNER_STATISTICS;
 
-/* Added in v0.116, enabled in v0.116, remove after v0.119 */
+/* Added in v0.116, enabled in v0.116, remove after v1.1 */
 #define DEFAULT_SKIP_LEGACY_ID_INDEX_STATS_CHECK true
 bool SkipLegacyIdIndexStatsCheck = DEFAULT_SKIP_LEGACY_ID_INDEX_STATS_CHECK;
 
-/* Added in v0.113, Pending stabilization, enable in v0.120 */
+/* Added in v0.113, Pending stabilization, enable in v1.2 */
 #define DEFAULT_ENABLE_PLANNER_STATISTICS_NEW_COLLECTIONS false
 bool EnablePlannerStatisticsNewCollections =
 	DEFAULT_ENABLE_PLANNER_STATISTICS_NEW_COLLECTIONS;
@@ -217,25 +234,25 @@ bool EnablePlannerStatisticsNewCollections =
 #define DEFAULT_ENABLE_EXTENDED_INDEXES false
 bool EnableExtendedIndexes = DEFAULT_ENABLE_EXTENDED_INDEXES;
 
-/* Added in v0.111, Pending stabilization, enable in v0.118 */
+/* Added in v0.111, Pending stabilization, enable in v1.0 */
 #define DEFAULT_ENABLE_COMPARABLE_TERMS false
 bool EnableComparableTerms = DEFAULT_ENABLE_COMPARABLE_TERMS;
 
-/* Added in v0.111, Pending stabilization, enable in v0.118 */
+/* Added in v0.111, Pending stabilization, enable in v1.0 */
 #define DEFAULT_ENABLE_ORDER_BY_INDEX_TERM false
 bool EnableOrderByIndexTerm = DEFAULT_ENABLE_ORDER_BY_INDEX_TERM;
 
-/* Added on v0.112, enabled on v0.117, remove after v0.119 */
+/* Added on v0.112, enabled on v0.117, remove after v1.1 */
 #define DEFAULT_ENABLE_GROUP_BY_COMPOUND_ID_INDEX_PUSHDOWN true
 bool EnableGroupByCompoundIdIndexPushdown =
 	DEFAULT_ENABLE_GROUP_BY_COMPOUND_ID_INDEX_PUSHDOWN;
 
-/* Added in v0.117, Pending stabilization, enable in v0.119 */
+/* Added in v0.117, Pending stabilization, enable in v1.1 */
 #define DEFAULT_ENABLE_SCALAR_AGGREGATE_INDEX_PUSHDOWN false
 bool EnableScalarAggregateIndexPushdown =
 	DEFAULT_ENABLE_SCALAR_AGGREGATE_INDEX_PUSHDOWN;
 
-/* Added in v0.117, enabled in v0.117, remove after v0.120 */
+/* Added in v0.117, enabled in v0.117, remove after v1.2 */
 #define DEFAULT_ENABLE_SCALAR_AGGREGATE_ACCUMULATOR_PATH_COLLECTION true
 bool EnableScalarAggregateAccumulatorPathCollection =
 	DEFAULT_ENABLE_SCALAR_AGGREGATE_ACCUMULATOR_PATH_COLLECTION;
@@ -248,7 +265,7 @@ bool EnablePartialMatchHasRecheck = DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK;
 #define DEFAULT_ENABLE_SKIP_DOTTED_FIELD_INDEX_TERMS true
 bool EnableSkipDottedFieldIndexTerms = DEFAULT_ENABLE_SKIP_DOTTED_FIELD_INDEX_TERMS;
 
-/* Added in v0.115, enabled in v0.115, remove after v0.118 */
+/* Added in v0.115, enabled in v0.115, remove after v1.0 */
 #define DEFAULT_ENABLE_PARTIAL_FILTER_EVAL_ON_PLANNER true
 bool EnablePartialFilterEvalOnPlanner = DEFAULT_ENABLE_PARTIAL_FILTER_EVAL_ON_PLANNER;
 
@@ -256,20 +273,20 @@ bool EnablePartialFilterEvalOnPlanner = DEFAULT_ENABLE_PARTIAL_FILTER_EVAL_ON_PL
 #define DEFAULT_ENABLE_DOTTED_VALUE_TEXT_INDEX_TERMS true
 bool EnableDottedValueTextIndexTerms = DEFAULT_ENABLE_DOTTED_VALUE_TEXT_INDEX_TERMS;
 
-/* Added in v0.117, Pending stabilization, enable in v0.121 */
+/* Added in v0.117, Pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_HIGH_KEY_OPTIMIZATION false
 bool EnableHighKeyOptimization = DEFAULT_ENABLE_HIGH_KEY_OPTIMIZATION;
 
-/* Added in v0.114, enabled in v0.114, remove after v0.118 */
+/* Added in v0.114, enabled in v0.114, remove after v1.0 */
 #define DEFAULT_ENABLE_DISTINCT_INDEX_PUSHDOWN true
 bool EnableDistinctIndexPushdown = DEFAULT_ENABLE_DISTINCT_INDEX_PUSHDOWN;
 
-/* Added in v0.116, Pending stabilization, enable in v0.122 */
+/* Added in v0.116, Pending stabilization, enable in v1.4 */
 #define DEFAULT_ENABLE_DISTINCT_EXISTS_FILTER_PUSHDOWN false
 bool EnableDistinctExistsFilterPushdown =
 	DEFAULT_ENABLE_DISTINCT_EXISTS_FILTER_PUSHDOWN;
 
-/* Added in v0.117, enabled in v0.117, remove after v0.121 */
+/* Added in v0.117, enabled in v0.117, remove after v1.3 */
 #define DEFAULT_ENABLE_DISTINCT_SKIP_SCAN_ON_KEY true
 bool EnableDistinctSkipScanOnKey = DEFAULT_ENABLE_DISTINCT_SKIP_SCAN_ON_KEY;
 
@@ -285,12 +302,12 @@ bool EnableNewMinMaxAccumulators = DEFAULT_ENABLE_NEW_MIN_MAX_ACCUMULATORS;
 #define DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS true
 bool EnableNewWithExprAccumulators = DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS;
 
-/* Added in v0.117, enabled on v0.117, remove after v0.120 */
+/* Added in v0.117, enabled on v0.117, remove after v1.2 */
 #define DEFAULT_ENABLE_PARALLEL_SAFE_WITH_EXPR_ACCUMULATORS true
 bool EnableParallelSafeWithExprAccumulators =
 	DEFAULT_ENABLE_PARALLEL_SAFE_WITH_EXPR_ACCUMULATORS;
 
-/* Added on v0.115, enabled on v0.115, remove after v0.118 */
+/* Added on v0.115, enabled on v0.115, remove after v1.0 */
 #define DEFAULT_ENABLE_MIN_MAX_SKIP_NULL_VALUES true
 bool EnableMinMaxSkipNullValues = DEFAULT_ENABLE_MIN_MAX_SKIP_NULL_VALUES;
 
@@ -299,7 +316,7 @@ bool EnableMinMaxSkipNullValues = DEFAULT_ENABLE_MIN_MAX_SKIP_NULL_VALUES;
 bool EnableDeleteOnePlanCacheOptimization =
 	DEFAULT_ENABLE_DELETE_ONE_PLAN_CACHE_OPTIMIZATION;
 
-/* Added in v0.113, pending stabilization, enable in v0.119 */
+/* Added in v0.113, pending stabilization, enable in v1.1 */
 #define DEFAULT_ENABLE_DYNAMIC_CURSORS false
 bool EnableDynamicCursors = DEFAULT_ENABLE_DYNAMIC_CURSORS;
 
@@ -319,7 +336,7 @@ bool EnableDynamicCursorParallelPlans = DEFAULT_ENABLE_DYNAMIC_CURSOR_PARALLEL_P
 /* Ordered multikey scans deduplicate by carrying the dedup state forward in the
  * continuation, so the bitmap-scan safeguard is opt-in (used mainly by tests). */
 
-/* Added in v0.116, Pending stabilization, enable in v0.120 */
+/* Added in v0.116, Pending stabilization, enable in v1.2 */
 #define DEFAULT_ENABLE_DYNAMIC_CURSOR_MULTIKEY_BITMAP false
 bool EnableDynamicCursorMultiKeyBitmap = DEFAULT_ENABLE_DYNAMIC_CURSOR_MULTIKEY_BITMAP;
 
@@ -327,7 +344,7 @@ bool EnableDynamicCursorMultiKeyBitmap = DEFAULT_ENABLE_DYNAMIC_CURSOR_MULTIKEY_
  * forward in the continuation so each document is returned at most once across
  * cursor batches. Enabled by default; can be disabled as an escape hatch. */
 
-/* Added in v0.116, enabled in v0.116, remove after v0.118 */
+/* Added in v0.116, enabled in v0.116, remove after v1.0 */
 #define DEFAULT_ENABLE_DYNAMIC_CURSOR_DEDUP_TRACKING true
 bool EnableDynamicCursorDedupTracking = DEFAULT_ENABLE_DYNAMIC_CURSOR_DEDUP_TRACKING;
 
@@ -336,7 +353,7 @@ bool EnableDynamicCursorDedupTracking = DEFAULT_ENABLE_DYNAMIC_CURSOR_DEDUP_TRAC
 bool EnableSingleResultQueryParallelPlans =
 	DEFAULT_ENABLE_SINGLE_RESULT_QUERY_PARALLEL_PLANS;
 
-/* Added in v0.116, enabled in v0.116, remove after v0.118 */
+/* Added in v0.116, enabled in v0.116, remove after v1.0 */
 #define DEFAULT_ENABLE_GROUP_BY_DYNAMIC_STREAMING true
 bool EnableGroupByDynamicStreaming = DEFAULT_ENABLE_GROUP_BY_DYNAMIC_STREAMING;
 
@@ -344,23 +361,28 @@ bool EnableGroupByDynamicStreaming = DEFAULT_ENABLE_GROUP_BY_DYNAMIC_STREAMING;
 #define DEFAULT_ENABLE_PG_PRNG_CURSOR_ID true
 bool EnablePGPrngCursorId = DEFAULT_ENABLE_PG_PRNG_CURSOR_ID;
 
-/* Added in v0.114, enabled in v0.114, remove after v0.120 */
+/* Added in v0.114, enabled in v0.114, remove after v1.2 */
 #define DEFAULT_ENABLE_INDEX_PATH_KEY_SUMMARIZATION true
 bool EnableIndexPathKeySummarization = DEFAULT_ENABLE_INDEX_PATH_KEY_SUMMARIZATION;
 
-/* Added in v0.114, enabled in v0.117, remove after v0.119 */
+/* Added in v0.114, enabled in v0.117, remove after v1.1 */
 #define DEFAULT_ENABLE_DISTINCT_CUSTOM_SCAN true
 bool EnableDistinctCustomScan = DEFAULT_ENABLE_DISTINCT_CUSTOM_SCAN;
 
-/* Added in v0.114, enabled in v0.117, remove after v0.119 */
+/* Added in v0.114, enabled in v0.117, remove after v1.1 */
 #define DEFAULT_ENABLE_GROUP_BY_DISTINCT_SCAN true
 bool EnableGroupByDistinctScan = DEFAULT_ENABLE_GROUP_BY_DISTINCT_SCAN;
 
-/* Added in v0.114, enabled in v0.117, remove after v0.119 */
+/* Added in v0.114, enabled in v0.117, remove after v1.1 */
 #define DEFAULT_ENABLE_DISTINCT_SCAN_FOR_GROUP_FIRST true
 bool EnableDistinctScanForGroupFirst = DEFAULT_ENABLE_DISTINCT_SCAN_FOR_GROUP_FIRST;
 
-/* Added in v0.117, Pending stabilization, enable in v0.121 */
+/* Added in v1.0, enabled in v1.0, remove after v1.3 */
+#define DEFAULT_ENABLE_DISTINCT_SCAN_FOR_ORDERED_GROUP_FIRST true
+bool EnableDistinctScanForOrderedGroupFirst =
+	DEFAULT_ENABLE_DISTINCT_SCAN_FOR_ORDERED_GROUP_FIRST;
+
+/* Added in v0.117, Pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_SUPPORT_FUNCTION_ID_PUSHDOWN false
 bool EnableSupportFunctionIdPushdown = DEFAULT_ENABLE_SUPPORT_FUNCTION_ID_PUSHDOWN;
 
@@ -372,11 +394,11 @@ bool EnableSupportFunctionIdPushdown = DEFAULT_ENABLE_SUPPORT_FUNCTION_ID_PUSHDO
 #define DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN true
 bool EnablePrimaryKeyCursorScan = DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN;
 
-/* Added in v0.110, Pending stabilization, enable in v0.119 */
+/* Added in v0.110, Pending stabilization, enable in v1.1 */
 #define DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP false
 bool EnableContinuationFastBitmapLookup = DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP;
 
-/* Added in v0.108, Pending stabilization, enable in v0.121 */
+/* Added in v0.108, Pending stabilization, enable in v1.3 */
 #define DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS false
 bool UseFileBasedPersistedCursors = DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS;
 
@@ -393,11 +415,11 @@ bool FailOnGroupIdDuplicate =
 #define DEFAULT_ENABLE_PULL_NESTED_ARRAY_EQ_FIX true
 bool EnablePullNestedArrayEqFix = DEFAULT_ENABLE_PULL_NESTED_ARRAY_EQ_FIX;
 
-/* Added in v0.114, enabled in v0.114, remove after v0.120 */
+/* Added in v0.114, enabled in v0.114, remove after v1.2 */
 #define DEFAULT_ENABLE_RUM_CURSOR_DYNAMIC_INDEX_SCANS true
 bool EnableRumCursorDynamicIndexScans = DEFAULT_ENABLE_RUM_CURSOR_DYNAMIC_INDEX_SCANS;
 
-/* Added in v0.114, enabled in v0.114, remove after v0.120 */
+/* Added in v0.114, enabled in v0.114, remove after v1.2 */
 #define DEFAULT_ENABLE_RUM_DYNAMIC_INDEX_SCANS_SKIP_TO_TID true
 bool EnableRumDynamicIndexScansSkipToTid =
 	DEFAULT_ENABLE_RUM_DYNAMIC_INDEX_SCANS_SKIP_TO_TID;
@@ -414,30 +436,30 @@ bool EnableTailableCursorMaxAwaitTime = DEFAULT_ENABLE_TAILABLE_CURSOR_MAX_AWAIT
 #define DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG true
 bool FailOnNonEmptyGroupCountArg = DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG;
 
-/* Added in v0.115, Pending stabilization, enable in v0.118. */
+/* Added in v0.115, Pending stabilization, enable in v1.0. */
 #define DEFAULT_ENABLE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP false
 bool EnableProjectPushUpBeforeUnwindWithGroup =
 	DEFAULT_ENABLE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP;
 
-/* Added in v0.113, enabled in v0.115, remove after v0.118 */
+/* Added in v0.113, enabled in v0.115, remove after v1.0 */
 #define DEFAULT_ENABLE_SORT_PUSH_TO_ACCUMULATOR_WITH_PREFIX true
 bool EnableSortPushToAccumulatorWithPrefix =
 	DEFAULT_ENABLE_SORT_PUSH_TO_ACCUMULATOR_WITH_PREFIX;
 
-/* Added in v0.116, Pending stabilization, enable in v0.121 */
+/* Added in v0.116, Pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_MERGE_SORT_FOR_IN_PREFIX false
 bool EnableMergeSortForInPrefix = DEFAULT_ENABLE_MERGE_SORT_FOR_IN_PREFIX;
 
-/* Added in v0.116, enabled in v0.116, remove after v0.118 */
+/* Added in v0.116, enabled in v0.116, remove after v1.0 */
 #define DEFAULT_ENABLE_MERGE_SORT_FOR_BITMAP_OR true
 bool EnableMergeSortForBitmapOr = DEFAULT_ENABLE_MERGE_SORT_FOR_BITMAP_OR;
 
-/* Added on v0.118, pending stabilization, enable on v0.123 */
+/* Added on v1.0, pending stabilization, enable on v1.5 */
 #define DEFAULT_ENABLE_CROSS_INDEX_BITMAP_OR_SORT_MERGE false
 bool EnableCrossIndexBitmapOrSortMerge =
 	DEFAULT_ENABLE_CROSS_INDEX_BITMAP_OR_SORT_MERGE;
 
-/* Added in v0.116, enabled in v0.116, remove after v0.118 */
+/* Added in v0.116, enabled in v0.116, remove after v1.0 */
 #define DEFAULT_ENABLE_COMPOSITE_SECONDARY_PATH_ORDER_PUSHDOWN true
 bool EnableCompositeSecondaryPathOrderPushdown =
 	DEFAULT_ENABLE_COMPOSITE_SECONDARY_PATH_ORDER_PUSHDOWN;
@@ -455,7 +477,7 @@ bool EnableObjectIdFuncExprConversion = DEFAULT_ENABLE_OBJECTID_FUNC_EXPR_CONVER
 #define DEFAULT_ENABLE_SAMPLE_SCAN_FIX_ON_SHARDED true
 bool EnableSampleScanFixOnSharded = DEFAULT_ENABLE_SAMPLE_SCAN_FIX_ON_SHARDED;
 
-/* Added in v0.115, Pending stabilization, enable in v0.119 */
+/* Added in v0.115, Pending stabilization, enable in v1.1 */
 #define DEFAULT_ENABLE_ADD_SHARD_KEY_ONLY_ON_PRIMARY_KEY_FILTERS false
 bool EnableAddShardKeyOnlyOnPrimaryKeyFilters =
 	DEFAULT_ENABLE_ADD_SHARD_KEY_ONLY_ON_PRIMARY_KEY_FILTERS;
@@ -468,12 +490,12 @@ bool EnableSubqueryPushdownForMatch = DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_MATCH
 #define DEFAULT_ENABLE_DOLLAR_SAMPLE_RESERVOIR_SCAN true
 bool EnableDollarSampleReservoirScan = DEFAULT_ENABLE_DOLLAR_SAMPLE_RESERVOIR_SCAN;
 
-/* Added in v0.117, Pending stabilization, enable in v0.119 */
+/* Added in v0.117, Pending stabilization, enable in v1.1 */
 #define DEFAULT_ENABLE_RUM_INDEX_ONLY_SCAN_PROJECTION_WRAPPER false
 bool EnableRumIndexOnlyScanProjectionWrapper =
 	DEFAULT_ENABLE_RUM_INDEX_ONLY_SCAN_PROJECTION_WRAPPER;
 
-/* Added in v0.115, Pending stabilization, enable in v0.118 */
+/* Added in v0.115, Pending stabilization, enable in v1.0 */
 #define DEFAULT_ENABLE_DOLLAR_SAMPLE_HEAP_SKIP_RESERVOIR_SCAN false
 bool EnableDollarSampleHeapSkipReservoirScan =
 	DEFAULT_ENABLE_DOLLAR_SAMPLE_HEAP_SKIP_RESERVOIR_SCAN;
@@ -482,7 +504,7 @@ bool EnableDollarSampleHeapSkipReservoirScan =
 #define DEFAULT_ENABLE_SKIP_COMMENT_FIELD_ON_UPSERT true
 bool EnableSkipCommentFieldOnUpsert = DEFAULT_ENABLE_SKIP_COMMENT_FIELD_ON_UPSERT;
 
-/* Added in v0.116, enabled in v0.116, remove after v0.119 */
+/* Added in v0.116, enabled in v0.116, remove after v1.1 */
 #define DEFAULT_ENABLE_EXISTENTIAL_NULL_ARRAY_MATCH true
 bool EnableExistentialNullArrayMatch = DEFAULT_ENABLE_EXISTENTIAL_NULL_ARRAY_MATCH;
 
@@ -490,20 +512,25 @@ bool EnableExistentialNullArrayMatch = DEFAULT_ENABLE_EXISTENTIAL_NULL_ARRAY_MAT
  * SECTION: Lookup feature flags
  */
 
-/* Added in v0.118, Pending stabilization, enable in v0.121 */
+/* Added in v1.0, Pending stabilization, enable in v1.3 */
 #define DEFAULT_FORCE_NESTED_LOOKUP_PIPELINE_AFTER_JOIN false
 bool ForceNestedLookupPipelineAfterJoin =
 	DEFAULT_FORCE_NESTED_LOOKUP_PIPELINE_AFTER_JOIN;
+
+/* Added on v1.0, enabled on v1.0, remove after v1.3 */
+#define DEFAULT_ENABLE_LOOKUP_JOIN_INDEX_WITH_LINEAR_PIPELINE true
+bool EnableLookupJoinIndexWithLinearPipeline =
+	DEFAULT_ENABLE_LOOKUP_JOIN_INDEX_WITH_LINEAR_PIPELINE;
 
 /*
  * SECTION: Collation feature flags
  */
 
-/* Added in v0.108, Pending stabilization, enable in v0.124 */
+/* Added in v0.108, Pending stabilization, enable in v1.6 */
 #define DEFAULT_SKIP_FAIL_ON_COLLATION false
 bool SkipFailOnCollation = DEFAULT_SKIP_FAIL_ON_COLLATION;
 
-/* Added in v0.110, Pending stabilization, enable in v0.118 */
+/* Added in v0.110, Pending stabilization, enable in v1.0 */
 #define DEFAULT_ENABLE_COLLATION_WITH_NON_UNIQUE_ORDERED_INDEXES false
 bool EnableCollationWithNonUniqueOrderedIndexes =
 	DEFAULT_ENABLE_COLLATION_WITH_NON_UNIQUE_ORDERED_INDEXES;
@@ -520,28 +547,28 @@ bool EnableLocalRetryTable = DEFAULT_ENABLE_LOCAL_RETRY_TABLE;
 #define DEFAULT_ENABLE_SCHEMA_ENFORCEMENT_FOR_CSFLE true
 bool EnableSchemaEnforcementForCSFLE = DEFAULT_ENABLE_SCHEMA_ENFORCEMENT_FOR_CSFLE;
 
-/* Added in v0.109, enabled in v0.114, remove after v0.118 */
+/* Added in v0.109, enabled in v0.114, remove after v1.0 */
 #define DEFAULT_ENABLE_PREPARE_UNIQUE true
 bool EnablePrepareUnique = DEFAULT_ENABLE_PREPARE_UNIQUE;
 
-/* Added in v0.109, enabled in v0.114, remove after v0.118 */
+/* Added in v0.109, enabled in v0.114, remove after v1.0 */
 #define DEFAULT_ENABLE_COLLMOD_UNIQUE true
 bool EnableCollModUnique = DEFAULT_ENABLE_COLLMOD_UNIQUE;
 
-/* Added in v0.113, enabled in v0.113, remove after v0.120 */
+/* Added in v0.113, enabled in v0.113, remove after v1.2 */
 #define DEFAULT_ENABLE_UNIQUE_REINDEX true
 bool EnableUniqueReindex = DEFAULT_ENABLE_UNIQUE_REINDEX;
 
-/* Added in v0.114, enabled in v0.114, remove after v0.120 */
+/* Added in v0.114, enabled in v0.114, remove after v1.2 */
 #define DEFAULT_ENABLE_NON_BLOCKING_UNIQUE_INDEX_BUILD true
 bool EnableNonBlockingUniqueIndexBuild =
 	DEFAULT_ENABLE_NON_BLOCKING_UNIQUE_INDEX_BUILD;
 
-/* Added in v0.114, Pending stabilization, enable in v0.120 */
+/* Added in v0.114, Pending stabilization, enable in v1.2 */
 #define DEFAULT_ENABLE_COMPACT_VACUUM_FULL false
 bool EnableCompactVacuumFull = DEFAULT_ENABLE_COMPACT_VACUUM_FULL;
 
-/* Added on v0.112, enabled on v0.115, remove after v0.118 */
+/* Added on v0.112, enabled on v0.115, remove after v1.0 */
 #define DEFAULT_ENABLE_NEW_NAMESPACE_VALIDATION true
 bool EnableNewNamespaceValidation =
 	DEFAULT_ENABLE_NEW_NAMESPACE_VALIDATION;
@@ -555,19 +582,19 @@ bool EnableInsertDuplicateInlineHandling =
  * SECTION: Write path feature flags
  */
 
-/* Added in v0.116, Pending stabilization, enable in v0.119 */
+/* Added in v0.116, Pending stabilization, enable in v1.1 */
 #define DEFAULT_ENABLE_UPDATE_MANY_WORKER_PUSHDOWN false
 bool EnableUpdateManyWorkerPushdown = DEFAULT_ENABLE_UPDATE_MANY_WORKER_PUSHDOWN;
 
 /* Improves updateMany performance but can lead to deadlocks when concurrent writes update the same document */
 /* To enable this default we need to handle deadlock scenarios gracefully */
 
-/* Added in v0.114, Pending stabilization, enable in v0.120 */
+/* Added in v0.114, Pending stabilization, enable in v1.2 */
 #define DEFAULT_ENABLE_COMMUTATIVE_UPDATE_MANY false
 bool EnableCommutativeUpdateMany =
 	DEFAULT_ENABLE_COMMUTATIVE_UPDATE_MANY;
 
-/* Added in v0.115, Pending stabilization, enable in v0.121 */
+/* Added in v0.115, Pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_COMMUTATIVE_DELETE_MANY false
 bool EnableCommutativeDeleteMany =
 	DEFAULT_ENABLE_COMMUTATIVE_DELETE_MANY;
@@ -581,7 +608,7 @@ bool EnableArrayFilterLogicalOperators =
  * SECTION: Changestream feature flags
  */
 
-/* Added in v0.112, Pending stabilization, enable in v0.120 */
+/* Added in v0.112, Pending stabilization, enable in v1.2 */
 #define DEFAULT_ENABLE_PREIMAGES false
 bool EnablePreImages = DEFAULT_ENABLE_PREIMAGES;
 
@@ -589,7 +616,7 @@ bool EnablePreImages = DEFAULT_ENABLE_PREIMAGES;
  * SECTION: Schedule jobs via background worker.
  */
 
-/* Added in v0.109, Pending stabilization, enable in v0.120 */
+/* Added in v0.109, Pending stabilization, enable in v1.2 */
 #define DEFAULT_INDEX_BUILDS_SCHEDULED_ON_BGWORKER false
 bool IndexBuildsScheduledOnBgWorker = DEFAULT_INDEX_BUILDS_SCHEDULED_ON_BGWORKER;
 
@@ -597,7 +624,7 @@ bool IndexBuildsScheduledOnBgWorker = DEFAULT_INDEX_BUILDS_SCHEDULED_ON_BGWORKER
  * SECTION: TTL feature flags
  */
 
-/* Added in v0.113, Pending stabilization, enable in v0.119 */
+/* Added in v0.113, Pending stabilization, enable in v1.1 */
 #define DEFAULT_ENABLE_DEAD_INDEX_ENTRY_MARKING_BY_TTL_TASK false
 bool EnableDeadIndexEntryMarkingByTTLTask =
 	DEFAULT_ENABLE_DEAD_INDEX_ENTRY_MARKING_BY_TTL_TASK;
@@ -680,6 +707,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
+		psprintf("%s.enable_skip_use_query_text_data", newGucPrefix),
+		gettext_noop(
+			"Whether to skip using per-statement text query state that a prior aborted statement may have left published on this backend."),
+		NULL,
+		&EnableSkipUseQueryTextData,
+		DEFAULT_ENABLE_SKIP_USE_QUERY_TEXT_DATA,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
 		psprintf("%s.enable_null_collection_validation", newGucPrefix),
 		gettext_noop(
 			"Whether to reject namespace strings containing embedded null characters."),
@@ -718,6 +756,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether nested lookup stages are forced to run after the parent equality join. Unsupported query shapes may fail when this setting is enabled."),
 		NULL, &ForceNestedLookupPipelineAfterJoin,
 		DEFAULT_FORCE_NESTED_LOOKUP_PIPELINE_AFTER_JOIN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_lookup_join_index_with_linear_pipeline", newGucPrefix),
+		gettext_noop(
+			"Whether lookup joins can use the foreign-field index through a linear inner pipeline."),
+		NULL, &EnableLookupJoinIndexWithLinearPipeline,
+		DEFAULT_ENABLE_LOOKUP_JOIN_INDEX_WITH_LINEAR_PIPELINE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -870,6 +916,15 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"$group pipelines whose accumulators are exclusively $first."),
 		NULL, &EnableDistinctScanForGroupFirst,
 		DEFAULT_ENABLE_DISTINCT_SCAN_FOR_GROUP_FIRST,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_distinct_scan_for_ordered_group_first", newGucPrefix),
+		gettext_noop(
+			"Whether to enable the distinct custom scan wrapper for $group "
+			"pipelines with ordered $first accumulators."),
+		NULL, &EnableDistinctScanForOrderedGroupFirst,
+		DEFAULT_ENABLE_DISTINCT_SCAN_FOR_ORDERED_GROUP_FIRST,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -1196,6 +1251,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable tracking of index metadata in the index global metadata."),
 		NULL, &EnableIndexMetadataGlobalTracking,
 		DEFAULT_ENABLE_INDEX_METADATA_GLOBAL_TRACKING,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_request_index_name_cache", newGucPrefix),
+		gettext_noop(
+			"Whether to cache logical secondary-index names while processing a request."),
+		NULL, &EnableRequestIndexNameCache,
+		DEFAULT_ENABLE_REQUEST_INDEX_NAME_CACHE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

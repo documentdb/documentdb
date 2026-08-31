@@ -19,6 +19,7 @@ use std::{
 use bson::rawdoc;
 use deadpool_postgres::PoolError;
 use documentdb_gateway_core::{
+    configuration::DocumentDBSetupConfiguration,
     context::{RequestContext, TransactionError},
     error::{DocumentDBError, ErrorCode, ErrorKind},
     postgres::{
@@ -31,12 +32,16 @@ use documentdb_gateway_core::{
     requests::{request_tracker::RequestTracker, RequestExecutionMode, RequestType, WireRequest},
 };
 use documentdb_tests::test_setup::{
-    config::{
-        failing_setup_configuration, setup_configuration, setup_configuration_with_command_timeout,
+    config::{failing_setup_configuration, setup_configuration},
+    pools::{
+        build_connection_pool, build_connection_pool_with_command_timeout,
+        build_pool_manager_with_command_timeout, TestConfiguration,
     },
-    pools::{build_connection_pool, build_pool_manager},
 };
-use tokio::time::{sleep, Instant};
+use tokio::{
+    net::TcpListener,
+    time::{sleep, Instant},
+};
 use tokio_postgres::IsolationLevel;
 
 fn ping_request() -> WireRequest<'static> {
@@ -48,6 +53,46 @@ fn ping_request() -> WireRequest<'static> {
         None,
     )
     .expect("ping request should parse")
+}
+
+async fn run_dropped_connection_request(command_timeout_ms: Option<u64>) -> DocumentDBError {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let accept_task = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        drop(socket);
+    });
+
+    let setup_config = DocumentDBSetupConfiguration {
+        postgres_host_name: Some("127.0.0.1".to_owned()),
+        postgres_port: Some(port),
+        ..setup_configuration()
+    };
+    let pool =
+        build_connection_pool(&setup_config, &setup_config.postgres_system_user.clone(), 1).await;
+    let request_tracker = RequestTracker::new();
+    let ping = ping_request();
+    let request_context = RequestContext::new("", &ping, &request_tracker);
+    let dynamic_configuration = TestConfiguration::default();
+    dynamic_configuration.set_send_shutdown_responses(true);
+
+    let error = run_request_with_retries(
+        ConnectionSource::Pool(&pool),
+        QueryOptions::builder()
+            .retry_request(true)
+            .supports_backend_timeout(true)
+            .build(),
+        RequestOptions::new(false, command_timeout_ms),
+        Duration::from_secs(5),
+        &dynamic_configuration,
+        &request_context,
+        |_| async { Ok::<(), StatementError>(()) },
+    )
+    .await
+    .expect_err("connection to a listener that closes during startup should fail");
+
+    accept_task.await.unwrap();
+    error
 }
 
 async fn wait_until_transaction_flag_clears(connection: &Connection) {
@@ -136,9 +181,14 @@ async fn pool_backend_error_converts_to_pool_kind_documentdb_error() {
 
 #[tokio::test]
 async fn acquire_connection_records_timeout_metric_on_pool_timeout() {
-    let setup_config = setup_configuration_with_command_timeout(0);
-    let pool =
-        build_connection_pool(&setup_config, &setup_config.postgres_system_user.clone(), 1).await;
+    let setup_config = setup_configuration();
+    let pool = build_connection_pool_with_command_timeout(
+        &setup_config,
+        &setup_config.postgres_system_user.clone(),
+        1,
+        0,
+    )
+    .await;
 
     let _held = pool.acquire_connection().await.unwrap();
     let error = pool
@@ -154,20 +204,27 @@ async fn acquire_connection_records_timeout_metric_on_pool_timeout() {
 
 #[tokio::test]
 async fn run_request_with_retries_counts_deadpool_timeouts_once() {
-    let setup_config = setup_configuration_with_command_timeout(0);
-    let pool =
-        build_connection_pool(&setup_config, &setup_config.postgres_system_user.clone(), 1).await;
+    let setup_config = setup_configuration();
+    let pool = build_connection_pool_with_command_timeout(
+        &setup_config,
+        &setup_config.postgres_system_user.clone(),
+        1,
+        0,
+    )
+    .await;
     let _held = pool.acquire_connection().await.unwrap();
     let _ = pool.report_status();
     let request_tracker = RequestTracker::new();
     let ping = ping_request();
     let ctx = RequestContext::new("", &ping, &request_tracker);
+    let dynamic_configuration = TestConfiguration::default();
 
     let error = run_request_with_retries(
         ConnectionSource::Pool(&pool),
         QueryOptions::builder().retry_request(false).build(),
         RequestOptions::new(false, Some(30000)),
         Duration::from_secs(30),
+        &dynamic_configuration,
         &ctx,
         |_| async { Ok::<(), StatementError>(()) },
     )
@@ -184,10 +241,8 @@ async fn run_request_with_retries_counts_deadpool_timeouts_once() {
 
 #[tokio::test]
 async fn pool_manager_system_requests_connection_counts_deadpool_timeouts_once() {
-    let mut setup_config = setup_configuration();
-    setup_config.postgres_command_timeout_secs = Some(0);
-
-    let pool_manager = build_pool_manager(&setup_config);
+    let setup_config = setup_configuration();
+    let pool_manager = build_pool_manager_with_command_timeout(&setup_config, 0);
 
     // Saturate the system requests pool (max = SYSTEM_REQUESTS_MAX_CONNECTIONS = 2).
     let _first = pool_manager.system_requests_connection().await.unwrap();
@@ -212,9 +267,14 @@ async fn pool_manager_system_requests_connection_counts_deadpool_timeouts_once()
 
 #[tokio::test]
 async fn run_request_with_retries_returns_exceeded_time_limit_when_command_timeout_exceeded() {
-    let setup_config = setup_configuration_with_command_timeout(1);
-    let pool =
-        build_connection_pool(&setup_config, &setup_config.postgres_system_user.clone(), 1).await;
+    let setup_config = setup_configuration();
+    let pool = build_connection_pool_with_command_timeout(
+        &setup_config,
+        &setup_config.postgres_system_user.clone(),
+        1,
+        1,
+    )
+    .await;
     // Hold the only connection so the next acquire will time out.
     let _held = pool.acquire_connection().await.unwrap();
     let _ = pool.report_status();
@@ -223,12 +283,14 @@ async fn run_request_with_retries_returns_exceeded_time_limit_when_command_timeo
         let tracker = RequestTracker::new();
         let ping = ping_request();
         let ctx = RequestContext::new("", &ping, &tracker);
+        let dynamic_configuration = TestConfiguration::default();
         run_request_with_retries(
             ConnectionSource::Pool(&pool),
             QueryOptions::builder().build(),
             // command_timeout_ms of 1 means elapsed time will exceed the limit almost instantly.
             RequestOptions::new(false, Some(1)),
             Duration::from_secs(1),
+            &dynamic_configuration,
             &ctx,
             |_| async { Ok::<(), StatementError>(()) },
         )
@@ -241,9 +303,14 @@ async fn run_request_with_retries_returns_exceeded_time_limit_when_command_timeo
 
 #[tokio::test]
 async fn run_request_with_retries_returns_original_error_when_no_command_timeout() {
-    let setup_config = setup_configuration_with_command_timeout(1);
-    let pool =
-        build_connection_pool(&setup_config, &setup_config.postgres_system_user.clone(), 1).await;
+    let setup_config = setup_configuration();
+    let pool = build_connection_pool_with_command_timeout(
+        &setup_config,
+        &setup_config.postgres_system_user.clone(),
+        1,
+        1,
+    )
+    .await;
     // Hold the only connection so the next acquire will time out.
     let _held = pool.acquire_connection().await.unwrap();
     let _ = pool.report_status();
@@ -254,11 +321,13 @@ async fn run_request_with_retries_returns_original_error_when_no_command_timeout
         let tracker = RequestTracker::new();
         let ping = ping_request();
         let ctx = RequestContext::new("", &ping, &tracker);
+        let dynamic_configuration = TestConfiguration::default();
         run_request_with_retries(
             ConnectionSource::Pool(&pool),
             QueryOptions::builder().build(),
             RequestOptions::new(false, None),
             Duration::from_secs(1),
+            &dynamic_configuration,
             &ctx,
             |_| async { Ok::<(), StatementError>(()) },
         )
@@ -277,6 +346,7 @@ async fn gateway_timeout_commit_clears_transaction_flag() {
     let request_tracker = RequestTracker::new();
     let ping = ping_request();
     let ctx = RequestContext::new("", &ping, &request_tracker);
+    let dynamic_configuration = TestConfiguration::default();
     let observed_connection = Arc::new(Mutex::new(None));
     let observed_for_request = Arc::clone(&observed_connection);
 
@@ -289,6 +359,7 @@ async fn gateway_timeout_commit_clears_transaction_flag() {
             .build(),
         RequestOptions::new(false, Some(30000)),
         Duration::from_secs(30),
+        &dynamic_configuration,
         &ctx,
         move |connection| {
             let observed_for_request = Arc::clone(&observed_for_request);
@@ -458,6 +529,57 @@ async fn batch_execute_enforces_command_deadline() {
         .expect("statement within the deadline should complete");
 }
 
+/// A backend SQL error remains visible while shutdown responses are enabled.
+/// Only connectivity failures are eligible for graceful-shutdown remapping.
+#[tokio::test]
+async fn non_connectivity_error_is_preserved_when_shutdown_responses_are_enabled() {
+    let setup_config = setup_configuration();
+    let pool =
+        build_connection_pool(&setup_config, &setup_config.postgres_system_user.clone(), 1).await;
+    let request_tracker = RequestTracker::new();
+    let ping = ping_request();
+    let request_context = RequestContext::new("", &ping, &request_tracker);
+    let dynamic_configuration = TestConfiguration::default();
+    dynamic_configuration.set_send_shutdown_responses(true);
+
+    let error = run_request_with_retries(
+        ConnectionSource::Pool(&pool),
+        QueryOptions::builder().retry_request(false).build(),
+        RequestOptions::new(false, None),
+        Duration::from_secs(30),
+        &dynamic_configuration,
+        &request_context,
+        |connection| async move { connection.batch_execute("SELECT 1 / 0").await },
+    )
+    .await
+    .expect_err("division by zero should fail the request");
+
+    assert_ne!(error.error_code(), ErrorCode::ShutdownInProgress);
+    assert_eq!(
+        error.as_postgres_error().and_then(|error| error.code()),
+        Some(&tokio_postgres::error::SqlState::DIVISION_BY_ZERO)
+    );
+}
+
+/// A request deadline takes precedence over shutdown mapping.
+/// This keeps expired requests from being reported as graceful shutdowns.
+#[tokio::test]
+async fn command_timeout_takes_precedence_when_shutdown_responses_are_enabled() {
+    let error = run_dropped_connection_request(Some(0)).await;
+
+    assert_eq!(error.error_code(), ErrorCode::ExceededTimeLimit);
+}
+
+/// A startup connectivity failure maps to the graceful-shutdown response after
+/// retry attempts stop.
+#[tokio::test]
+async fn shutdown_connectivity_error_is_returned_after_retries_stop() {
+    let error = run_dropped_connection_request(None).await;
+
+    assert_eq!(error.error_code(), ErrorCode::ShutdownInProgress);
+    assert_eq!(error.error_message_user(), "Graceful shutdown requested");
+}
+
 /// A gateway ROLLBACK that fails after a request error must leave the connection
 /// marked in-transaction, so the backstop in `Connection::drop` still fires.
 ///
@@ -471,6 +593,7 @@ async fn failed_rollback_after_request_error_keeps_transaction_flag_set() {
     let request_tracker = RequestTracker::new();
     let ping = ping_request();
     let ctx = RequestContext::new("", &ping, &request_tracker);
+    let dynamic_configuration = TestConfiguration::default();
     let observed_connection = Arc::new(Mutex::new(None));
     let observed_for_request = Arc::clone(&observed_connection);
 
@@ -483,6 +606,7 @@ async fn failed_rollback_after_request_error_keeps_transaction_flag_set() {
             .build(),
         RequestOptions::new(false, Some(30000)),
         Duration::from_secs(30),
+        &dynamic_configuration,
         &ctx,
         move |connection| {
             let observed_for_request = Arc::clone(&observed_for_request);
@@ -619,6 +743,7 @@ async fn failed_set_statement_timeout_rolls_back_gateway_transaction_and_clears_
     let request_tracker = RequestTracker::new();
     let ping = ping_request();
     let ctx = RequestContext::new("", &ping, &request_tracker);
+    let dynamic_configuration = TestConfiguration::default();
 
     // 3_000_000_000 ms exceeds PostgreSQL's 32-bit statement_timeout range, so
     // `SET LOCAL statement_timeout` is rejected while the gateway transaction is
@@ -632,6 +757,7 @@ async fn failed_set_statement_timeout_rolls_back_gateway_transaction_and_clears_
             .build(),
         RequestOptions::new(false, Some(3_000_000_000)),
         Duration::from_secs(30),
+        &dynamic_configuration,
         &ctx,
         |_connection| async { Ok::<(), StatementError>(()) },
     )
@@ -679,6 +805,7 @@ async fn gateway_commit_timeout_clears_transaction_flag() {
     let request_tracker = RequestTracker::new();
     let ping = ping_request();
     let ctx = RequestContext::new("", &ping, &request_tracker);
+    let dynamic_configuration = TestConfiguration::default();
 
     let error = run_request_with_retries(
         ConnectionSource::Cursor(Arc::clone(&connection)),
@@ -689,6 +816,7 @@ async fn gateway_commit_timeout_clears_transaction_flag() {
             .build(),
         RequestOptions::new(false, Some(1500)),
         Duration::from_secs(30),
+        &dynamic_configuration,
         &ctx,
         |connection| async move {
             connection

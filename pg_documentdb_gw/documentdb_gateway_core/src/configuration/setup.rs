@@ -84,18 +84,17 @@ pub struct DocumentDBSetupConfiguration {
 
     #[serde(default)]
     pub allow_transaction_snapshot: Option<bool>,
-    pub transaction_timeout_secs: Option<u64>,
     pub certificate_options: CertificateOptions,
 
     #[serde(default)]
     pub dynamic_configuration_file: String,
     pub dynamic_configuration_refresh_interval_secs: Option<u32>,
     pub host_configuration_watch_interval_ms: Option<u64>,
-    pub postgres_command_timeout_secs: Option<u64>,
     pub postgres_idle_connection_timeout_minutes: Option<u64>,
     pub postgres_startup_wait_time_seconds: Option<u64>,
 
     // Runtime configuration
+    pub enable_v2_runtime: Option<bool>,
     pub async_runtime_worker_threads: Option<usize>,
     pub stream_read_buffer_size: Option<usize>,
     pub stream_write_buffer_size: Option<usize>,
@@ -156,7 +155,6 @@ impl std::fmt::Debug for DocumentDBSetupConfiguration {
                 "allow_transaction_snapshot",
                 &self.allow_transaction_snapshot,
             )
-            .field("transaction_timeout_secs", &self.transaction_timeout_secs)
             .field("certificate_options", &self.certificate_options)
             .field(
                 "dynamic_configuration_file",
@@ -171,10 +169,6 @@ impl std::fmt::Debug for DocumentDBSetupConfiguration {
                 &self.host_configuration_watch_interval_ms,
             )
             .field(
-                "postgres_command_timeout_secs",
-                &self.postgres_command_timeout_secs,
-            )
-            .field(
                 "postgres_idle_connection_timeout_minutes",
                 &self.postgres_idle_connection_timeout_minutes,
             )
@@ -182,6 +176,7 @@ impl std::fmt::Debug for DocumentDBSetupConfiguration {
                 "postgres_startup_wait_time_seconds",
                 &self.postgres_startup_wait_time_seconds,
             )
+            .field("enable_v2_runtime", &self.enable_v2_runtime)
             .field(
                 "async_runtime_worker_threads",
                 &self.async_runtime_worker_threads,
@@ -208,6 +203,12 @@ impl std::fmt::Debug for DocumentDBSetupConfiguration {
 }
 
 impl DocumentDBSetupConfiguration {
+    /// Returns whether the v2 gateway runtime is enabled.
+    #[must_use]
+    pub fn enable_v2_runtime(&self) -> bool {
+        self.enable_v2_runtime.unwrap_or(false)
+    }
+
     /// Load configuration strictly from a JSON file.
     ///
     /// Kept for back-compat with existing callers (tests, dev tooling) and
@@ -898,10 +899,6 @@ impl SetupConfiguration for DocumentDBSetupConfiguration {
         self.host_configuration_watch_interval_ms.unwrap_or(1000)
     }
 
-    fn transaction_timeout_secs(&self) -> u64 {
-        self.transaction_timeout_secs.unwrap_or(30)
-    }
-
     fn use_local_host(&self) -> bool {
         self.use_local_host.unwrap_or(false)
     }
@@ -912,10 +909,6 @@ impl SetupConfiguration for DocumentDBSetupConfiguration {
 
     fn blocked_role_prefixes(&self) -> &[String] {
         &self.blocked_role_prefixes
-    }
-
-    fn postgres_command_timeout_secs(&self) -> u64 {
-        self.postgres_command_timeout_secs.unwrap_or(120)
     }
 
     fn certificate_options(&self) -> &CertificateOptions {

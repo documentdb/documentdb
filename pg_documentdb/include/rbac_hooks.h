@@ -15,6 +15,8 @@
 #define EXTENSION_RBAC_HOOKS_H
 
 #include <nodes/pg_list.h>
+#include <nodes/parsenodes.h>
+#include <nodes/plannodes.h>
 #include <utils/acl.h>
 
 #include "utils/string_view.h"
@@ -84,5 +86,28 @@ void RemoveCollectionPrivileges(const char *roleName);
  */
 void GrantCollectionPrivilegesToBaselineRoles(uint64 collectionId,
 											  bool includeRetryTable);
+
+/*
+ * Records, on a plan built without the planner, the identity a relation's
+ * permission record should be checked against, and marks the plan role
+ * dependent.
+ *
+ * A plan returned without running the planner carries a permission record that
+ * nothing has had the chance to evaluate. Every other statement has that record
+ * settled while planning, so this hands the ones that skip the planner to
+ * whichever layer settles it.
+ *
+ * The record is read from the plan's own permission list, so a caller does not
+ * need a Query. No-op when no implementation is registered, which leaves the
+ * record checked against the invoking role.
+ */
+void ApplyCollectionAccessIdentityToPlan(RangeTblEntry *rte, PlannedStmt *stmt);
+
+/*
+ * Invoked after the collections catalog is invalidated so a hosting layer can
+ * refresh any state it derives from collection metadata. No-op when no
+ * implementation is registered.
+ */
+void NotifyCollectionMetadataInvalidated(void);
 
 #endif

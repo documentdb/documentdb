@@ -17,25 +17,20 @@ SELECT documentdb_api.create_role('{"createRole":"customReadRole", "roles":["rea
 -- Verify the role was created
 SELECT rolname FROM pg_roles WHERE rolname = 'customReadRole';
 
--- Test creating a role that inherits from admin role
+-- Test creating a role that inherits from readWriteAnyDatabase and clusterAdmin
+-- (the pair is collapsed into a single grant of the admin role)
 SELECT documentdb_api.create_role('{"createRole":"customAdminRole", "roles":["readWriteAnyDatabase", "clusterAdmin"], "privileges":[], "$db":"admin"}');
 
--- Verify the role was created
-SELECT rolname FROM pg_roles WHERE rolname = 'customAdminRole';
+-- Verify customAdminRole inherits the admin role
+SELECT r2.rolname AS granted_role
+FROM pg_auth_members am
+JOIN pg_roles r1 ON am.member = r1.oid
+JOIN pg_roles r2 ON am.roleid = r2.oid
+WHERE r1.rolname = 'customAdminRole';
 
--- Test creating a role that inherits from multiple roles
+-- Test creating a role that inherits from multiple roles (readAnyDatabase plus
+-- the readWriteAnyDatabase + clusterAdmin admin pair)
 SELECT documentdb_api.create_role('{"createRole":"multiInheritRole", "roles":["readAnyDatabase", "readWriteAnyDatabase", "clusterAdmin"], "privileges":[], "$db":"admin"}');
-
--- Verify the role was created
-SELECT rolname FROM pg_roles WHERE rolname = 'multiInheritRole';
-
--- Verify the role has both inherited roles
-SELECT r2.rolname as inherited_role 
-FROM pg_auth_members am 
-JOIN pg_roles r1 ON am.member = r1.oid 
-JOIN pg_roles r2 ON am.roleid = r2.oid 
-WHERE r1.rolname = 'multiInheritRole' 
-ORDER BY r2.rolname;
 
 -- Test createRole with empty roles array and empty privileges array
 SELECT documentdb_api.create_role('{"createRole":"emptyRolesRole", "roles":[], "privileges":[], "$db":"admin"}');
@@ -54,11 +49,12 @@ SELECT documentdb_api.create_role('{"createRole":"", "roles":["readAnyDatabase"]
 -- Test createRole with invalid inherited role, should fail
 SELECT documentdb_api.create_role('{"createRole":"invalidInheritRole", "roles":["nonexistent_role"], "privileges":[], "$db":"admin"}');
 
--- An inherited role name that exceeds the identifier limit is reported as missing
+-- An inherited role name that exceeds the identifier limit is rejected rather
+-- than skipped, so the role is not created inheriting less than was asked for.
 SELECT documentdb_api.create_role('{"createRole":"longInheritRole", "roles":["1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk"], "privileges":[], "$db":"admin"}');
 SELECT rolname FROM pg_roles WHERE rolname = 'longInheritRole';
 
--- An empty inherited role name is also reported as missing
+-- An empty inherited role name is rejected the same way.
 SELECT documentdb_api.create_role('{"createRole":"emptyInheritRole", "roles":[""], "privileges":[], "$db":"admin"}');
 SELECT rolname FROM pg_roles WHERE rolname = 'emptyInheritRole';
 
@@ -93,13 +89,19 @@ SELECT documentdb_api.create_role('{"createRole":"nonAdminDatabaseRole", "roles"
 SELECT documentdb_api.create_role('{"createRole":"noDatabaseRole", "roles":["readAnyDatabase"], "privileges":[]}');
 
 -- Test createRole with just readWriteAnyDatabase role, should fail
+-- (must be specified together with clusterAdmin)
 SELECT documentdb_api.create_role('{"createRole":"readWriteOnlyRole", "roles":["readWriteAnyDatabase"], "privileges":[], "$db":"admin"}');
 
 -- Test createRole with just clusterAdmin role, should fail
+-- (must be specified together with readWriteAnyDatabase)
 SELECT documentdb_api.create_role('{"createRole":"clusterAdminOnlyRole", "roles":["clusterAdmin"], "$db":"admin", "privileges":[]}');
 
 -- Test createRole with root role, should fail
 SELECT documentdb_api.create_role('{"createRole":"rootRoleTest", "roles":["root"], "privileges":[], "$db":"admin"}');
+
+-- Test createRole inheriting from a native built-in role that is not an
+-- inheritable system role (e.g. dbAdmin), should fail as not supported
+SELECT documentdb_api.create_role('{"createRole":"dbAdminInheritRole", "roles":["dbAdmin"], "privileges":[], "$db":"admin"}');
 
 -- Test role functionality by creating users and assigning custom roles
 -- Create a user first
@@ -115,23 +117,15 @@ JOIN pg_roles r1 ON am.member = r1.oid
 JOIN pg_roles r2 ON am.roleid = r2.oid 
 WHERE r1.rolname = 'testRoleUser' AND r2.rolname = 'customReadRole';
 
--- Test that role inheritance works correctly
--- Check that multiInheritRole has both inherited roles
-SELECT r1.rolname as member_role, r2.rolname as granted_role 
-FROM pg_auth_members am 
-JOIN pg_roles r1 ON am.member = r1.oid 
-JOIN pg_roles r2 ON am.roleid = r2.oid 
-WHERE r1.rolname = 'multiInheritRole' 
-ORDER BY r2.rolname;
-
 -- Test edge cases for role names
 -- Test role name with maximum length (63 characters is PostgreSQL limit)
 SELECT documentdb_api.create_role('{"createRole":"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
 SELECT rolname FROM pg_roles WHERE rolname = 'abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk';
 
--- Test role name exceeding maximum length (64 characters), which is rejected
+-- Test role name exceeding maximum length (64 characters) is rejected
 SELECT documentdb_api.create_role('{"createRole":"1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
 SELECT rolname FROM pg_roles WHERE rolname = '1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij';
+SELECT role_name FROM documentdb_api_catalog.roles WHERE role_name LIKE '1abcdefghijklmnopqrstuvwxyz%';
 
 -- Test createRole when feature is disabled
 SET documentdb.enableRoleCrud TO OFF;
@@ -181,8 +175,8 @@ SELECT rolname FROM pg_roles WHERE rolname = 'privRoleUpdate';
 SELECT documentdb_api.create_role('{"createRole":"privRoleRemove", "roles":[], "privileges":[{"resource":{"db":"testdb","collection":"testcol"},"actions":["remove"]}], "$db":"admin"}');
 SELECT rolname FROM pg_roles WHERE rolname = 'privRoleRemove';
 
--- Test createRole with both roles and a privilege naming a resource
-SELECT documentdb_api.create_role('{"createRole":"privRoleBoth", "roles":["documentdb_readonly_role"], "privileges":[{"resource":{"db":"testdb","collection":"testcol"},"actions":["find", "insert", "update", "remove"]}], "$db":"admin"}');
+-- Test createRole with both roles and privileges
+SELECT documentdb_api.create_role('{"createRole":"privRoleBoth", "roles":["readAnyDatabase"], "privileges":[{"resource":{"db":"testdb","collection":"testcol"},"actions":["find", "insert", "update", "remove"]}], "$db":"admin"}');
 SELECT rolname FROM pg_roles WHERE rolname = 'privRoleBoth';
 
 -- Test error cases for privileges
@@ -260,6 +254,74 @@ SELECT documentdb_api.create_role('{"createRole":"block", "roles":["readAnyDatab
 SELECT documentdb_api.create_role('{"createRole":"test_block_user", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
 RESET documentdb.blockedRolePrefixList;
 
+-- ********* Test catalog table storage on create_role *********
+
+-- Verify create_role stores BSON in documentdb_api_catalog.roles
+SELECT documentdb_api.create_role('{"createRole":"catalogStoreRole", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+SELECT role_name FROM documentdb_api_catalog.roles WHERE role_name = 'catalogStoreRole';
+SELECT role_bson IS NOT NULL AS has_bson FROM documentdb_api_catalog.roles WHERE role_name = 'catalogStoreRole';
+
+-- Verify catalog constraints reject invalid role metadata
+INSERT INTO documentdb_api_catalog.roles (role_name, role_bson)
+VALUES (NULL, '{"createRole":"invalid"}'::documentdb_core.bson);
+INSERT INTO documentdb_api_catalog.roles (role_name, role_bson)
+VALUES ('nullRoleBson', NULL);
+
+-- A role naming only resource privileges is rejected here, so no catalog row is
+-- written for it
+SELECT documentdb_api.create_role('{"createRole":"privOnlyCatalogRole", "roles":[], "privileges":[{"resource":{"db":"appdb","collection":"users"},"actions":["find","update"]}], "$db":"admin"}');
+SELECT role_name FROM documentdb_api_catalog.roles WHERE role_name = 'privOnlyCatalogRole';
+
+-- Verify duplicate role does not create a second catalog entry
+SELECT documentdb_api.create_role('{"createRole":"catalogStoreRole", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+SELECT count(*) FROM documentdb_api_catalog.roles WHERE role_name = 'catalogStoreRole';
+
+-- ********* Test role inheritance grants on create_role *********
+
+-- Verify create_role grants inheritable system roles via pg_auth_members
+SELECT documentdb_api.create_role('{"createRole":"noGrantTestRole", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+SELECT count(*) FROM pg_auth_members am JOIN pg_roles r ON am.member = r.oid WHERE r.rolname = 'noGrantTestRole';
+
+-- ********* Test role name length validation *********
+
+-- Role name at exactly 63 chars (NAMEDATALEN-1) should succeed
+SELECT documentdb_api.create_role('{"createRole":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+SELECT rolname FROM pg_roles WHERE rolname = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+-- Role name at 64 chars (NAMEDATALEN) should be rejected before the identifier
+-- is truncated, so neither the role nor a catalog row is created
+SELECT documentdb_api.create_role('{"createRole":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+SELECT rolname FROM pg_roles WHERE rolname = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+SELECT role_name FROM documentdb_api_catalog.roles WHERE role_name LIKE 'bbbb%';
+
+-- A 64-char name must not be able to collide with an existing 63-char role by truncation
+SELECT documentdb_api.create_role('{"createRole":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+
+-- ********* Test empty inherited role name validation *********
+
+-- Empty string in roles array should fail
+SELECT documentdb_api.create_role('{"createRole":"emptyInheritRole", "roles":[""], "privileges":[], "$db":"admin"}');
+
+-- ********* Test inherited role name length validation *********
+
+-- Inherited role name at 64 chars should fail as unsupported role
+SELECT documentdb_api.create_role('{"createRole":"longInheritRole", "roles":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"], "privileges":[], "$db":"admin"}');
+
+-- ********* Test empty action name validation *********
+
+-- Empty string in actions array should fail
+SELECT documentdb_api.create_role('{"createRole":"emptyActionRole", "roles":[], "privileges":[{"resource":{"db":"testdb","collection":"testcol"},"actions":[""]}], "$db":"admin"}');
+
+-- ********* Test action name length validation *********
+
+-- Action name at 64 chars should fail as unsupported action
+SELECT documentdb_api.create_role('{"createRole":"longActionRole", "roles":[], "privileges":[{"resource":{"db":"testdb","collection":"testcol"},"actions":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}], "$db":"admin"}');
+
+-- ********* Test a role naming neither a parent role nor a privilege *********
+
+-- Empty roles AND empty privileges creates a role that grants nothing
+SELECT documentdb_api.create_role('{"createRole":"emptyBothRole", "roles":[], "privileges":[], "$db":"admin"}');
+
 -- Clean up privilege test roles
 DROP ROLE IF EXISTS "privRoleFind";
 DROP ROLE IF EXISTS "privRoleInsert";
@@ -274,6 +336,7 @@ DROP ROLE IF EXISTS "emptyInheritRole";
 DROP ROLE IF EXISTS "customAdminRole";
 DROP ROLE IF EXISTS "multiInheritRole";
 DROP ROLE IF EXISTS "emptyRolesRole";
+DROP ROLE IF EXISTS "emptyBothRole";
 DROP ROLE IF EXISTS "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk";
 DROP ROLE IF EXISTS "1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij";
 DROP ROLE IF EXISTS "role_with_underscores";
@@ -284,6 +347,15 @@ DROP ROLE IF EXISTS "casesensitiverole";
 DROP ROLE IF EXISTS "ignoredFieldsRole";
 DROP ROLE IF EXISTS "nonAdminDBNoCheckRole";
 DROP ROLE IF EXISTS "noDbFieldRole";
+DROP ROLE IF EXISTS "catalogStoreRole";
+DROP ROLE IF EXISTS "privOnlyCatalogRole";
+DROP ROLE IF EXISTS "noGrantTestRole";
+DROP ROLE IF EXISTS "maxPrivOkRole";
+DROP ROLE IF EXISTS "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+-- Remove any roles catalog rows left behind by the raw DROP ROLE statements
+-- above; a stale row would collide with the role_name primary key if a later
+-- test in the same database reused one of these names.
+DELETE FROM documentdb_api_catalog.roles r WHERE NOT EXISTS (SELECT 1 FROM pg_roles p WHERE p.rolname = r.role_name);
 
 -- Clean up test users
 SELECT documentdb_api.drop_user('{"dropUser":"testRoleUser", "$db":"admin"}');

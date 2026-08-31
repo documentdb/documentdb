@@ -13,6 +13,7 @@ mod tcp_listener;
 mod tls;
 
 pub(crate) use connection_loop::handle_stream;
+pub use connection_loop::process_request_message;
 pub use listener_config::ListenerConfig;
 pub use tcp_listener::create_tcp_listeners;
 pub use tls::TlsProvider;

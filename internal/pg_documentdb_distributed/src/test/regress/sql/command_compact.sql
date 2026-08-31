@@ -122,6 +122,7 @@ SET citus.show_shards_for_app_name_prefixes to '*';
 -- VALID, first need to analyze the table so that stats are up to date
 ANALYZE VERBOSE documentdb_data.documents_24323;
 SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->>'storageSize' AS big_relpages_before_compact \gset
+SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->>'totalSize' AS big_total_size_before_compact \gset
 
 -- set relpages to INT32_MAX - 1
 UPDATE pg_class
@@ -136,8 +137,15 @@ SELECT (2147483640::bigint * 8 * 1024) as base_estimated_size \gset
 SELECT (documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": true}')->>'estimatedBytesFreed')::bigint as big_free_estimated_size \gset
 SELECT (documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": false, "mode": "full"}')->>'bytesFreed')::bigint as big_free_byte_size \gset
 
+-- dryRun still answers from the statistics based estimate, so the inflated relpages
+-- above are reflected in estimatedBytesFreed. A non dry run instead measures the
+-- relation files either side of the vacuum, so its bytesFreed must stay within the
+-- space the collection actually occupied and cannot be inflated by bogus statistics.
+-- The bound is totalSize rather than storageSize because bytesFreed accounts for
+-- index space too, which storageSize excludes.
 SELECT :big_free_estimated_size::bigint > :base_estimated_size::bigint as estimated_is_valid,
-       :big_free_byte_size::bigint > :base_estimated_size::bigint as actual_is_valid;
+       :big_free_byte_size::bigint > 0 AND
+       :big_free_byte_size::bigint <= :big_total_size_before_compact::bigint as actual_is_valid;
 
 SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->>'storageSize' AS big_relpages_after_compact \gset
 SELECT :big_relpages_after_compact::bigint < :big_relpages_before_compact::bigint as is_big_relpages_compacted;

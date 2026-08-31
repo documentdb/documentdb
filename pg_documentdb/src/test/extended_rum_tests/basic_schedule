@@ -1,5 +1,6 @@
 test: documentdb_test_helpers
 test: basic_extended_rum_creation_tests bson_composite_index_selectivity_tests!PG16_OR_HIGHER! bson_composite_index_correlation_tests!PG16_OR_HIGHER! rum_index_value_only_ordering_tests bson_collation_index_ordering_tests!PG16_OR_HIGHER!
+# TODO: Add isolation, recovery, and replication coverage for entry-page deletion, including standby page reuse, serializable scans, persistent pins, crash boundaries, and fully empty multi-level posting trees.
 test: rum_vacuum_cleanup_tests
 test: rum_vacuum_cleanup_tests_newbulkdel
 test: rum_dead_tuple_query_tests
@@ -15,7 +16,9 @@ test: rum_high_key_optimization_tests distinct_trailing_key_filter_scan_tests
 test: bson_composite_index_only_scan_rum_tests!PG16_OR_HIGHER!
 test: bson_composite_index_only_scan_multi_key_per_path_tests bson_rum_index_only_scan_wrapper_tests
 test: bson_aggregation_sort_group_stage_tests!PG16_OR_HIGHER!
+test: bson_aggregation_in_sort_group_explain_tests!PG16_OR_HIGHER!
 test: bson_aggregation_sort_group_commonprefix_tests!PG16_OR_HIGHER! distinct_index_pushdown_tests distinct_unwind_rows_estimate_tests!PG16_OR_HIGHER! distinct_exists_filter_pushdown_tests!PG16_OR_HIGHER! distinct_index_pushdown_parallel_tests
+test: bson_collation_distinct_index_pushdown_tests
 test: comparable_index_term_edge_case_tests comparable_index_term_tests rumget_validation_tests comparable_unique_index_bson_types_tests
 test: bson_dynamic_cursor_scan_tests bson_dynamic_cursor_drain_tests bson_dynamic_cursor_index_scan_tests
 test: bson_dynamic_cursor_group_pushdown_tests
@@ -24,6 +27,7 @@ test: rum_incomplete_split_page_deletion_tests
 test: bson_dynamic_cursor_parallel_tests
 test: bson_dynamic_cursor_wildcard_root_tests
 test: bson_dynamic_cursor_multikey_bitmap_tests
+test: bson_large_in_predicate_tests
 test: bson_aggregation_group_scalar_index_pushdown_tests!PG16_OR_HIGHER!
 test: bson_dynamic_cursor_dedup_tests
 test: bson_group_by_dynamic_streaming_tests!PG16_OR_HIGHER!

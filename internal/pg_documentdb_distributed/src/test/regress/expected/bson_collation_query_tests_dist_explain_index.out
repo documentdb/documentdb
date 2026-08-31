@@ -96,7 +96,7 @@ $cmd$);
                ->  Function Scan on read_intermediate_result intermediate_result
                ->  Aggregate
                      ->  Function Scan on read_intermediate_result intermediate_result_1
-                           Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(document, intermediate_result.lookup_filter, '_id'::text)
+                           Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(document_1, intermediate_result.lookup_filter, '_id'::text)
 (34 rows)
 
 END;
@@ -808,4 +808,155 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('coll_q_idx_d
 $cmd$);
 ERROR:  $graphLookup using 'from' on a sharded collection is currently unsupported
 CONTEXT:  PL/pgSQL function documentdb_distributed_test_helpers.run_explain_and_trim(text,boolean,boolean,boolean,boolean) line 5 at FOR over EXECUTE statement
+END;
+-- ======================================================================
+-- SECTION: distinct with a collation-aware index across shards
+-- ======================================================================
+SELECT documentdb_api.insert_one('coll_q_idx_dist_explain_db', 'coll_distinct_d', '{ "_id": 1, "a": "cafe" }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_idx_dist_explain_db', 'coll_distinct_d', '{ "_id": 2, "a": "CAFE" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_idx_dist_explain_db', 'coll_distinct_d', '{ "_id": 3, "a": "tea" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection(
+  'coll_q_idx_dist_explain_db', 'coll_distinct_d', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+BEGIN;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_q_idx_dist_explain_db',
+  '{ "createIndexes": "coll_distinct_d", "indexes": [ { "key": { "a": 1 }, "name": "idx_a_en_s1", "collation": { "locale": "en", "strength": 1 } } ] }',
+  TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL enable_seqscan TO off;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+  'coll_q_idx_dist_explain_db',
+  '{ "distinct": "coll_distinct_d", "key": "a", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                             
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   ->  Distributed Subplan 344_1
+         ->  Unique
+               Output: remote_scan.document
+               ->  Sort
+                     Output: remote_scan.document
+                     Sort Key: remote_scan.document USING <<<
+                     ->  Custom Scan (Citus Adaptive)
+                           Output: remote_scan.document
+                           Task Count: 8
+                           Tasks Shown: One of 8
+                           ->  Task
+                                 Query: SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text, 'en-u-ks-level1'::text) AS document FROM documentdb_data.documents_95659_95650084 collection WHERE documentdb_api_internal.bson_dollar_fullscan(document, '{ "a" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+                                 Node: host=localhost port=58070 dbname=regression
+                                 ->  Unique
+                                       Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text, 'en-u-ks-level1'::text))
+                                       ->  Sort
+                                             Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text, 'en-u-ks-level1'::text))
+                                             Sort Key: (documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level1'::text)) USING <<<
+                                             ->  ProjectSet
+                                                   Output: documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text, 'en-u-ks-level1'::text)
+                                                   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                                                         Output: document
+                                                         ->  Seq Scan on documentdb_data.documents_95659_95650084 collection
+                                                               Output: document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('344_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_0
+         Node: host=localhost port=58070 dbname=regression
+         ->  Aggregate
+               Output: documentdb_api_catalog.bson_distinct_agg(intermediate_result.document)
+               ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
+                     Output: intermediate_result.document
+                     Function Call: read_intermediate_result('344_1'::text, 'binary'::citus_copy_format)
+(36 rows)
+
+END;
+-- An incompatible collation cannot borrow ordering from the strength-1 index.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.enable_distinct_exists_filter_pushdown TO on;
+SET LOCAL enable_seqscan TO off;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+  'coll_q_idx_dist_explain_db',
+  '{ "distinct": "coll_distinct_d", "key": "a", "collation": { "locale": "en", "strength": 2 } }')
+$cmd$);
+                                                                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                                                                   
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   ->  Distributed Subplan 346_1
+         ->  Unique
+               Output: remote_scan.document
+               ->  Sort
+                     Output: remote_scan.document
+                     Sort Key: remote_scan.document USING <<<
+                     ->  Custom Scan (Citus Adaptive)
+                           Output: remote_scan.document
+                           Task Count: 8
+                           Tasks Shown: One of 8
+                           ->  Task
+                                 Query: SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text, 'en-u-ks-level2'::text) AS document FROM documentdb_data.documents_95659_95650084 collection WHERE (documentdb_api_internal.bson_dollar_fullscan(document, '{ "a" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level2" }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_distinct_exists(document, '{ "a" : true }'::documentdb_core.bson))
+                                 Node: host=localhost port=58070 dbname=regression
+                                 ->  Unique
+                                       Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text, 'en-u-ks-level2'::text))
+                                       ->  Sort
+                                             Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text, 'en-u-ks-level2'::text))
+                                             Sort Key: (documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level2'::text)) USING <<<
+                                             ->  ProjectSet
+                                                   Output: documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text, 'en-u-ks-level2'::text)
+                                                   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                                                         Output: document
+                                                         indexName: idx_a_en_s1
+                                                         ->  Bitmap Heap Scan on documentdb_data.documents_95659_95650084 collection
+                                                               Output: document
+                                                               Recheck Cond: (collection.document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : { "$minKey" : 1 } }'::documentdb_core.bson)
+                                                               ->  Bitmap Index Scan on idx_a_en_s1
+                                                                     Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : { "$minKey" : 1 } }'::documentdb_core.bson)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('346_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_0
+         Node: host=localhost port=58070 dbname=regression
+         ->  Aggregate
+               Output: documentdb_api_catalog.bson_distinct_agg(intermediate_result.document)
+               ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
+                     Output: intermediate_result.document
+                     Function Call: read_intermediate_result('346_1'::text, 'binary'::citus_copy_format)
+(40 rows)
+
 END;

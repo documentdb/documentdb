@@ -123,8 +123,55 @@ SELECT documentdb_api.roles_info('{"rolesInfo":1, "$db":"nonAdminDatabase"}');
 SELECT documentdb_api.roles_info('{"rolesInfo":1}');
 SET documentdb.enableRolesAdminDBCheck TO ON;
 
+-- ********* Test rolesInfo reports inherited roles when the admin role has LOGIN *********
+
+-- readWriteAnyDatabase and clusterAdmin are collapsed into a single grant of the
+-- admin role. The admin role carrying LOGIN must not cause the roles it stands
+-- for to be dropped from the response.
+SELECT documentdb_api.create_role('{"createRole":"test_multi_inherit_role", "roles":["readAnyDatabase", "readWriteAnyDatabase", "clusterAdmin"], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.roles_info('{"rolesInfo":"test_multi_inherit_role", "$db":"admin"}');
+
+ALTER ROLE documentdb_admin_role WITH LOGIN;
+SELECT documentdb_api.roles_info('{"rolesInfo":"test_multi_inherit_role", "$db":"admin"}');
+ALTER ROLE documentdb_admin_role WITH NOLOGIN;
+
+DROP ROLE IF EXISTS "test_multi_inherit_role";
+DELETE FROM documentdb_api_catalog.roles WHERE role_name = 'test_multi_inherit_role';
+
+-- ********* Test rolesInfo rejects a granted role it cannot report *********
+
+-- A role granted directly in SQL may be one the inheritance table does not
+-- report, such as a login role. Reporting the holder without it would understate
+-- its membership, so the request fails instead.
+SELECT documentdb_api.create_role('{"createRole":"test_stray_parent_role", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+CREATE ROLE test_stray_login_role LOGIN;
+GRANT test_stray_login_role TO "test_stray_parent_role";
+
+SELECT documentdb_api.roles_info('{"rolesInfo":"test_stray_parent_role", "$db":"admin"}');
+SELECT documentdb_api.roles_info('{"rolesInfo":1, "$db":"admin"}') IS NOT NULL AS lists_all_roles;
+
+REVOKE test_stray_login_role FROM "test_stray_parent_role";
+
+-- With the grant removed the role is reportable again.
+SELECT documentdb_api.roles_info('{"rolesInfo":"test_stray_parent_role", "$db":"admin"}');
+
+-- Only direct parents are reported, so an unreportable role reached
+-- transitively through another role does not fail the request.
+SELECT documentdb_api.create_role('{"createRole":"test_stray_child_role", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+GRANT test_stray_login_role TO "test_stray_parent_role";
+GRANT "test_stray_parent_role" TO "test_stray_child_role";
+SELECT documentdb_api.roles_info('{"rolesInfo":"test_stray_child_role", "$db":"admin"}');
+
+REVOKE "test_stray_parent_role" FROM "test_stray_child_role";
+REVOKE test_stray_login_role FROM "test_stray_parent_role";
+DROP ROLE IF EXISTS "test_stray_child_role";
+DROP ROLE IF EXISTS test_stray_login_role;
+DROP ROLE IF EXISTS "test_stray_parent_role";
+DELETE FROM documentdb_api_catalog.roles WHERE role_name IN ('test_stray_parent_role', 'test_stray_child_role');
+
 -- Clean up test roles created for rolesInfo testing
 DROP ROLE IF EXISTS "test_custom_role";
+DELETE FROM documentdb_api_catalog.roles WHERE role_name IN ('test_custom_role');
 
 -- Reset settings
 RESET documentdb.enableRoleCrud;

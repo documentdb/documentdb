@@ -19,8 +19,14 @@ pub mod reader;
 pub mod util;
 
 pub const MAX_BSON_OBJECT_SIZE: i32 = 16 * 1024 * 1024; // 16 MB
+pub const MAX_BSON_OBJECT_USIZE: usize = 16 * 1024 * 1024;
 pub const MAX_MESSAGE_SIZE_BYTES: i32 = 48_000_000; // 48 MB
+pub const MAX_MESSAGE_USIZE_BYTES: usize = 48_000_000;
 pub const MAX_PRE_AUTH_MESSAGE_SIZE_BYTES: i32 = 250_000; // 250 KB
+pub const MAX_PRE_AUTH_MESSAGE_USIZE_BYTES: usize = 250_000; // 250 KB
+pub const OP_MSG_PREFIX_LENGTH: usize =
+    header::Header::LENGTH + std::mem::size_of::<u32>() + std::mem::size_of::<u8>();
+pub const OP_REPLY_PREFIX_LENGTH: usize = header::Header::LENGTH + 20;
 pub const MESSAGE_SIZE_EXCEEDED_ERROR: &str = "Message size exceeds the maximum allowed size.";
 pub const LOGICAL_SESSION_TIMEOUT_MINUTES: u8 = 30;
 

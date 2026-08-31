@@ -988,10 +988,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          ->  Subquery Scan on agg_stage_0
                Output: documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
                ->  Sort
-                     Output: collection.document, (bson_orderby(collection.document, '{ "score" : { "$meta" : "textScore" } }'::bson))
-                     Sort Key: (bson_orderby(collection.document, '{ "score" : { "$meta" : "textScore" } }'::bson)) DESC NULLS LAST
+                     Output: collection.document, (documentdb_api_internal.bson_orderby_meta(collection.document, NULL::bytea, NULL::tsquery))
+                     Sort Key: (documentdb_api_internal.bson_orderby_meta(collection.document, NULL::bytea, NULL::tsquery)) DESC NULLS LAST
                      ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
-                           Output: collection.document, bson_orderby(collection.document, '{ "score" : { "$meta" : "textScore" } }'::bson)
+                           Output: collection.document, documentdb_api_internal.bson_orderby_meta(collection.document, NULL::bytea, NULL::tsquery)
                            Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
                            ->  Bitmap Index Scan on _id_
                                  Index Cond: (collection.shard_key_value = '25701010'::bigint)

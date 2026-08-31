@@ -15,6 +15,7 @@ ArrayType * GetCollectionIds(void);
 ArrayType * GetCollectionIdsStartingFrom(uint64 startCollectionId);
 void AlterCreationTime(void);
 void AlterRolesTablePrimaryKey(void);
+void CreateValidateDbNameTrigger(void);
 
 
 #endif /* DATA_TABLE_UTILS_H */

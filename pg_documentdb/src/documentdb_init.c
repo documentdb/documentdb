@@ -44,6 +44,7 @@ static shmem_request_hook_type prev_shmem_request_hook = NULL;
 /* In single node mode, we always inline write operations */
 bool DefaultInlineWriteOperations = true;
 bool ShouldUpgradeDataTables = true;
+extern bool EnableSkipUseQueryTextData;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -280,6 +281,18 @@ DocumentDBTransactionCallback(XactEvent event, void *arg)
 		{
 			ConnMgrTryCancelActiveConnection();
 			DeletePendingCursorFiles();
+
+			/* HACK: A statement that aborted mid-execution may have left the
+			 * backend global text query state pointing at freed per-query
+			 * memory. Clear it so a later statement reading text-score metadata
+			 * does not dereference freed memory. This is a stopgap until the
+			 * global is removed in favor of threading text-score metadata
+			 * through the plan as explicit arguments (bson_orderby_meta). */
+			if (EnableSkipUseQueryTextData)
+			{
+				ResetQueryTextData();
+			}
+
 			break;
 		}
 
@@ -300,6 +313,17 @@ DocumentDBSubTransactionCallback(SubXactEvent event, SubTransactionId mySubid,
 		case SUBXACT_EVENT_ABORT_SUB:
 		{
 			ConnMgrTryCancelActiveConnection();
+
+			/* HACK: A statement that aborted inside a subtransaction (for
+			 * example a PL/pgSQL block with an EXCEPTION handler, or a
+			 * ROLLBACK TO SAVEPOINT) may have left the backend global text
+			 * query state pointing at freed per-query memory while the outer
+			 * transaction survives. Clear it here for the same reason as the
+			 * top-level abort path above. */
+			if (EnableSkipUseQueryTextData)
+			{
+				ResetQueryTextData();
+			}
 			break;
 		}
 

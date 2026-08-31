@@ -946,12 +946,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('
 $cmd$);
 ROLLBACK;
 
--- ============================================================
--- Cleanup
--- ============================================================
--- SELECT documentdb_api.drop_collection('db', 'dist_push');
--- SELECT documentdb_api.drop_collection('db', 'dist_push_mk');
--- SELECT documentdb_api.drop_collection('db', 'dist_trunc');
--- SELECT documentdb_api.drop_collection('db', 'dist_cscan');
--- SELECT documentdb_api.drop_collection('db', 'dist_cscan_mk');
--- SELECT documentdb_api.drop_collection('db', 'dist_ios');
+-- Cleanup.
+SELECT documentdb_api.drop_collection('db', 'dist_push');
+SELECT documentdb_api.drop_collection('db', 'dist_push_mk');
+SELECT documentdb_api.drop_collection('db', 'dist_trunc');
+SELECT documentdb_api.drop_collection('db', 'dist_cscan');
+SELECT documentdb_api.drop_collection('db', 'dist_cscan_mk');
+SELECT documentdb_api.drop_collection('db', 'dist_ios');

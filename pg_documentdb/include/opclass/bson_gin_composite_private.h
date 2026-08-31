@@ -100,6 +100,9 @@ typedef struct VariableIndexBounds
 	 * dedupState.value_type is BSON_TYPE_BINARY. */
 	bson_value_t dedupState;
 
+	/* Number of leading index paths that form the distinct group prefix. */
+	int32_t numGroupKeyPaths;
+
 	/* Whether planning already handled reduced-correlated bound pruning. */
 	bool isReducedCorrelatedBoundsPlanApplied;
 } VariableIndexBounds;
@@ -194,6 +197,9 @@ typedef struct CompositeQueryMetaInfo
 	 * the continuation to restore an ordered scan's dedup tracker, as a BSON
 	 * binary value. Present when dedupState.value_type is BSON_TYPE_BINARY. */
 	bson_value_t dedupState;
+
+	/* Number of leading index paths that form the distinct group prefix. */
+	int32_t numGroupKeyPaths;
 } CompositeQueryMetaInfo;
 
 typedef struct CompositeQueryRunData

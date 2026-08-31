@@ -32,11 +32,11 @@ PGDLLEXPORT bool RumThrowErrorOnInvalidDataPage =
 	RUM_DEFAULT_THROW_ERROR_ON_INVALID_DATA_PAGE;
 
 /* rumbtree.c */
-/* FeatureFlag: Added in v0.108, enabled in v0.108, remove after v0.121 */
+/* FeatureFlag: Added in v0.108, enabled in v0.108, remove after v1.3 */
 #define RUM_DEFAULT_TRACK_INCOMPLETE_SPLIT true
 PGDLLEXPORT bool RumTrackIncompleteSplit = RUM_DEFAULT_TRACK_INCOMPLETE_SPLIT;
 
-/* FeatureFlag: Added in v0.114, enabled in v0.114, remove after v0.125 */
+/* FeatureFlag: Added in v0.114, enabled in v0.114, remove after v1.7 */
 #define RUM_DEFAULT_ALLOW_REPLACE_ON_INSERT_TUPLE true
 PGDLLEXPORT bool RumAllowReplaceOnInsertTuple = RUM_DEFAULT_ALLOW_REPLACE_ON_INSERT_TUPLE;
 
@@ -48,11 +48,11 @@ PGDLLEXPORT bool RumEnableXlogInsertEntry = RUM_DEFAULT_ENABLE_XLOG_INSERT_ENTRY
 #define RUM_DEFAULT_ENABLE_CUSTOM_XLOG_RMRG false
 PGDLLEXPORT bool EnableCustomXlogRmgr = RUM_DEFAULT_ENABLE_CUSTOM_XLOG_RMRG;
 
-/* FeatureFlag: Added in v0.114, enabled in v0.114, remove after v0.118 */
+/* FeatureFlag: Added in v0.114, enabled in v0.114, remove after v1.0 */
 #define RUM_DEFAULT_ENABLE_COMPARE_FUNCTION_FMGR true
 PGDLLEXPORT bool EnableRumCompareFunctionFmgr = RUM_DEFAULT_ENABLE_COMPARE_FUNCTION_FMGR;
 
-/* FeatureFlag: Added in v0.108, enabled in v0.108, remove after v0.121 */
+/* FeatureFlag: Added in v0.108, enabled in v0.108, remove after v1.3 */
 #define RUM_DEFAULT_FIX_INCOMPLETE_SPLIT true
 PGDLLEXPORT bool RumFixIncompleteSplit = RUM_DEFAULT_FIX_INCOMPLETE_SPLIT;
 
@@ -101,7 +101,7 @@ PGDLLEXPORT bool RumDisableFastScan = RUM_DEFAULT_DISABLE_FAST_SCAN;
 #define RUM_DEFAULT_FORCE_RUM_ORDERED_INDEX_SCAN false
 PGDLLEXPORT bool RumForceOrderedIndexScan = RUM_DEFAULT_FORCE_RUM_ORDERED_INDEX_SCAN;
 
-/* FeatureFlag: Added in v0.108, enabled in v0.108, remove after v0.121 */
+/* FeatureFlag: Added in v0.108, enabled in v0.108, remove after v1.3 */
 #define RUM_DEFAULT_ENABLE_SKIP_INTERMEDIATE_ENTRY true
 PGDLLEXPORT bool RumEnableSkipIntermediateEntry =
 	RUM_DEFAULT_ENABLE_SKIP_INTERMEDIATE_ENTRY;
@@ -111,29 +111,25 @@ PGDLLEXPORT bool RumEnableSkipIntermediateEntry =
 PGDLLEXPORT int RumParallelIndexWorkersOverride =
 	RUM_DEFAULT_PARALLEL_INDEX_WORKERS_OVERRIDE;
 
-/* FeatureFlag: Added in v0.110, enabled in v0.112, remove after v0.125  */
+/* FeatureFlag: Added in v0.110, enabled in v0.112, remove after v1.7  */
 #define RUM_DEFAULT_ENABLE_PARALLEL_INDEX_BUILD true
 PGDLLEXPORT bool RumEnableParallelIndexBuild = RUM_DEFAULT_ENABLE_PARALLEL_INDEX_BUILD;
 
 /* rumvacuum.c */
-/* FeatureFlag: Added in v0.108, enabled in v0.108, remove after v0.120 */
-#define RUM_DEFAULT_SKIP_RETRY_ON_DELETE_PAGE true
-PGDLLEXPORT bool RumSkipRetryOnDeletePage = RUM_DEFAULT_SKIP_RETRY_ON_DELETE_PAGE;
-
-/* FeatureFlag: Added in v0.108, Pending stabilization, enable on v0.118 */
-#define RUM_DEFAULT_PRUNE_EMPTY_PAGES false
+/* FeatureFlag: Added on v0.108, enabled on v1.0, remove after v1.7 */
+#define RUM_DEFAULT_PRUNE_EMPTY_PAGES true
 PGDLLEXPORT bool RumPruneEmptyPages = RUM_DEFAULT_PRUNE_EMPTY_PAGES;
 
-/* FeatureFlag: Added on v0.108, enabled in v0.113, remove after v0.125 */
+/* FeatureFlag: Added on v0.108, enabled in v0.113, remove after v1.7 */
 #define RUM_DEFAULT_ENABLE_NEW_BULK_DELETE true
 PGDLLEXPORT bool RumEnableNewBulkDelete = RUM_DEFAULT_ENABLE_NEW_BULK_DELETE;
 
-/* FeatureFlag: Added in v0.108, Pending stabilization, enable on v0.120 */
+/* FeatureFlag: Added in v0.108, Pending stabilization, enable on v1.2 */
 #define RUM_DEFAULT_ENABLE_NEW_BULK_DELETE_INLINE_DATA_PAGES false
 PGDLLEXPORT bool RumNewBulkDeleteInlineDataPages =
 	RUM_DEFAULT_ENABLE_NEW_BULK_DELETE_INLINE_DATA_PAGES;
 
-/* FeatureFlag: Added in v0.115, enabled in v0.115, remove after v0.125 */
+/* FeatureFlag: Added in v0.115, enabled in v0.115, remove after v1.7 */
 #define RUM_DEFAULT_ENABLE_ENTRY_PAGE_STEP true
 PGDLLEXPORT bool RumEnableEntryPageStep = RUM_DEFAULT_ENABLE_ENTRY_PAGE_STEP;
 
@@ -156,23 +152,23 @@ PGDLLEXPORT bool RumTraversePageOnlyOnBackTrack =
 PGDLLEXPORT bool RumSkipGlobalVisibilityCheckOnPrune =
 	RUM_DEFAULT_SKIP_GLOBAL_VISIBILITY_CHECK_ON_PRUNE;
 
-/* FeatureFlag: Added in v0.113, enabled in v0.113, remove after v0.120 */
+/* FeatureFlag: Added in v0.113, enabled in v0.113, remove after v1.2 */
 #define RUM_DEFAULT_ENABLE_OVERWRITE_ENTRY_TUPLE_ON_VACUUM true
 PGDLLEXPORT bool RumEnableOverwriteEntryTupleOnVacuum =
 	RUM_DEFAULT_ENABLE_OVERWRITE_ENTRY_TUPLE_ON_VACUUM;
 
-/* FeatureFlag: Added in v0.114, Pending stabilization, enable on v0.117 */
-#define RUM_DEFAULT_ENABLE_TARGETED_POSTING_TREE_PRUNING false
+/* FeatureFlag: Added in v0.114, enabled in v1.0, remove after v1.3 */
+#define RUM_DEFAULT_ENABLE_TARGETED_POSTING_TREE_PRUNING true
 PGDLLEXPORT bool RumEnableTargetedPostingTreePruning =
 	RUM_DEFAULT_ENABLE_TARGETED_POSTING_TREE_PRUNING;
 
-/* FeatureFlag: Added in v0.115, Pending stabilization, enable on v0.118 */
+/* FeatureFlag: Added in v0.115, Pending stabilization, enable on v1.0 */
 #define RUM_DEFAULT_ENABLE_SINGLE_PASS_POSTING_TREE_VACUUM false
 PGDLLEXPORT bool RumEnableSinglePassPostingTreeVacuum =
 	RUM_DEFAULT_ENABLE_SINGLE_PASS_POSTING_TREE_VACUUM;
 
 /* rumget.c */
-/* FeatureFlag: Added in v0.109, Pending stabilization, enable on v0.118 */
+/* FeatureFlag: Added in v0.109, Pending stabilization, enable on v1.0 */
 #define RUM_DEFAULT_ENABLE_SUPPORT_DEAD_INDEX_ITEMS false
 PGDLLEXPORT bool RumEnableSupportDeadIndexItems =
 	RUM_DEFAULT_ENABLE_SUPPORT_DEAD_INDEX_ITEMS;
@@ -188,12 +184,12 @@ PGDLLEXPORT bool RumEnableEmitReusePageOnRecycle =
 PGDLLEXPORT bool RumEnableOrderedOperatorScans =
 	RUM_DEFAULT_ENABLE_ORDERED_OPERATOR_SCANS;
 
-/* FeatureFlag: Added in v0.113, Enabled in v0.113, remove after v0.125 */
+/* FeatureFlag: Added in v0.113, Enabled in v0.113, remove after v1.7 */
 #define RUM_DEFAULT_ENABLE_PAGE_FILL_FACTOR true
 PGDLLEXPORT bool RumEnablePageFillFactor =
 	RUM_DEFAULT_ENABLE_PAGE_FILL_FACTOR;
 
-/* FeatureFlag: Added in v0.113, Enabled in v0.113, remove after v0.125 */
+/* FeatureFlag: Added in v0.113, Enabled in v0.113, remove after v1.7 */
 #define RUM_DEFAULT_ENABLE_BTREE_LOCK_ORDER true
 PGDLLEXPORT bool RumEnableBtreeLockOrder = RUM_DEFAULT_ENABLE_BTREE_LOCK_ORDER;
 
@@ -237,15 +233,6 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 							-1, -1, INT_MAX,
 							PGC_USERSET, 0,
 							NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(psprintf("%s.rum_skip_retry_on_delete_page",
-									  documentDBRumGucPrefix),
-							 "Sets whether or not to skip retrying on delete pages during vacuuming",
-							 NULL,
-							 &RumSkipRetryOnDeletePage,
-							 RUM_DEFAULT_SKIP_RETRY_ON_DELETE_PAGE,
-							 PGC_USERSET, 0,
-							 NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.rum_throw_error_on_invalid_data_page", documentDBRumGucPrefix),
@@ -425,7 +412,7 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		"test only guc to skip checking visibility on pruning pages",
 		NULL,
 		&RumSkipGlobalVisibilityCheckOnPrune,
-		RUM_DEFAULT_TRAVERSE_PAGE_ONLY_ON_BACKTRACK,
+		RUM_DEFAULT_SKIP_GLOBAL_VISIBILITY_CHECK_ON_PRUNE,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 

@@ -25,17 +25,17 @@ bool BsonTextUseJsonRepresentation = DEFAULT_BSON_TEXT_USE_JSON_REPRESENTATION;
 
 /* GUC deciding whether collation is support */
 /* FeatureFlag */
-/* Added in v0.108, Pending stabilization, enable in v0.124 */
+/* Added in v0.108, Pending stabilization, enable in v1.6 */
 #define DEFAULT_ENABLE_COLLATION false
 bool EnableCollation = DEFAULT_ENABLE_COLLATION;
 
 /* FeatureFlag */
-/* Added on v0.114, enabled on v0.117, remove after v0.119 */
+/* Added on v0.114, enabled on v0.117, remove after v1.1 */
 #define DEFAULT_ENABLE_WRITE_DOCUMENTS_IN_REPATH true
 bool EnableWriteDocumentsInRepath = DEFAULT_ENABLE_WRITE_DOCUMENTS_IN_REPATH;
 
 /* FeatureFlag */
-/* Added in v0.114, Pending stabilization, enable in v0.124 */
+/* Added in v0.114, Pending stabilization, enable in v1.6 */
 #define DEFAULT_ENABLE_BSON_SELECTIVITY_FROM_BTREE_STATS false
 bool EnableBsonSelectivityFromBtreeStats =
 	DEFAULT_ENABLE_BSON_SELECTIVITY_FROM_BTREE_STATS;

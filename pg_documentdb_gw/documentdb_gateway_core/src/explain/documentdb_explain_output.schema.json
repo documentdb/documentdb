@@ -509,6 +509,14 @@
           "type": "integer",
           "description": "Number of parallel workers launched for this stage. Derived from PostgreSQL's 'Workers Launched'. Omitted if zero."
         },
+        "actualLoops": {
+          "type": "number",
+          "description": "Number of times this plan stage executed. Derived from PostgreSQL's 'Actual Loops'. Omitted when the stage executed once or not at all."
+        },
+        "stageWorkerCount": {
+          "type": "integer",
+          "description": "Number of workers with execution details in stageWorkerData. Present only when PostgreSQL includes a non-empty Workers array."
+        },
         "stageWorkerData": {
           "type": "array",
           "description": "Per-worker execution details reported by PostgreSQL for a parallel plan stage. Present only when PostgreSQL includes a Workers array.",

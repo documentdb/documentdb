@@ -246,6 +246,9 @@ typedef struct SortIndexInputDetails
 	struct Expr *sortDatum;
 	struct PathKey *sortPathKey;
 	struct Const *collationConst;
+
+	/* Whether this path key groups rows rather than ordering their output. */
+	bool isGroupBy;
 } SortIndexInputDetails;
 
 
@@ -273,6 +276,9 @@ List * ExtractBoundaryQualsForOrderedIndexPath(struct IndexPath *indexPath,
 											   int *num_sa_scans);
 OpExpr * CreateFullScanOpExpr(Expr *documentExpr, const char *sourcePath, uint32_t
 							  sourcePathLength, int32_t orderByScanDirection);
+OpExpr * CreateGroupKeyPathCountOpExpr(Expr *documentExpr, const char *sourcePath,
+									   uint32_t sourcePathLength,
+									   int32_t numGroupKeyPaths);
 
 /* Helper macro to retrieve a length prefixed value in the index options */
 #define Get_Index_Path_Option(options, field, result, resultFieldLength) \

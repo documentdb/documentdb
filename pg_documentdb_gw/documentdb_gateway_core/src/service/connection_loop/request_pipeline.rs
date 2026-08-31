@@ -6,6 +6,7 @@
  *-------------------------------------------------------------------------
  */
 
+use bytes::Bytes;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     time::{Duration, Instant},
@@ -15,23 +16,24 @@ use tracing::field::Empty;
 
 use crate::{
     context::{ConnectionContext, RequestContext},
+    error::{DocumentDBError, Result},
     postgres::PgDataClient,
-    protocol::{self, header::Header},
+    protocol::{
+        self, header::Header, MAX_PRE_AUTH_MESSAGE_SIZE_BYTES, MESSAGE_SIZE_EXCEEDED_ERROR,
+    },
     requests::{
-        request_tracker::RequestTracker, validation, RequestIntervalKind, RequestObservation,
+        request_tracker::RequestTracker, validation, RequestIntervalKind, RequestMessage,
+        RequestObservation,
     },
     service::connection_loop::{
         error_reply,
         read_ahead::{self, PendingHeaderRead},
         request_execution,
+        writer::FailureTrackingWriter,
     },
     telemetry::{consts::labels, context_propagation},
 };
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "Request hot path coordinates read-ahead, parsing, validation, response writing, and telemetry"
-)]
 #[cfg_attr(
     feature = "request-tracing",
     tracing::instrument(
@@ -102,8 +104,146 @@ where
         }
     };
     request_tracker.record_duration(RequestIntervalKind::ReadRequest, read_request_start);
-    let mut requires_response =
+    // Start receiving the next request as soon as the current request bytes are fully consumed so
+    // socket read-ahead overlaps deeper parsing and handling work.
+    let next_header = read_ahead::start_next_header_read(reader, idle_timeout).await;
+
+    process_message::<T, W>(
+        connection_context,
+        header,
+        &message,
+        writer,
+        activity_id,
+        &request_tracker,
+    )
+    .await;
+
+    next_header
+}
+
+/// Processes one decoded request and writes its complete wire response.
+///
+/// Writes nothing for a valid one-way request. A header/body length mismatch is
+/// encoded as a request error when the request requires a response. The caller
+/// supplies the instant at which body reading began after decoding the header.
+///
+/// # Errors
+///
+/// Returns an I/O error when the complete wire response cannot be written.
+#[cfg_attr(
+    feature = "request-tracing",
+    tracing::instrument(
+        name = "gateway.request",
+        skip_all,
+        fields(
+            span.kind = "server",
+            span.status_code = Empty,
+            span.status_message = Empty,
+            db.system.name = "documentdb",
+            db.operation.name = Empty,
+            db.collection.name = Empty,
+            db.namespace = Empty,
+            network.connection.id = %connection_context.connection_id,
+            network.protocol.name = %connection_context.transport_protocol(),
+            tls.established = !connection_context.ssl_protocol.is_empty(),
+            request.id = header.request_id(),
+            activity_id = %activity_id,
+        )
+    )
+)]
+pub async fn process_request_message<T, W>(
+    connection_context: &mut ConnectionContext,
+    header: Header,
+    body: Bytes,
+    read_request_start: Instant,
+    activity_id: &str,
+    writer: &mut W,
+) -> Result<()>
+where
+    T: PgDataClient,
+    W: AsyncWrite + Unpin,
+{
+    let mut writer = FailureTrackingWriter::new(writer);
+    let request_tracker = RequestTracker::new();
+    request_tracker.record_duration(RequestIntervalKind::ReadRequest, read_request_start);
+    let message_length = Header::LENGTH.saturating_add(body.len());
+    let message = RequestMessage::new(
+        body,
+        header.op_code(),
+        header.request_id(),
+        header.response_to(),
+    );
+    let requires_response =
         protocol::reader::requires_response_from_parsed_message(&message).unwrap_or(true);
+    if usize::try_from(header.message_length()) != Ok(message_length) {
+        let error = DocumentDBError::bad_value(
+            "Message body length does not match the declared message length.".to_owned(),
+        );
+        error_reply::reply_with_request_error(
+            connection_context,
+            &header,
+            &error,
+            None,
+            &mut writer,
+            requires_response,
+            None,
+            &request_tracker,
+            activity_id,
+            None,
+        )
+        .await;
+        return writer.into_result();
+    }
+    if !connection_context.auth_state.is_authenticated()
+        && message_length > usize::try_from(MAX_PRE_AUTH_MESSAGE_SIZE_BYTES).unwrap_or(250_000)
+    {
+        let error = DocumentDBError::internal_error(MESSAGE_SIZE_EXCEEDED_ERROR.to_owned());
+        error_reply::reply_with_request_error(
+            connection_context,
+            &header,
+            &error,
+            None,
+            &mut writer,
+            requires_response,
+            None,
+            &request_tracker,
+            activity_id,
+            None,
+        )
+        .await;
+        return writer.into_result();
+    }
+
+    process_message::<T, _>(
+        connection_context,
+        &header,
+        &message,
+        &mut writer,
+        activity_id,
+        &request_tracker,
+    )
+    .await;
+
+    writer.into_result()
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "Request hot path coordinates parsing, validation, response writing, and telemetry"
+)]
+async fn process_message<T, W>(
+    connection_context: &mut ConnectionContext,
+    header: &Header,
+    message: &RequestMessage,
+    writer: &mut W,
+    activity_id: &str,
+    request_tracker: &RequestTracker,
+) where
+    T: PgDataClient,
+    W: AsyncWrite + Unpin,
+{
+    let mut requires_response =
+        protocol::reader::requires_response_from_parsed_message(message).unwrap_or(true);
     let shutdown_requires_response = if connection_context
         .dynamic_configuration()
         .send_shutdown_responses()
@@ -112,10 +252,6 @@ where
     } else {
         true
     };
-
-    // Start receiving the next request as soon as the current request bytes are fully consumed,
-    // mirroring the managed gateway's read-ahead overlap before deeper parsing/handling work.
-    let next_header = read_ahead::start_next_header_read(reader, idle_timeout).await;
 
     // HandleMessage captures the overall duration needed by the server to handle/process
     // a user operation message/request. Client-to-Gateway networking latency should be
@@ -127,22 +263,22 @@ where
         header,
         writer,
         shutdown_requires_response,
-        &request_tracker,
+        request_tracker,
         activity_id,
         handle_message_start,
     )
     .await
     {
-        return next_header;
+        return;
     }
     let format_request_start = Instant::now();
-    let wire_request = match protocol::reader::parse_request(&message, &mut requires_response) {
+    let wire_request = match protocol::reader::parse_request(message, &mut requires_response) {
         Ok(request) => request,
         Err(error) => {
             let span = tracing::Span::current();
             context_propagation::mark_span_error(&span);
             let telemetry_wire_request =
-                protocol::reader::parse_request_payload(&message, &mut requires_response).ok();
+                protocol::reader::parse_request_payload(message, &mut requires_response).ok();
             if let Some(preview) = telemetry_wire_request.as_ref() {
                 span.record(
                     labels::DB_OPERATION_NAME,
@@ -160,13 +296,13 @@ where
                 writer,
                 requires_response,
                 None,
-                &request_tracker,
+                request_tracker,
                 activity_id,
                 Some(handle_message_start),
             )
             .await;
 
-            return next_header;
+            return;
         }
     };
     connection_context.requires_response = requires_response;
@@ -202,15 +338,15 @@ where
             writer,
             connection_context.requires_response,
             Some(collection),
-            &request_tracker,
+            request_tracker,
             activity_id,
             Some(handle_message_start),
         )
         .await;
-        return next_header;
+        return;
     }
 
-    let request_context = RequestContext::new(activity_id, &wire_request, &request_tracker);
+    let request_context = RequestContext::new(activity_id, &wire_request, request_tracker);
 
     // Errors in request handling are handled explicitly so that telemetry can have access to the
     // request. The next header read is already pending, so the caller can await it on the next
@@ -244,22 +380,26 @@ where
         )
         .await;
     }
-
-    next_header
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    };
 
     use bson::{doc, spec::BinarySubtype, Binary};
+    use either::Either;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
     use crate::{
-        error::{ErrorCode, Result},
+        error::ErrorCode,
         postgres::DocumentDBDataClient,
         protocol::opcode::OpCode,
+        responses::Response,
+        telemetry::TelemetryProvider,
         testing::{
             assert_error_response, assert_header_matches, build_document_section,
             build_op_msg_parts, build_op_msg_parts_with_sections, decode_op_msg_response,
@@ -269,6 +409,36 @@ mod tests {
     };
 
     const NON_EXPIRING_IDLE_TIMEOUT: Duration = Duration::from_mins(1);
+
+    #[derive(Clone, Debug, Default)]
+    struct ReadIntervalTelemetryProvider {
+        read_request_ns: Arc<AtomicU64>,
+    }
+
+    impl ReadIntervalTelemetryProvider {
+        fn read_request_ns(&self) -> u64 {
+            self.read_request_ns.load(Ordering::Relaxed)
+        }
+    }
+
+    impl TelemetryProvider for ReadIntervalTelemetryProvider {
+        fn emit_request_event(
+            &self,
+            _: &ConnectionContext,
+            _: &Header,
+            _: Option<RequestObservation<'_, '_>>,
+            _: Either<&Response, (&DocumentDBError, usize)>,
+            _: &str,
+            request_tracker: &RequestTracker,
+            _: &str,
+            _: &str,
+        ) {
+            self.read_request_ns.store(
+                request_tracker.get_interval_elapsed_time(RequestIntervalKind::ReadRequest),
+                Ordering::Relaxed,
+            );
+        }
+    }
 
     async fn execute_handle_message<T>(
         connection_context: &mut ConnectionContext,
@@ -308,6 +478,160 @@ mod tests {
             .expect("response reader should drain bytes");
 
         (response_bytes, next_header.await)
+    }
+
+    #[tokio::test]
+    async fn process_request_message_returns_framed_response() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        let invalid_document = doc! {
+            "ping": 1_i32,
+            "$db": 7_i32,
+        };
+        let (header, body) = build_op_msg_parts(&invalid_document, 81);
+        let mut writer = Vec::new();
+
+        process_request_message::<DocumentDBDataClient, _>(
+            &mut connection_context,
+            header,
+            Bytes::from(body),
+            Instant::now(),
+            "activity-process-request-message",
+            &mut writer,
+        )
+        .await
+        .expect("captured response should complete");
+        let response = Bytes::from(writer);
+
+        let (response_header, response_document) = decode_op_msg_response(&response);
+        assert_header_matches(
+            &response_header,
+            response_header.message_length(),
+            81,
+            81,
+            OpCode::Msg,
+        );
+        assert_error_response(&response_document, ErrorCode::BadValue);
+    }
+
+    #[tokio::test]
+    async fn process_request_message_records_body_read_interval() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        let telemetry_provider = ReadIntervalTelemetryProvider::default();
+        let mut connection_context = test_connection_context(
+            false,
+            dynamic_configuration,
+            Some(Box::new(telemetry_provider.clone())),
+        )
+        .await;
+        let invalid_document = doc! {
+            "ping": 1_i32,
+            "$db": 7_i32,
+        };
+        let (header, body) = build_op_msg_parts(&invalid_document, 87);
+        let mut writer = Vec::new();
+
+        process_request_message::<DocumentDBDataClient, _>(
+            &mut connection_context,
+            header,
+            Bytes::from(body),
+            Instant::now() - Duration::from_millis(5),
+            "activity-process-read-interval",
+            &mut writer,
+        )
+        .await
+        .expect("captured response should complete");
+
+        assert!(telemetry_provider.read_request_ns() > 0);
+    }
+
+    #[tokio::test]
+    async fn process_request_message_returns_empty_bytes_for_one_way_request() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        let invalid_document = doc! {
+            "ping": 1_i32,
+            "$db": 7_i32,
+        };
+        let (header, mut body) = build_op_msg_parts(&invalid_document, 82);
+        body[..std::mem::size_of::<u32>()].copy_from_slice(&2_u32.to_le_bytes());
+        let mut writer = Vec::new();
+
+        process_request_message::<DocumentDBDataClient, _>(
+            &mut connection_context,
+            header,
+            Bytes::from(body),
+            Instant::now(),
+            "activity-process-one-way-message",
+            &mut writer,
+        )
+        .await
+        .expect("one-way processing should complete");
+
+        assert!(writer.is_empty());
+    }
+
+    #[tokio::test]
+    async fn process_request_message_rejects_header_body_length_mismatch() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        let (header, body) = build_op_msg_parts(&logout_document(), 83);
+        let mismatched_header = Header::new(
+            header.message_length() - 1,
+            header.request_id(),
+            header.response_to(),
+            header.op_code(),
+        )
+        .expect("mismatched test header should remain structurally valid");
+        let mut writer = Vec::new();
+
+        process_request_message::<DocumentDBDataClient, _>(
+            &mut connection_context,
+            mismatched_header,
+            Bytes::from(body),
+            Instant::now(),
+            "activity-process-mismatched-message",
+            &mut writer,
+        )
+        .await
+        .expect("mismatch response should complete");
+        let response = Bytes::from(writer);
+
+        let (_, response_document) = decode_op_msg_response(&response);
+        assert_error_response(&response_document, ErrorCode::BadValue);
+    }
+
+    #[tokio::test]
+    async fn process_request_message_does_not_reply_to_mismatched_one_way_request() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        let (header, mut body) = build_op_msg_parts(&logout_document(), 84);
+        body[..std::mem::size_of::<u32>()].copy_from_slice(&2_u32.to_le_bytes());
+        let mismatched_header = Header::new(
+            header.message_length() - 1,
+            header.request_id(),
+            header.response_to(),
+            header.op_code(),
+        )
+        .expect("mismatched test header should remain structurally valid");
+        let mut writer = Vec::new();
+
+        process_request_message::<DocumentDBDataClient, _>(
+            &mut connection_context,
+            mismatched_header,
+            Bytes::from(body),
+            Instant::now(),
+            "activity-process-mismatched-one-way-message",
+            &mut writer,
+        )
+        .await
+        .expect("one-way mismatch processing should complete");
+
+        assert!(writer.is_empty());
     }
 
     #[tokio::test]

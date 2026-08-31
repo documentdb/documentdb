@@ -27,11 +27,15 @@ RUN dnf -y install glibc-langpack-en glibc-common && \
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 
+# diffutils and findutils: the rockylinux:8 base ships neither `diff` (needed by
+# pg_regress) nor `find` (needed by report-test-failure.sh, whose `2>/dev/null`
+# guards would otherwise swallow "command not found" and report an all-clear).
 RUN dnf -y swap curl-minimal curl && \
     dnf -y install \
     make \
     ca-certificates \
     diffutils \
+    findutils \
     python3 \
     gcc \
     gcc-c++ \
@@ -72,6 +76,7 @@ WORKDIR /usr/src/documentdb
 COPY . /usr/src/documentdb
 COPY ${RPM_PACKAGE_REL_PATH} /tmp/documentdb.rpm
 COPY packaging/test_packages/test-install-entrypoint-rpm.sh /usr/local/bin/test-install-entrypoint-rpm.sh
-RUN chmod +x /usr/local/bin/test-install-entrypoint-rpm.sh
+COPY packaging/test_packages/report-test-failure.sh /usr/local/bin/report-test-failure.sh
+RUN chmod +x /usr/local/bin/test-install-entrypoint-rpm.sh /usr/local/bin/report-test-failure.sh
 
 ENTRYPOINT ["test-install-entrypoint-rpm.sh"]

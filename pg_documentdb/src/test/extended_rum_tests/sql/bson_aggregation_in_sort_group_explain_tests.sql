@@ -1,0 +1,480 @@
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documentdb_api_internal,public;
+
+SET documentdb.next_collection_id TO 27120000;
+SET documentdb.next_collection_index_id TO 27120000;
+SET documentdb.defaultUseCompositeOpClass TO on;
+SET documentdb.enableDistinctScanForGroupFirst TO on;
+SET documentdb.enable_distinct_skip_scan_on_key TO on;
+
+SELECT COUNT(documentdb_api.insert_one(
+    'in_sort_group_explain_db',
+    'in_sort_group_explain',
+    format(
+        '{ "_id": %s, "tenant": "tenant-1", "assetCode": "asset-%s", "effectiveAt": { "$date": { "$numberLong": "%s" } }, "recordedAt": { "$date": { "$numberLong": "%s" } }, "amount": %s }',
+        i,
+        i % 5,
+        1704067200000 + ((i % 4) * 86400000),
+        1704067200000 + (i * 60000),
+        i * 10)::bson))
+FROM generate_series(1, 120) AS i;
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'in_sort_group_explain_db',
+    '{ "createIndexes": "in_sort_group_explain", "indexes": [
+        {
+            "key": { "assetCode": 1, "effectiveAt": -1, "recordedAt": -1 },
+            "name": "assetCode_1_effectiveAt_-1_recordedAt_-1"
+        }
+    ] }',
+    true);
+
+CREATE OR REPLACE FUNCTION pg_temp.compare_ordered_group_first(
+    test_name text,
+    command documentdb_core.bson)
+RETURNS TABLE(test_case text, matches_tid_skip boolean,
+              matches_wrapper_off boolean, uses_distinct_scan boolean,
+              has_group_key_metadata boolean, result_count integer)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    baseline_tid_skip text[];
+    baseline_wrapper_off text[];
+    optimized text[];
+    result_document documentdb_core.bson;
+    plan_line text;
+    optimized_plan text := '';
+BEGIN
+    PERFORM set_config('documentdb.enable_distinct_scan_for_ordered_group_first',
+                       'on', false);
+    PERFORM set_config('documentdb.enable_distinct_skip_scan_on_key', 'off', false);
+    FOR result_document IN
+        SELECT document
+        FROM bson_aggregation_pipeline('in_sort_group_explain_db', command)
+    LOOP
+        baseline_tid_skip = array_append(
+            baseline_tid_skip, result_document::text);
+    END LOOP;
+    SELECT array_agg(value ORDER BY value)
+    INTO baseline_tid_skip
+    FROM unnest(baseline_tid_skip) value;
+
+    PERFORM set_config('documentdb.enable_distinct_scan_for_ordered_group_first',
+                       'off', false);
+    FOR result_document IN
+        SELECT document
+        FROM bson_aggregation_pipeline('in_sort_group_explain_db', command)
+    LOOP
+        baseline_wrapper_off = array_append(
+            baseline_wrapper_off, result_document::text);
+    END LOOP;
+    SELECT array_agg(value ORDER BY value)
+    INTO baseline_wrapper_off
+    FROM unnest(baseline_wrapper_off) value;
+
+    PERFORM set_config('documentdb.enable_distinct_scan_for_ordered_group_first',
+                       'on', false);
+    PERFORM set_config('documentdb.enable_distinct_skip_scan_on_key', 'on', false);
+    FOR plan_line IN EXECUTE
+        'EXPLAIN (COSTS OFF) '
+        'SELECT document '
+        'FROM bson_aggregation_pipeline(''in_sort_group_explain_db'', $1)'
+        USING command
+    LOOP
+        optimized_plan = optimized_plan || plan_line;
+    END LOOP;
+    FOR result_document IN
+        SELECT document
+        FROM bson_aggregation_pipeline('in_sort_group_explain_db', command)
+    LOOP
+        optimized = array_append(optimized, result_document::text);
+    END LOOP;
+    SELECT array_agg(value ORDER BY value)
+    INTO optimized
+    FROM unnest(optimized) value;
+
+    RETURN QUERY
+    SELECT test_name,
+           optimized IS NOT DISTINCT FROM baseline_tid_skip,
+           optimized IS NOT DISTINCT FROM baseline_wrapper_off,
+           optimized_plan LIKE '%DocumentDBApiDistinctQueryScan%',
+           optimized_plan LIKE '%numGroupKeyPaths%',
+           coalesce(array_length(optimized, 1), 0);
+END;
+$$;
+
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableNewWithExprAccumulators TO on;
+SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
+SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
+SET LOCAL documentdb_core.enableWriteDocumentsInRepath TO on;
+SET LOCAL documentdb_api.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.enableExplainScanIndexCosts TO off;
+
+ANALYZE documentdb_data.documents_27120001;
+
+SELECT documentdb_test_helpers.run_explain_and_trim($explain$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document
+FROM bson_aggregation_pipeline(
+    'in_sort_group_explain_db',
+    '{
+        "aggregate": "in_sort_group_explain",
+        "pipeline": [
+            {
+                "$match": {
+                    "effectiveAt": {
+                        "$lte": { "$date": { "$numberLong": "1704326400000" } }
+                    },
+                    "assetCode": {
+                        "$in": [
+                            "asset-0", "asset-1", "asset-2", "asset-3",
+                            "asset-0", "asset-1", "asset-2", "asset-3"
+                        ]
+                    }
+                }
+            },
+            {
+                "$sort": {
+                    "assetCode": 1,
+                    "effectiveAt": 1,
+                    "recordedAt": -1
+                }
+            },
+            {
+                "$group": {
+                    "_id": {
+                        "assetCode": "$assetCode",
+                        "effectiveAt": "$effectiveAt"
+                    },
+                    "selected": { "$first": "$$ROOT" }
+                }
+            },
+            { "$replaceRoot": { "newRoot": "$selected" } }
+        ],
+        "cursor": {}
+    }')
+$explain$, p_ignore_heap_fetches := true);
+
+-- Multiple $in search entries, a range entry, compound group keys, and an
+-- ordered accumulator must produce the same documents with both skip paths.
+SELECT * FROM pg_temp.compare_ordered_group_first(
+    'multiple search entries and compound group',
+    '{
+        "aggregate": "in_sort_group_explain",
+        "hint": "assetCode_1_effectiveAt_-1_recordedAt_-1",
+        "pipeline": [
+            {
+                "$match": {
+                    "effectiveAt": {
+                        "$lte": { "$date": { "$numberLong": "1704326400000" } }
+                    },
+                    "assetCode": {
+                        "$in": [ "asset-0", "asset-1", "asset-2", "asset-3" ]
+                    }
+                }
+            },
+            { "$sort": { "assetCode": 1, "effectiveAt": 1, "recordedAt": -1 } },
+            {
+                "$group": {
+                    "_id": {
+                        "assetCode": "$assetCode",
+                        "effectiveAt": "$effectiveAt"
+                    },
+                    "selected": { "$first": "$$ROOT" }
+                }
+            }
+        ],
+        "cursor": {}
+    }');
+
+ROLLBACK;
+
+CALL documentdb_api.drop_indexes(
+    'in_sort_group_explain_db',
+    '{ "dropIndexes": "in_sort_group_explain", "index": "assetCode_1_effectiveAt_-1_recordedAt_-1" }');
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'in_sort_group_explain_db',
+    '{ "createIndexes": "in_sort_group_explain", "indexes": [
+        {
+            "key": { "assetCode": -1, "effectiveAt": -1, "recordedAt": -1 },
+            "name": "assetCode_-1_effectiveAt_-1_recordedAt_-1"
+        }
+    ] }',
+    true);
+
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableNewWithExprAccumulators TO on;
+SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
+SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
+SET LOCAL documentdb_core.enableWriteDocumentsInRepath TO on;
+SET LOCAL documentdb_api.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.enableExplainScanIndexCosts TO off;
+
+ANALYZE documentdb_data.documents_27120001;
+
+SELECT documentdb_test_helpers.run_explain_and_trim($explain$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document
+FROM bson_aggregation_pipeline(
+    'in_sort_group_explain_db',
+    '{
+        "aggregate": "in_sort_group_explain",
+        "pipeline": [
+            {
+                "$match": {
+                    "effectiveAt": {
+                        "$lte": { "$date": { "$numberLong": "1704326400000" } }
+                    },
+                    "assetCode": {
+                        "$in": [
+                            "asset-0", "asset-1", "asset-2", "asset-3",
+                            "asset-0", "asset-1", "asset-2", "asset-3"
+                        ]
+                    }
+                }
+            },
+            {
+                "$sort": {
+                    "assetCode": 1,
+                    "effectiveAt": 1,
+                    "recordedAt": -1
+                }
+            },
+            {
+                "$group": {
+                    "_id": {
+                        "assetCode": "$assetCode",
+                        "effectiveAt": "$effectiveAt"
+                    },
+                    "selected": { "$first": "$$ROOT" }
+                }
+            },
+            { "$replaceRoot": { "newRoot": "$selected" } }
+        ],
+        "cursor": {}
+    }')
+$explain$, p_ignore_heap_fetches := true);
+
+ROLLBACK;
+
+CALL documentdb_api.drop_indexes(
+    'in_sort_group_explain_db',
+    '{ "dropIndexes": "in_sort_group_explain", "index": "assetCode_-1_effectiveAt_-1_recordedAt_-1" }');
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'in_sort_group_explain_db',
+    '{ "createIndexes": "in_sort_group_explain", "indexes": [
+        {
+            "key": { "tenant": 1, "assetCode": 1, "recordedAt": -1, "amount": 1 },
+            "name": "tenant_1_assetCode_1_recordedAt_-1_amount_1"
+        }
+    ] }',
+    true);
+
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableNewWithExprAccumulators TO on;
+SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
+SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
+SET LOCAL documentdb_core.enableWriteDocumentsInRepath TO on;
+SET LOCAL documentdb_api.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.enableExplainScanIndexCosts TO off;
+
+-- Equality prefixes before the group key must be preserved by key skipping.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'in_sort_group_explain_db',
+    '{
+        "aggregate": "in_sort_group_explain",
+        "pipeline": [
+            { "$match": { "tenant": "tenant-1" } },
+            { "$sort": { "assetCode": 1, "recordedAt": -1 } },
+            {
+                "$group": {
+                    "_id": "$assetCode",
+                    "selected": { "$first": "$$ROOT" }
+                }
+            }
+        ],
+        "cursor": {}
+    }');
+
+-- The range on the trailing index path and the residual effectiveAt filter
+-- must be applied before advancing to the next group.
+SELECT * FROM pg_temp.compare_ordered_group_first(
+    'trailing range and residual filter',
+    '{
+        "aggregate": "in_sort_group_explain",
+        "hint": "tenant_1_assetCode_1_recordedAt_-1_amount_1",
+        "pipeline": [
+            {
+                "$match": {
+                    "tenant": "tenant-1",
+                    "amount": { "$gte": 250, "$lte": 950 },
+                    "effectiveAt": {
+                        "$lte": { "$date": { "$numberLong": "1704240000000" } }
+                    }
+                }
+            },
+            { "$sort": { "assetCode": 1, "recordedAt": -1 } },
+            {
+                "$group": {
+                    "_id": "$assetCode",
+                    "selected": { "$first": "$$ROOT" }
+                }
+            }
+        ],
+        "cursor": {}
+    }');
+
+ROLLBACK;
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'in_sort_group_explain_db',
+    '{ "createIndexes": "in_sort_group_explain", "indexes": [
+        {
+            "key": {
+                "assetCode": 1,
+                "tenant": 1,
+                "effectiveAt": -1,
+                "recordedAt": -1,
+                "amount": 1
+            },
+            "name": "assetCode_1_tenant_1_effectiveAt_-1_recordedAt_-1_amount_1"
+        }
+    ] }',
+    true);
+
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableNewWithExprAccumulators TO on;
+SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
+SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
+SET LOCAL documentdb_core.enableWriteDocumentsInRepath TO on;
+SET LOCAL documentdb_api.forceUseIndexIfAvailable TO on;
+
+-- An equality-constrained path between compound group paths must remain part
+-- of the preserved index prefix when the trailing suffix is skipped.
+SELECT * FROM pg_temp.compare_ordered_group_first(
+    'interleaved equality and trailing range',
+    '{
+        "aggregate": "in_sort_group_explain",
+        "hint": "assetCode_1_tenant_1_effectiveAt_-1_recordedAt_-1_amount_1",
+        "pipeline": [
+            {
+                "$match": {
+                    "tenant": "tenant-1",
+                    "amount": { "$gte": 200, "$lte": 1000 }
+                }
+            },
+            { "$sort": { "assetCode": 1, "effectiveAt": 1, "recordedAt": -1 } },
+            {
+                "$group": {
+                    "_id": {
+                        "assetCode": "$assetCode",
+                        "effectiveAt": "$effectiveAt"
+                    },
+                    "selected": { "$first": "$$ROOT" }
+                }
+            }
+        ],
+        "cursor": {}
+    }');
+
+ROLLBACK;
+
+SELECT documentdb_api.drop_collection('in_sort_group_explain_db',
+                                      'in_sort_group_explain');
+
+SELECT COUNT(documentdb_api.insert_one(
+    'in_sort_group_explain_db',
+    'ordered_group_stress',
+    format(
+        '{ "_id": %s, "groupKey": "group-%s", "sortKey": %s, "trail": %s, "keep": %s }',
+        i,
+        i % 16,
+        (i * 17) % 251,
+        i % 29,
+        CASE WHEN i % 5 = 0 THEN 'true' ELSE 'false' END)::bson))
+FROM generate_series(1, 800) AS i;
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'in_sort_group_explain_db',
+    '{ "createIndexes": "ordered_group_stress", "indexes": [
+        {
+            "key": { "groupKey": 1, "sortKey": -1, "_id": 1, "trail": 1 },
+            "name": "groupKey_1_sortKey_-1_id_1_trail_1"
+        }
+    ] }',
+    true);
+
+UPDATE documentdb_data.documents_27120002
+SET document = document
+WHERE ctid IN (
+    SELECT ctid
+    FROM documentdb_data.documents_27120002
+    ORDER BY ctid
+    LIMIT 160
+);
+
+DELETE FROM documentdb_data.documents_27120002
+WHERE ctid IN (
+    SELECT ctid
+    FROM documentdb_data.documents_27120002
+    ORDER BY ctid
+    LIMIT 40
+);
+
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableNewWithExprAccumulators TO on;
+SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
+SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
+SET LOCAL documentdb_core.enableWriteDocumentsInRepath TO on;
+SET LOCAL documentdb_api.forceUseIndexIfAvailable TO on;
+
+-- Exercise a page-spanning scan after updates and deletes have left dead
+-- index tuples, with a trailing range and a residual filter.
+SELECT * FROM pg_temp.compare_ordered_group_first(
+    'trailing range with dead tuples',
+    '{
+        "aggregate": "ordered_group_stress",
+        "hint": "groupKey_1_sortKey_-1_id_1_trail_1",
+        "pipeline": [
+            {
+                "$match": {
+                    "trail": { "$gte": 8, "$lte": 22 },
+                    "keep": true
+                }
+            },
+            { "$sort": { "groupKey": 1, "sortKey": -1, "_id": 1 } },
+            {
+                "$group": {
+                    "_id": "$groupKey",
+                    "selected": { "$first": "$$ROOT" }
+                }
+            }
+        ],
+        "cursor": {}
+    }');
+
+ROLLBACK;
+
+SELECT documentdb_api.drop_collection('in_sort_group_explain_db',
+                                      'ordered_group_stress');

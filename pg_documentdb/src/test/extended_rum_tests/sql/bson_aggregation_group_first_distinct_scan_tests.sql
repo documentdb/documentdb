@@ -45,6 +45,9 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
   '{ "createIndexes": "grp_first", "indexes": [{ "key": { "x": 1, "y": 1 }, "name": "idx_xy" }] }', true);
 
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
+  '{ "createIndexes": "grp_first", "indexes": [{ "key": { "x": 1, "y": -1 }, "name": "idx_x_y_desc" }] }', true);
+
 -- Wrong-index target for C10.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
   '{ "createIndexes": "grp_first", "indexes": [{ "key": { "y": 1 }, "name": "idx_y" }] }', true);
@@ -599,9 +602,8 @@ ROLLBACK;
 -- With enableSortPushToAccumulatorWithPrefix ON, the rewrite drops the
 -- prefix (group key already covered by idx_x) and pushes the suffix into
 -- the accumulator as bsonfirstonsorted(... ORDER BY bson_orderby(...)).
--- The OID is in our allowlist, so the OID check passes; aggref->aggorder
--- is non-NIL, so the walker rejects on the aggorder guard. This case
--- exercises the second guard rather than the OID check.
+-- The aggregate is eligible, but idx_x does not provide the y suffix order,
+-- so path-level validation rejects the distinct wrapper.
 --
 -- Loudness: the sort-aware result for $sort: { x: 1, y: -1 } is
 -- a -> 60, b -> 80, c -> 70. A regression where the walker missed
@@ -627,6 +629,113 @@ SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
     { "$sort": { "x": 1, "y": -1 } },
     { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+ROLLBACK;
+
+-- ============================================================
+-- C4b: The same ordered $first shape on an index that supplies both
+-- the group prefix and the accumulator suffix. On PostgreSQL 16 and later,
+-- path-level validation accepts the wrapper when both keys are exposed.
+-- Disable key-level skipping so this case covers wrapper eligibility only.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SET LOCAL documentdb.enable_distinct_scan_for_ordered_group_first TO off;
+SET LOCAL documentdb.enable_distinct_skip_scan_on_key TO off;
+SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
+
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x_y_desc", "pipeline": [
+    { "$sort": { "x": 1, "y": -1 } },
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SET LOCAL documentdb.enable_distinct_skip_scan_on_key TO off;
+SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
+
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x_y_desc", "pipeline": [
+    { "$sort": { "x": 1, "y": -1 } },
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }');
+
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x_y_desc", "pipeline": [
+    { "$sort": { "x": 1, "y": -1 } },
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+ROLLBACK;
+
+-- ============================================================
+-- C4c: Two ordered $first accumulators with two group keys. idx_xy
+-- supplies the group ordering in its forward direction but not the
+-- trailing _id order required by both accumulators. Path-level validation
+-- must reject the distinct wrapper.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
+
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_xy", "pipeline": [
+    { "$sort": { "x": 1, "y": 1, "_id": 1 } },
+    { "$group": {
+        "_id": { "x": "$x", "y": "$y" },
+        "firstY": { "$first": "$y" },
+        "firstId": { "$first": "$_id" }
+    } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+ROLLBACK;
+
+-- ============================================================
+-- C4d: The same incomplete ordering while scanning idx_xy backward.
+-- Reversing every requested direction still leaves the trailing _id
+-- order unserved, so the distinct wrapper must remain ineligible.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
+
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_xy", "pipeline": [
+    { "$sort": { "x": -1, "y": -1, "_id": -1 } },
+    { "$group": {
+        "_id": { "x": "$x", "y": "$y" },
+        "firstY": { "$first": "$y" },
+        "firstId": { "$first": "$_id" }
+    } },
     { "$sort": { "_id": 1 } }
   ] }')
 $Q$, p_ignore_heap_fetches := true);

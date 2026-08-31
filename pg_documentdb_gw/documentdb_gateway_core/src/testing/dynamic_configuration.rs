@@ -13,8 +13,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use bson::{rawbson, RawBson};
 
 use crate::configuration::{
-    DynamicConfiguration, SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS,
-    SOCKET_CONNECTION_IDLE_TIMEOUT_KEY,
+    DynamicConfiguration, MAX_REQUEST_TIMEOUT_DEFAULT_SEC, MAX_REQUEST_TIMEOUT_SEC_KEY,
+    SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS, SOCKET_CONNECTION_IDLE_TIMEOUT_KEY,
+    TRANSACTION_TIMEOUT_DEFAULT_SEC, TRANSACTION_TIMEOUT_SEC_KEY,
 };
 
 const UNSET_U64: u64 = u64::MAX;
@@ -99,8 +100,20 @@ impl DynamicConfiguration for TestDynamicConfiguration {
         self.allow_transaction_snapshot.load(Ordering::Relaxed)
     }
 
+    fn max_request_timeout_sec(&self) -> u64 {
+        self.get_u64(MAX_REQUEST_TIMEOUT_SEC_KEY, MAX_REQUEST_TIMEOUT_DEFAULT_SEC)
+    }
+
+    fn transaction_timeout_sec(&self) -> u64 {
+        self.get_u64(TRANSACTION_TIMEOUT_SEC_KEY, TRANSACTION_TIMEOUT_DEFAULT_SEC)
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+
+    fn enable_request_metrics(&self) -> bool {
+        false
     }
 }
 

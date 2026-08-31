@@ -309,8 +309,7 @@ static Datum * ProcessStandardCompositeQueryEntries(int32_t totalPathTerms,
 													uint32_t *indexPathLengths,
 													int8_t *sortOrders, bool
 													isOrderedScan);
-static Datum * ProcessOrderedCompositeQueryEntries(int32_t totalPathTerms,
-												   IndexTermCreateMetadata *
+static Datum * ProcessOrderedCompositeQueryEntries(IndexTermCreateMetadata *
 												   singlePathMetadata,
 												   IndexTermCreateMetadata *
 												   compositeMetadata,
@@ -614,6 +613,7 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	{
 		metaInfo->dedupState = variableBounds.dedupState;
 	}
+	metaInfo->numGroupKeyPaths = variableBounds.numGroupKeyPaths;
 	metaInfo->isOrderedScan = (*searchMode == RUM_SEARCH_MODE_ORDERED ||
 							   *searchMode == RUM_SEARCH_MODE_ORDERED_REVERSE ||
 							   *searchMode == RUM_ORDERED_ANY_SCAN);
@@ -680,6 +680,7 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	 * with each of the boundaries.
 	 */
 	int32_t totalPathTerms = 1;
+	bool termPathsOverflowed = false;
 
 	/* These are the scan keys to validate in consistent checks */
 	runData->metaInfo->numScanKeys = list_length(variableBounds.variableBoundsList);
@@ -702,6 +703,7 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 			{
 				/* If one scanKey is unsatisfiable then the query is not satisfiable */
 				totalPathTerms = 0;
+				termPathsOverflowed = false;
 			}
 
 			/* Insert the index into the active key */
@@ -721,7 +723,14 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 											 (list_length(
 												  pathScanTermMap[i].scanKeyIndexList) >
 											  1);
-				totalPathTerms = totalPathTerms * pathScanTermMap[i].numTermsPerPath;
+				if (!termPathsOverflowed &&
+					totalPathTerms > 0 &&
+					__builtin_mul_overflow(totalPathTerms,
+										   pathScanTermMap[i].numTermsPerPath,
+										   &totalPathTerms))
+				{
+					termPathsOverflowed = true;
+				}
 			}
 		}
 	}
@@ -739,10 +748,11 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	 */
 	Datum *entries;
 	if (supportsOrderedOperatorScans &&
-		MaxNonOrderedTermScanThreshold > 0 &&
-		totalPathTerms > MaxNonOrderedTermScanThreshold)
+		((MaxNonOrderedTermScanThreshold > 0 &&
+		  totalPathTerms > MaxNonOrderedTermScanThreshold) ||
+		 termPathsOverflowed))
 	{
-		entries = ProcessOrderedCompositeQueryEntries(totalPathTerms, &singlePathMetadata,
+		entries = ProcessOrderedCompositeQueryEntries(&singlePathMetadata,
 													  &compositeMetadata, nentries,
 													  partialmatch, extra_data,
 													  runData, &variableBounds,
@@ -751,6 +761,10 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 													  hasArrayPaths,
 													  metaInfo->isOrderedScan,
 													  searchMode);
+	}
+	else if (termPathsOverflowed)
+	{
+		ereport(ERROR, (errmsg("Query generates too many index terms to process")));
 	}
 	else
 	{
@@ -765,7 +779,7 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 			ReportFeatureUsage(FEATURE_QUERY_ORDERED_SAOP_50_TERMS);
 		}
 
-		entries = ProcessStandardCompositeQueryEntries(totalPathTerms,
+		entries = ProcessStandardCompositeQueryEntries((int32_t) totalPathTerms,
 													   &singlePathMetadata,
 													   &compositeMetadata,
 													   pathScanTermMap, nentries,
@@ -902,8 +916,7 @@ CompareCompositeIndexBoundsForOrderedScan(const void *a, const void *b,
  * revs the ordered path data to keep the keys moving forward.
  */
 static Datum *
-ProcessOrderedCompositeQueryEntries(int32_t totalPathTerms,
-									IndexTermCreateMetadata *singlePathMetadata,
+ProcessOrderedCompositeQueryEntries(IndexTermCreateMetadata *singlePathMetadata,
 									IndexTermCreateMetadata *compositeMetadata,
 									int32_t *nentries, bool **partialmatch,
 									Pointer **extra_data,
@@ -2560,9 +2573,11 @@ CompositeIndexTermGenerateDistinctSkipBound(PG_FUNCTION_ARGS)
 	Pointer extraData = PG_GETARG_POINTER(3);
 	int32_t orderByPathCount = PG_NARGS() > 4 ? PG_GETARG_INT32(4) : 0;
 	Datum orderByQuery = PG_NARGS() > 5 ? PG_GETARG_DATUM(5) : (Datum) 0;
+	int32_t totalSearchEntries = PG_NARGS() > 6 ? PG_GETARG_INT32(6) : 1;
 
 	CompositeQueryRunData *runData = (CompositeQueryRunData *) extraData;
 	int32_t numIndexPaths = runData->metaInfo->numIndexPaths;
+	int32_t numGroupKeyPaths = runData->metaInfo->numGroupKeyPaths;
 
 	/* The distinct skip-scan re-seeks the ordered scan to a synthetic term that
 	 * pins the order-by prefix and pushes the trailing suffix past the end of
@@ -2576,10 +2591,17 @@ CompositeIndexTermGenerateDistinctSkipBound(PG_FUNCTION_ARGS)
 		return (Datum) 0;
 	}
 
+	if (totalSearchEntries != 1 && numGroupKeyPaths <= 0)
+	{
+		PG_FREE_IF_COPY(compareKeyValue, 0);
+		return (Datum) 0;
+	}
+
 	/* Without the order-by query key we cannot tell which index path drives the
 	 * scan, so we cannot know which trailing paths are safe to skip. Fall back
 	 * to the per-TID skip. */
-	if (orderByPathCount <= 0 || orderByQuery == (Datum) 0)
+	if (numGroupKeyPaths <= 0 &&
+		(orderByPathCount <= 0 || orderByQuery == (Datum) 0))
 	{
 		PG_FREE_IF_COPY(compareKeyValue, 0);
 		return (Datum) 0;
@@ -2619,11 +2641,15 @@ CompositeIndexTermGenerateDistinctSkipBound(PG_FUNCTION_ARGS)
 	 * suffix that is safe to skip. Computing this from the first order-by path
 	 * plus the order-by count would wrongly treat an interleaved order-by
 	 * column as skippable and prune distinct values. */
-	pgbsonelement querySortElement;
-	int orderByIndexPath = GetOrderByIndexPath(DatumGetPgBson(orderByQuery),
-											   indexPaths, indexPathLengths,
-											   numPaths, &querySortElement);
-	int32_t keepPathCount = orderByIndexPath + 1;
+	int32_t keepPathCount = numGroupKeyPaths;
+	if (keepPathCount <= 0)
+	{
+		pgbsonelement querySortElement;
+		int orderByIndexPath = GetOrderByIndexPath(DatumGetPgBson(orderByQuery),
+												   indexPaths, indexPathLengths,
+												   numPaths, &querySortElement);
+		keepPathCount = orderByIndexPath + 1;
+	}
 
 	/* Nothing to skip over if the last order-by column already reaches the last
 	 * index path. Fall back to the per-TID skip. */

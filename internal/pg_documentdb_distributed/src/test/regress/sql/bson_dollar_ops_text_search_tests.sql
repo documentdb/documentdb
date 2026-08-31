@@ -118,6 +118,13 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_dolla
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_dollar_ops_text_search", "cursor": {}, "pipeline": [ { "$match": { "$text": { "$search": "Manzana baya cosechar" } } }, { "$sort": { "_id": 1 } } ] }');
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_dollar_ops_text_search", "cursor": {}, "pipeline": [ { "$match": { "$text": { "$search": "Manzana baya cosechar" } } }, { "$project": { "_id": 1, "titular": 1, "rank": { "$meta": "textScore" } } }, { "$sort": { "_id": 1 } } ] }');
 
+-- $meta:"textScore" sort through the aggregation pipeline on a sharded
+-- collection. The per-shard query pulls the order-by meta expression up into
+-- the worker target list (the sort runs on the coordinator), so the text index
+-- options and query arguments must be filled in during planning on each worker.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_dollar_ops_text_search", "cursor": {}, "pipeline": [ { "$match": { "$text": { "$search": "Manzana baya cosechar" } } }, { "$sort": { "score": { "$meta": "textScore" }, "_id": 1 } } ] }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_dollar_ops_text_search", "cursor": {}, "pipeline": [ { "$match": { "$text": { "$search": "Manzana baya cosechar" } } }, { "$project": { "_id": 1, "titular": 1, "score": { "$meta": "textScore" } } }, { "$sort": { "score": { "$meta": "textScore" }, "_id": 1 } } ] }');
+
 -- now add sort
 SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana Cosechando" } }' ORDER BY bson_orderby(document, '{ "score": {"$meta": "textScore"} }') DESC;
 

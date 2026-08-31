@@ -621,6 +621,7 @@ dependencies = [
  "either",
  "hex",
  "metrics",
+ "nacelle",
  "once_cell",
  "openssl",
  "rand 0.10.2",
@@ -1523,6 +1524,71 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "nacelle"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f7c5d960a6a874e31fb2b695f0bcb3c7bda805f5e41915e5f862aea5c459f4f"
+dependencies = [
+ "bytes",
+ "nacelle-codec",
+ "nacelle-core",
+ "nacelle-openssl",
+ "nacelle-tcp",
+ "tokio",
+]
+
+[[package]]
+name = "nacelle-codec"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4500a5cbfed423a09944241d78e3257de7fdf867d395d25b057e1f515f580890"
+dependencies = [
+ "bytes",
+ "tokio",
+]
+
+[[package]]
+name = "nacelle-core"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a9d93bb9d074e6df80fb1f03e3ce6242ac8316fc213c899f53c1eed3875c6601"
+dependencies = [
+ "bytes",
+ "futures-core",
+ "metrics",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "nacelle-openssl"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "897154359561869cebcc3f198f4bff15ca0e6950565d31620bebbbff4e12de66"
+dependencies = [
+ "nacelle-core",
+ "openssl",
+]
+
+[[package]]
+name = "nacelle-tcp"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "768db68478e061051d66f68e3c069c2af7c7a8b691fe6a4b33b553588f3c0810"
+dependencies = [
+ "bytes",
+ "nacelle-codec",
+ "nacelle-core",
+ "nacelle-openssl",
+ "openssl",
+ "socket2",
+ "tokio",
+ "tokio-openssl",
+ "tracing",
 ]
 
 [[package]]
@@ -2545,9 +2611,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.52.1"
+version = "1.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b67dee974fe86fd92cc45b7a95fdd2f99a36a6d7b0d431a231178d3d670bbcc6"
+checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
 dependencies = [
  "bytes",
  "libc",

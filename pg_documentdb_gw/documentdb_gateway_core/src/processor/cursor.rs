@@ -378,7 +378,7 @@ pub async fn process_get_more(
     .await?;
 
     if let Some(continuation) = final_continuation {
-        connection_context.add_cursor(
+        connection_context.return_cursor(
             cursor_connection,
             Cursor {
                 cursor_id: CursorId::from(id),
@@ -389,6 +389,13 @@ pub async fn process_get_more(
             cursor_timeout,
             lsid,
             transaction_number,
+            caller,
+        );
+    } else {
+        connection_context.close_cursor(
+            lsid.as_ref(),
+            transaction_number,
+            CursorId::from(id),
             caller,
         );
     }

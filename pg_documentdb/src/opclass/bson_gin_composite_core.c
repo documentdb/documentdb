@@ -3073,6 +3073,11 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 		indexBounds->dedupState = params->dedupState;
 	}
 
+	if (params->numGroupKeyPaths > 0)
+	{
+		indexBounds->numGroupKeyPaths = params->numGroupKeyPaths;
+	}
+
 	if (params->isMergeSortInPrefixMarker)
 	{
 		/* The $in-prefix merge-sort marker is a planner-only signal that must be

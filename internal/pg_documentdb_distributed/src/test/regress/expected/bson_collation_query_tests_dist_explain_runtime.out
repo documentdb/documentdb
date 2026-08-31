@@ -93,6 +93,186 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
 (10 rows)
 
 END;
+-- distinct with collation gathers shard rows before semantic deduplication.
+SELECT documentdb_api.insert_one('coll_q_runtime_dist_explain_db', 'coll_distinct_d', '{ "_id": 1, "a": "cafe", "n": { "a": "cafe" }, "arr": [ "cafe", "tea" ] }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_runtime_dist_explain_db', 'coll_distinct_d', '{ "_id": 2, "a": "CAFE", "n": { "a": "CAFE" }, "arr": [ "CAFE" ] }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_runtime_dist_explain_db', 'coll_distinct_d', '{ "_id": 3, "a": "tea", "n": { "a": "tea" }, "arr": [ "TEA" ] }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection(
+  'coll_q_runtime_dist_explain_db', 'coll_distinct_d', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+  'coll_q_runtime_dist_explain_db',
+  '{ "distinct": "coll_distinct_d", "key": "a", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                             
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   ->  Distributed Subplan 65_1
+         ->  Unique
+               Output: remote_scan.document
+               ->  Sort
+                     Output: remote_scan.document
+                     Sort Key: remote_scan.document USING <<<
+                     ->  Custom Scan (Citus Adaptive)
+                           Output: remote_scan.document
+                           Task Count: 8
+                           Tasks Shown: One of 8
+                           ->  Task
+                                 Query: SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text, 'en-u-ks-level1'::text) AS document FROM documentdb_data.documents_95682_95680014 collection WHERE documentdb_api_internal.bson_dollar_fullscan(document, '{ "a" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+                                 Node: host=localhost port=58070 dbname=regression
+                                 ->  Unique
+                                       Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text, 'en-u-ks-level1'::text))
+                                       ->  Sort
+                                             Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text, 'en-u-ks-level1'::text))
+                                             Sort Key: (documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level1'::text)) USING <<<
+                                             ->  ProjectSet
+                                                   Output: documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text, 'en-u-ks-level1'::text)
+                                                   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                                                         Output: document
+                                                         ->  Seq Scan on documentdb_data.documents_95682_95680014 collection
+                                                               Output: document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('65_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_0
+         Node: host=localhost port=58070 dbname=regression
+         ->  Aggregate
+               Output: documentdb_api_catalog.bson_distinct_agg(intermediate_result.document)
+               ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
+                     Output: intermediate_result.document
+                     Function Call: read_intermediate_result('65_1'::text, 'binary'::citus_copy_format)
+(36 rows)
+
+END;
+-- Dotted paths preserve the collated distinct operators after distribution rewrites.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+  'coll_q_runtime_dist_explain_db',
+  '{ "distinct": "coll_distinct_d", "key": "n.a", "query": { "a": "CAFE" }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                                                                                                                                                                                                run_explain_and_trim                                                                                                                                                                                                                                                
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   ->  Distributed Subplan 67_1
+         ->  Unique
+               Output: remote_scan.document
+               ->  Sort
+                     Output: remote_scan.document
+                     Sort Key: remote_scan.document USING <<<
+                     ->  Custom Scan (Citus Adaptive)
+                           Output: remote_scan.document
+                           Task Count: 8
+                           Tasks Shown: One of 8
+                           ->  Task
+                                 Query: SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(document, 'n.a'::text, 'en-u-ks-level1'::text) AS document FROM documentdb_data.documents_95682_95680014 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "a" : "CAFE", "collation" : "en-u-ks-level1" }'::documentdb_core.bsonquery) AND documentdb_api_internal.bson_dollar_fullscan(document, '{ "n.a" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson))
+                                 Node: host=localhost port=58070 dbname=regression
+                                 ->  Unique
+                                       Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'n.a'::text, 'en-u-ks-level1'::text))
+                                       ->  Sort
+                                             Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'n.a'::text, 'en-u-ks-level1'::text))
+                                             Sort Key: (documentdb_api_catalog.bson_distinct_unwind(collection.document, 'n.a'::text, 'en-u-ks-level1'::text)) USING <<<
+                                             ->  ProjectSet
+                                                   Output: documentdb_api_catalog.bson_distinct_unwind(document, 'n.a'::text, 'en-u-ks-level1'::text)
+                                                   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                                                         Output: document
+                                                         ->  Seq Scan on documentdb_data.documents_95682_95680014 collection
+                                                               Output: document
+                                                               Filter: (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "CAFE", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('67_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_1
+         Node: host=localhost port=58070 dbname=regression
+         ->  Aggregate
+               Output: documentdb_api_catalog.bson_distinct_agg(intermediate_result.document)
+               ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
+                     Output: intermediate_result.document
+                     Function Call: read_intermediate_result('67_1'::text, 'binary'::citus_copy_format)
+(37 rows)
+
+END;
+-- Array unwinding remains below coordinator-level semantic deduplication.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+  'coll_q_runtime_dist_explain_db',
+  '{ "distinct": "coll_distinct_d", "key": "arr", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                                                                                                                              run_explain_and_trim                                                                                                                                                                               
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   ->  Distributed Subplan 69_1
+         ->  Unique
+               Output: remote_scan.document
+               ->  Sort
+                     Output: remote_scan.document
+                     Sort Key: remote_scan.document USING <<<
+                     ->  Custom Scan (Citus Adaptive)
+                           Output: remote_scan.document
+                           Task Count: 8
+                           Tasks Shown: One of 8
+                           ->  Task
+                                 Query: SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(document, 'arr'::text, 'en-u-ks-level1'::text) AS document FROM documentdb_data.documents_95682_95680014 collection WHERE documentdb_api_internal.bson_dollar_fullscan(document, '{ "arr" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+                                 Node: host=localhost port=58070 dbname=regression
+                                 ->  Unique
+                                       Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'arr'::text, 'en-u-ks-level1'::text))
+                                       ->  Sort
+                                             Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'arr'::text, 'en-u-ks-level1'::text))
+                                             Sort Key: (documentdb_api_catalog.bson_distinct_unwind(collection.document, 'arr'::text, 'en-u-ks-level1'::text)) USING <<<
+                                             ->  ProjectSet
+                                                   Output: documentdb_api_catalog.bson_distinct_unwind(document, 'arr'::text, 'en-u-ks-level1'::text)
+                                                   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                                                         Output: document
+                                                         ->  Seq Scan on documentdb_data.documents_95682_95680014 collection
+                                                               Output: document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('69_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_0
+         Node: host=localhost port=58070 dbname=regression
+         ->  Aggregate
+               Output: documentdb_api_catalog.bson_distinct_agg(intermediate_result.document)
+               ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
+                     Output: intermediate_result.document
+                     Function Call: read_intermediate_result('69_1'::text, 'binary'::citus_copy_format)
+(36 rows)
+
+END;
 -- count command with collation fans out and scans each shard
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;

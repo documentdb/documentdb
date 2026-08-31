@@ -11,6 +11,7 @@ categories.workspace = true
 
 [features]
 default = []
+runtime-benchmarks = []
 # Compiles request span creation and inbound W3C parent extraction.
 request-tracing = []
 # Compiles outbound PostgreSQL SQLCommenter generation.
@@ -33,6 +34,7 @@ dyn-clone.workspace = true
 either.workspace = true
 hex.workspace = true
 metrics.workspace = true
+nacelle.workspace = true
 once_cell.workspace = true
 openssl.workspace = true
 rand.workspace = true
@@ -52,6 +54,16 @@ whoami.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
+
+[[bench]]
+name = "runtime_hot_path"
+harness = false
+required-features = ["runtime-benchmarks"]
+
+[[bench]]
+name = "runtime_comparison"
+harness = false
+required-features = ["runtime-benchmarks"]
 
 [[bench]]
 name = "hot_path_bench"

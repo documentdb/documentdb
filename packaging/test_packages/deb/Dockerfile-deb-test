@@ -54,5 +54,7 @@ COPY . /test-install
 RUN dpkg -i ${DEB_PACKAGE_REL_PATH}
 
 COPY packaging/test_packages/test-install-entrypoint.sh /usr/local/bin/test-install-entrypoint.sh
+COPY packaging/test_packages/report-test-failure.sh /usr/local/bin/report-test-failure.sh
+RUN chmod +x /usr/local/bin/test-install-entrypoint.sh /usr/local/bin/report-test-failure.sh
 
 ENTRYPOINT ["test-install-entrypoint.sh"]

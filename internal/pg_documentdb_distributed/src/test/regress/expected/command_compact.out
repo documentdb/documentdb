@@ -67,9 +67,9 @@ SELECT documentdb_api.compact('{"compact": "compact_test", "$db": "commands_comp
 (1 row)
 
 SELECT documentdb_api.compact('{"compact": "compact_test", "$db": "commands_compact_db", "dryRun": false, "mode": "full"}');
-                                    compact                                     
+                                       compact                                        
 ---------------------------------------------------------------------
- { "ok" : { "$numberDouble" : "1.0" }, "bytesFreed" : { "$numberLong" : "0" } }
+ { "ok" : { "$numberDouble" : "1.0" }, "bytesFreed" : { "$numberLong" : "4128768" } }
 (1 row)
 
 SELECT documentdb_api.coll_stats('commands_compact_db','compact_test')->>'storageSize' as after_compact_size \gset
@@ -133,9 +133,9 @@ SELECT documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "comma
 (1 row)
 
 SELECT documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": false, "mode": "full"}');
-                                    compact                                     
+                                       compact                                        
 ---------------------------------------------------------------------
- { "ok" : { "$numberDouble" : "1.0" }, "bytesFreed" : { "$numberLong" : "0" } }
+ { "ok" : { "$numberDouble" : "1.0" }, "bytesFreed" : { "$numberLong" : "4308992" } }
 (1 row)
 
 SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->>'storageSize' AS sharded_after_compact_size \gset
@@ -191,6 +191,7 @@ ANALYZE VERBOSE documentdb_data.documents_24323;
 INFO:  analyzing "documentdb_data.documents_24323"
 INFO:  "documents_24323": scanned 0 of 0 pages, containing 0 live rows and 0 dead rows; 0 rows in sample, 0 estimated total rows
 SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->>'storageSize' AS big_relpages_before_compact \gset
+SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->>'totalSize' AS big_total_size_before_compact \gset
 -- set relpages to INT32_MAX - 1
 UPDATE pg_class
 SET relpages = 2147483646
@@ -201,8 +202,15 @@ SELECT (2147483640::bigint * 8 * 1024) as base_estimated_size \gset
 -- These tests can produce different size, so a better way to check would be to assume the estimated size is very high
 SELECT (documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": true}')->>'estimatedBytesFreed')::bigint as big_free_estimated_size \gset
 SELECT (documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": false, "mode": "full"}')->>'bytesFreed')::bigint as big_free_byte_size \gset
+-- dryRun still answers from the statistics based estimate, so the inflated relpages
+-- above are reflected in estimatedBytesFreed. A non dry run instead measures the
+-- relation files either side of the vacuum, so its bytesFreed must stay within the
+-- space the collection actually occupied and cannot be inflated by bogus statistics.
+-- The bound is totalSize rather than storageSize because bytesFreed accounts for
+-- index space too, which storageSize excludes.
 SELECT :big_free_estimated_size::bigint > :base_estimated_size::bigint as estimated_is_valid,
-       :big_free_byte_size::bigint > :base_estimated_size::bigint as actual_is_valid;
+       :big_free_byte_size::bigint > 0 AND
+       :big_free_byte_size::bigint <= :big_total_size_before_compact::bigint as actual_is_valid;
  estimated_is_valid | actual_is_valid 
 ---------------------------------------------------------------------
  t                  | t

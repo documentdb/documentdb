@@ -15,24 +15,24 @@ echo "=========================================="
 # Keep the internal directory out of the testing
 sed -i '/internal/d' Makefile
 
+# Verbose server-side error reporting for the temp instances pg_regress spins
+# up: every ereport then carries its SQLSTATE and originating
+# file:line:function, often identifying the failing C site straight from
+# postmaster.log. Server log only; pg_regress compares client output, so
+# expected results are unaffected.
+PG_SAMPLE_CONF="$(pg_config --sharedir)/postgresql.conf.sample"
+if [ -f "$PG_SAMPLE_CONF" ]; then
+    echo "log_error_verbosity = verbose" >> "$PG_SAMPLE_CONF"
+fi
+
 # Run the test
 adduser --disabled-password --gecos "" documentdb
 chown -R documentdb:documentdb .
 # Pass PG bin dir on PATH so TAP tests can locate initdb under `su`.
-# On failure, dump every postmaster.log so backend crashes (e.g. the segfault
-# cascade first seen against PG 18.6) leave a stack/stderr trail in the CI log
-# instead of only "server closed the connection unexpectedly" diffs.
+# On failure, report-test-failure.sh dumps the regression diffs and every
+# postmaster.log, so a backend crash leaves a real trail in the CI log instead
+# of only "server closed the connection unexpectedly" diffs.
 if ! su documentdb -c "PATH=\"$(pg_config --bindir):\$PATH\" make check"; then
-    echo "make check failed. Displaying any postmaster.log found:"
-    FOUND_LOGS=$(find /test-install -type f -name postmaster.log 2>/dev/null)
-    if [ -n "$FOUND_LOGS" ]; then
-        for LOG_FILE in $FOUND_LOGS; do
-            echo "=== Contents of $LOG_FILE ==="
-            cat "$LOG_FILE"
-            echo "==============================="
-        done
-    else
-        echo "No postmaster.log found under /test-install."
-    fi
+    report-test-failure.sh /test-install
     exit 1
 fi

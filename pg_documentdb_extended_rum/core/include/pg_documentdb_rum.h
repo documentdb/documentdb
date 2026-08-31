@@ -1187,7 +1187,6 @@ extern RumItem * rumGetBAEntry(BuildAccumulator *accum,
 extern PGDLLIMPORT int RumFuzzySearchLimit;
 extern PGDLLIMPORT bool RumDisableFastScan;
 extern PGDLLIMPORT bool RumEnableParallelIndexBuild;
-extern PGDLLIMPORT bool RumSkipRetryOnDeletePage;
 extern PGDLLIMPORT bool RumEnableSkipIntermediateEntry;
 extern PGDLLIMPORT bool RumPruneEmptyPages;
 extern PGDLLIMPORT bool RumTrackIncompleteSplit;

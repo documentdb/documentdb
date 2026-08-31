@@ -10,7 +10,7 @@ use std::{sync::Arc, time::Duration};
 
 use crate::{
     configuration::{DynamicConfiguration, SetupConfiguration},
-    context::{CursorStore, SessionManager, TransactionStore},
+    context::{CursorStore, SessionManager, SessionResourceMetrics, TransactionStore},
     postgres::{conn_mgmt::PoolManager, QueryCatalog},
     service::TlsProvider,
 };
@@ -21,7 +21,7 @@ pub struct ServiceContextInner {
     pub dynamic_configuration: Arc<dyn DynamicConfiguration>,
     pub connection_pool_manager: Arc<PoolManager>,
     pub tls_provider: TlsProvider,
-    pub request_metrics_enabled: bool,
+    request_metrics_enabled: bool,
     session_manager: SessionManager,
 }
 
@@ -39,12 +39,24 @@ impl ServiceContext {
         let request_metrics_enabled = setup_configuration
             .telemetry_settings()
             .request_metrics_enabled();
-        let timeout_secs = setup_configuration.transaction_timeout_secs();
-        let cursor_store = CursorStore::with_reaper(Arc::clone(&dynamic_configuration), true);
-        let transaction_store = TransactionStore::new(Duration::from_secs(timeout_secs));
+
+        // Session Resource Metrics Are Managed Separately
+        let session_resource_metrics =
+            SessionResourceMetrics::new(dynamic_configuration.enable_request_metrics());
+        let timeout_secs = dynamic_configuration.transaction_timeout_sec();
+        let cursor_store = CursorStore::with_reaper(
+            Arc::clone(&dynamic_configuration),
+            session_resource_metrics.clone(),
+            true,
+        );
+        let transaction_store = TransactionStore::new(
+            Duration::from_secs(timeout_secs),
+            session_resource_metrics.clone(),
+        );
         let session_manager = SessionManager::new(
             transaction_store,
             cursor_store,
+            session_resource_metrics,
             Duration::from_secs(timeout_secs) / 2,
         );
 
@@ -67,6 +79,11 @@ impl ServiceContext {
     #[must_use]
     pub fn transaction_store(&self) -> &TransactionStore {
         self.0.session_manager.transactions()
+    }
+
+    #[must_use]
+    pub fn session_manager(&self) -> &SessionManager {
+        &self.0.session_manager
     }
 
     #[must_use]

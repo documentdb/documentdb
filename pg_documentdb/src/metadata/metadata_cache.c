@@ -37,6 +37,7 @@
 #include "metadata/metadata_cache.h"
 #include "metadata/collection.h"
 #include "commands/defrem.h"
+#include "rbac_hooks.h"
 
 
 #define PG_EXTENSION_NAME_SCAN_NARGS 1
@@ -285,6 +286,9 @@ typedef struct DocumentDBApiOidCacheData
 
 	/* OID of the bson_orderby with collation function */
 	Oid BsonOrderByWithCollationFunctionId;
+
+	/* OID of the bson_orderby_meta function */
+	Oid BsonOrderByMetaFunctionId;
 
 	/* OID of the bson_orderby_index function */
 	Oid BsonOrderByIndexFunctionId;
@@ -815,6 +819,15 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the bson_aggregation_count function */
 	Oid ApiCatalogAggregationCountFunctionId;
 
+	/* OID of the bson_aggregation_update function */
+	Oid ApiCatalogAggregationUpdateFunctionId;
+
+	/* OID of the bson_aggregation_delete function */
+	Oid ApiCatalogAggregationDeleteFunctionId;
+
+	/* OID of the bson_aggregation_find_and_modify function */
+	Oid ApiCatalogAggregationFindAndModifyFunctionId;
+
 	/* OID of the bson_aggregation_distinct function */
 	Oid ApiCatalogAggregationDistinctFunctionId;
 
@@ -1133,6 +1146,9 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the bson_distinct_unwind function */
 	Oid BsonDistinctUnwindFunctionOid;
 
+	/* OID of the bson_distinct_unwind function with collation */
+	Oid BsonDistinctUnwindWithCollationFunctionOid;
+
 	/* OID of the bson_expression_partition_get function */
 	Oid BsonExpressionPartitionByFieldsGetFunctionOid;
 
@@ -1442,6 +1458,9 @@ InvalidateDocumentDBApiCache(Datum argument, Oid relationId)
 		CacheValidity = CACHE_INVALID;
 		ResetCollectionsCache();
 		InvalidateVersionCache();
+
+		/* Let a hosting layer refresh state it derives from collection metadata. */
+		NotifyCollectionMetadataInvalidated();
 	}
 	else
 	{
@@ -3789,6 +3808,39 @@ ApiCatalogAggregationCountFunctionId(void)
 
 
 Oid
+ApiCatalogAggregationUpdateFunctionId(void)
+{
+	return GetBinaryOperatorFunctionIdMissingOk(
+		&Cache.ApiCatalogAggregationUpdateFunctionId,
+		"bson_aggregation_update",
+		TEXTOID, BsonTypeId(),
+		"2.0");
+}
+
+
+Oid
+ApiCatalogAggregationDeleteFunctionId(void)
+{
+	return GetBinaryOperatorFunctionIdMissingOk(
+		&Cache.ApiCatalogAggregationDeleteFunctionId,
+		"bson_aggregation_delete",
+		TEXTOID, BsonTypeId(),
+		"2.0");
+}
+
+
+Oid
+ApiCatalogAggregationFindAndModifyFunctionId(void)
+{
+	return GetBinaryOperatorFunctionIdMissingOk(
+		&Cache.ApiCatalogAggregationFindAndModifyFunctionId,
+		"bson_aggregation_find_and_modify",
+		TEXTOID, BsonTypeId(),
+		"2.0");
+}
+
+
+Oid
 ApiCatalogAggregationDistinctFunctionId(void)
 {
 	return GetBinaryOperatorFunctionIdMissingOk(
@@ -5125,6 +5177,19 @@ BsonDistinctUnwindFunctionOid(void)
 
 
 Oid
+BsonDistinctUnwindWithCollationFunctionOid(void)
+{
+	Oid argTypes[3] = { BsonTypeId(), TEXTOID, TEXTOID };
+
+	bool missingOK = true;
+	return GetSchemaFunctionIdWithNargs(
+		&Cache.BsonDistinctUnwindWithCollationFunctionOid,
+		ApiCatalogSchemaName, "bson_distinct_unwind", 3, argTypes,
+		missingOK);
+}
+
+
+Oid
 BsonDollarBucketAutoFunctionOid(void)
 {
 	InitializeDocumentDBApiExtensionCache();
@@ -5488,6 +5553,24 @@ BsonOrderByFunctionOid(void)
 {
 	return GetBinaryOperatorFunctionId(&Cache.BsonOrderByFunctionId,
 									   "bson_orderby", BsonTypeId(), BsonTypeId());
+}
+
+
+/*
+ * BsonOrderByMetaFunctionOid returns the OID of the
+ * bson_orderby_meta(<bson>, bytea, tsquery) function that computes the
+ * text score for a document from an explicit index options blob and TSQuery.
+ */
+Oid
+BsonOrderByMetaFunctionOid(void)
+{
+	int nargs = 3;
+	Oid argTypes[3] = { BsonTypeId(), BYTEAOID, TSQUERYOID };
+	bool missingOk = true;
+	return GetSchemaFunctionIdWithNargs(&Cache.BsonOrderByMetaFunctionId,
+										ApiInternalSchemaNameV2,
+										"bson_orderby_meta", nargs, argTypes,
+										missingOk);
 }
 
 

@@ -24,9 +24,12 @@
 #include "commands/parse_error.h"
 #include "utils/error_utils.h"
 #include "utils/documentdb_errors.h"
+#include "utils/hsearch.h"
 #include "aggregation/bson_query.h"
+#include "metadata/index.h"
 #include "metadata/metadata_cache.h"
 #include "planner/documentdb_planner.h"
+#include "utils/hashset_utils.h"
 #include "utils/timeout.h"
 
 
@@ -35,6 +38,7 @@ extern bool EnableBackendStatementTimeout;
 extern int MaxCustomCommandTimeout;
 extern bool RumFailOnLostPath;
 extern bool EnableNullCollectionValidation;
+extern bool EnableRequestIndexNameCache;
 
 /*
  *  This is a list of command options that are not currently supported.
@@ -100,6 +104,10 @@ static int NumberOfIgnoredFields = sizeof(IgnoredCommonSpecFields) /
 static int CompareStringsCaseInsensitive(const void *a, const void *b);
 static pgbson * RewriteDocumentAddObjectIdCore(const bson_value_t *docValue,
 											   bson_value_t *objectIdToWrite);
+static HTAB * CreateIndexNameCache(MemoryContext requestContext);
+static const char * GetIndexNameWithCache(const char *pgIndexName,
+										  MemoryContext requestContext,
+										  HTAB **indexNameCache);
 
 /*
  * Rejects an embedded null in a namespace when validation is enabled.
@@ -413,11 +421,28 @@ CompareStringsCaseInsensitive(const void *a, const void *b)
 
 
 /*
+ * CreateIndexNameCache creates a lazily populated cache in a command's stable
+ * memory context. This context survives transaction retries within the request
+ * and releases the cache when request processing finishes.
+ */
+static HTAB *
+CreateIndexNameCache(MemoryContext requestContext)
+{
+	MemoryContext priorMemoryContext = MemoryContextSwitchTo(requestContext);
+	HTAB *indexNameCache = CreatePgbsonElementHashSet();
+	MemoryContextSwitchTo(priorMemoryContext);
+	return indexNameCache;
+}
+
+
+/*
  * GetWriteErrorFromErrorData checks if the error is an error we should rethrow
  * and if not, returns a WriteError with the details of the error data.
  */
 WriteError *
-GetWriteErrorFromErrorData(ErrorData *errorData, int writeErrorIdx)
+GetWriteErrorFromErrorData(ErrorData *errorData, int writeErrorIdx,
+						   MemoryContext requestContext,
+						   HTAB **indexNameCache)
 {
 	/*
 	 * If the write error is because we're in a readonly state, which means we are in recovery mode
@@ -464,7 +489,8 @@ GetWriteErrorFromErrorData(ErrorData *errorData, int writeErrorIdx)
 
 	WriteError *writeError = palloc0(sizeof(WriteError));
 	writeError->index = writeErrorIdx;
-	if (!TryGetErrorMessageAndCode(errorData, &writeError->code, &writeError->errmsg))
+	if (!TryGetErrorMessageAndCode(errorData, &writeError->code, &writeError->errmsg,
+								   requestContext, indexNameCache))
 	{
 		writeError->code = errorData->sqlerrcode;
 		writeError->errmsg = pstrdup(errorData->message);
@@ -475,7 +501,9 @@ GetWriteErrorFromErrorData(ErrorData *errorData, int writeErrorIdx)
 
 
 bool
-TryGetErrorMessageAndCode(ErrorData *errorData, int *code, char **errmessage)
+TryGetErrorMessageAndCode(ErrorData *errorData, int *code, char **errmessage,
+						  MemoryContext requestContext,
+						  HTAB **indexNameCache)
 {
 	if (errorData->sqlerrcode == ERRCODE_CHECK_VIOLATION)
 	{
@@ -489,7 +517,6 @@ TryGetErrorMessageAndCode(ErrorData *errorData, int *code, char **errmessage)
 			 errorData->sqlerrcode == ERRCODE_UNIQUE_VIOLATION)
 	{
 		const char *mongoIndexName = NULL;
-		bool useLibPq = true;
 		if (errorData->constraint_name == NULL)
 		{
 			/* If the collection is on a remote node, this ends up being null. */
@@ -505,16 +532,18 @@ TryGetErrorMessageAndCode(ErrorData *errorData, int *code, char **errmessage)
 				StringView indexNameView = StringViewSubstring(&errorView,
 															   constraintError.length);
 				StringView actualNameView = StringViewFindPrefix(&indexNameView, '\"');
-				mongoIndexName = GetDocumentDBIndexNameFromPostgresIndex(
-					CreateStringFromStringView(&actualNameView), useLibPq);
+				mongoIndexName = GetIndexNameWithCache(
+					CreateStringFromStringView(&actualNameView), requestContext,
+					indexNameCache);
 			}
 			else if (StringViewStartsWithStringView(&errorView, &uniqueIndexError))
 			{
 				StringView indexNameView = StringViewSubstring(&errorView,
 															   uniqueIndexError.length);
 				StringView actualNameView = StringViewFindPrefix(&indexNameView, '\"');
-				mongoIndexName = GetDocumentDBIndexNameFromPostgresIndex(
-					CreateStringFromStringView(&actualNameView), useLibPq);
+				mongoIndexName = GetIndexNameWithCache(
+					CreateStringFromStringView(&actualNameView), requestContext,
+					indexNameCache);
 			}
 			else if (StringViewStartsWithStringView(&errorView, &constraintCreateError))
 			{
@@ -522,14 +551,15 @@ TryGetErrorMessageAndCode(ErrorData *errorData, int *code, char **errmessage)
 															   constraintCreateError.
 															   length);
 				StringView actualNameView = StringViewFindPrefix(&indexNameView, '\"');
-				mongoIndexName = GetDocumentDBIndexNameFromPostgresIndex(
-					CreateStringFromStringView(&actualNameView), useLibPq);
+				mongoIndexName = GetIndexNameWithCache(
+					CreateStringFromStringView(&actualNameView), requestContext,
+					indexNameCache);
 			}
 		}
 		else
 		{
-			mongoIndexName = GetDocumentDBIndexNameFromPostgresIndex(
-				errorData->constraint_name, useLibPq);
+			mongoIndexName = GetIndexNameWithCache(errorData->constraint_name,
+												   requestContext, indexNameCache);
 		}
 
 		if (mongoIndexName == NULL)
@@ -546,6 +576,62 @@ TryGetErrorMessageAndCode(ErrorData *errorData, int *code, char **errmessage)
 	}
 
 	return false;
+}
+
+
+/*
+ * GetIndexNameWithCache resolves a physical index name and caches successful
+ * secondary-index lookups for the current request. The request context keeps
+ * the cache alive across transaction retries and releases it with the command.
+ */
+static const char *
+GetIndexNameWithCache(const char *pgIndexName, MemoryContext requestContext,
+					  HTAB **indexNameCache)
+{
+	bool useLibPq = true;
+	int prefixLength = strlen(DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT_PREFIX);
+	if (!EnableRequestIndexNameCache || indexNameCache == NULL ||
+		strncmp(pgIndexName, DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT_PREFIX,
+				prefixLength) != 0)
+	{
+		return GetDocumentDBIndexNameFromPostgresIndex(pgIndexName, useLibPq);
+	}
+
+	if (*indexNameCache == NULL)
+	{
+		*indexNameCache = CreateIndexNameCache(requestContext);
+	}
+
+	uint32 pgIndexNameLength = strlen(pgIndexName);
+	PgbsonElementHashEntry searchEntry = {
+		.element = {
+			.path = pgIndexName,
+			.pathLength = pgIndexNameLength,
+		}
+	};
+	bool found = false;
+	PgbsonElementHashEntry *cacheEntry = hash_search(*indexNameCache, &searchEntry,
+													 HASH_FIND, &found);
+	if (found)
+	{
+		return cacheEntry->element.bsonValue.value.v_utf8.str;
+	}
+
+	const char *indexName = GetDocumentDBIndexNameFromPostgresIndex(pgIndexName,
+																	useLibPq);
+	if (indexName == NULL)
+	{
+		return NULL;
+	}
+
+	ereport(DEBUG1, (errmsg("Inserting index name into cache: %s", indexName)));
+	searchEntry.element.path = MemoryContextStrdup(requestContext, pgIndexName);
+	searchEntry.element.bsonValue.value_type = BSON_TYPE_UTF8;
+	searchEntry.element.bsonValue.value.v_utf8.str =
+		MemoryContextStrdup(requestContext, indexName);
+	searchEntry.element.bsonValue.value.v_utf8.len = strlen(indexName);
+	cacheEntry = hash_search(*indexNameCache, &searchEntry, HASH_ENTER, &found);
+	return cacheEntry->element.bsonValue.value.v_utf8.str;
 }
 
 

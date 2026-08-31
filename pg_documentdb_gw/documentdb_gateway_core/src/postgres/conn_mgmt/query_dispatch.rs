@@ -14,6 +14,7 @@ use tokio::time::{Duration, Instant};
 use tokio_postgres::error::SqlState;
 
 use crate::{
+    configuration::DynamicConfiguration,
     context::RequestContext,
     error::{DocumentDBError, ErrorCode, Result},
     postgres::conn_mgmt::{
@@ -64,10 +65,12 @@ const fn is_transient_io_error(kind: io::ErrorKind) -> bool {
     matches!(
         kind,
         io::ErrorKind::TimedOut
-            | io::ErrorKind::ConnectionReset
-            | io::ErrorKind::ConnectionAborted
-            | io::ErrorKind::NotConnected
             | io::ErrorKind::BrokenPipe
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionRefused
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::HostUnreachable
+            | io::ErrorKind::NotConnected
             | io::ErrorKind::UnexpectedEof
     )
 }
@@ -120,6 +123,7 @@ fn classify_retry(
             })
         }
         Some(code) if code == SqlState::ADMIN_SHUTDOWN.code() => Some(Retry::Long),
+        Some(code) if code == SqlState::CANNOT_CONNECT_NOW.code() => Some(Retry::Long),
         // Peer authentication failed for user
         Some(code) if code == SqlState::INVALID_AUTHORIZATION_SPECIFICATION.code() => {
             Some(Retry::Long)
@@ -201,6 +205,20 @@ fn extract_pg_error(error: &DocumentDBError) -> Option<&tokio_postgres::Error> {
     }
 
     None
+}
+
+fn map_shutdown_connectivity_error(
+    postgres_error: Option<&tokio_postgres::Error>,
+    dynamic_configuration: &dyn DynamicConfiguration,
+) -> Option<DocumentDBError> {
+    (dynamic_configuration.send_shutdown_responses()
+        && postgres_error.is_some_and(is_connectivity_error))
+    .then(|| {
+        DocumentDBError::documentdb_error(
+            ErrorCode::ShutdownInProgress,
+            "Graceful shutdown requested".to_owned(),
+        )
+    })
 }
 
 /// Returns the retry interval for the given retry classification, or `None` if exhausted.
@@ -354,6 +372,7 @@ pub async fn run_request_with_retries<T, F, Fut>(
     query_options: QueryOptions,
     request_options: RequestOptions,
     max_time: Duration,
+    dynamic_configuration: &dyn DynamicConfiguration,
     request_context: &RequestContext<'_>,
     run_func: F,
 ) -> Result<T>
@@ -539,7 +558,7 @@ where
                         if !matches!(retry, Retry::None) {
                             tracing::info!(
                                 "Error is retriable ({retry:?}), but not getting retried \
-                                 due to the request being in a transaction."
+                                     due to the request being in a transaction."
                             );
                         }
                     } else if query_options.retry_request()
@@ -573,7 +592,11 @@ where
                 }
 
                 mark_span_error(&tracing::Span::current());
-                return Err(error);
+                return Err(map_shutdown_connectivity_error(
+                    extract_pg_error(&error),
+                    dynamic_configuration,
+                )
+                .unwrap_or(error));
             }
         }
     }
@@ -581,7 +604,29 @@ where
 
 #[cfg(test)]
 mod tests {
+    use tokio::net::TcpListener;
+    use tokio_postgres::NoTls;
+
     use super::*;
+    use crate::{error::ErrorKind, testing::TestDynamicConfiguration};
+
+    async fn mapped_connectivity_error() -> DocumentDBError {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let accept_task = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            drop(socket);
+        });
+
+        let connection_string = format!("host=127.0.0.1 port={port} user=test connect_timeout=1");
+        let Err(pg_error) = tokio_postgres::connect(&connection_string, NoTls).await else {
+            panic!("connection should fail when the server closes during startup");
+        };
+        accept_task.await.unwrap();
+        assert!(is_connectivity_error(&pg_error));
+
+        map_pg_error(pg_error, false, false, "")
+    }
 
     fn default_query_context() -> QueryOptions {
         QueryOptions::default()
@@ -597,6 +642,34 @@ mod tests {
 
     fn replica_options() -> RequestOptions {
         RequestOptions::new(true, Some(30))
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_connectivity_error_when_enabled_returns_shutdown_in_progress() {
+        let error = mapped_connectivity_error().await;
+        let dynamic_configuration = TestDynamicConfiguration::default();
+        dynamic_configuration.set_send_shutdown_responses(true);
+
+        let error =
+            map_shutdown_connectivity_error(extract_pg_error(&error), &dynamic_configuration)
+                .expect("connectivity error should be mapped when shutdown responses are enabled");
+
+        assert_eq!(error.error_code(), ErrorCode::ShutdownInProgress);
+        assert_eq!(error.error_message_user(), "Graceful shutdown requested");
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_connectivity_error_when_disabled_preserves_error() {
+        let error = mapped_connectivity_error().await;
+        let dynamic_configuration = TestDynamicConfiguration::default();
+
+        let shutdown_error =
+            map_shutdown_connectivity_error(extract_pg_error(&error), &dynamic_configuration);
+
+        assert!(shutdown_error.is_none());
+        assert_eq!(error.error_code(), ErrorCode::InternalError);
+        assert_eq!(error.kind(), &ErrorKind::Gateway);
+        assert!(error.as_postgres_error().is_some());
     }
 
     // ── is_transient_io_error ──────────────────────────────────────────

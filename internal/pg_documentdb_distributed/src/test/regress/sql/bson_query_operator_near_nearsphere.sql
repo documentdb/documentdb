@@ -321,3 +321,53 @@ SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "near_sphere
 SELECT documentdb_api.find_and_modify('db', '{"findAndModify": "near_sphere_distinct", "query": { "loc.coordinates": { "$near": [0, 0], "$maxDistance": 1} }, "sort": {"_id": -1}, "update": {"a": 10}, "fields": {"_id": 1}}');
 -- If no sort clause then near decides the ordering
 SELECT documentdb_api.find_and_modify('db', '{"findAndModify": "near_sphere_distinct", "query": { "loc.coordinates": { "$near": [30, 30]} }, "update": {"a": 10}, "fields": {"_id": 1}}');
+
+-- Longitudes 180 and -180 describe the same meridian. A document indexed under one
+-- representation must not break the ordering of a nearest neighbour index scan that is
+-- anchored at the other representation.
+SELECT documentdb_api.insert_one('db','near_antimeridian','{ "_id": 1, "loc": { "type": "Point", "coordinates": [180, -0.25]} }', NULL);
+SELECT documentdb_api.insert_one('db','near_antimeridian','{ "_id": 2, "loc": { "type": "Point", "coordinates": [-180, 0]} }', NULL);
+SELECT documentdb_api.insert_one('db','near_antimeridian','{ "_id": 3, "loc": { "type": "Point", "coordinates": [179.5, 0]} }', NULL);
+SELECT documentdb_api.insert_one('db','near_antimeridian','{ "_id": 4, "loc": { "type": "Point", "coordinates": [-179, 0]} }', NULL);
+SELECT documentdb_api.insert_one('db','near_antimeridian','{ "_id": 5, "loc": { "type": "Point", "coordinates": [180, 45]} }', NULL);
+SELECT documentdb_api.insert_one('db','near_antimeridian','{ "_id": 6, "loc": { "type": "Point", "coordinates": [-180, -60]} }', NULL);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "near_antimeridian", "indexes": [{"key": {"loc": "2dsphere"}, "name": "my_2ds_antimeridian_idx" }]}', true);
+SELECT documentdb_distributed_test_helpers.drop_primary_key('db','near_antimeridian');
+
+-- Reference point on the meridian, expressed either way
+SELECT document FROM bson_aggregation_find('db', '{ "find": "near_antimeridian", "filter": { "loc": { "$near": { "$geometry": { "type": "Point", "coordinates": [180, 0] } } } } }');
+SELECT document FROM bson_aggregation_find('db', '{ "find": "near_antimeridian", "filter": { "loc": { "$near": { "$geometry": { "type": "Point", "coordinates": [-180, 0] } } } } }');
+
+-- Legacy coordinate pair on the meridian
+SELECT document FROM bson_aggregation_find('db', '{ "find": "near_antimeridian", "filter": { "loc": { "$nearSphere": [180, 0] } } }');
+
+-- Reference point on the meridian away from the equator
+SELECT document FROM bson_aggregation_find('db', '{ "find": "near_antimeridian", "filter": { "loc": { "$near": { "$geometry": { "type": "Point", "coordinates": [180, 45] } } } } }');
+
+-- Bounded by maxDistance, so a reference point written one way must find a location on
+-- the meridian written the other way at zero distance.
+SELECT document FROM bson_aggregation_find('db', '{ "find": "near_antimeridian", "filter": { "loc": { "$near": { "$geometry": { "type": "Point", "coordinates": [180, 0] }, "$maxDistance": 1 } } } }');
+SELECT document FROM bson_aggregation_find('db', '{ "find": "near_antimeridian", "filter": { "loc": { "$near": { "$geometry": { "type": "Point", "coordinates": [-180, -0.25] }, "$maxDistance": 1 } } } }');
+
+-- A reference point just off the meridian still orders correctly
+SELECT document FROM bson_aggregation_find('db', '{ "find": "near_antimeridian", "filter": { "loc": { "$near": { "$geometry": { "type": "Point", "coordinates": [179.9, 0] } } } } }');
+
+-- The same disagreement is reachable from a reference point that is merely very close to
+-- the meridian rather than exactly on it, in either direction.
+SELECT document FROM bson_aggregation_find('db', '{ "find": "near_antimeridian", "filter": { "loc": { "$near": { "$geometry": { "type": "Point", "coordinates": [179.9999999, 0] } } } } }');
+SELECT document FROM bson_aggregation_find('db', '{ "find": "near_antimeridian", "filter": { "loc": { "$near": { "$geometry": { "type": "Point", "coordinates": [-179.9999999, 0] } } } } }');
+SELECT document FROM bson_aggregation_find('db', '{ "find": "near_antimeridian", "filter": { "loc": { "$near": { "$geometry": { "type": "Point", "coordinates": [179.99999999999997, 0] } } } } }');
+
+-- Two locations closer together than the exact distance computation can resolve are
+-- reported as coincident while their index bounding boxes still separate them, so the
+-- index bound must not exceed the exact distance there either.
+SELECT documentdb_api.insert_one('db','near_coincident','{ "_id": 1, "loc": { "type": "Point", "coordinates": [0, 0]} }', NULL);
+SELECT documentdb_api.insert_one('db','near_coincident','{ "_id": 2, "loc": { "type": "Point", "coordinates": [0.5, 0.5]} }', NULL);
+SELECT documentdb_api.insert_one('db','near_coincident','{ "_id": 3, "loc": { "type": "Point", "coordinates": [-0.5, -0.5]} }', NULL);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "near_coincident", "indexes": [{"key": {"loc": "2dsphere"}, "name": "my_2ds_coincident_idx" }]}', true);
+SELECT documentdb_distributed_test_helpers.drop_primary_key('db','near_coincident');
+
+SELECT document FROM bson_aggregation_find('db', '{ "find": "near_coincident", "filter": { "loc": { "$near": { "$geometry": { "type": "Point", "coordinates": [0.000000000001, 0.000000000001] } } } } }');
+SELECT document FROM bson_aggregation_find('db', '{ "find": "near_coincident", "filter": { "loc": { "$near": { "$geometry": { "type": "Point", "coordinates": [-0.000000000001, -0.000000000001] } } } } }');

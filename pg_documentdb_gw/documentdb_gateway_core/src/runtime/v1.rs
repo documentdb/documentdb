@@ -272,7 +272,7 @@ where
     let (tcp_stream, peer_address) = stream_and_address?;
 
     let connection_id = Uuid::new_v4();
-    tracing::info!(
+    tracing::debug!(
         activity_id = connection_id.to_string().as_str(),
         "Accepted new TCP connection"
     );

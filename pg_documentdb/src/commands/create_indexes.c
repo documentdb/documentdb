@@ -1527,10 +1527,12 @@ ParseIndexDefDocument(const bson_iter_t *indexesArrayIter, bool ignoreUnknownInd
 	{
 		bson_iter_t indexDefDocIter;
 		bson_iter_recurse(indexesArrayIter, &indexDefDocIter);
+		const bool useTTLIndexInvalidOptionsError = false;
 		indexDef = ParseIndexDefDocumentInternal(&indexDefDocIter,
 												 indexSpecRepr,
 												 ignoreUnknownIndexOptions,
-												 buildAsUniqueForPrepareUnique);
+												 buildAsUniqueForPrepareUnique,
+												 useTTLIndexInvalidOptionsError);
 	}
 	PG_CATCH();
 	{
@@ -1670,6 +1672,13 @@ ParseCustomIndexDefOption(const char *indexDefDocKey, bson_iter_t *indexDefDocIt
 }
 
 
+static int
+GetTTLIndexErrorCode(bool useInvalidOptionsError, int defaultErrorCode)
+{
+	return useInvalidOptionsError ? ERRCODE_DOCUMENTDB_INVALIDOPTIONS : defaultErrorCode;
+}
+
+
 /*
  * ParseIndexDefDocumentInternal returns an IndexDef object by parsing value
  * of pgbson iterator that points to the "indexes" field of "arg" document
@@ -1679,7 +1688,8 @@ IndexDef *
 ParseIndexDefDocumentInternal(const bson_iter_t *indexesDocIter,
 							  const char *indexSpecRepr,
 							  bool ignoreUnknownIndexOptions,
-							  bool buildAsUniqueForPrepareUnique)
+							  bool buildAsUniqueForPrepareUnique,
+							  bool useTTLIndexInvalidOptionsError)
 {
 	/*
 	 * Distinguish "key: {}" from not specifying "key" field at all,
@@ -1794,7 +1804,9 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesDocIter,
 		{
 			if (!BSON_ITER_HOLDS_NUMBER(&indexDefDocIter))
 			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+				ereport(ERROR, (errcode(GetTTLIndexErrorCode(
+											useTTLIndexInvalidOptionsError,
+											ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX)),
 								errmsg(
 									"The 'expireAfterSeconds' option for a TTL index must be a numeric value, but a different data type was provided: %s.",
 									BsonIterTypeName(&indexDefDocIter))));
@@ -1807,14 +1819,18 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesDocIter,
 			if (expireAfterSecondsValAsDouble < INT_MIN ||
 				expireAfterSecondsValAsDouble > INT_MAX)
 			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+				ereport(ERROR, (errcode(GetTTLIndexErrorCode(
+											useTTLIndexInvalidOptionsError,
+											ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX)),
 								errmsg(
 									"TTL index 'expireAfterSeconds' option must be within an acceptable range, try a different number than %lf.",
 									expireAfterSecondsValAsDouble)));
 			}
 			else if (expireAfterSecondsValAsInt < 0)
 			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+				ereport(ERROR, (errcode(GetTTLIndexErrorCode(
+											useTTLIndexInvalidOptionsError,
+											ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX)),
 								errmsg(
 									"TTL index 'expireAfterSeconds' option cannot be less than 0.")));
 			}
@@ -2242,21 +2258,27 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesDocIter,
 		/* "key" : { "_id" : 1, "_id" : 1 } is considered as single-field spec on _id. */
 		if (totalIdKeyPath == totalIndexKeyPath)
 		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDINDEXSPECIFICATIONOPTION),
+			ereport(ERROR, (errcode(GetTTLIndexErrorCode(
+										useTTLIndexInvalidOptionsError,
+										ERRCODE_DOCUMENTDB_INVALIDINDEXSPECIFICATIONOPTION)),
 							errmsg(
 								"The field 'expireAfterSeconds' is not valid for an _id index specification.")));
 		}
 
 		if (totalIndexKeyPath > 1)
 		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+			ereport(ERROR, (errcode(GetTTLIndexErrorCode(
+										useTTLIndexInvalidOptionsError,
+										ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX)),
 							errmsg(
 								"TTL indexes work only on single fields, and compound indexes are incompatible with TTL functionality.")));
 		}
 
 		if (indexDef->key->isWildcard)
 		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+			ereport(ERROR, (errcode(GetTTLIndexErrorCode(
+										useTTLIndexInvalidOptionsError,
+										ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX)),
 							errmsg(
 								"Index type 'wildcard' cannot be a TTL index.")));
 		}
@@ -2274,35 +2296,45 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesDocIter,
 		 */
 		if (indexDef->key->hasHashedIndexes)
 		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			ereport(ERROR, (errcode(GetTTLIndexErrorCode(
+										useTTLIndexInvalidOptionsError,
+										ERRCODE_FEATURE_NOT_SUPPORTED)),
 							errmsg(
 								"Creating a hash index as ttl index is not supported.")));
 		}
 
 		if (indexDef->key->hasTextIndexes)
 		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			ereport(ERROR, (errcode(GetTTLIndexErrorCode(
+										useTTLIndexInvalidOptionsError,
+										ERRCODE_FEATURE_NOT_SUPPORTED)),
 							errmsg(
 								"Creating a text index as ttl index is not supported.")));
 		}
 
 		if (indexDef->key->hasCosmosIndexes)
 		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			ereport(ERROR, (errcode(GetTTLIndexErrorCode(
+										useTTLIndexInvalidOptionsError,
+										ERRCODE_FEATURE_NOT_SUPPORTED)),
 							errmsg(
 								"Creating a cosmosSearch index as ttl index is not supported.")));
 		}
 
 		if (indexDef->key->has2dIndex)
 		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			ereport(ERROR, (errcode(GetTTLIndexErrorCode(
+										useTTLIndexInvalidOptionsError,
+										ERRCODE_FEATURE_NOT_SUPPORTED)),
 							errmsg(
 								"Creating a 2d index as ttl index is not supported.")));
 		}
 
 		if (indexDef->key->has2dsphereIndex)
 		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			ereport(ERROR, (errcode(GetTTLIndexErrorCode(
+										useTTLIndexInvalidOptionsError,
+										ERRCODE_FEATURE_NOT_SUPPORTED)),
 							errmsg(
 								"Creating a 2dsphere index as ttl index is not supported.")));
 		}
@@ -4795,6 +4827,7 @@ TryCreateCollectionIndexes(uint64 collectionId, List *indexDefList,
 {
 	TryCreateIndexesResult *result = MemoryContextAllocZero(retValueContext,
 															sizeof(TryCreateIndexesResult));
+	HTAB *indexNameCache = NULL;
 
 	int nindexes = list_length(indexDefList);
 	if (nindexes == 0)
@@ -4845,7 +4878,8 @@ TryCreateCollectionIndexes(uint64 collectionId, List *indexDefList,
 		{
 			MemoryContext oldContext = MemoryContextSwitchTo(retValueContext);
 			if (TryGetErrorMessageAndCode((ErrorData *) edata, &errorCodeInternal,
-										  &errorMessageInternal))
+										  &errorMessageInternal, retValueContext,
+										  &indexNameCache))
 			{
 				result->errcode = errorCodeInternal;
 				result->errmsg = errorMessageInternal;

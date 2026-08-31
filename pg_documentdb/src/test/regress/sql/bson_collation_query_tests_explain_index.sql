@@ -1139,3 +1139,53 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
 
 SELECT documentdb_api.drop_collection('coll_q_db','coll_minmax_idx');
+
+-- ======================================================================
+-- SECTION: distinct with a collation-aware index
+-- ======================================================================
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_distinct_explain', '{ "_id": 1, "a": "cafe" }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_distinct_explain', '{ "_id": 2, "a": "CAFE" }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_distinct_explain', '{ "_id": 3, "a": "tea" }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_q_db',
+  '{ "createIndexes": "coll_distinct_explain", "indexes": [ { "key": { "a": 1 }, "name": "idx_a_en_s1", "collation": { "locale": "en", "strength": 1 } } ] }',
+  TRUE);
+
+-- This suite does not load documentdb_extended_rum, so it cannot exercise a
+-- physical ordered distinct scan. Without a selective predicate, the planner
+-- uses the _id index and retains the runtime distinct sort.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+  'coll_q_db',
+  '{ "distinct": "coll_distinct_explain", "key": "a", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- A matching collated predicate uses the collated index for its bounds, but
+-- that index cannot supply distinct ordering without documentdb_extended_rum,
+-- so the runtime sort remains.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+  'coll_q_db',
+  '{ "distinct": "coll_distinct_explain", "key": "a", "query": { "a": { "$gte": "cafe" } }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+
+-- A different collation cannot reuse the strength-1 index ordering. With the
+-- default-off distinct-exists filter enabled, the index may still scan
+-- MinKey-to-MaxKey to exclude missing values, but the Sort proves it does not
+-- supply distinct ordering.
+SET documentdb.enable_distinct_exists_filter_pushdown TO on;
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+  'coll_q_db',
+  '{ "distinct": "coll_distinct_explain", "key": "a", "collation": { "locale": "en", "strength": 2 } }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+SET documentdb.enable_distinct_exists_filter_pushdown TO off;
+
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_distinct_explain');

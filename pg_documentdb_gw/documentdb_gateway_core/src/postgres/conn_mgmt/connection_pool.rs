@@ -33,7 +33,7 @@ use tokio::{
 use tokio_postgres::NoTls;
 
 use crate::{
-    configuration::SetupConfiguration,
+    configuration::{DynamicConfiguration, SetupConfiguration},
     error::Result,
     postgres::{
         conn_mgmt::{
@@ -45,6 +45,12 @@ use crate::{
     time::{self, EpochClock},
 };
 
+#[derive(Clone, Copy)]
+struct BackendTimeouts {
+    command: Duration,
+    transaction: Duration,
+}
+
 fn pg_configuration(
     setup_configuration: &dyn SetupConfiguration,
     query_catalog: &QueryCatalog,
@@ -52,18 +58,13 @@ fn pg_configuration(
     password: Option<&str>,
     application_name: &str,
     connection_buffer_size: usize,
+    timeouts: BackendTimeouts,
 ) -> tokio_postgres::Config {
     let mut config = tokio_postgres::Config::new();
 
-    let command_timeout_ms =
-        Duration::from_secs(setup_configuration.postgres_command_timeout_secs())
-            .as_millis()
-            .to_string();
+    let command_timeout_ms = timeouts.command.as_millis().to_string();
 
-    let transaction_timeout_ms =
-        Duration::from_secs(setup_configuration.transaction_timeout_secs())
-            .as_millis()
-            .to_string();
+    let transaction_timeout_ms = timeouts.transaction.as_millis().to_string();
 
     config
         .host(setup_configuration.postgres_host_name())
@@ -116,9 +117,13 @@ const COMMAND_DEADLINE_SLACK: Duration = Duration::from_secs(1);
 /// Catches a connection that has stopped responding, which no server-side GUC
 /// covers.
 #[must_use]
-pub fn command_deadline_for(setup_configuration: &dyn SetupConfiguration) -> Duration {
-    Duration::from_secs(setup_configuration.postgres_command_timeout_secs())
+pub fn command_deadline_for(dynamic_configuration: &dyn DynamicConfiguration) -> Duration {
+    Duration::from_secs(dynamic_configuration.max_request_timeout_sec())
         .saturating_add(COMMAND_DEADLINE_SLACK)
+}
+
+const fn command_timeout_for(pool_settings: PgPoolSettings) -> Duration {
+    pool_settings.max_request_timeout()
 }
 
 /// Only ever compared, never logged. Collision-resistant so a rotated
@@ -215,6 +220,11 @@ impl ConnectionPool {
         application_name: &str,
         pool_settings: PgPoolSettings,
     ) -> Result<Self> {
+        let command_timeout = command_timeout_for(pool_settings);
+        let timeouts = BackendTimeouts {
+            command: command_timeout,
+            transaction: pool_settings.transaction_timeout(),
+        };
         let config = pg_configuration(
             setup_configuration,
             query_catalog,
@@ -222,6 +232,7 @@ impl ConnectionPool {
             password,
             application_name,
             pool_settings.connection_buffer_size(),
+            timeouts,
         );
 
         let metrics = Arc::new(ConnectionPoolMetrics::default());
@@ -236,9 +247,7 @@ impl ConnectionPool {
             DeadpoolPool::builder(manager)
                 .runtime(Runtime::Tokio1)
                 .max_size(pool_settings.adjusted_max_connections())
-                .wait_timeout(Some(Duration::from_secs(
-                    setup_configuration.postgres_command_timeout_secs(),
-                )))
+                .wait_timeout(Some(command_timeout))
                 .build()
         };
 
@@ -255,8 +264,7 @@ impl ConnectionPool {
         let timeout_pool_copy = timeout_pool.clone();
         // Timeout pool connections are pruned more aggressively on idleness
         // to free slots back to the primary pool for general use.
-        let timeout_idle_lifetime =
-            Duration::from_secs(setup_configuration.postgres_command_timeout_secs());
+        let timeout_idle_lifetime = command_timeout;
 
         let prune_task = tokio::spawn(async move {
             let mut prune_interval =
@@ -286,7 +294,7 @@ impl ConnectionPool {
             pool_settings.adjusted_max_connections()
         );
 
-        let command_deadline = command_deadline_for(setup_configuration);
+        let command_deadline = command_timeout.saturating_add(COMMAND_DEADLINE_SLACK);
 
         Ok(Self {
             pool,
@@ -649,6 +657,10 @@ mod tests {
             Some("secret"),
             "app",
             262_144,
+            BackendTimeouts {
+                command: Duration::from_mins(1),
+                transaction: Duration::from_secs(30),
+            },
         );
         let password = config.get_password().expect("password should be set");
         assert_eq!(password, b"secret");
@@ -659,7 +671,18 @@ mod tests {
         let setup_config = test_setup_configuration();
         let query_catalog = create_query_catalog();
 
-        let config = pg_configuration(&setup_config, &query_catalog, "user", None, "app", 262_144);
+        let config = pg_configuration(
+            &setup_config,
+            &query_catalog,
+            "user",
+            None,
+            "app",
+            262_144,
+            BackendTimeouts {
+                command: Duration::from_mins(1),
+                transaction: Duration::from_secs(30),
+            },
+        );
         assert!(config.get_password().is_none());
     }
 }
