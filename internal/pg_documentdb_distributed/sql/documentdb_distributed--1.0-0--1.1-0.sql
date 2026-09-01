@@ -1,0 +1,1 @@
+#include "udfs/clustermgmt/repair_collections_table_schema--1.1-0.sql"
