@@ -534,7 +534,9 @@ GetDynamicCursorCursorOptions(void)
 
 
 QueryCursorPlanResult *
-PlanDynamicQueryAndDetermineCursorType(Query *query, bool *isDynamicStreamable)
+PlanDynamicQueryAndDetermineCursorType(Query *query,
+									   bool allowOffsetLimitNode,
+									   bool *isDynamicStreamable)
 {
 	/* Deparse query text before planning since the planner may modify the query tree */
 	char *sourceText = "";
@@ -546,12 +548,10 @@ PlanDynamicQueryAndDetermineCursorType(Query *query, bool *isDynamicStreamable)
 		sourceText = pg_get_querydef(query, pretty);
 	}
 
-	/* Plan the query */
 	ParamListInfo paramList = NULL;
 	PlannedStmt *queryPlan = PgPlanQueryCompat(query, NULL, cursorOptions, paramList);
-
-	Plan *outerPlan = queryPlan->planTree;
-	*isDynamicStreamable = IsDynamicCustomScanPath(outerPlan);
+	*isDynamicStreamable = IsDynamicCustomScanPath(queryPlan->planTree,
+												   allowOffsetLimitNode);
 
 	QueryCursorPlanResult *result = palloc0(sizeof(QueryCursorPlanResult));
 	result->queryPlan = queryPlan;
@@ -595,8 +595,11 @@ pgbson *
 DrainDynamicStreamingCursor(QueryCursorPlanResult *planResult,
 							int batchSize, pgbson *inputContinuation,
 							pgbson_array_writer *arrayWriter,
-							uint32_t accumulatedSize)
+							uint32_t accumulatedSize, int64 *numRowsFetchedOut)
 {
+	Assert(numRowsFetchedOut != NULL);
+	*numRowsFetchedOut = 0;
+
 	/* batchSize=0 means no documents should be returned; skip executor startup. */
 	if (batchSize == 0)
 	{
@@ -604,11 +607,12 @@ DrainDynamicStreamingCursor(QueryCursorPlanResult *planResult,
 	}
 
 	DynamicStreamingTupleDestReceiver *receiver = CreateDynamicStreamingTupleDestReceiver(
-		arrayWriter, CurrentMemoryContext, batchSize,
-		accumulatedSize);
+		arrayWriter, CurrentMemoryContext, batchSize, accumulatedSize);
 	UpdateCustomScanState stateFunc = UpdateQueryDescriptionForDynamicCursor;
 	DrainStatementViaExecutor(planResult->queryPlan, NULL, planResult->queryString,
 							  (DestReceiver *) receiver, CurrentMemoryContext, stateFunc);
+
+	*numRowsFetchedOut = (int64) receiver->base.numRowsFetched;
 
 	switch (receiver->terminationReason)
 	{

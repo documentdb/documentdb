@@ -94,6 +94,82 @@ FROM documentdb_api_internal.documentdb_rum_page_get_entries(
  5      | { "$" : "item20", "$flags" : { "$numberInt" : "5" } }
 (5 rows)
 
+-- Collation-aware sorted limits: an index whose collation matches the requested
+-- one genuinely provides the sort order, so it streams with the remaining limit
+-- tracked. A mismatching collation does not satisfy the requested ordering, so it
+-- must fall back to a persistent cursor rather than stream rows in the wrong
+-- order.
+SET documentdb.enableDynamicCursors TO on;
+SET documentdb.enable_dynamic_cursor_with_skiplimit TO on;
+CREATE TEMP TABLE matching_collation_limit AS
+SELECT cursorpage, continuation, persistconnection
+FROM find_cursor_first_page(
+    'ord_coll_ordered_db',
+    '{ "find": "ord_numord_true", "sort": { "item": 1 }, "hint": "item_numord_true_idx", "collation": { "locale": "en", "numericOrdering": true }, "limit": 4, "batchSize": 2 }',
+    81001);
+SELECT persistconnection,
+       bson_dollar_project(continuation, '{ "dc.type": 1, "lim": 1 }') AS continuation_flags
+FROM matching_collation_limit;
+ persistconnection |                               continuation_flags                                
+-------------------+---------------------------------------------------------------------------------
+ f                 | { "dc" : { "type" : { "$numberInt" : "3" } }, "lim" : { "$numberLong" : "2" } }
+(1 row)
+
+SELECT bson_dollar_project(cursorpage, '{ "cursor.nextBatch._id": 1 }')
+FROM cursor_get_more(
+    'ord_coll_ordered_db',
+    '{ "getMore": { "$numberLong": "81001" }, "collection": "ord_numord_true", "batchSize": 2 }',
+    (SELECT continuation FROM matching_collation_limit));
+                                             bson_dollar_project                                             
+-------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "nextBatch" : [ { "_id" : { "$numberInt" : "5" } }, { "_id" : { "$numberInt" : "2" } } ] } }
+(1 row)
+
+DROP TABLE matching_collation_limit;
+-- If collation ordering is disabled between pages, the unchanged index still
+-- resolves by OID but no longer provides the required pathkeys.
+CREATE TEMP TABLE changed_collation_limit AS
+SELECT continuation
+FROM find_cursor_first_page(
+    'ord_coll_ordered_db',
+    '{ "find": "ord_numord_true", "sort": { "item": 1 }, "hint": "item_numord_true_idx", "collation": { "locale": "en", "numericOrdering": true }, "limit": 4, "batchSize": 2 }',
+    81003);
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO off;
+SELECT cursorpage
+FROM cursor_get_more(
+    'ord_coll_ordered_db',
+    '{ "getMore": { "$numberLong": "81003" }, "collection": "ord_numord_true", "batchSize": 2 }',
+    (SELECT continuation FROM changed_collation_limit));
+psql:sql/bson_collation_index_ordering_tests.sql:86: ERROR:  Cannot resume secondary index scan with the required ordering.
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+DROP TABLE changed_collation_limit;
+CREATE TEMP TABLE mismatching_collation_limit AS
+SELECT cursorpage, continuation, persistconnection
+FROM find_cursor_first_page(
+    'ord_coll_ordered_db',
+    '{ "find": "ord_numord_true", "sort": { "item": 1 }, "hint": "item_numord_true_idx", "collation": { "locale": "en", "numericOrdering": false }, "limit": 4, "batchSize": 2 }',
+    81002);
+SELECT persistconnection,
+       bson_dollar_project(continuation, '{ "dc.type": 1, "lim": 1 }') AS continuation_flags
+FROM mismatching_collation_limit;
+ persistconnection | continuation_flags 
+-------------------+--------------------
+ t                 | { }
+(1 row)
+
+SELECT bson_dollar_project(cursorpage, '{ "cursor.nextBatch._id": 1 }')
+FROM cursor_get_more(
+    'ord_coll_ordered_db',
+    '{ "getMore": { "$numberLong": "81002" }, "collection": "ord_numord_true", "batchSize": 2 }',
+    (SELECT continuation FROM mismatching_collation_limit));
+                                             bson_dollar_project                                             
+-------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "nextBatch" : [ { "_id" : { "$numberInt" : "3" } }, { "_id" : { "$numberInt" : "4" } } ] } }
+(1 row)
+
+DROP TABLE mismatching_collation_limit;
+RESET documentdb.enable_dynamic_cursor_with_skiplimit;
+RESET documentdb.enableDynamicCursors;
 -- ===== Section 2: Single-key ordered index with numericOrdering=false ======
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
   'ord_coll_ordered_db',
@@ -107,7 +183,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
   }',
   TRUE
 );
-psql:sql/bson_collation_index_ordering_tests.sql:62: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:121: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -191,7 +267,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
   }',
   TRUE
 );
-psql:sql/bson_collation_index_ordering_tests.sql:94: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:153: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -275,7 +351,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
   }',
   TRUE
 );
-psql:sql/bson_collation_index_ordering_tests.sql:126: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:185: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -359,7 +435,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
   }',
   TRUE
 );
-psql:sql/bson_collation_index_ordering_tests.sql:158: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:217: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -447,7 +523,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
   }',
   TRUE
 );
-psql:sql/bson_collation_index_ordering_tests.sql:191: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:250: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -538,7 +614,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
   }',
   TRUE
 );
-psql:sql/bson_collation_index_ordering_tests.sql:224: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:283: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -622,7 +698,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
   }',
   TRUE
 );
-psql:sql/bson_collation_index_ordering_tests.sql:256: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:315: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -702,7 +778,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
   }',
   TRUE
 );
-psql:sql/bson_collation_index_ordering_tests.sql:287: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:346: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -764,7 +840,7 @@ FROM documentdb_api_internal.documentdb_rum_page_get_entries(
 
 -- ===== Section 10: Index build — documents before index creation, numericOrdering=true ======
 SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_build_numord', '{"_id": 1, "item": "item1", "tag": "A"}', NULL);
-psql:sql/bson_collation_index_ordering_tests.sql:306: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:365: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -860,7 +936,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
   }',
   TRUE
 );
-psql:sql/bson_collation_index_ordering_tests.sql:350: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:409: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -951,7 +1027,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
   }',
   TRUE
 );
-psql:sql/bson_collation_index_ordering_tests.sql:383: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:442: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -1053,7 +1129,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
   }',
   TRUE
 );
-psql:sql/bson_collation_index_ordering_tests.sql:434: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:493: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -1130,7 +1206,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
   }',
   TRUE
 );
-psql:sql/bson_collation_index_ordering_tests.sql:465: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:524: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -1204,7 +1280,7 @@ SET enable_seqscan TO OFF;
 --          kiwi, lemon, mango
 -- Non-string: 42, true, null, missing-field
 SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 1, "a": "apple"}', NULL);
-psql:sql/bson_collation_index_ordering_tests.sql:499: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:558: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2078,7 +2154,7 @@ $cmd$);
 -- ===== Section 16: Composite index (a, b) — positive on first key, negation on second =====
 -- Setup: collection with two string fields, dense data across both dimensions
 SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 1, "a": "apple", "b": "red"}', NULL);
-psql:sql/bson_collation_index_ordering_tests.sql:675: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:734: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -3048,7 +3124,7 @@ RESET enable_seqscan;
 -- varying width, and verify the scan merges both bounds correctly.
 -- Data: 25 strings (ids 1-25), 15 non-strings (ids 26-40)
 SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 1,  "a": "aardvark"}', NULL);
-psql:sql/bson_collation_index_ordering_tests.sql:965: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:1024: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -4158,7 +4234,7 @@ SET enable_seqscan TO OFF;
 -- Ordering: at strength-1 all four cafe-variants tie; strength-2 puts
 -- cafe/CAFE before café/Café before caff.
 SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id": 1, "a": "cafe"}', NULL);
-psql:sql/bson_collation_index_ordering_tests.sql:1259: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:1318: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -4424,7 +4500,7 @@ RESET enable_seqscan;
 -- negation on middle key, and all-negation on 3 keys.
 -- 18 docs covering a×b×c combinations + non-string types
 SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_three_key_coll', '{"_id": 1,  "a": "apple",  "b": "red",    "c": 10}', NULL);
-psql:sql/bson_collation_index_ordering_tests.sql:1358: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:1417: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -5083,7 +5159,7 @@ RESET enable_seqscan;
 -- =============================================================================
 -- Test $not operators on documents containing array values in the indexed field.
 SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_array_coll', '{"_id": 1, "a": "apple"}', NULL);
-psql:sql/bson_collation_index_ordering_tests.sql:1561: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:1620: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -5517,7 +5593,7 @@ RESET enable_seqscan;
 -- Section 28: $elemMatch with ordered scan + collation
 -- =============================================================================
 SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_elemmatch_coll', '{"_id": 1, "a": ["Apple", "banana", "Cherry"]}', NULL);
-psql:sql/bson_collation_index_ordering_tests.sql:1673: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:1732: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -6218,7 +6294,7 @@ FROM (VALUES
   (1, 'item20'), (2, 'item3'), (3, 'item11'),
   (4, 'item1'), (5, 'item100'), (6, 'item2')
 ) AS g(idx, a);
-psql:sql/bson_collation_index_ordering_tests.sql:1838: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:1897: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -6459,7 +6535,7 @@ FROM (VALUES
   (4, 'item1', 'tag4'), (5, 'item100', 'tag5'), (6, 'item2', 'tag6'),
   (10, 'item12', 'tag10'), (11, 'item10', 'tag11'), (12, 'item4', 'tag12')
 ) AS g(idx, a, tag);
-psql:sql/bson_collation_index_ordering_tests.sql:1906: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:1965: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -6848,7 +6924,7 @@ FROM (VALUES
   (1, 'item1', 'sub20'), (2, 'item2', 'sub3'), (3, 'item2', 'sub11'),
   (4, 'item10', 'sub10'), (5, 'item10', 'sub2'), (6, 'item3', 'sub2')
 ) AS g(idx, a, b);
-psql:sql/bson_collation_index_ordering_tests.sql:1991: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:2050: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -6948,7 +7024,7 @@ FROM (VALUES
   (1, 'item1', 'sub20'), (2, 'item2', 'sub3'), (3, 'item2', 'sub11'),
   (4, 'item10', 'sub10'), (5, 'item10', 'sub2'), (6, 'item3', 'sub2')
 ) AS g(idx, a, b);
-psql:sql/bson_collation_index_ordering_tests.sql:2025: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:2084: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -7073,7 +7149,7 @@ FROM (VALUES
   ('item1', 1), ('item10', 2), ('item2', 3),
   ('item20', 4), ('item3', 5), ('item30', 6)
 ) AS g(id, a);
-psql:sql/bson_collation_index_ordering_tests.sql:2064: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:2123: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -7138,7 +7214,7 @@ FROM (VALUES
   (1, 'item20'), (2, 'item3'), (3, 'item11'),
   (4, 'item1'), (5, 'item100'), (6, 'item2')
 ) AS g(idx, a);
-psql:sql/bson_collation_index_ordering_tests.sql:2088: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:2147: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -7527,7 +7603,7 @@ RESET documentdb.enableNewWithExprAccumulators;
 -- distinct (byte-wise) string _id values including case variants so a
 -- strength-1 collation index treats "cat"/"Cat"/"CAT" as equal
 SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "cat", "country": "usa", "seq": 1 }');
-psql:sql/bson_collation_index_ordering_tests.sql:2233: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:2292: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -8086,7 +8162,7 @@ RESET documentdb.forceUseIndexIfAvailable;
 RESET documentdb.enableExtendedExplainPlans;
 RESET enable_seqscan;
 DROP SCHEMA collation_ordered_test_schema CASCADE;
-psql:sql/bson_collation_index_ordering_tests.sql:2346: NOTICE:  drop cascades to function collation_ordered_test_schema.gin_bson_index_term_to_bson(bytea)
+psql:sql/bson_collation_index_ordering_tests.sql:2405: NOTICE:  drop cascades to function collation_ordered_test_schema.gin_bson_index_term_to_bson(bytea)
 RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
 RESET documentdb.defaultUseCompositeOpClass;
 RESET documentdb_core.enableCollation;

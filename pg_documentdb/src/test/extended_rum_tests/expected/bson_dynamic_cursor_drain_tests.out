@@ -1223,7 +1223,8 @@ CREATE OR REPLACE FUNCTION drain_cursor_alternating(
     p_find_spec text,
     p_getmore_spec text,
     p_batch_size int,
-    p_expected_count int
+    p_expected_count int,
+    p_expected_values int[] DEFAULT NULL
 ) RETURNS bigint AS $$
 DECLARE
     v_cursor_page documentdb_core.bson;
@@ -1236,6 +1237,8 @@ DECLARE
     v_page_num int := 0;
     v_round_trips int := 0;
     v_expected_round_trips int;
+    v_values int[] := '{}';
+    v_batch_values int[];
 BEGIN
     -- First page: enable_indexonlyscan ON → expect index only scan (type 7)
     SET LOCAL enable_indexonlyscan TO on;
@@ -1252,6 +1255,13 @@ BEGIN
         '{ "c": { "$size": { "$ifNull": ["$cursor.firstBatch", []] } } }')
         ->> 'c' INTO v_batch_count;
     v_total_count := v_total_count + COALESCE(v_batch_count, 0);
+    IF p_expected_values IS NOT NULL THEN
+        SELECT array_agg((value->'a'->>'$numberInt')::int ORDER BY ordinality)
+        INTO v_batch_values
+        FROM jsonb_array_elements((v_cursor_page::text::jsonb)->'cursor'->'firstBatch')
+             WITH ORDINALITY;
+        v_values := v_values || COALESCE(v_batch_values, '{}');
+    END IF;
 
     IF v_continuation IS NOT NULL THEN
         SELECT (bson_dollar_project(v_continuation, '{ "dc.type": 1 }') ->> 'dc.type')::int
@@ -1285,6 +1295,13 @@ BEGIN
             '{ "c": { "$size": { "$ifNull": ["$cursor.nextBatch", []] } } }')
             ->> 'c' INTO v_batch_count;
         v_total_count := v_total_count + COALESCE(v_batch_count, 0);
+        IF p_expected_values IS NOT NULL THEN
+            SELECT array_agg((value->'a'->>'$numberInt')::int ORDER BY ordinality)
+            INTO v_batch_values
+            FROM jsonb_array_elements((v_cursor_page::text::jsonb)->'cursor'->'nextBatch')
+                 WITH ORDINALITY;
+            v_values := v_values || COALESCE(v_batch_values, '{}');
+        END IF;
 
         IF v_continuation IS NOT NULL THEN
             SELECT (bson_dollar_project(v_continuation, '{ "dc.type": 1 }') ->> 'dc.type')::int
@@ -1303,6 +1320,10 @@ BEGIN
     IF v_round_trips < v_expected_round_trips THEN
         RAISE EXCEPTION 'Expected at least % round trips for batchSize=% and % rows, got %',
             v_expected_round_trips, p_batch_size, p_expected_count, v_round_trips;
+    END IF;
+    IF p_expected_values IS NOT NULL AND v_values IS DISTINCT FROM p_expected_values THEN
+        RAISE EXCEPTION 'Expected ordered values %, got %',
+            p_expected_values, v_values;
     END IF;
 
     RETURN v_total_count;
@@ -1329,8 +1350,22 @@ BEGIN
 END;
 $$;
 NOTICE:  Alternating scan: all batch sizes 1..1001 returned 1000 rows
+SET documentdb.enable_dynamic_cursor_with_skiplimit TO on;
+SELECT drain_cursor_alternating(
+    '{ "find": "drain_scans", "filter": { "a": { "$exists": true } }, "sort": { "a": 1 }, "projection": { "_id": 0, "a": 1 }, "limit": 7, "batchSize": 2 }',
+    '{ "getMore": { "$numberLong": "537" }, "collection": "drain_scans", "batchSize": 2 }',
+    2,
+    7,
+    ARRAY[0,1,1,2,2,3,3]
+) AS alternating_sorted_limit_count;
+ alternating_sorted_limit_count 
+--------------------------------
+                              7
+(1 row)
+
+SET documentdb.enable_dynamic_cursor_with_skiplimit TO off;
 -- Clean up helper functions
-DROP FUNCTION drain_cursor_alternating(text, text, int, int);
+DROP FUNCTION drain_cursor_alternating(text, text, int, int, int[]);
 -- ===========================================================================
 -- Test 8: Validate continuation drains all remaining documents
 -- For various batch sizes, fetch the first page on "c" index, verify the
@@ -1405,5 +1440,52 @@ END;
 $$;
 NOTICE:  Continuation validation: all batch sizes passed (1, 2, 5, 10, 25, 50, 100, 250, 500, 999)
 DROP FUNCTION validate_continuation_and_drain(int);
+-- ===========================================================================
+-- Sorted skip over the ordered secondary index: the offset must be applied on
+-- the first page only. A resume that re-applied it would skip the same amount
+-- again from the resumed position, so the ids are asserted per page.
+-- No projection: skip + projection is not streamable (the pre-projection
+-- subquery migration moves the offset off the top-level query).
+-- ===========================================================================
+SET documentdb.enable_dynamic_cursor_with_skiplimit TO on;
+DO $$
+DECLARE
+    v_page documentdb_core.bson;
+    v_cont documentdb_core.bson;
+    v_persist bool;
+    v_ids int[] := '{}';
+    v_batch int[];
+    v_pages int := 1;
+BEGIN
+    SELECT cursorpage, continuation, persistconnection INTO v_page, v_cont, v_persist
+    FROM find_cursor_first_page('dyncursor_drain_db',
+        '{ "find": "drain_scans", "filter": { "_id": { "$lte": 20 } }, "sort": { "_id": 1 }, "skip": 4, "limit": 6, "batchSize": 2 }'::documentdb_core.bson, 561);
+
+    IF v_persist THEN
+        RAISE EXCEPTION 'Sorted skip should stream, not hold a portal';
+    END IF;
+
+    SELECT array_agg((value->'_id'->>'$numberInt')::int ORDER BY ordinality) INTO v_batch
+    FROM jsonb_array_elements((v_page::text::jsonb)->'cursor'->'firstBatch') WITH ORDINALITY;
+    v_ids := v_ids || COALESCE(v_batch, '{}');
+
+    WHILE v_cont IS NOT NULL LOOP
+        SELECT cursorpage, continuation INTO v_page, v_cont
+        FROM cursor_get_more('dyncursor_drain_db',
+            '{ "getMore": { "$numberLong": "561" }, "collection": "drain_scans", "batchSize": 2 }'::documentdb_core.bson, v_cont);
+        SELECT array_agg((value->'_id'->>'$numberInt')::int ORDER BY ordinality) INTO v_batch
+        FROM jsonb_array_elements((v_page::text::jsonb)->'cursor'->'nextBatch') WITH ORDINALITY;
+        v_ids := v_ids || COALESCE(v_batch, '{}');
+        v_pages := v_pages + 1;
+    END LOOP;
+
+    IF v_ids IS DISTINCT FROM ARRAY[5,6,7,8,9,10] THEN
+        RAISE EXCEPTION 'Sorted skip returned %, expected {5,6,7,8,9,10}', v_ids;
+    END IF;
+    RAISE NOTICE 'Sorted skip drain: pages=% ids=%', v_pages, v_ids;
+END;
+$$;
+NOTICE:  Sorted skip drain: pages=3 ids={5,6,7,8,9,10}
+SET documentdb.enable_dynamic_cursor_with_skiplimit TO off;
 -- Restore defaults
 SET documentdb.enablePrimaryKeyCursorScan TO off;

@@ -2302,7 +2302,7 @@ ExpandAggregationFunction(Query *query, ParamListInfo boundParams, PlannedStmt *
 		finalQuery = GenerateGetMoreQuery(databaseName,
 										  pipeline, DatumGetPgBson(
 											  thirdConst->constvalue),
-										  &queryData, setStatementTimeout);
+										  setStatementTimeout);
 	}
 	else
 	{

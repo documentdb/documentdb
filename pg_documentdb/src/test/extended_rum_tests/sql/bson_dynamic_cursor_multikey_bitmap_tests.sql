@@ -117,6 +117,84 @@ BEGIN
     RAISE NOTICE 'multikey bitmap gate off - drained total rows: %', v_total;
 END$$;
 
+------------------------------------------------------------------------------
+-- Sorted limits remain conservative with the bitmap safeguard, and preserve
+-- cross-page deduplication when the ordered multikey path is enabled.
+------------------------------------------------------------------------------
+SET documentdb.enable_dynamic_cursor_with_skiplimit TO on;
+SET documentdb.enable_dynamic_cursor_multikey_bitmap TO on;
+
+SELECT persistconnection,
+       bson_dollar_project(continuation, '{ "dc.type": 1, "lim": 1 }') AS continuation_flags
+FROM find_cursor_first_page(
+    database => 'mkbitmap_db',
+    commandSpec => '{ "find": "mk", "sort": { "a": 1 }, "hint": "a_1", "limit": 20, "batchSize": 7 }',
+    cursorId => 93505);
+
+SET documentdb.enable_dynamic_cursor_multikey_bitmap TO off;
+
+DO $$
+DECLARE
+    v_page documentdb_core.bson;
+    v_cont documentdb_core.bson;
+    v_batch_ids int[];
+    v_ids int[] := '{}';
+    v_expected_ids int[];
+    v_distinct int;
+    v_remaining bigint;
+    v_cursor_type int;
+BEGIN
+    v_expected_ids := ARRAY[
+        1, 9999, 2, 3, 4, 5, 6, 7, 8, 9,
+        10, 11, 12, 13, 14, 15, 16, 17, 18, 19
+    ];
+
+    SELECT cursorpage, continuation INTO v_page, v_cont
+    FROM find_cursor_first_page(
+        'mkbitmap_db',
+        '{ "find": "mk", "sort": { "a": 1 }, "hint": "a_1", "limit": 20, "batchSize": 7 }',
+        93506);
+
+    SELECT array_agg((value->'_id'->>'$numberInt')::int ORDER BY ordinality)
+    INTO v_batch_ids
+    FROM jsonb_array_elements((v_page::text::jsonb)->'cursor'->'firstBatch')
+         WITH ORDINALITY;
+    v_ids := v_ids || COALESCE(v_batch_ids, '{}');
+
+    WHILE v_cont IS NOT NULL LOOP
+        v_cursor_type :=
+            (bson_dollar_project(v_cont, '{ "dc.type": 1 }') ->> 'dc.type')::int;
+        v_remaining :=
+            (bson_dollar_project(v_cont, '{ "lim": 1 }') ->> 'lim')::bigint;
+        IF v_cursor_type IS DISTINCT FROM 3 OR
+           v_remaining IS DISTINCT FROM (20 - cardinality(v_ids))::bigint THEN
+            RAISE EXCEPTION 'Unexpected type %, remaining %', v_cursor_type, v_remaining;
+        END IF;
+
+        SELECT cursorpage, continuation INTO v_page, v_cont
+        FROM cursor_get_more(
+            'mkbitmap_db',
+            '{ "getMore": { "$numberLong": "93506" }, "collection": "mk", "batchSize": 7 }',
+            v_cont);
+        SELECT array_agg((value->'_id'->>'$numberInt')::int ORDER BY ordinality)
+        INTO v_batch_ids
+        FROM jsonb_array_elements((v_page::text::jsonb)->'cursor'->'nextBatch')
+             WITH ORDINALITY;
+        v_ids := v_ids || COALESCE(v_batch_ids, '{}');
+    END LOOP;
+
+    SELECT COUNT(DISTINCT value) INTO v_distinct FROM unnest(v_ids) value;
+    IF cardinality(v_ids) <> 20 OR v_distinct <> 20 OR
+       v_ids IS DISTINCT FROM v_expected_ids THEN
+        RAISE EXCEPTION 'Expected ordered ids %, got % total, % distinct, ids %',
+            v_expected_ids, cardinality(v_ids), v_distinct, v_ids;
+    END IF;
+
+    RAISE NOTICE 'Sorted multikey limit returned % distinct documents',
+        v_distinct;
+END$$;
+
+RESET documentdb.enable_dynamic_cursor_with_skiplimit;
 RESET documentdb.enable_dynamic_cursor_multikey_bitmap;
 
 SELECT documentdb_api.drop_collection('mkbitmap_db', 'mk');

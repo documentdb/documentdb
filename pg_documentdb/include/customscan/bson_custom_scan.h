@@ -31,7 +31,7 @@ void ValidateCursorCustomScanPlan(Plan *plan);
 PathTarget * BuildBaseRelPathTarget(Relation tableRel, Index relIdIndex);
 
 /* Dynamic scan methods */
-bool IsDynamicCustomScanPath(Plan *plan);
+bool IsDynamicCustomScanPath(Plan *plan, bool allowOffsetLimitNode);
 CustomScanState * GetDynamicStreamingCustomScanState(PlanState *planState,
 													 bool *isGroupReadAhead);
 pgbson * GetContinuationFromCustomScan(CustomScanState *scan);

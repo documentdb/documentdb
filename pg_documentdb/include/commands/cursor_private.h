@@ -56,11 +56,13 @@ bool PlanResultHasParallelPlan(QueryCursorPlanResult *planResult);
 
 
 QueryCursorPlanResult * PlanDynamicQueryAndDetermineCursorType(Query *query,
+															   bool allowOffsetLimitNode,
 															   bool *isDynamicStreamable);
 pgbson * DrainDynamicStreamingCursor(QueryCursorPlanResult *planResult,
 									 int batchSize, pgbson *inputContinuation,
 									 pgbson_array_writer *arrayWriter,
-									 uint32_t accumulatedSize);
+									 uint32_t accumulatedSize,
+									 int64 *numRowsFetchedOut);
 
 TupleDesc ConstructCursorResultTupleDesc(AttrNumber maxAttrNum);
 

@@ -46,6 +46,65 @@ FROM documentdb_api_internal.documentdb_rum_page_get_entries(
     'documentdb_data.documents_rum_index_8102'::regclass
 ) entry;
 
+-- Collation-aware sorted limits: an index whose collation matches the requested
+-- one genuinely provides the sort order, so it streams with the remaining limit
+-- tracked. A mismatching collation does not satisfy the requested ordering, so it
+-- must fall back to a persistent cursor rather than stream rows in the wrong
+-- order.
+SET documentdb.enableDynamicCursors TO on;
+SET documentdb.enable_dynamic_cursor_with_skiplimit TO on;
+
+CREATE TEMP TABLE matching_collation_limit AS
+SELECT cursorpage, continuation, persistconnection
+FROM find_cursor_first_page(
+    'ord_coll_ordered_db',
+    '{ "find": "ord_numord_true", "sort": { "item": 1 }, "hint": "item_numord_true_idx", "collation": { "locale": "en", "numericOrdering": true }, "limit": 4, "batchSize": 2 }',
+    81001);
+SELECT persistconnection,
+       bson_dollar_project(continuation, '{ "dc.type": 1, "lim": 1 }') AS continuation_flags
+FROM matching_collation_limit;
+SELECT bson_dollar_project(cursorpage, '{ "cursor.nextBatch._id": 1 }')
+FROM cursor_get_more(
+    'ord_coll_ordered_db',
+    '{ "getMore": { "$numberLong": "81001" }, "collection": "ord_numord_true", "batchSize": 2 }',
+    (SELECT continuation FROM matching_collation_limit));
+DROP TABLE matching_collation_limit;
+
+-- If collation ordering is disabled between pages, the unchanged index still
+-- resolves by OID but no longer provides the required pathkeys.
+CREATE TEMP TABLE changed_collation_limit AS
+SELECT continuation
+FROM find_cursor_first_page(
+    'ord_coll_ordered_db',
+    '{ "find": "ord_numord_true", "sort": { "item": 1 }, "hint": "item_numord_true_idx", "collation": { "locale": "en", "numericOrdering": true }, "limit": 4, "batchSize": 2 }',
+    81003);
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO off;
+SELECT cursorpage
+FROM cursor_get_more(
+    'ord_coll_ordered_db',
+    '{ "getMore": { "$numberLong": "81003" }, "collection": "ord_numord_true", "batchSize": 2 }',
+    (SELECT continuation FROM changed_collation_limit));
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+DROP TABLE changed_collation_limit;
+
+CREATE TEMP TABLE mismatching_collation_limit AS
+SELECT cursorpage, continuation, persistconnection
+FROM find_cursor_first_page(
+    'ord_coll_ordered_db',
+    '{ "find": "ord_numord_true", "sort": { "item": 1 }, "hint": "item_numord_true_idx", "collation": { "locale": "en", "numericOrdering": false }, "limit": 4, "batchSize": 2 }',
+    81002);
+SELECT persistconnection,
+       bson_dollar_project(continuation, '{ "dc.type": 1, "lim": 1 }') AS continuation_flags
+FROM mismatching_collation_limit;
+SELECT bson_dollar_project(cursorpage, '{ "cursor.nextBatch._id": 1 }')
+FROM cursor_get_more(
+    'ord_coll_ordered_db',
+    '{ "getMore": { "$numberLong": "81002" }, "collection": "ord_numord_true", "batchSize": 2 }',
+    (SELECT continuation FROM mismatching_collation_limit));
+DROP TABLE mismatching_collation_limit;
+
+RESET documentdb.enable_dynamic_cursor_with_skiplimit;
+RESET documentdb.enableDynamicCursors;
 
 -- ===== Section 2: Single-key ordered index with numericOrdering=false ======
 SELECT documentdb_api_internal.create_indexes_non_concurrently(

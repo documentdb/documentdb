@@ -1,6 +1,6 @@
 -- Tests for dynamic cursor behavior with index scans: validates that streaming
 -- cursors are used for simple ordered index scans with filters, and that
--- skip or limit causes a fallback to persistent cursors.
+-- skip or a non-streamable plan causes a fallback to persistent cursors.
 
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documentdb_api_internal;
 
@@ -759,6 +759,77 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+CREATE OR REPLACE FUNCTION sp_drain_ordered_limit(
+    p_find text,
+    p_getmore text,
+    p_expected_count int
+) RETURNS TABLE(page_num int, docs documentdb_core.bson, remaining_limit bigint) AS $$
+DECLARE
+    v_page documentdb_core.bson;
+    v_cont documentdb_core.bson;
+    v_persist bool;
+    v_page_num int := 1;
+    v_emitted int;
+    v_batch_count int;
+    v_cursor_type int;
+BEGIN
+    SELECT cursorpage, continuation, persistconnection
+    INTO v_page, v_cont, v_persist
+    FROM find_cursor_first_page('dyncur_sp_db', p_find::bson, 542);
+
+    IF v_persist THEN
+        RAISE EXCEPTION 'Expected sorted limit to use dynamic streaming';
+    END IF;
+
+    v_batch_count :=
+        (bson_dollar_project(v_page,
+            '{ "c": { "$size": { "$ifNull": [ "$cursor.firstBatch", [] ] } } }')
+            ->> 'c')::int;
+    v_emitted := v_batch_count;
+
+    page_num := v_page_num;
+    docs := bson_dollar_project(v_page,
+        '{ "cursor.firstBatch._id": 1, "cursor.firstBatch.a": 1, "cursor.firstBatch.b": 1 }');
+    remaining_limit := CASE WHEN v_cont IS NULL THEN NULL
+        ELSE (bson_dollar_project(v_cont, '{ "lim": 1 }') ->> 'lim')::bigint END;
+    RETURN NEXT;
+
+    WHILE v_cont IS NOT NULL LOOP
+        v_cursor_type :=
+            (bson_dollar_project(v_cont, '{ "dc.type": 1 }') ->> 'dc.type')::int;
+        remaining_limit :=
+            (bson_dollar_project(v_cont, '{ "lim": 1 }') ->> 'lim')::bigint;
+        IF v_cursor_type NOT IN (3, 7) OR
+           remaining_limit IS DISTINCT FROM (p_expected_count - v_emitted)::bigint THEN
+            RAISE EXCEPTION 'Unexpected type %, remaining % after % documents',
+                v_cursor_type, remaining_limit, v_emitted;
+        END IF;
+
+        SELECT cursorpage, continuation
+        INTO v_page, v_cont
+        FROM cursor_get_more('dyncur_sp_db', p_getmore::bson, v_cont);
+
+        v_batch_count :=
+            (bson_dollar_project(v_page,
+                '{ "c": { "$size": { "$ifNull": [ "$cursor.nextBatch", [] ] } } }')
+                ->> 'c')::int;
+        v_emitted := v_emitted + v_batch_count;
+        v_page_num := v_page_num + 1;
+
+        page_num := v_page_num;
+        docs := bson_dollar_project(v_page,
+            '{ "cursor.nextBatch._id": 1, "cursor.nextBatch.a": 1, "cursor.nextBatch.b": 1 }');
+        remaining_limit := CASE WHEN v_cont IS NULL THEN NULL
+            ELSE (bson_dollar_project(v_cont, '{ "lim": 1 }') ->> 'lim')::bigint END;
+        RETURN NEXT;
+    END LOOP;
+
+    IF v_emitted <> p_expected_count THEN
+        RAISE EXCEPTION 'Expected % documents, got %', p_expected_count, v_emitted;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
 
 -- ---------------------------------------------------------------------------
@@ -939,6 +1010,79 @@ SELECT * FROM sp_drain_ordered(
     '{ "getMore": { "$numberLong": "538" }, "collection": "sp_order_coll", "batchSize": 2 }',
     2);
 
+-- ===========================================================================
+-- SECTION G-LIMIT: positive find limits compose with index-provided ordering.
+-- ===========================================================================
+SET documentdb.enable_dynamic_cursor_with_skiplimit TO on;
+
+SELECT * FROM sp_drain_ordered_limit(
+    '{ "find": "sp_order_coll", "sort": { "a": 1 }, "projection": { "_id": 1, "a": 1, "b": 1 }, "limit": 7, "batchSize": 3, "hint": "idx_order_a_asc" }',
+    '{ "getMore": { "$numberLong": "542" }, "collection": "sp_order_coll", "batchSize": 3 }',
+    7);
+
+SELECT * FROM sp_drain_ordered_limit(
+    '{ "find": "sp_order_coll", "sort": { "a": -1 }, "projection": { "_id": 1, "a": 1, "b": 1 }, "limit": 7, "batchSize": 3, "hint": "idx_order_a_desc" }',
+    '{ "getMore": { "$numberLong": "542" }, "collection": "sp_order_coll", "batchSize": 3 }',
+    7);
+
+SELECT * FROM sp_drain_ordered_limit(
+    '{ "find": "sp_order_coll", "sort": { "a": 1, "b": 1 }, "projection": { "_id": 1, "a": 1, "b": 1 }, "limit": 7, "batchSize": 3, "hint": "idx_order_ab_asc" }',
+    '{ "getMore": { "$numberLong": "542" }, "collection": "sp_order_coll", "batchSize": 3 }',
+    7);
+
+SELECT * FROM sp_drain_ordered_limit(
+    '{ "find": "sp_order_coll", "sort": { "a": 1, "b": -1 }, "projection": { "_id": 1, "a": 1, "b": 1 }, "limit": 7, "batchSize": 3, "hint": "idx_order_a_asc_b_desc" }',
+    '{ "getMore": { "$numberLong": "542" }, "collection": "sp_order_coll", "batchSize": 3 }',
+    7);
+
+SELECT * FROM sp_drain_ordered_limit(
+    '{ "find": "sp_order_coll", "sort": { "a": -1, "b": -1 }, "projection": { "_id": 1, "a": 1, "b": 1 }, "limit": 7, "batchSize": 3, "hint": "idx_order_ab_asc" }',
+    '{ "getMore": { "$numberLong": "542" }, "collection": "sp_order_coll", "batchSize": 3 }',
+    7);
+
+SELECT * FROM sp_drain_ordered_limit(
+    '{ "find": "sp_order_coll", "filter": { "a": 2 }, "sort": { "b": -1 }, "projection": { "_id": 1, "a": 1, "b": 1 }, "limit": 2, "batchSize": 1, "hint": "idx_order_ab_asc" }',
+    '{ "getMore": { "$numberLong": "542" }, "collection": "sp_order_coll", "batchSize": 1 }',
+    2);
+
+-- A partial direction mismatch remains persistent even when limit streaming is enabled.
+SELECT * FROM sp_drain_and_report(
+    '{ "find": "sp_order_coll", "sort": { "a": 1, "b": -1 }, "projection": { "_id": 1, "a": 1, "b": 1 }, "limit": 7, "batchSize": 3, "hint": "idx_order_ab_asc" }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_order_coll", "batchSize": 3 }',
+    3);
+
+-- Recreating the required index with an incompatible definition invalidates
+-- the in-flight ordered cursor rather than silently changing result order.
+SELECT COUNT(documentdb_api.insert_one(
+    'dyncur_sp_db', 'sp_limit_index_recreate',
+    FORMAT('{ "_id": %s, "a": %s, "b": %s }', i, i, 20 - i)::bson))
+FROM generate_series(1, 10) i;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'dyncur_sp_db',
+    '{ "createIndexes": "sp_limit_index_recreate", "indexes": [ { "key": { "a": 1 }, "name": "limit_order_idx" } ] }',
+    true);
+CREATE TEMP TABLE sorted_limit_index_recreate AS
+SELECT continuation
+FROM find_cursor_first_page(
+    'dyncur_sp_db',
+    '{ "find": "sp_limit_index_recreate", "sort": { "a": 1 }, "hint": "limit_order_idx", "limit": 5, "batchSize": 2 }',
+    544);
+CALL documentdb_api.drop_indexes(
+    'dyncur_sp_db',
+    '{ "dropIndexes": "sp_limit_index_recreate", "index": "limit_order_idx" }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'dyncur_sp_db',
+    '{ "createIndexes": "sp_limit_index_recreate", "indexes": [ { "key": { "b": 1 }, "name": "limit_order_idx" } ] }',
+    true);
+SELECT cursorpage
+FROM cursor_get_more(
+    'dyncur_sp_db',
+    '{ "getMore": { "$numberLong": "544" }, "collection": "sp_limit_index_recreate", "batchSize": 2 }',
+    (SELECT continuation FROM sorted_limit_index_recreate));
+SELECT documentdb_api.drop_collection(
+    'dyncur_sp_db', 'sp_limit_index_recreate');
+
+SET documentdb.enable_dynamic_cursor_with_skiplimit TO off;
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;
 
 -- ===========================================================================

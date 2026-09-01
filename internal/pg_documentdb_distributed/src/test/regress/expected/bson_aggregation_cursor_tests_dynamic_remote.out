@@ -1418,7 +1418,7 @@ Custom Scan (Citus Adaptive)
   Task Count: 1
   Tasks Shown: All
   ->  Task
-        Query: SELECT documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "a" : { "$gte" : "aval-" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_11802_11800047 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>=) '{ "a" : "aval-" }'::documentdb_core.bsonquery) AND ((shard_key_value OPERATOR(pg_catalog.=) '11802'::bigint) AND documentdb_api_internal.cursor_tracker(document, '{ }'::documentdb_core.bson)))
+        Query: SELECT documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "a" : { "$gte" : "aval-" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_11802_11800047 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>=) '{ "a" : "aval-" }'::documentdb_core.bsonquery) AND ((shard_key_value OPERATOR(pg_catalog.=) '11802'::bigint) AND documentdb_api_internal.cursor_tracker(document, '{ "allowOffsetLimitNode" : false }'::documentdb_core.bson)))
         Node: host=localhost port=58070 dbname=regression
         ->  Custom Scan (DocumentDBApiCursorScan)
               Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "a" : { "$gte" : "aval-" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
@@ -1715,7 +1715,7 @@ Custom Scan (Citus Adaptive)
   Task Count: 1
   Tasks Shown: All
   ->  Task
-        Query: SELECT document FROM documentdb_data.documents_11804_11800081 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : "dsdsdasdasdasdadewe68676wqeeq" }'::documentdb_core.bsonquery) AND (object_id OPERATOR(documentdb_core.=) '{ "" : "dsdsdasdasdasdadewe68676wqeeq" }'::documentdb_core.bson) AND ((shard_key_value OPERATOR(pg_catalog.=) '11804'::bigint) AND documentdb_api_internal.cursor_tracker(document, '{ }'::documentdb_core.bson)) AND documentdb_api_internal.bson_dollar_fullscan(document, '{ "createdDateTime" : { "$numberInt" : "-1" } }'::documentdb_core.bson)) ORDER BY (documentdb_api_catalog.bson_orderby(document, '{ "createdDateTime" : { "$numberInt" : "-1" } }'::documentdb_core.bson)) USING OPERATOR(documentdb_api_internal.>>>) NULLS LAST
+        Query: SELECT document FROM documentdb_data.documents_11804_11800081 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : "dsdsdasdasdasdadewe68676wqeeq" }'::documentdb_core.bsonquery) AND (object_id OPERATOR(documentdb_core.=) '{ "" : "dsdsdasdasdasdadewe68676wqeeq" }'::documentdb_core.bson) AND ((shard_key_value OPERATOR(pg_catalog.=) '11804'::bigint) AND documentdb_api_internal.cursor_tracker(document, '{ "allowOffsetLimitNode" : false }'::documentdb_core.bson)) AND documentdb_api_internal.bson_dollar_fullscan(document, '{ "createdDateTime" : { "$numberInt" : "-1" } }'::documentdb_core.bson)) ORDER BY (documentdb_api_catalog.bson_orderby(document, '{ "createdDateTime" : { "$numberInt" : "-1" } }'::documentdb_core.bson)) USING OPERATOR(documentdb_api_internal.>>>) NULLS LAST
         Node: host=localhost port=58070 dbname=regression
         ->  Sort
               Output: document, (documentdb_api_catalog.bson_orderby(document, '{ "createdDateTime" : { "$numberInt" : "-1" } }'::documentdb_core.bson))

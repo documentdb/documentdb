@@ -61,6 +61,7 @@
 #include "utils/version_utils.h"
 #include "aggregation/bson_query.h"
 #include "aggregation/bson_query_common.h"
+#include "customscan/bson_custom_scan.h"
 #include "customscan/bson_custom_query_scan.h"
 #include "metadata/index.h"
 
@@ -82,6 +83,7 @@
 extern bool EnableCursorsOnAggregationQueryRewrite;
 extern bool EnableCollation;
 extern bool EnableDynamicCursors;
+extern bool EnableDynamicCursorWithSkipLimit;
 extern bool SkipFailOnCollation;
 extern bool DefaultInlineWriteOperations;
 extern int MaxAggregationStagesAllowed;
@@ -435,14 +437,22 @@ static FindSpec ParseFindQuery(pgbson *findSpec,
 static Query * ApplyFindSpec(const FindSpec *spec, MongoCollection *collection,
 							 QueryData *queryData, CursorParamKind cursorParamKind,
 							 AggregationPipelineBuildContext *context);
-static Query * ApplyFindSpecCore(const FindSpec *spec, Query *query, Query *baseQuery,
+static Query * ApplyFindSpecCore(const FindSpec *spec, Query *query,
 								 QueryData *queryData, CursorParamKind cursorParamKind,
 								 AggregationPipelineBuildContext *context);
+static void SetStreamingSkipLimitForFind(const FindSpec *spec,
+										 MongoCollection *collection,
+										 QueryData *queryData,
+										 CursorParamKind cursorParamKind);
+static void RewriteQueryForSkipLimit(Query *query, QueryData *queryData);
+static int64 ParseSkipValue(const bson_value_t *value);
+static int64 ParseLimitValue(const bson_value_t *value);
 static Const * AddCollationToSortSpec(const pgbsonelement *sortElement,
 									  const char *collationString);
 static Expr * MakeBsonFullScanQual(Expr *documentExpr,
 								   const pgbsonelement *sortSpecElement,
 								   const char *collationString);
+static pgbson * BuildDynamicCursorTrackerState(const QueryData *queryData);
 
 #define COMPATIBLE_CHANGE_STREAM_STAGES_COUNT 8
 const char *CompatibleChangeStreamPipelineStages[COMPATIBLE_CHANGE_STREAM_STAGES_COUNT] =
@@ -1605,6 +1615,38 @@ SetCursorTopology(QueryData *queryData,
 }
 
 
+static pgbson *
+BuildDynamicCursorTrackerState(const QueryData *queryData)
+{
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+
+	if (queryData->cursorStateConst != NULL &&
+		!IsPgbsonEmptyDocument(queryData->cursorStateConst))
+	{
+		bson_iter_t cursorIter;
+		PgbsonInitIterator(queryData->cursorStateConst, &cursorIter);
+		while (bson_iter_next(&cursorIter))
+		{
+			const char *key = bson_iter_key(&cursorIter);
+			if (strcmp(key, "allowOffsetLimitNode") == 0)
+			{
+				continue;
+			}
+
+			PgbsonWriterAppendIter(&writer, &cursorIter);
+		}
+	}
+
+	PgbsonWriterAppendBool(&writer, "allowOffsetLimitNode",
+						   sizeof("allowOffsetLimitNode") - 1,
+						   queryData->streamingLimit > 0 ||
+						   queryData->streamingSkip > 0);
+
+	return PgbsonWriterGetPgbson(&writer);
+}
+
+
 inline static bool
 TryAddDynamicCursorQuery(CursorParamKind cursorParamKind, QueryData *queryData,
 						 Query *query, AggregationPipelineBuildContext *context)
@@ -1647,9 +1689,7 @@ TryAddDynamicCursorQuery(CursorParamKind cursorParamKind, QueryData *queryData,
 				 */
 				List *quals = make_ands_implicit((Expr *) query->jointree->quals);
 
-				pgbson *cursorValue = queryData->cursorStateConst != NULL ?
-									  queryData->cursorStateConst : PgbsonInitEmpty();
-
+				pgbson *cursorValue = BuildDynamicCursorTrackerState(queryData);
 				Const *cursorConst = MakeBsonConst(cursorValue);
 				FuncExpr *cursorStateExpr = makeFuncExpr(
 					ApiCursorTrackerFunctionId(), BOOLOID, list_make2(
@@ -1696,6 +1736,8 @@ ParseAggregationQueryAndLookupCollection(text *database, pgbson *aggregationSpec
 	context->optimizePipelineStages = true;
 	context->joinStatus = JoinStageStatus_Unknown;
 	queryData->cursorKind = QueryCursorType_Unspecified;
+	queryData->streamingLimit = 0;
+	queryData->streamingSkip = 0;
 
 	bson_iter_t aggregationIterator;
 	PgbsonInitIterator(aggregationSpec, &aggregationIterator);
@@ -2443,6 +2485,7 @@ ApplyFindSpec(const FindSpec *spec, MongoCollection *collection,
 			  AggregationPipelineBuildContext *context)
 {
 	context->variableSpec = (Expr *) MakeBsonConst(spec->parsedVariables);
+	SetStreamingSkipLimitForFind(spec, collection, queryData, cursorParamKind);
 
 	context->isSingleRowResult = false;
 	if (spec->sort.value_type != BSON_TYPE_EOD)
@@ -2459,14 +2502,103 @@ ApplyFindSpec(const FindSpec *spec, MongoCollection *collection,
 	{
 		context->requiresPersistentCursor = true;
 	}
-
 	context->mongoCollection = collection;
+
 	Query *query = GenerateBaseTableQuery(spec->databaseDatum, &spec->collectionName,
 										  spec->collectionUuid, &spec->indexHint,
 										  context);
-	Query *baseQuery = query;
 
-	return ApplyFindSpecCore(spec, query, baseQuery, queryData, cursorParamKind, context);
+	Query *finalQuery = ApplyFindSpecCore(spec, query, queryData,
+										  cursorParamKind, context);
+
+	return finalQuery;
+}
+
+
+/*
+ * Selects the find-owned counts that can be streamed before cursor_tracker is
+ * added. Views are excluded before GenerateBaseTableQuery replaces them with
+ * their underlying collection.
+ */
+static void
+SetStreamingSkipLimitForFind(const FindSpec *spec, MongoCollection *collection,
+							 QueryData *queryData,
+							 CursorParamKind cursorParamKind)
+{
+	bool isCursorResume = queryData->cursorStateConst != NULL &&
+						  !queryData->isAggregationQueryCursorRewrite;
+
+	if (!EnableDynamicCursorWithSkipLimit && !isCursorResume)
+	{
+		return;
+	}
+
+	int64 remainingLimit = queryData->streamingLimit;
+
+	queryData->streamingLimit = 0;
+	queryData->streamingSkip = 0;
+
+	int64 skipValue = spec->skip.value_type == BSON_TYPE_EOD ?
+					  0 : ParseSkipValue(&spec->skip);
+	int64 limitValue = spec->limit.value_type == BSON_TYPE_EOD ?
+					   0 : ParseLimitValue(&spec->limit);
+
+	bool canStreamSkipLimit = cursorParamKind == CursorParamKind_Dynamic &&
+							  collection != NULL &&
+							  collection->shardKey == NULL &&
+							  collection->viewDefinition == NULL;
+
+	if (isCursorResume &&
+		(((remainingLimit > 0) != (limitValue > 1)) ||
+		 (!canStreamSkipLimit && (remainingLimit > 0 || skipValue > 0))))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg(
+							"Cannot resume dynamic cursor with invalid remaining skip/limit state.")));
+	}
+
+	if (canStreamSkipLimit)
+	{
+		queryData->streamingSkip = skipValue;
+		queryData->streamingLimit = isCursorResume ?
+									remainingLimit : (limitValue > 1 ? limitValue : 0);
+	}
+}
+
+
+/*
+ * Applies resume-time count mutations after the find stages have built the
+ * count-owning query.
+ */
+static void
+RewriteQueryForSkipLimit(Query *query, QueryData *queryData)
+{
+	bool isCursorResume = queryData->cursorStateConst != NULL &&
+						  !queryData->isAggregationQueryCursorRewrite;
+	bool clearOffset = isCursorResume && queryData->hasFetchedRows;
+
+	if (isCursorResume && queryData->streamingLimit > 0)
+	{
+		Const *limitConst = query->limitCount != NULL &&
+							IsA(query->limitCount, Const) ?
+							(Const *) query->limitCount : NULL;
+		if (limitConst == NULL || limitConst->constisnull ||
+			limitConst->consttype != INT8OID ||
+			DatumGetInt64(limitConst->constvalue) <= 1 ||
+			queryData->streamingLimit > DatumGetInt64(limitConst->constvalue))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg(
+								"Cannot resume dynamic cursor because the remaining limit does not match the original query.")));
+		}
+		limitConst->constvalue = Int64GetDatum(queryData->streamingLimit);
+	}
+
+	if (clearOffset)
+	{
+		query->limitOffset = NULL;
+		queryData->streamingSkip = 0;
+	}
 }
 
 
@@ -2475,18 +2607,19 @@ ApplyFindSpec(const FindSpec *spec, MongoCollection *collection,
  * project) and attaches cursor functions.
  */
 static Query *
-ApplyFindSpecCore(const FindSpec *spec, Query *query, Query *baseQuery,
+ApplyFindSpecCore(const FindSpec *spec, Query *query,
 				  QueryData *queryData, CursorParamKind cursorParamKind,
 				  AggregationPipelineBuildContext *context)
 {
+	Query *baseQuery = query;
+
 	if (cursorParamKind == CursorParamKind_Dynamic &&
 		!TryAddDynamicCursorQuery(cursorParamKind, queryData, query, context))
 	{
-		/* Fall back to streaming cursor if dynamic cursor cannot be added */
 		cursorParamKind = CursorParamKind_Streaming;
-
-		/* If we couldn't add dynamic cursors then fall back to not allowing this */
 		context->joinStatus = JoinStageStatus_Unknown;
+		queryData->streamingLimit = 0;
+		queryData->streamingSkip = 0;
 	}
 
 	/* First apply match */
@@ -2516,6 +2649,9 @@ ApplyFindSpecCore(const FindSpec *spec, Query *query, Query *baseQuery,
 		context->stageNum++;
 	}
 
+	/* Projection migration wraps this query but leaves it as the count owner. */
+	Query *skipLimitQuery = query;
+
 	/* $near and $nearSphere add sort clause to query, for them we need persistent cursor. */
 	if (query->sortClause)
 	{
@@ -2538,6 +2674,8 @@ ApplyFindSpecCore(const FindSpec *spec, Query *query, Query *baseQuery,
 
 		query = HandleProjectFind(&spec->projection, &spec->filter, query, context);
 	}
+
+	RewriteQueryForSkipLimit(skipLimitQuery, queryData);
 
 	if (rt_fetch(1, query->rtable)->rtekind != RTE_RELATION)
 	{
@@ -4418,12 +4556,10 @@ HandleReplaceRoot(const bson_value_t *existingValue, Query *query,
  * If there is a limit, then injects a new subquery and sets the skip
  * since Skip is processed before limit in PG.
  */
-static Query *
-HandleSkip(const bson_value_t *existingValue, Query *query,
-		   AggregationPipelineBuildContext *context)
+static int64
+ParseSkipValue(const bson_value_t *value)
 {
-	ReportFeatureUsage(FEATURE_STAGE_SKIP);
-	if (!BsonValueIsNumber(existingValue))
+	if (!BsonValueIsNumber(value))
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION5107200),
 						errmsg(
@@ -4431,16 +4567,16 @@ HandleSkip(const bson_value_t *existingValue, Query *query,
 	}
 
 	bool checkFixedInteger = true;
-	if (!IsBsonValueUnquantized64BitInteger(existingValue, checkFixedInteger))
+	if (!IsBsonValueUnquantized64BitInteger(value, checkFixedInteger))
 	{
-		double doubleValue = BsonValueAsDouble(existingValue);
+		double doubleValue = BsonValueAsDouble(value);
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION5107200),
 						errmsg(
 							"Invalid parameter provided to $skip stage: value cannot be expressed as a 64-bit integer $skip: %f",
 							doubleValue)));
 	}
 
-	int64_t skipValue = BsonValueAsInt64(existingValue);
+	int64 skipValue = BsonValueAsInt64(value);
 	if (skipValue < 0)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION5107200),
@@ -4448,6 +4584,17 @@ HandleSkip(const bson_value_t *existingValue, Query *query,
 							"Invalid argument provided to $skip stage: A non-negative numerical value was expected in $skip, but received %ld.",
 							skipValue)));
 	}
+
+	return skipValue;
+}
+
+
+static Query *
+HandleSkip(const bson_value_t *existingValue, Query *query,
+		   AggregationPipelineBuildContext *context)
+{
+	ReportFeatureUsage(FEATURE_STAGE_SKIP);
+	int64 skipValue = ParseSkipValue(existingValue);
 
 	if (skipValue == 0)
 	{
@@ -4489,28 +4636,26 @@ HandleSkip(const bson_value_t *existingValue, Query *query,
  * Mutates the query for the $limit stage
  * Simply updates the limit in the current query.
  */
-static Query *
-HandleLimit(const bson_value_t *existingValue, Query *query,
-			AggregationPipelineBuildContext *context)
+static int64
+ParseLimitValue(const bson_value_t *value)
 {
-	ReportFeatureUsage(FEATURE_STAGE_LIMIT);
-	if (!BsonValueIsNumber(existingValue))
+	if (!BsonValueIsNumber(value))
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION5107201),
 						errmsg("the limit must be specified as a number")));
 	}
 
 	bool checkFixedInteger = true;
-	if (!IsBsonValue64BitInteger(existingValue, checkFixedInteger))
+	if (!IsBsonValue64BitInteger(value, checkFixedInteger))
 	{
-		double doubleValue = BsonValueAsDouble(existingValue);
+		double doubleValue = BsonValueAsDouble(value);
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION5107201),
 						errmsg(
 							"Invalid $limit stage argument: value cannot be represented as a 64-bit integer: $limit: %f",
 							doubleValue)));
 	}
 
-	int64_t limitValue = BsonValueAsInt64(existingValue);
+	int64 limitValue = BsonValueAsInt64(value);
 	if (limitValue < 0)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION5107201),
@@ -4524,6 +4669,17 @@ HandleLimit(const bson_value_t *existingValue, Query *query,
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION15958),
 						errmsg("The specified limit value must always be positive")));
 	}
+
+	return limitValue;
+}
+
+
+static Query *
+HandleLimit(const bson_value_t *existingValue, Query *query,
+			AggregationPipelineBuildContext *context)
+{
+	ReportFeatureUsage(FEATURE_STAGE_LIMIT);
+	int64 limitValue = ParseLimitValue(existingValue);
 
 	if (query->limitCount != NULL)
 	{
@@ -9090,7 +9246,7 @@ RequiresPersistentCursorLimit(const bson_value_t *pipelineValue, bool *isSingleR
 	if (pipelineValue->value_type != BSON_TYPE_EOD &&
 		BsonValueIsNumber(pipelineValue))
 	{
-		int32_t limit = BsonValueAsInt32(pipelineValue);
+		int64_t limit = BsonValueAsInt64(pipelineValue);
 		if (limit == 1)
 		{
 			/* For special case limit 1 - this can be a singleBatch cursor
@@ -9101,7 +9257,7 @@ RequiresPersistentCursorLimit(const bson_value_t *pipelineValue, bool *isSingleR
 		}
 
 		/* Defer to prior */
-		return limit != 1 && limit != 0;
+		return limit != 0;
 	}
 
 	return pipelineValue->value_type != BSON_TYPE_EOD;
@@ -9118,7 +9274,7 @@ RequiresPersistentCursorSkip(const bson_value_t *pipelineValue, bool *isSingleRo
 	if (pipelineValue->value_type != BSON_TYPE_EOD &&
 		BsonValueIsNumber(pipelineValue))
 	{
-		int32_t skip = BsonValueAsInt32(pipelineValue);
+		int64_t skip = BsonValueAsInt64(pipelineValue);
 		return skip != 0;
 	}
 

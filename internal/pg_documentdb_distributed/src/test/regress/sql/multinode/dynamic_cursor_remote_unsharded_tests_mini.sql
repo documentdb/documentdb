@@ -263,6 +263,202 @@ BEGIN
 END;
 $$;
 
+-- Projection-bearing commands include their returned documents in the report.
+CREATE OR REPLACE FUNCTION remote_sorted_limit_report(
+    p_find_spec text,
+    p_getmore_spec text,
+    p_expected_streaming bool,
+    p_expected_type int,
+    p_expected_count int,
+    p_value_field text DEFAULT NULL,
+    p_expected_values int[] DEFAULT NULL)
+RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+    v_page documentdb_core.bson;
+    v_cont documentdb_core.bson;
+    v_persist bool;
+    v_pages int := 1;
+    v_total int;
+    v_batch_count int;
+    v_type int;
+    v_remaining bigint;
+    v_values int[] := '{}';
+    v_batch_values int[];
+    v_documents text;
+    v_batch_documents text;
+    v_has_projection bool := p_find_spec::jsonb ? 'projection';
+BEGIN
+    SELECT cursorpage, continuation, persistconnection
+    INTO v_page, v_cont, v_persist
+    FROM find_cursor_first_page('dyncur_sp_db', p_find_spec::bson, 543);
+
+    IF v_persist THEN
+        RAISE EXCEPTION 'Coordinator must not hold a remote cursor portal';
+    END IF;
+
+    v_batch_count :=
+        (bson_dollar_project(v_page,
+            '{ "c": { "$size": { "$ifNull": [ "$cursor.firstBatch", [] ] } } }')
+            ->> 'c')::int;
+    v_total := v_batch_count;
+    SELECT COALESCE(string_agg(
+        regexp_replace(value::text,
+            '\{"\$numberInt": "(-?[0-9]+)"\}', '\1', 'g'),
+        ',' ORDER BY ordinality), '')
+    INTO v_batch_documents
+    FROM jsonb_array_elements((v_page::text::jsonb)->'cursor'->'firstBatch')
+         WITH ORDINALITY;
+    v_documents := '[' || v_batch_documents || ']';
+    IF p_value_field IS NOT NULL THEN
+        SELECT array_agg((value->p_value_field->>'$numberInt')::int ORDER BY ordinality)
+        INTO v_batch_values
+        FROM jsonb_array_elements((v_page::text::jsonb)->'cursor'->'firstBatch')
+             WITH ORDINALITY;
+        v_values := v_values || COALESCE(v_batch_values, '{}');
+    END IF;
+
+    WHILE v_cont IS NOT NULL LOOP
+        v_type :=
+            (bson_dollar_project(v_cont, '{ "wc.dc.type": 1 }') ->> 'wc.dc.type')::int;
+        v_remaining :=
+            (bson_dollar_project(v_cont, '{ "wc.lim": 1 }') ->> 'wc.lim')::bigint;
+
+        IF p_expected_streaming THEN
+            IF v_type IS DISTINCT FROM p_expected_type OR
+               v_remaining IS DISTINCT FROM (p_expected_count - v_total)::bigint OR
+               (bson_dollar_project(v_cont, '{ "wc.qf": 1 }') ->> 'wc.qf') IS NOT NULL THEN
+                RAISE EXCEPTION 'Unexpected remote streaming state type %, remaining %',
+                    v_type, v_remaining;
+            END IF;
+        ELSIF v_type IS NOT NULL OR v_remaining IS NOT NULL OR
+              (bson_dollar_project(v_cont, '{ "wc.qf": 1 }') ->> 'wc.qf') IS NULL THEN
+            RAISE EXCEPTION 'Expected remote file cursor continuation';
+        END IF;
+
+        SELECT cursorpage, continuation
+        INTO v_page, v_cont
+        FROM cursor_get_more('dyncur_sp_db', p_getmore_spec::bson, v_cont);
+
+        v_batch_count :=
+            (bson_dollar_project(v_page,
+                '{ "c": { "$size": { "$ifNull": [ "$cursor.nextBatch", [] ] } } }')
+                ->> 'c')::int;
+        v_total := v_total + v_batch_count;
+        v_pages := v_pages + 1;
+        SELECT COALESCE(string_agg(
+            regexp_replace(value::text,
+                '\{"\$numberInt": "(-?[0-9]+)"\}', '\1', 'g'),
+            ',' ORDER BY ordinality), '')
+        INTO v_batch_documents
+        FROM jsonb_array_elements((v_page::text::jsonb)->'cursor'->'nextBatch')
+             WITH ORDINALITY;
+        v_documents := v_documents || ' [' || v_batch_documents || ']';
+        IF p_value_field IS NOT NULL THEN
+            SELECT array_agg((value->p_value_field->>'$numberInt')::int ORDER BY ordinality)
+            INTO v_batch_values
+            FROM jsonb_array_elements((v_page::text::jsonb)->'cursor'->'nextBatch')
+                 WITH ORDINALITY;
+            v_values := v_values || COALESCE(v_batch_values, '{}');
+        END IF;
+    END LOOP;
+
+    IF v_total <> p_expected_count OR
+       (p_expected_values IS NOT NULL AND v_values IS DISTINCT FROM p_expected_values) THEN
+        RAISE EXCEPTION 'Expected % documents %, got % documents %',
+            p_expected_count, p_expected_values, v_total, v_values;
+    END IF;
+
+    RETURN FORMAT('pages=%s docs=%s kind=%s%s', v_pages, v_total,
+        CASE WHEN p_expected_streaming THEN 'streaming' ELSE 'file' END,
+        CASE WHEN v_has_projection THEN ' projected=' || v_documents ELSE '' END);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION remote_sorted_skip_report(
+    p_find_spec text,
+    p_getmore_spec text,
+    p_expected_streaming bool,
+    p_expected_type int,
+    p_expected_values int[])
+RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+    v_page documentdb_core.bson;
+    v_cont documentdb_core.bson;
+    v_persist bool;
+    v_pages int := 1;
+    v_type int;
+    v_values int[] := '{}';
+    v_batch_values int[];
+    v_documents text;
+    v_batch_documents text;
+    v_has_projection bool := p_find_spec::jsonb ? 'projection';
+BEGIN
+    SELECT cursorpage, continuation, persistconnection
+    INTO v_page, v_cont, v_persist
+    FROM find_cursor_first_page('dyncur_sp_db', p_find_spec::bson, 561);
+
+    IF v_persist THEN
+        RAISE EXCEPTION 'Coordinator must not hold a remote cursor portal';
+    END IF;
+
+    SELECT array_agg((value->'_id'->>'$numberInt')::int ORDER BY ordinality)
+    INTO v_batch_values
+    FROM jsonb_array_elements((v_page::text::jsonb)->'cursor'->'firstBatch') WITH ORDINALITY;
+    v_values := v_values || COALESCE(v_batch_values, '{}');
+    SELECT COALESCE(string_agg(
+        regexp_replace(value::text,
+            '\{"\$numberInt": "(-?[0-9]+)"\}', '\1', 'g'),
+        ',' ORDER BY ordinality), '')
+    INTO v_batch_documents
+    FROM jsonb_array_elements((v_page::text::jsonb)->'cursor'->'firstBatch')
+         WITH ORDINALITY;
+    v_documents := '[' || v_batch_documents || ']';
+
+    WHILE v_cont IS NOT NULL LOOP
+        v_type :=
+            (bson_dollar_project(v_cont, '{ "wc.dc.type": 1 }') ->> 'wc.dc.type')::int;
+
+        IF p_expected_streaming THEN
+            -- A streaming worker continuation carries a "dc" scan position and no
+            -- "qf" file state. No skip state is carried at all: the offset is
+            -- consumed on the first page and cleared on every resume.
+            IF v_type IS DISTINCT FROM p_expected_type OR
+               (bson_dollar_project(v_cont, '{ "wc.qf": 1 }') ->> 'wc.qf') IS NOT NULL THEN
+                RAISE EXCEPTION 'Unexpected remote streaming state type %', v_type;
+            END IF;
+        ELSIF v_type IS NOT NULL OR
+              (bson_dollar_project(v_cont, '{ "wc.qf": 1 }') ->> 'wc.qf') IS NULL THEN
+            RAISE EXCEPTION 'Expected remote file cursor continuation';
+        END IF;
+
+        SELECT cursorpage, continuation INTO v_page, v_cont
+        FROM cursor_get_more('dyncur_sp_db', p_getmore_spec::bson, v_cont);
+
+        SELECT array_agg((value->'_id'->>'$numberInt')::int ORDER BY ordinality)
+        INTO v_batch_values
+        FROM jsonb_array_elements((v_page::text::jsonb)->'cursor'->'nextBatch') WITH ORDINALITY;
+        v_values := v_values || COALESCE(v_batch_values, '{}');
+        SELECT COALESCE(string_agg(
+            regexp_replace(value::text,
+                '\{"\$numberInt": "(-?[0-9]+)"\}', '\1', 'g'),
+            ',' ORDER BY ordinality), '')
+        INTO v_batch_documents
+        FROM jsonb_array_elements((v_page::text::jsonb)->'cursor'->'nextBatch')
+             WITH ORDINALITY;
+        v_documents := v_documents || ' [' || v_batch_documents || ']';
+        v_pages := v_pages + 1;
+    END LOOP;
+
+    IF v_values IS DISTINCT FROM p_expected_values THEN
+        RAISE EXCEPTION 'Expected ids %, got %', p_expected_values, v_values;
+    END IF;
+
+    RETURN FORMAT('pages=%s ids=%s kind=%s%s', v_pages, v_values,
+        CASE WHEN p_expected_streaming THEN 'streaming' ELSE 'file' END,
+        CASE WHEN v_has_projection THEN ' projected=' || v_documents ELSE '' END);
+END;
+$$;
+
 -- ===========================================================================
 -- Helper UDF: EXPLAIN the first-page plan for a find or aggregate spec.
 -- Auto-detects the entry point (find vs aggregate) from the spec's "aggregate"
@@ -566,6 +762,56 @@ SELECT remote_drain_and_report(
     '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 2 }',
     false  -- print continuation token
 );
+
+-- ---------------------------------------------------------------------------
+-- Sorted positive limits: secondary and PK order stream on the worker; an
+-- unindexed sort remains a worker file cursor.
+-- ---------------------------------------------------------------------------
+SELECT run_command_on_all_nodes(
+    $$ALTER SYSTEM SET documentdb.enable_dynamic_cursor_with_skiplimit = 'on'$$);
+SELECT run_command_on_all_nodes($$SELECT pg_reload_conf()$$);
+
+SELECT remote_sorted_limit_report(
+    '{ "find": "remote_e2e_coll", "sort": { "a": 1 }, "projection": { "_id": 1, "a": 1 }, "hint": "idx_a", "limit": 5, "batchSize": 2 }',
+    '{ "getMore": { "$numberLong": "543" }, "collection": "remote_e2e_coll", "batchSize": 2 }',
+    true, 3, 5, 'a', ARRAY[1,2,3,4,5]) AS remote_secondary_sorted_limit;
+
+SELECT remote_sorted_limit_report(
+    '{ "find": "remote_e2e_coll", "filter": { "_id": { "$gte": 10, "$lte": 18 } }, "sort": { "_id": -1 }, "projection": { "_id": 1 }, "hint": "_id_", "limit": 5, "batchSize": 2 }',
+    '{ "getMore": { "$numberLong": "543" }, "collection": "remote_e2e_coll", "batchSize": 2 }',
+    true, 2, 5, '_id', ARRAY[18,17,16,15,14]) AS remote_pk_sorted_limit;
+
+SELECT remote_sorted_limit_report(
+    '{ "find": "remote_e2e_coll", "sort": { "b": 1 }, "projection": { "_id": 1, "b": 1 }, "hint": "idx_a", "limit": 5, "batchSize": 2 }',
+    '{ "getMore": { "$numberLong": "543" }, "collection": "remote_e2e_coll", "batchSize": 2 }',
+    false, 0, 5, '_id', ARRAY[1,10,11,12,13]) AS remote_runtime_sort_limit;
+
+-- ---------------------------------------------------------------------------
+-- Remote skip: the worker applies the offset once on the first page and clears
+-- it on every resume. A re-applied offset would skip the same amount again from
+-- the resumed position, so the ids are asserted per page rather than counted.
+-- ---------------------------------------------------------------------------
+-- PK-ordered skip streams on the worker: skip 3 then 6 rows from _id 4.
+SELECT remote_sorted_skip_report(
+    '{ "find": "remote_e2e_coll", "filter": { "_id": { "$lte": 20 } }, "sort": { "_id": 1 }, "projection": { "_id": 1 }, "hint": "_id_", "skip": 3, "limit": 6, "batchSize": 2 }',
+    '{ "getMore": { "$numberLong": "561" }, "collection": "remote_e2e_coll", "batchSize": 2 }',
+    true, 2, ARRAY[4,5,6,7,8,9]) AS remote_pk_sorted_skip;
+
+-- Secondary-index ordered skip on the worker.
+SELECT remote_sorted_skip_report(
+    '{ "find": "remote_e2e_coll", "filter": { "a": { "$lte": 20 } }, "sort": { "a": 1 }, "projection": { "_id": 1, "a": 1 }, "hint": "idx_a", "skip": 4, "limit": 4, "batchSize": 3 }',
+    '{ "getMore": { "$numberLong": "561" }, "collection": "remote_e2e_coll", "batchSize": 3 }',
+    true, 3, ARRAY[5,6,7,8]) AS remote_secondary_sorted_skip;
+
+-- Skip with no limit still streams and drains to the end of the filter range.
+SELECT remote_sorted_skip_report(
+    '{ "find": "remote_e2e_coll", "filter": { "_id": { "$lte": 8 } }, "sort": { "_id": 1 }, "projection": { "_id": 1 }, "hint": "_id_", "skip": 5, "batchSize": 2 }',
+    '{ "getMore": { "$numberLong": "561" }, "collection": "remote_e2e_coll", "batchSize": 2 }',
+    true, 2, ARRAY[6,7,8]) AS remote_skip_no_limit;
+
+SELECT run_command_on_all_nodes(
+    $$ALTER SYSTEM RESET documentdb.enable_dynamic_cursor_with_skiplimit$$);
+SELECT run_command_on_all_nodes($$SELECT pg_reload_conf()$$);
 
 -- ---------------------------------------------------------------------------
 -- Test R-AGG: aggregate pipeline on the same unsharded remote collection.

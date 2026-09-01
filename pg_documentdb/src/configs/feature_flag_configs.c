@@ -320,6 +320,11 @@ bool EnableDeleteOnePlanCacheOptimization =
 #define DEFAULT_ENABLE_DYNAMIC_CURSORS false
 bool EnableDynamicCursors = DEFAULT_ENABLE_DYNAMIC_CURSORS;
 
+/* Added in v1.1, pending stabilization, enable in v1.4 */
+#define DEFAULT_ENABLE_DYNAMIC_CURSOR_WITH_SKIPLIMIT false
+bool EnableDynamicCursorWithSkipLimit =
+	DEFAULT_ENABLE_DYNAMIC_CURSOR_WITH_SKIPLIMIT;
+
 /* Added in v0.115, enabled in v0.115, remove after v0.117 */
 #define DEFAULT_ENABLE_DYNAMIC_PERSISTENT_CURSORS_WITH_STATS true
 bool EnableDynamicPersistentCursorsWithStats =
@@ -787,6 +792,18 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether or not to enable dynamic persistent cursors with statistics."),
 		NULL, &EnableDynamicPersistentCursorsWithStats,
 		DEFAULT_ENABLE_DYNAMIC_PERSISTENT_CURSORS_WITH_STATS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_dynamic_cursor_with_skiplimit", newGucPrefix),
+		gettext_noop(
+			"Whether or not to allow a query with a positive skip or a positive "
+			"limit (> 1) to use a dynamic streaming cursor instead of falling "
+			"back to a persistent cursor, by tracking the remaining limit in the "
+			"continuation token and clearing the offset once a page has consumed "
+			"it."),
+		NULL, &EnableDynamicCursorWithSkipLimit,
+		DEFAULT_ENABLE_DYNAMIC_CURSOR_WITH_SKIPLIMIT,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

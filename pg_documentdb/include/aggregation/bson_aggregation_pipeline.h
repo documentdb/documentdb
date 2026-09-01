@@ -147,6 +147,22 @@ typedef struct
 	 * query cursor rewrite path (enableCursorsOnAggregationQueryRewrite).
 	 */
 	bool isAggregationQueryCursorRewrite;
+
+	/*
+	 * Whether a dynamic streaming cursor has returned a row on any prior page.
+	 */
+	bool hasFetchedRows;
+
+	/*
+	 * Top-level find limit tracked across pages in the "lim" continuation field.
+	 * Zero means untracked.
+	 */
+	int64_t streamingLimit;
+
+	/*
+	 * Top-level find skip tracked while planning.
+	 */
+	int64_t streamingSkip;
 } QueryData;
 
 
@@ -166,7 +182,7 @@ FindQueryPlan * ParseFindQueryAndLookupCollection(text *database, pgbson *findSp
 Query * ApplyParsedFindQuery(FindQueryPlan *plan, CursorParamKind cursorParamKind);
 Query * GenerateGetMoreQuery(text *database, pgbson *getMoreSpec,
 							 pgbson *continuationSpec,
-							 QueryData *queryData, bool setStatementTimeout);
+							 bool setStatementTimeout);
 Query * BuildAggregationCursorGetMoreQuery(text *database, pgbson *getMoreSpec,
 										   pgbson *continuationSpec);
 Query * GenerateCountQuery(text *database, pgbson *countSpec, bool setStatementTimeout);

@@ -32,7 +32,6 @@
 #include "aggregation/aggregation_commands.h"
 #include "infrastructure/cursor_store.h"
 #include <utils/query_utils.h>
-#include <utils/guc_utils.h>
 #include "metadata/collection.h"
 #include "api_hooks.h"
 
@@ -185,6 +184,16 @@ typedef struct
 	 * Tracked across getMore pages for diagnostic purposes.
 	 */
 	int32_t numIterations;
+
+	/*
+	 * Remaining top-level find limit parsed from "lim"; zero means untracked.
+	 */
+	int64_t remainingLimit;
+
+	/*
+	 * Whether any dynamic streaming cursor page has returned a row.
+	 */
+	bool hasFetchedRows;
 } QueryGetMoreInfo;
 
 typedef struct LocalFirstPageResult
@@ -219,6 +228,8 @@ static pgbson * BuildDynamicStreamingContinuationDocument(int64_t cursorId, Quer
 														  pgbson *querySpec, int
 														  numIterations,
 														  pgbson *continuationDoc,
+														  int64_t remainingLimit,
+														  bool hasFetchedRows,
 														  TimeSystemVariables *
 														  timeSystemVariables);
 
@@ -682,6 +693,8 @@ DrainLocalCursorGetMorePage(text *database, pgbson *cursorSpec,
 			queryData.timeSystemVariables =
 				getMoreInfo->queryData.timeSystemVariables;
 			queryData.cursorStateConst = getMoreInfo->dynamicCursorState;
+			queryData.streamingLimit = getMoreInfo->remainingLimit;
+			queryData.hasFetchedRows = getMoreInfo->hasFetchedRows;
 
 			bool setStatementTimeout = false;
 			Query *query = GenerateCursorQueryForKind(
@@ -690,8 +703,12 @@ DrainLocalCursorGetMorePage(text *database, pgbson *cursorSpec,
 				setStatementTimeout);
 
 			bool isDynamicStreaming = false;
+			bool allowOffsetLimitNode =
+				queryData.streamingLimit > 0 || queryData.streamingSkip > 0;
 			QueryCursorPlanResult *planResult =
-				PlanDynamicQueryAndDetermineCursorType(query, &isDynamicStreaming);
+				PlanDynamicQueryAndDetermineCursorType(
+					query, allowOffsetLimitNode,
+					&isDynamicStreaming);
 			if (!isDynamicStreaming)
 			{
 				ereport(ERROR, (errmsg(
@@ -710,9 +727,16 @@ DrainLocalCursorGetMorePage(text *database, pgbson *cursorSpec,
 			}
 
 			pgbson *sourceDoc = getMoreInfo->dynamicCursorState;
+			int64 numRowsFetched = 0;
 			pgbson *innerDoc = DrainDynamicStreamingCursor(
 				planResult, getMoreInfo->queryData.batchSize, sourceDoc,
-				arrayWriter, accumulatedSize);
+				arrayWriter, accumulatedSize, &numRowsFetched);
+
+			bool hasFetchedRows = getMoreInfo->hasFetchedRows || numRowsFetched > 0;
+
+			/* -1 is untracked; 0 is exhausted; positive values continue. */
+			int64 remainingNext = getMoreInfo->remainingLimit > 0 ?
+								  getMoreInfo->remainingLimit - numRowsFetched : -1;
 
 			if (innerDoc == NULL)
 			{
@@ -724,8 +748,8 @@ DrainLocalCursorGetMorePage(text *database, pgbson *cursorSpec,
 				*queryFullyDrained = false;
 				continuationDoc = BuildDynamicStreamingContinuationDocument(
 					getMoreInfo->cursorId, getMoreInfo->queryKind,
-					getMoreInfo->querySpec, 1, innerDoc,
-					&getMoreInfo->queryData.timeSystemVariables);
+					getMoreInfo->querySpec, 1, innerDoc, remainingNext,
+					hasFetchedRows, &getMoreInfo->queryData.timeSystemVariables);
 			}
 			break;
 		}
@@ -922,7 +946,9 @@ aggregation_cursor_get_more(text *database, pgbson *getMoreSpec,
 
 		default:
 		{
-			Assert(false);
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg("Unsupported cursor kind %d for getMore",
+								   (int) getMoreInfo.cursorKind)));
 			pg_unreachable();
 		}
 	}
@@ -1059,7 +1085,7 @@ delete_cursors(ArrayType *cursorArray)
 
 Query *
 GenerateGetMoreQuery(text *database, pgbson *getMoreSpec, pgbson *continuationSpec,
-					 QueryData *queryData, bool setStatementTimeout)
+					 bool setStatementTimeout)
 {
 	QueryGetMoreInfo getMoreInfo = { 0 };
 	ParseGetMoreSpec(&database, getMoreSpec, continuationSpec, &getMoreInfo,
@@ -1099,10 +1125,12 @@ GenerateGetMoreQuery(text *database, pgbson *getMoreSpec, pgbson *continuationSp
 			queryData.timeSystemVariables =
 				getMoreInfo.queryData.timeSystemVariables;
 			queryData.cursorStateConst = workerSpec;
+			queryData.streamingLimit = getMoreInfo.remainingLimit;
+			queryData.hasFetchedRows = getMoreInfo.hasFetchedRows;
+
 			query = GenerateCursorQueryForKind(database, getMoreInfo.querySpec,
 											   &queryData, getMoreInfo.queryKind,
 											   cursorParamKind, setStatementTimeout);
-
 			return query;
 		}
 
@@ -1497,8 +1525,10 @@ HandleLocalFirstPageRequestCore(text *database, pgbson *querySpec, int64_t curso
 			 * To do this, we first plan the query and get the streaming state.
 			 */
 			bool isDynamicStreaming = false;
+			bool allowOffsetLimitNode =
+				queryData->streamingLimit > 0 || queryData->streamingSkip > 0;
 			QueryCursorPlanResult *planResult = PlanDynamicQueryAndDetermineCursorType(
-				query, &isDynamicStreaming);
+				query, allowOffsetLimitNode, &isDynamicStreaming);
 
 			if (isDynamicStreaming)
 			{
@@ -1506,10 +1536,17 @@ HandleLocalFirstPageRequestCore(text *database, pgbson *querySpec, int64_t curso
 				persistConnection = false;
 
 				pgbson *sourceDoc = PgbsonInitEmpty();
+				int64 numRowsFetched = 0;
 				pgbson *innerDoc = DrainDynamicStreamingCursor(planResult,
 															   queryData->batchSize,
 															   sourceDoc, &arrayWriter,
-															   accumulatedSize);
+															   accumulatedSize,
+															   &numRowsFetched);
+				bool hasFetchedRows = numRowsFetched > 0;
+
+				/* -1 is untracked; 0 is exhausted; positive values continue. */
+				int64 remainingNext = queryData->streamingLimit > 0 ?
+									  queryData->streamingLimit - numRowsFetched : -1;
 
 				if (innerDoc == NULL)
 				{
@@ -1524,7 +1561,8 @@ HandleLocalFirstPageRequestCore(text *database, pgbson *querySpec, int64_t curso
 					continuationDoc =
 						BuildDynamicStreamingContinuationDocument(
 							cursorId, queryKind, querySpec, numIterations,
-							innerDoc, &queryData->timeSystemVariables);
+							innerDoc, remainingNext, hasFetchedRows,
+							&queryData->timeSystemVariables);
 				}
 			}
 			else
@@ -1715,6 +1753,8 @@ static pgbson *
 BuildDynamicStreamingContinuationDocument(int64_t cursorId, QueryKind queryKind,
 										  pgbson *querySpec, int numIterations,
 										  pgbson *continuationDoc,
+										  int64_t remainingLimit,
+										  bool hasFetchedRows,
 										  TimeSystemVariables *timeSystemVariables)
 {
 	pgbson_writer writer;
@@ -1729,6 +1769,25 @@ BuildDynamicStreamingContinuationDocument(int64_t cursorId, QueryKind queryKind,
 	PgbsonWriterAppendDocument(&writer, "qd", 2, querySpec);
 
 	PgbsonWriterAppendDocument(&writer, "dc", 2, continuationDoc);
+	PgbsonWriterAppendBool(&writer, "hasFetchedRows", 14, hasFetchedRows);
+
+	/*
+	 * Store a positive remaining count in "lim". -1 is untracked; callers must
+	 * close the cursor instead of serializing an exhausted value of zero.
+	 */
+	if (remainingLimit > 0)
+	{
+		PgbsonWriterAppendInt64(&writer, "lim", 3, remainingLimit);
+	}
+	else if (remainingLimit != -1)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg(
+							"Cannot serialize invalid dynamic cursor limit " INT64_FORMAT
+							".",
+							remainingLimit)));
+		pg_unreachable();
+	}
 
 	/* In the response add the number of iterations (used in tests) */
 	PgbsonWriterAppendInt32(&writer, "numIters", 8, numIterations);
@@ -1987,12 +2046,57 @@ ParseCursorInputSpec(pgbson *cursorSpec, QueryGetMoreInfo *getMoreInfo)
 				continue;
 			}
 
+			/* hasFetchedRows: whether a prior page returned any rows */
+			case 'h':
+			{
+				if (strcmp(pathKey, "hasFetchedRows") == 0)
+				{
+					const bson_value_t *hasFetchedRowsValue =
+						bson_iter_value(&cursorSpecIter);
+					if (hasFetchedRowsValue->value_type != BSON_TYPE_BOOL)
+					{
+						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+										errmsg(
+											"Cannot resume dynamic cursor with invalid hasFetchedRows state.")));
+						pg_unreachable();
+					}
+
+					getMoreInfo->hasFetchedRows =
+						hasFetchedRowsValue->value.v_bool;
+				}
+				continue;
+			}
+
 			/* numIters — page iteration counter stored in the continuation */
 			case 'n':
 			{
 				if (strncmp(pathKey, "numIters", 8) == 0 && pathKey[8] == '\0')
 				{
 					getMoreInfo->numIterations = bson_iter_int32(&cursorSpecIter);
+				}
+				continue;
+			}
+
+			/* lim — remaining streamable limit tracked across getMore pages */
+			case 'l':
+			{
+				if (strncmp(pathKey, "lim", 3) == 0 && pathKey[3] == '\0')
+				{
+					const bson_value_t *remainingLimitValue =
+						bson_iter_value(&cursorSpecIter);
+
+					if (getMoreInfo->remainingLimit > 0 ||
+						remainingLimitValue->value_type != BSON_TYPE_INT64 ||
+						remainingLimitValue->value.v_int64 <= 0)
+					{
+						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+										errmsg(
+											"Cannot resume dynamic cursor with invalid remaining limit state.")));
+						pg_unreachable();
+					}
+
+					getMoreInfo->remainingLimit =
+						remainingLimitValue->value.v_int64;
 				}
 				continue;
 			}
@@ -2014,6 +2118,18 @@ ParseCursorInputSpec(pgbson *cursorSpec, QueryGetMoreInfo *getMoreInfo)
 				continue;
 			}
 		}
+	}
+
+	if (getMoreInfo->remainingLimit > 0 &&
+		(getMoreInfo->cursorKind != CursorKind_DynamicStreaming ||
+		 getMoreInfo->queryKind != QueryKind_Find ||
+		 getMoreInfo->querySpec == NULL ||
+		 getMoreInfo->dynamicCursorState == NULL))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg(
+							"Cannot resume dynamic cursor with invalid remaining limit state.")));
+		pg_unreachable();
 	}
 }
 
