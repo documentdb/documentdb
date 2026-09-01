@@ -3,7 +3,7 @@
  *
  * include/rbac_hooks.h
  *
- * Hook definitions for collection-scoped role privileges. These hooks let the
+ * Hook definitions for resource-scoped role privileges. These hooks let the
  * hosting extension layer persist the privileges a role is granted on a
  * resource, and hold the native relation privileges that reaching the
  * authorization path requires.
@@ -86,6 +86,9 @@ void RemoveCollectionPrivileges(const char *roleName);
  */
 void GrantCollectionPrivilegesToBaselineRoles(uint64 collectionId,
 											  bool includeRetryTable);
+
+/* Runs optional work after a collection is created. */
+void PostCreateCollection(uint64 collectionId);
 
 /*
  * Records, on a plan built without the planner, the identity a relation's

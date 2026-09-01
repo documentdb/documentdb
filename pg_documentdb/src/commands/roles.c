@@ -572,6 +572,7 @@ ParseResourceDocument(bson_iter_t *privilegeDocIter,
 								errmsg("'db' in resource must not be empty.")));
 			}
 
+			ValidateNamespaceStringForEmbeddedNull(strValue, strLength);
 			*dbName = CreateStringViewFromStringWithLength(strValue, strLength);
 			dbFound = true;
 		}
@@ -586,12 +587,14 @@ ParseResourceDocument(bson_iter_t *privilegeDocIter,
 
 			uint32_t strLength = 0;
 			const char *strValue = bson_iter_utf8(&resourceIter, &strLength);
-			if (strValue == NULL || strLength == 0)
+			if (strValue == NULL)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-								errmsg("'collection' in resource must not be empty.")));
+								errmsg(
+									"'collection' in resource must be a string.")));
 			}
 
+			ValidateNamespaceStringForEmbeddedNull(strValue, strLength);
 			*collectionName = CreateStringViewFromStringWithLength(strValue, strLength);
 			collectionFound = true;
 		}
@@ -620,8 +623,15 @@ ParseResourceDocument(bson_iter_t *privilegeDocIter,
 	 * Privileges may target collections created later, so validate only the
 	 * namespace syntax here.
 	 */
-	ValidateDatabaseCollection(StringViewGetTextDatum(dbName),
-							   StringViewGetTextDatum(collectionName));
+	if (collectionName->length == 0)
+	{
+		ValidateDatabaseName(StringViewGetTextDatum(dbName));
+	}
+	else
+	{
+		ValidateDatabaseCollection(StringViewGetTextDatum(dbName),
+								   StringViewGetTextDatum(collectionName));
+	}
 }
 
 

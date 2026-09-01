@@ -3,7 +3,7 @@
  *
  * src/rbac_hooks.c
  *
- * Default implementations of the collection-scoped role privilege hooks.
+ * Default implementations of the resource-scoped role privilege hooks.
  *
  *-------------------------------------------------------------------------
  */
@@ -21,6 +21,7 @@ RemoveCollectionPrivileges_HookType
 	remove_collection_privileges_hook = NULL;
 GrantCollectionPrivilegesToBaselineRoles_HookType
 	grant_collection_privileges_to_baseline_roles_hook = NULL;
+PostCreateCollection_HookType post_create_collection_hook = NULL;
 ApplyCollectionAccessIdentityToPlan_HookType
 	apply_collection_access_identity_to_plan_hook = NULL;
 NotifyCollectionMetadataInvalidated_HookType
@@ -82,6 +83,17 @@ GrantCollectionPrivilegesToBaselineRoles(uint64 collectionId, bool includeRetryT
 	{
 		grant_collection_privileges_to_baseline_roles_hook(collectionId,
 														   includeRetryTable);
+	}
+}
+
+
+/* Runs optional work after a collection is created. */
+void
+PostCreateCollection(uint64 collectionId)
+{
+	if (post_create_collection_hook != NULL)
+	{
+		post_create_collection_hook(collectionId);
 	}
 }
 

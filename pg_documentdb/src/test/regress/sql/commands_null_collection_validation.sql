@@ -116,3 +116,10 @@ SELECT * FROM aggregate_cursor_first_page(
     'null_collection_validation',
     '{"aggregate":"source","pipeline":[{"$inverseMatch":{"path":"a","from":"target\u0000suffix","pipeline":[]}}],"cursor":{}}',
     4294967294);
+
+SET documentdb.enableRoleCrud TO ON;
+SELECT documentdb_api.create_role(
+    '{"createRole":"null_duplicate_db_role","roles":[],"privileges":[{"resource":{"db":"invalid\u0000suffix","db":"null_collection_validation","collection":"source"},"actions":["find"]}],"$db":"admin"}');
+SELECT documentdb_api.create_role(
+    '{"createRole":"null_duplicate_collection_role","roles":[],"privileges":[{"resource":{"db":"null_collection_validation","collection":"invalid\u0000suffix","collection":"source"},"actions":["find"]}],"$db":"admin"}');
+RESET documentdb.enableRoleCrud;

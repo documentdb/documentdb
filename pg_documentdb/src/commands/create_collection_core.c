@@ -313,6 +313,7 @@ CreatePostgresDataTable(uint64_t collectionId, const char *colocateWith, const
 
 	bool includeRetryTable = retryTableName != NULL;
 	GrantCollectionPrivilegesToBaselineRoles(collectionId, includeRetryTable);
+	PostCreateCollection(collectionId);
 
 	return dataTableNameInfo->data;
 }

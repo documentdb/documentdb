@@ -25,4 +25,7 @@ typedef void (*NotifyCollectionMetadataInvalidated_HookType)(void);
 extern NotifyCollectionMetadataInvalidated_HookType
 	notify_collection_metadata_invalidated_hook;
 
+typedef void (*PostCreateCollection_HookType)(uint64 collectionId);
+extern PostCreateCollection_HookType post_create_collection_hook;
+
 #endif

@@ -349,7 +349,7 @@ SELECT documentdb_api.create_role('{"createRole":"privRoleEmptyDb", "roles":[], 
 ERROR:  'db' in resource must not be empty.
 -- Test privileges with empty collection in resource, should fail
 SELECT documentdb_api.create_role('{"createRole":"privRoleEmptyCol", "roles":[], "privileges":[{"resource":{"db":"testdb","collection":""},"actions":["find"]}], "$db":"admin"}');
-ERROR:  'collection' in resource must not be empty.
+ERROR:  Privileges on a collection are currently unsupported.
 -- Test privileges with non-string action, should fail
 SELECT documentdb_api.create_role('{"createRole":"privRoleNonStringAction", "roles":[], "privileges":[{"resource":{"db":"testdb","collection":"testcol"},"actions":[123]}], "$db":"admin"}');
 ERROR:  Each action must be a string.
