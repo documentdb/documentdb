@@ -10,6 +10,11 @@
       "const": 2.0,
       "description": "The version of the explain output format. Always 2.0 for DocumentDB."
     },
+    "currentDateTime": {
+      "type": "string",
+      "format": "date-time",
+      "description": "The UTC date and time when the gateway generated the explain response. Encoded as a BSON datetime and represented as an RFC 3339 string in JSON."
+    },
     "command": {
       "type": "string",
       "description": "A shell-style string representation of the explain command that was run, e.g. \"db.runCommand({explain:{'find':'collectionName', ...}})\"."
@@ -59,7 +64,7 @@
       "description": "Standard response status. Always 1.0 on success."
     }
   },
-  "required": ["explainVersion", "command", "ok"],
+  "required": ["explainVersion", "currentDateTime", "command", "ok"],
   "$defs": {
     "QueryPlanner": {
       "type": "object",

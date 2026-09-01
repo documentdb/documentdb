@@ -9,7 +9,7 @@
 use core::f64;
 use std::{cmp::Ordering, collections::HashMap, str::FromStr, sync::LazyLock};
 
-use bson::{rawdoc, Document, RawArrayBuf, RawBson, RawDocument, RawDocumentBuf};
+use bson::{rawdoc, DateTime, Document, RawArrayBuf, RawBson, RawDocument, RawDocumentBuf};
 use model::{
     DistributedJob, DistributedQueryPlan, DistributedSubPlan, ExplainPlan, ExplainWorker,
     IndexCost, IndexDetails, PostgresExplain, VectorSearchParams,
@@ -241,6 +241,7 @@ async fn run_explain(
 
             let mut explain = RawDocumentBuf::new();
             explain.append("explainVersion", 2.0);
+            explain.append("currentDateTime", DateTime::now());
 
             let command_str = format!(
                 "db.runCommand({{explain: {}}})",
