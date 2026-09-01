@@ -3,7 +3,6 @@ SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 SET documentdb.next_collection_id TO 3500;
 SET documentdb.next_collection_index_id TO 3500;
 SET documentdb.failOnNonEmptyGroupCountArg TO on;
-SET documentdb.failOnGroupIdDuplicate TO on;
 SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
@@ -558,4 +557,3 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": 1, "pipelin
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ { "category": "A", "val": 10 }, { "category": "B", "val": 20 }, { "category": "A", "val": 30 } ] }, { "$group": { "_id": "$category", "total": { "$sum": "$val" } } } ], "cursor": {}}');
 
 RESET documentdb.failOnNonEmptyGroupCountArg;
-RESET documentdb.failOnGroupIdDuplicate;

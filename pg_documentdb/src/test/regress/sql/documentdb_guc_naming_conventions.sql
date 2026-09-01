@@ -124,7 +124,6 @@ INSERT INTO documentdb_guc_naming_baseline (name) VALUES
     ('documentdb.enableVectorHNSWIndex'),
     ('documentdb.enableVectorPreFilter'),
     ('documentdb.enableVectorPreFilterV2'),
-    ('documentdb.failOnGroupIdDuplicate'),
     ('documentdb.failOnNonEmptyGroupCountArg'),
     ('documentdb.forceBitmapScanForLookup'),
     ('documentdb.forceCollStatsDataCollection'),

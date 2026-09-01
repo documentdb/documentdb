@@ -406,15 +406,6 @@ bool UseFileBasedPersistedCursors = DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS;
 #define DEFAULT_CLEANUP_CURSOR_FILES true
 bool CleanupCursorFiles = DEFAULT_CLEANUP_CURSOR_FILES;
 
-/* Added in v0.111, enabled in v0.115, remove after v0.116 */
-#define DEFAULT_FAIL_ON_GROUP_ID_DUPLICATE true
-bool FailOnGroupIdDuplicate =
-	DEFAULT_FAIL_ON_GROUP_ID_DUPLICATE;
-
-/* Added in v0.114, enabled in v0.114, remove after v0.116 */
-#define DEFAULT_ENABLE_PULL_NESTED_ARRAY_EQ_FIX true
-bool EnablePullNestedArrayEqFix = DEFAULT_ENABLE_PULL_NESTED_ARRAY_EQ_FIX;
-
 /* Added in v0.114, enabled in v0.114, remove after v1.2 */
 #define DEFAULT_ENABLE_RUM_CURSOR_DYNAMIC_INDEX_SCANS true
 bool EnableRumCursorDynamicIndexScans = DEFAULT_ENABLE_RUM_CURSOR_DYNAMIC_INDEX_SCANS;
@@ -773,14 +764,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL, &EnablePrimaryKeyCursorScan,
 		DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enablePullNestedArrayEqFix", newGucPrefix),
-		gettext_noop(
-			"Enables fix for $pull with $eq to correctly remove matching nested array elements."),
-		NULL, &EnablePullNestedArrayEqFix,
-		DEFAULT_ENABLE_PULL_NESTED_ARRAY_EQ_FIX,
-		PGC_USERSET, GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.enableDeleteOnePlanCacheOptimization", newGucPrefix),
@@ -1175,14 +1158,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to push an order-by down to a non-leading top-level path of a composite index whose reduced correlated terms carry metadata-based tracking."),
 		NULL, &EnableCompositeSecondaryPathOrderPushdown,
 		DEFAULT_ENABLE_COMPOSITE_SECONDARY_PATH_ORDER_PUSHDOWN,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.failOnGroupIdDuplicate", newGucPrefix),
-		gettext_noop(
-			"Whether to fail when $group stage has duplicate _id."),
-		NULL, &FailOnGroupIdDuplicate,
-		DEFAULT_FAIL_ON_GROUP_ID_DUPLICATE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

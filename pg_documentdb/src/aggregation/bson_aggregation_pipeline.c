@@ -87,7 +87,6 @@ extern bool DefaultInlineWriteOperations;
 extern int MaxAggregationStagesAllowed;
 
 extern bool FailOnNonEmptyGroupCountArg;
-extern bool FailOnGroupIdDuplicate;
 extern bool ForceGroupSubqueryElimination;
 extern bool EnableTailableCursorMaxAwaitTime;
 extern bool RemoveMatchNamespaceFilters;
@@ -7763,15 +7762,8 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		{
 			if (idAlreadyFound)
 			{
-				ReportFeatureUsage(FEATURE_STAGE_GROUP_DUPLICATE_ID);
-
-				if (FailOnGroupIdDuplicate)
-				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION15948),
-									errmsg("a group's _id may only be specified once")));
-				}
-
-				break;
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION15948),
+								errmsg("a group's _id may only be specified once")));
 			}
 
 			idValue = *bson_iter_value(&groupIter);
