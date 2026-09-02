@@ -163,7 +163,7 @@ bool EnableIndexOnlyScanForFindProject = DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND
 bool TrackIndexOnlyScanFindCandidate =
 	DEFAULT_TRACK_INDEX_ONLY_SCAN_FIND_CANDIDATE;
 
-/* Added in v0.114, enabled on v0.113, remove after v0.116 */
+/* Added in v0.114, enabled on v0.113, remove after v1.1 */
 #define DEFAULT_EMIT_ENABLE_ORDERED_INDEX_FALSE_IN_RESPONSE true
 bool EmitEnableOrderedIndexFalseInResponse =
 	DEFAULT_EMIT_ENABLE_ORDERED_INDEX_FALSE_IN_RESPONSE;
@@ -620,8 +620,8 @@ bool IndexBuildsScheduledOnBgWorker = DEFAULT_INDEX_BUILDS_SCHEDULED_ON_BGWORKER
  * SECTION: TTL feature flags
  */
 
-/* Added in v0.113, Pending stabilization, enable in v1.1 */
-#define DEFAULT_ENABLE_DEAD_INDEX_ENTRY_MARKING_BY_TTL_TASK false
+/* Added in v0.113, enabled in v1.1, remove after v1.3 */
+#define DEFAULT_ENABLE_DEAD_INDEX_ENTRY_MARKING_BY_TTL_TASK true
 bool EnableDeadIndexEntryMarkingByTTLTask =
 	DEFAULT_ENABLE_DEAD_INDEX_ENTRY_MARKING_BY_TTL_TASK;
 
