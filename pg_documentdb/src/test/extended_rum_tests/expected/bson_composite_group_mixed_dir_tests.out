@@ -1,0 +1,134 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog, documentdb_api_internal, public;
+SET documentdb.next_collection_id TO 21400;
+SET documentdb.next_collection_index_id TO 21400;
+-- ================================================================
+-- $group over a $sort whose trailing key opposes the index direction.
+--
+-- The group keys form an ascending prefix of the composite index, so the
+-- operator class resolves the index bounds to a forward scan. The trailing
+-- descending sort key drives that same physical index scan backward. A single
+-- index scan cannot satisfy both, so the operator class and the physical index
+-- disagree on the search mode.
+--
+-- forceDisableSeqScan pins the index plan: with default page costs the planner
+-- prefers a sequential scan plus a sort, which never reaches the conflict.
+-- ================================================================
+SET documentdb.defaultUseCompositeOpClass TO on;
+SET documentdb.forceDisableSeqScan TO on;
+SELECT COUNT(documentdb_api.insert_one('db', 'grp_mixed_dir', bson_build_document(
+    '_id', i,
+    'a', concat('a_', (i % 4)::text),
+    'b', concat('b_', (i % 3)::text),
+    'c', i
+))) FROM generate_series(1, 400) AS i;
+NOTICE:  creating collection
+ count 
+-------
+   400
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
+    '{ "createIndexes": "grp_mixed_dir", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1 }, "enableCompositeTerm": true, "name": "idx_a_b_c" } ] }',
+    true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+ANALYZE;
+-- ----------------------------------------------------------------
+-- 1. Ascending prefix group keys with a descending trailing sort key.
+--    This is the failing shape.
+-- ----------------------------------------------------------------
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "grp_mixed_dir", "pipeline": [
+        { "$sort": { "a": 1, "b": 1, "c": -1 } },
+        { "$group": { "_id": { "a": "$a", "b": "$b" }, "latest": { "$first": "$$ROOT" } } }
+    ], "cursor": {} }');
+                                                                      document                                                                       
+-----------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "a" : "a_3", "b" : "b_2" }, "latest" : { "_id" : { "$numberInt" : "395" }, "a" : "a_3", "b" : "b_2", "c" : { "$numberInt" : "395" } } }
+ { "_id" : { "a" : "a_3", "b" : "b_1" }, "latest" : { "_id" : { "$numberInt" : "391" }, "a" : "a_3", "b" : "b_1", "c" : { "$numberInt" : "391" } } }
+ { "_id" : { "a" : "a_3", "b" : "b_0" }, "latest" : { "_id" : { "$numberInt" : "399" }, "a" : "a_3", "b" : "b_0", "c" : { "$numberInt" : "399" } } }
+ { "_id" : { "a" : "a_2", "b" : "b_2" }, "latest" : { "_id" : { "$numberInt" : "398" }, "a" : "a_2", "b" : "b_2", "c" : { "$numberInt" : "398" } } }
+ { "_id" : { "a" : "a_2", "b" : "b_1" }, "latest" : { "_id" : { "$numberInt" : "394" }, "a" : "a_2", "b" : "b_1", "c" : { "$numberInt" : "394" } } }
+ { "_id" : { "a" : "a_2", "b" : "b_0" }, "latest" : { "_id" : { "$numberInt" : "390" }, "a" : "a_2", "b" : "b_0", "c" : { "$numberInt" : "390" } } }
+ { "_id" : { "a" : "a_1", "b" : "b_2" }, "latest" : { "_id" : { "$numberInt" : "389" }, "a" : "a_1", "b" : "b_2", "c" : { "$numberInt" : "389" } } }
+ { "_id" : { "a" : "a_1", "b" : "b_1" }, "latest" : { "_id" : { "$numberInt" : "397" }, "a" : "a_1", "b" : "b_1", "c" : { "$numberInt" : "397" } } }
+ { "_id" : { "a" : "a_1", "b" : "b_0" }, "latest" : { "_id" : { "$numberInt" : "393" }, "a" : "a_1", "b" : "b_0", "c" : { "$numberInt" : "393" } } }
+ { "_id" : { "a" : "a_0", "b" : "b_2" }, "latest" : { "_id" : { "$numberInt" : "392" }, "a" : "a_0", "b" : "b_2", "c" : { "$numberInt" : "392" } } }
+ { "_id" : { "a" : "a_0", "b" : "b_1" }, "latest" : { "_id" : { "$numberInt" : "400" }, "a" : "a_0", "b" : "b_1", "c" : { "$numberInt" : "400" } } }
+ { "_id" : { "a" : "a_0", "b" : "b_0" }, "latest" : { "_id" : { "$numberInt" : "396" }, "a" : "a_0", "b" : "b_0", "c" : { "$numberInt" : "396" } } }
+(12 rows)
+
+-- ----------------------------------------------------------------
+-- 2. Same shape with a single-field group key. The conflict does not
+--    depend on the group key being compound.
+-- ----------------------------------------------------------------
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "grp_mixed_dir", "pipeline": [
+        { "$sort": { "a": 1, "c": -1 } },
+        { "$group": { "_id": { "a": "$a" }, "latest": { "$first": "$$ROOT" } } }
+    ], "cursor": {} }');
+                                                                document                                                                
+----------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "a" : "a_3" }, "latest" : { "_id" : { "$numberInt" : "399" }, "a" : "a_3", "b" : "b_0", "c" : { "$numberInt" : "399" } } }
+ { "_id" : { "a" : "a_2" }, "latest" : { "_id" : { "$numberInt" : "398" }, "a" : "a_2", "b" : "b_2", "c" : { "$numberInt" : "398" } } }
+ { "_id" : { "a" : "a_1" }, "latest" : { "_id" : { "$numberInt" : "397" }, "a" : "a_1", "b" : "b_1", "c" : { "$numberInt" : "397" } } }
+ { "_id" : { "a" : "a_0" }, "latest" : { "_id" : { "$numberInt" : "400" }, "a" : "a_0", "b" : "b_1", "c" : { "$numberInt" : "400" } } }
+(4 rows)
+
+-- ----------------------------------------------------------------
+-- 3. Control: the sort direction matches the index throughout, so the
+--    operator class and the physical scan agree.
+-- ----------------------------------------------------------------
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "grp_mixed_dir", "pipeline": [
+        { "$sort": { "a": 1, "b": 1, "c": 1 } },
+        { "$group": { "_id": { "a": "$a", "b": "$b" }, "latest": { "$first": "$c" } } }
+    ], "cursor": {} }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "_id" : { "a" : "a_0", "b" : "b_0" }, "latest" : { "$numberInt" : "12" } }
+ { "_id" : { "a" : "a_0", "b" : "b_1" }, "latest" : { "$numberInt" : "4" } }
+ { "_id" : { "a" : "a_0", "b" : "b_2" }, "latest" : { "$numberInt" : "8" } }
+ { "_id" : { "a" : "a_1", "b" : "b_0" }, "latest" : { "$numberInt" : "9" } }
+ { "_id" : { "a" : "a_1", "b" : "b_1" }, "latest" : { "$numberInt" : "1" } }
+ { "_id" : { "a" : "a_1", "b" : "b_2" }, "latest" : { "$numberInt" : "5" } }
+ { "_id" : { "a" : "a_2", "b" : "b_0" }, "latest" : { "$numberInt" : "6" } }
+ { "_id" : { "a" : "a_2", "b" : "b_1" }, "latest" : { "$numberInt" : "10" } }
+ { "_id" : { "a" : "a_2", "b" : "b_2" }, "latest" : { "$numberInt" : "2" } }
+ { "_id" : { "a" : "a_3", "b" : "b_0" }, "latest" : { "$numberInt" : "3" } }
+ { "_id" : { "a" : "a_3", "b" : "b_1" }, "latest" : { "$numberInt" : "7" } }
+ { "_id" : { "a" : "a_3", "b" : "b_2" }, "latest" : { "$numberInt" : "11" } }
+(12 rows)
+
+-- ----------------------------------------------------------------
+-- 4. Control: the descending trailing key on its own is fine without
+--    $group, which pins the conflict to the group-key bounds rather
+--    than to the descending sort by itself.
+-- ----------------------------------------------------------------
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "grp_mixed_dir", "pipeline": [
+        { "$sort": { "a": 1, "b": 1, "c": -1 } },
+        { "$limit": 3 },
+        { "$project": { "_id": 1 } }
+    ], "cursor": {} }');
+               document               
+--------------------------------------
+ { "_id" : { "$numberInt" : "396" } }
+ { "_id" : { "$numberInt" : "384" } }
+ { "_id" : { "$numberInt" : "372" } }
+(3 rows)
+
+RESET documentdb.forceDisableSeqScan;
+-- Cleanup
+SELECT documentdb_api.drop_collection('db', 'grp_mixed_dir');
+ drop_collection 
+-----------------
+ t
+(1 row)
+

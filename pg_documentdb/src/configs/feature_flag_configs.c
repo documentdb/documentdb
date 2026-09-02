@@ -257,6 +257,11 @@ bool EnableScalarAggregateIndexPushdown =
 bool EnableScalarAggregateAccumulatorPathCollection =
 	DEFAULT_ENABLE_SCALAR_AGGREGATE_ACCUMULATOR_PATH_COLLECTION;
 
+/* Added in v1.1, enabled in v1.1, remove after v1.3 */
+#define DEFAULT_ENABLE_SKIP_SETTING_ORDER_SCAN_DIRECTION_FOR_FULL_SCAN_EXPR true
+bool EnableSkipSettingOrderScanDirectionForFullScanExpr =
+	DEFAULT_ENABLE_SKIP_SETTING_ORDER_SCAN_DIRECTION_FOR_FULL_SCAN_EXPR;
+
 /* Added in v0.112, enabled in v0.112, remove after v0.116 */
 #define DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK true
 bool EnablePartialMatchHasRecheck = DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK;
@@ -972,6 +977,15 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		gettext_noop(
 			"Whether to enable the new ordered index opclass for default index creates"),
 		NULL, &DefaultUseCompositeOpClass, DEFAULT_USE_NEW_COMPOSITE_INDEX_OPCLASS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_skip_setting_order_scan_direction_for_full_scan_expr",
+				 newGucPrefix),
+		gettext_noop(
+			"Whether to skip setting the order scan direction for a full scan expression"),
+		NULL, &EnableSkipSettingOrderScanDirectionForFullScanExpr,
+		DEFAULT_ENABLE_SKIP_SETTING_ORDER_SCAN_DIRECTION_FOR_FULL_SCAN_EXPR,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

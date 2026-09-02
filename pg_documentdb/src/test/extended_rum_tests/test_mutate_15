@@ -2,3 +2,4 @@ s/test: bson_composite_index_only_scan_rum_tests//g
 s/rum_fillfactor_tests//g
 s/rum_collation_fillfactor_tests//g
 s/rum_parallel_build_tests//g
+s/test: bson_composite_group_mixed_dir_tests//g

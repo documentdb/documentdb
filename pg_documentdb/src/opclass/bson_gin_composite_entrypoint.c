@@ -248,6 +248,7 @@ static void ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const
 											int32_t numPaths,
 											int32_t wildcardPathIndex,
 											ScanDirection *scanDirection,
+											bool *requiresOrderedScan,
 											VariableIndexBounds *variableBounds,
 											const char *indexCollation,
 											bool hasArrayPaths,
@@ -554,6 +555,7 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 
 	/* Round 1, collect fixed index bounds and collect variable index bounds */
 	ScanDirection scanDir = NoMovementScanDirection;
+	bool requiresOrderedScan = false;
 	if (strategy == BSON_INDEX_STRATEGY_UNIQUE_EQUAL)
 	{
 		if (*searchMode == RUM_ORDERED_ANY_SCAN)
@@ -581,7 +583,7 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 
 		ParseOperatorStrategy(indexPaths, indexPathLengths, sortOrders, numPaths,
 							  metaInfo->wildcardPathIndex, &singleElement, strategy,
-							  &scanDir, &variableBounds,
+							  &scanDir, &requiresOrderedScan, &variableBounds,
 							  metaInfo->collation,
 							  hasArrayPaths, multiKeyBitMask,
 							  options->enableMetadataBasedTracking);
@@ -598,6 +600,7 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 										sortOrders, numPaths,
 										metaInfo->wildcardPathIndex,
 										&scanDir,
+										&requiresOrderedScan,
 										&variableBounds,
 										metaInfo->collation,
 										hasArrayPaths, multiKeyBitMask,
@@ -655,6 +658,27 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	}
 	else if (*searchMode == RUM_ORDERED_ANY_SCAN)
 	{
+		*searchMode = RUM_SEARCH_MODE_ORDERED;
+		metaInfo->isOrderedScan = true;
+		metaInfo->isBackwardScan = false;
+	}
+	else if (*searchMode == RUM_SEARCH_MODE_ORDERED)
+	{
+		/* The physical layer wants a forward scan */
+		metaInfo->isOrderedScan = true;
+		metaInfo->isBackwardScan = false;
+	}
+	else if (*searchMode == RUM_SEARCH_MODE_ORDERED_REVERSE)
+	{
+		/* The physical layer wants a backward scan */
+		metaInfo->isOrderedScan = true;
+		metaInfo->isBackwardScan = true;
+	}
+	else if (requiresOrderedScan)
+	{
+		/* The operator classes request an ordered scan of any kind, but the physical
+		 * opclass did not provide one - just do a forward walk.
+		 */
 		*searchMode = RUM_SEARCH_MODE_ORDERED;
 		metaInfo->isOrderedScan = true;
 		metaInfo->isBackwardScan = false;
@@ -6048,8 +6072,8 @@ GetIndexPathsFromOptionsWithLength(BsonGinCompositePathOptions *options,
 static void
 ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const char **indexPaths,
 								uint32_t *indexPathsLengths, int8_t *sortOrders, int32_t
-								numPaths,
-								int32_t wildcardPathIndex, ScanDirection *scanDirection,
+								numPaths, int32_t wildcardPathIndex,
+								ScanDirection *scanDirection, bool *requiresOrderedScan,
 								VariableIndexBounds *variableBounds,
 								const char *indexCollation,
 								bool hasArrayPaths, uint32_t multiKeyBitMask,
@@ -6118,7 +6142,8 @@ ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const char **index
 
 		ParseOperatorStrategy(indexPaths, indexPathsLengths, sortOrders, numPaths,
 							  wildcardPathIndex,
-							  &queryElement, queryStrategy, scanDirection,
+							  &queryElement, queryStrategy,
+							  scanDirection, requiresOrderedScan,
 							  variableBounds, indexCollation,
 							  hasArrayPaths, multiKeyBitMask,
 							  isGlobalIndexMetadataTracked);
