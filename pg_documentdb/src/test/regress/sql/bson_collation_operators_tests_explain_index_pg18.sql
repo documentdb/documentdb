@@ -1,0 +1,1 @@
+\i sql/bson_collation_operators_tests_explain_index.sql

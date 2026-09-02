@@ -123,7 +123,7 @@ $cmd$);
 END;
 
 -- ======================================================================
--- SECTION 4: Delete predicate plans on sharded coll_delete_d with collation
+-- SECTION 4: Predicate plans on sharded coll_delete_d with collation
 -- ======================================================================
 
 SELECT documentdb_api.insert_one('coll_q_idx_dist_explain_db', 'coll_delete_d', '{"_id": "dog", "a":"dog"}');
@@ -141,7 +141,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_idx_dist_
                    "collation": {"locale": "en", "strength": 1} }] }', TRUE);
 END;
 
--- deleteMany predicate (collation-aware on the shard key field)
+-- Collation-aware shard-key predicate
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
 SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
@@ -153,7 +153,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('coll_q_idx_d
 $cmd$);
 END;
 
--- deleteOne predicate when no _id and no shard-key filter
+-- Predicate without an _id or shard-key filter
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
 SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
@@ -165,7 +165,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('coll_q_idx_d
 $cmd$);
 END;
 
--- deleteOne predicate with collation-aware shard key value filter
+-- Collation-aware shard-key value predicate
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
 SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
@@ -177,7 +177,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('coll_q_idx_d
 $cmd$);
 END;
 
--- deleteOne predicate with both _id and shard key filter
+-- Predicate with both _id and shard-key filters
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
 SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
@@ -190,7 +190,7 @@ $cmd$);
 END;
 
 -- ======================================================================
--- SECTION 5: Delete predicate plans on sharded single_field_d with collation
+-- SECTION 5: Predicate plans on sharded single_field_d with collation
 -- ======================================================================
 
 BEGIN;

@@ -125,3 +125,21 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SE
                Index Cond: (shard_key_value = '9601'::bigint)
 (8 rows)
 
+-- deleteMany with collation uses the runtime predicate path
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_delete('coll_operators_runtime_explain_db', '{ "delete": "single_field", "deletes": [ { "q": { "a": { "$eq": "APPLE" } }, "limit": 0, "collation": { "locale": "en", "strength": 1 } } ] }') $cmd$);
+                                         run_explain_and_trim
+-------------------------------------------------------------------------------------------------------
+ Aggregate
+   CTE d
+     ->  Delete on documents_9601
+           ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                 namespaceName: coll_operators_runtime_explain_db.single_field
+                 indexName: _id_
+                 ->  Bitmap Heap Scan on documents_9601
+                       Recheck Cond: (shard_key_value = '9601'::bigint)
+                       Filter: (document @= '{ "a" : "APPLE", "collation" : "en-u-ks-level1" }'::bson)
+                       ->  Bitmap Index Scan on _id_
+                             Index Cond: (shard_key_value = '9601'::bigint)
+   ->  CTE Scan on d
+(12 rows)
+

@@ -362,6 +362,14 @@ FROM (
 ) response;
 END;
 
+-- deleteOne without a shard-key filter uses the _id filter to find the shard.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SELECT documentdb_api.delete('coll_q_dist_db', '{ "delete": "coll_delete_d", "deletes": [ { "q": {"_id": "CaT" }, "limit": 1, "collation": { "locale": "en", "strength" : 1}}]}');
+ROLLBACK;
+
 -- ======================================================================
 -- CLEANUP
 -- ======================================================================

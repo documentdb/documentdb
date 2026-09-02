@@ -2127,9 +2127,7 @@ $cmd$);
 -- ======================================================================
 -- Uses a dedicated collection so prior sections' state stays untouched.
 -- update.collation and findAndModify.collation are NOT supported by the
--- backend today, so only delete is exercised here. The find+EXPLAIN before
--- each delete proves the same filter the delete executor evaluates can use
--- the collation index.
+-- backend today, so only delete is exercised here.
 
 SELECT documentdb_api.insert_one('coll_operators_index_explain_db','write_in_coll', '{"_id": 1, "a": "apple", "v": 1}', NULL);
 SELECT documentdb_api.insert_one('coll_operators_index_explain_db','write_in_coll', '{"_id": 2, "a": "Apple", "v": 1}', NULL);
@@ -2157,19 +2155,19 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
 
 -- 41.1: delete_one with $nin + matching collation (en s1) — removes one non-fruit doc (id 9 or 10)
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "write_in_coll", "filter": { "a": { "$nin": ["apple", "banana", "cherry", "date"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_delete('coll_operators_index_explain_db', '{ "delete": "write_in_coll", "deletes": [ { "q": { "a": { "$nin": ["apple", "banana", "cherry", "date"] } }, "limit": 1, "collation": { "locale": "en", "strength": 1 } } ] }')
 $cmd$);
 -- 41.2: delete_many with $in (matching collation) — removes BOTH date variants (ids 7,8)
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "write_in_coll", "filter": { "a": { "$in": ["DATE"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_delete('coll_operators_index_explain_db', '{ "delete": "write_in_coll", "deletes": [ { "q": { "a": { "$in": ["DATE"] } }, "limit": 0, "collation": { "locale": "en", "strength": 1 } } ] }')
 $cmd$);
 -- 41.3: delete_many with $in + mismatched collation (de/s2 vs idx en/s1) — index NOT used; at de/s2 case is still ignored, so deletes BOTH cherry and Cherry
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "write_in_coll", "filter": { "a": { "$in": ["cherry"] } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 2 } }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_delete('coll_operators_index_explain_db', '{ "delete": "write_in_coll", "deletes": [ { "q": { "a": { "$in": ["cherry"] } }, "limit": 0, "collation": { "locale": "de", "strength": 2 } } ] }')
 $cmd$);
--- 41.4: delete with $in all-non-string + mismatched collation — index path still valid (non-string bypass)
+-- 41.4: delete with $in all-non-string + mismatched collation falls back from the collation index
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "write_in_coll", "filter": { "a": { "$in": [42, null] } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 2 } }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_delete('coll_operators_index_explain_db', '{ "delete": "write_in_coll", "deletes": [ { "q": { "a": { "$in": [42, null] } }, "limit": 0, "collation": { "locale": "de", "strength": 2 } } ] }')
 $cmd$);
 -- ======================================================================
 -- Section 42: $in/$nin nested under $or / $and / $nor

@@ -33,6 +33,20 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('coll_ops_runtime_dist_explain_db', '{ "aggregate": "single_field_d", "pipeline": [ { "$match": { "a": { "$eq": "cherry" } } }, { "$sort": { "_id": 1 } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
 END;
 
+-- deleteMany with collation uses runtime predicates across shards
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_delete('coll_ops_runtime_dist_explain_db', '{ "delete": "single_field_d", "deletes": [ { "q": { "a": { "$eq": "APPLE" } }, "limit": 0, "collation": { "locale": "en", "strength": 1 } } ] }') $cmd$);
+END;
+
+-- deleteOne with collation targets one shard using the numeric shard key
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_delete('coll_ops_runtime_dist_explain_db', '{ "delete": "single_field_d", "deletes": [ { "q": { "_id": 1, "a": { "$eq": "APPLE" } }, "limit": 1, "collation": { "locale": "en", "strength": 1 } } ] }') $cmd$);
+END;
+
 -- collated ORDER BY on a non-_id field without a collation-aware index —
 -- per-shard Seq Scan and a coordinator-side merge sort
 -- (Sort over remote_scan."?sort?"). The per-shard sort key is the 3-arg

@@ -30,3 +30,6 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SE
 
 -- $not $lt against numeric (non-string operand bypasses collation)
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_operators_runtime_explain_db', '{ "find": "single_field", "filter": { "a": { "$not": { "$lt": 100 } } }, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
+
+-- deleteMany with collation uses the runtime predicate path
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_delete('coll_operators_runtime_explain_db', '{ "delete": "single_field", "deletes": [ { "q": { "a": { "$eq": "APPLE" } }, "limit": 0, "collation": { "locale": "en", "strength": 1 } } ] }') $cmd$);

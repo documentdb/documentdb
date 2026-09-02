@@ -80,6 +80,28 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('coll_ops_idx
 $cmd$);
 END;
 
+-- deleteMany with collation uses the matching index across shards
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_delete('coll_ops_idx_dist_explain_db', '{ "delete": "single_field_d", "deletes": [ { "q": { "a": { "$eq": "APPLE" } }, "limit": 0, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$);
+END;
+
+-- deleteOne with collation targets one shard using the numeric shard key
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_delete('coll_ops_idx_dist_explain_db', '{ "delete": "single_field_d", "deletes": [ { "q": { "_id": 1, "a": { "$eq": "APPLE" } }, "limit": 1, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$);
+END;
+
 -- ======================================================================
 -- SECTION 4: Collation mismatch — index NOT used on sharded collection
 -- ======================================================================

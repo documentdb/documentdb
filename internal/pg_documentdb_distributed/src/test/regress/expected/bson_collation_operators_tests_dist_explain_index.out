@@ -6,7 +6,7 @@ SET documentdb_api.forceUseIndexIfAvailable TO on;
 SET documentdb.defaultUseCompositeOpClass TO on;
 -- if documentdb_extended_rum exists, set alternate index handler
 SELECT pg_catalog.set_config('documentdb.alternate_index_handler_name', 'extended_rum', false), extname FROM pg_extension WHERE extname = 'documentdb_extended_rum';
-  set_config  |         extname         
+  set_config  |         extname
 ---------------------------------------------------------------------
  extended_rum | documentdb_extended_rum
 (1 row)
@@ -16,57 +16,57 @@ SELECT pg_catalog.set_config('documentdb.alternate_index_handler_name', 'extende
 -- ======================================================================
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','single_field_d', '{"_id": 1, "a": "apple"}', NULL);
 NOTICE:  creating collection
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','single_field_d', '{"_id": 2, "a": "Apple"}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','single_field_d', '{"_id": 3, "a": "BANANA"}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','single_field_d', '{"_id": 4, "a": "banana"}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','single_field_d', '{"_id": 5, "a": "cherry"}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','single_field_d', '{"_id": 6, "a": "Cherry"}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','single_field_d', '{"_id": 7, "a": 42}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','single_field_d', '{"_id": 8, "a": null}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.shard_collection('coll_ops_idx_dist_explain_db', 'single_field_d', '{ "_id": "hashed" }', false);
- shard_collection 
+ shard_collection
 ---------------------------------------------------------------------
- 
+
 (1 row)
 
 BEGIN;
@@ -83,14 +83,14 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
   }',
   TRUE
 );
-                                                                                                   create_indexes_non_concurrently                                                                                                    
+                                                                                                   create_indexes_non_concurrently
 ---------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
 END;
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('coll_ops_idx_dist_explain_db', '{"listIndexes": "single_field_d"}');
-                                                                                                                                                                                                                                          cursorpage                                                                                                                                                                                                                                          
+                                                                                                                                                                                                                                          cursorpage
 ---------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "coll_ops_idx_dist_explain_db.single_field_d", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "a" : { "$numberInt" : "1" } }, "name" : "idx_a_en_s1", "collation" : { "locale" : "en", "strength" : { "$numberInt" : "1" } }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -106,7 +106,7 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "single_field_d", "filter": { "a": { "$eq": "apple" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                      run_explain_and_trim                                                                      
+                                                                      run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -134,7 +134,7 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "single_field_d", "filter": { "a": { "$gt": "banana" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                      run_explain_and_trim                                                                       
+                                                                      run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -165,7 +165,7 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('coll_ops_idx_dist_explain_db', '{ "aggregate": "single_field_d", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$eq": "cherry" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                      run_explain_and_trim                                                                       
+                                                                      run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -185,6 +185,75 @@ $cmd$);
 (15 rows)
 
 END;
+-- deleteMany with collation uses the matching index across shards
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_delete('coll_ops_idx_dist_explain_db', '{ "delete": "single_field_d", "deletes": [ { "q": { "a": { "$eq": "APPLE" } }, "limit": 0, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$);
+                                                                            run_explain_and_trim
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   ->  Distributed Subplan 45_1
+         ->  Custom Scan (Citus Adaptive)
+               Task Count: 8
+               Tasks Shown: One of 8
+               ->  Task
+                     Node: host=localhost port=58070 dbname=regression
+                     ->  Delete on documents_95211_95210004 documents_95211
+                           ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                                 indexName: idx_a_en_s1
+                                 indexKey: {"a": 1}
+                                 indexCollation: en-u-ks-level1
+                                 isMultiKey: false
+                                 indexBounds: ["a": ["APPLE", "APPLE"]]
+                                 ->  Index Scan using idx_a_en_s1 on documents_95211_95210004 documents_95211
+                                       Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "APPLE", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Aggregate
+               ->  Function Scan on read_intermediate_result intermediate_result
+(22 rows)
+
+END;
+-- deleteOne with collation targets one shard using the numeric shard key
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_delete('coll_ops_idx_dist_explain_db', '{ "delete": "single_field_d", "deletes": [ { "q": { "_id": 1, "a": { "$eq": "APPLE" } }, "limit": 1, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$);
+                                                                                                                                                   run_explain_and_trim
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Delete on documents_95211_95210011 d
+               CTE s
+                 ->  Limit
+                       ->  LockRows
+                             ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                                   indexName: _id_
+                                   ->  Index Scan using _id_ on documents_95211_95210011 documents_95211
+                                         Index Cond: ((shard_key_value = '4322365043291501017'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson))
+                                         Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "APPLE", "collation" : "en-u-ks-level1" }'::documentdb_core.bson))
+               ->  Nested Loop
+                     ->  CTE Scan on s
+                     ->  Tid Scan on documents_95211_95210011 d
+                           TID Cond: (ctid = s.ctid)
+                           Filter: (shard_key_value = '4322365043291501017'::bigint)
+(19 rows)
+
+END;
 -- ======================================================================
 -- SECTION 4: Collation mismatch — index NOT used on sharded collection
 -- ======================================================================
@@ -195,7 +264,7 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "single_field_d", "filter": { "a": { "$eq": "apple" } }, "sort": { "_id": 1 } }')
 $cmd$);
-                                                    run_explain_and_trim                                                    
+                                                    run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -221,7 +290,7 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "single_field_d", "filter": { "a": { "$ne": "apple" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                      run_explain_and_trim                                                                       
+                                                                      run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -253,7 +322,7 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "single_field_d", "filter": { "a": { "$not": { "$gt": "BANANA" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                       run_explain_and_trim                                                                        
+                                                                       run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -282,7 +351,7 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "single_field_d", "filter": { "a": { "$not": { "$gte": "Cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                        run_explain_and_trim                                                                        
+                                                                        run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -314,7 +383,7 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "single_field_d", "filter": { "a": { "$not": { "$lt": "CHERRY" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                       run_explain_and_trim                                                                        
+                                                                       run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -343,7 +412,7 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "single_field_d", "filter": { "a": { "$not": { "$lte": "banana" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                        run_explain_and_trim                                                                        
+                                                                        run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -372,7 +441,7 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "single_field_d", "filter": { "a": { "$not": { "$lt": 100 } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                               run_explain_and_trim                                                                                
+                                                                               run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -397,45 +466,45 @@ END;
 -- ======================================================================
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','compound_d', '{"_id": 1, "a": "dog", "b": 10}', NULL);
 NOTICE:  creating collection
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','compound_d', '{"_id": 2, "a": "DOG", "b": 20}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','compound_d', '{"_id": 3, "a": "cat", "b": 30}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','compound_d', '{"_id": 4, "a": "Cat", "b": 40}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','compound_d', '{"_id": 5, "a": "bird", "b": 50}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','compound_d', '{"_id": 6, "a": "Bird", "b": 60}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.shard_collection('coll_ops_idx_dist_explain_db', 'compound_d', '{ "_id": "hashed" }', false);
- shard_collection 
+ shard_collection
 ---------------------------------------------------------------------
- 
+
 (1 row)
 
 BEGIN;
@@ -452,7 +521,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
   }',
   TRUE
 );
-                                                                                                   create_indexes_non_concurrently                                                                                                    
+                                                                                                   create_indexes_non_concurrently
 ---------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
@@ -467,7 +536,7 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "compound_d", "filter": { "a": "dog", "b": { "$gt": 10 } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                                            run_explain_and_trim                                                                                                                                             
+                                                                                                                                            run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -496,7 +565,7 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "compound_d", "filter": { "a": { "$not": { "$gt": "cat" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                      run_explain_and_trim                                                                      
+                                                                      run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -525,7 +594,7 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "compound_d", "filter": { "a": "dog", "b": { "$gt": 10 } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                                            run_explain_and_trim                                                                                                                                             
+                                                                                                                                            run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -555,7 +624,7 @@ SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
 SET LOCAL enable_seqscan TO OFF;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "single_field_d", "filter": { "a": { "$in": ["apple", "CHERRY"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
-                                                                                  QUERY PLAN                                                                                   
+                                                                                  QUERY PLAN
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -582,7 +651,7 @@ SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
 SET LOCAL enable_seqscan TO OFF;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "single_field_d", "filter": { "a": { "$nin": ["apple", "banana"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
-                                                                                   QUERY PLAN                                                                                   
+                                                                                   QUERY PLAN
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -609,7 +678,7 @@ SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
 SET LOCAL enable_seqscan TO OFF;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "compound_d", "filter": { "a": { "$in": ["dog", "cat"] }, "b": { "$gt": 20 } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
-                                                                                                                                                       QUERY PLAN                                                                                                                                                        
+                                                                                                                                                       QUERY PLAN
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -634,51 +703,51 @@ END;
 -- ======================================================================
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','elemmatch_d', '{"_id": 1, "items": ["Apple", "banana", "Cherry"]}', NULL);
 NOTICE:  creating collection
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','elemmatch_d', '{"_id": 2, "items": ["apple", "BANANA", "cherry"]}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','elemmatch_d', '{"_id": 3, "items": ["APPLE", "Apple", "apple"]}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','elemmatch_d', '{"_id": 4, "items": ["Dog", "elephant", "FOX"]}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','elemmatch_d', '{"_id": 5, "items": [42, "apple", null]}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','elemmatch_d', '{"_id": 6, "items": []}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','elemmatch_d', '{"_id": 7, "other": "value"}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.shard_collection('coll_ops_idx_dist_explain_db', 'elemmatch_d', '{ "_id": "hashed" }', false);
- shard_collection 
+ shard_collection
 ---------------------------------------------------------------------
- 
+
 (1 row)
 
 BEGIN;
@@ -688,7 +757,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
   '{ "createIndexes": "elemmatch_d",
      "indexes": [{ "key": {"items": 1}, "name": "idx_items_en_s1_d",
                    "collation": {"locale": "en", "strength": 1} }] }', TRUE);
-                                                                                                   create_indexes_non_concurrently                                                                                                    
+                                                                                                   create_indexes_non_concurrently
 ---------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
@@ -703,7 +772,7 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "elemmatch_d", "filter": { "items": { "$elemMatch": { "$eq": "APPLE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                        run_explain_and_trim                                                                                                        
+                                                                                                        run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -733,7 +802,7 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "elemmatch_d", "filter": { "items": { "$elemMatch": { "$eq": 42 } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                run_explain_and_trim                                                                                                                
+                                                                                                                run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -763,7 +832,7 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('coll_ops_idx_dist_explain_db', '{ "aggregate": "elemmatch_d", "pipeline": [ { "$match": { "items": { "$elemMatch": { "$gte": "Banana", "$lte": "Dog" } } } }, { "$sort": { "_id": 1 } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                                             run_explain_and_trim                                                                                                                                             
+                                                                                                                                             run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -793,7 +862,7 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "elemmatch_d", "filter": { "items": { "$elemMatch": { "$eq": "APPLE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
 $cmd$);
-                                                                            run_explain_and_trim                                                                             
+                                                                            run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -813,57 +882,57 @@ END;
 -- ======================================================================
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_pure_d', '{"_id": 1, "a": "item20"}', NULL);
 NOTICE:  creating collection
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_pure_d', '{"_id": 2, "a": "item3"}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_pure_d', '{"_id": 3, "a": "item11"}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_pure_d', '{"_id": 4, "a": "item1"}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_pure_d', '{"_id": 5, "a": "item100"}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_pure_d', '{"_id": 6, "a": "item2"}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_pure_d', '{"_id": 7, "a": "item40"}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_pure_d', '{"_id": 8, "a": "item12"}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.shard_collection('coll_ops_idx_dist_explain_db', 'ord_pure_d', '{ "_id": "hashed" }', false);
- shard_collection 
+ shard_collection
 ---------------------------------------------------------------------
- 
+
 (1 row)
 
 BEGIN;
@@ -872,7 +941,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_ops_idx_dis
   '{ "createIndexes": "ord_pure_d",
      "indexes": [{ "key": {"a": 1}, "name": "idx_a_en_num_ord_pure",
                    "collation": {"locale": "en", "numericOrdering": true} }] }', TRUE);
-                                                                                                   create_indexes_non_concurrently                                                                                                    
+                                                                                                   create_indexes_non_concurrently
 ---------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
@@ -882,45 +951,45 @@ SELECT collection_id AS ord_pure_d_id FROM documentdb_api_catalog.collections WH
 ANALYZE documentdb_data.documents_:ord_pure_d_id;
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_compound_d', '{"_id": 1, "a": "item1", "b": "sub20"}', NULL);
 NOTICE:  creating collection
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_compound_d', '{"_id": 2, "a": "item2", "b": "sub3"}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_compound_d', '{"_id": 3, "a": "item2", "b": "sub11"}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_compound_d', '{"_id": 4, "a": "item10", "b": "sub10"}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_compound_d', '{"_id": 5, "a": "item10", "b": "sub2"}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_compound_d', '{"_id": 6, "a": "item3", "b": "sub2"}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.shard_collection('coll_ops_idx_dist_explain_db', 'ord_compound_d', '{ "_id": "hashed" }', false);
- shard_collection 
+ shard_collection
 ---------------------------------------------------------------------
- 
+
 (1 row)
 
 BEGIN;
@@ -929,7 +998,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_ops_idx_dis
   '{ "createIndexes": "ord_compound_d",
      "indexes": [{ "key": {"a": 1, "b": 1}, "name": "idx_ab_en_num_ord_compound",
                    "collation": {"locale": "en", "numericOrdering": true} }] }', TRUE);
-                                                                                                   create_indexes_non_concurrently                                                                                                    
+                                                                                                   create_indexes_non_concurrently
 ---------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
@@ -939,45 +1008,45 @@ SELECT collection_id AS ord_compound_d_id FROM documentdb_api_catalog.collection
 ANALYZE documentdb_data.documents_:ord_compound_d_id;
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_id_d', '{"_id": "item1", "a": 1}', NULL);
 NOTICE:  creating collection
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_id_d', '{"_id": "item10", "a": 2}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_id_d', '{"_id": "item2", "a": 3}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_id_d', '{"_id": "item20", "a": 4}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_id_d', '{"_id": "item3", "a": 5}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_id_d', '{"_id": "item30", "a": 6}', NULL);
-                              insert_one                              
+                              insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.shard_collection('coll_ops_idx_dist_explain_db', 'ord_id_d', '{ "_id": "hashed" }', false);
- shard_collection 
+ shard_collection
 ---------------------------------------------------------------------
- 
+
 (1 row)
 
 -- 11a: ASC sort, no LIMIT — coordinator does a plain Sort (per-shard index
@@ -992,7 +1061,7 @@ SET LOCAL documentdb.enableOrderByIndexTerm TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_pure_d", "filter": { "a": { "$exists": true } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
 $cmd$);
-                                                                               run_explain_and_trim                                                                                
+                                                                               run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -1024,7 +1093,7 @@ SET LOCAL documentdb.enableOrderByIndexTerm TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_pure_d", "filter": { "a": { "$exists": true } }, "sort": { "a": 1 }, "limit": 4, "collation": { "locale": "en", "numericOrdering": true } }')
 $cmd$);
-                                                                                     run_explain_and_trim                                                                                      
+                                                                                     run_explain_and_trim
 ---------------------------------------------------------------------
  Limit
    ->  Sort
@@ -1059,7 +1128,7 @@ SET LOCAL documentdb.enableOrderByIndexTerm TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_pure_d", "filter": { "a": { "$exists": true } }, "sort": { "a": -1 }, "limit": 4, "collation": { "locale": "en", "numericOrdering": true } }')
 $cmd$);
-                                                                                     run_explain_and_trim                                                                                      
+                                                                                     run_explain_and_trim
 ---------------------------------------------------------------------
  Limit
    ->  Sort
@@ -1094,7 +1163,7 @@ SET LOCAL documentdb.enableOrderByIndexTerm TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_pure_d", "filter": { "a": { "$gte": "item10" } }, "sort": { "a": 1 }, "limit": 4, "collation": { "locale": "en", "numericOrdering": true } }')
 $cmd$);
-                                                                                 run_explain_and_trim                                                                                 
+                                                                                 run_explain_and_trim
 ---------------------------------------------------------------------
  Limit
    ->  Sort
@@ -1130,7 +1199,7 @@ SET LOCAL documentdb.enableOrderByIndexTerm TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_compound_d", "filter": { "a": "item10" }, "sort": { "b": 1 }, "limit": 4, "collation": { "locale": "en", "numericOrdering": true } }')
 $cmd$);
-                                                                                run_explain_and_trim                                                                                 
+                                                                                run_explain_and_trim
 ---------------------------------------------------------------------
  Limit
    ->  Sort
@@ -1165,7 +1234,7 @@ SET LOCAL documentdb.enableOrderByIndexTerm TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_pure_d", "filter": { "a": { "$exists": true } }, "sort": { "a": 1 }, "collation": { "locale": "fr", "numericOrdering": true } }')
 $cmd$);
-                                                                               run_explain_and_trim                                                                                
+                                                                               run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -1197,7 +1266,7 @@ SET LOCAL documentdb.enableOrderByIndexTerm TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_pure_d", "filter": { "a": { "$exists": true } }, "sort": { "a": 1 }, "collation": { "locale": "en" } }')
 $cmd$);
-                                                                           run_explain_and_trim                                                                            
+                                                                           run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -1228,7 +1297,7 @@ SET LOCAL documentdb.enableOrderByIndexTerm TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_id_d", "filter": {}, "sort": { "_id": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
 $cmd$);
-                          run_explain_and_trim                           
+                          run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -1253,7 +1322,7 @@ SET LOCAL documentdb.enableOrderByIndexTerm TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_id_d", "filter": {}, "sort": { "_id": -1 }, "collation": { "locale": "en", "numericOrdering": true } }')
 $cmd$);
-                          run_explain_and_trim                           
+                          run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" DESC NULLS LAST
@@ -1279,7 +1348,7 @@ SET LOCAL documentdb.enableOrderByIndexTerm TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_id_d", "filter": { "_id": "item2" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
 $cmd$);
-                                                                         run_explain_and_trim                                                                         
+                                                                         run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -1306,7 +1375,7 @@ SET LOCAL documentdb.enableOrderByIndexTerm TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_pure_d", "filter": { "a": { "$exists": true } }, "sort": { "a": 1 } }')
 $cmd$);
-                                                           run_explain_and_trim                                                            
+                                                           run_explain_and_trim
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
