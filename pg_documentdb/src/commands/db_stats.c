@@ -31,6 +31,7 @@
 #include "commands/commands_common.h"
 #include "commands/diagnostic_commands_common.h"
 #include "api_hooks.h"
+#include "rbac_hooks.h"
 
 PG_FUNCTION_INFO_V1(command_db_stats);
 PG_FUNCTION_INFO_V1(command_db_stats_worker);
@@ -190,14 +191,21 @@ command_list_databases(PG_FUNCTION_ARGS)
 	}
 
 	/* We can definitely do better here. TODO: Improve size tracking etc. */
+	const char *collectionFilter = GetCollectionsStringFilter();
+	if (collectionFilter == NULL || strlen(collectionFilter) == 0)
+	{
+		collectionFilter = "TRUE";
+	}
+
 	const char *cmdStr = FormatSqlQuery(
-		"WITH r1 AS (SELECT DISTINCT database_name AS name %s FROM %s.collections),"
+		"WITH r1 AS (SELECT DISTINCT database_name AS name %s FROM %s.collections WHERE %s),"
 		"r2 AS (SELECT %s.row_get_bson(r1) AS document FROM r1),"
 		"r3 AS (SELECT document FROM r2 %s),"
 		"r4 AS (SELECT COALESCE(%s.bson_array_agg(r3.document, ''), '{ \"\": [] }') AS "
 		"databases" ",%s 1.0::float8 AS " "ok" " FROM r3)"
 											   "SELECT %s.row_get_bson(r4) AS document FROM r4",
-		sizeOnDiskSelector, ApiCatalogSchemaName, CoreSchemaName, filterString,
+		sizeOnDiskSelector, ApiCatalogSchemaName, collectionFilter, CoreSchemaName,
+		filterString,
 		ApiCatalogSchemaName, totalSizeSelector, CoreSchemaName);
 
 	bool isNull = false;
@@ -608,9 +616,16 @@ static List *
 GetAllCollectionIdsInDb(Datum databaseNameDatum, int64 *views)
 {
 	List *collectionIdsList = NIL;
+
+	const char *collectionFilter = GetCollectionsStringFilter();
+	if (collectionFilter == NULL || strlen(collectionFilter) == 0)
+	{
+		collectionFilter = "TRUE";
+	}
+
 	const char *query =
-		FormatSqlQuery("SELECT * FROM %s.collections WHERE database_name = $1",
-					   ApiCatalogSchemaName);
+		FormatSqlQuery("SELECT * FROM %s.collections WHERE database_name = $1 AND %s",
+					   ApiCatalogSchemaName, collectionFilter);
 
 	int nargs = 1;
 	Oid argTypes[1] = { TEXTOID };

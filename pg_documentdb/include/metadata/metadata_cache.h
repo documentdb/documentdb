@@ -505,6 +505,7 @@ Oid BsonDensifyFullWindowFunctionOid(void);
 
 /* Catalog */
 Oid ApiDataNamespaceOid(void);
+Oid CatalogCollectionsTableId(void);
 
 /* CRUD functions */
 Oid UpdateWorkerFunctionOid(void);

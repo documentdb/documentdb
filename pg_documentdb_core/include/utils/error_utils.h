@@ -54,7 +54,7 @@ CopyErrorDataAndFlush(void)
 
 
 /* Whether or not the error code is an operator intervention error
- * class (class 57) that should not resume the query.
+ * class (class 57) or privilege (class 42) that should not resume the query.
  */
 inline static bool
 IsOperatorInterventionError(ErrorData *errorData)
@@ -66,6 +66,14 @@ IsOperatorInterventionError(ErrorData *errorData)
 		case ERRCODE_CRASH_SHUTDOWN:
 		{
 			/* Explicit background notification of cancellation */
+			return true;
+		}
+
+		case ERRCODE_INSUFFICIENT_PRIVILEGE:
+		{
+			/* Insufficient privilege on an operation should not be
+			 * treated as a resumable per document error but rolled up.
+			 */
 			return true;
 		}
 

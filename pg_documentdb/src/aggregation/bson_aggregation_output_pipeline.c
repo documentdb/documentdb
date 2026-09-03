@@ -1385,9 +1385,9 @@ AddTargetCollectionRTEDollarMerge(Query *query, MongoCollection *targetCollectio
 
 #if PG_VERSION_NUM >= 160000
 	RTEPermissionInfo *permInfo = addRTEPermissionInfo(&query->rteperminfos, rte);
-	permInfo->requiredPerms = ACL_SELECT;
+	permInfo->requiredPerms = ACL_SELECT | ACL_INSERT | ACL_UPDATE;
 #else
-	rte->requiredPerms = ACL_SELECT;
+	rte->requiredPerms = ACL_SELECT | ACL_INSERT | ACL_UPDATE;
 #endif
 	RangeTblEntry *existingrte = list_nth(query->rtable, 0);
 	query->rtable = list_make2(rte, existingrte);

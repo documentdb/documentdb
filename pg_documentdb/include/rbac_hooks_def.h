@@ -25,6 +25,18 @@ typedef void (*NotifyCollectionMetadataInvalidated_HookType)(void);
 extern NotifyCollectionMetadataInvalidated_HookType
 	notify_collection_metadata_invalidated_hook;
 
+typedef bool (*RequireBaseCollectionRteInMetadataQueries_HookType)(void);
+extern RequireBaseCollectionRteInMetadataQueries_HookType
+	require_base_collection_rte_in_metadata_queries_hook;
+
+typedef void (*UpdateJoinTreeForCollectionsQuery_HookType)(struct FromExpr *fromExpr,
+														   List *rtes);
+extern UpdateJoinTreeForCollectionsQuery_HookType
+	update_join_tree_for_collections_query_hook;
+
+typedef const char *(*GetCollectionsStringFilter_HookType)(void);
+extern GetCollectionsStringFilter_HookType get_collections_string_filter_hook;
+
 typedef void (*PostCreateCollection_HookType)(uint64 collectionId);
 extern PostCreateCollection_HookType post_create_collection_hook;
 

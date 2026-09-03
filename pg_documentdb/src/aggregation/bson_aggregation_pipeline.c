@@ -9476,6 +9476,66 @@ ExtractAggregationStages(const bson_value_t *pipelineValue,
 }
 
 
+inline static List *
+GetBaseTableColumnNames(void)
+{
+	return list_make3(makeString("shard_key_value"), makeString("object_id"),
+					  makeString("document"));
+}
+
+
+void
+FillRteForMongoCollection(Query *query, RangeTblEntry *rte,
+						  const char *collectionAlias,
+						  bool *allowShardBaseTable,
+						  MongoCollection *collection)
+{
+	rte->rtekind = RTE_RELATION;
+	rte->relid = collection->relationId;
+
+	List *colNames = GetBaseTableColumnNames();
+	if (collection->mongoDataCreationTimeVarAttrNumber != -1)
+	{
+		colNames = lappend(colNames, makeString("creation_time"));
+	}
+
+	if (*allowShardBaseTable)
+	{
+		Oid shardOid = TryGetCollectionShardTable(collection, AccessShareLock);
+		if (shardOid != InvalidOid)
+		{
+			/* Mark on our copy of the collection that we're using the shard */
+			collection->relationId = shardOid;
+			rte->relid = shardOid;
+		}
+		else if (DefaultInlineWriteOperations)
+		{
+			*allowShardBaseTable = true;
+		}
+		else
+		{
+			/* Signal that shard table pushdown didn't succeed */
+			*allowShardBaseTable = false;
+		}
+	}
+
+	rte->alias = makeAlias(collectionAlias, NIL);
+	rte->eref = makeAlias(collectionAlias, colNames);
+	rte->lateral = false;
+	rte->inFromCl = true;
+	rte->relkind = RELKIND_RELATION;
+	rte->functions = NIL;
+	rte->inh = true;
+#if PG_VERSION_NUM >= 160000
+	RTEPermissionInfo *permInfo = addRTEPermissionInfo(&query->rteperminfos, rte);
+	permInfo->requiredPerms = ACL_SELECT;
+#else
+	rte->requiredPerms = ACL_SELECT;
+#endif
+	rte->rellockmode = AccessShareLock;
+}
+
+
 /*
  * Updates the base table
  */
@@ -9543,10 +9603,6 @@ GenerateBaseTableQuery(text *databaseDatum, const StringView *collectionNameView
 	 */
 	RangeTblEntry *rte = makeNode(RangeTblEntry);
 
-	/* Match spec for ApiSchema.collection() function */
-	List *colNames = list_make3(makeString("shard_key_value"), makeString("object_id"),
-								makeString("document"));
-
 	const char *collectionAlias = "collection";
 	if (context->numNestedLevels > 0 || context->nestedPipelineLevel > 0)
 	{
@@ -9571,6 +9627,7 @@ GenerateBaseTableQuery(text *databaseDatum, const StringView *collectionNameView
 			}
 		}
 
+		List *colNames = GetBaseTableColumnNames();
 		rte->rtekind = RTE_FUNCTION;
 		rte->relid = InvalidOid;
 		rte->lateral = false;
@@ -9603,48 +9660,8 @@ GenerateBaseTableQuery(text *databaseDatum, const StringView *collectionNameView
 	}
 	else
 	{
-		rte->rtekind = RTE_RELATION;
-		rte->relid = collection->relationId;
-
-		if (collection->mongoDataCreationTimeVarAttrNumber != -1)
-		{
-			colNames = lappend(colNames, makeString("creation_time"));
-		}
-
-		if (context->allowShardBaseTable)
-		{
-			Oid shardOid = TryGetCollectionShardTable(collection, AccessShareLock);
-			if (shardOid != InvalidOid)
-			{
-				/* Mark on our copy of the collection that we're using the shard */
-				collection->relationId = shardOid;
-				rte->relid = shardOid;
-			}
-			else if (DefaultInlineWriteOperations)
-			{
-				context->allowShardBaseTable = true;
-			}
-			else
-			{
-				/* Signal that shard table pushdown didn't succeed */
-				context->allowShardBaseTable = false;
-			}
-		}
-
-		rte->alias = makeAlias(collectionAlias, NIL);
-		rte->eref = makeAlias(collectionAlias, colNames);
-		rte->lateral = false;
-		rte->inFromCl = true;
-		rte->relkind = RELKIND_RELATION;
-		rte->functions = NIL;
-		rte->inh = true;
-#if PG_VERSION_NUM >= 160000
-		RTEPermissionInfo *permInfo = addRTEPermissionInfo(&query->rteperminfos, rte);
-		permInfo->requiredPerms = ACL_SELECT;
-#else
-		rte->requiredPerms = ACL_SELECT;
-#endif
-		rte->rellockmode = AccessShareLock;
+		FillRteForMongoCollection(query, rte, collectionAlias,
+								  &context->allowShardBaseTable, collection);
 	}
 
 	query->rtable = list_make1(rte);

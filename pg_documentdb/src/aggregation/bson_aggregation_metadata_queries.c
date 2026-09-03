@@ -52,6 +52,7 @@
 #include "aggregation/bson_aggregation_pipeline_private.h"
 #include "api_hooks.h"
 #include "index_am/index_am_extend_create.h"
+#include "rbac_hooks.h"
 
 static Query * GenerateBaseListCollectionsQuery(Datum databaseDatum, bool nameOnly,
 												bool addDistributedMetadata,
@@ -72,8 +73,9 @@ static Query * GenerateBaseListExtendedIndexesQuery(text *databaseDatum,
 static inline Expr * MakeExtendedIndexOnlyFilter(Var *indexSpecVar);
 static inline Expr * MakeExcludeExtendedIndexFilter(Var *indexSpecVar);
 
-static Query * BuildSingleFunctionQuery(Oid queryFunctionOid, List *queryArgs, bool
-										isMultiRow);
+static Query * BuildSingleCollectionFunctionQuery(MongoCollection *collection,
+												  Oid queryFunctionOid, List *queryArgs,
+												  bool isMultiRow);
 
 
 /*
@@ -556,6 +558,15 @@ GenerateBaseListIndexesQuery(text *databaseDatum, const StringView *collectionNa
 #endif
 	query->rtable = list_make1(rte);
 
+	if (RequireBaseCollectionRteInMetadataQueries())
+	{
+		RangeTblEntry *mainTableRte = makeNode(RangeTblEntry);
+		bool allowShardBaseTableIgnore = false;
+		FillRteForMongoCollection(query, mainTableRte, "?collection?",
+								  &allowShardBaseTableIgnore, collection);
+		query->rtable = lappend(query->rtable, mainTableRte);
+	}
+
 	/* Register the RTE in the "FROM" clause and add where clause
 	 *  collection_id = <id> AND (index_is_valid OR ApiInternalSchemaName.index_build_is_in_progress)*/
 	RangeTblRef *rtr = makeNode(RangeTblRef);
@@ -714,6 +725,8 @@ GenerateBaseListCollectionsQuery(Datum databaseDatum, bool nameOnly,
 	query->jointree = makeFromExpr(list_make1(rtr), (Node *) make_ands_explicit(
 									   list_make2(opExpr, notExpr)));
 
+	UpdateJoinTreeForCollectionsQuery(query->jointree, query->rtable);
+
 	/* Add a row_get_bson to make it a single bson document */
 	Var *rowExpr = makeVar(1, 0, ApiCatalogCollectionsTypeOid(), -1, InvalidOid, 0);
 	FuncExpr *funcExpr = makeFuncExpr(RowGetBsonFunctionOid(), BsonTypeId(),
@@ -759,11 +772,14 @@ HandleCollStats(const bson_value_t *existingValue, Query *query,
 	pgbson *bson = PgbsonInitFromDocumentBsonValue(existingValue);
 	List *collStatsArgs = list_make3(databaseConst, collectionConst, MakeBsonConst(bson));
 
+	MongoCollection *baseCollection = context->mongoCollection;
+
 	/* Remove the collection (it's not on the base table) */
 	context->mongoCollection = NULL;
 	bool isMultiRow = false;
-	return BuildSingleFunctionQuery(ApiCollStatsAggregationFunctionOid(),
-									collStatsArgs, isMultiRow);
+	return BuildSingleCollectionFunctionQuery(baseCollection,
+											  ApiCollStatsAggregationFunctionOid(),
+											  collStatsArgs, isMultiRow);
 }
 
 
@@ -807,11 +823,13 @@ HandleIndexStats(const bson_value_t *existingValue, Query *query,
 	List *indexStatsArgs = list_make2(databaseConst, collectionConst);
 
 	/* Remove the collection (it's not on the base table) */
+	MongoCollection *baseCollection = context->mongoCollection;
 	context->mongoCollection = NULL;
 
 	bool isMultiRow = true;
-	return BuildSingleFunctionQuery(ApiIndexStatsAggregationFunctionOid(),
-									indexStatsArgs, isMultiRow);
+	return BuildSingleCollectionFunctionQuery(baseCollection,
+											  ApiIndexStatsAggregationFunctionOid(),
+											  indexStatsArgs, isMultiRow);
 }
 
 
@@ -1072,15 +1090,14 @@ HandleListExtendedIndexes(const bson_value_t *existingValue, Query *query,
 
 	pgbson *specBson = PgbsonInitFromDocumentBsonValue(existingValue);
 
-	/* Remove the collection (it's not on the base table) */
-	context->mongoCollection = NULL;
-
 	/* Build base query for extended indexes */
 	Query *baseQuery = GenerateBaseListExtendedIndexesQuery(
 		context->databaseNameDatum,
 		&context->collectionNameView,
 		context,
 		specBson);
+
+	context->mongoCollection = NULL;
 
 	/* rewrite the query with the postprocess hook to add the appropriate project and final filter */
 	Query *result = RewriteListExtendedIndexesQuery(existingValue, baseQuery, context);
@@ -1099,7 +1116,8 @@ HandleListExtendedIndexes(const bson_value_t *existingValue, Query *query,
  * SELECT document FROM queryFunction(args);
  */
 static Query *
-BuildSingleFunctionQuery(Oid queryFunctionOid, List *queryArgs, bool isMultiRow)
+BuildSingleCollectionFunctionQuery(MongoCollection *collection, Oid queryFunctionOid,
+								   List *queryArgs, bool isMultiRow)
 {
 	Query *query = makeNode(Query);
 	query->commandType = CMD_SELECT;
@@ -1144,6 +1162,18 @@ BuildSingleFunctionQuery(Oid queryFunctionOid, List *queryArgs, bool isMultiRow)
 	rte->functions = list_make1(rangeTableFunction);
 
 	query->rtable = list_make1(rte);
+
+	/* If there is a collection, add it to the RTE as well to mark the dependency on the collection */
+	if (collection != NULL && RequireBaseCollectionRteInMetadataQueries())
+	{
+		RangeTblEntry *collectionRte = makeNode(RangeTblEntry);
+		bool allowShardBaseTable = false;
+		FillRteForMongoCollection(query, collectionRte, "?collection?",
+								  &allowShardBaseTable, collection);
+
+		/* Add the collection RTE to the query's RTE list */
+		query->rtable = lappend(query->rtable, collectionRte);
+	}
 
 	RangeTblRef *rtr = makeNode(RangeTblRef);
 	rtr->rtindex = 1;

@@ -113,4 +113,12 @@ void ApplyCollectionAccessIdentityToPlan(RangeTblEntry *rte, PlannedStmt *stmt);
  */
 void NotifyCollectionMetadataInvalidated(void);
 
+
+bool RequireBaseCollectionRteInMetadataQueries(void);
+
+struct FromExpr;
+void UpdateJoinTreeForCollectionsQuery(struct FromExpr *fromExpr, List *rtes);
+
+const char * GetCollectionsStringFilter(void);
+
 #endif

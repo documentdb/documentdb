@@ -414,4 +414,10 @@ ShouldSkipShardKeyFilterOnBaseTable(AggregationPipelineBuildContext *context)
 }
 
 
+void FillRteForMongoCollection(Query *query, RangeTblEntry *rte,
+							   const char *collectionAlias,
+							   bool *allowShardBaseTable,
+							   MongoCollection *collection);
+
+
 #endif

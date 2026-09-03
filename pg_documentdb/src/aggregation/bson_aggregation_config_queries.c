@@ -26,6 +26,7 @@
 #include "aggregation/bson_aggregation_pipeline.h"
 #include "aggregation/bson_aggregation_pipeline_private.h"
 #include "api_hooks.h"
+#include "rbac_hooks.h"
 
 static Query * GenerateVersionQuery(AggregationPipelineBuildContext *context);
 static Query * GenerateDatabasesQuery(AggregationPipelineBuildContext *context);
@@ -161,6 +162,7 @@ GenerateDatabasesQuery(AggregationPipelineBuildContext *context)
 	RangeTblRef *rtr = makeNode(RangeTblRef);
 	rtr->rtindex = 1;
 	query->jointree = makeFromExpr(list_make1(rtr), (Node *) nullTest);
+	UpdateJoinTreeForCollectionsQuery(query->jointree, query->rtable);
 
 	/* Add a row_get_bson to make it a single bson document */
 	Var *rowExpr = makeVar(1, 0, ApiCatalogCollectionsTypeOid(), -1, InvalidOid, 0);
@@ -251,6 +253,7 @@ GenerateCollectionsQuery(AggregationPipelineBuildContext *context)
 	RangeTblRef *rtr = makeNode(RangeTblRef);
 	rtr->rtindex = 1;
 	query->jointree = makeFromExpr(list_make1(rtr), (Node *) nullTest);
+	UpdateJoinTreeForCollectionsQuery(query->jointree, query->rtable);
 
 	/* Add a row_get_bson to make it a single bson document */
 	Var *rowExpr = makeVar(1, 0, ApiCatalogCollectionsTypeOid(), -1, InvalidOid, 0);
@@ -346,6 +349,7 @@ GenerateChunksQuery(AggregationPipelineBuildContext *context)
 	RangeTblRef *rtr = makeNode(RangeTblRef);
 	rtr->rtindex = 1;
 	query->jointree = makeFromExpr(list_make1(rtr), (Node *) nullTest);
+	UpdateJoinTreeForCollectionsQuery(query->jointree, query->rtable);
 
 	/* Add a row_get_bson to make it a single bson document */
 	Var *rowExpr = makeVar(1, 0, ApiCatalogCollectionsTypeOid(), -1, InvalidOid, 0);
@@ -382,7 +386,6 @@ GenerateChunksQuery(AggregationPipelineBuildContext *context)
 	PgbsonWriterStartDocument(&writer, "max", 3, &expressionWriter);
 	PgbsonWriterAppendInt64(&expressionWriter, "$literal", -1, LONG_MAX);
 	PgbsonWriterEndDocument(&writer, &expressionWriter);
-
 
 	pgbson *spec = PgbsonWriterGetPgbson(&writer);
 	bson_value_t projectionValue = ConvertPgbsonToBsonValue(spec);

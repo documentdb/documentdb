@@ -1482,6 +1482,14 @@ InvalidateDocumentDBApiCache(Datum argument, Oid relationId)
 }
 
 
+Oid
+CatalogCollectionsTableId(void)
+{
+	InitializeDocumentDBApiExtensionCache();
+	return Cache.CollectionsTableId;
+}
+
+
 /*
  * Helper method abstracting typename parsing across PG Versions
  */

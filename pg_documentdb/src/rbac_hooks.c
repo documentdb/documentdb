@@ -26,6 +26,13 @@ ApplyCollectionAccessIdentityToPlan_HookType
 	apply_collection_access_identity_to_plan_hook = NULL;
 NotifyCollectionMetadataInvalidated_HookType
 	notify_collection_metadata_invalidated_hook = NULL;
+RequireBaseCollectionRteInMetadataQueries_HookType
+	require_base_collection_rte_in_metadata_queries_hook = NULL;
+UpdateJoinTreeForCollectionsQuery_HookType
+	update_join_tree_for_collections_query_hook = NULL;
+
+GetCollectionsStringFilter_HookType
+	get_collections_string_filter_hook = NULL;
 
 
 /*
@@ -124,4 +131,33 @@ NotifyCollectionMetadataInvalidated(void)
 	{
 		notify_collection_metadata_invalidated_hook();
 	}
+}
+
+
+bool
+RequireBaseCollectionRteInMetadataQueries(void)
+{
+	return require_base_collection_rte_in_metadata_queries_hook != NULL &&
+		   require_base_collection_rte_in_metadata_queries_hook();
+}
+
+
+void
+UpdateJoinTreeForCollectionsQuery(struct FromExpr *fromExpr, List *rtes)
+{
+	if (update_join_tree_for_collections_query_hook != NULL)
+	{
+		update_join_tree_for_collections_query_hook(fromExpr, rtes);
+	}
+}
+
+
+const char *
+GetCollectionsStringFilter(void)
+{
+	if (get_collections_string_filter_hook != NULL)
+	{
+		return get_collections_string_filter_hook();
+	}
+	return NULL;
 }

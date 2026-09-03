@@ -33,6 +33,7 @@
 #include "metadata/metadata_cache.h"
 #include "metadata/collection.h"
 #include "shard_colocation.h"
+#include "rbac_hooks.h"
 #include "api_hooks_def.h"
 #include "aggregation/bson_aggregation_pipeline.h"
 #include "aggregation/bson_aggregation_pipeline_private.h"
@@ -1063,6 +1064,8 @@ RewriteConfigChunksQueryForDistribution(Query *baseQuery)
 	source->jointree = makeFromExpr(list_make4(collectionsRef, shardsRef, shardSizesRef,
 											   placementRef), (Node *) make_ands_explicit(
 										quals));
+
+	UpdateJoinTreeForCollectionsQuery(source->jointree, source->rtable);
 
 	Const *groupPrefix = MakeTextConst("shard_", 6);
 	FuncExpr *groupIdStr = makeFuncExpr(F_TEXTANYCAT, TEXTOID,
