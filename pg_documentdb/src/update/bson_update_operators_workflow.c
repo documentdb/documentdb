@@ -30,7 +30,6 @@
 
 #include "api_hooks_def.h"
 
-extern bool EnableArrayFilterLogicalOperators;
 
 /* --------------------------------------------------------- */
 /* Data types */
@@ -1601,16 +1600,9 @@ GetNodePositionalDataFromPath(const StringView *path,
 		hashEntry->filterUsed = true;
 
 		ExprEvalState *expr;
-		if (EnableArrayFilterLogicalOperators)
-		{
-			expr = GetExpressionEvalStateForArrayFilter(&hashEntry->queryValue,
-														CurrentMemoryContext);
-		}
-		else
-		{
-			expr = GetExpressionEvalState(&hashEntry->queryValue,
-										  CurrentMemoryContext);
-		}
+
+		expr = GetExpressionEvalStateForArrayFilter(&hashEntry->queryValue,
+													CurrentMemoryContext);
 		return (PositionalData) {
 				   .expression = expr,
 				   .type = PositionalType_ArrayFilter
@@ -2589,7 +2581,6 @@ BuildExpressionForArrayFilters(const bson_value_t *arrayFilters)
 	while (bson_iter_next(&arrayIterator))
 	{
 		bson_iter_t documentIterator;
-		pgbsonelement singleElement;
 		if (!BSON_ITER_HOLDS_DOCUMENT(&arrayIterator))
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
@@ -2613,70 +2604,10 @@ BuildExpressionForArrayFilters(const bson_value_t *arrayFilters)
 		bool hasElements = false;
 		StringView topLevelKey = { 0 };
 
-		if (EnableArrayFilterLogicalOperators)
-		{
-			topLevelKey = ProcessArrayFilterDocument(&documentIterator,
-													 &writer, false);
-			hasElements = (topLevelKey.length > 0);
-		}
-		else
-		{
-			while (bson_iter_next(&documentIterator))
-			{
-				hasElements = true;
-				BsonIterToPgbsonElement(&documentIterator, &singleElement);
-				StringView keyView = {
-					.length = singleElement.pathLength, .string = singleElement.path
-				};
+		topLevelKey = ProcessArrayFilterDocument(&documentIterator,
+												 &writer, false);
+		hasElements = (topLevelKey.length > 0);
 
-				if (keyView.length == 0 || !isalnum(keyView.string[0]))
-				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-									errmsg(
-										"The top level field name must be alphanumeric string. Found '%.*s'",
-										keyView.length, keyView.string)));
-				}
-
-				StringView fieldPath = StringViewFindPrefix(&keyView, '.');
-
-				StringView suffix = { 0 };
-				if (fieldPath.length == 0)
-				{
-					/* No dots in path */
-					fieldPath = keyView;
-				}
-				else
-				{
-					suffix = StringViewSubstring(&keyView, fieldPath.length + 1);
-				}
-
-				if (topLevelKey.length > 0 && !StringViewEquals(&fieldPath, &topLevelKey))
-				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
-									errmsg(
-										"Error parsing array filter :: caused by :: "
-										"Expected a single top-level field name, found %.*s and %.*s",
-										topLevelKey.length, topLevelKey.string,
-										fieldPath.length, fieldPath.string)));
-				}
-
-				topLevelKey = fieldPath;
-
-				if (suffix.length == 0)
-				{
-					WriteCurrentArrayFilterValue(&writer, &singleElement.bsonValue);
-				}
-				else
-				{
-					pgbson_writer childWriter;
-					PgbsonWriterStartDocument(&writer, suffix.string, suffix.length,
-											  &childWriter);
-					WriteCurrentArrayFilterValue(&childWriter,
-												 &singleElement.bsonValue);
-					PgbsonWriterEndDocument(&writer, &childWriter);
-				}
-			}
-		}
 
 		if (!hasElements)
 		{
