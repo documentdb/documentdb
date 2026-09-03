@@ -1,4 +1,5 @@
 ### documentdb v1.1-0 (Unreleased) ###
+* Fall back to a logical posting-tree sweep when inline RUM vacuum observes a concurrent root split, ensuring dead TIDs are removed from leaves allocated behind the disk-order cursor. *[Bugfix]*
 * Support collation with `distinct` command *[Feature]*
 
 ### documentdb v1.0-0 (Unreleased) ###

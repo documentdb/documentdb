@@ -820,7 +820,8 @@ rumCleanPostingTreeLeavesTidsByRightlink(RumVacuumState *gvs, OffsetNumber attnu
 				vacStats->numStaleEmptyLeafRetries++;
 			}
 
-			if (RumEnableSinglePassPostingTreeVacuum &&
+			if (!gvs->inlineVacuumBulkDelDataPages &&
+				RumEnableSinglePassPostingTreeVacuum &&
 				!RumVacuumSkipPrunePostingTreePages &&
 				isPrunableEmptyLeaf)
 			{
@@ -2662,12 +2663,28 @@ backtrack:
 	LockBuffer(buf, RUM_EXCLUSIVE);
 	page = BufferGetPage(buf);
 
-	/* The entry-tree root can become an internal page while no lock is held.
-	 * Its newly allocated leaves will be visited by the disk-ordered scan, so
-	 * returning is safe. */
-	if (blkno == RUM_ROOT_BLKNO && !RumPageIsLeaf(page))
+	/*
+	 * A root split can turn a leaf into an internal page while no lock is held.
+	 * If it's an index entry root, the new leaves will be ahead in the disk scan
+	 * and we can return.
+	 * If it's an inline-vacuumed posting tree, we must descend from its root
+	 * because a new leaf may have been allocated behind scanblkno.
+	 */
+	if (!RumPageIsLeaf(page))
 	{
+		bool shouldVacuumPostingTree =
+			gvs->inlineVacuumBulkDelDataPages && RumPageIsData(page);
+
 		UnlockReleaseBuffer(buf);
+		if (shouldVacuumPostingTree)
+		{
+			int32_t nonVoidPageCount;
+
+			(void) rumCleanPostingTreeLeavesTidsByRightlink(gvs, gvs->postingTreeAttNum,
+															blkno, &nonVoidPageCount,
+															vacStats);
+		}
+
 		return;
 	}
 
