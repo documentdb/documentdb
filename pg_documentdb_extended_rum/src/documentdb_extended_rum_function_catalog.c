@@ -28,6 +28,8 @@ extern PGDLLIMPORT Datum documentdb_rum_skip_tids_on_current_entry(PG_FUNCTION_A
 extern PGDLLIMPORT Datum DocumentDBRumOrderedCostEstimate(PG_FUNCTION_ARGS);
 extern PGDLLIMPORT Datum documentdb_rum_get_meta_page_info(PG_FUNCTION_ARGS);
 extern PGDLLIMPORT Datum documentdb_rum_prune_empty_entries_on_index(PG_FUNCTION_ARGS);
+extern PGDLLIMPORT Datum documentdb_rum_repair_incomplete_split_on_index(
+	PG_FUNCTION_ARGS);
 extern PGDLLIMPORT Datum documentdb_rum_page_get_stats(PG_FUNCTION_ARGS);
 extern PGDLLIMPORT Datum documentdb_rum_page_get_entries(PG_FUNCTION_ARGS);
 extern PGDLLIMPORT Datum documentdb_rum_page_get_data_items(PG_FUNCTION_ARGS);
@@ -53,6 +55,8 @@ extern PGDLLIMPORT Datum builtin_rmgr_documentdb_rum_skip_tids_on_current_entry(
 extern PGDLLIMPORT Datum builtin_rmgr_DocumentDBRumOrderedCostEstimate(PG_FUNCTION_ARGS);
 extern PGDLLIMPORT Datum builtin_rmgr_documentdb_rum_get_meta_page_info(PG_FUNCTION_ARGS);
 extern PGDLLIMPORT Datum builtin_rmgr_documentdb_rum_prune_empty_entries_on_index(
+	PG_FUNCTION_ARGS);
+extern PGDLLIMPORT Datum builtin_rmgr_documentdb_rum_repair_incomplete_split_on_index(
 	PG_FUNCTION_ARGS);
 extern PGDLLIMPORT Datum builtin_rmgr_documentdb_rum_page_get_stats(PG_FUNCTION_ARGS);
 extern PGDLLIMPORT Datum builtin_rmgr_documentdb_rum_page_get_entries(PG_FUNCTION_ARGS);
@@ -82,6 +86,8 @@ GetCoreFunctionCatalog(void)
 			   .documentdb_rum_get_meta_page_info = documentdb_rum_get_meta_page_info,
 			   .documentdb_rum_prune_empty_entries_on_index =
 				   documentdb_rum_prune_empty_entries_on_index,
+			   .documentdb_rum_repair_incomplete_split_on_index =
+				   documentdb_rum_repair_incomplete_split_on_index,
 			   .documentdb_rum_page_get_stats = documentdb_rum_page_get_stats,
 			   .documentdb_rum_page_get_entries = documentdb_rum_page_get_entries,
 			   .documentdb_rum_page_get_data_items = documentdb_rum_page_get_data_items,
@@ -117,6 +123,8 @@ GetBuiltInRmgrFunctionCatalog(void)
 				   builtin_rmgr_documentdb_rum_get_meta_page_info,
 			   .documentdb_rum_prune_empty_entries_on_index =
 				   builtin_rmgr_documentdb_rum_prune_empty_entries_on_index,
+			   .documentdb_rum_repair_incomplete_split_on_index =
+				   builtin_rmgr_documentdb_rum_repair_incomplete_split_on_index,
 			   .documentdb_rum_page_get_stats =
 				   builtin_rmgr_documentdb_rum_page_get_stats,
 			   .documentdb_rum_page_get_entries =

@@ -80,6 +80,7 @@ bool RumUseBuiltinRmgrModules = DEFAULT_RUM_USE_BUILTIN_RMGR_MODULES;
 PG_FUNCTION_INFO_V1(documentdb_extended_rumhandler);
 PG_FUNCTION_INFO_V1(documentdb_extended_rum_get_meta_page_info);
 PG_FUNCTION_INFO_V1(documentdb_extended_rum_prune_empty_entries_on_index);
+PG_FUNCTION_INFO_V1(documentdb_extended_rum_repair_incomplete_split_on_index);
 PG_FUNCTION_INFO_V1(documentdb_extended_rum_page_get_stats);
 PG_FUNCTION_INFO_V1(documentdb_extended_rum_page_get_entries);
 PG_FUNCTION_INFO_V1(documentdb_extended_rum_page_get_data_items);
@@ -395,6 +396,14 @@ documentdb_extended_rum_prune_empty_entries_on_index(PG_FUNCTION_ARGS)
 {
 	EnsureDocumentDBExtendedRumLib();
 	return core_function_catalog.documentdb_rum_prune_empty_entries_on_index(fcinfo);
+}
+
+
+PGDLLEXPORT Datum
+documentdb_extended_rum_repair_incomplete_split_on_index(PG_FUNCTION_ARGS)
+{
+	EnsureDocumentDBExtendedRumLib();
+	return core_function_catalog.documentdb_rum_repair_incomplete_split_on_index(fcinfo);
 }
 
 

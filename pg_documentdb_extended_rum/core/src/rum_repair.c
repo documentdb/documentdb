@@ -44,6 +44,9 @@ static void rumRepairLostPathOnIndex(Relation index, bool trackDataPages, bool
 static void MarkIncompleteSplitOnPage(RumState *rumState,
 									  Buffer targetBuffer,
 									  BlockNumber targetRightBlockNo);
+static bool IncompleteSplitChainReachesTarget(Relation index,
+											  BlockNumber startBlockNo,
+											  BlockNumber targetRightBlockNo);
 static void CheckTreeAtLevel(RumState *rumState, BlockNumber blockNumber, int level,
 							 bool trackDataPages, bool dryrunMode);
 static void RumReviveAllPagesAndTuplesOnIndex(Relation rel, bool dryrunMode);
@@ -235,7 +238,7 @@ CheckTreeAtLevel(RumState *rumState, BlockNumber blockNumber, int level,
 	bool isNextLevelIntermediate = false;
 	bool childBufferHasIncompleteSplit = false;
 	OffsetNumber off;
-	elog(INFO, "Starting check at level %d", level);
+	elog(LOG, "Starting check at level %d", level);
 
 	CHECK_FOR_INTERRUPTS();
 	buffer = ReadBufferExtended(rumState->index, MAIN_FORKNUM, blockNumber,
@@ -375,47 +378,120 @@ static void
 MarkIncompleteSplitOnPage(RumState *rumState, Buffer targetBuffer,
 						  BlockNumber targetRightBlockNo)
 {
-	GenericXLogState *state;
-	Page page;
+	BlockNumber currentBlockNo = BufferGetBlockNumber(targetBuffer);
+	BlockNumber numberOfBlocks = RelationGetNumberOfBlocks(rumState->index);
+	bool reachedTarget = false;
 	int32_t numBuffersSet = 0;
 
-	while (targetBuffer != InvalidBuffer)
+	UnlockReleaseBuffer(targetBuffer);
+
+	if (!IncompleteSplitChainReachesTarget(rumState->index, currentBlockNo,
+										   targetRightBlockNo))
 	{
-		BlockNumber nextBlockNo;
-		state = GenericXLogStart(rumState->index);
-		page = GenericXLogRegisterBuffer(state, targetBuffer, 0);
-		nextBlockNo = RumPageGetOpaque(page)->rightlink;
-
-		if (nextBlockNo != InvalidBlockNumber)
-		{
-			numBuffersSet++;
-			RumPageGetOpaque(page)->flags |= RUM_INCOMPLETE_SPLIT;
-		}
-
-		GenericXLogFinish(state);
-
-		/* Now that the XLog file is written do work to move on */
-		if (nextBlockNo != targetRightBlockNo)
-		{
-			/* If we're the right most entry, subsequent pages may are
-			 * also not tracked in the parent. Walk them and ensure that
-			 * they get set as incomplete split.
-			 */
-			Buffer nextBuffer =
-				ReadBufferExtended(rumState->index, MAIN_FORKNUM, nextBlockNo, RBM_NORMAL,
-								   NULL);
-			LockBuffer(nextBuffer, RUM_EXCLUSIVE);
-			UnlockReleaseBuffer(targetBuffer);
-			targetBuffer = nextBuffer;
-		}
-		else
-		{
-			UnlockReleaseBuffer(targetBuffer);
-			targetBuffer = InvalidBuffer;
-		}
+		elog(WARNING, "Could not follow the incomplete split chain from block %u "
+					  "to block %u",
+			 currentBlockNo, targetRightBlockNo);
+		return;
 	}
 
-	elog(INFO, "Set %d buffers as incomplete split", numBuffersSet);
+	for (BlockNumber visitedBlocks = 0;
+		 visitedBlocks < numberOfBlocks;
+		 visitedBlocks++)
+	{
+		Buffer currentBuffer =
+			ReadBufferExtended(rumState->index, MAIN_FORKNUM, currentBlockNo,
+							   RBM_NORMAL, NULL);
+		GenericXLogState *state;
+		Page page;
+		BlockNumber nextBlockNo;
+
+		CHECK_FOR_INTERRUPTS();
+		LockBuffer(currentBuffer, RUM_EXCLUSIVE);
+		nextBlockNo = RumPageGetOpaque(BufferGetPage(currentBuffer))->rightlink;
+
+		/*
+		 * The target already has a parent downlink. Marking its left sibling
+		 * would cause split completion to insert a duplicate downlink.
+		 */
+		if (nextBlockNo == targetRightBlockNo)
+		{
+			UnlockReleaseBuffer(currentBuffer);
+			reachedTarget = true;
+			break;
+		}
+
+		if (nextBlockNo == InvalidBlockNumber ||
+			nextBlockNo >= numberOfBlocks)
+		{
+			UnlockReleaseBuffer(currentBuffer);
+			ereport(ERROR, (errmsg(
+								"incomplete split chain changed while marking block %u",
+								currentBlockNo)));
+		}
+
+		state = GenericXLogStart(rumState->index);
+		page = GenericXLogRegisterBuffer(state, currentBuffer, 0);
+		RumPageGetOpaque(page)->flags |= RUM_INCOMPLETE_SPLIT;
+		numBuffersSet++;
+
+		GenericXLogFinish(state);
+		UnlockReleaseBuffer(currentBuffer);
+		currentBlockNo = nextBlockNo;
+	}
+
+	if (!reachedTarget)
+	{
+		ereport(ERROR, (errmsg(
+							"incomplete split chain changed while marking block %u",
+							currentBlockNo)));
+	}
+
+	elog(LOG, "Set %d buffers as incomplete split", numBuffersSet);
+}
+
+
+static bool
+IncompleteSplitChainReachesTarget(Relation index, BlockNumber startBlockNo,
+								  BlockNumber targetRightBlockNo)
+{
+	BlockNumber currentBlockNo = startBlockNo;
+	BlockNumber numberOfBlocks = RelationGetNumberOfBlocks(index);
+
+	if (targetRightBlockNo != InvalidBlockNumber &&
+		targetRightBlockNo >= numberOfBlocks)
+	{
+		return false;
+	}
+
+	for (BlockNumber visitedBlocks = 0;
+		 visitedBlocks < numberOfBlocks;
+		 visitedBlocks++)
+	{
+		Buffer buffer;
+		BlockNumber nextBlockNo;
+
+		CHECK_FOR_INTERRUPTS();
+		if (currentBlockNo == InvalidBlockNumber ||
+			currentBlockNo >= numberOfBlocks)
+		{
+			return false;
+		}
+
+		buffer = ReadBufferExtended(index, MAIN_FORKNUM, currentBlockNo,
+									RBM_NORMAL, NULL);
+		LockBuffer(buffer, RUM_SHARE);
+		nextBlockNo = RumPageGetOpaque(BufferGetPage(buffer))->rightlink;
+		UnlockReleaseBuffer(buffer);
+
+		if (nextBlockNo == targetRightBlockNo)
+		{
+			return true;
+		}
+
+		currentBlockNo = nextBlockNo;
+	}
+
+	return false;
 }
 
 

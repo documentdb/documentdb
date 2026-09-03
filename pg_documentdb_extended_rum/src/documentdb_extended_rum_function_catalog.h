@@ -28,6 +28,7 @@ typedef struct CoreFunctionCatalog
 	PGFunction DocumentDBRumOrderedCostEstimate;
 	PGFunction documentdb_rum_get_meta_page_info;
 	PGFunction documentdb_rum_prune_empty_entries_on_index;
+	PGFunction documentdb_rum_repair_incomplete_split_on_index;
 	PGFunction documentdb_rum_page_get_stats;
 	PGFunction documentdb_rum_page_get_entries;
 	PGFunction documentdb_rum_page_get_data_items;

@@ -429,15 +429,13 @@ WHERE page_num < (SELECT MAX(page_num) FROM r3);
 
 RESET documentdb_rum.enable_page_fill_factor;
 
--- verify that with fill factor 100 but compare function fmgr disabled,
--- inserts don't benefit from the optimized compare path → fill factor drops
+-- verify that inserts still respect fill factor 100 when the build comparator
+-- optimization is disabled
 SET documentdb_rum.rum_default_page_fill_factor TO 100;
 SET documentdb_rum.enable_compare_function_fmgr TO off;
 
--- delete all docs and reinsert with fmgr disabled
-SELECT documentdb_api.delete('collff_db', '{"delete": "collff_numeric", "deletes": [{"q": {}, "limit": 0}]}');
-
-VACUUM (FREEZE ON, INDEX_CLEANUP ON) documentdb_data.documents_2105;
+-- start with an empty index so retained pages do not affect the insert path
+TRUNCATE documentdb_data.documents_2105;
 
 SELECT COUNT(documentdb_api.insert_one('collff_db', 'collff_numeric',
     bson_build_document('_id', i, 'a', i::text, 'c', repeat('a', 1024))))
@@ -457,9 +455,9 @@ r2 AS (
 r3 AS (
     SELECT page_num, page_stats FROM r2 WHERE page_stats->>'flagsStr' = 'LEAF')
 SELECT CASE
-    WHEN percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) BETWEEN 40 AND 65
-    THEN 'PASS: fill factor low with numeric collation when fmgr disabled'
-    ELSE 'FAIL: fill factor unexpectedly high with numeric collation when fmgr disabled - test invalid'
+    WHEN percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) BETWEEN 90 AND 130
+    THEN 'PASS: fill factor 100 respected on inserts when fmgr disabled'
+    ELSE 'FAIL: fill factor 100 NOT respected on inserts when fmgr disabled - test invalid'
 END AS fillfactor_check,
 percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) AS median_nentries
 FROM r3

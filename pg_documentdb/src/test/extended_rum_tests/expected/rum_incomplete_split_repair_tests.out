@@ -1,0 +1,650 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+SET search_path TO documentdb_api_catalog, documentdb_core, public;
+SET documentdb.next_collection_id TO 2700;
+SET documentdb.next_collection_index_id TO 2700;
+CREATE SCHEMA rum_incomplete_split_repair_test;
+CREATE FUNCTION rum_incomplete_split_repair_test.index_term_to_bson(bytea)
+RETURNS bson
+LANGUAGE c
+AS '$libdir/pg_documentdb', 'gin_bson_index_term_to_bson';
+SET documentdb_rum.fix_incomplete_split TO off;
+SET documentdb_rum.track_incomplete_split TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'rumdb',
+    '{ "createIndexes": "incomplete_split", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "enableCompositeTerm": false } ] }');
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT collection_id AS collection_id
+FROM documentdb_api_catalog.collections
+WHERE database_name = 'rumdb'
+  AND collection_name = 'incomplete_split' \gset
+SELECT index_id AS index_id
+FROM documentdb_api_catalog.collection_indexes
+WHERE collection_id = :collection_id
+  AND (index_spec).index_name = 'a_1' \gset
+SELECT COUNT(documentdb_api.insert_one(
+    'rumdb', 'incomplete_split',
+    bson_build_document('_id'::text, i, 'a'::text, i)))
+FROM generate_series(1, 1000) i;
+ count 
+-------
+  1000
+(1 row)
+
+-- the root page has all the children (the tree consistent)
+SELECT COUNT(*)
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    get_raw_page(FORMAT('documentdb_data.documents_rum_index_%s', :index_id), 1),
+    FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass);
+ count 
+-------
+     8
+(1 row)
+
+-- insert second batch of documents
+SELECT COUNT(documentdb_api.insert_one(
+    'rumdb', 'incomplete_split',
+    bson_build_document('_id'::text, i, 'a'::text, i)))
+FROM generate_series(2001, 3000) i;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT COUNT(*)
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    get_raw_page(FORMAT('documentdb_data.documents_rum_index_%s', :index_id), 1),
+    FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass);
+ count 
+-------
+    17
+(1 row)
+
+SELECT entry->> 'offset',
+       rum_incomplete_split_repair_test.index_term_to_bson(
+           (entry->>'firstEntry')::bytea)
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    get_raw_page(FORMAT('documentdb_data.documents_rum_index_%s', :index_id), 1),
+    FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass) entry;
+ ?column? |                           index_term_to_bson                           
+----------+------------------------------------------------------------------------
+ 1        | { "$" : { "$numberInt" : "99" }, "$flags" : { "$numberInt" : "0" } }
+ 2        | { "$" : { "$numberInt" : "213" }, "$flags" : { "$numberInt" : "0" } }
+ 3        | { "$" : { "$numberInt" : "327" }, "$flags" : { "$numberInt" : "0" } }
+ 4        | { "$" : { "$numberInt" : "441" }, "$flags" : { "$numberInt" : "0" } }
+ 5        | { "$" : { "$numberInt" : "555" }, "$flags" : { "$numberInt" : "0" } }
+ 6        | { "$" : { "$numberInt" : "669" }, "$flags" : { "$numberInt" : "0" } }
+ 7        | { "$" : { "$numberInt" : "783" }, "$flags" : { "$numberInt" : "0" } }
+ 8        | { "$" : { "$numberInt" : "897" }, "$flags" : { "$numberInt" : "0" } }
+ 9        | { "$" : { "$numberInt" : "2011" }, "$flags" : { "$numberInt" : "0" } }
+ 10       | { "$" : { "$numberInt" : "2125" }, "$flags" : { "$numberInt" : "0" } }
+ 11       | { "$" : { "$numberInt" : "2239" }, "$flags" : { "$numberInt" : "0" } }
+ 12       | { "$" : { "$numberInt" : "2353" }, "$flags" : { "$numberInt" : "0" } }
+ 13       | { "$" : { "$numberInt" : "2467" }, "$flags" : { "$numberInt" : "0" } }
+ 14       | { "$" : { "$numberInt" : "2581" }, "$flags" : { "$numberInt" : "0" } }
+ 15       | { "$" : { "$numberInt" : "2695" }, "$flags" : { "$numberInt" : "0" } }
+ 16       | { "$" : { "$numberInt" : "2809" }, "$flags" : { "$numberInt" : "0" } }
+ 17       | { "$" : { "$numberInt" : "212" }, "$flags" : { "$numberInt" : "0" } }
+(17 rows)
+
+SELECT COUNT(*)
+FROM documentdb_api.collection('rumdb', 'incomplete_split')
+WHERE document @@ '{ "a": { "$exists": true } }';
+ count 
+-------
+  2000
+(1 row)
+
+CALL documentdb_api.drop_indexes(
+    'rumdb',
+    '{ "dropIndexes": "incomplete_split", "index": "a_1" }');
+                          retval                          
+----------------------------------------------------------
+ { "ok" : true, "nIndexesWas" : { "$numberLong" : "2" } }
+(1 row)
+
+SELECT FORMAT('TRUNCATE documentdb_data.documents_%s', :collection_id) \gexec
+TRUNCATE documentdb_data.documents_2701
+SELECT COUNT(*) FROM documentdb_api.collection('rumdb', 'incomplete_split');
+ count 
+-------
+     0
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'rumdb',
+    '{ "createIndexes": "incomplete_split", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "enableCompositeTerm": false } ] }',
+    TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT index_id AS index_id
+FROM documentdb_api_catalog.collection_indexes
+WHERE collection_id = :collection_id
+  AND (index_spec).index_name = 'a_1' \gset
+-- insert documents that cause splits and leave the tree in a dangling state
+SET documentdb_rum.enable_inject_page_split_incomplete TO on;
+SET documentdb_rum.track_incomplete_split TO on;
+SELECT COUNT(documentdb_api.insert_one(
+    'rumdb', 'incomplete_split',
+    bson_build_document('_id'::text, i, 'a'::text, i)))
+FROM generate_series(1, 1000) i;
+ count 
+-------
+  1000
+(1 row)
+
+-- assert that not all documents got inserted
+SELECT COUNT(*) FROM documentdb_api.collection('rumdb', 'incomplete_split');
+ count 
+-------
+   993
+(1 row)
+
+-- the root page doesn't have all the children (the tree is inconsistent)
+SELECT COUNT(*)
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    get_raw_page(FORMAT('documentdb_data.documents_rum_index_%s', :index_id), 1),
+    FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass);
+ count 
+-------
+     2
+(1 row)
+
+-- now don't throw on incomplete split, but insert some more - we should get lost path here.
+SET documentdb_rum.enable_inject_page_split_incomplete TO off;
+SET documentdb.rumFailOnLostPath TO on;
+SELECT COUNT(documentdb_api.insert_one(
+    'rumdb', 'incomplete_split',
+    bson_build_document('_id'::text, i, 'a'::text, i)))
+FROM generate_series(2001, 3000) i;
+ERROR:  An invalid/lost index path for the write operation was detected. Please retry the operation.
+CONTEXT:  SQL statement "SELECT p_result                   FROM documentdb_api.insert(
+      p_database_name,
+      v_insert,
+      p_document::bsonsequence,
+      p_transaction_id)"
+PL/pgSQL function documentdb_api.insert_one(text,text,bson,text) line 7 at SQL statement
+SQL statement "SELECT p_result                   FROM documentdb_api.insert(
+      p_database_name,
+      v_insert,
+      p_document::bsonsequence,
+      p_transaction_id)"
+PL/pgSQL function documentdb_api.insert_one(text,text,bson,text) line 7 at SQL statement
+-- the root page doesn't have all the children (the tree is inconsistent)
+SELECT COUNT(*)
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    get_raw_page(FORMAT('documentdb_data.documents_rum_index_%s', :index_id), 1),
+    FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass);
+ count 
+-------
+     2
+(1 row)
+
+SELECT COUNT(*) FROM documentdb_api.collection('rumdb', 'incomplete_split');
+ count 
+-------
+   993
+(1 row)
+
+-- now enable tracking of the incomplete splits and repeat - the insert should go through (after finishing the incomplete split)
+CALL documentdb_api.drop_indexes(
+    'rumdb',
+    '{ "dropIndexes": "incomplete_split", "index": "a_1" }');
+                          retval                          
+----------------------------------------------------------
+ { "ok" : true, "nIndexesWas" : { "$numberLong" : "2" } }
+(1 row)
+
+SELECT FORMAT('TRUNCATE documentdb_data.documents_%s', :collection_id) \gexec
+TRUNCATE documentdb_data.documents_2701
+SELECT COUNT(*) FROM documentdb_api.collection('rumdb', 'incomplete_split');
+ count 
+-------
+     0
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'rumdb',
+    '{ "createIndexes": "incomplete_split", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "enableCompositeTerm": false } ] }',
+    TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT index_id AS index_id
+FROM documentdb_api_catalog.collection_indexes
+WHERE collection_id = :collection_id
+  AND (index_spec).index_name = 'a_1' \gset
+SET documentdb_rum.enable_inject_page_split_incomplete TO on;
+SELECT COUNT(documentdb_api.insert_one(
+    'rumdb', 'incomplete_split',
+    bson_build_document('_id'::text, i, 'a'::text, i)))
+FROM generate_series(1, 1000) i;
+ count 
+-------
+  1000
+(1 row)
+
+-- the root page doesn't have all the children (the tree is inconsistent)
+SELECT COUNT(*)
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    get_raw_page(FORMAT('documentdb_data.documents_rum_index_%s', :index_id), 1),
+    FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass);
+ count 
+-------
+     2
+(1 row)
+
+SELECT entry->> 'offset',
+       rum_incomplete_split_repair_test.index_term_to_bson(
+           (entry->>'firstEntry')::bytea)
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    get_raw_page(FORMAT('documentdb_data.documents_rum_index_%s', :index_id), 1),
+    FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass) entry;
+ ?column? |                          index_term_to_bson                           
+----------+-----------------------------------------------------------------------
+ 1        | { "$" : { "$numberInt" : "99" }, "$flags" : { "$numberInt" : "0" } }
+ 2        | { "$" : { "$numberInt" : "212" }, "$flags" : { "$numberInt" : "0" } }
+(2 rows)
+
+-- assert that not all documents got inserted
+SELECT COUNT(*) FROM documentdb_api.collection('rumdb', 'incomplete_split');
+ count 
+-------
+   993
+(1 row)
+
+-- this no longer fails
+SET documentdb_rum.fix_incomplete_split TO on;
+SET documentdb_rum.enable_inject_page_split_incomplete TO off;
+SET documentdb.rumFailOnLostPath TO on;
+SELECT COUNT(documentdb_api.insert_one(
+    'rumdb', 'incomplete_split',
+    bson_build_document('_id'::text, i, 'a'::text, i)))
+FROM generate_series(2001, 3000) i;
+ count 
+-------
+  1000
+(1 row)
+
+-- not all the children are here.
+SELECT COUNT(*)
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    get_raw_page(FORMAT('documentdb_data.documents_rum_index_%s', :index_id), 1),
+    FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass);
+ count 
+-------
+    17
+(1 row)
+
+SELECT entry->> 'offset',
+       rum_incomplete_split_repair_test.index_term_to_bson(
+           (entry->>'firstEntry')::bytea)
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    get_raw_page(FORMAT('documentdb_data.documents_rum_index_%s', :index_id), 1),
+    FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass) entry;
+ ?column? |                           index_term_to_bson                           
+----------+------------------------------------------------------------------------
+ 1        | { "$" : { "$numberInt" : "99" }, "$flags" : { "$numberInt" : "0" } }
+ 2        | { "$" : { "$numberInt" : "213" }, "$flags" : { "$numberInt" : "0" } }
+ 3        | { "$" : { "$numberInt" : "327" }, "$flags" : { "$numberInt" : "0" } }
+ 4        | { "$" : { "$numberInt" : "441" }, "$flags" : { "$numberInt" : "0" } }
+ 5        | { "$" : { "$numberInt" : "555" }, "$flags" : { "$numberInt" : "0" } }
+ 6        | { "$" : { "$numberInt" : "669" }, "$flags" : { "$numberInt" : "0" } }
+ 7        | { "$" : { "$numberInt" : "783" }, "$flags" : { "$numberInt" : "0" } }
+ 8        | { "$" : { "$numberInt" : "897" }, "$flags" : { "$numberInt" : "0" } }
+ 9        | { "$" : { "$numberInt" : "2011" }, "$flags" : { "$numberInt" : "0" } }
+ 10       | { "$" : { "$numberInt" : "2125" }, "$flags" : { "$numberInt" : "0" } }
+ 11       | { "$" : { "$numberInt" : "2239" }, "$flags" : { "$numberInt" : "0" } }
+ 12       | { "$" : { "$numberInt" : "2353" }, "$flags" : { "$numberInt" : "0" } }
+ 13       | { "$" : { "$numberInt" : "2467" }, "$flags" : { "$numberInt" : "0" } }
+ 14       | { "$" : { "$numberInt" : "2581" }, "$flags" : { "$numberInt" : "0" } }
+ 15       | { "$" : { "$numberInt" : "2695" }, "$flags" : { "$numberInt" : "0" } }
+ 16       | { "$" : { "$numberInt" : "2809" }, "$flags" : { "$numberInt" : "0" } }
+ 17       | { "$" : { "$numberInt" : "212" }, "$flags" : { "$numberInt" : "0" } }
+(17 rows)
+
+-- count is correct
+SELECT COUNT(*)
+FROM documentdb_api.collection('rumdb', 'incomplete_split')
+WHERE document @@ '{ "a": { "$exists": true } }';
+ count 
+-------
+  1993
+(1 row)
+
+-- now repeat this exercise again but use the repair function to fix it.
+SET documentdb_rum.fix_incomplete_split TO off;
+SET documentdb_rum.track_incomplete_split TO off;
+CALL documentdb_api.drop_indexes(
+    'rumdb',
+    '{ "dropIndexes": "incomplete_split", "index": "a_1" }');
+                          retval                          
+----------------------------------------------------------
+ { "ok" : true, "nIndexesWas" : { "$numberLong" : "2" } }
+(1 row)
+
+SELECT FORMAT('TRUNCATE documentdb_data.documents_%s', :collection_id) \gexec
+TRUNCATE documentdb_data.documents_2701
+SELECT COUNT(*) FROM documentdb_api.collection('rumdb', 'incomplete_split');
+ count 
+-------
+     0
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'rumdb',
+    '{ "createIndexes": "incomplete_split", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "enableCompositeTerm": false } ] }',
+    TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT index_id AS index_id
+FROM documentdb_api_catalog.collection_indexes
+WHERE collection_id = :collection_id
+  AND (index_spec).index_name = 'a_1' \gset
+SET documentdb_rum.enable_inject_page_split_incomplete TO on;
+SELECT COUNT(documentdb_api.insert_one(
+    'rumdb', 'incomplete_split',
+    bson_build_document('_id'::text, i, 'a'::text, i)))
+FROM generate_series(1, 1000) i;
+ count 
+-------
+  1000
+(1 row)
+
+-- the root page doesn't have all the children (the tree is inconsistent)
+SELECT COUNT(*)
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    get_raw_page(FORMAT('documentdb_data.documents_rum_index_%s', :index_id), 1),
+    FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass);
+ count 
+-------
+     2
+(1 row)
+
+SELECT entry->> 'offset',
+       rum_incomplete_split_repair_test.index_term_to_bson(
+           (entry->>'firstEntry')::bytea)
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    get_raw_page(FORMAT('documentdb_data.documents_rum_index_%s', :index_id), 1),
+    FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass) entry;
+ ?column? |                          index_term_to_bson                           
+----------+-----------------------------------------------------------------------
+ 1        | { "$" : { "$numberInt" : "99" }, "$flags" : { "$numberInt" : "0" } }
+ 2        | { "$" : { "$numberInt" : "212" }, "$flags" : { "$numberInt" : "0" } }
+(2 rows)
+
+-- assert that not all documents got inserted
+SELECT COUNT(*) FROM documentdb_api.collection('rumdb', 'incomplete_split');
+ count 
+-------
+   994
+(1 row)
+
+-- now insert some more docs - we should get a lost path error
+SET documentdb_rum.enable_inject_page_split_incomplete TO off;
+SET documentdb.rumFailOnLostPath TO on;
+SELECT COUNT(documentdb_api.insert_one(
+    'rumdb', 'incomplete_split',
+    bson_build_document('_id'::text, i, 'a'::text, i)))
+FROM generate_series(2001, 3000) i;
+ERROR:  An invalid/lost index path for the write operation was detected. Please retry the operation.
+CONTEXT:  SQL statement "SELECT p_result                   FROM documentdb_api.insert(
+      p_database_name,
+      v_insert,
+      p_document::bsonsequence,
+      p_transaction_id)"
+PL/pgSQL function documentdb_api.insert_one(text,text,bson,text) line 7 at SQL statement
+SQL statement "SELECT p_result                   FROM documentdb_api.insert(
+      p_database_name,
+      v_insert,
+      p_document::bsonsequence,
+      p_transaction_id)"
+PL/pgSQL function documentdb_api.insert_one(text,text,bson,text) line 7 at SQL statement
+-- repair the index using the rum repair functions
+SET documentdb_rum.track_incomplete_split TO on;
+SET documentdb_rum.fix_incomplete_split TO on;
+-- run in dry run mode - reports but doesn't fix.
+SELECT documentdb_api_internal.rum_repair_incomplete_split_on_index(
+    FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass,
+    FALSE, TRUE);
+INFO:  Repairing index with dryRunMode 1, and trackDataPages 0
+INFO:  Rum tree is in an inconsistent state. parentPage 1 has child 2 with rightLink 4, but parent right link is 4294967295
+ rum_repair_incomplete_split_on_index 
+--------------------------------------
+ 
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one(
+    'rumdb', 'incomplete_split',
+    bson_build_document('_id'::text, i, 'a'::text, i)))
+FROM generate_series(2001, 3000) i;
+ERROR:  An invalid/lost index path for the write operation was detected. Please retry the operation.
+CONTEXT:  SQL statement "SELECT p_result                   FROM documentdb_api.insert(
+      p_database_name,
+      v_insert,
+      p_document::bsonsequence,
+      p_transaction_id)"
+PL/pgSQL function documentdb_api.insert_one(text,text,bson,text) line 7 at SQL statement
+SQL statement "SELECT p_result                   FROM documentdb_api.insert(
+      p_database_name,
+      v_insert,
+      p_document::bsonsequence,
+      p_transaction_id)"
+PL/pgSQL function documentdb_api.insert_one(text,text,bson,text) line 7 at SQL statement
+-- now run in real mode
+SELECT documentdb_api_internal.rum_repair_incomplete_split_on_index(
+    FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass,
+    FALSE, FALSE);
+INFO:  Repairing index with dryRunMode 0, and trackDataPages 0
+INFO:  Rum tree is in an inconsistent state. parentPage 1 has child 2 with rightLink 4, but parent right link is 4294967295
+ rum_repair_incomplete_split_on_index 
+--------------------------------------
+ 
+(1 row)
+
+-- this now works fine once dynamic repair is turned on:
+SELECT COUNT(documentdb_api.insert_one(
+    'rumdb', 'incomplete_split',
+    bson_build_document('_id'::text, i, 'a'::text, i)))
+FROM generate_series(2001, 3000) i;
+ count 
+-------
+  1000
+(1 row)
+
+-- not all the children are here.
+SELECT COUNT(*)
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    get_raw_page(FORMAT('documentdb_data.documents_rum_index_%s', :index_id), 1),
+    FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass);
+ count 
+-------
+    17
+(1 row)
+
+SELECT entry->> 'offset',
+       rum_incomplete_split_repair_test.index_term_to_bson(
+           (entry->>'firstEntry')::bytea)
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    get_raw_page(FORMAT('documentdb_data.documents_rum_index_%s', :index_id), 1),
+    FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass) entry;
+ ?column? |                           index_term_to_bson                           
+----------+------------------------------------------------------------------------
+ 1        | { "$" : { "$numberInt" : "99" }, "$flags" : { "$numberInt" : "0" } }
+ 2        | { "$" : { "$numberInt" : "213" }, "$flags" : { "$numberInt" : "0" } }
+ 3        | { "$" : { "$numberInt" : "327" }, "$flags" : { "$numberInt" : "0" } }
+ 4        | { "$" : { "$numberInt" : "441" }, "$flags" : { "$numberInt" : "0" } }
+ 5        | { "$" : { "$numberInt" : "555" }, "$flags" : { "$numberInt" : "0" } }
+ 6        | { "$" : { "$numberInt" : "669" }, "$flags" : { "$numberInt" : "0" } }
+ 7        | { "$" : { "$numberInt" : "783" }, "$flags" : { "$numberInt" : "0" } }
+ 8        | { "$" : { "$numberInt" : "897" }, "$flags" : { "$numberInt" : "0" } }
+ 9        | { "$" : { "$numberInt" : "2011" }, "$flags" : { "$numberInt" : "0" } }
+ 10       | { "$" : { "$numberInt" : "2125" }, "$flags" : { "$numberInt" : "0" } }
+ 11       | { "$" : { "$numberInt" : "2239" }, "$flags" : { "$numberInt" : "0" } }
+ 12       | { "$" : { "$numberInt" : "2353" }, "$flags" : { "$numberInt" : "0" } }
+ 13       | { "$" : { "$numberInt" : "2467" }, "$flags" : { "$numberInt" : "0" } }
+ 14       | { "$" : { "$numberInt" : "2581" }, "$flags" : { "$numberInt" : "0" } }
+ 15       | { "$" : { "$numberInt" : "2695" }, "$flags" : { "$numberInt" : "0" } }
+ 16       | { "$" : { "$numberInt" : "2809" }, "$flags" : { "$numberInt" : "0" } }
+ 17       | { "$" : { "$numberInt" : "212" }, "$flags" : { "$numberInt" : "0" } }
+(17 rows)
+
+-- count is correct
+SELECT COUNT(*)
+FROM documentdb_api.collection('rumdb', 'incomplete_split')
+WHERE document @@ '{ "a": { "$exists": true } }';
+ count 
+-------
+  1994
+(1 row)
+
+-- now repeat with larger index keys to see if there's multiple levels.
+SET documentdb_rum.fix_incomplete_split TO off;
+SET documentdb_rum.track_incomplete_split TO off;
+SELECT FORMAT('TRUNCATE documentdb_data.documents_%s', :collection_id) \gexec
+TRUNCATE documentdb_data.documents_2701
+SELECT COUNT(*) FROM documentdb_api.collection('rumdb', 'incomplete_split');
+ count 
+-------
+     0
+(1 row)
+
+SET documentdb_rum.enable_inject_page_split_incomplete TO on;
+SELECT COUNT(documentdb_api.insert_one(
+    'rumdb', 'incomplete_split',
+    bson_build_document(
+        '_id'::text, i, 'a'::text, repeat('a', 1900) || i)))
+FROM generate_series(1, 10000) i;
+ count 
+-------
+ 10000
+(1 row)
+
+-- assert that documents got missed due to injecting incomplete split.
+SELECT COUNT(*) < 10000
+FROM documentdb_api.collection('rumdb', 'incomplete_split');
+ ?column? 
+----------
+ t
+(1 row)
+
+SET documentdb_rum.track_incomplete_split TO on;
+SET documentdb_rum.fix_incomplete_split TO on;
+SET documentdb_rum.enable_inject_page_split_incomplete TO off;
+-- run in dry run mode - reports but doesn't fix.
+SET client_min_messages TO WARNING;
+-- now fix the pages
+SELECT documentdb_api_internal.rum_repair_incomplete_split_on_index(
+    FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass,
+    FALSE, TRUE);
+INFO:  Repairing index with dryRunMode 1, and trackDataPages 0
+WARNING:  Rum tree is in an inconsistent state.
+WARNING:  Rum tree is in an inconsistent state.
+ rum_repair_incomplete_split_on_index 
+--------------------------------------
+ 
+(1 row)
+
+-- rerunning in dryrunmode should only report that it's in incomplete split page
+SELECT documentdb_api_internal.rum_repair_incomplete_split_on_index(
+    FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass,
+    FALSE, FALSE);
+INFO:  Repairing index with dryRunMode 0, and trackDataPages 0
+WARNING:  Rum tree is in an inconsistent state.
+WARNING:  Rum tree is in an inconsistent state.
+ rum_repair_incomplete_split_on_index 
+--------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_api_internal.rum_repair_incomplete_split_on_index(
+    FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass,
+    FALSE, TRUE);
+INFO:  Repairing index with dryRunMode 1, and trackDataPages 0
+WARNING:  Rum tree is in an incomplete split state.
+WARNING:  Rum tree is in an incomplete split state.
+ rum_repair_incomplete_split_on_index 
+--------------------------------------
+ 
+(1 row)
+
+RESET client_min_messages;
+-- insert a bunch of docs (still fails with lost path)
+SET documentdb.rumFailOnLostPath TO on;
+SELECT COUNT(documentdb_api.insert_one(
+    'rumdb', 'incomplete_split',
+    bson_build_document(
+        '_id'::text, i + 10000, 'a'::text, repeat('a', 1900) || i)))
+FROM generate_series(1, 10000) i;
+ERROR:  An invalid/lost index path for the write operation was detected. Please retry the operation.
+CONTEXT:  SQL statement "SELECT p_result                   FROM documentdb_api.insert(
+      p_database_name,
+      v_insert,
+      p_document::bsonsequence,
+      p_transaction_id)"
+PL/pgSQL function documentdb_api.insert_one(text,text,bson,text) line 7 at SQL statement
+SQL statement "SELECT p_result                   FROM documentdb_api.insert(
+      p_database_name,
+      v_insert,
+      p_document::bsonsequence,
+      p_transaction_id)"
+PL/pgSQL function documentdb_api.insert_one(text,text,bson,text) line 7 at SQL statement
+-- rerun with fixing data pages
+SET client_min_messages TO WARNING;
+SELECT documentdb_api_internal.rum_repair_incomplete_split_on_index(
+    FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass,
+    TRUE, FALSE);
+INFO:  Repairing index with dryRunMode 0, and trackDataPages 1
+WARNING:  Rum tree is in an inconsistent state.
+ rum_repair_incomplete_split_on_index 
+--------------------------------------
+ 
+(1 row)
+
+RESET client_min_messages;
+-- inserts finally work
+SELECT COUNT(documentdb_api.insert_one(
+    'rumdb', 'incomplete_split',
+    bson_build_document(
+        '_id'::text, i + 10000, 'a'::text, repeat('a', 1900) || i)))
+FROM generate_series(1, 10000) i;
+ count 
+-------
+ 10000
+(1 row)
+
+-- no inconsistencies in dryrun mode - expect no failures
+SELECT documentdb_api_internal.rum_repair_incomplete_split_on_index(
+    FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass,
+    TRUE, TRUE);
+INFO:  Repairing index with dryRunMode 1, and trackDataPages 1
+ rum_repair_incomplete_split_on_index 
+--------------------------------------
+ 
+(1 row)
+
+RESET documentdb.rumFailOnLostPath;
+RESET documentdb_rum.fix_incomplete_split;
+RESET documentdb_rum.track_incomplete_split;
+SELECT documentdb_api.drop_collection('rumdb', 'incomplete_split');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+DROP SCHEMA rum_incomplete_split_repair_test CASCADE;
+NOTICE:  drop cascades to function rum_incomplete_split_repair_test.index_term_to_bson(bytea)
