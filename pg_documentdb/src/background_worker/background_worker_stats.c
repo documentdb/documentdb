@@ -179,6 +179,11 @@ RoleExecutionProfileName(BackgroundWorkerJobRoleExecutionProfile roleExecutionPr
 			return "recoveryEligible";
 		}
 
+		case BackgroundWorkerJobRoleExecutionProfile_RecoveryOnly:
+		{
+			return "recoveryOnly";
+		}
+
 		default:
 			return "invalid";
 	}

@@ -16,8 +16,9 @@
 
 extern bool EnableBackgroundWorker;
 extern bool EnableBackgroundWorkerJobs;
+extern bool EnableBackgroundWorkerJobsInRecovery;
 extern bool EnableBackgroundWorkerInitJobs;
-extern bool EnableBgWorkerMetricsEmission;
+extern bool StartBackgroundWorkerInRecovery;
 extern bool IndexBuildsScheduledOnBgWorker;
 
 /* index build tasks */

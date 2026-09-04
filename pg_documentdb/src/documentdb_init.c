@@ -151,7 +151,9 @@ InitializeDocumentDBBackgroundWorker(char *libraryName, char *gucPrefix,
 
 	/* set up common data for the worker */
 	worker.bgw_flags = BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
-	worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
+	worker.bgw_start_time = StartBackgroundWorkerInRecovery ?
+							BgWorkerStart_ConsistentState :
+							BgWorkerStart_RecoveryFinished;
 	worker.bgw_restart_time = 10;
 	worker.bgw_main_arg = Int32GetDatum(0);
 	worker.bgw_notify_pid = 0;

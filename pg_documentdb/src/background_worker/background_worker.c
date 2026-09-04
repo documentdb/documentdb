@@ -150,14 +150,16 @@ static void ValidateJob(BackgroundWorkerJob job);
 static void ValidateRoleExecutionProfile(const char *jobName,
 										 BackgroundWorkerJobRoleExecutionProfile
 										 roleExecutionProfile);
-static void ManageJobsLifeCycle(List *jobExecutions, char *userName, char *databaseName);
+static void ManageJobsLifeCycle(List *jobExecutions, char *userName, char *databaseName,
+								bool inRecovery);
 static void ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName,
 					   char *databaseName, TimestampTz currentTime);
 static void CheckJobCompletion(BackgroundWorkerJobExecution *jobExec);
 static void FreeJobExecutions(List *jobExecutions);
 static bool CheckIfMetadataCoordinator(void);
 static bool CheckIfJobCommandIsAllowed(BackgroundWorkerJobCommand command);
-static bool CanExecuteJob(BackgroundWorkerJobExecution *jobExec, TimestampTz currentTime);
+static bool CanExecuteJob(BackgroundWorkerJobExecution *jobExec, TimestampTz currentTime,
+						  bool inRecovery);
 static bool IsJobEnabled(BackgroundWorkerJobExecution *jobExec);
 static bool CheckIfRoleExists(const char *roleName);
 static List * GenerateJobExecutions(void);
@@ -167,6 +169,30 @@ static void CancelJobIfTimeIsUp(BackgroundWorkerJobExecution *jobExec, Timestamp
 								currentTime);
 static void WaitForBackgroundWorkerDependencies(void);
 static void WaitForInitJobsCompletion(void);
+static bool BackgroundWorkerJobsEnabledForRole(bool inRecovery);
+static bool JobCanExecuteForRole(BackgroundWorkerJobRoleExecutionProfile
+								 roleExecutionProfile, bool inRecovery);
+
+/*
+ * The scheduler initializes initJobsPending once at startup. It is true only
+ * when the server is in recovery, where init jobs are deferred because they
+ * may require writes; otherwise, the init jobs run immediately and the flag
+ * is false.
+ *
+ * Promotion does not restart the postmaster or this worker, so
+ * initJobsPending retains its startup value. Each scheduling cycle separately
+ * refreshes inRecovery by calling RecoveryInProgress(). After promotion,
+ * inRecovery becomes false while initJobsPending is still true. The helper
+ * returns true in this state, telling the caller to run the deferred init jobs
+ * before primary job scheduling. The caller clears initJobsPending after the
+ * init jobs complete.
+ */
+static inline bool
+ShouldRunDeferredInitJobs(bool initJobsPending, bool inRecovery)
+{
+	return initJobsPending && !inRecovery;
+}
+
 
 /*
  * The allowed commands registry should not be exposed outside this c file to avoid unpredictable behavior.
@@ -220,7 +246,7 @@ ValidateRoleExecutionProfile(const char *jobName,
 	}
 
 	if (roleExecutionProfile < BackgroundWorkerJobRoleExecutionProfile_PrimaryOnly ||
-		roleExecutionProfile > BackgroundWorkerJobRoleExecutionProfile_RecoveryEligible)
+		roleExecutionProfile > BackgroundWorkerJobRoleExecutionProfile_RecoveryOnly)
 	{
 		ereport(ERROR, (errmsg(
 							"Background worker job '%s' has invalid role execution profile value %d",
@@ -280,10 +306,14 @@ DocumentDBBackgroundWorkerMain(Datum main_arg)
 	on_shmem_exit(BackgroundWorkerKill, 0);
 
 	/*
-	 * Run registered init jobs before waiting for background worker dependencies.
-	 * Guarded by the enableBackgroundWorkerInitJobs feature flag.
+	 * Run init jobs before waiting for dependencies, but defer them until
+	 * recovery ends. The wait helper handles enableBackgroundWorkerInitJobs feature flag.
 	 */
-	WaitForInitJobsCompletion();
+	bool initJobsPending = RecoveryInProgress();
+	if (!initJobsPending)
+	{
+		WaitForInitJobsCompletion();
+	}
 
 	/*
 	 * After init jobs complete, mark all subsequent transactions as read-only.
@@ -343,20 +373,11 @@ DocumentDBBackgroundWorkerMain(Datum main_arg)
 		MemoryContextSwitchTo(bgWorkerContext);
 
 		/*
-		 * The background worker job framework is controlled by a GUC
-		 * that enables or disables job executions. The control flow
-		 * below exists to adjust the internal state gracefuly when the
-		 * GUC value changes in real time.
+		 * Keep execution state after role or configuration changes so running
+		 * jobs can drain. Role eligibility is checked before each dispatch.
 		 */
-		if (jobExecutions != NIL)
-		{
-			if (!EnableBackgroundWorkerJobs)
-			{
-				FreeJobExecutions(jobExecutions);
-				jobExecutions = NIL;
-			}
-		}
-		else if (EnableBackgroundWorkerJobs)
+		if (jobExecutions == NIL &&
+			(EnableBackgroundWorkerJobs || EnableBackgroundWorkerJobsInRecovery))
 		{
 			jobExecutions = GenerateJobExecutions();
 		}
@@ -410,7 +431,36 @@ DocumentDBBackgroundWorkerMain(Datum main_arg)
 		if (waitResult & WL_TIMEOUT)
 		{
 			/* Event received for schedules */
-			ManageJobsLifeCycle(jobExecutions, ApiBgWorkerRole, databaseName);
+			bool inRecovery = RecoveryInProgress();
+
+			if (ShouldRunDeferredInitJobs(initJobsPending, inRecovery))
+			{
+				if (BgWorkerEnableDiagnosticsLog)
+				{
+					ereport(LOG, (errmsg(
+									  "Recovery ended; running deferred background worker init jobs")));
+				}
+
+				PopActiveSnapshot();
+				CommitTransactionCommand();
+
+				set_config_option("default_transaction_read_only", "false",
+								  PGC_USERSET, PGC_S_SESSION,
+								  GUC_ACTION_SET, true, 0, false);
+				WaitForInitJobsCompletion();
+				set_config_option("default_transaction_read_only", "true",
+								  PGC_USERSET, PGC_S_SESSION,
+								  GUC_ACTION_SET, true, 0, false);
+				initJobsPending = false;
+
+				SetCurrentStatementStartTimestamp();
+				StartTransactionCommand();
+				PushActiveSnapshot(GetTransactionSnapshot());
+				MemoryContextSwitchTo(bgWorkerContext);
+			}
+
+			ManageJobsLifeCycle(jobExecutions, ApiBgWorkerRole, databaseName,
+								inRecovery);
 		}
 
 		latchTimeOut = LatchTimeOutSec;
@@ -519,7 +569,8 @@ GetBackgroundWorkerJob(int index)
  * ManageJobsLifeCycle walks through the list of jobs and takes action based on their state.
  */
 static void
-ManageJobsLifeCycle(List *jobExecutions, char *userName, char *databaseName)
+ManageJobsLifeCycle(List *jobExecutions, char *userName, char *databaseName,
+					bool inRecovery)
 {
 	TimestampTz currentTime = GetCurrentTimestamp();
 	ListCell *jobExecCell = NULL;
@@ -540,7 +591,7 @@ ManageJobsLifeCycle(List *jobExecutions, char *userName, char *databaseName)
 		CheckJobCompletion(jobExec);
 
 		/* Executes job if it hasn't started and the scheduled interval was reached. */
-		if (CanExecuteJob(jobExec, currentTime))
+		if (CanExecuteJob(jobExec, currentTime, inRecovery))
 		{
 			ExecuteJob(jobExec, userName, databaseName, currentTime);
 		}
@@ -594,8 +645,15 @@ IsJobEnabled(BackgroundWorkerJobExecution *jobExec)
  * Checks if a given job is eligible to start.
  */
 static bool
-CanExecuteJob(BackgroundWorkerJobExecution *jobExec, TimestampTz currentTime)
+CanExecuteJob(BackgroundWorkerJobExecution *jobExec, TimestampTz currentTime,
+			  bool inRecovery)
 {
+	if (!BackgroundWorkerJobsEnabledForRole(inRecovery) ||
+		!JobCanExecuteForRole(jobExec->job.roleExecutionProfile, inRecovery))
+	{
+		return false;
+	}
+
 	if (jobExec->job.toBeExecutedOnMetadataCoordinatorOnly &&
 		!CheckIfMetadataCoordinator())
 	{
@@ -614,6 +672,41 @@ CanExecuteJob(BackgroundWorkerJobExecution *jobExec, TimestampTz currentTime)
 		   scheduleIntervalInSeconds > 0 &&
 		   TimestampDifferenceExceeds(jobExec->lastStartTime, currentTime,
 									  scheduleIntervalInSeconds * ONE_SEC_IN_MS);
+}
+
+
+static bool
+BackgroundWorkerJobsEnabledForRole(bool inRecovery)
+{
+	return inRecovery ? EnableBackgroundWorkerJobsInRecovery :
+		   EnableBackgroundWorkerJobs;
+}
+
+
+static bool
+JobCanExecuteForRole(BackgroundWorkerJobRoleExecutionProfile roleExecutionProfile,
+					 bool inRecovery)
+{
+	switch (roleExecutionProfile)
+	{
+		case BackgroundWorkerJobRoleExecutionProfile_PrimaryOnly:
+		{
+			return !inRecovery;
+		}
+
+		case BackgroundWorkerJobRoleExecutionProfile_RecoveryEligible:
+		{
+			return true;
+		}
+
+		case BackgroundWorkerJobRoleExecutionProfile_RecoveryOnly:
+		{
+			return inRecovery;
+		}
+
+		default:
+			return false;
+	}
 }
 
 

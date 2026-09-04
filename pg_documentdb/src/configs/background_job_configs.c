@@ -68,6 +68,13 @@ bool EnableBackgroundWorker = DEFAULT_ENABLE_BG_WORKER;
 #define DEFAULT_ENABLE_BG_WORKER_JOBS true
 bool EnableBackgroundWorkerJobs = DEFAULT_ENABLE_BG_WORKER_JOBS;
 
+#define DEFAULT_ENABLE_BG_WORKER_JOBS_IN_RECOVERY false
+bool EnableBackgroundWorkerJobsInRecovery =
+	DEFAULT_ENABLE_BG_WORKER_JOBS_IN_RECOVERY;
+
+#define DEFAULT_START_BG_WORKER_IN_RECOVERY false
+bool StartBackgroundWorkerInRecovery = DEFAULT_START_BG_WORKER_IN_RECOVERY;
+
 /* Added in v0.111, pending stabilization */
 #define DEFAULT_ENABLE_BG_WORKER_INIT_JOBS false
 bool EnableBackgroundWorkerInitJobs = DEFAULT_ENABLE_BG_WORKER_INIT_JOBS;
@@ -294,6 +301,22 @@ InitializeBackgroundJobConfigurations(const char *prefix, const char *newGucPref
 		gettext_noop("Enable the execution of the pre-defined background worker jobs."),
 		NULL, &EnableBackgroundWorkerJobs, DEFAULT_ENABLE_BG_WORKER_JOBS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_background_worker_jobs_in_recovery", newGucPrefix),
+		gettext_noop(
+			"Enable recovery-eligible background worker jobs while the server is in recovery."),
+		NULL, &EnableBackgroundWorkerJobsInRecovery,
+		DEFAULT_ENABLE_BG_WORKER_JOBS_IN_RECOVERY,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.start_background_worker_in_recovery", newGucPrefix),
+		gettext_noop(
+			"Start the background worker when the server reaches consistent recovery state."),
+		NULL, &StartBackgroundWorkerInRecovery,
+		DEFAULT_START_BG_WORKER_IN_RECOVERY,
+		PGC_POSTMASTER, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.enableBackgroundWorkerInitJobs", newGucPrefix),
