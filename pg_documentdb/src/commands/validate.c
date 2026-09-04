@@ -177,6 +177,8 @@ command_validate(PG_FUNCTION_ARGS)
 							validateSpec.databaseName, validateSpec.collectionName)));
 	}
 
+	EnsureCollectionOwner(collection);
+
 	StringInfo namespaceString = makeStringInfo();
 	appendStringInfo(namespaceString, "%s.%s", validateSpec.databaseName,
 					 validateSpec.collectionName);

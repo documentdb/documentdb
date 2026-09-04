@@ -535,6 +535,16 @@ command_create_indexes_non_concurrently(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errmsg("dbName cannot be NULL")));
 	}
 
+	MongoCollection *collection =
+		GetMongoCollectionByNameDatum(dbNameDatum,
+									  CStringGetTextDatum(
+										  createIndexesArg.collectionName),
+									  AccessShareLock);
+	if (collection != NULL)
+	{
+		EnsureCollectionOwner(collection);
+	}
+
 	skip_check_collection_create |= createIndexesArg.blocking;
 	bool uniqueIndexOnly = false;
 	CreateIndexesResult result = create_indexes_non_concurrently(
@@ -675,6 +685,17 @@ command_create_indexes(const CallStmt *callStmt, ProcessUtilityContext context,
 	{
 		ereport(ERROR, (errmsg("dbName cannot be NULL")));
 	}
+
+	MongoCollection *collection =
+		GetMongoCollectionByNameDatum(dbNameDatum,
+									  CStringGetTextDatum(
+										  createIndexesArg.collectionName),
+									  AccessShareLock);
+	if (collection != NULL)
+	{
+		EnsureCollectionOwner(collection);
+	}
+
 	bool isTopLevel = (context == PROCESS_UTILITY_TOPLEVEL);
 	bool buildIndexesConcurrently = !IsInTransactionBlock(isTopLevel);
 	buildIndexesConcurrently &= !createIndexesArg.blocking;
@@ -731,6 +752,14 @@ command_reindex(const CallStmt *callStmt,
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_OPERATIONNOTSUPPORTEDINTRANSACTION),
 						errmsg("Cannot run 'reIndex' in a multi-document transaction.")));
 	}
+
+	MongoCollection *collection =
+		GetMongoCollectionByNameDatum(dbNameDatum, collectionNameDatum, AccessShareLock);
+	if (collection != NULL)
+	{
+		EnsureCollectionOwner(collection);
+	}
+
 	ReIndexResult result = reindex_concurrently(dbNameDatum, collectionNameDatum);
 
 	SendReIndexResultToClientAsBson(fcinfo, &result, destReceiver);

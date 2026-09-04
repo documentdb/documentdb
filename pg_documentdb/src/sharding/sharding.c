@@ -1461,6 +1461,8 @@ ShardCollectionCore(ShardCollectionArgs *args)
 		}
 	}
 
+	EnsureCollectionOwner(collection);
+
 	if (collection->shardKey == NULL &&
 		args->shardingMode != ShardCollectionMode_Shard)
 	{

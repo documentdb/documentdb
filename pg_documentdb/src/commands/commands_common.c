@@ -12,9 +12,12 @@
 #include "miscadmin.h"
 
 #include "access/xact.h"
+#include "catalog/pg_class_d.h"
 #include "executor/spi.h"
 #include "lib/stringinfo.h"
+#include "utils/acl.h"
 #include "utils/builtins.h"
+#include "utils/lsyscache.h"
 #include "storage/lmgr.h"
 #include "utils/snapmgr.h"
 
@@ -39,6 +42,7 @@ extern int MaxCustomCommandTimeout;
 extern bool RumFailOnLostPath;
 extern bool EnableNullCollectionValidation;
 extern bool EnableRequestIndexNameCache;
+extern bool EnableCollectionOwnerAclCheck;
 
 /*
  *  This is a list of command options that are not currently supported.
@@ -126,6 +130,34 @@ ValidateNamespaceStringForEmbeddedNull(const char *value, uint32_t length)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
 						errmsg("namespaces cannot have embedded null characters")));
+	}
+}
+
+
+void
+EnsureCollectionOwner(MongoCollection *collection)
+{
+	if (!EnableCollectionOwnerAclCheck)
+	{
+		return;
+	}
+
+	if (!OidIsValid(collection->relationId))
+	{
+		return;
+	}
+
+#if PG_VERSION_NUM >= 160000
+	bool isOwner = object_ownercheck(RelationRelationId, collection->relationId,
+									 GetUserId());
+#else
+	bool isOwner = pg_class_ownercheck(collection->relationId, GetUserId());
+#endif
+
+	if (!isOwner)
+	{
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_TABLE,
+					   collection->name.collectionName);
 	}
 }
 

@@ -262,6 +262,8 @@ command_coll_mod(PG_FUNCTION_ARGS)
 						errmsg("The specified namespace does not exist")));
 	}
 
+	EnsureCollectionOwner(collection);
+
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
 	PgbsonWriterAppendInt32(&writer, "ok", 2, 1);

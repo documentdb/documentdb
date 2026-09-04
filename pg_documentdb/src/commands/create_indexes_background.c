@@ -1501,6 +1501,8 @@ SubmitCreateIndexesRequest(Datum dbNameDatum,
 		}
 	}
 
+	EnsureCollectionOwner(collection);
+
 	uint64 collectionId = collection->collectionId;
 
 	/*

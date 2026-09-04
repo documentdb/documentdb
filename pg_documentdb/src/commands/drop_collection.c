@@ -77,6 +77,8 @@ command_drop_collection(PG_FUNCTION_ARGS)
 		PG_RETURN_BOOL(false);
 	}
 
+	EnsureCollectionOwner(collection);
+
 	bool trackChanges = PG_GETARG_BOOL(4);
 
 	if (!IsMetadataCoordinator())

@@ -125,6 +125,7 @@ bool FindShardKeyValueForDocumentId(MongoCollection *collection, const
 
 bool IsCommonSpecIgnoredField(const char *fieldName);
 void ValidateNamespaceStringForEmbeddedNull(const char *value, uint32_t length);
+void EnsureCollectionOwner(MongoCollection *collection);
 void ValidateOrExtractDatabaseNameFromSpec(bson_iter_t *iter, Datum *databaseNameDatum);
 void ValidateOrExtractDatabaseNameTextFromSpec(bson_iter_t *iter,
 											   text **databaseNameText);

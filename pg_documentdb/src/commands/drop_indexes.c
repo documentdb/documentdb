@@ -206,6 +206,8 @@ ProcessDropIndexesRequest(char *dbName, DropIndexesArg dropIndexesArg, bool
 							   collectionName)));
 	}
 
+	EnsureCollectionOwner(collection);
+
 	uint64 collectionId = collection->collectionId;
 
 	DropIndexesResult result = {

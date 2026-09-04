@@ -79,6 +79,10 @@ bool EnableReadWriteAnyDatabaseRoleEnforcement =
 #define DEFAULT_ENABLE_ROLES_ADMIN_DB_CHECK true
 bool EnableRolesAdminDBCheck = DEFAULT_ENABLE_ROLES_ADMIN_DB_CHECK;
 
+/* Added on v1.1, enabled on v1.1, remove after v1.3 */
+#define DEFAULT_ENABLE_COLLECTION_OWNER_ACL_CHECK true
+bool EnableCollectionOwnerAclCheck = DEFAULT_ENABLE_COLLECTION_OWNER_ACL_CHECK;
+
 /*
  * SECTION: Vector Search flags
  */
@@ -1083,6 +1087,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		gettext_noop(
 			"Enables db admin requirement for role CRUD APIs through the data plane."),
 		NULL, &EnableRolesAdminDBCheck, DEFAULT_ENABLE_ROLES_ADMIN_DB_CHECK,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_collection_owner_acl_check", newGucPrefix),
+		gettext_noop(
+			"Whether collection commands enforce data table ownership."),
+		NULL, &EnableCollectionOwnerAclCheck,
+		DEFAULT_ENABLE_COLLECTION_OWNER_ACL_CHECK,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
