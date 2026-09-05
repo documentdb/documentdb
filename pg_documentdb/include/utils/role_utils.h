@@ -113,6 +113,11 @@ bool ContainsReservedPgRoleNamePrefix(const char *name);
 * Note: this function does not check against native built-in role names */
 bool IsReservedInternalRoleName(const char *name);
 
+/* Function to check whether a name is reserved for the extension's own roles,
+ * a blocked prefix, or a built-in role name. Roles and users share one
+ * namespace, so this applies to both. */
+bool IsReservedRoleName(const char *name);
+
 /* Function to check whether a name identifies a custom role */
 bool IsCustomRole(const char *roleName);
 

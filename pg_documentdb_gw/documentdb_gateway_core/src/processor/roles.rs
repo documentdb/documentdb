@@ -52,3 +52,43 @@ pub async fn process_roles_info(
         .execute_roles_info(request_context, connection_context)
         .await
 }
+
+pub async fn process_grant_roles_to_role(
+    request_context: &RequestContext<'_>,
+    connection_context: &ConnectionContext,
+    pg_data_client: &impl PgDataClient,
+) -> Result<Response, DocumentDBError> {
+    pg_data_client
+        .execute_grant_roles_to_role(request_context, connection_context)
+        .await
+}
+
+pub async fn process_grant_privileges_to_role(
+    request_context: &RequestContext<'_>,
+    connection_context: &ConnectionContext,
+    pg_data_client: &impl PgDataClient,
+) -> Result<Response, DocumentDBError> {
+    pg_data_client
+        .execute_grant_privileges_to_role(request_context, connection_context)
+        .await
+}
+
+pub async fn process_revoke_roles_from_role(
+    request_context: &RequestContext<'_>,
+    connection_context: &ConnectionContext,
+    pg_data_client: &impl PgDataClient,
+) -> Result<Response, DocumentDBError> {
+    pg_data_client
+        .execute_revoke_roles_from_role(request_context, connection_context)
+        .await
+}
+
+pub async fn process_revoke_privileges_from_role(
+    request_context: &RequestContext<'_>,
+    connection_context: &ConnectionContext,
+    pg_data_client: &impl PgDataClient,
+) -> Result<Response, DocumentDBError> {
+    pg_data_client
+        .execute_revoke_privileges_from_role(request_context, connection_context)
+        .await
+}

@@ -123,3 +123,24 @@ SELECT documentdb_api.create_role(
 SELECT documentdb_api.create_role(
     '{"createRole":"null_duplicate_collection_role","roles":[],"privileges":[{"resource":{"db":"null_collection_validation","collection":"invalid\u0000suffix","collection":"source"},"actions":["find"]}],"$db":"admin"}');
 RESET documentdb.enableRoleCrud;
+
+-- The grant and revoke role commands validate the database name they are
+-- dispatched against, and the per entry database name inside the roles array.
+SET documentdb.enableRoleCrud TO ON;
+SET documentdb.enableUserCrud TO ON;
+SET documentdb.enableRolesAdminDBCheck TO ON;
+SET documentdb.enableUsersAdminDBCheck TO ON;
+SELECT documentdb_api.grant_roles_to_role(
+    '{"grantRolesToRole":"null_target_role","roles":["readAnyDatabase"],"$db":"admin\u0000suffix"}');
+SELECT documentdb_api.grant_roles_to_role(
+    '{"grantRolesToRole":"null_target_role","roles":[{"role":"readAnyDatabase","db":"admin\u0000suffix"}],"$db":"admin"}');
+SELECT documentdb_api.revoke_roles_from_role(
+    '{"revokeRolesFromRole":"null_target_role","roles":["readAnyDatabase"],"$db":"admin\u0000suffix"}');
+SELECT documentdb_api.grant_roles_to_user(
+    '{"grantRolesToUser":"null_target_user","roles":["readAnyDatabase"],"$db":"admin\u0000suffix"}');
+SELECT documentdb_api.revoke_roles_from_user(
+    '{"revokeRolesFromUser":"null_target_user","roles":["readAnyDatabase"],"$db":"admin\u0000suffix"}');
+RESET documentdb.enableUsersAdminDBCheck;
+RESET documentdb.enableRolesAdminDBCheck;
+RESET documentdb.enableUserCrud;
+RESET documentdb.enableRoleCrud;

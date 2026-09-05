@@ -118,6 +118,12 @@ pub struct QueryCatalog {
     pub update_role: String,
     pub drop_role: String,
     pub roles_info: String,
+    pub grant_roles_to_role: String,
+    pub grant_privileges_to_role: String,
+    pub grant_roles_to_user: String,
+    pub revoke_roles_from_role: String,
+    pub revoke_privileges_from_role: String,
+    pub revoke_roles_from_user: String,
 
     // tests
     pub create_db_user: String,
@@ -520,6 +526,36 @@ impl QueryCatalog {
     }
 
     #[must_use]
+    pub fn grant_roles_to_role(&self) -> &str {
+        &self.grant_roles_to_role
+    }
+
+    #[must_use]
+    pub fn grant_privileges_to_role(&self) -> &str {
+        &self.grant_privileges_to_role
+    }
+
+    #[must_use]
+    pub fn grant_roles_to_user(&self) -> &str {
+        &self.grant_roles_to_user
+    }
+
+    #[must_use]
+    pub fn revoke_roles_from_role(&self) -> &str {
+        &self.revoke_roles_from_role
+    }
+
+    #[must_use]
+    pub fn revoke_privileges_from_role(&self) -> &str {
+        &self.revoke_privileges_from_role
+    }
+
+    #[must_use]
+    pub fn revoke_roles_from_user(&self) -> &str {
+        &self.revoke_roles_from_user
+    }
+
+    #[must_use]
     pub fn create_db_user(&self, user: &str, pass: &str) -> String {
         self.create_db_user
             .replace("{user}", user)
@@ -685,6 +721,14 @@ pub fn create_query_catalog() -> QueryCatalog {
             update_role: "SELECT documentdb_api.update_role($1)".to_owned(),
             drop_role: "SELECT documentdb_api.drop_role($1)".to_owned(),
             roles_info: "SELECT documentdb_api.roles_info($1)".to_owned(),
+            grant_roles_to_role: "SELECT documentdb_api.grant_roles_to_role($1)".to_owned(),
+            grant_privileges_to_role: "SELECT documentdb_api.grant_privileges_to_role($1)"
+                .to_owned(),
+            grant_roles_to_user: "SELECT documentdb_api.grant_roles_to_user($1)".to_owned(),
+            revoke_roles_from_role: "SELECT documentdb_api.revoke_roles_from_role($1)".to_owned(),
+            revoke_privileges_from_role: "SELECT documentdb_api.revoke_privileges_from_role($1)"
+                .to_owned(),
+            revoke_roles_from_user: "SELECT documentdb_api.revoke_roles_from_user($1)".to_owned(),
 
             // tests
             create_db_user: "CREATE ROLE \"{user}\" WITH LOGIN INHERIT PASSWORD '{pass}' IN ROLE documentdb_readonly_role; 

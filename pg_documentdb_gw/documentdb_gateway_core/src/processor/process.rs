@@ -316,6 +316,46 @@ pub async fn process_request(
         RequestType::RolesInfo => {
             roles::process_roles_info(request_context, connection_context, pg_data_client).await
         }
+        RequestType::GrantRolesToRole => {
+            roles::process_grant_roles_to_role(request_context, connection_context, pg_data_client)
+                .await
+        }
+        RequestType::GrantPrivilegesToRole => {
+            roles::process_grant_privileges_to_role(
+                request_context,
+                connection_context,
+                pg_data_client,
+            )
+            .await
+        }
+        RequestType::GrantRolesToUser => {
+            users::process_grant_roles_to_user(request_context, connection_context, pg_data_client)
+                .await
+        }
+        RequestType::RevokeRolesFromRole => {
+            roles::process_revoke_roles_from_role(
+                request_context,
+                connection_context,
+                pg_data_client,
+            )
+            .await
+        }
+        RequestType::RevokePrivilegesFromRole => {
+            roles::process_revoke_privileges_from_role(
+                request_context,
+                connection_context,
+                pg_data_client,
+            )
+            .await
+        }
+        RequestType::RevokeRolesFromUser => {
+            users::process_revoke_roles_from_user(
+                request_context,
+                connection_context,
+                pg_data_client,
+            )
+            .await
+        }
         RequestType::UnshardCollection => {
             data_description::process_unshard_collection(
                 request_context,

@@ -79,6 +79,11 @@ bool EnableReadWriteAnyDatabaseRoleEnforcement =
 #define DEFAULT_ENABLE_ROLES_ADMIN_DB_CHECK true
 bool EnableRolesAdminDBCheck = DEFAULT_ENABLE_ROLES_ADMIN_DB_CHECK;
 
+/* Added in v1.1, enabled in v1.1, remove after v1.5 */
+#define DEFAULT_ENABLE_FAILURE_ON_ALWAYS_BLOCKED_ROLE_PREFIXES true
+bool EnableFailureOnAlwaysBlockedRolePrefixes =
+	DEFAULT_ENABLE_FAILURE_ON_ALWAYS_BLOCKED_ROLE_PREFIXES;
+
 /* Added on v1.1, enabled on v1.1, remove after v1.3 */
 #define DEFAULT_ENABLE_COLLECTION_OWNER_ACL_CHECK true
 bool EnableCollectionOwnerAclCheck = DEFAULT_ENABLE_COLLECTION_OWNER_ACL_CHECK;
@@ -1087,6 +1092,16 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		gettext_noop(
 			"Enables db admin requirement for role CRUD APIs through the data plane."),
 		NULL, &EnableRolesAdminDBCheck, DEFAULT_ENABLE_ROLES_ADMIN_DB_CHECK,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_failure_on_always_blocked_role_prefixes", newGucPrefix),
+		gettext_noop(
+			"Enables rejecting role and user commands that name roles the extension "
+			"provisions for itself, independent of the configured blocked role "
+			"prefix list."),
+		NULL, &EnableFailureOnAlwaysBlockedRolePrefixes,
+		DEFAULT_ENABLE_FAILURE_ON_ALWAYS_BLOCKED_ROLE_PREFIXES,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

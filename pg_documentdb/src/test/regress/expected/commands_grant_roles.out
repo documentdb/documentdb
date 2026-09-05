@@ -1,0 +1,283 @@
+SET documentdb.next_collection_id TO 1984100;
+SET documentdb.next_collection_index_id TO 1984100;
+SET documentdb.maxUserLimit TO 10;
+\set VERBOSITY TERSE
+SET documentdb.enableRoleCrud TO ON;
+SET documentdb.enableUserCrud TO ON;
+SET documentdb.enableRolesAdminDBCheck TO ON;
+SET documentdb.enableUsersAdminDBCheck TO ON;
+-- Set up the roles the grant commands operate on
+SELECT documentdb_api.create_role('{"createRole":"grantTargetRole", "roles":[], "privileges":[], "$db":"admin"}');
+            create_role            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.create_role('{"createRole":"grantSourceRole", "roles":[], "privileges":[], "$db":"admin"}');
+            create_role            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.create_user('{"createUser":"grantRoleUser", "pwd":"Valid$123Pass", "roles":[{"role":"readAnyDatabase","db":"admin"}], "$db":"admin"}');
+            create_user            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- grantRolesToRole: grant a built-in role
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"grantTargetRole", "roles":["readAnyDatabase"], "$db":"admin"}');
+        grant_roles_to_role        
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- grantRolesToRole: grant a custom role using the {role, db} document form
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"grantTargetRole", "roles":[{"role":"grantSourceRole","db":"admin"}], "$db":"admin"}');
+        grant_roles_to_role        
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Re-granting a role that is already held is a no-op and must still succeed.
+-- The redundant-grant NOTICE names the grantor, which is the operating system
+-- account running the test, and its wording differs across server versions, so
+-- it is suppressed here to keep the output stable.
+SET client_min_messages TO WARNING;
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"grantTargetRole", "roles":["readAnyDatabase"], "$db":"admin"}');
+        grant_roles_to_role        
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+RESET client_min_messages;
+-- Verify the inheritance edges
+SELECT parent.rolname AS granted_role
+FROM pg_auth_members m
+JOIN pg_roles parent ON m.roleid = parent.oid
+JOIN pg_roles child ON m.member = child.oid
+WHERE child.rolname = 'grantTargetRole'
+ORDER BY 1;
+       granted_role       
+--------------------------
+ documentdb_readonly_role
+ grantSourceRole
+(2 rows)
+
+-- The stored role document is the source of truth for the role's inherited
+-- roles, so it must list exactly the roles granted above.
+SELECT role_name, role_bson
+FROM documentdb_api_catalog.roles
+WHERE role_name = 'grantTargetRole';
+    role_name    |                                                                                        role_bson                                                                                         
+-----------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ grantTargetRole | { "createRole" : "grantTargetRole", "roles" : [ { "role" : "grantSourceRole", "db" : "admin" }, { "role" : "readAnyDatabase", "db" : "admin" } ], "privileges" : [  ], "$db" : "admin" }
+(1 row)
+
+-- grantRolesToRole: the paired built-in roles must be granted together
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"grantTargetRole", "roles":["readWriteAnyDatabase","clusterAdmin"], "$db":"admin"}');
+        grant_roles_to_role        
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- The paired grant is reflected in both the membership catalog and the
+-- stored role document.
+SELECT parent.rolname AS granted_role
+FROM pg_auth_members m
+JOIN pg_roles parent ON m.roleid = parent.oid
+JOIN pg_roles child ON m.member = child.oid
+WHERE child.rolname = 'grantTargetRole'
+ORDER BY 1;
+       granted_role       
+--------------------------
+ documentdb_admin_role
+ documentdb_readonly_role
+ grantSourceRole
+(3 rows)
+
+SELECT role_name, role_bson
+FROM documentdb_api_catalog.roles
+WHERE role_name = 'grantTargetRole';
+    role_name    |                                                                                                                                         role_bson                                                                                                                                          
+-----------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ grantTargetRole | { "createRole" : "grantTargetRole", "roles" : [ { "role" : "clusterAdmin", "db" : "admin" }, { "role" : "grantSourceRole", "db" : "admin" }, { "role" : "readAnyDatabase", "db" : "admin" }, { "role" : "readWriteAnyDatabase", "db" : "admin" } ], "privileges" : [  ], "$db" : "admin" }
+(1 row)
+
+-- grantRolesToRole: error cases
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"missingRole", "roles":["readAnyDatabase"], "$db":"admin"}');
+ERROR:  The specified role 'missingRole' does not exist.
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"readAnyDatabase", "roles":["readAnyDatabase"], "$db":"admin"}');
+ERROR:  Cannot modify built-in role 'readAnyDatabase'.
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"grantTargetRole", "roles":[], "$db":"admin"}');
+ERROR:  'roles' must not be empty.
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"grantTargetRole", "roles":["notARole"], "$db":"admin"}');
+ERROR:  Granting the role 'notARole' is not supported.
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"grantTargetRole", "roles":["clusterAdmin"], "$db":"admin"}');
+ERROR:  Roles specified are invalid. 'readWriteAnyDatabase' and 'clusterAdmin' must be specified together.
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"grantTargetRole", "$db":"admin"}');
+ERROR:  'roles' is a required field.
+SELECT documentdb_api.grant_roles_to_role('{"roles":["readAnyDatabase"], "$db":"admin"}');
+ERROR:  'grantRolesToRole' is a required field.
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":1, "roles":["readAnyDatabase"], "$db":"admin"}');
+ERROR:  The BSON field 'grantRolesToRole' has an incorrect type 'int'; it should be of type 'string'.
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"grantTargetRole", "roles":"readAnyDatabase", "$db":"admin"}');
+ERROR:  Expected 'array' type for 'roles' parameter but found 'string' type
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"grantTargetRole", "roles":["readAnyDatabase"], "$db":"test"}');
+ERROR:  GrantRolesToRole must be called from 'admin' database.
+-- root is not a grantable membership: it is rejected whether it is named alone
+-- or in the {role, db} document form, and the reserved name is not accepted as
+-- a grant target. This is the counterpart of the revoke side, and keeping root
+-- ungrantable is what keeps it unrevocable.
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"grantTargetRole", "roles":["root"], "$db":"admin"}');
+ERROR:  Granting the role 'root' is not supported.
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"grantTargetRole", "roles":[{"role":"root","db":"admin"}], "$db":"admin"}');
+ERROR:  Granting the role 'root' is not supported.
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"root", "roles":["readAnyDatabase"], "$db":"admin"}');
+ERROR:  Cannot modify built-in role 'root'.
+-- grantRolesToUser: grant a custom role and a built-in role to a user
+SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"grantRoleUser", "roles":[{"role":"grantTargetRole","db":"admin"}], "$db":"admin"}');
+        grant_roles_to_user        
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"grantRoleUser", "roles":["readWriteAnyDatabase","clusterAdmin"], "$db":"admin"}');
+        grant_roles_to_user        
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT parent.rolname AS granted_role
+FROM pg_auth_members m
+JOIN pg_roles parent ON m.roleid = parent.oid
+JOIN pg_roles child ON m.member = child.oid
+WHERE child.rolname = 'grantRoleUser'
+ORDER BY 1;
+       granted_role       
+--------------------------
+ documentdb_admin_role
+ documentdb_readonly_role
+ grantTargetRole
+ pg_read_all_data
+(4 rows)
+
+-- grantRolesToUser: error cases
+SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"missingUser", "roles":["readAnyDatabase"], "$db":"admin"}');
+ERROR:  The specified user does not exist.
+SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"grantRoleUser", "roles":[], "$db":"admin"}');
+ERROR:  'roles' must not be empty.
+SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"grantRoleUser", "roles":["notARole"], "$db":"admin"}');
+ERROR:  Granting the role 'notARole' is not supported.
+SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"grantRoleUser", "$db":"admin"}');
+ERROR:  'roles' is a required field.
+SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"grantRoleUser", "roles":["readAnyDatabase"], "$db":"test"}');
+ERROR:  GrantRolesToUser must be called from 'admin' database.
+-- root is rejected on the user path as well, and the reserved root name is not
+-- accepted as a user to grant to.
+SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"grantRoleUser", "roles":["root"], "$db":"admin"}');
+ERROR:  Granting the role 'root' is not supported.
+SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"grantRoleUser", "roles":[{"role":"root","db":"admin"}], "$db":"admin"}');
+ERROR:  Granting the role 'root' is not supported.
+SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"root", "roles":["readAnyDatabase"], "$db":"admin"}');
+ERROR:  User 'root' is reserved and cannot be modified.
+-- No root membership was created by any of the attempts above.
+SELECT COUNT(*) AS root_memberships_created
+FROM pg_auth_members m
+JOIN pg_roles parent ON m.roleid = parent.oid
+JOIN pg_roles child ON m.member = child.oid
+WHERE child.rolname IN ('grantRoleUser', 'grantTargetRole')
+  AND parent.rolname LIKE '%root%';
+ root_memberships_created 
+--------------------------
+                        0
+(1 row)
+
+-- A role created while the admin-database check was disabled stores a document
+-- that would not pass the command-time checks. Granting to it must still work:
+-- the stored document is historical data, not a command being validated.
+SET documentdb.enableRolesAdminDBCheck TO OFF;
+SELECT documentdb_api.create_role('{"createRole":"grantLegacyNonAdminRole", "roles":[], "privileges":[], "$db":"nonAdminDatabase"}');
+            create_role            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.create_role('{"createRole":"grantLegacyNoDbRole", "roles":[], "privileges":[]}');
+            create_role            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SET documentdb.enableRolesAdminDBCheck TO ON;
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"grantLegacyNonAdminRole", "roles":[{"role":"grantSourceRole","db":"admin"}], "$db":"admin"}');
+        grant_roles_to_role        
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"grantLegacyNoDbRole", "roles":[{"role":"grantSourceRole","db":"admin"}], "$db":"admin"}');
+        grant_roles_to_role        
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT role_name, role_bson
+FROM documentdb_api_catalog.roles
+WHERE role_name IN ('grantLegacyNonAdminRole', 'grantLegacyNoDbRole')
+ORDER BY role_name;
+        role_name        |                                                                          role_bson                                                                          
+-------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------
+ grantLegacyNoDbRole     | { "createRole" : "grantLegacyNoDbRole", "roles" : [ { "role" : "grantSourceRole", "db" : "admin" } ], "privileges" : [  ] }
+ grantLegacyNonAdminRole | { "createRole" : "grantLegacyNonAdminRole", "roles" : [ { "role" : "grantSourceRole", "db" : "admin" } ], "privileges" : [  ], "$db" : "nonAdminDatabase" }
+(2 rows)
+
+-- grantPrivilegesToRole is not implemented yet and is always rejected.
+SELECT documentdb_api.grant_privileges_to_role('{"grantPrivilegesToRole":"grantTargetRole", "privileges":[{"resource":{"db":"grantdb","collection":"grantcoll"}, "actions":["find"]}], "$db":"admin"}');
+ERROR:  The GrantPrivilegesToRole command is currently unsupported.
+-- The commands are rejected outright when role CRUD is disabled
+SET documentdb.enableRoleCrud TO OFF;
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"grantTargetRole", "roles":["readAnyDatabase"], "$db":"admin"}');
+ERROR:  The GrantRolesToRole command is currently unsupported.
+RESET documentdb.enableRoleCrud;
+SET documentdb.enableUserCrud TO OFF;
+SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"grantRoleUser", "roles":["readAnyDatabase"], "$db":"admin"}');
+ERROR:  The GrantRolesToUser command is currently unsupported.
+RESET documentdb.enableUserCrud;
+-- Clean up
+SET documentdb.enableRoleCrud TO ON;
+SELECT documentdb_api.drop_user('{"dropUser":"grantRoleUser", "$db":"admin"}');
+             drop_user             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.drop_role('{"dropRole":"grantTargetRole", "$db":"admin"}');
+             drop_role             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.drop_role('{"dropRole":"grantSourceRole", "$db":"admin"}');
+             drop_role             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.drop_role('{"dropRole":"grantLegacyNonAdminRole", "$db":"admin"}');
+             drop_role             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.drop_role('{"dropRole":"grantLegacyNoDbRole", "$db":"admin"}');
+             drop_role             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+RESET documentdb.enableRoleCrud;
+RESET documentdb.enableUserCrud;
+RESET documentdb.enableRolesAdminDBCheck;
+RESET documentdb.enableUsersAdminDBCheck;
+RESET documentdb.maxUserLimit;

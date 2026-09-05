@@ -62,3 +62,23 @@ pub async fn process_connection_status(
         .execute_connection_status(request_context, connection_context)
         .await
 }
+
+pub async fn process_grant_roles_to_user(
+    request_context: &RequestContext<'_>,
+    connection_context: &ConnectionContext,
+    pg_data_client: &impl PgDataClient,
+) -> Result<Response, DocumentDBError> {
+    pg_data_client
+        .execute_grant_roles_to_user(request_context, connection_context)
+        .await
+}
+
+pub async fn process_revoke_roles_from_user(
+    request_context: &RequestContext<'_>,
+    connection_context: &ConnectionContext,
+    pg_data_client: &impl PgDataClient,
+) -> Result<Response, DocumentDBError> {
+    pg_data_client
+        .execute_revoke_roles_from_user(request_context, connection_context)
+        .await
+}

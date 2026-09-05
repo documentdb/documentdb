@@ -33,6 +33,9 @@
 /* GUC that controls the blocked role prefix list, separated by , */
 extern char *BlockedRolePrefixList;
 
+/* GUC that controls enforcement of the always blocked role name prefixes */
+extern bool EnableFailureOnAlwaysBlockedRolePrefixes;
+
 static void WriteSinglePrivilegeDocument(const ConsolidatedPrivilege *privilege,
 										 pgbson_array_writer *privilegesArrayWriter);
 static void ConsolidatePrivileges(List **consolidatedPrivileges,
@@ -319,12 +322,36 @@ WriteMultipleRolePrivileges(HTAB *rolesTable,
 
 
 /*
- * Check if the given name begins with any of the reserved pg role name
- * prefixes listed in the blocked role prefix list.
+ * Prefixes that name roles the extension provisions and manages for itself.
+ * These are always blocked, independent of the configured blocked prefix list,
+ * so that no configuration can expose them to the role and user commands.
+ */
+static const char *const AlwaysBlockedRoleNamePrefixes[] = {
+	"documentdb_api",
+	"documentdb_rbac"
+};
+
+
+/*
+ * Check if the given name begins with a prefix that is always blocked, or with
+ * any of the reserved pg role name prefixes listed in the blocked role prefix
+ * list.
  */
 bool
 ContainsReservedPgRoleNamePrefix(const char *name)
 {
+	if (EnableFailureOnAlwaysBlockedRolePrefixes)
+	{
+		for (size_t i = 0; i < lengthof(AlwaysBlockedRoleNamePrefixes); i++)
+		{
+			const char *blockedPrefix = AlwaysBlockedRoleNamePrefixes[i];
+			if (strncmp(name, blockedPrefix, strlen(blockedPrefix)) == 0)
+			{
+				return true;
+			}
+		}
+	}
+
 	/* Split the blocked role prefix list */
 	char *blockedRolePrefixList = pstrdup(BlockedRolePrefixList);
 	bool containsBlockedPrefix = false;
@@ -734,6 +761,23 @@ IsReservedInternalRoleName(const char *name)
 	return IS_SYSTEM_LOGIN_ROLE(name) ||
 		   IS_BUILTIN_ROLE(name) ||
 		   IS_CUSTOM_RBAC_ROLE(name);
+}
+
+
+/*
+ * IsReservedRoleName reports whether a name is one that the role and user
+ * commands must never accept: a blocked prefix, a name the extension
+ * provisions for its own use, or a documented built-in role name.
+ *
+ * PostgreSQL keeps roles and users in a single namespace, so the same set of
+ * names is reserved for both.
+ */
+bool
+IsReservedRoleName(const char *name)
+{
+	return ContainsReservedPgRoleNamePrefix(name) ||
+		   IsReservedInternalRoleName(name) ||
+		   IS_NATIVE_BUILTIN_ROLE(name);
 }
 
 

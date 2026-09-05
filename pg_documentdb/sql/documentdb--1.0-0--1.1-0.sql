@@ -1,1 +1,7 @@
 #include "udfs/aggregation/bson_unwind_functions--1.1-0.sql"
+#include "udfs/roles/grant_roles_to_role--1.1-0.sql"
+#include "udfs/roles/grant_privileges_to_role--1.1-0.sql"
+#include "udfs/roles/grant_roles_to_user--1.1-0.sql"
+#include "udfs/roles/revoke_roles_from_role--1.1-0.sql"
+#include "udfs/roles/revoke_privileges_from_role--1.1-0.sql"
+#include "udfs/roles/revoke_roles_from_user--1.1-0.sql"

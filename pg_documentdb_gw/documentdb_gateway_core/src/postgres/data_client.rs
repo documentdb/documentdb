@@ -382,6 +382,42 @@ pub trait PgDataClient: Send + Sync {
         connection_context: &ConnectionContext,
     ) -> Result<Response>;
 
+    async fn execute_grant_roles_to_role(
+        &self,
+        request_context: &RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response>;
+
+    async fn execute_grant_privileges_to_role(
+        &self,
+        request_context: &RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response>;
+
+    async fn execute_grant_roles_to_user(
+        &self,
+        request_context: &RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response>;
+
+    async fn execute_revoke_roles_from_role(
+        &self,
+        request_context: &RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response>;
+
+    async fn execute_revoke_privileges_from_role(
+        &self,
+        request_context: &RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response>;
+
+    async fn execute_revoke_roles_from_user(
+        &self,
+        request_context: &RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response>;
+
     // TODO: This is a temporary solution to get the index build ID from the create indexes response.
     // it's a processing logic, not a data client logic, but for sake of simplicity, we put it here.
     // It should be refactored later to a more appropriate place related to the processing

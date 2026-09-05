@@ -459,6 +459,12 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 
 	/* Feature mapping region - Role CRUD */
 	[FEATURE_ROLE_CREATE] = "role_create",
+	[FEATURE_ROLE_GRANT_PRIVILEGES_TO_ROLE] = "role_grant_privileges_to_role",
+	[FEATURE_ROLE_GRANT_ROLES_TO_ROLE] = "role_grant_roles_to_role",
+	[FEATURE_ROLE_GRANT_ROLES_TO_USER] = "role_grant_roles_to_user",
+	[FEATURE_ROLE_REVOKE_PRIVILEGES_FROM_ROLE] = "role_revoke_privileges_from_role",
+	[FEATURE_ROLE_REVOKE_ROLES_FROM_ROLE] = "role_revoke_roles_from_role",
+	[FEATURE_ROLE_REVOKE_ROLES_FROM_USER] = "role_revoke_roles_from_user",
 
 	/* Feature mapping region - Search operators */
 	[FEATURE_SEARCH_OPERATOR_AUTO_COMPLETE] = "search_operator_auto_complete",

@@ -23,7 +23,7 @@ SELECT documentdb_api.drop_user('{"dropUser":"documentdb_unblocked", "$db":"admi
 
 SET documentdb.blockedRolePrefixList TO 'documentdb';
 SELECT documentdb_api.drop_user('{"dropUser":"documentdb_unblocked", "$db":"admin"}');
-ERROR:  The specified user does not exist.
+ERROR:  User 'documentdb_unblocked' is reserved and cannot be dropped.
 SET documentdb.blockedRolePrefixList TO 'newBlock, newBlock2';
 SELECT documentdb_api.create_user('{"createUser":"newBlock_user", "pwd":"test_password", "roles":[{"role":"readWriteAnyDatabase","db":"admin"}, {"role":"clusterAdmin","db":"admin"}], "$db":"admin"}');
 ERROR:  Username is reserved, use a different username.
@@ -292,16 +292,16 @@ SELECT documentdb_api.users_info('{"usersInfo":"test_user5", "$db":"admin"}');
 
 --Drop a reserved user, should fail
 SELECT documentdb_api.drop_user('{"dropUser":"documentdb_user", "$db":"admin"}');
-ERROR:  The specified user does not exist.
+ERROR:  User 'documentdb_user' is reserved and cannot be dropped.
 --Drop non-existent user
 SELECT documentdb_api.drop_user('{"dropUser":"nonexistent_user", "$db":"admin"}');
 ERROR:  role "nonexistent_user" does not exist
 --Drop a system user
 SELECT documentdb_api.drop_user('{"dropUser":"documentdb_bg_worker_role", "$db":"admin"}');
-ERROR:  The specified user does not exist.
+ERROR:  User 'documentdb_bg_worker_role' is reserved and cannot be dropped.
 --Drop a built-in user
 SELECT documentdb_api.drop_user('{"dropUser":"documentdb_admin_role", "$db":"admin"}');
-ERROR:  The specified user does not exist.
+ERROR:  User 'documentdb_admin_role' is reserved and cannot be dropped.
 --Drop with disallowed parameter
 SELECT documentdb_api.drop_user('{"user":"test_user", "$db":"admin"}');
 ERROR:  The specified field 'user' is not supported.
@@ -895,10 +895,10 @@ SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_some_other
 
 -- dropUser with IS_BUILTIN_ROLE name
 SELECT documentdb_api.drop_user('{"dropUser":"documentdb_readonly_role", "$db":"admin"}');
-ERROR:  The specified user does not exist.
+ERROR:  User 'documentdb_readonly_role' is reserved and cannot be dropped.
 -- updateUser with IS_BUILTIN_ROLE name
 SELECT documentdb_api.update_user('{"updateUser":"documentdb_readonly_role", "pwd":"New$123Pass", "$db":"admin"}');
-ERROR:  The specified user does not exist.
+ERROR:  User 'documentdb_readonly_role' is reserved and cannot be modified.
 -- usersInfo with a reserved name should still work (read-only, no blocking)
 SELECT documentdb_api.users_info('{"usersInfo":"documentdb_readonly_role", "$db":"admin"}');
             users_info             

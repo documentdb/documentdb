@@ -59,9 +59,9 @@ pub async fn validate_drop_role_of_reserved_name(db: &Database, reserved_role_na
             doc! {
                 "dropRole": role_name
             },
-            31,
-            "The specified role does not exist.",
-            "RoleNotFound",
+            2,
+            &format!("Role '{role_name}' is reserved and cannot be dropped."),
+            "BadValue",
         )
         .await;
     }

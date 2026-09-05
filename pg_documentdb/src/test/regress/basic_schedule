@@ -44,6 +44,9 @@ test: bson_aggregation_stage_reservoir_sample_tests
 test: ttl_index_delete_rows
 test: user_crud_commands
 test: commands_create_role
+test: commands_grant_roles
+test: commands_revoke_roles
+test: commands_system_roles_protected
 test: commands_roles_info
 test: commands_drop_role
 test: commands_killop
