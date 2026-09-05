@@ -37,6 +37,8 @@ RunCommandOnMetadataCoordinator_HookType run_command_on_metadata_coordinator_hoo
 RunQueryWithCommutativeWrites_HookType run_query_with_commutative_writes_hook = NULL;
 RunMultiValueQueryWithCommutativeWrites_HookType
 	run_multi_value_query_with_commutative_writes_hook = NULL;
+AllowCommutativeWritesInCurrentTransaction_HookType
+	allow_commutative_writes_in_current_transaction_hook = NULL;
 RunQueryWithSequentialModification_HookType
 	run_query_with_sequential_modification_mode_hook = NULL;
 DistributePostgresTable_HookType distribute_postgres_table_hook = NULL;
@@ -250,6 +252,19 @@ RunQueryWithCommutativeWrites(const char *query, int nargs, Oid *argTypes,
 	}
 
 	return ExtensionExecuteQueryViaSPI(query, readOnly, expectedSPIOK, isNull);
+}
+
+
+/*
+ * Enables commutative writes for the current transaction.
+ */
+void
+AllowCommutativeWritesInCurrentTransaction(void)
+{
+	if (allow_commutative_writes_in_current_transaction_hook != NULL)
+	{
+		allow_commutative_writes_in_current_transaction_hook();
+	}
 }
 
 

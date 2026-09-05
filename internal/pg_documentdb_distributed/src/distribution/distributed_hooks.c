@@ -203,6 +203,13 @@ RunMultiValueQueryWithCommutativeWritesCore(const char *query, SPIPlanPtr plan,
 }
 
 
+static void
+AllowCommutativeWritesInCurrentTransactionCore(void)
+{
+	SetGUCLocally("citus.all_modifications_commutative", "true");
+}
+
+
 static Datum
 RunQueryWithSequentialModificationCore(const char *query, int expectedSPIOK, bool *isNull)
 {
@@ -961,6 +968,8 @@ InitializeDocumentDBDistributedHooks(void)
 	run_query_with_commutative_writes_hook = RunQueryWithCommutativeWritesCore;
 	run_multi_value_query_with_commutative_writes_hook =
 		RunMultiValueQueryWithCommutativeWritesCore;
+	allow_commutative_writes_in_current_transaction_hook =
+		AllowCommutativeWritesInCurrentTransactionCore;
 	run_query_with_sequential_modification_mode_hook =
 		RunQueryWithSequentialModificationCore;
 	distribute_postgres_table_hook = DistributePostgresTableCore;

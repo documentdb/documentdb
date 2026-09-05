@@ -80,6 +80,11 @@ void RunMultiValueQueryWithCommutativeWrites(const char *query, SPIPlanPtr plan,
 											 Datum *argValues, char *argNulls,
 											 bool readOnly, long maxTupleCount);
 
+/*
+ * Enables commutative writes for the current transaction when supported.
+ */
+void AllowCommutativeWritesInCurrentTransaction(void);
+
 
 /*
  * Sets up the system to allow nested distributed query execution for the current

@@ -94,6 +94,10 @@ typedef void (*RunMultiValueQueryWithCommutativeWrites_HookType)(const char *que
 extern RunMultiValueQueryWithCommutativeWrites_HookType
 	run_multi_value_query_with_commutative_writes_hook;
 
+typedef void (*AllowCommutativeWritesInCurrentTransaction_HookType)(void);
+extern AllowCommutativeWritesInCurrentTransaction_HookType
+	allow_commutative_writes_in_current_transaction_hook;
+
 
 /*
  * Runs a query via SPI with sequential shard execution for distributed scenarios
