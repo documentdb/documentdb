@@ -24,8 +24,6 @@ GrantCollectionPrivilegesToBaselineRoles_HookType
 PostCreateCollection_HookType post_create_collection_hook = NULL;
 ApplyCollectionAccessIdentityToPlan_HookType
 	apply_collection_access_identity_to_plan_hook = NULL;
-NotifyCollectionMetadataInvalidated_HookType
-	notify_collection_metadata_invalidated_hook = NULL;
 RequireBaseCollectionRteInMetadataQueries_HookType
 	require_base_collection_rte_in_metadata_queries_hook = NULL;
 UpdateJoinTreeForCollectionsQuery_HookType
@@ -115,21 +113,6 @@ ApplyCollectionAccessIdentityToPlan(RangeTblEntry *rte, PlannedStmt *stmt)
 	if (apply_collection_access_identity_to_plan_hook != NULL)
 	{
 		apply_collection_access_identity_to_plan_hook(rte, stmt);
-	}
-}
-
-
-/*
- * Notifies a hosting layer that the collections catalog was invalidated so it
- * can refresh any state it derives from collection metadata. No-op when no
- * implementation is registered.
- */
-void
-NotifyCollectionMetadataInvalidated(void)
-{
-	if (notify_collection_metadata_invalidated_hook != NULL)
-	{
-		notify_collection_metadata_invalidated_hook();
 	}
 }
 

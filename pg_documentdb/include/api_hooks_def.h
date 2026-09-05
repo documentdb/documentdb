@@ -3,9 +3,7 @@
  *
  * include/api_hooks_def.h
  *
- * Definition of hooks for the extension that allow for handling
- * distribution type scenarios. These can be overriden to implement
- * custom distribution logic.
+ * Definitions of API hooks that allow extension-specific behavior.
  *
  *-------------------------------------------------------------------------
  */
@@ -42,6 +40,14 @@ extern IsMetadataCoordinator_HookType is_metadata_coordinator_hook;
  */
 typedef bool (*IsClusterInitialized_HookType)(void);
 extern IsClusterInitialized_HookType is_cluster_initialized_hook;
+
+typedef void (*NotifyCollectionMetadataInvalidated_HookType)(void);
+extern NotifyCollectionMetadataInvalidated_HookType
+	notify_collection_metadata_invalidated_hook;
+
+typedef void (*NotifyCollectionRelationInvalidated_HookType)(Oid relationId);
+extern NotifyCollectionRelationInvalidated_HookType
+	notify_collection_relation_invalidated_hook;
 
 /*
  * Indicates whether the Change Stream feature is currently enabled

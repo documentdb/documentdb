@@ -29,6 +29,10 @@ extern bool EnablePlannerStatisticsNewCollections;
 
 IsMetadataCoordinator_HookType is_metadata_coordinator_hook = NULL;
 IsClusterInitialized_HookType is_cluster_initialized_hook = NULL;
+NotifyCollectionMetadataInvalidated_HookType
+	notify_collection_metadata_invalidated_hook = NULL;
+NotifyCollectionRelationInvalidated_HookType
+	notify_collection_relation_invalidated_hook = NULL;
 RunCommandOnMetadataCoordinator_HookType run_command_on_metadata_coordinator_hook = NULL;
 RunQueryWithCommutativeWrites_HookType run_query_with_commutative_writes_hook = NULL;
 RunMultiValueQueryWithCommutativeWrites_HookType
@@ -139,6 +143,34 @@ IsClusterInitialized(void)
 	}
 
 	return true;
+}
+
+
+/*
+ * Notifies registered consumers that collection metadata was invalidated.
+ * No-op when no consumer is registered.
+ */
+void
+NotifyCollectionMetadataInvalidated(void)
+{
+	if (notify_collection_metadata_invalidated_hook != NULL)
+	{
+		notify_collection_metadata_invalidated_hook();
+	}
+}
+
+
+/*
+ * Notifies registered consumers that one relation was invalidated so they can
+ * discard state derived from it. No-op when none is registered.
+ */
+void
+NotifyCollectionRelationInvalidated(Oid relationId)
+{
+	if (notify_collection_relation_invalidated_hook != NULL)
+	{
+		notify_collection_relation_invalidated_hook(relationId);
+	}
 }
 
 

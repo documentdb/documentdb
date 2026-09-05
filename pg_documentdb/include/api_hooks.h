@@ -3,7 +3,7 @@
  *
  * include/api_hooks.h
  *
- * Exports related to hooks for the public API surface that enable distribution.
+ * Exports related to extension hooks for the public API surface.
  *
  *-------------------------------------------------------------------------
  */
@@ -33,6 +33,19 @@ bool IsMetadataCoordinator(void);
  * background worker jobs. Defaults to true when no hook is set.
  */
 bool IsClusterInitialized(void);
+
+
+/*
+ * Invoked after collection metadata is invalidated so registered consumers can
+ * refresh state derived from it. No-op when no consumer is registered.
+ */
+void NotifyCollectionMetadataInvalidated(void);
+
+/*
+ * Invoked when a specific relation is invalidated so registered consumers can
+ * discard state derived from that relation. No-op when none is registered.
+ */
+void NotifyCollectionRelationInvalidated(Oid relationId);
 
 
 /*

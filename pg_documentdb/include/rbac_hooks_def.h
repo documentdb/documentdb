@@ -21,10 +21,6 @@ typedef void (*ApplyCollectionAccessIdentityToPlan_HookType)(RangeTblEntry *rte,
 extern ApplyCollectionAccessIdentityToPlan_HookType
 	apply_collection_access_identity_to_plan_hook;
 
-typedef void (*NotifyCollectionMetadataInvalidated_HookType)(void);
-extern NotifyCollectionMetadataInvalidated_HookType
-	notify_collection_metadata_invalidated_hook;
-
 typedef bool (*RequireBaseCollectionRteInMetadataQueries_HookType)(void);
 extern RequireBaseCollectionRteInMetadataQueries_HookType
 	require_base_collection_rte_in_metadata_queries_hook;

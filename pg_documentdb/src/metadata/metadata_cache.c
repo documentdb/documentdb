@@ -37,7 +37,7 @@
 #include "metadata/metadata_cache.h"
 #include "metadata/collection.h"
 #include "commands/defrem.h"
-#include "rbac_hooks.h"
+#include "api_hooks.h"
 
 
 #define PG_EXTENSION_NAME_SCAN_NARGS 1
@@ -1459,7 +1459,7 @@ InvalidateDocumentDBApiCache(Datum argument, Oid relationId)
 		ResetCollectionsCache();
 		InvalidateVersionCache();
 
-		/* Let a hosting layer refresh state it derives from collection metadata. */
+		/* Let registered consumers refresh state derived from collection metadata. */
 		NotifyCollectionMetadataInvalidated();
 	}
 	else
@@ -1478,6 +1478,8 @@ InvalidateDocumentDBApiCache(Datum argument, Oid relationId)
 			 * cache on the next call to InitializeDocumentDBApiExtensionCache.
 			 */
 		}
+
+		NotifyCollectionRelationInvalidated(relationId);
 	}
 }
 

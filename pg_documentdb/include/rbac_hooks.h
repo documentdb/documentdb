@@ -106,13 +106,6 @@ void PostCreateCollection(uint64 collectionId);
  */
 void ApplyCollectionAccessIdentityToPlan(RangeTblEntry *rte, PlannedStmt *stmt);
 
-/*
- * Invoked after the collections catalog is invalidated so a hosting layer can
- * refresh any state it derives from collection metadata. No-op when no
- * implementation is registered.
- */
-void NotifyCollectionMetadataInvalidated(void);
-
 
 bool RequireBaseCollectionRteInMetadataQueries(void);
 
