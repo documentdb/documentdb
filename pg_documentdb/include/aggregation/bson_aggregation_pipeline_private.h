@@ -370,6 +370,7 @@ Query * HandleNativeVectorSearch(const bson_value_t *existingValue, Query *query
 
 /* Metadata based query generators */
 Query * GenerateConfigDatabaseQuery(AggregationPipelineBuildContext *context);
+Query * GenerateAdminDatabaseQuery(AggregationPipelineBuildContext *context);
 
 bool IsPartitionByFieldsOnShardKey(const pgbson *partitionByFields,
 								   const MongoCollection *collection);

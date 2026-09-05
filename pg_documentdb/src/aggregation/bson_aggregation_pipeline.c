@@ -9626,6 +9626,14 @@ GenerateBaseTableQuery(text *databaseDatum, const StringView *collectionNameView
 				return returnedQuery;
 			}
 		}
+		else if (StringViewEqualsCString(&databaseView, "admin"))
+		{
+			Query *returnedQuery = GenerateAdminDatabaseQuery(context);
+			if (returnedQuery != NULL)
+			{
+				return returnedQuery;
+			}
+		}
 
 		List *colNames = GetBaseTableColumnNames();
 		rte->rtekind = RTE_FUNCTION;

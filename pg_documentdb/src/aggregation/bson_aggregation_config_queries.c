@@ -14,10 +14,13 @@
 #include <float.h>
 #include <fmgr.h>
 #include <miscadmin.h>
+#include <access/table.h>
 #include <catalog/pg_class.h>
 #include <parser/parse_node.h>
+#include <nodes/makefuncs.h>
 #include <nodes/params.h>
 #include <utils/builtins.h>
+#include <utils/lsyscache.h>
 #include <catalog/namespace.h>
 #include <parser/parse_relation.h>
 
@@ -27,6 +30,9 @@
 #include "aggregation/bson_aggregation_pipeline_private.h"
 #include "api_hooks.h"
 #include "rbac_hooks.h"
+#include "utils/version_utils.h"
+
+extern bool EnableAdminDatabaseQueries;
 
 static Query * GenerateVersionQuery(AggregationPipelineBuildContext *context);
 static Query * GenerateDatabasesQuery(AggregationPipelineBuildContext *context);
@@ -34,6 +40,30 @@ static Query * GenerateCollectionsQuery(AggregationPipelineBuildContext *context
 static Query * GenerateChunksQuery(AggregationPipelineBuildContext *context);
 static Query * GenerateShardsQuery(AggregationPipelineBuildContext *context);
 static Query * GenerateSettingsQuery(AggregationPipelineBuildContext *context);
+
+static Query * GenerateRolesQuery(AggregationPipelineBuildContext *context);
+static Query * GenerateUsersQuery(AggregationPipelineBuildContext *context);
+static ParseNamespaceItem * AddCallerCheckedRte(ParseState *parseState, const
+												char *schemaName, const
+												char *relationName,
+												const char *aliasName);
+static ParseNamespaceItem * AddOwnerCheckedRte(ParseState *parseState, const
+											   char *schemaName, const char *relationName,
+											   const char *aliasName);
+static ParseNamespaceItem * AddRelationRte(ParseState *parseState, const char *schemaName,
+										   const char *relationName,
+										   const char *aliasName, Oid *relationOwner);
+static CoerceViaIO * CoerceNameToText(Var *nameVar);
+static JoinExpr * MakeUsersJoin(ParseState *parseState, JoinType joinType,
+								ParseNamespaceItem *leftItem,
+								ParseNamespaceItem *rightItem, Node *left,
+								Node *right, Expr *quals,
+								ParseNamespaceItem **joinItem);
+static void AppendUsersJoinColumns(ParseNamespaceItem *sourceItem,
+								   Index nullingRelationId, List **columnNames,
+								   List **columnVars, List **columnNumbers,
+								   ParseNamespaceColumn *joinColumns,
+								   int *joinColumnIndex);
 
 /*
  * Sets the RTE of a table in the Config database.
@@ -72,6 +102,32 @@ GenerateConfigDatabaseQuery(AggregationPipelineBuildContext *context)
 		/* the MX connection string - reconsider adding this back. */
 		context->requiresPersistentCursor = true;
 		return GenerateShardsQuery(context);
+	}
+	else
+	{
+		return NULL;
+	}
+}
+
+
+Query *
+GenerateAdminDatabaseQuery(AggregationPipelineBuildContext *context)
+{
+	if (!EnableAdminDatabaseQueries)
+	{
+		return NULL;
+	}
+	else if (StringViewEqualsCString(&context->collectionNameView, "system.roles") &&
+			 IsClusterVersionAtleast(DocDB_V0, 116, 0))
+	{
+		context->requiresPersistentCursor = true;
+		return GenerateRolesQuery(context);
+	}
+	else if (StringViewEqualsCString(&context->collectionNameView, "system.users") &&
+			 IsClusterVersionAtleast(DocDB_V0, 116, 0))
+	{
+		context->requiresPersistentCursor = true;
+		return GenerateUsersQuery(context);
 	}
 	else
 	{
@@ -486,4 +542,429 @@ GenerateSettingsQuery(AggregationPipelineBuildContext *context)
 	context->requiresPersistentCursor = true;
 
 	return query;
+}
+
+
+static Query *
+GenerateRolesQuery(AggregationPipelineBuildContext *context)
+{
+	/* The system.roles collection is a collection that just maps into
+	 * the catalog roles table and mutates the spec.
+	 */
+	Query *query = makeNode(Query);
+	query->commandType = CMD_SELECT;
+	query->querySource = QSRC_ORIGINAL;
+	query->canSetTag = true;
+	context->mongoCollection = NULL;
+
+	RangeTblEntry *rte = makeNode(RangeTblEntry);
+
+	List *colNames = list_make3(makeString(""), makeString("role_bson"),
+								makeString("role_name"));
+	rte->rtekind = RTE_RELATION;
+	rte->alias = rte->eref = makeAlias("roles", colNames);
+	rte->lateral = false;
+	rte->inFromCl = true;
+	rte->relkind = RELKIND_RELATION;
+	rte->functions = NIL;
+	rte->inh = true;
+	rte->rellockmode = AccessShareLock;
+
+	RangeVar *rangeVar = makeRangeVar(ApiCatalogSchemaName, "roles", -1);
+	rte->relid = RangeVarGetRelid(rangeVar, AccessShareLock, false);
+
+#if PG_VERSION_NUM >= 160000
+	RTEPermissionInfo *permInfo = addRTEPermissionInfo(&query->rteperminfos, rte);
+	permInfo->requiredPerms = ACL_SELECT;
+#else
+	rte->requiredPerms = ACL_SELECT;
+#endif
+	query->rtable = list_make1(rte);
+
+	RangeTblRef *rtr = makeNode(RangeTblRef);
+	rtr->rtindex = 1;
+	query->jointree = makeFromExpr(list_make1(rtr), NULL);
+
+	/* Add a var to get the role_spec to make it a single bson document */
+	Var *rowExpr = makeVar(1, 2, BsonTypeId(), -1, InvalidOid, 0);
+	TargetEntry *baseTargetEntry = makeTargetEntry((Expr *) rowExpr, 1, "document",
+												   false);
+	query->targetList = list_make1(baseTargetEntry);
+
+	/* Modify the output to match the system.roles output */
+	pgbson_writer topLevelwriter;
+	PgbsonWriterInit(&topLevelwriter);
+
+	pgbson_writer writer;
+	PgbsonWriterStartDocument(&topLevelwriter, "newRoot", 7, &writer);
+
+	pgbson_writer childWriter;
+	PgbsonWriterStartDocument(&writer, "_id", 3, &childWriter);
+
+	pgbson_array_writer childArray;
+	PgbsonWriterStartArray(&childWriter, "$concat", 7, &childArray);
+	PgbsonArrayWriterWriteUtf8(&childArray, "admin");
+	PgbsonArrayWriterWriteUtf8(&childArray, ".");
+	PgbsonArrayWriterWriteUtf8(&childArray, "$createRole");
+	PgbsonWriterEndArray(&childWriter, &childArray);
+	PgbsonWriterEndDocument(&writer, &childWriter);
+
+	PgbsonWriterAppendUtf8(&writer, "role", 4, "$createRole");
+	PgbsonWriterAppendUtf8(&writer, "db", 2, "admin");
+
+	PgbsonWriterAppendUtf8(&writer, "privileges", 10, "$privileges");
+	PgbsonWriterAppendUtf8(&writer, "roles", 5, "$roles");
+
+	PgbsonWriterEndDocument(&topLevelwriter, &writer);
+
+	pgbson *spec = PgbsonWriterGetPgbson(&topLevelwriter);
+	bson_value_t projectionValue = ConvertPgbsonToBsonValue(spec);
+
+	/* no use for *WithLet or *WithLetAndCollation projection functions here, so we set them to NULL */
+	Oid (*addFieldsWithLetFuncOid) (void) = NULL;
+	Oid (*addFieldsWithLetAndCollationFuncOid) (void) = NULL;
+
+	query = HandleSimpleProjectionStage(
+		&projectionValue, query, context, "$replaceRoot",
+		BsonDollarReplaceRootFunctionOid(),
+		addFieldsWithLetFuncOid, addFieldsWithLetAndCollationFuncOid);
+
+	return query;
+}
+
+
+static Query *
+GenerateUsersQuery(AggregationPipelineBuildContext *context)
+{
+	context->mongoCollection = NULL;
+
+	ParseState *parseState = make_parsestate(NULL);
+
+	/*
+	 * A normal query against pg_roles is rewritten before planning. PostgreSQL
+	 * retains the original view RTE for caller permission checks, then checks
+	 * the rewritten backing-relation RTEs as the view owner. This query is
+	 * generated after view rewriting, so directly adding pg_roles to its
+	 * jointree would leave the view unexpanded and fail during planning.
+	 *
+	 * Reproduce the rewrite permission model explicitly. The two unscanned
+	 * pg_roles RTEs represent the two view references in the original query
+	 * and require the invoking user to have SELECT on that view. The two
+	 * pg_authid RTEs are the corresponding rewritten backing relations, so
+	 * those alone are checked as their relation owner. pg_auth_members and
+	 * the roles catalog are direct relations in the original query and must
+	 * remain caller-checked. Keeping this distinction is important:
+	 * owner-checking every relation would grant more access than the original
+	 * query, while caller-checking pg_authid would make pg_roles unusable by
+	 * otherwise authorized non-owners.
+	 */
+	ParseNamespaceItem *usersViewPermissionItem =
+		AddCallerCheckedRte(parseState, "pg_catalog", "pg_roles",
+							"users_view_permission_check");
+	usersViewPermissionItem->p_rte->inFromCl = false;
+	ParseNamespaceItem *parentViewPermissionItem =
+		AddCallerCheckedRte(parseState, "pg_catalog", "pg_roles",
+							"parent_view_permission_check");
+	parentViewPermissionItem->p_rte->inFromCl = false;
+
+	ParseNamespaceItem *usersItem = AddOwnerCheckedRte(
+		parseState, "pg_catalog", "pg_authid", "users");
+	ParseNamespaceItem *membersItem = AddCallerCheckedRte(
+		parseState, "pg_catalog", "pg_auth_members", "members");
+	ParseNamespaceItem *parentItem = AddOwnerCheckedRte(
+		parseState, "pg_catalog", "pg_authid", "parent");
+	ParseNamespaceItem *customRolesItem = AddCallerCheckedRte(
+		parseState, ApiCatalogSchemaName, "roles", "custom_roles");
+
+	AttrNumber usersOidAttnum = get_attnum(usersItem->p_rte->relid, "oid");
+	AttrNumber usersNameAttnum = get_attnum(usersItem->p_rte->relid, "rolname");
+	AttrNumber memberAttnum = get_attnum(membersItem->p_rte->relid, "member");
+	AttrNumber roleIdAttnum = get_attnum(membersItem->p_rte->relid, "roleid");
+	AttrNumber parentOidAttnum = get_attnum(parentItem->p_rte->relid, "oid");
+	AttrNumber parentNameAttnum = get_attnum(parentItem->p_rte->relid, "rolname");
+	AttrNumber customRoleNameAttnum = get_attnum(customRolesItem->p_rte->relid,
+												 "role_name");
+
+	Var *usersOid = makeVar(usersItem->p_rtindex, usersOidAttnum, OIDOID, -1,
+							InvalidOid, 0);
+	Var *usersName = makeVar(usersItem->p_rtindex, usersNameAttnum, NAMEOID, -1,
+							 DEFAULT_COLLATION_OID, 0);
+	Var *member = makeVar(membersItem->p_rtindex, memberAttnum, OIDOID, -1,
+						  InvalidOid, 0);
+	Var *roleId = makeVar(membersItem->p_rtindex, roleIdAttnum, OIDOID, -1,
+						  InvalidOid, 0);
+	Var *parentOid = makeVar(parentItem->p_rtindex, parentOidAttnum, OIDOID, -1,
+							 InvalidOid, 0);
+	Var *parentName = makeVar(parentItem->p_rtindex, parentNameAttnum, NAMEOID, -1,
+							  DEFAULT_COLLATION_OID, 0);
+	Var *customRoleName = makeVar(customRolesItem->p_rtindex, customRoleNameAttnum,
+								  TEXTOID, -1, DEFAULT_COLLATION_OID, 0);
+
+	Oid oidEqualityOperator = OpernameGetOprid(list_make1(makeString("=")), OIDOID,
+											   OIDOID);
+	Expr *userMembershipQual = make_opclause(oidEqualityOperator, BOOLOID, false,
+											 (Expr *) member, (Expr *) usersOid,
+											 InvalidOid, InvalidOid);
+	Expr *parentMembershipQual = make_opclause(oidEqualityOperator, BOOLOID, false,
+											   (Expr *) roleId, (Expr *) parentOid,
+											   InvalidOid, InvalidOid);
+
+	CoerceViaIO *parentNameText = CoerceNameToText(parentName);
+	Expr *customRoleQual = make_opclause(TextEqualOperatorId(), BOOLOID, false,
+										 (Expr *) parentNameText,
+										 (Expr *) customRoleName,
+										 InvalidOid, DEFAULT_COLLATION_OID);
+
+	RangeTblRef *usersRef = makeNode(RangeTblRef);
+	usersRef->rtindex = usersItem->p_rtindex;
+	RangeTblRef *membersRef = makeNode(RangeTblRef);
+	membersRef->rtindex = membersItem->p_rtindex;
+	RangeTblRef *parentRef = makeNode(RangeTblRef);
+	parentRef->rtindex = parentItem->p_rtindex;
+	RangeTblRef *customRolesRef = makeNode(RangeTblRef);
+	customRolesRef->rtindex = customRolesItem->p_rtindex;
+
+	ParseNamespaceItem *membershipItem;
+	JoinExpr *membershipJoin = MakeUsersJoin(
+		parseState, JOIN_INNER, usersItem, membersItem, (Node *) usersRef,
+		(Node *) membersRef, userMembershipQual, &membershipItem);
+	ParseNamespaceItem *parentJoinItem;
+	JoinExpr *parentJoin = MakeUsersJoin(parseState, JOIN_INNER, membershipItem,
+										 parentItem, (Node *) membershipJoin,
+										 (Node *) parentRef,
+										 parentMembershipQual, &parentJoinItem);
+	JoinExpr *customRolesJoin = MakeUsersJoin(
+		parseState, JOIN_LEFT, parentJoinItem, customRolesItem,
+		(Node *) parentJoin, (Node *) customRolesRef, customRoleQual, NULL);
+
+	Const *currentUserOid = makeConst(OIDOID, -1, InvalidOid, sizeof(Oid),
+									  ObjectIdGetDatum(GetUserId()), false, true);
+	Expr *currentUserQual = make_opclause(oidEqualityOperator, BOOLOID, false,
+										  (Expr *) copyObject(usersOid),
+										  (Expr *) currentUserOid,
+										  InvalidOid, InvalidOid);
+
+	Var *nullableCustomRoleName = copyObject(customRoleName);
+#if PG_VERSION_NUM >= 160000
+	nullableCustomRoleName->varnullingrels =
+		bms_make_singleton(customRolesJoin->rtindex);
+#endif
+	NullTest *customRoleExists = makeNode(NullTest);
+	customRoleExists->arg = (Expr *) nullableCustomRoleName;
+	customRoleExists->nulltesttype = IS_NOT_NULL;
+	customRoleExists->argisrow = false;
+
+	Query *query = makeNode(Query);
+	query->commandType = CMD_SELECT;
+	query->querySource = QSRC_ORIGINAL;
+	query->canSetTag = true;
+	query->rtable = parseState->p_rtable;
+#if PG_VERSION_NUM >= 160000
+	query->rteperminfos = parseState->p_rteperminfos;
+#endif
+	query->jointree = makeFromExpr(list_make1(customRolesJoin),
+								   (Node *) makeBoolExpr(AND_EXPR,
+														 list_make2(currentUserQual,
+																	customRoleExists),
+														 -1));
+
+	List *buildDocumentArgs = list_make4(
+		MakeTextConst("user_name", 9), CoerceNameToText(usersName),
+		MakeTextConst("roles", 5), copyObject(parentNameText));
+	FuncExpr *buildDocument = makeFuncExpr(
+		BsonBuildDocumentFunctionOid(), BsonTypeId(), buildDocumentArgs,
+		InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+	query->targetList = list_make1(makeTargetEntry((Expr *) buildDocument, 1, "document",
+												   false));
+
+	free_parsestate(parseState);
+
+	query = MigrateQueryToSubQuery(query, context);
+
+	pgbson_writer groupWriter;
+	PgbsonWriterInit(&groupWriter);
+
+	pgbson_writer idWriter;
+	PgbsonWriterStartDocument(&groupWriter, "_id", 3, &idWriter);
+	pgbson_array_writer concatWriter;
+	PgbsonWriterStartArray(&idWriter, "$concat", 7, &concatWriter);
+	PgbsonArrayWriterWriteUtf8(&concatWriter, "admin.");
+	PgbsonArrayWriterWriteUtf8(&concatWriter, "$user_name");
+	PgbsonWriterEndArray(&idWriter, &concatWriter);
+	PgbsonWriterEndDocument(&groupWriter, &idWriter);
+
+	pgbson_writer userWriter;
+	PgbsonWriterStartDocument(&groupWriter, "user", 4, &userWriter);
+	PgbsonWriterAppendUtf8(&userWriter, "$first", 6, "$user_name");
+	PgbsonWriterEndDocument(&groupWriter, &userWriter);
+
+	pgbson_writer databaseWriter;
+	PgbsonWriterStartDocument(&groupWriter, "db", 2, &databaseWriter);
+	PgbsonWriterAppendUtf8(&databaseWriter, "$first", 6, "admin");
+	PgbsonWriterEndDocument(&groupWriter, &databaseWriter);
+
+	pgbson_writer rolesWriter;
+	PgbsonWriterStartDocument(&groupWriter, "roles", 5, &rolesWriter);
+	pgbson_writer pushWriter;
+	PgbsonWriterStartDocument(&rolesWriter, "$push", 5, &pushWriter);
+	PgbsonWriterAppendUtf8(&pushWriter, "db", 2, "admin");
+	PgbsonWriterAppendUtf8(&pushWriter, "role", 4, "$roles");
+	PgbsonWriterEndDocument(&rolesWriter, &pushWriter);
+	PgbsonWriterEndDocument(&groupWriter, &rolesWriter);
+
+	pgbson *groupSpec = PgbsonWriterGetPgbson(&groupWriter);
+	bson_value_t groupValue = ConvertPgbsonToBsonValue(groupSpec);
+
+	query = HandleGroup(&groupValue, query, context);
+
+	return query;
+}
+
+
+static ParseNamespaceItem *
+AddCallerCheckedRte(ParseState *parseState, const char *schemaName,
+					const char *relationName, const char *aliasName)
+{
+	return AddRelationRte(parseState, schemaName, relationName, aliasName, NULL);
+}
+
+
+static ParseNamespaceItem *
+AddOwnerCheckedRte(ParseState *parseState, const char *schemaName,
+				   const char *relationName, const char *aliasName)
+{
+	Oid relationOwner = InvalidOid;
+	ParseNamespaceItem *item = AddRelationRte(
+		parseState, schemaName, relationName, aliasName, &relationOwner);
+#if PG_VERSION_NUM >= 160000
+	RTEPermissionInfo *permissionInfo = getRTEPermissionInfo(parseState->p_rteperminfos,
+															 item->p_rte);
+	permissionInfo->checkAsUser = relationOwner;
+#else
+	item->p_rte->checkAsUser = relationOwner;
+#endif
+	return item;
+}
+
+
+static ParseNamespaceItem *
+AddRelationRte(ParseState *parseState, const char *schemaName,
+			   const char *relationName, const char *aliasName,
+			   Oid *relationOwner)
+{
+	RangeVar *rangeVar = makeRangeVar(pstrdup(schemaName), pstrdup(relationName), -1);
+	Oid relationId = RangeVarGetRelid(rangeVar, AccessShareLock, false);
+	Relation relation = table_open(relationId, NoLock);
+	ParseNamespaceItem *item = addRangeTableEntryForRelation(
+		parseState, relation, AccessShareLock, makeAlias(pstrdup(aliasName), NIL), false,
+		true);
+
+	if (relationOwner != NULL)
+	{
+		*relationOwner = RelationGetForm(relation)->relowner;
+	}
+
+	table_close(relation, NoLock);
+	return item;
+}
+
+
+static CoerceViaIO *
+CoerceNameToText(Var *nameVar)
+{
+	CoerceViaIO *coerce = makeNode(CoerceViaIO);
+	coerce->arg = (Expr *) nameVar;
+	coerce->resulttype = TEXTOID;
+	coerce->resultcollid = DEFAULT_COLLATION_OID;
+	coerce->coerceformat = COERCE_EXPLICIT_CAST;
+	coerce->location = -1;
+	return coerce;
+}
+
+
+static JoinExpr *
+MakeUsersJoin(ParseState *parseState, JoinType joinType,
+			  ParseNamespaceItem *leftItem, ParseNamespaceItem *rightItem,
+			  Node *left, Node *right, Expr *quals,
+			  ParseNamespaceItem **joinItem)
+{
+	JoinExpr *join = makeNode(JoinExpr);
+	join->jointype = joinType;
+	join->larg = left;
+	join->rarg = right;
+	join->quals = (Node *) quals;
+	join->rtindex = list_length(parseState->p_rtable) + 1;
+
+	int maximumColumns = list_length(leftItem->p_names->colnames) +
+						 list_length(rightItem->p_names->colnames);
+	ParseNamespaceColumn *joinColumns =
+		palloc0(maximumColumns * sizeof(ParseNamespaceColumn));
+	List *columnNames = NIL;
+	List *columnVars = NIL;
+	List *leftColumnNumbers = NIL;
+	List *rightColumnNumbers = NIL;
+	int joinColumnIndex = 0;
+
+	AppendUsersJoinColumns(leftItem, 0, &columnNames, &columnVars,
+						   &leftColumnNumbers, joinColumns, &joinColumnIndex);
+	AppendUsersJoinColumns(rightItem,
+						   joinType == JOIN_LEFT ? join->rtindex : 0,
+						   &columnNames, &columnVars, &rightColumnNumbers,
+						   joinColumns, &joinColumnIndex);
+
+	ParseNamespaceItem *newJoinItem = addRangeTableEntryForJoin(
+		parseState, columnNames, joinColumns, joinType, 0, columnVars,
+		leftColumnNumbers, rightColumnNumbers, NULL, NULL, true);
+	Assert(join->rtindex == newJoinItem->p_rtindex);
+	if (joinItem != NULL)
+	{
+		*joinItem = newJoinItem;
+	}
+	return join;
+}
+
+
+static void
+AppendUsersJoinColumns(ParseNamespaceItem *sourceItem, Index nullingRelationId,
+					   List **columnNames,
+					   List **columnVars, List **columnNumbers,
+					   ParseNamespaceColumn *joinColumns,
+					   int *joinColumnIndex)
+{
+	int attributeNumber = 0;
+	ListCell *columnNameCell;
+	foreach(columnNameCell, sourceItem->p_names->colnames)
+	{
+		attributeNumber++;
+		String *columnName = lfirst(columnNameCell);
+		if (strVal(columnName)[0] == '\0')
+		{
+			continue;
+		}
+
+		ParseNamespaceColumn *sourceColumn =
+			sourceItem->p_nscolumns + attributeNumber - 1;
+		Var *columnVar = makeVar(sourceColumn->p_varno,
+								 sourceColumn->p_varattno,
+								 sourceColumn->p_vartype,
+								 sourceColumn->p_vartypmod,
+								 sourceColumn->p_varcollid, 0);
+		columnVar->varnosyn = sourceColumn->p_varnosyn;
+		columnVar->varattnosyn = sourceColumn->p_varattnosyn;
+#if PG_VERSION_NUM >= 180000
+		columnVar->varreturningtype = sourceColumn->p_varreturningtype;
+#endif
+#if PG_VERSION_NUM >= 160000
+		if (nullingRelationId != 0)
+		{
+			columnVar->varnullingrels = bms_make_singleton(nullingRelationId);
+		}
+#endif
+
+		*columnNames = lappend(*columnNames, copyObject(columnName));
+		*columnVars = lappend(*columnVars, columnVar);
+		*columnNumbers = lappend_int(*columnNumbers, attributeNumber);
+		joinColumns[*joinColumnIndex] = *sourceColumn;
+		(*joinColumnIndex)++;
+	}
 }

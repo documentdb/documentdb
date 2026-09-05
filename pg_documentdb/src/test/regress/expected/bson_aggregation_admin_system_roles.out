@@ -1,0 +1,96 @@
+SET search_path TO documentdb_api,documentdb_core;
+SET documentdb.next_collection_id TO 2800;
+SET documentdb.next_collection_index_id TO 2800;
+\set VERBOSITY TERSE
+SET documentdb.enableRoleCrud TO ON;
+SET documentdb.enableRolesAdminDBCheck TO ON;
+SELECT documentdb_api.create_role('{"createRole":"systemRolesParent", "roles":[], "privileges":[], "$db":"admin"}');
+            create_role            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.create_role('{"createRole":"systemRolesChildOne", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+            create_role            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.create_role('{"createRole":"systemRolesChildTwo", "roles":["readWriteAnyDatabase", "clusterAdmin"], "privileges":[], "$db":"admin"}');
+            create_role            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SET documentdb.enable_admin_database_queries TO OFF;
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles", "filter": { "role": "systemRolesParent" } }');
+ document 
+----------
+(0 rows)
+
+SET documentdb.enable_admin_database_queries TO ON;
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles", "filter": { "role": { "$in": [ "systemRolesParent", "systemRolesChildOne", "systemRolesChildTwo" ] } }, "sort": { "role": 1 } }');
+                                                                                                           document                                                                                                           
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : "admin.systemRolesChildOne", "role" : "systemRolesChildOne", "db" : "admin", "privileges" : [  ], "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ] }
+ { "_id" : "admin.systemRolesChildTwo", "role" : "systemRolesChildTwo", "db" : "admin", "privileges" : [  ], "roles" : [ { "role" : "clusterAdmin", "db" : "admin" }, { "role" : "readWriteAnyDatabase", "db" : "admin" } ] }
+ { "_id" : "admin.systemRolesParent", "role" : "systemRolesParent", "db" : "admin", "privileges" : [  ], "roles" : [  ] }
+(3 rows)
+
+SELECT cursorpage AS page, continuation AS cont, persistconnection AS persistent,
+	cursorid AS cid
+FROM documentdb_api.find_cursor_first_page(
+	'admin',
+	'{ "find": "system.roles", "filter": { "role": { "$in": [ "systemRolesParent", "systemRolesChildOne", "systemRolesChildTwo" ] } }, "batchSize": 1 }',
+	4294967294) \gset
+SELECT documentdb_api_catalog.bson_dollar_project(
+	:'page'::bson,
+	'{ "_id": 0, "batchCount": { "$size": "$cursor.firstBatch" } }'::bson) AS first_page,
+	:'cont'::bson IS NOT NULL AS has_more,
+	:'persistent'::bool AS persistent;
+                first_page                 | has_more | persistent 
+-------------------------------------------+----------+------------
+ { "batchCount" : { "$numberInt" : "1" } } | t        | t
+(1 row)
+
+SELECT cursorpage AS page, continuation IS NULL AS exhausted
+FROM documentdb_api.cursor_get_more(
+	'admin',
+	('{ "getMore": ' || :'cid' || ', "collection": "system.roles", "batchSize": 2 }')::bson,
+	:'cont'::bson) \gset
+SELECT documentdb_api_catalog.bson_dollar_project(
+	:'page'::bson,
+	'{ "_id": 0, "batchCount": { "$size": "$cursor.nextBatch" } }'::bson) AS next_page,
+	:'exhausted'::bool AS exhausted;
+                 next_page                 | exhausted 
+-------------------------------------------+-----------
+ { "batchCount" : { "$numberInt" : "2" } } | t
+(1 row)
+
+SELECT documentdb_api.drop_role('{"dropRole":"systemRolesChildOne", "$db":"admin"}');
+             drop_role             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.drop_role('{"dropRole":"systemRolesChildTwo", "$db":"admin"}');
+             drop_role             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.drop_role('{"dropRole":"systemRolesParent", "$db":"admin"}');
+             drop_role             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+RESET documentdb.enableRoleCrud;
+RESET documentdb.enableRolesAdminDBCheck;
+RESET documentdb.enable_admin_database_queries;
