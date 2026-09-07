@@ -1386,8 +1386,6 @@ drop_role(pgbson *dropRoleBson)
 							dropRoleSpec.roleName)));
 	}
 
-	DeleteCustomRoleFromRoleCatalog(dropRoleSpec.roleName);
-
 	/*
 	 * Stored privileges are matched by resolving the role name, so they must
 	 * be removed while the role still resolves. Every statement here runs in
@@ -1395,6 +1393,8 @@ drop_role(pgbson *dropRoleBson)
 	 * together.
 	 */
 	RemoveCollectionPrivileges(dropRoleSpec.roleName);
+
+	DeleteCustomRoleFromRoleCatalog(dropRoleSpec.roleName);
 
 	StringInfo dropRoleQuery = makeStringInfo();
 	appendStringInfo(dropRoleQuery, "DROP ROLE %s",
