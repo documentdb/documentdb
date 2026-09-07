@@ -27,7 +27,7 @@ use crate::{
     error::{DocumentDBError, Result},
     postgres::PgDataClient,
     runtime::v2::{connection::GatewayRuntime, wire},
-    service::{create_tcp_listeners, ListenerConfig},
+    service::{create_tcp_listeners, ListenerConfig, RequestRouter},
     telemetry::{record_startup_metrics, TelemetryProvider},
     time::STARTUP_INSTANT,
 };
@@ -105,8 +105,8 @@ fn openssl_tls_meta(ssl: &openssl::ssl::SslRef) -> NacelleConnectionTlsMeta {
     metadata
 }
 
-async fn serve_tcp_connection<T>(
-    runtime: GatewayRuntime<T>,
+async fn serve_tcp_connection<T, R>(
+    runtime: GatewayRuntime<T, R>,
     tcp_stream: TcpStream,
     peer_address: std::net::SocketAddr,
     listener: &'static str,
@@ -114,6 +114,7 @@ async fn serve_tcp_connection<T>(
 ) -> Result<()>
 where
     T: PgDataClient + 'static,
+    R: RequestRouter<T> + Send + 'static,
 {
     let connection_id = Uuid::new_v4();
     let connection_activity_id = connection_id.to_string();
@@ -207,14 +208,15 @@ pub(super) fn create_unix_socket_listener(path: &str, permissions: u32) -> Resul
     Ok(listener)
 }
 
-async fn serve_unix_connection<T>(
-    runtime: GatewayRuntime<T>,
+async fn serve_unix_connection<T, R>(
+    runtime: GatewayRuntime<T, R>,
     unix_stream: UnixStream,
     path: String,
     _connection_permit: TrackedPermit,
 ) -> Result<()>
 where
     T: PgDataClient + 'static,
+    R: RequestRouter<T> + Send + 'static,
 {
     let connection_id = Uuid::new_v4();
     let connection_activity_id = connection_id.to_string();
@@ -239,14 +241,15 @@ where
     Ok(())
 }
 
-fn spawn_tcp_connection<T>(
+fn spawn_tcp_connection<T, R>(
     tasks: &mut JoinSet<Result<()>>,
-    runtime: &GatewayRuntime<T>,
+    runtime: &GatewayRuntime<T, R>,
     stream: TcpStream,
     peer: std::net::SocketAddr,
     listener: &'static str,
 ) where
     T: PgDataClient + 'static,
+    R: RequestRouter<T> + Send + 'static,
 {
     match runtime.acquire_connection(Some(peer.ip())) {
         Ok(permit) => {
@@ -315,13 +318,15 @@ fn record_startup(elapsed: Duration, telemetry: Option<&dyn TelemetryProvider>) 
 ///
 /// Returns an error if the runtime fails to bind, serve, or shut down its configured
 /// listeners.
-pub async fn run_gateway<T>(
+pub async fn run_gateway<T, R>(
     service_context: ServiceContext,
     telemetry: Option<Box<dyn TelemetryProvider>>,
+    request_router: R,
     token: CancellationToken,
 ) -> Result<()>
 where
     T: PgDataClient + 'static,
+    R: RequestRouter<T> + Send + 'static,
 {
     let listener_config = ListenerConfig::from(service_context.setup_configuration());
     let (ipv4_listener, ipv6_listener) = create_tcp_listeners(&listener_config).await?;
@@ -342,7 +347,8 @@ where
             .elapsed(),
         telemetry.as_deref(),
     );
-    let runtime = GatewayRuntime::<T>::new(service_context, telemetry, token.clone());
+    let runtime =
+        GatewayRuntime::<T, R>::new(service_context, telemetry, request_router, token.clone());
     let mut connections = JoinSet::new();
 
     loop {

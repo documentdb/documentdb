@@ -11,88 +11,33 @@ use tokio::{io::AsyncWrite, time::Instant};
 use tracing::Instrument;
 
 use crate::{
-    auth,
     context::{ConnectionContext, RequestContext},
-    error::{DocumentDBError, Result},
+    error::Result,
     postgres::PgDataClient,
-    processor,
     protocol::header::Header,
-    requests::{RequestIntervalKind, RequestObservation, RequestType},
-    responses::{self, Response},
+    requests::{RequestIntervalKind, RequestObservation},
+    responses,
+    service::connection_loop::routing::RequestRouter,
     telemetry::{self, client_info},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RequestExecutionPath {
-    AuthCommand,
-    UnauthorizedRequest,
-    ReauthenticationRequired,
-    AuthorizedRequest,
-}
-
-fn determine_request_execution_path(
-    request_type: RequestType,
-    auth_state: &auth::AuthState,
-) -> RequestExecutionPath {
-    if request_type.handle_with_auth() {
-        return RequestExecutionPath::AuthCommand;
-    }
-
-    if !auth_state.is_authenticated() {
-        if auth_state.auth_kind() == Some(&auth::AuthKind::ExternalIdentity) {
-            return RequestExecutionPath::ReauthenticationRequired;
-        }
-
-        return RequestExecutionPath::UnauthorizedRequest;
-    }
-
-    RequestExecutionPath::AuthorizedRequest
-}
-
-async fn get_response<T>(
-    request_context: &RequestContext<'_>,
-    connection_context: &mut ConnectionContext,
-) -> Result<Response>
-where
-    T: PgDataClient,
-{
-    match determine_request_execution_path(
-        request_context.request_type(),
-        &connection_context.auth_state,
-    ) {
-        RequestExecutionPath::AuthCommand | RequestExecutionPath::UnauthorizedRequest => {
-            let response = auth::process::<T>(connection_context, request_context).await?;
-            return Ok(response);
-        }
-        RequestExecutionPath::ReauthenticationRequired => {
-            return Err(DocumentDBError::reauthentication_required(
-                "External identity token has expired.".to_owned(),
-            ));
-        }
-        RequestExecutionPath::AuthorizedRequest => {}
-    }
-
-    let data_client = T::new_authorized(
-        &connection_context.service_context,
-        &connection_context.auth_state,
-    )?;
-
-    processor::process_request(request_context, connection_context, &data_client).await
-}
-
-pub(super) async fn handle_request<T, W>(
+pub(super) async fn handle_request<T, R, W>(
     connection_context: &mut ConnectionContext,
     header: &Header,
     request_context: &RequestContext<'_>,
+    request_router: &R,
     writer: &mut W,
     handle_message_start: Instant,
 ) -> Result<()>
 where
     T: PgDataClient,
+    R: RequestRouter<T>,
     W: AsyncWrite + Unpin,
 {
     let handle_request_start = Instant::now();
-    let response_result = get_response::<T>(request_context, connection_context).await;
+    let response_result = request_router
+        .handle_request(request_context, connection_context)
+        .await;
     request_context
         .tracker
         .record_duration(RequestIntervalKind::HandleRequest, handle_request_start);
@@ -154,14 +99,13 @@ mod tests {
 
     use super::*;
     use crate::{
-        auth::{AuthKind, AuthState},
-        error::ErrorCode,
         postgres::DocumentDBDataClient,
         protocol::opcode::OpCode,
-        requests::{request_tracker::RequestTracker, Request, WireRequest},
+        requests::{request_tracker::RequestTracker, Request, RequestType, WireRequest},
+        service::connection_loop::routing::DefaultRequestRouter,
         testing::{
             assert_header_matches, assert_success_response, build_op_msg_parts, build_raw_document,
-            decode_op_msg_response, logout_document, ping_document, test_connection_context,
+            decode_op_msg_response, logout_document, test_connection_context,
             RecordingTelemetryProvider, TestDynamicConfiguration,
         },
     };
@@ -176,10 +120,11 @@ mod tests {
         T: PgDataClient,
     {
         let (mut response_writer, mut response_reader) = tokio::io::duplex(4096);
-        let result = handle_request::<T, _>(
+        let result = handle_request::<T, _, _>(
             connection_context,
             header,
             request_context,
+            &DefaultRequestRouter {},
             &mut response_writer,
             handle_message_start,
         )
@@ -194,93 +139,6 @@ mod tests {
 
         (result, response_bytes)
     }
-
-    #[test]
-    fn determine_request_execution_path_covers_auth_states() {
-        let logout_document = logout_document();
-        let logout_request =
-            Request::RawBuf(RequestType::Logout, build_raw_document(&logout_document));
-        let ping_document = ping_document();
-        let ping_request = Request::RawBuf(RequestType::Ping, build_raw_document(&ping_document));
-
-        let native_unauthorized = AuthState::new();
-
-        let mut external_identity = AuthState::new();
-        external_identity
-            .set_auth_kind(AuthKind::ExternalIdentity)
-            .expect("auth kind should be set once in tests");
-
-        let authorized = AuthState::new();
-        authorized.set_authenticated(true);
-
-        assert_eq!(
-            determine_request_execution_path(logout_request.request_type(), &native_unauthorized),
-            RequestExecutionPath::AuthCommand
-        );
-        assert_eq!(
-            determine_request_execution_path(ping_request.request_type(), &native_unauthorized),
-            RequestExecutionPath::UnauthorizedRequest
-        );
-        assert_eq!(
-            determine_request_execution_path(ping_request.request_type(), &external_identity),
-            RequestExecutionPath::ReauthenticationRequired
-        );
-        assert_eq!(
-            determine_request_execution_path(ping_request.request_type(), &authorized),
-            RequestExecutionPath::AuthorizedRequest
-        );
-    }
-
-    #[tokio::test]
-    async fn get_response_handles_auth_commands_without_pg_client_calls() {
-        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
-        let mut connection_context =
-            test_connection_context(false, dynamic_configuration, None).await;
-        let logout_document = logout_document();
-        let request = Request::RawBuf(RequestType::Logout, build_raw_document(&logout_document));
-        let request_info = request
-            .extract_common()
-            .expect("logout request should have valid common fields");
-        let wire_request = WireRequest::from_request_and_info(&request, request_info);
-        let request_tracker = RequestTracker::new();
-        let request_context =
-            RequestContext::new("activity-auth-command", &wire_request, &request_tracker);
-
-        let response =
-            get_response::<DocumentDBDataClient>(&request_context, &mut connection_context)
-                .await
-                .expect("logout should be handled in auth flow");
-
-        assert_success_response(&response.as_json().expect("response should convert to JSON"));
-    }
-
-    #[tokio::test]
-    async fn get_response_requires_reauthentication_for_expired_external_identity() {
-        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
-        let mut connection_context =
-            test_connection_context(false, dynamic_configuration, None).await;
-        connection_context
-            .auth_state
-            .set_auth_kind(AuthKind::ExternalIdentity)
-            .expect("auth kind should be set once in tests");
-
-        let ping_document = ping_document();
-        let request = Request::RawBuf(RequestType::Ping, build_raw_document(&ping_document));
-        let request_info = request
-            .extract_common()
-            .expect("ping request should have valid common fields");
-        let wire_request = WireRequest::from_request_and_info(&request, request_info);
-        let request_tracker = RequestTracker::new();
-        let request_context =
-            RequestContext::new("activity-reauth", &wire_request, &request_tracker);
-
-        let error = get_response::<DocumentDBDataClient>(&request_context, &mut connection_context)
-            .await
-            .expect_err("expired external identity should require reauthentication");
-
-        assert_eq!(error.error_code(), ErrorCode::ReauthenticationRequired);
-    }
-
     #[tokio::test]
     async fn handle_request_writes_response_and_emits_success_event() {
         let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());

@@ -6,7 +6,7 @@
  *-------------------------------------------------------------------------
  */
 
-use std::{net::IpAddr, pin::Pin, time::Duration};
+use std::{net::IpAddr, pin::Pin, sync::Arc, time::Duration};
 
 use openssl::ssl::Ssl;
 use tokio::{
@@ -22,7 +22,7 @@ use crate::{
     context::{ConnectionContext, ServiceContext},
     error::{DocumentDBError, Result},
     postgres::PgDataClient,
-    service::{self, ListenerConfig},
+    service::{self, ListenerConfig, RequestRouter},
     telemetry::{record_startup_metrics, TelemetryProvider},
     time::STARTUP_INSTANT,
 };
@@ -87,14 +87,17 @@ fn create_unix_socket_listener(socket_path: &str, permissions: u32) -> Result<Un
 ///
 /// Returns an error if listener binding fails or a fatal error occurs in the
 /// accept loop.
-pub async fn run_gateway<T>(
+pub async fn run_gateway<T, R>(
     service_context: ServiceContext,
     telemetry: Option<Box<dyn TelemetryProvider>>,
+    request_router: R,
     token: CancellationToken,
 ) -> Result<()>
 where
     T: PgDataClient + 'static,
+    R: RequestRouter<T> + Send + 'static,
 {
+    let request_router = Arc::new(request_router);
     let listener_config = ListenerConfig::from(service_context.setup_configuration());
 
     let (ipv4_listener, ipv6_listener) = service::create_tcp_listeners(&listener_config).await?;
@@ -125,10 +128,11 @@ where
                     None => std::future::pending().await,
                 }
             }, if ipv4_listener.is_some() => {
-                spawn_tcp_handler::<T>(
+                spawn_tcp_handler::<T, R>(
                     result,
                     service_context.clone(),
                     telemetry.clone(),
+                    Arc::clone(&request_router),
                     "IPv4",
                 );
             }
@@ -138,10 +142,11 @@ where
                     None => std::future::pending().await,
                 }
             }, if ipv6_listener.is_some() => {
-                spawn_tcp_handler::<T>(
+                spawn_tcp_handler::<T, R>(
                     result,
                     service_context.clone(),
                     telemetry.clone(),
+                    Arc::clone(&request_router),
                     "IPv6",
                 );
             }
@@ -151,7 +156,12 @@ where
                     None => std::future::pending().await,
                 }
             }, if unix_listener.is_some() => {
-                spawn_unix_handler::<T>(result, service_context.clone(), telemetry.clone());
+                spawn_unix_handler::<T, R>(
+                    result,
+                    service_context.clone(),
+                    telemetry.clone(),
+                    Arc::clone(&request_router),
+                );
             }
             () = token.cancelled() => {
                 return Ok(())
@@ -178,33 +188,47 @@ fn record_startup(elapsed: Duration, telemetry: Option<&dyn TelemetryProvider>) 
     }
 }
 
-fn spawn_tcp_handler<T>(
+fn spawn_tcp_handler<T, R>(
     stream_and_address: std::io::Result<(TcpStream, std::net::SocketAddr)>,
     service_context: ServiceContext,
     telemetry: Option<Box<dyn TelemetryProvider>>,
+    request_router: Arc<R>,
     protocol: &'static str,
 ) where
     T: PgDataClient + 'static,
+    R: RequestRouter<T> + Send + 'static,
 {
     tokio::spawn(async move {
-        if let Err(error) =
-            handle_connection::<T>(stream_and_address, service_context, telemetry).await
+        if let Err(error) = handle_connection::<T, R>(
+            stream_and_address,
+            service_context,
+            telemetry,
+            request_router,
+        )
+        .await
         {
             tracing::error!("Failed to accept a TCP connection ({protocol}): {error:?}.");
         }
     });
 }
 
-fn spawn_unix_handler<T>(
+fn spawn_unix_handler<T, R>(
     stream_result: std::io::Result<(UnixStream, UnixSocketAddr)>,
     service_context: ServiceContext,
     telemetry: Option<Box<dyn TelemetryProvider>>,
+    request_router: Arc<R>,
 ) where
     T: PgDataClient + 'static,
+    R: RequestRouter<T> + Send + 'static,
 {
     tokio::spawn(async move {
-        if let Err(error) =
-            handle_unix_connection::<T>(stream_result, service_context, telemetry).await
+        if let Err(error) = handle_unix_connection::<T, R>(
+            stream_result,
+            service_context,
+            telemetry,
+            request_router,
+        )
+        .await
         {
             tracing::error!("Failed to accept a Unix socket connection: {error:?}.");
         }
@@ -261,13 +285,15 @@ async fn detect_tls_handshake(tcp_stream: &TcpStream, connection_id: Uuid) -> Re
     }
 }
 
-async fn handle_connection<T>(
+async fn handle_connection<T, R>(
     stream_and_address: std::result::Result<(TcpStream, std::net::SocketAddr), std::io::Error>,
     service_context: ServiceContext,
     telemetry: Option<Box<dyn TelemetryProvider>>,
+    request_router: Arc<R>,
 ) -> Result<()>
 where
     T: PgDataClient + 'static,
+    R: RequestRouter<T>,
 {
     let (tcp_stream, peer_address) = stream_and_address?;
 
@@ -330,7 +356,12 @@ where
             "TLS TCP connection established - Connection Id {connection_id}, client IP {ip_address}"
         );
 
-        service::handle_stream::<T, _>(buffered_stream, connection_context).await;
+        service::handle_stream::<T, R, _>(
+            buffered_stream,
+            connection_context,
+            request_router.as_ref(),
+        )
+        .await;
     } else {
         let connection_context = ConnectionContext::new(
             service_context,
@@ -354,19 +385,26 @@ where
             "Non-TLS TCP connection established - Connection Id {connection_id}, client IP {ip_address}"
         );
 
-        service::handle_stream::<T, _>(buffered_stream, connection_context).await;
+        service::handle_stream::<T, R, _>(
+            buffered_stream,
+            connection_context,
+            request_router.as_ref(),
+        )
+        .await;
     }
 
     Ok(())
 }
 
-async fn handle_unix_connection<T>(
+async fn handle_unix_connection<T, R>(
     stream_result: std::result::Result<(UnixStream, UnixSocketAddr), std::io::Error>,
     service_context: ServiceContext,
     telemetry: Option<Box<dyn TelemetryProvider>>,
+    request_router: Arc<R>,
 ) -> Result<()>
 where
     T: PgDataClient,
+    R: RequestRouter<T>,
 {
     let (unix_stream, _socket_addr) = stream_result?;
 
@@ -398,6 +436,7 @@ where
         "Unix socket connection established - Connection Id {connection_id}"
     );
 
-    service::handle_stream::<T, _>(buffered_stream, connection_context).await;
+    service::handle_stream::<T, R, _>(buffered_stream, connection_context, request_router.as_ref())
+        .await;
     Ok(())
 }

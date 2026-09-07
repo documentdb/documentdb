@@ -15,14 +15,18 @@ use crate::{
     context::ConnectionContext,
     postgres::PgDataClient,
     responses,
-    service::connection_loop::{read_ahead, request_pipeline},
+    service::connection_loop::{read_ahead, request_pipeline, routing::RequestRouter},
 };
 
 const CONNECTION_WRITER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(1);
 
-pub async fn handle_stream<T, S>(stream: S, mut connection_context: ConnectionContext)
-where
+pub async fn handle_stream<T, R, S>(
+    stream: S,
+    mut connection_context: ConnectionContext,
+    request_router: &R,
+) where
     T: PgDataClient,
+    R: RequestRouter<T>,
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
     let connection_activity_id = connection_context.connection_id.to_string();
@@ -46,10 +50,11 @@ where
                 let request_activity_id =
                     activity_uuid.hyphenated().encode_lower(&mut activity_buf);
 
-                next_header = request_pipeline::handle_message::<T, _, _>(
+                next_header = request_pipeline::handle_message::<T, _, _, R>(
                     &mut connection_context,
                     &header,
                     &mut reader,
+                    request_router,
                     &mut writer,
                     request_activity_id,
                     idle_timeout,
@@ -113,6 +118,7 @@ mod tests {
     use crate::{
         error::ErrorCode,
         postgres::DocumentDBDataClient,
+        service::DefaultRequestRouter,
         testing::{
             assert_error_response, assert_success_response, build_op_msg_request,
             decode_op_msg_responses, logout_document, test_connection_context,
@@ -208,7 +214,12 @@ mod tests {
         let (mut client_stream, server_stream) = tokio::io::duplex(4096);
 
         let server_task = tokio::spawn(async move {
-            handle_stream::<DocumentDBDataClient, _>(server_stream, connection_context).await;
+            handle_stream::<DocumentDBDataClient, _, _>(
+                server_stream,
+                connection_context,
+                &DefaultRequestRouter {},
+            )
+            .await;
         });
 
         let first_request = logout_document();
@@ -254,7 +265,12 @@ mod tests {
         let (mut client_stream, server_stream) = tokio::io::duplex(1024);
 
         let server_task = tokio::spawn(async move {
-            handle_stream::<DocumentDBDataClient, _>(server_stream, connection_context).await;
+            handle_stream::<DocumentDBDataClient, _, _>(
+                server_stream,
+                connection_context,
+                &DefaultRequestRouter {},
+            )
+            .await;
         });
 
         client_stream
@@ -285,7 +301,12 @@ mod tests {
         let (mut client_stream, server_stream) = tokio::io::duplex(1024);
 
         let server_task = tokio::spawn(async move {
-            handle_stream::<DocumentDBDataClient, _>(server_stream, connection_context).await;
+            handle_stream::<DocumentDBDataClient, _, _>(
+                server_stream,
+                connection_context,
+                &DefaultRequestRouter {},
+            )
+            .await;
         });
 
         let mut response_bytes = Vec::new();
@@ -313,7 +334,12 @@ mod tests {
         let stream = ErrorSequenceStream::new(false);
         let stream_handle = stream.clone();
 
-        handle_stream::<DocumentDBDataClient, _>(stream, connection_context).await;
+        handle_stream::<DocumentDBDataClient, _, _>(
+            stream,
+            connection_context,
+            &DefaultRequestRouter {},
+        )
+        .await;
 
         let responses = decode_op_msg_responses(&stream_handle.written_bytes());
         assert_eq!(
@@ -331,7 +357,12 @@ mod tests {
         let stream = ErrorSequenceStream::new(true);
         let stream_handle = stream.clone();
 
-        handle_stream::<DocumentDBDataClient, _>(stream, connection_context).await;
+        handle_stream::<DocumentDBDataClient, _, _>(
+            stream,
+            connection_context,
+            &DefaultRequestRouter {},
+        )
+        .await;
 
         assert!(
             stream_handle.written_bytes().is_empty(),

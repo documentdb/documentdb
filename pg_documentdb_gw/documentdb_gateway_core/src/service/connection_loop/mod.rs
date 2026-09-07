@@ -12,8 +12,10 @@ mod error_reply;
 mod read_ahead;
 mod request_execution;
 mod request_pipeline;
+mod routing;
 mod stream_driver;
 mod writer;
 
 pub use request_pipeline::process_request_message;
+pub use routing::{DefaultRequestRouter, RequestRouter};
 pub use stream_driver::handle_stream;

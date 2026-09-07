@@ -13,7 +13,7 @@ use documentdb_gateway_core::{
     configuration::{DocumentDBSetupConfiguration, PgConfiguration, SetupConfiguration},
     postgres::{conn_mgmt, create_query_catalog, DocumentDBDataClient},
     run_gateway,
-    service::TlsProvider,
+    service::{DefaultRequestRouter, TlsProvider},
     shutdown_controller::SHUTDOWN_CONTROLLER,
     startup::{create_postgres_object, get_service_context},
     time::STARTUP_INSTANT,
@@ -144,7 +144,12 @@ async fn run_docdb_gateway(setup_configuration_file: &str) {
         tls_provider,
     );
 
-    run_gateway::<DocumentDBDataClient>(service_context, None, shutdown_token)
-        .await
-        .unwrap();
+    run_gateway::<DocumentDBDataClient, _>(
+        service_context,
+        None,
+        DefaultRequestRouter {},
+        shutdown_token,
+    )
+    .await
+    .unwrap();
 }

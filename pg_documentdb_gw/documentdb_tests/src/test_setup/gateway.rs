@@ -16,7 +16,7 @@ use documentdb_gateway_core::{
     error::Result,
     postgres::DocumentDBDataClient,
     run_gateway,
-    service::TlsProvider,
+    service::{DefaultRequestRouter, TlsProvider},
     startup::get_service_context,
 };
 use tokio::sync::Notify;
@@ -67,5 +67,11 @@ pub async fn run_test_gateway(
     ready_flag.store(true, Ordering::SeqCst);
     ready_notify.notify_waiters();
 
-    run_gateway::<DocumentDBDataClient>(service_context, None, CancellationToken::new()).await
+    run_gateway::<DocumentDBDataClient, _>(
+        service_context,
+        None,
+        DefaultRequestRouter {},
+        CancellationToken::new(),
+    )
+    .await
 }

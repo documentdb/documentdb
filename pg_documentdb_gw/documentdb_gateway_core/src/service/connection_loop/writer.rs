@@ -89,7 +89,7 @@ mod tests {
     use crate::{
         error::ErrorKind,
         postgres::DocumentDBDataClient,
-        service::connection_loop::process_request_message,
+        service::{connection_loop::process_request_message, DefaultRequestRouter},
         testing::{build_op_msg_parts, test_connection_context, TestDynamicConfiguration},
     };
 
@@ -144,12 +144,13 @@ mod tests {
         };
         let (header, body) = build_op_msg_parts(&invalid_document, 85);
 
-        let error = process_request_message::<DocumentDBDataClient, _>(
+        let error = process_request_message::<DocumentDBDataClient, _, _>(
             &mut connection_context,
             header,
             Bytes::from(body),
             Instant::now(),
             "activity-process-write-failure",
+            &DefaultRequestRouter {},
             &mut FailingResponseWriter,
         )
         .await
@@ -168,12 +169,13 @@ mod tests {
         };
         let (header, body) = build_op_msg_parts(&invalid_document, 86);
 
-        let error = process_request_message::<DocumentDBDataClient, _>(
+        let error = process_request_message::<DocumentDBDataClient, _, _>(
             &mut connection_context,
             header,
             Bytes::from(body),
             Instant::now(),
             "activity-process-zero-progress-write",
+            &DefaultRequestRouter {},
             &mut ZeroResponseWriter,
         )
         .await

@@ -31,7 +31,7 @@ use crate::{
         body::{collect_body, BoundedResponseWriter},
         protocol::{gateway_max_frame_len, gateway_max_request_body_len, GatewayWireProtocol},
     },
-    service::process_request_message,
+    service::{process_request_message, RequestRouter},
 };
 
 pub(super) struct GatewayConnectionState {
@@ -76,32 +76,26 @@ impl GatewayConnectionState {
     }
 }
 
-#[derive(Debug)]
-pub(super) struct GatewayRuntimeHandler<T> {
+pub(super) struct GatewayRuntimeHandler<T, R> {
     _data_client: PhantomData<fn() -> T>,
+    request_router: R,
 }
 
-impl<T> Clone for GatewayRuntimeHandler<T> {
-    fn clone(&self) -> Self {
-        Self {
-            _data_client: PhantomData,
-        }
-    }
-}
-
-impl<T> GatewayRuntimeHandler<T> {
+impl<T, R> GatewayRuntimeHandler<T, R> {
     /// Creates a required-response gateway handler.
     #[must_use]
-    pub(super) const fn new() -> Self {
+    pub(super) const fn new(request_router: R) -> Self {
         Self {
             _data_client: PhantomData,
+            request_router,
         }
     }
 }
 
-impl<T> SerialTcpHandler<GatewayWireProtocol> for GatewayRuntimeHandler<T>
+impl<T, R> SerialTcpHandler<GatewayWireProtocol> for GatewayRuntimeHandler<T, R>
 where
     T: PgDataClient + 'static,
+    R: RequestRouter<T> + Send + 'static,
 {
     async fn call<'connection>(
         &'connection self,
@@ -117,13 +111,14 @@ where
         let read_request_start = context.request().head.read_request_start();
         let body = std::mem::replace(&mut context.request_mut().body, NacelleBody::empty());
         let response_chunk_size = context.connection().state.response_chunk_size;
-        let response = process_request::<T>(
+        let response = process_request::<T, R>(
             &mut context.connection_mut().state,
             header,
             body,
             read_request_start,
             response_chunk_size,
             gateway_max_frame_len(),
+            &self.request_router,
         )
         .await?;
         if response.is_empty() {
@@ -135,9 +130,10 @@ where
     }
 }
 
-impl<T> SerialTcpOneWayHandler<GatewayWireProtocol> for GatewayRuntimeHandler<T>
+impl<T, R> SerialTcpOneWayHandler<GatewayWireProtocol> for GatewayRuntimeHandler<T, R>
 where
     T: PgDataClient + 'static,
+    R: RequestRouter<T> + Send + 'static,
 {
     async fn call<'connection>(
         &'connection self,
@@ -153,13 +149,14 @@ where
         let read_request_start = context.request().head.read_request_start();
         let body = std::mem::replace(&mut context.request_mut().body, NacelleBody::empty());
         let response_chunk_size = context.connection().state.response_chunk_size;
-        if !process_request::<T>(
+        if !process_request::<T, R>(
             &mut context.connection_mut().state,
             header,
             body,
             read_request_start,
             response_chunk_size,
             0,
+            &self.request_router,
         )
         .await?
         .is_empty()
@@ -172,16 +169,18 @@ where
     }
 }
 
-async fn process_request<T>(
+async fn process_request<T, R>(
     connection_state: &mut GatewayConnectionState,
     header: Header,
     body: NacelleBody,
     read_request_start: Instant,
     response_chunk_size: usize,
     max_response_bytes: usize,
+    request_router: &R,
 ) -> std::result::Result<Bytes, NacelleError>
 where
     T: PgDataClient,
+    R: RequestRouter<T>,
 {
     let bytes = collect_body(body, gateway_max_request_body_len()).await?;
     let mut writer = BoundedResponseWriter::new(max_response_bytes, response_chunk_size)?;
@@ -189,12 +188,13 @@ where
     let activity_uuid = connection_context.generate_request_activity_id(header.request_id());
     let mut activity_buf = [0u8; uuid::fmt::Hyphenated::LENGTH];
     let activity_id = activity_uuid.hyphenated().encode_lower(&mut activity_buf);
-    process_request_message::<T, _>(
+    process_request_message::<T, R, _>(
         connection_context,
         header,
         bytes,
         read_request_start,
         activity_id,
+        request_router,
         &mut writer,
     )
     .await

@@ -32,6 +32,7 @@ use crate::{
     postgres::DocumentDBDataClient,
     protocol::{header::Header, opcode::OpCode},
     runtime::v2::{handler::GatewayRuntimeHandler, protocol::GatewayWireProtocol, wire},
+    service::DefaultRequestRouter,
     testing::test_connection_context,
 };
 
@@ -73,7 +74,9 @@ pub(super) fn start_serial_test_connection(
         config.response_buffer_capacity,
     ));
     let (client, mut server) = tokio::io::duplex(64 * 1024);
-    let handler = Arc::new(GatewayRuntimeHandler::<DocumentDBDataClient>::new());
+    let handler = Arc::new(GatewayRuntimeHandler::<DocumentDBDataClient, _>::new(
+        DefaultRequestRouter {},
+    ));
     let server_task = tokio::spawn(async move {
         Box::pin(serve_serial_stream_without_connection_limit(
             &mut server,

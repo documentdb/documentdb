@@ -33,21 +33,22 @@ use crate::{
         handler::GatewayRuntimeHandler,
         protocol::{gateway_max_frame_len, GatewayWireProtocol},
     },
+    service::RequestRouter,
     telemetry::TelemetryProvider,
 };
 
 const CONNECTION_WRITER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
 
-pub(super) struct GatewayRuntime<T> {
+pub(super) struct GatewayRuntime<T, R> {
     protocol: Arc<GatewayWireProtocol>,
-    handler: Arc<GatewayRuntimeHandler<T>>,
+    handler: Arc<GatewayRuntimeHandler<T, R>>,
     config: NacelleTcpConfig,
     telemetry: NacelleTelemetry,
     runtime_state: NacelleRuntimeState,
     service_context: ServiceContext,
 }
 
-impl<T> Clone for GatewayRuntime<T> {
+impl<T, R> Clone for GatewayRuntime<T, R> {
     fn clone(&self) -> Self {
         Self {
             protocol: Arc::clone(&self.protocol),
@@ -60,15 +61,17 @@ impl<T> Clone for GatewayRuntime<T> {
     }
 }
 
-impl<T> GatewayRuntime<T>
+impl<T, R> GatewayRuntime<T, R>
 where
     T: PgDataClient + 'static,
+    R: RequestRouter<T> + Send + 'static,
 {
     /// Creates the shared runtime used by all gateway listeners.
     #[must_use]
     pub(super) fn new(
         service_context: ServiceContext,
         telemetry_provider: Option<Box<dyn TelemetryProvider>>,
+        request_router: R,
         shutdown_token: CancellationToken,
     ) -> Self {
         let runtime_state = NacelleRuntimeState::new(gateway_limits(&service_context));
@@ -82,7 +85,7 @@ where
                 shutdown_token,
                 config.response_buffer_capacity,
             )),
-            handler: Arc::new(GatewayRuntimeHandler::new()),
+            handler: Arc::new(GatewayRuntimeHandler::new(request_router)),
             config,
             telemetry,
             runtime_state,

@@ -29,6 +29,7 @@ use crate::{
         error_reply,
         read_ahead::{self, PendingHeaderRead},
         request_execution,
+        routing::RequestRouter,
         writer::FailureTrackingWriter,
     },
     telemetry::{consts::labels, context_propagation},
@@ -55,10 +56,11 @@ use crate::{
         )
     )
 )]
-pub(super) async fn handle_message<'a, T, R, W>(
+pub(super) async fn handle_message<'a, T, R, W, RR>(
     connection_context: &mut ConnectionContext,
     header: &Header,
     reader: &'a mut R,
+    request_router: &RR,
     writer: &mut W,
     activity_id: &str,
     idle_timeout: Duration,
@@ -67,6 +69,7 @@ where
     T: PgDataClient,
     R: AsyncRead + Unpin + Send + 'a,
     W: AsyncWrite + Unpin,
+    RR: RequestRouter<T>,
 {
     let request_tracker = RequestTracker::new();
 
@@ -108,10 +111,11 @@ where
     // socket read-ahead overlaps deeper parsing and handling work.
     let next_header = read_ahead::start_next_header_read(reader, idle_timeout).await;
 
-    process_message::<T, W>(
+    process_message::<T, W, RR>(
         connection_context,
         header,
         &message,
+        request_router,
         writer,
         activity_id,
         &request_tracker,
@@ -151,16 +155,18 @@ where
         )
     )
 )]
-pub async fn process_request_message<T, W>(
+pub async fn process_request_message<T, R, W>(
     connection_context: &mut ConnectionContext,
     header: Header,
     body: Bytes,
     read_request_start: Instant,
     activity_id: &str,
+    request_router: &R,
     writer: &mut W,
 ) -> Result<()>
 where
     T: PgDataClient,
+    R: RequestRouter<T>,
     W: AsyncWrite + Unpin,
 {
     let mut writer = FailureTrackingWriter::new(writer);
@@ -214,10 +220,11 @@ where
         return writer.into_result();
     }
 
-    process_message::<T, _>(
+    process_message::<T, _, R>(
         connection_context,
         &header,
         &message,
+        request_router,
         &mut writer,
         activity_id,
         &request_tracker,
@@ -231,16 +238,18 @@ where
     clippy::too_many_lines,
     reason = "Request hot path coordinates parsing, validation, response writing, and telemetry"
 )]
-async fn process_message<T, W>(
+async fn process_message<T, W, R>(
     connection_context: &mut ConnectionContext,
     header: &Header,
     message: &RequestMessage,
+    request_router: &R,
     writer: &mut W,
     activity_id: &str,
     request_tracker: &RequestTracker,
 ) where
     T: PgDataClient,
     W: AsyncWrite + Unpin,
+    R: RequestRouter<T>,
 {
     let mut requires_response =
         protocol::reader::requires_response_from_parsed_message(message).unwrap_or(true);
@@ -351,10 +360,11 @@ async fn process_message<T, W>(
     // Errors in request handling are handled explicitly so that telemetry can have access to the
     // request. The next header read is already pending, so the caller can await it on the next
     // iteration without paying request teardown time on the critical path.
-    if let Err(error) = request_execution::handle_request::<T, W>(
+    if let Err(error) = request_execution::handle_request::<T, _, W>(
         connection_context,
         header,
         &request_context,
+        request_router,
         writer,
         handle_message_start,
     )
@@ -399,6 +409,7 @@ mod tests {
         postgres::DocumentDBDataClient,
         protocol::opcode::OpCode,
         responses::Response,
+        service::DefaultRequestRouter,
         telemetry::TelemetryProvider,
         testing::{
             assert_error_response, assert_header_matches, build_document_section,
@@ -460,10 +471,11 @@ mod tests {
             .expect("request writer should shut down cleanly");
 
         let (mut response_writer, mut response_reader) = tokio::io::duplex(4096);
-        let next_header = handle_message::<T, _, _>(
+        let next_header = handle_message::<T, _, _, _>(
             connection_context,
             &header,
             &mut request_reader,
+            &DefaultRequestRouter {},
             &mut response_writer,
             activity_id,
             NON_EXPIRING_IDLE_TIMEOUT,
@@ -492,12 +504,13 @@ mod tests {
         let (header, body) = build_op_msg_parts(&invalid_document, 81);
         let mut writer = Vec::new();
 
-        process_request_message::<DocumentDBDataClient, _>(
+        process_request_message::<DocumentDBDataClient, _, _>(
             &mut connection_context,
             header,
             Bytes::from(body),
             Instant::now(),
             "activity-process-request-message",
+            &DefaultRequestRouter {},
             &mut writer,
         )
         .await
@@ -532,12 +545,13 @@ mod tests {
         let (header, body) = build_op_msg_parts(&invalid_document, 87);
         let mut writer = Vec::new();
 
-        process_request_message::<DocumentDBDataClient, _>(
+        process_request_message::<DocumentDBDataClient, _, _>(
             &mut connection_context,
             header,
             Bytes::from(body),
             Instant::now() - Duration::from_millis(5),
             "activity-process-read-interval",
+            &DefaultRequestRouter {},
             &mut writer,
         )
         .await
@@ -559,12 +573,13 @@ mod tests {
         body[..std::mem::size_of::<u32>()].copy_from_slice(&2_u32.to_le_bytes());
         let mut writer = Vec::new();
 
-        process_request_message::<DocumentDBDataClient, _>(
+        process_request_message::<DocumentDBDataClient, _, _>(
             &mut connection_context,
             header,
             Bytes::from(body),
             Instant::now(),
             "activity-process-one-way-message",
+            &DefaultRequestRouter {},
             &mut writer,
         )
         .await
@@ -588,12 +603,13 @@ mod tests {
         .expect("mismatched test header should remain structurally valid");
         let mut writer = Vec::new();
 
-        process_request_message::<DocumentDBDataClient, _>(
+        process_request_message::<DocumentDBDataClient, _, _>(
             &mut connection_context,
             mismatched_header,
             Bytes::from(body),
             Instant::now(),
             "activity-process-mismatched-message",
+            &DefaultRequestRouter {},
             &mut writer,
         )
         .await
@@ -620,12 +636,13 @@ mod tests {
         .expect("mismatched test header should remain structurally valid");
         let mut writer = Vec::new();
 
-        process_request_message::<DocumentDBDataClient, _>(
+        process_request_message::<DocumentDBDataClient, _, _>(
             &mut connection_context,
             mismatched_header,
             Bytes::from(body),
             Instant::now(),
             "activity-process-mismatched-one-way-message",
+            &DefaultRequestRouter {},
             &mut writer,
         )
         .await
@@ -688,10 +705,11 @@ mod tests {
             .expect("partial request bytes should be written");
 
         let (mut response_writer, mut response_reader) = tokio::io::duplex(4096);
-        let next_header = handle_message::<DocumentDBDataClient, _, _>(
+        let next_header = handle_message::<DocumentDBDataClient, _, _, _>(
             &mut connection_context,
             &header,
             &mut request_reader,
+            &DefaultRequestRouter {},
             &mut response_writer,
             "activity-read-request-timeout",
             Duration::ZERO,
