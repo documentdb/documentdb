@@ -82,6 +82,9 @@ bool EnableBackgroundWorkerInitJobs = DEFAULT_ENABLE_BG_WORKER_INIT_JOBS;
 #define DEFAULT_BG_WORKER_JOB_TIMEOUT_THRESHOLD_SEC 300
 int BackgroundWorkerJobTimeoutThresholdSec = DEFAULT_BG_WORKER_JOB_TIMEOUT_THRESHOLD_SEC;
 
+#define DEFAULT_ENABLE_LEGACY_JOBS_TIMEOUT true
+bool EnableLegacyJobsTimeout = DEFAULT_ENABLE_LEGACY_JOBS_TIMEOUT;
+
 #define DEFAULT_BG_DATABASE_NAME "postgres"
 char *BackgroundWorkerDatabaseName = DEFAULT_BG_DATABASE_NAME;
 
@@ -333,6 +336,12 @@ InitializeBackgroundJobConfigurations(const char *prefix, const char *newGucPref
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_legacy_jobs_timeout", newGucPrefix),
+		gettext_noop("Enable timeout cancellation for background worker jobs."),
+		NULL, &EnableLegacyJobsTimeout, DEFAULT_ENABLE_LEGACY_JOBS_TIMEOUT,
+		PGC_USERSET, 0, NULL, NULL, NULL);
 }
 
 
