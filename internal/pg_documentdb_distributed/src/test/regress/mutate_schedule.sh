@@ -2,6 +2,7 @@
 
 targetFile=$1
 pg_version=$2
+citus_major_version=${3:-0}
 
 source="${BASH_SOURCE[0]}"
 
@@ -38,6 +39,12 @@ if (( $pg_version >= 18 )); then
     sed -i -e "s/!PG18_OR_HIGHER!/_pg18/g" $targetFile
 else
     sed -i -e "s/!PG18_OR_HIGHER!//g" $targetFile
+fi
+
+if (( $citus_major_version >= 14 )); then
+    sed -i -e "s/!CITUS_14_OR_HIGHER!/_citus14/g" $targetFile
+else
+    sed -i -e "s/!CITUS_14_OR_HIGHER!//g" $targetFile
 fi
 
 # !PG16_OR_LOWER!: run the test only on pg<=16; drop the whole schedule line on pg>=17.
