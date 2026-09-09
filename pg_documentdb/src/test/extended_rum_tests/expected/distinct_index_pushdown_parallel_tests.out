@@ -85,8 +85,8 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_par',
   '{ "distinct": "dp", "key": "a" }')
 $cmd$);
-                                                     run_explain_and_trim                                                     
-------------------------------------------------------------------------------------------------------------------------------
+                                          run_explain_and_trim                                           
+---------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text)))
    ->  Unique
@@ -99,10 +99,10 @@ $cmd$);
                      indexName: idx_a
                      indexKey: {"a": 1}
                      isMultiKey: false
-                     indexBounds: ["a": (MinKey, MaxKey)]
+                     indexBounds: ["a": [MinKey, MaxKey]]
                      ->  Index Only Scan using idx_a on documentdb_data.documents_24801 collection
                            Output: collection.document
-                           Index Cond: (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Index Cond: (collection.document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
                            Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (17 rows)
 
@@ -128,8 +128,8 @@ SET LOCAL documentdb.forceParallelScanIfAvailable TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_par',
   '{ "distinct": "dp", "key": "a" }');
-                                                          QUERY PLAN                                                          
-------------------------------------------------------------------------------------------------------------------------------
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text)))
    ->  Unique
@@ -141,7 +141,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('
                      Output: bson_distinct_unwind(collection.document, 'a'::text)
                      ->  Parallel Index Only Scan using idx_a on documentdb_data.documents_24801 collection
                            Output: collection.document
-                           Index Cond: (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Index Cond: (collection.document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
                            Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (13 rows)
 
@@ -160,8 +160,8 @@ SET LOCAL documentdb.enableCompositeParallelIndexScan TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_par',
   '{ "distinct": "dp", "key": "a" }');
-                                                          QUERY PLAN                                                          
-------------------------------------------------------------------------------------------------------------------------------
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text)))
    ->  Unique
@@ -173,7 +173,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('
                      Output: bson_distinct_unwind(collection.document, 'a'::text)
                      ->  Parallel Index Only Scan using idx_a on documentdb_data.documents_24801 collection
                            Output: collection.document
-                           Index Cond: (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Index Cond: (collection.document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
                            Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (13 rows)
 
@@ -194,8 +194,8 @@ SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_par',
   '{ "distinct": "dp", "key": "a" }');
-                                                             QUERY PLAN                                                             
-------------------------------------------------------------------------------------------------------------------------------------
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text)))
    ->  Unique
@@ -209,7 +209,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('
                            Output: collection.document
                            ->  Parallel Index Only Scan using idx_a on documentdb_data.documents_24801 collection
                                  Output: collection.document
-                                 Index Cond: (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                                 Index Cond: (collection.document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
                                  Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (15 rows)
 
@@ -229,8 +229,8 @@ SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_par',
   '{ "distinct": "dp", "key": "a" }');
-                                                             QUERY PLAN                                                             
-------------------------------------------------------------------------------------------------------------------------------------
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text)))
    ->  Unique
@@ -244,7 +244,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('
                            Output: collection.document
                            ->  Parallel Index Only Scan using idx_a on documentdb_data.documents_24801 collection
                                  Output: collection.document
-                                 Index Cond: (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                                 Index Cond: (collection.document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
                                  Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (15 rows)
 
@@ -284,9 +284,10 @@ $cmd$);
                      Workers Planned: 2
                      ->  ProjectSet
                            Output: bson_distinct_unwind(collection.document, 'a'::text)
-                           ->  Parallel Seq Scan on documentdb_data.documents_24801 collection
+                           ->  Parallel Index Scan using idx_a on documentdb_data.documents_24801 collection
                                  Output: collection.shard_key_value, collection.object_id, collection.document
-(14 rows)
+                                 Index Cond: (collection.document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+(15 rows)
 
 ROLLBACK;
 -- Correctness: distinct "a" values are exactly {1..10} regardless of the plan.

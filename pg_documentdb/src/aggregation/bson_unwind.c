@@ -35,8 +35,7 @@ extern int DistinctUnwindDefaultRows;
 
 /*
  * Feature flag gating whether the distinct-unwind support function derives its
- * row estimate from statistics of the unwound path. Defined in
- * feature_flag_configs.c.
+ * row estimate from statistics of the unwound path.
  */
 extern bool EnableDistinctUnwindRowsFromStatistics;
 

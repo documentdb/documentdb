@@ -103,6 +103,10 @@ bool EnableDataTableWithoutCreationTime =
 #define DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH true
 bool EnableCompositeUniqueHash = DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH;
 
+/* Left behind for testing compatibility with older shard document terms */
+#define DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT_TERMS true
+bool EnableCompositeShardDocumentTerms = DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT_TERMS;
+
 /* Left behind for long term testing of full correlated composite indexes */
 #define DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS_ON_COMMON_SUBPATH true
 bool EnableCompositeReducedCorrelatedTermsOnCommonSubPath =
@@ -148,6 +152,16 @@ bool EnableExplainScanNamespaceName = DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME
 
 #define DEFAULT_ENABLE_EXPLAIN_SCAN_SEQ_SCAN true
 bool EnableExplainScanSeqScan = DEFAULT_ENABLE_EXPLAIN_SCAN_SEQ_SCAN;
+
+#define DEFAULT_ENABLE_DISTINCT_UNWIND_ROWS_FROM_STATISTICS false
+bool EnableDistinctUnwindRowsFromStatistics =
+	DEFAULT_ENABLE_DISTINCT_UNWIND_ROWS_FROM_STATISTICS;
+
+#define DEFAULT_ENABLE_DYNAMIC_CURSOR_MULTIKEY_BITMAP false
+bool EnableDynamicCursorMultiKeyBitmap = DEFAULT_ENABLE_DYNAMIC_CURSOR_MULTIKEY_BITMAP;
+
+#define DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP false
+bool EnableContinuationFastBitmapLookup = DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP;
 
 /*
  * See create_indexes_background.c for the full description of each failure point value.
@@ -429,6 +443,14 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
+		psprintf("%s.enableCompositeShardDocumentTerms", newGucPrefix),
+		gettext_noop(
+			"Whether to enable shard hash term generation for composite indexes (specially for null handling)."),
+		NULL, &EnableCompositeShardDocumentTerms,
+		DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT_TERMS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
 		psprintf("%s.enableCompositeReducedCorrelatedTermsOnCommonSubPath",
 				 newGucPrefix),
 		gettext_noop(
@@ -525,6 +547,33 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 			"Whether to wrap sequential scans in extended explain output."),
 		NULL, &EnableExplainScanSeqScan,
 		DEFAULT_ENABLE_EXPLAIN_SCAN_SEQ_SCAN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_distinct_unwind_rows_from_statistics", newGucPrefix),
+		gettext_noop(
+			"Whether the distinct-unwind planner support function should derive its returned row estimate from column statistics of the unwound path. When off, the estimate defaults to the function's declared prorows."),
+		NULL, &EnableDistinctUnwindRowsFromStatistics,
+		DEFAULT_ENABLE_DISTINCT_UNWIND_ROWS_FROM_STATISTICS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_dynamic_cursor_multikey_bitmap", newGucPrefix),
+		gettext_noop(
+			"Whether or not dynamic cursors force a bitmap scan for multikey "
+			"indexes. Ordered index scans on multikey indexes can re-emit a "
+			"document across cursor batches, so a bitmap scan is used to "
+			"deduplicate by heap tuple."),
+		NULL, &EnableDynamicCursorMultiKeyBitmap,
+		DEFAULT_ENABLE_DYNAMIC_CURSOR_MULTIKEY_BITMAP,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableContinuationFastBitmapLookup", newGucPrefix),
+		gettext_noop(
+			"Whether to enable skipping bitmap records by tid without loading the heap to find the continuation point."),
+		NULL, &EnableContinuationFastBitmapLookup,
+		DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomIntVariable(

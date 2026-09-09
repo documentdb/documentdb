@@ -1174,7 +1174,7 @@ $cmd$),
   'documents_[0-9]+', 'documents_x', 'g');
 
 -- A different collation cannot reuse the strength-1 index ordering. With the
--- default-off distinct-exists filter enabled, the index may still scan
+-- distinct-exists filter enabled, the index may still scan
 -- MinKey-to-MaxKey to exclude missing values, but the Sort proves it does not
 -- supply distinct ordering.
 SET documentdb.enable_distinct_exists_filter_pushdown TO on;

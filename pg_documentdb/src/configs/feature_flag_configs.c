@@ -215,16 +215,6 @@ bool EnableGroupByMultiKeySortPushdown =
 bool EnableIndexCorrelationFromStatistics =
 	DEFAULT_ENABLE_INDEX_CORRELATION_FROM_STATISTICS;
 
-/* Added in v0.116, Pending stabilization, enable in v1.4 */
-#define DEFAULT_ENABLE_DISTINCT_UNWIND_ROWS_FROM_STATISTICS false
-bool EnableDistinctUnwindRowsFromStatistics =
-	DEFAULT_ENABLE_DISTINCT_UNWIND_ROWS_FROM_STATISTICS;
-
-/* Longer term feature flag to track older cluster data: Move to testing_configs when convenient */
-/* Added in v0.109, enabled in v0.109, remove after v999.999 */
-#define DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT_TERMS true
-bool EnableCompositeShardDocumentTerms = DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT_TERMS;
-
 /* Added in v0.111, enabled in v0.115, remove after v1.0 */
 #define DEFAULT_ENABLE_PER_COLLECTION_PLANNER_STATISTICS true
 bool EnablePerCollectionPlannerStatistics =
@@ -243,7 +233,7 @@ bool EnablePlannerStatisticsNewCollections =
 #define DEFAULT_ENABLE_EXTENDED_INDEXES false
 bool EnableExtendedIndexes = DEFAULT_ENABLE_EXTENDED_INDEXES;
 
-/* Added in v0.111, Pending stabilization, enable in v1.0 */
+/* Added in v0.111, Pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_COMPARABLE_TERMS false
 bool EnableComparableTerms = DEFAULT_ENABLE_COMPARABLE_TERMS;
 
@@ -256,7 +246,7 @@ bool EnableOrderByIndexTerm = DEFAULT_ENABLE_ORDER_BY_INDEX_TERM;
 bool EnableGroupByCompoundIdIndexPushdown =
 	DEFAULT_ENABLE_GROUP_BY_COMPOUND_ID_INDEX_PUSHDOWN;
 
-/* Added in v0.117, Pending stabilization, enable in v1.1 */
+/* Added in v0.117, Pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_SCALAR_AGGREGATE_INDEX_PUSHDOWN false
 bool EnableScalarAggregateIndexPushdown =
 	DEFAULT_ENABLE_SCALAR_AGGREGATE_INDEX_PUSHDOWN;
@@ -295,8 +285,8 @@ bool EnableHighKeyOptimization = DEFAULT_ENABLE_HIGH_KEY_OPTIMIZATION;
 #define DEFAULT_ENABLE_DISTINCT_INDEX_PUSHDOWN true
 bool EnableDistinctIndexPushdown = DEFAULT_ENABLE_DISTINCT_INDEX_PUSHDOWN;
 
-/* Added in v0.116, Pending stabilization, enable in v1.4 */
-#define DEFAULT_ENABLE_DISTINCT_EXISTS_FILTER_PUSHDOWN false
+/* Added in v0.116, enabled in v1.0, remove after v1.4 */
+#define DEFAULT_ENABLE_DISTINCT_EXISTS_FILTER_PUSHDOWN true
 bool EnableDistinctExistsFilterPushdown =
 	DEFAULT_ENABLE_DISTINCT_EXISTS_FILTER_PUSHDOWN;
 
@@ -351,13 +341,6 @@ bool EnableDynamicCursorFastStartupScan = DEFAULT_ENABLE_DYNAMIC_CURSOR_FAST_STA
 /* Added in v0.115, enabled in v0.115, remove after v0.117 */
 #define DEFAULT_ENABLE_DYNAMIC_CURSOR_PARALLEL_PLANS true
 bool EnableDynamicCursorParallelPlans = DEFAULT_ENABLE_DYNAMIC_CURSOR_PARALLEL_PLANS;
-
-/* Ordered multikey scans deduplicate by carrying the dedup state forward in the
- * continuation, so the bitmap-scan safeguard is opt-in (used mainly by tests). */
-
-/* Added in v0.116, Pending stabilization, enable in v1.2 */
-#define DEFAULT_ENABLE_DYNAMIC_CURSOR_MULTIKEY_BITMAP false
-bool EnableDynamicCursorMultiKeyBitmap = DEFAULT_ENABLE_DYNAMIC_CURSOR_MULTIKEY_BITMAP;
 
 /* Tracks deduplication state for ordered multikey index scans and carries it
  * forward in the continuation so each document is returned at most once across
@@ -417,10 +400,6 @@ bool EnableAdminDatabaseQueries = DEFAULT_ENABLE_ADMIN_DATABASE_QUERIES;
 #define DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN true
 bool EnablePrimaryKeyCursorScan = DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN;
 
-/* Added in v0.110, Pending stabilization, enable in v1.1 */
-#define DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP false
-bool EnableContinuationFastBitmapLookup = DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP;
-
 /* Added in v0.108, Pending stabilization, enable in v1.3 */
 #define DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS false
 bool UseFileBasedPersistedCursors = DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS;
@@ -437,10 +416,6 @@ bool EnableRumCursorDynamicIndexScans = DEFAULT_ENABLE_RUM_CURSOR_DYNAMIC_INDEX_
 #define DEFAULT_ENABLE_RUM_DYNAMIC_INDEX_SCANS_SKIP_TO_TID true
 bool EnableRumDynamicIndexScansSkipToTid =
 	DEFAULT_ENABLE_RUM_DYNAMIC_INDEX_SCANS_SKIP_TO_TID;
-
-/* Added in v0.110, enabled in v0.110, unknown stabilization removal time */
-#define DEFAULT_REMOVE_MATCH_NAMESPACE_FILTERS true
-bool RemoveMatchNamespaceFilters = DEFAULT_REMOVE_MATCH_NAMESPACE_FILTERS;
 
 /* Added in v0.115, enabled in v0.115, remove after v0.117 */
 #define DEFAULT_ENABLE_TAILABLE_CURSOR_MAX_AWAIT_TIME true
@@ -617,6 +592,10 @@ bool EnableCommutativeDeleteMany =
 /*
  * SECTION: Changestream feature flags
  */
+
+/* Added in v0.110, enabled in v0.110, unknown stabilization removal time */
+#define DEFAULT_REMOVE_MATCH_NAMESPACE_FILTERS true
+bool RemoveMatchNamespaceFilters = DEFAULT_REMOVE_MATCH_NAMESPACE_FILTERS;
 
 /* Added in v0.112, Pending stabilization, enable in v1.2 */
 #define DEFAULT_ENABLE_PREIMAGES false
@@ -841,17 +820,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether or not to allow parallel plans for dynamic cursors."),
 		NULL, &EnableDynamicCursorParallelPlans,
 		DEFAULT_ENABLE_DYNAMIC_CURSOR_PARALLEL_PLANS,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enable_dynamic_cursor_multikey_bitmap", newGucPrefix),
-		gettext_noop(
-			"Whether or not dynamic cursors force a bitmap scan for multikey "
-			"indexes. Ordered index scans on multikey indexes can re-emit a "
-			"document across cursor batches, so a bitmap scan is used to "
-			"deduplicate by heap tuple."),
-		NULL, &EnableDynamicCursorMultiKeyBitmap,
-		DEFAULT_ENABLE_DYNAMIC_CURSOR_MULTIKEY_BITMAP,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -1326,23 +1294,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enable_distinct_unwind_rows_from_statistics", newGucPrefix),
-		gettext_noop(
-			"Whether the distinct-unwind planner support function should derive its returned row estimate from column statistics of the unwound path. When off, the estimate defaults to the function's declared prorows."),
-		NULL, &EnableDistinctUnwindRowsFromStatistics,
-		DEFAULT_ENABLE_DISTINCT_UNWIND_ROWS_FROM_STATISTICS,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableCompositeShardDocumentTerms", newGucPrefix),
-		gettext_noop(
-			"Whether to enable shard hash term generation for composite indexes (specially for null handling)."),
-		NULL, &EnableCompositeShardDocumentTerms,
-		DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT_TERMS,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enableExtendedIndexes", newGucPrefix),
 		gettext_noop(
 			"Whether to enable extended indexes feature."),
@@ -1410,22 +1361,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.removeMatchNamespaceFilters", newGucPrefix),
-		gettext_noop(
-			"Determines whether to remove $match aggregation stage filters on namespace when inlined with $changestreams"),
-		NULL, &RemoveMatchNamespaceFilters,
-		DEFAULT_REMOVE_MATCH_NAMESPACE_FILTERS,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableContinuationFastBitmapLookup", newGucPrefix),
-		gettext_noop(
-			"Whether to enable skipping bitmap records by tid without loading the heap to find the continuation point."),
-		NULL, &EnableContinuationFastBitmapLookup,
-		DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.emitEnableOrderedIndexFalseInResponse", newGucPrefix),
 		gettext_noop(
 			"When enabled, list index responses include \"enableOrderedIndex\": false "
@@ -1457,6 +1392,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable changestream preimages with the entire row logged in the WAL messages."),
 		NULL, &EnablePreImages,
 		DEFAULT_ENABLE_PREIMAGES,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.removeMatchNamespaceFilters", newGucPrefix),
+		gettext_noop(
+			"Determines whether to remove $match aggregation stage filters on namespace when inlined with $changestreams"),
+		NULL, &RemoveMatchNamespaceFilters,
+		DEFAULT_REMOVE_MATCH_NAMESPACE_FILTERS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

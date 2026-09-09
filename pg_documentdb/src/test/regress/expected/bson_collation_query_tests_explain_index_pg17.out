@@ -4392,8 +4392,8 @@ SELECT document FROM bson_aggregation_distinct(
   'coll_q_db',
   '{ "distinct": "coll_distinct_explain", "key": "a", "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                         run_explain_and_trim                                                          
----------------------------------------------------------------------------------------------------------------------------------------
+                                               run_explain_and_trim                                               
+------------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level1'::text)))
    ->  Unique
@@ -4406,11 +4406,15 @@ $cmd$);
                      ->  Custom Scan (DocumentDBApiExplainQueryScan)
                            Output: collection.document
                            namespaceName: coll_q_db.coll_distinct_explain
-                           indexName: _id_
-                           ->  Index Scan using _id_ on documentdb_data.documents_8819 collection
+                           indexName: idx_a_en_s1
+                           indexKey: {"a": 1}
+                           indexCollation: en-u-ks-level1
+                           isMultiKey: false
+                           indexBounds: ["a": [MinKey, MaxKey]]
+                           ->  Index Scan using idx_a_en_s1 on documentdb_data.documents_8819 collection
                                  Output: collection.document
-                                 Index Cond: (collection.shard_key_value = '8819'::bigint)
-(16 rows)
+                                 Index Cond: (collection.document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+(20 rows)
 
 -- A matching collated predicate uses the collated index for its bounds, but
 -- that index cannot supply distinct ordering without documentdb_extended_rum,
@@ -4423,8 +4427,8 @@ SELECT document FROM bson_aggregation_distinct(
   '{ "distinct": "coll_distinct_explain", "key": "a", "query": { "a": { "$gte": "cafe" } }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$),
   'documents_[0-9]+', 'documents_x', 'g');
-                                                            regexp_replace                                                             
----------------------------------------------------------------------------------------------------------------------------------------
+                                                                                           regexp_replace                                                                                           
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level1'::text)))
    ->  Unique
@@ -4444,11 +4448,11 @@ $cmd$),
                            indexBounds: ["a": ["cafe", { })]
                            ->  Index Scan using idx_a_en_s1 on documentdb_data.documents_x collection
                                  Output: collection.document
-                                 Index Cond: (collection.document @>= '{ "a" : "cafe", "collation" : "en-u-ks-level1" }'::bson)
+                                 Index Cond: ((collection.document @>= '{ "a" : "cafe", "collation" : "en-u-ks-level1" }'::bson) AND (collection.document @>= '{ "a" : { "$minKey" : 1 } }'::bson))
 (20 rows)
 
 -- A different collation cannot reuse the strength-1 index ordering. With the
--- default-off distinct-exists filter enabled, the index may still scan
+-- distinct-exists filter enabled, the index may still scan
 -- MinKey-to-MaxKey to exclude missing values, but the Sort proves it does not
 -- supply distinct ordering.
 SET documentdb.enable_distinct_exists_filter_pushdown TO on;
@@ -4460,8 +4464,8 @@ SELECT document FROM bson_aggregation_distinct(
   '{ "distinct": "coll_distinct_explain", "key": "a", "collation": { "locale": "en", "strength": 2 } }')
 $cmd$),
   'documents_[0-9]+', 'documents_x', 'g');
-                                                            regexp_replace                                                             
----------------------------------------------------------------------------------------------------------------------------------------
+                                                  regexp_replace                                                  
+------------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text, 'en-u-ks-level2'::text)))
    ->  Unique

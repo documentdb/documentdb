@@ -129,7 +129,7 @@ SELECT document FROM bson_aggregation_distinct(
   'coll_q_runtime_dist_explain_db',
   '{ "distinct": "coll_distinct_d", "key": "a", "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                             
+                                                                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                                                                   
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
@@ -144,7 +144,7 @@ $cmd$);
                            Task Count: 8
                            Tasks Shown: One of 8
                            ->  Task
-                                 Query: SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text, 'en-u-ks-level1'::text) AS document FROM documentdb_data.documents_95682_95680014 collection WHERE documentdb_api_internal.bson_dollar_fullscan(document, '{ "a" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+                                 Query: SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text, 'en-u-ks-level1'::text) AS document FROM documentdb_data.documents_95682_95680014 collection WHERE (documentdb_api_internal.bson_dollar_fullscan(document, '{ "a" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_distinct_exists(document, '{ "a" : true }'::documentdb_core.bson))
                                  Node: host=localhost port=58070 dbname=regression
                                  ->  Unique
                                        Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text, 'en-u-ks-level1'::text))
@@ -180,7 +180,7 @@ SELECT document FROM bson_aggregation_distinct(
   'coll_q_runtime_dist_explain_db',
   '{ "distinct": "coll_distinct_d", "key": "n.a", "query": { "a": "CAFE" }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                                                                                                                                                run_explain_and_trim                                                                                                                                                                                                                                                
+                                                                                                                                                                                                                                                                                                      run_explain_and_trim                                                                                                                                                                                                                                                                                                      
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
@@ -195,7 +195,7 @@ $cmd$);
                            Task Count: 8
                            Tasks Shown: One of 8
                            ->  Task
-                                 Query: SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(document, 'n.a'::text, 'en-u-ks-level1'::text) AS document FROM documentdb_data.documents_95682_95680014 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "a" : "CAFE", "collation" : "en-u-ks-level1" }'::documentdb_core.bsonquery) AND documentdb_api_internal.bson_dollar_fullscan(document, '{ "n.a" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson))
+                                 Query: SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(document, 'n.a'::text, 'en-u-ks-level1'::text) AS document FROM documentdb_data.documents_95682_95680014 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "a" : "CAFE", "collation" : "en-u-ks-level1" }'::documentdb_core.bsonquery) AND documentdb_api_internal.bson_dollar_fullscan(document, '{ "n.a" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_distinct_exists(document, '{ "n.a" : true }'::documentdb_core.bson))
                                  Node: host=localhost port=58070 dbname=regression
                                  ->  Unique
                                        Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'n.a'::text, 'en-u-ks-level1'::text))
@@ -232,7 +232,7 @@ SELECT document FROM bson_aggregation_distinct(
   'coll_q_runtime_dist_explain_db',
   '{ "distinct": "coll_distinct_d", "key": "arr", "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                                                                              run_explain_and_trim                                                                                                                                                                               
+                                                                                                                                                                                                                                     run_explain_and_trim                                                                                                                                                                                                                                      
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
@@ -247,7 +247,7 @@ $cmd$);
                            Task Count: 8
                            Tasks Shown: One of 8
                            ->  Task
-                                 Query: SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(document, 'arr'::text, 'en-u-ks-level1'::text) AS document FROM documentdb_data.documents_95682_95680014 collection WHERE documentdb_api_internal.bson_dollar_fullscan(document, '{ "arr" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+                                 Query: SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(document, 'arr'::text, 'en-u-ks-level1'::text) AS document FROM documentdb_data.documents_95682_95680014 collection WHERE (documentdb_api_internal.bson_dollar_fullscan(document, '{ "arr" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_distinct_exists(document, '{ "arr" : true }'::documentdb_core.bson))
                                  Node: host=localhost port=58070 dbname=regression
                                  ->  Unique
                                        Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'arr'::text, 'en-u-ks-level1'::text))

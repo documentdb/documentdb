@@ -270,8 +270,8 @@ SET documentdb.enableDistinctCustomScan TO off;
 -- Verify distinct plan uses parallel scan on RUM index
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_distinct('pord_db',
     '{ "distinct": "ordered_scan", "key": "createdAt" }');
-                                                           QUERY PLAN                                                            
----------------------------------------------------------------------------------------------------------------------------------
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
  Aggregate
    ->  Unique
          ->  Gather Merge
@@ -282,9 +282,9 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_distinct('pord_db',
                            indexName: createdAt_1
                            indexKey: {"createdAt": 1}
                            isMultiKey: false
-                           indexBounds: ["createdAt": (MinKey, MaxKey)]
+                           indexBounds: ["createdAt": [MinKey, MaxKey]]
                            ->  Parallel Index Only Scan using "createdAt_1" on documents_20101 collection
-                                 Index Cond: (document @<> '{ "createdAt" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                                 Index Cond: (document @>= '{ "createdAt" : { "$minKey" : 1 } }'::bson)
                                  Order By: (document |-<> '{ "createdAt" : { "$numberInt" : "1" } }'::bson)
 (14 rows)
 
@@ -299,8 +299,8 @@ SELECT document FROM bson_aggregation_distinct('pord_db',
 -- Distinct with filter: only years 2017-2019 (3 distinct values)
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_distinct('pord_db',
     '{ "distinct": "ordered_scan", "key": "createdAt", "query": { "createdAt": { "$gte": { "$date": "2017-01-01T00:00:00Z" }, "$lt": { "$date": "2020-01-01T00:00:00Z" } } } }');
-                                                                                                               QUERY PLAN                                                                                                               
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                              QUERY PLAN                                                                                                                                               
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate
    ->  Unique
          ->  Gather Merge
@@ -313,7 +313,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_distinct('pord_db',
                            isMultiKey: false
                            indexBounds: ["createdAt": [{ "$date" : "2017-01-01T00:00:00Z" }, { "$date" : "2020-01-01T00:00:00Z" })]
                            ->  Parallel Index Only Scan using "createdAt_1" on documents_20101 collection
-                                 Index Cond: ((document @>= '{ "createdAt" : { "$date" : { "$numberLong" : "1483228800000" } } }'::bson) AND (document @< '{ "createdAt" : { "$date" : { "$numberLong" : "1577836800000" } } }'::bson))
+                                 Index Cond: ((document @>= '{ "createdAt" : { "$date" : { "$numberLong" : "1483228800000" } } }'::bson) AND (document @< '{ "createdAt" : { "$date" : { "$numberLong" : "1577836800000" } } }'::bson) AND (document @>= '{ "createdAt" : { "$minKey" : 1 } }'::bson))
                                  Order By: (document |-<> '{ "createdAt" : { "$numberInt" : "1" } }'::bson)
 (14 rows)
 
@@ -340,8 +340,8 @@ ANALYZE documentdb_data.documents_20101
 -- Verify custom distinct plan with parallel scan
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_distinct('pord_db',
     '{ "distinct": "ordered_scan", "key": "createdAt" }');
-                                                              QUERY PLAN                                                               
----------------------------------------------------------------------------------------------------------------------------------------
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
  Aggregate
    ->  Unique
          ->  Gather Merge
@@ -352,10 +352,10 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_distinct('pord_db',
                            indexName: createdAt_1
                            indexKey: {"createdAt": 1}
                            isMultiKey: false
-                           indexBounds: ["createdAt": (MinKey, MaxKey)]
+                           indexBounds: ["createdAt": [MinKey, MaxKey]]
                            ->  Parallel Custom Scan (DocumentDBApiDistinctQueryScan)
                                  ->  Parallel Index Only Scan using "createdAt_1" on documents_20101 collection
-                                       Index Cond: (document @<> '{ "createdAt" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                                       Index Cond: (document @>= '{ "createdAt" : { "$minKey" : 1 } }'::bson)
                                        Order By: (document |-<> '{ "createdAt" : { "$numberInt" : "1" } }'::bson)
 (15 rows)
 
@@ -370,8 +370,8 @@ SELECT document FROM bson_aggregation_distinct('pord_db',
 -- Custom distinct with filter: only years 2017-2019 (3 distinct values)
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_distinct('pord_db',
     '{ "distinct": "ordered_scan", "key": "createdAt", "query": { "createdAt": { "$gte": { "$date": "2017-01-01T00:00:00Z" }, "$lt": { "$date": "2020-01-01T00:00:00Z" } } } }');
-                                                                                                                  QUERY PLAN                                                                                                                  
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                 QUERY PLAN                                                                                                                                                  
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate
    ->  Unique
          ->  Gather Merge
@@ -385,7 +385,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_distinct('pord_db',
                            indexBounds: ["createdAt": [{ "$date" : "2017-01-01T00:00:00Z" }, { "$date" : "2020-01-01T00:00:00Z" })]
                            ->  Parallel Custom Scan (DocumentDBApiDistinctQueryScan)
                                  ->  Parallel Index Only Scan using "createdAt_1" on documents_20101 collection
-                                       Index Cond: ((document @>= '{ "createdAt" : { "$date" : { "$numberLong" : "1483228800000" } } }'::bson) AND (document @< '{ "createdAt" : { "$date" : { "$numberLong" : "1577836800000" } } }'::bson))
+                                       Index Cond: ((document @>= '{ "createdAt" : { "$date" : { "$numberLong" : "1483228800000" } } }'::bson) AND (document @< '{ "createdAt" : { "$date" : { "$numberLong" : "1577836800000" } } }'::bson) AND (document @>= '{ "createdAt" : { "$minKey" : 1 } }'::bson))
                                        Order By: (document |-<> '{ "createdAt" : { "$numberInt" : "1" } }'::bson)
 (15 rows)
 

@@ -61,8 +61,8 @@ SET LOCAL documentdb.enableDistinctCustomScan TO off;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                           run_explain_and_trim                                                            
--------------------------------------------------------------------------------------------------------------------------------------------
+                                              run_explain_and_trim                                               
+-----------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text)))
    ->  Unique
@@ -71,7 +71,7 @@ $cmd$);
                Output: bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text)
                ->  Index Scan using idx_value_en_s1 on documentdb_data.documents_20200 collection
                      Output: collection.shard_key_value, collection.object_id, collection.document
-                     Index Cond: (collection.document @<> '{ "value" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                     Index Cond: (collection.document @>= '{ "value" : { "$minKey" : 1 } }'::bson)
                      Order By: (collection.document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
 (10 rows)
 
@@ -86,8 +86,8 @@ SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
 $cmd$, p_ignore_heap_fetches => true);
-                                                           run_explain_and_trim                                                            
--------------------------------------------------------------------------------------------------------------------------------------------
+                                                      run_explain_and_trim                                                      
+--------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text)))
    ->  Unique (actual rows=2 loops=1)
@@ -98,7 +98,7 @@ $cmd$, p_ignore_heap_fetches => true);
                      Output: collection.document
                      ->  Index Scan using idx_value_en_s1 on documentdb_data.documents_20200 collection (actual rows=2 loops=1)
                            Output: collection.document
-                           Index Cond: (collection.document @<> '{ "value" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Index Cond: (collection.document @>= '{ "value" : { "$minKey" : 1 } }'::bson)
                            Order By: (collection.document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
 (12 rows)
 
@@ -122,8 +122,8 @@ SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 2 } }')
 $cmd$);
-                                                           run_explain_and_trim                                                            
--------------------------------------------------------------------------------------------------------------------------------------------
+                                                 run_explain_and_trim                                                 
+----------------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level2'::text)))
    ->  Unique
@@ -133,9 +133,9 @@ $cmd$);
                Sort Key: (bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level2'::text)) USING <<<
                ->  ProjectSet
                      Output: bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level2'::text)
-                     ->  Index Scan using _id_ on documentdb_data.documents_20200 collection
+                     ->  Index Scan using idx_value_en_s1 on documentdb_data.documents_20200 collection
                            Output: collection.shard_key_value, collection.object_id, collection.document
-                           Index Cond: (collection.shard_key_value = '20200'::bigint)
+                           Index Cond: (collection.document @>= '{ "value" : { "$minKey" : 1 } }'::bson)
 (12 rows)
 
 WITH result AS (
@@ -169,9 +169,9 @@ $cmd$);
                Sort Key: (bson_distinct_unwind(collection.document, 'value'::text))
                ->  ProjectSet
                      Output: bson_distinct_unwind(collection.document, 'value'::text)
-                     ->  Index Scan using _id_ on documentdb_data.documents_20200 collection
+                     ->  Index Scan using idx_value_en_s1 on documentdb_data.documents_20200 collection
                            Output: collection.shard_key_value, collection.object_id, collection.document
-                           Index Cond: (collection.shard_key_value = '20200'::bigint)
+                           Index Cond: (collection.document @>= '{ "value" : { "$minKey" : 1 } }'::bson)
 (12 rows)
 
 WITH result AS (
@@ -195,8 +195,8 @@ SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO off;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                           run_explain_and_trim                                                            
--------------------------------------------------------------------------------------------------------------------------------------------
+                                                 run_explain_and_trim                                                 
+----------------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text)))
    ->  Unique
@@ -279,13 +279,13 @@ $cmd$, p_ignore_heap_fetches => true);
                      indexCollation: en-u-ks-level1
                      isMultiKey: false
                      hasTruncation: true
-                     indexBounds: ["value": (MinKey, MaxKey)]
+                     indexBounds: ["value": [MinKey, MaxKey]]
                      innerScanLoops: 1 loops
                      scanType: ordered
                      scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
                      ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
                            ->  Index Scan using idx_value_en_s1_truncated on documents_20201 collection (actual rows=3 loops=1)
-                                 Index Cond: (document @<> '{ "value" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                                 Index Cond: (document @>= '{ "value" : { "$minKey" : 1 } }'::bson)
                                  Order By: (document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
 (18 rows)
 
@@ -360,8 +360,8 @@ $cmd$, p_ignore_heap_fetches => true);
                Sort Key: (bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text)) USING <<<
                Sort Method: quicksort  Memory: xxxkB
                ->  ProjectSet (actual rows=9 loops=1)
-                     ->  Index Scan using _id_ on documents_20202 collection (actual rows=4 loops=1)
-                           Index Cond: (shard_key_value = '20202'::bigint)
+                     ->  Index Scan using idx_value_en_s1_array on documents_20202 collection (actual rows=4 loops=1)
+                           Index Cond: (document @>= '{ "value" : { "$minKey" : 1 } }'::bson)
 (8 rows)
 
 WITH result AS (
@@ -383,8 +383,8 @@ SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                           run_explain_and_trim                                                            
--------------------------------------------------------------------------------------------------------------------------------------------
+                                                 run_explain_and_trim                                                 
+----------------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text)))
    ->  Unique
@@ -394,9 +394,9 @@ $cmd$);
                Sort Key: (bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text)) USING <<<
                ->  ProjectSet
                      Output: bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text)
-                     ->  Index Scan using _id_ on documentdb_data.documents_20200 collection
+                     ->  Index Scan using idx_value_en_s1 on documentdb_data.documents_20200 collection
                            Output: collection.shard_key_value, collection.object_id, collection.document
-                           Index Cond: (collection.shard_key_value = '20200'::bigint)
+                           Index Cond: (collection.document @>= '{ "value" : { "$minKey" : 1 } }'::bson)
 (12 rows)
 
 ROLLBACK;
@@ -445,14 +445,14 @@ SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_nested", "key": "nested.value", "collation": { "locale": "en", "strength": 1 } }')
 $cmd$, p_ignore_heap_fetches => true);
-                                                     run_explain_and_trim                                                     
-------------------------------------------------------------------------------------------------------------------------------
+                                                 run_explain_and_trim                                                  
+-----------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Unique (actual rows=2 loops=1)
          ->  ProjectSet (actual rows=2 loops=1)
                ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=2 loops=1)
                      ->  Index Scan using idx_nested_value_en_s1 on documents_20203 collection (actual rows=2 loops=1)
-                           Index Cond: (document @<> '{ "nested.value" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Index Cond: (document @>= '{ "nested.value" : { "$minKey" : 1 } }'::bson)
                            Order By: (document |-<> '{ "nested.value" : { "$numberInt" : "1" } }'::bson)
 (7 rows)
 
@@ -486,14 +486,14 @@ SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "query": { "value": { "$gte": "cafe" } }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$, p_ignore_heap_fetches => true);
-                                               run_explain_and_trim                                                
--------------------------------------------------------------------------------------------------------------------
+                                                                              run_explain_and_trim                                                                              
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Unique (actual rows=2 loops=1)
          ->  ProjectSet (actual rows=2 loops=1)
                ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=2 loops=1)
                      ->  Index Scan using idx_value_en_s1 on documents_20200 collection (actual rows=2 loops=1)
-                           Index Cond: (document @>= '{ "value" : "cafe", "collation" : "en-u-ks-level1" }'::bson)
+                           Index Cond: ((document @>= '{ "value" : "cafe", "collation" : "en-u-ks-level1" }'::bson) AND (document @>= '{ "value" : { "$minKey" : 1 } }'::bson))
                            Order By: (document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
 (7 rows)
 
@@ -529,14 +529,14 @@ SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
 $cmd$, p_ignore_heap_fetches => true);
-                                                 run_explain_and_trim                                                  
------------------------------------------------------------------------------------------------------------------------
+                                              run_explain_and_trim                                              
+----------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Unique (actual rows=2 loops=1)
          ->  ProjectSet (actual rows=2 loops=1)
                ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=2 loops=1)
                      ->  Index Scan using idx_value_en_s1 on documents_20200 collection (actual rows=2 loops=1)
-                           Index Cond: (document @<> '{ "value" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Index Cond: (document @>= '{ "value" : { "$minKey" : 1 } }'::bson)
                            Order By: (document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
 (7 rows)
 
@@ -593,14 +593,14 @@ SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_mixed", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
 $cmd$, p_ignore_heap_fetches => true);
-                                                 run_explain_and_trim                                                  
------------------------------------------------------------------------------------------------------------------------
+                                                 run_explain_and_trim                                                 
+----------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Unique (actual rows=3 loops=1)
          ->  ProjectSet (actual rows=3 loops=1)
-               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=4 loops=1)
-                     ->  Index Scan using idx_value_en_s1_mixed on documents_20204 collection (actual rows=4 loops=1)
-                           Index Cond: (document @<> '{ "value" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
+                     ->  Index Scan using idx_value_en_s1_mixed on documents_20204 collection (actual rows=3 loops=1)
+                           Index Cond: (document @>= '{ "value" : { "$minKey" : 1 } }'::bson)
                            Order By: (document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
 (7 rows)
 
@@ -635,8 +635,8 @@ SET LOCAL documentdb.enable_distinct_exists_filter_pushdown TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 2 } }')
 $cmd$);
-                                                           run_explain_and_trim                                                            
--------------------------------------------------------------------------------------------------------------------------------------------
+                                                 run_explain_and_trim                                                 
+----------------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level2'::text)))
    ->  Unique
@@ -681,28 +681,28 @@ SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
 $cmd$, p_ignore_heap_fetches => true);
-                                                 run_explain_and_trim                                                  
------------------------------------------------------------------------------------------------------------------------
+                                              run_explain_and_trim                                              
+----------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Unique (actual rows=2 loops=1)
          ->  ProjectSet (actual rows=2 loops=1)
                ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=2 loops=1)
                      ->  Index Scan using idx_value_en_s1 on documents_20200 collection (actual rows=2 loops=1)
-                           Index Cond: (document @<> '{ "value" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Index Cond: (document @>= '{ "value" : { "$minKey" : 1 } }'::bson)
                            Order By: (document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
 (7 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 2 } }')
 $cmd$, p_ignore_heap_fetches => true);
-                                                 run_explain_and_trim                                                  
------------------------------------------------------------------------------------------------------------------------
+                                              run_explain_and_trim                                              
+----------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Unique (actual rows=3 loops=1)
          ->  ProjectSet (actual rows=3 loops=1)
                ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
                      ->  Index Scan using idx_value_en_s2 on documents_20200 collection (actual rows=3 loops=1)
-                           Index Cond: (document @<> '{ "value" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Index Cond: (document @>= '{ "value" : { "$minKey" : 1 } }'::bson)
                            Order By: (document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
 (7 rows)
 
@@ -769,14 +769,14 @@ SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_compound", "key": "value", "query": { "category": "group" }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$, p_ignore_heap_fetches => true);
-                                                  run_explain_and_trim                                                   
--------------------------------------------------------------------------------------------------------------------------
+                                                                               run_explain_and_trim                                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Unique (actual rows=2 loops=1)
          ->  ProjectSet (actual rows=2 loops=1)
                ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=2 loops=1)
                      ->  Index Scan using idx_category_value_en_s1 on documents_20205 collection (actual rows=2 loops=1)
-                           Index Cond: (document @= '{ "category" : "group", "collation" : "en-u-ks-level1" }'::bson)
+                           Index Cond: ((document @= '{ "category" : "group", "collation" : "en-u-ks-level1" }'::bson) AND (document @>= '{ "value" : { "$minKey" : 1 } }'::bson))
                            Order By: (document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
 (7 rows)
 
@@ -858,14 +858,14 @@ SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_response", "key": "value", "collation": { "locale": "fr", "strength": 2 } }')
 $cmd$, p_ignore_heap_fetches => true);
-                                                 run_explain_and_trim                                                  
------------------------------------------------------------------------------------------------------------------------
+                                              run_explain_and_trim                                              
+----------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Unique (actual rows=3 loops=1)
          ->  ProjectSet (actual rows=3 loops=1)
                ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
                      ->  Index Scan using idx_value_fr_s2 on documents_20206 collection (actual rows=3 loops=1)
-                           Index Cond: (document @<> '{ "value" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Index Cond: (document @>= '{ "value" : { "$minKey" : 1 } }'::bson)
                            Order By: (document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
 (7 rows)
 
@@ -897,14 +897,14 @@ SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_response", "key": "nested.value", "collation": { "locale": "fr", "strength": 2 } }')
 $cmd$, p_ignore_heap_fetches => true);
-                                                     run_explain_and_trim                                                     
-------------------------------------------------------------------------------------------------------------------------------
+                                                 run_explain_and_trim                                                  
+-----------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Unique (actual rows=3 loops=1)
          ->  ProjectSet (actual rows=3 loops=1)
                ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
                      ->  Index Scan using idx_nested_value_fr_s2 on documents_20206 collection (actual rows=3 loops=1)
-                           Index Cond: (document @<> '{ "nested.value" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Index Cond: (document @>= '{ "nested.value" : { "$minKey" : 1 } }'::bson)
                            Order By: (document |-<> '{ "nested.value" : { "$numberInt" : "1" } }'::bson)
 (7 rows)
 
@@ -934,7 +934,7 @@ $cmd$, p_ignore_heap_fetches => true);
          ->  ProjectSet (actual rows=3 loops=1)
                ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
                      ->  Index Scan using idx_numeric_en_s1_numeric on documents_20206 collection (actual rows=3 loops=1)
-                           Index Cond: (document @<> '{ "numeric" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Index Cond: (document @>= '{ "numeric" : { "$minKey" : 1 } }'::bson)
                            Order By: (document |-<> '{ "numeric" : { "$numberInt" : "1" } }'::bson)
 (7 rows)
 
@@ -1010,14 +1010,14 @@ SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_response_compound", "key": "value", "query": { "category": "group" }, "collation": { "locale": "fr", "strength": 2 } }')
 $cmd$, p_ignore_heap_fetches => true);
-                                                  run_explain_and_trim                                                   
--------------------------------------------------------------------------------------------------------------------------
+                                                                               run_explain_and_trim                                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Unique (actual rows=3 loops=1)
          ->  ProjectSet (actual rows=3 loops=1)
                ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
                      ->  Index Scan using idx_category_value_fr_s2 on documents_20207 collection (actual rows=3 loops=1)
-                           Index Cond: (document @= '{ "category" : "group", "collation" : "fr-u-ks-level2" }'::bson)
+                           Index Cond: ((document @= '{ "category" : "group", "collation" : "fr-u-ks-level2" }'::bson) AND (document @>= '{ "value" : { "$minKey" : 1 } }'::bson))
                            Order By: (document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
 (7 rows)
 
@@ -1066,8 +1066,8 @@ SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_id", "key": "_id", "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                          run_explain_and_trim                                                           
------------------------------------------------------------------------------------------------------------------------------------------
+                                                run_explain_and_trim                                                
+--------------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, '_id'::text, 'en-u-ks-level1'::text)))
    ->  Unique

@@ -77,8 +77,8 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
 SELECT document FROM bson_aggregation_distinct('dtk_db', '{ "distinct": "dloop", "key": "a", "query": {}, "hint": { "a": 1 } }')
 $cmd$, p_ignore_heap_fetches := true);
-                                                        run_explain_and_trim                                                        
-------------------------------------------------------------------------------------------------------------------------------------
+                                                       run_explain_and_trim                                                       
+----------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text)))
    ->  Unique (actual rows=10 loops=1)
@@ -91,7 +91,7 @@ $cmd$, p_ignore_heap_fetches := true);
                      indexName: idx_a
                      indexKey: {"a": 1}
                      isMultiKey: false
-                     indexBounds: ["a": (MinKey, MaxKey)]
+                     indexBounds: ["a": [MinKey, MaxKey]]
                      innerScanLoops: 10 loops
                      scanType: ordered
                      scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 10000)]
@@ -99,7 +99,7 @@ $cmd$, p_ignore_heap_fetches := true);
                            Output: collection.document
                            ->  Index Only Scan using idx_a on documentdb_data.documents_39901 collection (actual rows=10 loops=1)
                                  Output: collection.document
-                                 Index Cond: (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                                 Index Cond: (collection.document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
                                  Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
                                  Heap Fetches: xxx
 (23 rows)
@@ -146,7 +146,7 @@ $cmd$, p_ignore_heap_fetches := true);
                      indexName: idx_a_id
                      indexKey: {"a": 1,"_id": 1}
                      isMultiKey: false
-                     indexBounds: ["a": (MinKey, MaxKey), "_id": (5, 5000)]
+                     indexBounds: ["a": [MinKey, MaxKey], "_id": (5, 5000)]
                      innerScanLoops: 15 loops
                      scanType: ordered
                      scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
@@ -154,7 +154,7 @@ $cmd$, p_ignore_heap_fetches := true);
                            Output: collection.document
                            ->  Index Scan using idx_a_id on documentdb_data.documents_39901 collection (actual rows=10 loops=1)
                                  Output: collection.document
-                                 Index Cond: ((collection.document @> '{ "_id" : { "$numberInt" : "5" } }'::bson) AND (collection.document @< '{ "_id" : { "$numberInt" : "5000" } }'::bson) AND (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+                                 Index Cond: ((collection.document @> '{ "_id" : { "$numberInt" : "5" } }'::bson) AND (collection.document @< '{ "_id" : { "$numberInt" : "5000" } }'::bson) AND (collection.document @>= '{ "a" : { "$minKey" : 1 } }'::bson))
                                  Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
                                  Filter: ((collection.object_id > '{ "" : { "$numberInt" : "5" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "5000" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
 (23 rows)
@@ -205,8 +205,8 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
 SELECT document FROM bson_aggregation_distinct('dtk_db', '{ "distinct": "dloopbac", "key": "a", "query": { "b": 1, "c": { "$gt": 5 } }, "hint": { "b": 1, "a": 1, "c": 1 } }')
 $cmd$, p_ignore_heap_fetches := true);
-                                                                                 run_explain_and_trim                                                                                  
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                  run_explain_and_trim                                                                                                                   
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text)))
    ->  Unique (actual rows=10 loops=1)
@@ -219,7 +219,7 @@ $cmd$, p_ignore_heap_fetches := true);
                      indexName: idx_b_a_c
                      indexKey: {"b": 1,"a": 1,"c": 1}
                      isMultiKey: false
-                     indexBounds: ["b": [1, 1], "a": (MinKey, MaxKey), "c": (5, Infinity]]
+                     indexBounds: ["b": [1, 1], "a": [MinKey, MaxKey], "c": (5, Infinity]]
                      innerScanLoops: 16 loops
                      scanType: ordered
                      scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
@@ -227,7 +227,7 @@ $cmd$, p_ignore_heap_fetches := true);
                            Output: collection.document
                            ->  Index Only Scan using idx_b_a_c on documentdb_data.documents_39902 collection (actual rows=10 loops=1)
                                  Output: collection.document
-                                 Index Cond: ((collection.document @= '{ "b" : { "$numberInt" : "1" } }'::bson) AND (collection.document @> '{ "c" : { "$numberInt" : "5" } }'::bson))
+                                 Index Cond: ((collection.document @= '{ "b" : { "$numberInt" : "1" } }'::bson) AND (collection.document @> '{ "c" : { "$numberInt" : "5" } }'::bson) AND (collection.document @>= '{ "a" : { "$minKey" : 1 } }'::bson))
                                  Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
                                  Heap Fetches: xxx
 (23 rows)
@@ -294,8 +294,8 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
 SELECT document FROM bson_aggregation_distinct('dtk_db', '{ "distinct": "dloopbac", "key": "a", "query": { "b": 1, "c": { "$gt": 5 } }, "hint": { "b": 1, "a": 1, "c": -1 } }')
 $cmd$, p_ignore_heap_fetches := true);
-                                                                                 run_explain_and_trim                                                                                  
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                  run_explain_and_trim                                                                                                                   
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text)))
    ->  Unique (actual rows=10 loops=1)
@@ -308,7 +308,7 @@ $cmd$, p_ignore_heap_fetches := true);
                      indexName: idx_b_a_cdesc
                      indexKey: {"b": 1,"a": 1,"c": -1}
                      isMultiKey: false
-                     indexBounds: ["b": [1, 1], "a": (MinKey, MaxKey), "c": DESC(5, Infinity]]
+                     indexBounds: ["b": [1, 1], "a": [MinKey, MaxKey], "c": DESC(5, Infinity]]
                      innerScanLoops: 11 loops
                      scanType: ordered
                      scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
@@ -316,7 +316,7 @@ $cmd$, p_ignore_heap_fetches := true);
                            Output: collection.document
                            ->  Index Only Scan using idx_b_a_cdesc on documentdb_data.documents_39902 collection (actual rows=10 loops=1)
                                  Output: collection.document
-                                 Index Cond: ((collection.document @= '{ "b" : { "$numberInt" : "1" } }'::bson) AND (collection.document @> '{ "c" : { "$numberInt" : "5" } }'::bson))
+                                 Index Cond: ((collection.document @= '{ "b" : { "$numberInt" : "1" } }'::bson) AND (collection.document @> '{ "c" : { "$numberInt" : "5" } }'::bson) AND (collection.document @>= '{ "a" : { "$minKey" : 1 } }'::bson))
                                  Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
                                  Heap Fetches: xxx
 (23 rows)
@@ -734,8 +734,8 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
 SELECT document FROM bson_aggregation_distinct('dtk_db', '{ "distinct": "dloopacb", "key": "a", "query": { "b": { "$gt": 5 } }, "hint": { "a": 1, "c": 1, "b": 1 } }')
 $cmd$, p_ignore_heap_fetches := true);
-                                                                                            run_explain_and_trim                                                                                            
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                               run_explain_and_trim                                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text)))
    ->  Unique (actual rows=10 loops=1)
@@ -748,7 +748,7 @@ $cmd$, p_ignore_heap_fetches := true);
                      indexName: idx_a_c_b
                      indexKey: {"a": 1,"c": 1,"b": 1}
                      isMultiKey: false
-                     indexBounds: ["a": (MinKey, MaxKey), "c": (MinKey, MaxKey), "b": (5, Infinity]]
+                     indexBounds: ["a": [MinKey, MaxKey], "c": (MinKey, MaxKey), "b": (5, Infinity]]
                      innerScanLoops: 69 loops
                      scanType: ordered
                      scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
@@ -756,7 +756,7 @@ $cmd$, p_ignore_heap_fetches := true);
                            Output: collection.document
                            ->  Index Only Scan using idx_a_c_b on documentdb_data.documents_39907 collection (actual rows=10 loops=1)
                                  Output: collection.document
-                                 Index Cond: ((collection.document @> '{ "b" : { "$numberInt" : "5" } }'::bson) AND (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+                                 Index Cond: ((collection.document @> '{ "b" : { "$numberInt" : "5" } }'::bson) AND (collection.document @>= '{ "a" : { "$minKey" : 1 } }'::bson))
                                  Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
                                  Heap Fetches: xxx
 (23 rows)
@@ -807,8 +807,8 @@ SET LOCAL documentdb.enableCompositeParallelIndexScan TO on;
 SET LOCAL documentdb.forceParallelScanIfAvailable TO on;
 -- Plan: a parallel Gather over the DistinctQueryScan confirms the parallel path.
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_distinct('dtk_db', '{ "distinct": "dlooppar", "key": "a", "query": { "b": { "$gt": 5 } }, "hint": { "a": 1, "c": 1, "b": 1 } }');
-                                                                                      QUERY PLAN                                                                                      
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                         QUERY PLAN                                                                          
+-------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate
    ->  Unique
          ->  Gather Merge
@@ -816,7 +816,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_distinct('dtk_db', '{ 
                ->  ProjectSet
                      ->  Parallel Custom Scan (DocumentDBApiDistinctQueryScan)
                            ->  Parallel Index Only Scan using idxpar_a_c_b on documents_39908 collection
-                                 Index Cond: ((document @> '{ "b" : { "$numberInt" : "5" } }'::bson) AND (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+                                 Index Cond: ((document @> '{ "b" : { "$numberInt" : "5" } }'::bson) AND (document @>= '{ "a" : { "$minKey" : 1 } }'::bson))
                                  Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (9 rows)
 
