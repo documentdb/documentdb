@@ -1,6 +1,11 @@
 SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog, documentdb_api_internal, public;
 -- Composite op class required for RUM index to expose skip-tids primitive.
 SET documentdb.defaultUseCompositeOpClass TO on;
+-- enableProjectPushUpBeforeUnwindWithGroup is enabled by default starting in v118.
+-- Pin it off here so the $unwind -> $group cases in this suite keep exercising the
+-- plan shape without the injected field-pruning $project. Remove this pin when the
+-- flag is retired.
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO off;
 -- Ensure database 'db' exists so the system sentinel does not consume a test
 -- collection id when running in standalone mode.
 SELECT documentdb_api.insert_one('db', 'setup_sentinel_first', '{ "_id": 0 }');

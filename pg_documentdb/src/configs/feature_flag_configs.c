@@ -450,8 +450,8 @@ bool EnableTailableCursorMaxAwaitTime = DEFAULT_ENABLE_TAILABLE_CURSOR_MAX_AWAIT
 #define DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG true
 bool FailOnNonEmptyGroupCountArg = DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG;
 
-/* Added in v0.115, Pending stabilization, enable in v1.0. */
-#define DEFAULT_ENABLE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP false
+/* Added in v0.115, enabled in v1.1, remove after v1.3 */
+#define DEFAULT_ENABLE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP true
 bool EnableProjectPushUpBeforeUnwindWithGroup =
 	DEFAULT_ENABLE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP;
 

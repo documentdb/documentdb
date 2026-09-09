@@ -1,4 +1,5 @@
 ### documentdb v1.1-0 (Unreleased) ###
+* Enable the field-pruning `$project` injection before `$unwind` (the `enableProjectPushUpBeforeUnwindWithGroup` feature flag) by default now that it has stabilized. *[Perf]*
 * Fall back to a logical posting-tree sweep when inline RUM vacuum observes a concurrent root split, ensuring dead TIDs are removed from leaves allocated behind the disk-order cursor. *[Bugfix]*
 * Support collation with `distinct` command *[Feature]*
 

@@ -6,6 +6,12 @@ SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog, docu
 -- this pin when the flag is retired.
 SET documentdb.enableDistinctScanForGroupFirst TO off;
 
+-- enableProjectPushUpBeforeUnwindWithGroup is enabled by default starting in v118.
+-- Pin it off here so the $unwind -> $group cases in this suite keep exercising the
+-- plan shape without the injected field-pruning $project. Remove this pin when the
+-- flag is retired.
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO off;
+
 -- Use composite op class so RUM index supports the distinct skip-tids optimization
 SET documentdb.defaultUseCompositeOpClass TO on;
 
