@@ -14,6 +14,26 @@ SELECT documentdb_api.create_role('{"createRole":"grantTargetRole", "roles":[], 
 SELECT documentdb_api.create_role('{"createRole":"grantSourceRole", "roles":[], "privileges":[], "$db":"admin"}');
 SELECT documentdb_api.create_user('{"createUser":"grantRoleUser", "pwd":"Valid$123Pass", "roles":[{"role":"readAnyDatabase","db":"admin"}], "$db":"admin"}');
 
+-- Membership checks distinguish an absent grant from an existing direct grant.
+SELECT documentdb_api_internal.is_role_member_of_role(
+    'grantRoleUser', 'grantTargetRole') AS has_target_role;
+SELECT documentdb_api_internal.is_role_member_of_role(
+    'grantRoleUser', 'documentdb_readonly_role') AS has_readonly_role;
+
+SELECT user_name,
+       documentdb_api_internal.is_reserved_user(user_name) AS is_reserved
+FROM (VALUES
+    ('documentdb_bg_worker_role'),
+    ('documentdb_root_role'),
+    ('documentdb_api_user'),
+    ('documentdb_rbac_user'),
+    ('documentdbXapi_user'),
+    ('grantRoleUser')) AS users(user_name)
+ORDER BY user_name;
+
+SELECT documentdb_api_internal.is_reserved_user(NULL) IS NULL
+    AS null_user_returns_null;
+
 -- grantRolesToRole: grant a built-in role
 SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"grantTargetRole", "roles":["readAnyDatabase"], "$db":"admin"}');
 
@@ -81,6 +101,24 @@ SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"root", "roles":[
 -- grantRolesToUser: grant a custom role and a built-in role to a user
 SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"grantRoleUser", "roles":[{"role":"grantTargetRole","db":"admin"}], "$db":"admin"}');
 SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"grantRoleUser", "roles":["readWriteAnyDatabase","clusterAdmin"], "$db":"admin"}');
+
+-- Membership through grantTargetRole reaches its inherited custom role.
+SELECT documentdb_api_internal.is_role_member_of_role(
+    'grantRoleUser', 'grantTargetRole') AS has_target_role;
+SELECT documentdb_api_internal.is_role_member_of_role(
+    'grantRoleUser', 'grantSourceRole') AS has_transitive_source_role;
+
+-- Unknown names use PostgreSQL's standard role lookup errors.
+SELECT documentdb_api_internal.is_role_member_of_role(
+    'missingRoleUser', 'grantTargetRole');
+SELECT documentdb_api_internal.is_role_member_of_role(
+    'grantRoleUser', 'missingTargetRole');
+
+-- The function is strict.
+SELECT documentdb_api_internal.is_role_member_of_role(
+    NULL, 'grantTargetRole') IS NULL AS null_user_returns_null;
+SELECT documentdb_api_internal.is_role_member_of_role(
+    'grantRoleUser', NULL) IS NULL AS null_role_returns_null;
 
 SELECT parent.rolname AS granted_role
 FROM pg_auth_members m

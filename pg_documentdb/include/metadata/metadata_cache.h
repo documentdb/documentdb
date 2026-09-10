@@ -134,6 +134,8 @@ Oid ExtensionTableSampleSystemRowsFunctionId(void);
 Oid BsonInRangeNumericFunctionId(void);
 Oid BsonInRangeIntervalFunctionId(void);
 Oid BsonQueryMatchWithLetAndCollationFunctionId(void);
+Oid IsRoleMemberOfRoleFunctionId(void);
+Oid IsReservedUserFunctionId(void);
 
 /* object_id functions */
 Oid BsonRegexObjectIdMatchFunctionId(void);

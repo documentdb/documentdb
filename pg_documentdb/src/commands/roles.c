@@ -11,6 +11,7 @@
 #include "access/transam.h"
 #include "executor/spi.h"
 #include "miscadmin.h"
+#include "utils/acl.h"
 #include "utils/documentdb_errors.h"
 #include "utils/query_utils.h"
 #include "commands/commands_common.h"
@@ -36,6 +37,8 @@
 	(strcmp(roleName, ApiReadOnlyRole) == 0 || \
 	 strcmp(roleName, ApiAdminRoleV2) == 0)
 
+#define DOCUMENTDB_DEFAULT_ROOT_ROLE "documentdb_root_role"
+
 /* GUC to enable user crud operations */
 extern bool EnableRoleCrud;
 
@@ -50,6 +53,8 @@ PG_FUNCTION_INFO_V1(command_grant_roles_to_role);
 PG_FUNCTION_INFO_V1(command_grant_privileges_to_role);
 PG_FUNCTION_INFO_V1(command_revoke_roles_from_role);
 PG_FUNCTION_INFO_V1(command_revoke_privileges_from_role);
+PG_FUNCTION_INFO_V1(documentdb_is_role_member_of_role);
+PG_FUNCTION_INFO_V1(documentdb_is_reserved_user);
 
 /*
  * Struct to hold createRole parameters
@@ -169,6 +174,38 @@ command_create_role(PG_FUNCTION_ARGS)
 	Datum response = create_role(createRoleSpec);
 
 	PG_RETURN_DATUM(response);
+}
+
+
+/*
+ * Returns whether the first role is directly or transitively a member of the second.
+ */
+Datum
+documentdb_is_role_member_of_role(PG_FUNCTION_ARGS)
+{
+	char *memberRoleName = text_to_cstring(PG_GETARG_TEXT_PP(0));
+	char *roleName = text_to_cstring(PG_GETARG_TEXT_PP(1));
+	Oid memberRoleId = get_role_oid(memberRoleName, false);
+	Oid roleId = get_role_oid(roleName, false);
+
+	PG_RETURN_BOOL(is_member_of_role(memberRoleId, roleId));
+}
+
+
+/*
+ * Returns whether a login role is reserved for internal use.
+ */
+Datum
+documentdb_is_reserved_user(PG_FUNCTION_ARGS)
+{
+	char *roleName = text_to_cstring(PG_GETARG_TEXT_PP(0));
+
+	PG_RETURN_BOOL(
+		strcmp(roleName, ApiBgWorkerRole) == 0 ||
+		strcmp(roleName, ApiRootRole) == 0 ||
+		strcmp(roleName, ApiReplicationRole) == 0 ||
+		strncmp(roleName, "documentdb_api", strlen("documentdb_api")) == 0 ||
+		strncmp(roleName, "documentdb_rbac", strlen("documentdb_rbac")) == 0);
 }
 
 
@@ -2053,12 +2090,15 @@ BuildRoleInheritanceTable(void)
 		 * - ApiAdminRoleV2: internal role that maps to both readWriteAnyDatabase
 		 *   and clusterAdmin; we add separate entries for these at the end
 		 * - ApiAdminRole: legacy admin role
+		 * - The default root role when another root role mapping is active
 		 * - Privileged Action System Roles: internal roles for fine-grained access
 		 */
 		if (IS_SYSTEM_LOGIN_ROLE(childRole) ||
 			IS_CUSTOM_RBAC_ROLE(childRole) ||
 			strcmp(childRole, ApiAdminRoleV2) == 0 ||
-			strcmp(childRole, ApiAdminRole) == 0)
+			strcmp(childRole, ApiAdminRole) == 0 ||
+			(strcmp(childRole, DOCUMENTDB_DEFAULT_ROOT_ROLE) == 0 &&
+			 strcmp(childRole, ApiRootInternalRole) != 0))
 		{
 			if (parentRoles != NIL)
 			{

@@ -33,6 +33,61 @@ FROM documentdb_api_catalog.bson_aggregation_find(
 	'admin',
 	'{ "find": "system.users" }');
 
+SELECT documentdb_api.create_user(
+	'{"createUser":"systemUsersRootReader", "pwd":"Valid$123Pass", "roles":[{"role":"systemUsersCustomRole","db":"admin"}], "$db":"admin"}') AS create_result \gset
+SELECT documentdb_api.create_user(
+	'{"createUser":"systemUsersOtherReader", "pwd":"Valid$123Pass", "roles":[{"role":"systemUsersCustomRole","db":"admin"}], "$db":"admin"}') AS create_result \gset
+SELECT documentdb_api.create_role(
+	'{"createRole":"systemUsersNoLogin", "roles":[], "privileges":[], "$db":"admin"}') AS create_result \gset
+CREATE ROLE "documentdb_api_hidden_user" LOGIN;
+CREATE ROLE "documentdb_rbac_hidden_user" LOGIN;
+
+GRANT "documentdb_root_role" TO "systemUsersRootReader";
+GRANT "systemUsersCustomRole" TO
+	"systemUsersNoLogin",
+	"documentdb_api_hidden_user",
+	"documentdb_rbac_hidden_user";
+GRANT documentdb_readonly_role TO "systemUsersRootReader";
+GRANT SELECT ON documentdb_api_catalog.roles TO "systemUsersRootReader";
+
+SET ROLE "systemUsersRootReader";
+SET plan_cache_mode TO force_generic_plan;
+PREPARE system_users_query AS
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.users" }');
+EXECUTE system_users_query;
+RESET ROLE;
+
+GRANT documentdb_readonly_role TO "systemUsersOtherReader";
+GRANT SELECT ON documentdb_api_catalog.roles TO "systemUsersOtherReader";
+
+REVOKE "documentdb_root_role" FROM "systemUsersRootReader";
+SET ROLE "systemUsersRootReader";
+EXECUTE system_users_query;
+RESET ROLE;
+DEALLOCATE system_users_query;
+RESET plan_cache_mode;
+
+SET ROLE "systemUsersOtherReader";
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.users" }');
+RESET ROLE;
+
+REVOKE SELECT ON documentdb_api_catalog.roles FROM "systemUsersRootReader";
+REVOKE SELECT ON documentdb_api_catalog.roles FROM "systemUsersOtherReader";
+SELECT documentdb_api.drop_user(
+	'{"dropUser":"systemUsersRootReader", "$db":"admin"}') AS drop_result \gset
+SELECT documentdb_api.drop_user(
+	'{"dropUser":"systemUsersOtherReader", "$db":"admin"}') AS drop_result \gset
+SELECT documentdb_api.drop_role(
+	'{"dropRole":"systemUsersNoLogin", "$db":"admin"}') AS drop_result \gset
+DROP ROLE "documentdb_api_hidden_user";
+DROP ROLE "documentdb_rbac_hidden_user";
+
 REVOKE documentdb_admin_role FROM CURRENT_USER;
 REVOKE documentdb_readonly_role FROM CURRENT_USER;
 

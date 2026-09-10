@@ -23,6 +23,30 @@ FROM documentdb_api_catalog.bson_aggregation_find(
 	'admin',
 	'{ "find": "system.roles", "filter": { "role": { "$in": [ "systemRolesParent", "systemRolesChildOne", "systemRolesChildTwo" ] } }, "sort": { "role": 1 } }');
 
+GRANT USAGE ON SCHEMA documentdb_api_catalog TO "documentdb_root_role";
+GRANT SELECT ON documentdb_api_catalog.roles TO "documentdb_root_role";
+
+SET ROLE "documentdb_root_role";
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles", "filter": { "role": { "$in": [ "systemRolesParent", "systemRolesChildOne", "systemRolesChildTwo" ] } }, "sort": { "role": 1 } }');
+RESET ROLE;
+
+REVOKE SELECT ON documentdb_api_catalog.roles FROM "documentdb_root_role";
+REVOKE USAGE ON SCHEMA documentdb_api_catalog FROM "documentdb_root_role";
+
+GRANT SELECT ON documentdb_api_catalog.roles TO "systemRolesChildOne";
+
+SET ROLE "systemRolesChildOne";
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles", "filter": { "role": { "$in": [ "systemRolesParent", "systemRolesChildOne", "systemRolesChildTwo" ] } }, "sort": { "role": 1 } }');
+RESET ROLE;
+
+REVOKE SELECT ON documentdb_api_catalog.roles FROM "systemRolesChildOne";
+
 SELECT cursorpage AS page, continuation AS cont, persistconnection AS persistent,
 	cursorid AS cid
 FROM documentdb_api.find_cursor_first_page(

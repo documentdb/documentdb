@@ -58,7 +58,7 @@ ORDER BY 1;
  documentdb_rbac_baseline_write_role | f
  documentdb_readonly_role            | t
  documentdb_readwrite_role           | t
- documentdb_root_role                | f
+ documentdb_root_role                | t
  documentdb_user_admin_role          | f
 (13 rows)
 
@@ -315,7 +315,7 @@ ORDER BY 1;
  documentdb_rbac_baseline_write_role | f
  documentdb_readonly_role            | t
  documentdb_readwrite_role           | t
- documentdb_root_role                | f
+ documentdb_root_role                | t
  documentdb_user_admin_role          | f
 (13 rows)
 
