@@ -63,7 +63,9 @@ extern GrantCollectionPrivilegesToBaselineRoles_HookType
 
 /*
  * Persists collection-scoped privileges for a newly created role.
- * Errors when no implementation is registered.
+ * An empty list is a no-op when no implementation is registered, and is
+ * passed through when one is registered. Nonempty lists error without an
+ * implementation.
  */
 void GrantCollectionPrivilegesToRole(const char *roleName, List *collectionPrivileges);
 

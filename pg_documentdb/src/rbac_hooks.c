@@ -36,15 +36,20 @@ GetCollectionsStringFilter_HookType
 /*
  * Persists collection-scoped privileges for a newly created role.
  *
- * createRole reaches this only when its payload has privileges on a
- * resource, so without an implementation the request cannot be honoured and
- * is rejected rather than reporting success for privileges never granted.
+ * createRole reaches this after parent-role validation for both empty and
+ * nonempty privilege lists. Without an implementation, only the empty case is
+ * safe to accept because it grants no resource privileges to lose.
  */
 void
 GrantCollectionPrivilegesToRole(const char *roleName, List *collectionPrivileges)
 {
 	if (grant_collection_privileges_to_role_hook == NULL)
 	{
+		if (collectionPrivileges == NIL)
+		{
+			return;
+		}
+
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
 						errmsg(
 							"Privileges on a collection are currently unsupported."),

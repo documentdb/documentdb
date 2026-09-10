@@ -379,11 +379,8 @@ create_role(pgbson *createRoleBson)
 	ValidateAndGrantParentRoles(createRoleSpec.roleName, createRoleSpec.parentRoles,
 								allowCustomRoles);
 
-	if (createRoleSpec.collectionPrivileges != NIL)
-	{
-		GrantCollectionPrivilegesToRole(createRoleSpec.roleName,
-										createRoleSpec.collectionPrivileges);
-	}
+	GrantCollectionPrivilegesToRole(createRoleSpec.roleName,
+									createRoleSpec.collectionPrivileges);
 
 	createRoleBson = NormalizeRoleSpecForStorage(createRoleBson,
 												 createRoleSpec.parentRoles);
