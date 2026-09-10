@@ -162,7 +162,7 @@ PGDLLEXPORT bool RumEnableOverwriteEntryTupleOnVacuum =
 PGDLLEXPORT bool RumEnableTargetedPostingTreePruning =
 	RUM_DEFAULT_ENABLE_TARGETED_POSTING_TREE_PRUNING;
 
-/* FeatureFlag: Added in v0.115, Pending stabilization, enable on v1.0 */
+/* FeatureFlag: Added in v0.115, Pending stabilization, enable on v1.1 */
 #define RUM_DEFAULT_ENABLE_SINGLE_PASS_POSTING_TREE_VACUUM false
 PGDLLEXPORT bool RumEnableSinglePassPostingTreeVacuum =
 	RUM_DEFAULT_ENABLE_SINGLE_PASS_POSTING_TREE_VACUUM;
