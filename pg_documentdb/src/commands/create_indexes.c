@@ -171,7 +171,6 @@ extern bool EnableCompositeShardDocumentTerms;
 extern bool EnablePerCollectionPlannerStatistics;
 extern bool EnableCompositeReducedCorrelatedTermsOnCommonSubPath;
 extern bool EnableIndexMetadataGlobalTracking;
-extern bool EnableDottedValueTextIndexTerms;
 extern bool EnableNewNamespaceValidation;
 
 extern bool EnableCollationWithNonUniqueOrderedIndexes;
@@ -5955,7 +5954,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 	}
 
 	char *enableDottedTermsOption = "";
-	if (EnableDottedValueTextIndexTerms && IsClusterVersionAtleast(DocDB_V0, 112, 2))
+	if (IsClusterVersionAtleast(DocDB_V0, 112, 2))
 	{
 		enableDottedTermsOption = ",enabledottedterms=true";
 	}

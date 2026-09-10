@@ -3,9 +3,8 @@ SET citus.next_shard_id TO 33700;
 SET documentdb.next_collection_id TO 3370;
 SET documentdb.next_collection_index_id TO 3370;
 
--- Note: enableLocalRetryTable is a backend-only GUC. It is not yet wired up in
--- the gateway, so the gateway does not set or rely on this flag. These tests
--- validate the backend behavior directly via SQL.
+-- The production behavior uses the local retry table. This test-only switch
+-- remains available to preserve compatibility coverage for older tables.
 SET documentdb.enableLocalRetryTable to on;
 
 SELECT documentdb_api.create_collection('db', 'collection_without_retry_table');

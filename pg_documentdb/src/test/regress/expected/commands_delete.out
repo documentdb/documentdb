@@ -859,10 +859,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_2505 WHER
 (4 rows)
 
 COMMIT;
--- Test for deleteOne plan caching by enabling and disabling the config
+-- Test deleteOne plan caching correctness
 -- validate _id-only delete_one correctness, should still delete only one document
 begin;
-set local documentdb.enableDeleteOnePlanCacheOptimization to true;
 select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6},"limit":1}]}');
                                          delete                                         
 ----------------------------------------------------------------------------------------
@@ -875,7 +874,6 @@ select count(*) from documentdb_api.collection('db', 'removeme') where document 
      0
 (1 row)
 
-set local documentdb.enableDeleteOnePlanCacheOptimization to false;
 select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":7},"limit":1}]}');
                                          delete                                         
 ----------------------------------------------------------------------------------------
@@ -897,7 +895,6 @@ select count(*) from documentdb_api.collection('db', 'removeme');
 rollback;
 -- _id with other filters: should use full query matching
 begin;
-set local documentdb.enableDeleteOnePlanCacheOptimization to true;
 select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6, "a":6},"limit":1}]}');
                                          delete                                         
 ----------------------------------------------------------------------------------------
@@ -910,7 +907,6 @@ select count(*) from documentdb_api.collection('db', 'removeme') where document 
      0
 (1 row)
 
-set local documentdb.enableDeleteOnePlanCacheOptimization to false;
 select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":7, "a":7},"limit":1}]}');
                                          delete                                         
 ----------------------------------------------------------------------------------------
@@ -931,7 +927,6 @@ select count(*) from documentdb_api.collection('db', 'removeme');
 
 rollback;
 begin;
-set local documentdb.enableDeleteOnePlanCacheOptimization to true;
 -- delete_one empty query
 select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{},"limit":1}]}');
                                                                                                                                            delete                                                                                                                                           
@@ -947,7 +942,6 @@ select count(*) from documentdb_api.collection('db', 'removeme');
 
 rollback;
 begin;
-set local documentdb.enableDeleteOnePlanCacheOptimization to false;
 -- delete_one empty query
 select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{},"limit":1}]}');
                                                                                                                                            delete                                                                                                                                           

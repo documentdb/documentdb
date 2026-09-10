@@ -135,6 +135,10 @@ bool ForceGroupSubqueryElimination = DEFAULT_FORCE_GROUP_SUBQUERY_ELIMINATION;
 #define DEFAULT_RECREATE_RETRY_TABLE_ON_SHARDING false
 bool RecreateRetryTableOnSharding = DEFAULT_RECREATE_RETRY_TABLE_ON_SHARDING;
 
+/* Left behind for long term testing of per-collection retry tables */
+#define DEFAULT_ENABLE_LOCAL_RETRY_TABLE true
+bool EnableLocalRetryTable = DEFAULT_ENABLE_LOCAL_RETRY_TABLE;
+
 #define DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_SCAN false
 bool EnableCompositeParallelIndexScan = DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_SCAN;
 
@@ -182,6 +186,13 @@ bool ReportParallelPlanInCursorContinuation =
 void
 InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 {
+	DefineCustomBoolVariable(
+		psprintf("%s.enableLocalRetryTable", newGucPrefix),
+		gettext_noop(
+			"Whether to use a single local retry table instead of per-collection retry tables."),
+		NULL, &EnableLocalRetryTable, DEFAULT_ENABLE_LOCAL_RETRY_TABLE,
+		PGC_USERSET, GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE, NULL, NULL, NULL);
+
 	DefineCustomIntVariable(
 		psprintf("%s.next_collection_id", newGucPrefix),
 		gettext_noop("Set the next collection id to use when creationing a collection."),

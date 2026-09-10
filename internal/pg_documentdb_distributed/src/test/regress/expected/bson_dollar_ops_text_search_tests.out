@@ -850,101 +850,7 @@ SELECT documentdb_api.insert_one('db', 'text_dot_search', '{ "_id": 12, "name": 
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
-SET documentdb.enableDottedValueTextIndexTerms to off;
--- Create text index with dotted value index terms disabled.
-SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "text_dot_search", "indexes": [ { "key": { "name": "text" }, "name": "name_text" } ] }', TRUE);
-                                                                                                   create_indexes_non_concurrently                                                                                                    
----------------------------------------------------------------------
- { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
-(1 row)
-
-SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "person" } }';
-                                     bson_dollar_project                                     
----------------------------------------------------------------------
- { "_id" : { "$numberInt" : "3" }, "name" : "person", "rank" : { "$numberDouble" : "1.0" } }
-(1 row)
-
-SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "age" } }';
-                                   bson_dollar_project                                    
----------------------------------------------------------------------
- { "_id" : { "$numberInt" : "6" }, "name" : "age", "rank" : { "$numberDouble" : "1.0" } }
-(1 row)
-
-SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "person.0.age" } }';
-                                              bson_dollar_project                                              
----------------------------------------------------------------------
- { "_id" : { "$numberInt" : "1" }, "name" : "person.0.age", "rank" : { "$numberDouble" : "1.0" } }
- { "_id" : { "$numberInt" : "5" }, "name" : "hello person.0.age world", "rank" : { "$numberDouble" : "1.0" } }
-(2 rows)
-
-SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "foo" } }';
- bson_dollar_project 
----------------------------------------------------------------------
-(0 rows)
-
-SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "bar" } }';
- bson_dollar_project 
----------------------------------------------------------------------
-(0 rows)
-
-SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "hello" } }';
-                                              bson_dollar_project                                              
----------------------------------------------------------------------
- { "_id" : { "$numberInt" : "2" }, "name" : "hello world", "rank" : { "$numberDouble" : "1.0" } }
- { "_id" : { "$numberInt" : "5" }, "name" : "hello person.0.age world", "rank" : { "$numberDouble" : "1.0" } }
-(2 rows)
-
-SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "leading" } }';
- bson_dollar_project 
----------------------------------------------------------------------
-(0 rows)
-
-SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "trailing" } }';
- bson_dollar_project 
----------------------------------------------------------------------
-(0 rows)
-
--- "is.a" should match doc 9 via the host-type fallback lexeme
-SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "is.a" } }';
-                                    bson_dollar_project                                    
----------------------------------------------------------------------
- { "_id" : { "$numberInt" : "9" }, "name" : "is.a", "rank" : { "$numberDouble" : "1.0" } }
-(1 row)
-
--- "the.an" should match doc 10
-SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "the.an" } }';
-                                     bson_dollar_project                                      
----------------------------------------------------------------------
- { "_id" : { "$numberInt" : "10" }, "name" : "the.an", "rank" : { "$numberDouble" : "1.0" } }
-(1 row)
-
-SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "www.documentdb.com" } }';
-                                                 bson_dollar_project                                                 
----------------------------------------------------------------------
- { "_id" : { "$numberInt" : "11" }, "name" : "www.documentdb.com is awesome", "rank" : { "$numberDouble" : "1.0" } }
-(1 row)
-
-SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "www documentdb com" } }';
-                                                 bson_dollar_project                                                 
----------------------------------------------------------------------
- { "_id" : { "$numberInt" : "12" }, "name" : "www documentdb com is awesome", "rank" : { "$numberDouble" : "3.0" } }
-(1 row)
-
-SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "\"person.0.age\"" } }';
-                                              bson_dollar_project                                              
----------------------------------------------------------------------
- { "_id" : { "$numberInt" : "1" }, "name" : "person.0.age", "rank" : { "$numberDouble" : "1.0" } }
- { "_id" : { "$numberInt" : "5" }, "name" : "hello person.0.age world", "rank" : { "$numberDouble" : "1.0" } }
-(2 rows)
-
-SET documentdb.enableDottedValueTextIndexTerms to on;
--- Drop and recreate index with dotted value index terms enabled.
-CALL documentdb_api.drop_indexes('db', '{ "dropIndexes": "text_dot_search", "index": "name_text" }');
-                          retval                          
----------------------------------------------------------------------
- { "ok" : true, "nIndexesWas" : { "$numberLong" : "2" } }
-(1 row)
-
+-- Create the index with dotted value index terms enabled.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "text_dot_search", "indexes": [ { "key": { "name": "text" }, "name": "name_text" } ] }', TRUE);
                                                                                                    create_indexes_non_concurrently                                                                                                    
 ---------------------------------------------------------------------
@@ -1080,5 +986,4 @@ SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": 
  { "_id" : { "$numberInt" : "5" }, "name" : "hello person.0.age world", "rank" : { "$numberDouble" : "1.0" } }
 (2 rows)
 
--- Reset the GUC to default to avoid interactions with other tests
-RESET documentdb.enableDottedValueTextIndexTerms;
+-- End dotted-value text search coverage.

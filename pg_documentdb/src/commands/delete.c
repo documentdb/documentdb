@@ -50,7 +50,6 @@
 #include "utils/query_utils.h"
 #include "api_hooks.h"
 
-extern bool EnableDeleteOnePlanCacheOptimization;
 extern bool EnableCommutativeDeleteMany;
 
 
@@ -1759,7 +1758,7 @@ FormDeleteOneQuery(MongoCollection *collection, DeleteOneParams *deleteOneParams
 		nextSqlArgIndex += 3;
 		state->argCount += 3;
 	}
-	else if (!EnableDeleteOnePlanCacheOptimization || queryHasNonIdFilters)
+	else if (queryHasNonIdFilters)
 	{
 		appendStringInfo(&state->deleteQuery,
 						 " AND document OPERATOR(%s.@@) $2::%s ",
@@ -1783,7 +1782,7 @@ FormDeleteOneQuery(MongoCollection *collection, DeleteOneParams *deleteOneParams
 		{
 			state->preparedQueryKey = QUERY_DELETE_ONE_ID_LET_AND_COLLATION;
 		}
-		else if (!EnableDeleteOnePlanCacheOptimization || queryHasNonIdFilters)
+		else if (queryHasNonIdFilters)
 		{
 			state->preparedQueryKey = QUERY_DELETE_ONE_ID;
 		}
@@ -1837,7 +1836,7 @@ FormDeleteOneQuery(MongoCollection *collection, DeleteOneParams *deleteOneParams
 							  CStringGetTextDatum("");
 		state->argNulls[3] = ' ';
 	}
-	else if (!EnableDeleteOnePlanCacheOptimization || queryHasNonIdFilters)
+	else if (queryHasNonIdFilters)
 	{
 		state->argTypes[1] = bsonTypeId;
 		state->argValues[1] = PointerGetDatum(query);

@@ -1162,15 +1162,14 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createI
 ERROR:  Expected exactly one text index. Requested index: { "v" : 2, "key" : { "$**" : "text" }, "name" : "idx1", "weights" : { "a" : 2, "b" : 3, "c" : 4, "d" : 5 } }, existing index: { "v" : 2, "key" : { "a" : "text" }, "name" : "a_text" }
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "create_indexes_text", "indexes": [ { "key": { "f": "text" }, "name": "idx2", "default_language": "de" } ] }', true);
 ERROR:  Expected exactly one text index. Requested index: { "v" : 2, "key" : { "f" : "text" }, "name" : "idx2", "default_language" : "de" }, existing index: { "v" : 2, "key" : { "a" : "text" }, "name" : "a_text" }
--- Validate enableDottedTerms opclass option with GUC on/off
+-- Validate the enabledottedterms opclass option
 CALL documentdb_api.drop_indexes('db', '{ "dropIndexes": "create_indexes_text", "index": "a_text" }');
                           retval                          
 ---------------------------------------------------------------------
  { "ok" : true, "nIndexesWas" : { "$numberLong" : "2" } }
 (1 row)
 
--- Create text index with GUC off: enabledottedterms should NOT appear in PG index options
-SET documentdb.enableDottedValueTextIndexTerms to off;
+-- enabledottedterms=true should appear in PG index options
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "create_indexes_text", "indexes": [ { "key": { "a": "text" }, "name": "a_text" } ] }', true);
                                                                                                    create_indexes_non_concurrently                                                                                                    
 ---------------------------------------------------------------------
@@ -1187,35 +1186,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createI
 Indexes:
     "collection_pk_6770" PRIMARY KEY, btree (shard_key_value, object_id)
     "documents_rum_index_6806" documentdb_rum (document bson_rum_single_path_ops (path=_id, tl='2699'))
-    "documents_rum_index_6809" documentdb_rum (document bson_rum_text_path_ops (weights='{ "a" : 1.0 }'))
-Check constraints:
-    "shard_key_value_check" CHECK (shard_key_value = get_shard_key_value('{ "_id" : "hashed" }'::bson, 6770::bigint, document))
-
-CALL documentdb_api.drop_indexes('db', '{ "dropIndexes": "create_indexes_text", "index": "a_text" }');
-                          retval                          
----------------------------------------------------------------------
- { "ok" : true, "nIndexesWas" : { "$numberLong" : "2" } }
-(1 row)
-
--- Create text index with GUC on: enabledottedterms=true should appear in PG index options
-SET documentdb.enableDottedValueTextIndexTerms to on;
-SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "create_indexes_text", "indexes": [ { "key": { "a": "text" }, "name": "a_text" } ] }', true);
-                                                                                                   create_indexes_non_concurrently                                                                                                    
----------------------------------------------------------------------
- { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
-(1 row)
-
-\d documentdb_data.documents_6770
-          Table "documentdb_data.documents_6770"
-     Column      |  Type  | Collation | Nullable | Default 
----------------------------------------------------------------------
- shard_key_value | bigint |           | not null | 
- object_id       | bson   |           | not null | 
- document        | bson   |           | not null | 
-Indexes:
-    "collection_pk_6770" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_6806" documentdb_rum (document bson_rum_single_path_ops (path=_id, tl='2699'))
-    "documents_rum_index_6810" documentdb_rum (document bson_rum_text_path_ops (weights='{ "a" : 1.0 }', enabledottedterms='true'))
+    "documents_rum_index_6809" documentdb_rum (document bson_rum_text_path_ops (weights='{ "a" : 1.0 }', enabledottedterms='true'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = get_shard_key_value('{ "_id" : "hashed" }'::bson, 6770::bigint, document))
 
@@ -1242,7 +1213,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createI
 Indexes:
     "collection_pk_6770" PRIMARY KEY, btree (shard_key_value, object_id)
     "documents_rum_index_6806" documentdb_rum (document bson_rum_single_path_ops (path=_id, tl='2699'))
-    "documents_rum_index_6811" documentdb_rum (document bson_rum_text_path_ops (weights='', iswildcard='true', enabledottedterms='true'))
+    "documents_rum_index_6810" documentdb_rum (document bson_rum_text_path_ops (weights='', iswildcard='true', enabledottedterms='true'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = get_shard_key_value('{ "_id" : "hashed" }'::bson, 6770::bigint, document))
 
@@ -1252,4 +1223,4 @@ CALL documentdb_api.drop_indexes('db', '{ "dropIndexes": "create_indexes_text", 
  { "ok" : true, "nIndexesWas" : { "$numberLong" : "2" } }
 (1 row)
 
-RESET documentdb.enableDottedValueTextIndexTerms;
+-- End dotted-term index option coverage.

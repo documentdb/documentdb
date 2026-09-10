@@ -278,10 +278,6 @@ bool EnableSkipDottedFieldIndexTerms = DEFAULT_ENABLE_SKIP_DOTTED_FIELD_INDEX_TE
 #define DEFAULT_ENABLE_PARTIAL_FILTER_EVAL_ON_PLANNER true
 bool EnablePartialFilterEvalOnPlanner = DEFAULT_ENABLE_PARTIAL_FILTER_EVAL_ON_PLANNER;
 
-/* Added in v0.114, enabled in v0.114, remove after v0.116 */
-#define DEFAULT_ENABLE_DOTTED_VALUE_TEXT_INDEX_TERMS true
-bool EnableDottedValueTextIndexTerms = DEFAULT_ENABLE_DOTTED_VALUE_TEXT_INDEX_TERMS;
-
 /* Added in v0.117, Pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_HIGH_KEY_OPTIMIZATION false
 bool EnableHighKeyOptimization = DEFAULT_ENABLE_HIGH_KEY_OPTIMIZATION;
@@ -319,11 +315,6 @@ bool EnableParallelSafeWithExprAccumulators =
 /* Added on v0.115, enabled on v0.115, remove after v1.0 */
 #define DEFAULT_ENABLE_MIN_MAX_SKIP_NULL_VALUES true
 bool EnableMinMaxSkipNullValues = DEFAULT_ENABLE_MIN_MAX_SKIP_NULL_VALUES;
-
-/* Added in v0.114, enabled on v0.114, remove after v0.116 */
-#define DEFAULT_ENABLE_DELETE_ONE_PLAN_CACHE_OPTIMIZATION true
-bool EnableDeleteOnePlanCacheOptimization =
-	DEFAULT_ENABLE_DELETE_ONE_PLAN_CACHE_OPTIMIZATION;
 
 /* Added in v0.113, pending stabilization, enable in v1.1 */
 #define DEFAULT_ENABLE_DYNAMIC_CURSORS false
@@ -533,10 +524,6 @@ bool EnableCollationWithNonUniqueOrderedIndexes =
  * SECTION: Cluster administration & DDL feature flags
  */
 
-/* Added in v0.113, enabled in v0.113, remove after v0.116 */
-#define DEFAULT_ENABLE_LOCAL_RETRY_TABLE true
-bool EnableLocalRetryTable = DEFAULT_ENABLE_LOCAL_RETRY_TABLE;
-
 /* Added in v0.108, enabled in v0.108, unknown retirement schedule */
 #define DEFAULT_ENABLE_SCHEMA_ENFORCEMENT_FOR_CSFLE true
 bool EnableSchemaEnforcementForCSFLE = DEFAULT_ENABLE_SCHEMA_ENFORCEMENT_FOR_CSFLE;
@@ -723,13 +710,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enableLocalRetryTable", newGucPrefix),
-		gettext_noop(
-			"Whether to use a single local retry table instead of per-collection distributed retry tables (After retirement move it to testing configs)"),
-		NULL, &EnableLocalRetryTable, DEFAULT_ENABLE_LOCAL_RETRY_TABLE,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.skipFailOnCollation", newGucPrefix),
 		gettext_noop(
 			"Determines whether we can skip failing when collation is specified but collation is not supported"),
@@ -773,14 +753,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		gettext_noop(
 			"Whether to enable queries against supported collections in the admin database."),
 		NULL, &EnableAdminDatabaseQueries, DEFAULT_ENABLE_ADMIN_DATABASE_QUERIES,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableDeleteOnePlanCacheOptimization", newGucPrefix),
-		gettext_noop(
-			"Whether to enable optimized plan caching for delete-one operations."),
-		NULL, &EnableDeleteOnePlanCacheOptimization,
-		DEFAULT_ENABLE_DELETE_ONE_PLAN_CACHE_OPTIMIZATION,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -1020,14 +992,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable partial filter evaluation on the planner."),
 		NULL, &EnablePartialFilterEvalOnPlanner,
 		DEFAULT_ENABLE_PARTIAL_FILTER_EVAL_ON_PLANNER,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableDottedValueTextIndexTerms", newGucPrefix),
-		gettext_noop(
-			"Whether to enable generating index terms for dotted values (e.g. \"foo.bar\")."),
-		NULL, &EnableDottedValueTextIndexTerms,
-		DEFAULT_ENABLE_DOTTED_VALUE_TEXT_INDEX_TERMS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
