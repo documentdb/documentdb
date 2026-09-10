@@ -154,7 +154,6 @@ COPY pg_documentdb_gw/SetupConfiguration.json /home/documentdb/gateway/pg_docume
 COPY scripts/start_oss_server.sh /home/documentdb/gateway/scripts/start_oss_server.sh
 COPY scripts/build_and_start_gateway.sh /home/documentdb/gateway/scripts/build_and_start_gateway.sh
 COPY documentdb-local/scripts/emulator_entrypoint.sh /home/documentdb/gateway/scripts/emulator_entrypoint.sh
-COPY documentdb-local/scripts/documentdb_reserved_roles.sh /home/documentdb/gateway/scripts/documentdb_reserved_roles.sh
 COPY documentdb-local/scripts/documentdb_validate_username.sh /home/documentdb/gateway/scripts/documentdb_validate_username.sh
 COPY documentdb-local/scripts/documentdb_install_getparameter_stub.sh /home/documentdb/gateway/scripts/documentdb_install_getparameter_stub.sh
 COPY documentdb-local/scripts/documentdb_prepare_data_directory.sh /home/documentdb/gateway/scripts/documentdb_prepare_data_directory.sh

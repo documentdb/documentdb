@@ -4,14 +4,10 @@
 #
 # Reject a documentdb-local username the gateway would refuse at authentication
 # time, BEFORE the container starts anything, so it never reports "ready" with a
-# user that can never authenticate. Mirrors two independent gateway mechanisms:
-#
-#   1. exact internal DocumentDB role names -- sourced from
-#      documentdb_reserved_roles.sh (kept in sync with the gateway's
-#      RESERVED_ROLE_NAMES registry); and
-#   2. the case-insensitive BlockedRolePrefixes read from the gateway's own
-#      SetupConfiguration.json (so the emulator's policy always matches the
-#      gateway's, including entries like documentdb / citus / pg / internal_role).
+# user that can never authenticate. Mirrors the gateway's own policy: the
+# case-insensitive BlockedRolePrefixes read from its SetupConfiguration.json, so
+# the emulator's policy always matches the gateway's, including entries like
+# documentdb / citus / pg / internal_role.
 #
 # Usage:
 #   documentdb_validate_username.sh <username> [setup_configuration_json]
@@ -21,7 +17,6 @@
 
 username="$1"
 gateway_setup_config="${2:-$GATEWAY_HOME/pg_documentdb_gw/SetupConfiguration.json}"
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ ! -f "$gateway_setup_config" ]; then
     echo "Error: gateway configuration '$gateway_setup_config' not found; cannot validate the username against reserved role prefixes." >&2
@@ -42,20 +37,6 @@ if ! jq -e 'all(.BlockedRolePrefixes[]; type == "string")' "$gateway_setup_confi
     echo "Error: BlockedRolePrefixes in '$gateway_setup_config' must contain only strings." >&2
     exit 1
 fi
-
-# Exact internal DocumentDB roles are reserved independently of the prefix list.
-reserved_roles_file="$script_dir/documentdb_reserved_roles.sh"
-if [ ! -f "$reserved_roles_file" ]; then
-    echo "Error: reserved-roles definition '$reserved_roles_file' not found; cannot validate the username." >&2
-    exit 1
-fi
-source "$reserved_roles_file"
-for reserved_role_name in "${DOCUMENTDB_RESERVED_ROLE_NAMES[@]}"; do
-    if [ "$username" = "$reserved_role_name" ]; then
-        echo "Error: username '$username' is reserved for an internal DocumentDB role." >&2
-        exit 1
-    fi
-done
 
 # Process substitution preserves a stray empty prefix that command substitution
 # would drop with the trailing newline.

@@ -76,14 +76,6 @@ PG_CONTROLDATA_STUB = (
     "fi\n"
     + "".join(f'echo "{line}"\n' for line in PG_CONTROLDATA_FIELD_LINES)
 )
-GATEWAY_RBAC_UTILS = (
-    REPO_ROOT
-    / "pg_documentdb_gw"
-    / "documentdb_tests"
-    / "src"
-    / "utils"
-    / "rbac_utils.rs"
-)
 
 
 class EmulatorEntrypointTests(unittest.TestCase):
@@ -2714,21 +2706,6 @@ json.dump(data, sys.stdout)
         config["BlockedRolePrefixes"] = prefixes
         config_path.write_text(json.dumps(config), encoding="utf-8")
 
-    def _gateway_reserved_role_names(self):
-        source = GATEWAY_RBAC_UTILS.read_text(encoding="utf-8")
-        match = re.search(
-            r"pub const RESERVED_ROLE_NAMES:.*?= &\[(.*?)\];",
-            source,
-            re.DOTALL,
-        )
-        self.assertIsNotNone(
-            match,
-            "could not find the gateway RESERVED_ROLE_NAMES registry",
-        )
-        role_names = re.findall(r'"([^"]+)"', match.group(1))
-        self.assertTrue(role_names, "gateway reserved-role registry is empty")
-        return role_names
-
     def test_blocked_username_prefix_is_rejected(self):
         # citus is the username in the issue #650 reproduction; documentdb is the
         # prefix the default test config blocks. Either must fail fast at startup
@@ -2771,21 +2748,6 @@ json.dump(data, sys.stdout)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(
                     f"uses reserved prefix '{prefix}'",
-                    result.stdout + result.stderr,
-                )
-
-    def test_all_gateway_reserved_role_names_are_rejected(self):
-        # Registered internal roles remain reserved even when the independent
-        # BlockedRolePrefixes policy is empty.
-        self._set_blocked_role_prefixes([])
-        for username in self._gateway_reserved_role_names():
-            with self.subTest(username=username):
-                result = self._run_entrypoint(
-                    "--password", _TEST_PW, extra_env={"USERNAME": username}
-                )
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn(
-                    "is reserved for an internal DocumentDB role",
                     result.stdout + result.stderr,
                 )
 
@@ -2879,15 +2841,71 @@ json.dump(data, sys.stdout)
         self.assertIn("must contain only strings", result.stdout + result.stderr)
 
     def test_empty_blocked_role_prefixes_allows_non_reserved_username(self):
-        # An empty array disables prefix blocking, but exact internal role names
-        # remain reserved. A non-reserved username that the default prefix policy
-        # would block must pass validation.
+        # An empty array disables prefix blocking, so a username the default
+        # prefix policy would block must pass validation.
         self._set_blocked_role_prefixes([])
         result = self._run_entrypoint(
             "--password", _TEST_PW, extra_env={"USERNAME": "documentdb_service"}
         )
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         self.assertNotIn("reserved prefix", result.stdout + result.stderr)
+
+    def test_internal_role_name_is_rejected_by_prefix_policy(self):
+        # The shipped documentdb prefix is what keeps extension-owned identities
+        # out; there is no longer a separate exact-name list behind it.
+        result = self._run_entrypoint(
+            "--password", _TEST_PW, extra_env={"USERNAME": "documentdb_admin_role"}
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("uses reserved prefix 'documentdb'", result.stdout + result.stderr)
+
+    def test_empty_blocked_role_prefixes_allows_internal_role_name(self):
+        # Pins the deliberate policy reduction: with prefix blocking disabled,
+        # an extension-owned identity is no longer refused at startup. Startup
+        # readiness, not a name list, is the intended cover for this case.
+        self._set_blocked_role_prefixes([])
+        result = self._run_entrypoint(
+            "--password", _TEST_PW, extra_env={"USERNAME": "documentdb_admin_role"}
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
+    def _write_alternate_config_dir(self, prefixes):
+        """Config dir holding its own policy, distinct from the legacy
+        GATEWAY_HOME location, so the two cannot be confused."""
+        alt = self.root / "etc-documentdb-gateway"
+        alt.mkdir(parents=True, exist_ok=True)
+        source = self.gateway_config_dir / "SetupConfiguration.json"
+        config = json.loads(source.read_text(encoding="utf-8"))
+        config["BlockedRolePrefixes"] = prefixes
+        (alt / "SetupConfiguration.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+        return alt
+
+    def test_username_validated_against_resolved_config_dir(self):
+        # The gateway is started from $CONFIG_DIR; validating the legacy
+        # GATEWAY_HOME copy instead would clear a username the gateway blocks.
+        alt = self._write_alternate_config_dir(["acme"])
+        self._set_blocked_role_prefixes([])
+        result = self._run_entrypoint(
+            "--password",
+            _TEST_PW,
+            extra_env={"USERNAME": "acme_user", "CONFIG_DIR": str(alt)},
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("uses reserved prefix 'acme'", result.stdout + result.stderr)
+
+    def test_legacy_config_policy_is_not_consulted(self):
+        # The converse: a prefix blocked only in the legacy copy must not
+        # reject a username the gateway's own configuration permits.
+        alt = self._write_alternate_config_dir([])
+        self._set_blocked_role_prefixes(["acme"])
+        result = self._run_entrypoint(
+            "--password",
+            _TEST_PW,
+            extra_env={"USERNAME": "acme_user", "CONFIG_DIR": str(alt)},
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
 
 
 class InitDataAttemptMarkerTests(unittest.TestCase):
@@ -3047,14 +3065,11 @@ class InitDataAttemptMarkerTests(unittest.TestCase):
 
 class ValidateUsernameScriptTests(unittest.TestCase):
     """Direct tests for documentdb_validate_username.sh, invoked standalone with
-    a stubbed jq and a temp SetupConfiguration.json -- covering the reserved-name
-    and BlockedRolePrefixes logic without booting the whole entrypoint."""
+    a stubbed jq and a temp SetupConfiguration.json -- covering the
+    BlockedRolePrefixes logic without booting the whole entrypoint."""
 
     VALIDATOR = (
         REPO_ROOT / "documentdb-local" / "scripts" / "documentdb_validate_username.sh"
-    )
-    RESERVED_ROLES_FILE = (
-        REPO_ROOT / "documentdb-local" / "scripts" / "documentdb_reserved_roles.sh"
     )
 
     def setUp(self):
@@ -3112,23 +3127,6 @@ raise SystemExit('Unsupported jq expression: ' + expr)
             timeout=30, stdin=subprocess.DEVNULL,
         )
 
-    def _reserved_role_names(self):
-        # Source the file and read the array, so we get exactly its entries and
-        # not quoted strings that appear in comments.
-        result = subprocess.run(
-            [
-                "bash",
-                "-c",
-                f'source "{self.RESERVED_ROLES_FILE}"; '
-                'printf "%s\\n" "${DOCUMENTDB_RESERVED_ROLE_NAMES[@]}"',
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            stdin=subprocess.DEVNULL,
-        )
-        return [line for line in result.stdout.splitlines() if line]
-
     def test_allowed_username_exits_zero(self):
         result = self._run("docdb_admin", config=self.config)
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
@@ -3152,21 +3150,6 @@ raise SystemExit('Unsupported jq expression: ' + expr)
         result = self._run("DOCUMENTDB_svc", config=self.config)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("uses reserved prefix 'documentdb'", result.stdout + result.stderr)
-
-    def test_every_reserved_role_name_is_rejected(self):
-        # Empty prefixes isolate the exact-name check, which sources the list
-        # from documentdb_reserved_roles.sh.
-        self._write_prefixes([])
-        names = self._reserved_role_names()
-        self.assertGreaterEqual(len(names), 11, "reserved-roles data file looks empty")
-        for name in names:
-            with self.subTest(role=name):
-                result = self._run(name, config=self.config)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn(
-                    "is reserved for an internal DocumentDB role",
-                    result.stdout + result.stderr,
-                )
 
     def test_missing_config_is_rejected(self):
         result = self._run("docdb_admin", config=self.root / "absent.json")

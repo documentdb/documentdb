@@ -510,10 +510,13 @@ echo "Using username: $USERNAME"
 echo "Using owner: $OWNER"
 echo "Using data path: $DATA_PATH"
 
-# Reject a username the gateway would refuse at authentication time (a reserved
-# role name or a BlockedRolePrefix) before starting anything, so the container
-# never reports ready with a user that can never authenticate.
-bash "$(dirname "${BASH_SOURCE[0]}")/documentdb_validate_username.sh" "$USERNAME" || exit 1
+# Reject a username the gateway would refuse at authentication time (a
+# BlockedRolePrefix) before starting anything, so the container never reports
+# ready with a user that can never authenticate. Pass CONFIG_DIR explicitly:
+# the validator's own default resolves to the legacy layout, while the gateway
+# is started from $CONFIG_DIR/SetupConfiguration.json (see the cp below).
+bash "$(dirname "${BASH_SOURCE[0]}")/documentdb_validate_username.sh" \
+    "$USERNAME" "$CONFIG_DIR/SetupConfiguration.json" || exit 1
 
 if { [ -n "${CERT_PATH:-}" ] && [ -z "${KEY_FILE:-}" ]; } || \
    { [ -z "${CERT_PATH:-}" ] && [ -n "${KEY_FILE:-}" ]; }; then
