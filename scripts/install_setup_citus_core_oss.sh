@@ -51,22 +51,10 @@ else
 fi
 
 
-# Build in parallel, then install serially.
-#
-# The CDC decoders (src/backend/distributed/cdc) extract debug symbols into a
-# single shared symbols directory. Running the
-# build and install phases together under `-j` lets two make jobs operate on the
-# same citus_<decoder>.so at once: one `cp`s the file while another runs
-# `objcopy --strip-unneeded` on it, producing a truncated file and the failure
-# `objcopy: ...: file format not recognized`. Building everything first and then
-# installing serially (no `-j`) guarantees the symbol extraction never races.
-NPROC=$(cat /proc/cpuinfo | grep -c "processor")
 if [ "${DESTINSTALLDIR:-}" == "" ]; then
-make PATH=$PATH -j$NPROC all
-make PATH=$PATH install
+make PATH=$PATH -j$(cat /proc/cpuinfo | grep -c "processor") install
 else
-make PATH=$PATH DESTDIR=$DESTINSTALLDIR -j$NPROC all
-make PATH=$PATH DESTDIR=$DESTINSTALLDIR install
+make PATH=$PATH DESTDIR=$DESTINSTALLDIR -j$(cat /proc/cpuinfo | grep -c "processor") install
 fi
 popd
 

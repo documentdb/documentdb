@@ -760,10 +760,9 @@ fn get_aggregate_plan_from_output<'a>(
             let facet_names: Vec<&str> = output.split('\'').collect();
             (facet_names.len() > 4).then(|| facet_names[facet_names.len() - 4])
         }
-    } else if output.contains("coord_combine_agg") || output.contains("coord_binary_combine_agg") {
+    } else if output.contains("coord_combine_agg") {
         Some("MERGE_CURSORS")
-    } else if output.contains("worker_partial_agg") || output.contains("worker_binary_partial_agg")
-    {
+    } else if output.contains("worker_partial_agg") {
         Some("WORKER_PARTIAL_AGG")
     } else {
         None
