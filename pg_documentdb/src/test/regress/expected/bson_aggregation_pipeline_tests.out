@@ -1918,6 +1918,36 @@ SELECT BSONLASTNONSORTED(NULL, 3) FROM documentdb_api.collection('db', 'bsonFirs
  { "" : [  ] }
 (1 row)
 
+-- Regression test: firstN/lastN no-sort final over values whose serialized
+-- size is a multiple of 64 previously crashed (or returned nulls) because the
+-- value's varlena header first byte is 0 and was misread as a NULL marker.
+-- Insert rows so the aggregate builds its state buffer from storage-backed
+-- 64-byte pgbson values, matching the path that exposed the invalid marker check.
+SELECT documentdb_api.create_collection('db', 'bsonFirstNLastNMultipleOf64');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one('db', 'bsonFirstNLastNMultipleOf64', ('{"_id":' || g || ',"v":"' || repeat('x', 38) || '"}')::documentdb_core.bson)) FROM generate_series(1, 8) g;
+ count 
+-------
+      8
+(1 row)
+
+SELECT bson_expression_get(bson_repath_and_build('arr'::text, BSONFIRSTNONSORTED(document, 8)), '{ "": "$arr._id" }'::bson, true) AS firstn_ids FROM documentdb_api.collection('db', 'bsonFirstNLastNMultipleOf64');
+                                                                                                 firstn_ids                                                                                                  
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" }, { "$numberInt" : "8" } ] }
+(1 row)
+
+SELECT bson_expression_get(bson_repath_and_build('arr'::text, BSONLASTNONSORTED(document, 4)), '{ "": "$arr._id" }'::bson, true) AS lastn_ids FROM documentdb_api.collection('db', 'bsonFirstNLastNMultipleOf64');
+                                                  lastn_ids                                                  
+-------------------------------------------------------------------------------------------------------------
+ { "" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" }, { "$numberInt" : "8" } ] }
+(1 row)
+
 -- $documents + $group: non-constant _id
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ { "category": "A", "val": 10 }, { "category": "B", "val": 20 }, { "category": "A", "val": 30 } ] }, { "$group": { "_id": "$category", "total": { "$sum": "$val" } } } ], "cursor": {}}');
                 documents_aggregate                 

@@ -1344,7 +1344,18 @@ BsonOrderFinalOnSorted(PG_FUNCTION_ARGS, bool isSingle)
 		PgbsonWriterStartArray(&writer, "", 0, &arrayWriter);
 		for (uint32 i = 0; i < currentCount; i++)
 		{
-			if (*sourcePtr == 0)
+			/*
+			 * A stored value is a serialized pgbson whose leading bytes are its
+			 * 4-byte varlena header. When the value's total size is a multiple
+			 * of 64 that header's first byte is 0, so just testing only the first
+			 * byte misidentifies such a value as a NULL.
+			 * A NULL entry is written as a single 0 byte followed by a length of 1
+			 * (bytes 00 01 00 00 00), so match the full marker instead of just the
+			 * first byte.
+			 */
+			uint32 leadingLength;
+			memcpy(&leadingLength, sourcePtr + 1, sizeof(uint32));
+			if (*sourcePtr == 0 && leadingLength == 1)
 			{
 				PgbsonArrayWriterWriteNull(&arrayWriter);
 

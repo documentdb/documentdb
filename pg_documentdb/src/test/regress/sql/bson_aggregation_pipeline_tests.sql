@@ -544,6 +544,16 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_3508 whe
 SELECT documentdb_api.create_collection('db', 'bsonFirstNLastNCrashEmptyCollection');
 SELECT BSONLASTNONSORTED(NULL, 3) FROM documentdb_api.collection('db', 'bsonFirstNLastNCrashEmptyCollection');
 
+-- Regression test: firstN/lastN no-sort final over values whose serialized
+-- size is a multiple of 64 previously crashed (or returned nulls) because the
+-- value's varlena header first byte is 0 and was misread as a NULL marker.
+-- Insert rows so the aggregate builds its state buffer from storage-backed
+-- 64-byte pgbson values, matching the path that exposed the invalid marker check.
+SELECT documentdb_api.create_collection('db', 'bsonFirstNLastNMultipleOf64');
+SELECT COUNT(documentdb_api.insert_one('db', 'bsonFirstNLastNMultipleOf64', ('{"_id":' || g || ',"v":"' || repeat('x', 38) || '"}')::documentdb_core.bson)) FROM generate_series(1, 8) g;
+SELECT bson_expression_get(bson_repath_and_build('arr'::text, BSONFIRSTNONSORTED(document, 8)), '{ "": "$arr._id" }'::bson, true) AS firstn_ids FROM documentdb_api.collection('db', 'bsonFirstNLastNMultipleOf64');
+SELECT bson_expression_get(bson_repath_and_build('arr'::text, BSONLASTNONSORTED(document, 4)), '{ "": "$arr._id" }'::bson, true) AS lastn_ids FROM documentdb_api.collection('db', 'bsonFirstNLastNMultipleOf64');
+
 -- $documents + $group: non-constant _id
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ { "category": "A", "val": 10 }, { "category": "B", "val": 20 }, { "category": "A", "val": 30 } ] }, { "$group": { "_id": "$category", "total": { "$sum": "$val" } } } ], "cursor": {}}');
 
