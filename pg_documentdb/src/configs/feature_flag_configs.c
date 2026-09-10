@@ -163,6 +163,11 @@ bool EnableFailureOnParallelIndexArraysForMetadataTracking =
 #define DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT false
 bool EnableIndexOnlyScanForFindProject = DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT;
 
+/* Added on v1.1, enabled on v1.1, remove after v1.3 */
+#define DEFAULT_ENABLE_MULTI_KEY_FILTER_INDEX_ONLY_SCAN true
+bool EnableMultiKeyFilterIndexOnlyScan =
+	DEFAULT_ENABLE_MULTI_KEY_FILTER_INDEX_ONLY_SCAN;
+
 /*
  * Temporary kill switch for candidate detection; when off, projection walking
  * stays fully guarded by EnableIndexOnlyScanForFindProject (the old behavior).
@@ -1217,6 +1222,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether or not to enable index only scan for find with project operations."),
 		NULL, &EnableIndexOnlyScanForFindProject,
 		DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_multi_key_filter_index_only_scan", newGucPrefix),
+		gettext_noop(
+			"Whether to allow index-only scans when per-path metadata proves a filter on a multi-key path can be answered without a runtime recheck."),
+		NULL, &EnableMultiKeyFilterIndexOnlyScan,
+		DEFAULT_ENABLE_MULTI_KEY_FILTER_INDEX_ONLY_SCAN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

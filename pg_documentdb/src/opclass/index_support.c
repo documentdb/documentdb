@@ -336,6 +336,7 @@ extern bool EnableExtendedExplainPlans;
 extern bool EnableExplainScanIndexCosts;
 extern bool EnableOrderByIndexTerm;
 extern bool EnableIndexOnlyScanForFindProject;
+extern bool EnableMultiKeyFilterIndexOnlyScan;
 extern bool TrackIndexOnlyScanFindCandidate;
 extern bool EnableObjectIdFuncExprConversion;
 extern bool EnableExtendedIndexes;
@@ -450,7 +451,9 @@ static void PrimaryKeyLookupUnableToFindIndex(void);
 static bool IndexClauseIsValidForIndexOnlyScan(const IndexClause *clause,
 											   bytea *indexOptions,
 											   const IndexOnlyScanMultiKeyState *
-											   multiKeyState);
+											   multiKeyState,
+											   int32_t perPathMultiKeyQualsCount[
+												   INDEX_MAX_KEYS]);
 static OpExpr * CreateMergeSortInPrefixMarkerOpExpr(Expr *documentExpr);
 static List * RemoveMergeSortInPrefixMarkerClauses(List *indexClauses,
 												   bool *removedMarker);
@@ -2186,7 +2189,8 @@ IsBsonValueArgumentValidForIndexOnlyScan(const bson_value_t *bsonValue)
 static bool
 CheckOpArgIsValidForIndexOnlyScan(Const *arg, bytea *indexOptions, BsonIndexStrategy
 								  indexStrategy,
-								  const IndexOnlyScanMultiKeyState *multiKeyState)
+								  const IndexOnlyScanMultiKeyState *multiKeyState,
+								  int32_t perPathMultiKeyQualsCount[INDEX_MAX_KEYS])
 {
 	if (indexOptions == NULL)
 	{
@@ -2209,8 +2213,104 @@ CheckOpArgIsValidForIndexOnlyScan(Const *arg, bytea *indexOptions, BsonIndexStra
 	int32_t columnNumber = GetCompositeOpClassColumnNumber(queryElement.path,
 														   indexOptions,
 														   &sortDirectionIgnored);
-	if (GetIndexColumnMultiKeyStatus(multiKeyState, columnNumber) !=
-		IndexMultiKeyStatus_HasNoArrays)
+
+	IndexMultiKeyStatus status = GetIndexColumnMultiKeyStatus(multiKeyState,
+															  columnNumber);
+	bool isMultiKeyFilter = false;
+	if (EnableMultiKeyFilterIndexOnlyScan &&
+		multiKeyState->isPerPathMultiKeyTracked &&
+		status == IndexMultiKeyStatus_HasArrays)
+	{
+		/* For per path tracking, if the path is *known* to be multi-key, we still can support
+		 * index only scans for specific operator types.
+		 */
+		isMultiKeyFilter = true;
+		switch (indexStrategy)
+		{
+			case BSON_INDEX_STRATEGY_DOLLAR_EQUAL:
+			case BSON_INDEX_STRATEGY_DOLLAR_GREATER:
+			case BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL:
+			case BSON_INDEX_STRATEGY_DOLLAR_LESS:
+			case BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL:
+			{
+				/* For these cases, we *can* potentially do index only scans */
+				switch (queryElement.bsonValue.value_type)
+				{
+					case BSON_TYPE_MINKEY:
+					{
+						if (indexStrategy == BSON_INDEX_STRATEGY_DOLLAR_GREATER)
+						{
+							return false;
+						}
+
+						break;
+					}
+
+					case BSON_TYPE_MAXKEY:
+					{
+						if (indexStrategy == BSON_INDEX_STRATEGY_DOLLAR_LESS)
+						{
+							return false;
+						}
+
+						break;
+					}
+
+					case BSON_TYPE_BOOL:
+					case BSON_TYPE_INT32:
+					case BSON_TYPE_INT64:
+					case BSON_TYPE_DOUBLE:
+					case BSON_TYPE_TIMESTAMP:
+					case BSON_TYPE_DECIMAL128:
+					case BSON_TYPE_DATE_TIME:
+					case BSON_TYPE_OID:
+					{
+						/* These types with the operators above
+						 * generally do not do runtime recheck even with
+						 * multi-key - it's safe to push down if the index doesn't ahve
+						 * truncation.
+						 */
+						break;
+					}
+
+					case BSON_TYPE_UTF8:
+					case BSON_TYPE_BINARY:
+					{
+						/* The assumption here is that this path is not truncated.
+						 * Consequently, string queries don't need to recheck on the runtime
+						 * Ensure that this is covered by the check for IsCompositeIndexOnlyScanCandidate
+						 */
+						break;
+					}
+
+					default:
+					{
+						return false;
+					}
+				}
+
+				break;
+			}
+
+			case BSON_INDEX_STRATEGY_DOLLAR_EXISTS:
+			{
+				bool existsPositiveMatch = BsonValueAsBool(&queryElement.bsonValue);
+				if (!existsPositiveMatch)
+				{
+					return false;
+				}
+
+				break;
+			}
+
+			default:
+			{
+				/* For all other cases, skip for now defensively */
+				return false;
+			}
+		}
+	}
+	else if (status != IndexMultiKeyStatus_HasNoArrays)
 	{
 		return false;
 	}
@@ -2243,8 +2343,16 @@ CheckOpArgIsValidForIndexOnlyScan(Const *arg, bytea *indexOptions, BsonIndexStra
 		}
 	}
 
-	return ValidateIndexForQualifierElement(indexOptions, &queryElement, queryCollation,
-											indexStrategy);
+	bool isValid = ValidateIndexForQualifierElement(indexOptions, &queryElement,
+													queryCollation,
+													indexStrategy);
+
+	if (isValid && isMultiKeyFilter && perPathMultiKeyQualsCount != NULL)
+	{
+		perPathMultiKeyQualsCount[columnNumber]++;
+	}
+
+	return isValid;
 }
 
 
@@ -2307,7 +2415,8 @@ ConsiderObjectIdFuncForIndexOnlyScan(FuncExpr *funcExpr, bytea *indexOptions)
 static bool
 ExprIsValidForIndexOnlyScan(Expr *expr, bytea *indexOptions, bool *isShardKeyExpr,
 							int64 *shardKeyValue,
-							const IndexOnlyScanMultiKeyState *multiKeyState)
+							const IndexOnlyScanMultiKeyState *multiKeyState,
+							int32_t perPathMultiKeyQualsCount[INDEX_MAX_KEYS])
 {
 	check_stack_depth();
 	CHECK_FOR_INTERRUPTS();
@@ -2364,7 +2473,8 @@ ExprIsValidForIndexOnlyScan(Expr *expr, bytea *indexOptions, bool *isShardKeyExp
 				{
 					return CheckOpArgIsValidForIndexOnlyScan(
 						(Const *) secondArg, indexOptions,
-						BSON_INDEX_STRATEGY_DOLLAR_RANGE, multiKeyState);
+						BSON_INDEX_STRATEGY_DOLLAR_RANGE, multiKeyState,
+						perPathMultiKeyQualsCount);
 				}
 
 				return false;
@@ -2393,7 +2503,8 @@ ExprIsValidForIndexOnlyScan(Expr *expr, bytea *indexOptions, bool *isShardKeyExp
 
 		return CheckOpArgIsValidForIndexOnlyScan((Const *) secondArg, indexOptions,
 												 operator->indexStrategy,
-												 multiKeyState);
+												 multiKeyState,
+												 perPathMultiKeyQualsCount);
 	}
 	else if (IsA(expr, BoolExpr))
 	{
@@ -2405,7 +2516,8 @@ ExprIsValidForIndexOnlyScan(Expr *expr, bytea *indexOptions, bool *isShardKeyExp
 			Expr *boolArg = (Expr *) lfirst(boolArgs);
 			bool isShardKeyExprInner = false;
 			if (!ExprIsValidForIndexOnlyScan(boolArg, indexOptions, &isShardKeyExprInner,
-											 shardKeyValue, multiKeyState))
+											 shardKeyValue, multiKeyState,
+											 perPathMultiKeyQualsCount))
 			{
 				return false;
 			}
@@ -2425,7 +2537,8 @@ ExprIsValidForIndexOnlyScan(Expr *expr, bytea *indexOptions, bool *isShardKeyExp
 
 static bool
 IndexClauseIsValidForIndexOnlyScan(const IndexClause *clause, bytea *indexOptions,
-								   const IndexOnlyScanMultiKeyState *multiKeyState)
+								   const IndexOnlyScanMultiKeyState *multiKeyState,
+								   int32_t perPathMultiKeyQualsCount[INDEX_MAX_KEYS])
 {
 	if (clause->lossy)
 	{
@@ -2443,8 +2556,10 @@ IndexClauseIsValidForIndexOnlyScan(const IndexClause *clause, bytea *indexOption
 
 	/* We ignore if it is a shard key expression or not as for rum indexes a shard key value opExpr will never be valid to be pushed down. */
 	bool isShardKeyExpr = false;
+	int64_t *shardKeyValue = NULL;
 	return ExprIsValidForIndexOnlyScan(rinfo->clause, indexOptions, &isShardKeyExpr,
-									   NULL, multiKeyState);
+									   shardKeyValue, multiKeyState,
+									   perPathMultiKeyQualsCount);
 }
 
 
@@ -2461,10 +2576,12 @@ IndexRestrictInfoSupportIndexOnlyScan(const RestrictInfo *rinfo,
 	}
 
 	bool isShardKeyExpr = false;
+	int32_t *perPathMultiKeyState = NULL;
 	bool supportsIndexOnlyScan = ExprIsValidForIndexOnlyScan(rinfo->clause, indexOptions,
 															 &isShardKeyExpr,
 															 shardKeyValue,
-															 multiKeyState);
+															 multiKeyState,
+															 perPathMultiKeyState);
 	if (isShardKeyExpr && shardKeyRestrictInfo != NULL)
 	{
 		*shardKeyRestrictInfo = rinfo;
@@ -2532,13 +2649,31 @@ IndexClausesSupportIndexOnlyScan(IndexPath *indexPath,
 	}
 
 	ListCell *clauseCell;
+	int32_t perPathMultiKeyQualsCount[INDEX_MAX_KEYS] = { 0 };
 	foreach(clauseCell, indexPath->indexclauses)
 	{
 		IndexClause *clause = (IndexClause *) lfirst(clauseCell);
 
-		if (!IndexClauseIsValidForIndexOnlyScan(clause, indexOptions, multiKeyState))
+		if (!IndexClauseIsValidForIndexOnlyScan(clause, indexOptions, multiKeyState,
+												perPathMultiKeyQualsCount))
 		{
 			return false;
+		}
+	}
+
+	/* For a multi-key index, we can't support index only scans if there's > 1 qual
+	 * on the same path because that would require a runtime recheck.  This is only
+	 * relevant for per-path multi-key tracking, since that's the only path that allows
+	 * index only scans on multi-key paths.
+	 */
+	if (multiKeyState->isMultiKeyIndex && multiKeyState->isPerPathMultiKeyTracked)
+	{
+		for (int32_t i = 0; i < INDEX_MAX_KEYS; i++)
+		{
+			if (perPathMultiKeyQualsCount[i] > 1)
+			{
+				return false;
+			}
 		}
 	}
 
@@ -3178,7 +3313,10 @@ IsCompositeIndexOnlyScanCandidate(const IndexPath *indexPath,
 
 	/* Truncated terms are never full fidelity and block index only scan. When the
 	 * metadata is tracked we already know it; otherwise let the structural check
-	 * read it. */
+	 * read it.
+	 * If this was to change, please clean up ExprIsValidForIndexOnlyScan which assumes
+	 * that truncated indexes are skipped for index only scans.
+	 */
 	if (hasPerPathMetadata && metadata->hasTruncation)
 	{
 		return false;
@@ -7555,13 +7693,14 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 	 * this path already owns a private copy. See EnsureIndexClausesOwned.
 	 */
 	List *sharedIndexClauses = indexPath->indexclauses;
+	int32_t perPathMultiKeyQualsCount[INDEX_MAX_KEYS] = { 0 };
 	foreach(cell, indexPath->indexclauses)
 	{
 		IndexClause *clause = (IndexClause *) lfirst(cell);
 
-		if (indexOnlyScanPossible && !IndexClauseIsValidForIndexOnlyScan(clause,
-																		 indexOptions,
-																		 &multiKeyState))
+		if (indexOnlyScanPossible &&
+			!IndexClauseIsValidForIndexOnlyScan(clause, indexOptions, &multiKeyState,
+												perPathMultiKeyQualsCount))
 		{
 			indexOnlyScanPossible = false;
 		}
@@ -7637,6 +7776,19 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 				equalityPrefixes, nonEqualityPrefixes, anySpecifiedPrefixes))
 		{
 			firstFilterColumnFound = true;
+		}
+	}
+
+	if (indexOnlyScanPossible && multiKeyState.isMultiKeyIndex &&
+		multiKeyState.isPerPathMultiKeyTracked)
+	{
+		for (int i = 0; i < INDEX_MAX_KEYS; i++)
+		{
+			if (perPathMultiKeyQualsCount[i] > 1)
+			{
+				indexOnlyScanPossible = false;
+				break;
+			}
 		}
 	}
 

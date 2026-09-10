@@ -365,12 +365,14 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          innerScanLoops: 3 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
-         ->  Index Scan using region_tags_1 on documentdb_data.documents_43601 collection (actual rows=2 loops=1)
+         ->  Index Only Scan using region_tags_1 on documentdb_data.documents_43601 collection (actual rows=2 loops=1)
                Index Cond: ((collection.document @= '{ "region" : "west" }'::bson) AND (collection.document @>= '{ "tags" : { "$minKey" : 1 } }'::bson))
-(15 rows)
+               Heap Fetches: xxx
+(16 rows)
 
--- Leading "region" bound + a range on the multi-key "tags" -> Index Scan, NOT index-only.
--- (range/$eq operators are "supported" strategies; the multi-key column gate is what blocks them.)
+-- Leading "region" bound + a single sided range on the multi-key "tags" ->
+-- Index Only Scan. Each column carries exactly one qual, so the bound on the
+-- multi-key column is exact rather than a collapse of several clauses.
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosmk_db', '{ "aggregate" : "coll", "pipeline" : [{ "$match" : { "region": { "$eq": "west" }, "tags": { "$gt": "a" } } }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
                                                            run_explain_and_trim                                                           
 ------------------------------------------------------------------------------------------------------------------------------------------
@@ -387,11 +389,12 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          innerScanLoops: 3 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
-         ->  Index Scan using region_tags_1 on documentdb_data.documents_43601 collection (actual rows=2 loops=1)
+         ->  Index Only Scan using region_tags_1 on documentdb_data.documents_43601 collection (actual rows=2 loops=1)
                Index Cond: ((collection.document @= '{ "region" : "west" }'::bson) AND (collection.document @> '{ "tags" : "a" }'::bson))
-(15 rows)
+               Heap Fetches: xxx
+(16 rows)
 
--- Leading "region" bound + $eq on the multi-key "tags" -> Index Scan, NOT index-only.
+-- Leading "region" bound + $eq on the multi-key "tags" -> Index Only Scan.
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosmk_db', '{ "aggregate" : "coll", "pipeline" : [{ "$match" : { "region": { "$eq": "west" }, "tags": { "$eq": "x" } } }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
                                                            run_explain_and_trim                                                           
 ------------------------------------------------------------------------------------------------------------------------------------------
@@ -404,12 +407,13 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          isMultiKey: true
          multiKeyPaths: tags
          indexBounds: ["region": ["west", "west"], "tags": ["x", "x"]]
-         innerScanLoops: 1 loops
-         scanType: regular
+         innerScanLoops: 2 loops
+         scanType: ordered
          scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 1)]
-         ->  Index Scan using region_tags_1 on documentdb_data.documents_43601 collection (actual rows=1 loops=1)
+         ->  Index Only Scan using region_tags_1 on documentdb_data.documents_43601 collection (actual rows=1 loops=1)
                Index Cond: ((collection.document @= '{ "region" : "west" }'::bson) AND (collection.document @= '{ "tags" : "x" }'::bson))
-(14 rows)
+               Heap Fetches: xxx
+(15 rows)
 
 -- Leading "region" bound + $in with a null entry on the multi-key "tags" -> Index Scan, NOT index-only.
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosmk_db', '{ "aggregate" : "coll", "pipeline" : [{ "$match" : { "region": { "$eq": "west" }, "tags": { "$in": [ "x", null ] } } }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
@@ -1183,10 +1187,12 @@ SELECT format('ALTER TABLE documentdb_data.documents_%s set (autovacuum_enabled 
 ALTER TABLE documentdb_data.documents_43604 set (autovacuum_enabled = off)
 SELECT format('VACUUM (ANALYZE ON, FREEZE ON) documentdb_data.documents_%s', :'leadmk_cid') \gexec
 VACUUM (ANALYZE ON, FREEZE ON) documentdb_data.documents_43604
--- $eq on the multi-key leading "items" -> Index Scan (composite index used), NOT index-only.
+-- $eq on the multi-key leading "items" -> Index Only Scan. A numeric equality on
+-- a per-path tracked multi-key column needs no runtime recheck, so the count can
+-- be served from the index alone.
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosmk_db', '{ "aggregate" : "leadmk_coll", "pipeline" : [{ "$match" : { "items": { "$eq": 5 } } }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
-                                               run_explain_and_trim                                               
-------------------------------------------------------------------------------------------------------------------
+                                                 run_explain_and_trim                                                  
+-----------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, documentdb_api_internal.bsoncount(1))
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
@@ -1199,9 +1205,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          innerScanLoops: 1 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
-         ->  Index Scan using items_label_1 on documentdb_data.documents_43604 collection (actual rows=1 loops=1)
+         ->  Index Only Scan using items_label_1 on documentdb_data.documents_43604 collection (actual rows=1 loops=1)
                Index Cond: (collection.document @= '{ "items" : { "$numberInt" : "5" } }'::bson)
-(14 rows)
+               Heap Fetches: xxx
+(15 rows)
 
 -- $ne on the multi-key leading "items" -> Index Scan, NOT index-only.
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosmk_db', '{ "aggregate" : "leadmk_coll", "pipeline" : [{ "$match" : { "items": { "$ne": 5 } } }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);

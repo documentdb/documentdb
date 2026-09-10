@@ -113,11 +113,12 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 -- Leading "region" bound + $exists true on the multi-key "tags" -> Index Scan, NOT index-only.
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosmk_db', '{ "aggregate" : "coll", "pipeline" : [{ "$match" : { "region": { "$eq": "west" }, "tags": { "$exists": true } } }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
 
--- Leading "region" bound + a range on the multi-key "tags" -> Index Scan, NOT index-only.
--- (range/$eq operators are "supported" strategies; the multi-key column gate is what blocks them.)
+-- Leading "region" bound + a single sided range on the multi-key "tags" ->
+-- Index Only Scan. Each column carries exactly one qual, so the bound on the
+-- multi-key column is exact rather than a collapse of several clauses.
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosmk_db', '{ "aggregate" : "coll", "pipeline" : [{ "$match" : { "region": { "$eq": "west" }, "tags": { "$gt": "a" } } }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
 
--- Leading "region" bound + $eq on the multi-key "tags" -> Index Scan, NOT index-only.
+-- Leading "region" bound + $eq on the multi-key "tags" -> Index Only Scan.
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosmk_db', '{ "aggregate" : "coll", "pipeline" : [{ "$match" : { "region": { "$eq": "west" }, "tags": { "$eq": "x" } } }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
 
 -- Leading "region" bound + $in with a null entry on the multi-key "tags" -> Index Scan, NOT index-only.
@@ -278,7 +279,9 @@ SELECT collection_id AS leadmk_cid FROM documentdb_api_catalog.collections WHERE
 SELECT format('ALTER TABLE documentdb_data.documents_%s set (autovacuum_enabled = off)', :'leadmk_cid') \gexec
 SELECT format('VACUUM (ANALYZE ON, FREEZE ON) documentdb_data.documents_%s', :'leadmk_cid') \gexec
 
--- $eq on the multi-key leading "items" -> Index Scan (composite index used), NOT index-only.
+-- $eq on the multi-key leading "items" -> Index Only Scan. A numeric equality on
+-- a per-path tracked multi-key column needs no runtime recheck, so the count can
+-- be served from the index alone.
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosmk_db', '{ "aggregate" : "leadmk_coll", "pipeline" : [{ "$match" : { "items": { "$eq": 5 } } }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
 
 -- $ne on the multi-key leading "items" -> Index Scan, NOT index-only.
