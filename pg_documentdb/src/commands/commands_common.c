@@ -56,7 +56,6 @@ static const char *const IgnoredCommonSpecFields[] = {
 	"awaitData",
 	"batch_size",
 	"bypassDocumentValidation", /* insert command */
-	"bypassEmptyTsReplacement", /* insert, update, findAndModify and bulkWrite command */
 	"collation",
 	"collstats",
 	"comment", /* insert, createIndex, dropIndex command */
@@ -99,7 +98,8 @@ static int NumberOfIgnoredFields = sizeof(IgnoredCommonSpecFields) /
 /* Forward declartion */
 static int CompareStringsCaseInsensitive(const void *a, const void *b);
 static pgbson * RewriteDocumentAddObjectIdCore(const bson_value_t *docValue,
-											   bson_value_t *objectIdToWrite);
+											   bson_value_t *objectIdToWrite,
+											   bool replaceEmptyTimestamps);
 
 /*
  * Rejects an embedded null in a namespace when validation is enabled.
@@ -597,13 +597,21 @@ ValidateIdField(const bson_value_t *idValue)
  * returns the original document as a pgbson.
  */
 pgbson *
-RewriteDocumentValueAddObjectId(const bson_value_t *value)
+RewriteDocumentValueAddObjectId(const bson_value_t *value, bool replaceEmptyTimestamps)
 {
 	bson_value_t *objectIdToWrite = NULL;
-	pgbson *result = RewriteDocumentAddObjectIdCore(value, objectIdToWrite);
-	if (result == NULL)
+	pgbson *result = RewriteDocumentAddObjectIdCore(value, objectIdToWrite, replaceEmptyTimestamps);
+	if (result == NULL && !replaceEmptyTimestamps)
 	{
 		return PgbsonInitFromDocumentBsonValue(value);
+	}
+	else if (result == NULL)
+	{
+		result = RewriteDocumentAddObjectIdCore(value, objectIdToWrite, false);
+		if (result == NULL)
+		{
+			return PgbsonInitFromDocumentBsonValue(value);
+		}
 	}
 
 	return result;
@@ -618,14 +626,22 @@ RewriteDocumentValueAddObjectId(const bson_value_t *value)
  * returns the original document.
  */
 pgbson *
-RewriteDocumentAddObjectId(pgbson *document)
+RewriteDocumentAddObjectId(pgbson *document, bool replaceEmptyTimestamps)
 {
 	bson_value_t *objectIdToWrite = NULL;
 	bson_value_t value = ConvertPgbsonToBsonValue(document);
-	pgbson *result = RewriteDocumentAddObjectIdCore(&value, objectIdToWrite);
-	if (result == NULL)
+	pgbson *result = RewriteDocumentAddObjectIdCore(&value, objectIdToWrite, replaceEmptyTimestamps);
+	if (result == NULL && !replaceEmptyTimestamps)
 	{
 		return document;
+	}
+	else if (result == NULL)
+	{
+		result = RewriteDocumentAddObjectIdCore(&value, objectIdToWrite, false);
+		if (result == NULL)
+		{
+			return document;
+		}
 	}
 
 	return result;
@@ -638,7 +654,8 @@ RewriteDocumentAddObjectId(pgbson *document)
  */
 pgbson *
 RewriteDocumentWithCustomObjectId(pgbson *document,
-								  pgbson *objectIdToWrite)
+								  pgbson *objectIdToWrite,
+								  bool replaceEmptyTimestamps)
 {
 	pgbsonelement objectIdElement;
 	TryGetSinglePgbsonElementFromPgbson(objectIdToWrite, &objectIdElement);
@@ -646,10 +663,18 @@ RewriteDocumentWithCustomObjectId(pgbson *document,
 	Assert(objectIdElement.bsonValue.value_type == BSON_TYPE_OID);
 
 	bson_value_t value = ConvertPgbsonToBsonValue(document);
-	pgbson *result = RewriteDocumentAddObjectIdCore(&value, &objectIdElement.bsonValue);
-	if (result == NULL)
+	pgbson *result = RewriteDocumentAddObjectIdCore(&value, &objectIdElement.bsonValue, replaceEmptyTimestamps);
+	if (result == NULL && !replaceEmptyTimestamps)
 	{
 		return document;
+	}
+	else if (result == NULL)
+	{
+		result = RewriteDocumentAddObjectIdCore(&value, &objectIdElement.bsonValue, false);
+		if (result == NULL)
+		{
+			return document;
+		}
 	}
 
 	return result;
@@ -705,7 +730,8 @@ CommitWriteProcedureAndReacquireCollectionLock(MongoCollection *collection,
  */
 static pgbson *
 RewriteDocumentAddObjectIdCore(const bson_value_t *docValue,
-							   bson_value_t *objectIdToWrite)
+							   bson_value_t *objectIdToWrite,
+							   bool replaceEmptyTimestamps)
 {
 	bson_iter_t it;
 	BsonValueInitIterator(docValue, &it);
@@ -713,13 +739,16 @@ RewriteDocumentAddObjectIdCore(const bson_value_t *docValue,
 	PgbsonWriterInit(&writer);
 	bool isFirstField = true;
 	bool documentHasIdField = false;
+	bool generatedTimestamp = false;
+	bson_value_t currentTimestamp = { 0 };
+
 	while (bson_iter_next(&it))
 	{
 		StringView pathView = bson_iter_key_string_view(&it);
 		if (StringViewEquals(&pathView, &IdFieldStringView))
 		{
 			/* Found an _id already */
-			if (isFirstField)
+			if (isFirstField && !replaceEmptyTimestamps)
 			{
 				/* If the _id is the first field, we're done */
 				ValidateIdField(bson_iter_value(&it));
@@ -731,6 +760,13 @@ RewriteDocumentAddObjectIdCore(const bson_value_t *docValue,
 		}
 
 		isFirstField = false;
+	}
+
+	/* if replaceEmptyTimestamps is true, we must traverse regardless of isFirstField */
+	if (isFirstField && documentHasIdField && !replaceEmptyTimestamps)
+	{
+		/* We'll never get here due to earlier return, but this is logically correct */
+		return NULL;
 	}
 
 	if (documentHasIdField)
@@ -754,6 +790,22 @@ RewriteDocumentAddObjectIdCore(const bson_value_t *docValue,
 			}
 
 			value = bson_iter_value(&documentIterator);
+			
+			if (replaceEmptyTimestamps && value->value_type == BSON_TYPE_TIMESTAMP &&
+				value->value.v_timestamp.timestamp == 0 && value->value.v_timestamp.increment == 0)
+			{
+				if (!generatedTimestamp)
+				{
+					struct timespec spec;
+					clock_gettime(CLOCK_REALTIME, &spec);
+					currentTimestamp.value_type = BSON_TYPE_TIMESTAMP;
+					currentTimestamp.value.v_timestamp.timestamp = spec.tv_sec;
+					currentTimestamp.value.v_timestamp.increment = spec.tv_nsec;
+					generatedTimestamp = true;
+				}
+				value = &currentTimestamp;
+			}
+			
 			PgbsonWriterAppendValue(&writer, bsonKey, bsonKeyLen, value);
 		}
 	}
@@ -774,8 +826,39 @@ RewriteDocumentAddObjectIdCore(const bson_value_t *docValue,
 
 		/* set the content now and add the object_id. */
 		PgbsonWriterAppendValue(&writer, "_id", 3, &objectidValue);
-		PgbsonWriterConcatBytes(&writer, docValue->value.v_doc.data,
-								docValue->value.v_doc.data_len);
+		
+		if (replaceEmptyTimestamps)
+		{
+			bson_iter_t documentIterator;
+			BsonValueInitIterator(docValue, &documentIterator);
+			while (bson_iter_next(&documentIterator))
+			{
+				const char *bsonKey = bson_iter_key(&documentIterator);
+				int bsonKeyLen = bson_iter_key_len(&documentIterator);
+				const bson_value_t *value = bson_iter_value(&documentIterator);
+				
+				if (value->value_type == BSON_TYPE_TIMESTAMP &&
+					value->value.v_timestamp.timestamp == 0 && value->value.v_timestamp.increment == 0)
+				{
+					if (!generatedTimestamp)
+					{
+						struct timespec spec;
+						clock_gettime(CLOCK_REALTIME, &spec);
+						currentTimestamp.value_type = BSON_TYPE_TIMESTAMP;
+						currentTimestamp.value.v_timestamp.timestamp = spec.tv_sec;
+						currentTimestamp.value.v_timestamp.increment = spec.tv_nsec;
+						generatedTimestamp = true;
+					}
+					value = &currentTimestamp;
+				}
+				PgbsonWriterAppendValue(&writer, bsonKey, bsonKeyLen, value);
+			}
+		}
+		else
+		{
+			PgbsonWriterConcatBytes(&writer, docValue->value.v_doc.data,
+									docValue->value.v_doc.data_len);
+		}
 	}
 
 	return PgbsonWriterGetPgbson(&writer);

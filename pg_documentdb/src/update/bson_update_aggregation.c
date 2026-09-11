@@ -309,7 +309,7 @@ ProcessAggregationPipelineUpdate(pgbson *sourceDoc,
 	if (isUpsert)
 	{
 		/* ensure _id is there and is at the top of the document */
-		finalDocument = RewriteDocumentAddObjectId(finalDocument);
+		finalDocument = RewriteDocumentAddObjectId(finalDocument, true);
 
 		/* one last validation on the final document. */
 		PgbsonValidateInputBson(finalDocument, BSON_VALIDATE_NONE);

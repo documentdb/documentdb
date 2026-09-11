@@ -163,3 +163,67 @@ SELECT COUNT(*) FROM documentdb_data.documents_1001 where object_id::bson = bson
     16
 (1 row)
 
+-- Test empty timestamp replacement
+CREATE OR REPLACE FUNCTION test_insert_empty_timestamp() RETURNS text AS $$
+DECLARE
+    doc bson;
+    v_collection_id bigint;
+    v_data_table_name text;
+    v_query text;
+BEGIN
+    PERFORM documentdb_api.insert_one('db', 'testTsEmpty', '{"_id": 1, "k": {"$timestamp": {"t":0, "i":0}}}');
+    
+    SELECT collection_id INTO v_collection_id
+    FROM documentdb_api_catalog.collections
+    WHERE collection_name = 'testTsEmpty' AND database_name = 'db';
+    
+    v_data_table_name := format('documentdb_data.documents_%s', v_collection_id);
+    v_query := format('SELECT document FROM %s WHERE object_id OPERATOR(documentdb_core.=) ''{"": 1}''::documentdb_core.bson', v_data_table_name);
+    EXECUTE v_query INTO doc;
+    
+    IF (doc::text) LIKE '%"$timestamp" : { "t" : 0, "i" : 0 }%' THEN
+        RETURN 'FAIL: Timestamp was not replaced. Doc: ' || doc::text;
+    END IF;
+    
+    RETURN 'SUCCESS';
+END;
+$$ LANGUAGE plpgsql;
+SELECT test_insert_empty_timestamp();
+NOTICE:  creating collection
+ test_insert_empty_timestamp 
+-----------------------------
+ SUCCESS
+(1 row)
+
+-- Test populated timestamp is NOT replaced
+CREATE OR REPLACE FUNCTION test_insert_populated_timestamp() RETURNS text AS $$
+DECLARE
+    doc bson;
+    v_collection_id bigint;
+    v_data_table_name text;
+    v_query text;
+BEGIN
+    PERFORM documentdb_api.insert_one('db', 'testTsPopulated', '{"_id": 1, "k": {"$timestamp": {"t":1, "i":0}}}');
+    
+    SELECT collection_id INTO v_collection_id
+    FROM documentdb_api_catalog.collections
+    WHERE collection_name = 'testTsPopulated' AND database_name = 'db';
+    
+    v_data_table_name := format('documentdb_data.documents_%s', v_collection_id);
+    v_query := format('SELECT document FROM %s WHERE object_id OPERATOR(documentdb_core.=) ''{"": 1}''::documentdb_core.bson', v_data_table_name);
+    EXECUTE v_query INTO doc;
+    
+    IF (doc::text) LIKE '%"$timestamp" : { "t" : 1, "i" : 0 }%' THEN
+        RETURN 'SUCCESS';
+    END IF;
+    
+    RETURN 'FAIL: Timestamp was replaced or missing. Doc: ' || doc::text;
+END;
+$$ LANGUAGE plpgsql;
+SELECT test_insert_populated_timestamp();
+NOTICE:  creating collection
+ test_insert_populated_timestamp 
+---------------------------------
+ SUCCESS
+(1 row)
+
