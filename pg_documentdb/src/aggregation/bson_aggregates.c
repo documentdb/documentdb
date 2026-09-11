@@ -140,6 +140,8 @@ PG_FUNCTION_INFO_V1(bson_add_to_set_final);
 PG_FUNCTION_INFO_V1(bson_merge_objects_transition_on_sorted);
 PG_FUNCTION_INFO_V1(bson_merge_objects_transition);
 PG_FUNCTION_INFO_V1(bson_merge_objects_final);
+PG_FUNCTION_INFO_V1(bson_merge_objects_ordered_transition);
+PG_FUNCTION_INFO_V1(bson_merge_objects_ordered_final);
 PG_FUNCTION_INFO_V1(bson_maxn_transition);
 PG_FUNCTION_INFO_V1(bson_maxminn_final);
 PG_FUNCTION_INFO_V1(bson_minn_transition);
@@ -478,6 +480,58 @@ bson_object_agg_transition(PG_FUNCTION_ARGS)
 {
 	bool mergeObjectsInputIsNullOrMissing = false;
 	return AggregateObjectsCore(fcinfo, mergeObjectsInputIsNullOrMissing);
+}
+
+
+/*
+ * PostgreSQL supplies inputs in aggregate ORDER BY order. Keep the merge tree
+ * in the aggregate context without serializing the growing input on each row.
+ * Unlike the unsorted object aggregate, the legacy sorted merge has no limit
+ * on the cumulative input size: repeated fields can overwrite a small result.
+ */
+Datum
+bson_merge_objects_ordered_transition(PG_FUNCTION_ARGS)
+{
+	MemoryContext aggregateContext;
+	if (!AggCheckCallContext(fcinfo, &aggregateContext))
+	{
+		ereport(ERROR, errmsg("Aggregate function invoked in non-aggregate context"));
+	}
+
+	pgbson *input = PG_GETARG_MAYBE_NULL_PGBSON(1);
+	bool inputIsNullOrMissing = ValidateMergeObjectsInput(input);
+	MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
+	BsonObjectAggState *state;
+	if (PG_ARGISNULL(0))
+	{
+		state = palloc0(sizeof(BsonObjectAggState));
+		state->tree = MakeRootNode();
+	}
+	else
+	{
+		state = (BsonObjectAggState *) PG_GETARG_POINTER(0);
+	}
+
+	if (inputIsNullOrMissing)
+	{
+		state->addEmptyPath = true;
+	}
+	else
+	{
+		/* Tree leaves refer to the input values after this transition returns. */
+		CreateObjectAggTreeNodes(state, PgbsonCloneFromPgbson(input));
+	}
+	MemoryContextSwitchTo(oldContext);
+	PG_RETURN_POINTER(state);
+}
+
+
+Datum
+bson_merge_objects_ordered_final(PG_FUNCTION_ARGS)
+{
+	BsonObjectAggState *state = PG_ARGISNULL(0) ? NULL :
+								(BsonObjectAggState *) PG_GETARG_POINTER(0);
+	return ParseAndReturnMergeObjectsTree(state);
 }
 
 

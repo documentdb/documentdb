@@ -47,3 +47,52 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson
 
 select documentdb_api.drop_collection('db','mergeObjectsGroupColl');
 select documentdb_api.drop_collection('db','mergeObjectsGroupColl2');
+
+/* Sorted merges must overwrite fields in sort order, independently per group. */
+SET documentdb.enableOrderByIndexTerm TO on;
+SELECT documentdb_api.insert_one('db', 'sortedMergeObjects', '{"_id":1,"group":"a","rank":2,"obj":{"value":2,"nested":{"new":2}}}');
+SELECT documentdb_api.insert_one('db', 'sortedMergeObjects', '{"_id":2,"group":"b","rank":3,"obj":null}');
+SELECT documentdb_api.insert_one('db', 'sortedMergeObjects', '{"_id":3,"group":"a","rank":1,"obj":{"value":1,"nested":{"old":1},"onlyFirst":true}}');
+SELECT documentdb_api.insert_one('db', 'sortedMergeObjects', '{"_id":4,"group":"b","rank":1,"obj":{"value":10}}');
+SELECT documentdb_api.insert_one('db', 'sortedMergeObjects', '{"_id":5,"group":"a","rank":3,"obj":{"value":null,"last":true}}');
+SELECT documentdb_api.insert_one('db', 'sortedMergeObjects', '{"_id":6,"group":"b","rank":2}');
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{"aggregate":"sortedMergeObjects","pipeline":[{"$sort":{"rank":1,"_id":1}},{"$group":{"_id":"$group","merged":{"$mergeObjects":"$obj"}}},{"$sort":{"_id":1}}]}');
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{"aggregate":"sortedMergeObjects","pipeline":[{"$sort":{"group":1,"rank":-1}},{"$group":{"_id":"$group","merged":{"$mergeObjects":"$obj"}}},{"$sort":{"_id":1}}]}');
+
+/* Multiple merge and order-sensitive accumulators share the original input. */
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{"aggregate":"sortedMergeObjects","pipeline":[{"$sort":{"rank":1,"_id":1}},{"$group":{"_id":"$group","merged":{"$mergeObjects":"$obj"},"lastDocument":{"$mergeObjects":"$$ROOT"},"first":{"$first":"$_id"},"last":{"$last":"$_id"},"ids":{"$push":"$_id"}}},{"$sort":{"_id":1}}]}');
+
+/* Missing fields in constructed objects remain absent, rather than becoming null. */
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{"aggregate":"sortedMergeObjects","pipeline":[{"$sort":{"rank":1,"_id":1}},{"$group":{"_id":null,"merged":{"$mergeObjects":{"missing":"$missing","value":"$obj.value"}}}}]}');
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{"aggregate":"sortedMergeObjects","pipeline":[{"$match":{"_id":-1}},{"$sort":{"rank":1}},{"$group":{"_id":null,"merged":{"$mergeObjects":"$obj"}}}]}');
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{"aggregate":"sortedMergeObjects","pipeline":[{"$sort":{"rank":1}},{"$group":{"_id":null,"merged":{"$mergeObjects":"$rank"}}}]}');
+
+/* A limit between sorting and grouping must still restrict the input. */
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{"aggregate":"sortedMergeObjects","pipeline":[{"$sort":{"rank":1,"_id":1}},{"$skip":1},{"$limit":3},{"$group":{"_id":null,"merged":{"$mergeObjects":"$obj"}}}]}');
+
+/* Exercise the alternate BSON sort representation in both directions. */
+SET documentdb.enableOrderByIndexTerm TO off;
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{"aggregate":"sortedMergeObjects","pipeline":[{"$sort":{"rank":1,"_id":1}},{"$group":{"_id":"$group","merged":{"$mergeObjects":"$obj"}}},{"$sort":{"_id":1}}]}');
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{"aggregate":"sortedMergeObjects","pipeline":[{"$sort":{"group":1,"rank":-1}},{"$group":{"_id":"$group","merged":{"$mergeObjects":"$obj"}}},{"$sort":{"_id":1}}]}');
+RESET documentdb.enableOrderByIndexTerm;
+
+/* A sorted merge uses the executor's ORDER BY, not the bounded N accumulator. */
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{"aggregate":"sortedMergeObjects","pipeline":[{"$sort":{"rank":1,"_id":1}},{"$group":{"_id":null,"merged":{"$mergeObjects":"$obj"}}}]}');
+
+/* Keep per-group results correct when the executor must spill sorted input. */
+SELECT count(documentdb_api.insert_one('db', 'mergeObjectsSpill',
+    json_build_object('_id', i, 'group', i % 2, 'obj', json_build_object('version', i, 'padding', repeat('x', 128)))::text::documentdb_core.bson))
+FROM generate_series(1, 2000) i;
+SET work_mem TO '64kB';
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{"aggregate":"mergeObjectsSpill","pipeline":[{"$sort":{"_id":-1}},{"$group":{"_id":"$group","merged":{"$mergeObjects":"$obj"}}},{"$project":{"merged.padding":0}},{"$sort":{"_id":1}}]}');
+RESET work_mem;
+/* The final object can stay small while cumulative overwritten input exceeds 100 MiB. */
+SELECT count(documentdb_api.insert_one('db', 'mergeObjectsLargeInput',
+    json_build_object('_id', i, 'obj', json_build_object('version', i, 'padding', repeat('x', 2097152)))::text::documentdb_core.bson))
+FROM generate_series(1, 51) i;
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{"aggregate":"mergeObjectsLargeInput","pipeline":[{"$sort":{"_id":1}},{"$group":{"_id":null,"merged":{"$mergeObjects":"$obj"}}},{"$project":{"merged.padding":0}}]}');
+SELECT documentdb_api.drop_collection('db', 'mergeObjectsLargeInput');
+
+SELECT documentdb_api.drop_collection('db', 'sortedMergeObjects');
+SELECT documentdb_api.drop_collection('db', 'mergeObjectsSpill');

@@ -1,0 +1,1 @@
+\i sql/bson_aggregation_pipeline_tests_merge_objects_group.sql

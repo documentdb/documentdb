@@ -298,8 +298,8 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "
                                                                                                                          document                                                                                                                         
 ---------------------------------------------------------------------
  { "_id" : "X", "mergedMetrics" : { "2019A" : { "$numberInt" : "150" }, "2019B" : { "$numberInt" : "250" }, "2019C" : { "$numberInt" : "0" }, "2019D" : { "$numberInt" : "0" }, "2020A" : { "$numberInt" : "10" }, "2020B" : { "$numberInt" : "200" } } }
- { "_id" : "Z", "mergedMetrics" : { "2019C" : { "$numberInt" : "900" }, "2019D" : { "$numberInt" : "210" } } }
  { "_id" : "Y", "mergedMetrics" : { "2019C" : { "$numberInt" : "80" }, "2019D" : { "$numberInt" : "180" }, "2020A" : { "$numberInt" : "250" } } }
+ { "_id" : "Z", "mergedMetrics" : { "2019C" : { "$numberInt" : "900" }, "2019D" : { "$numberInt" : "210" } } }
 (3 rows)
 
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "mergeObjTestColl1", "pipeline": [ { "$sort": { "category": 1 } }, { "$group": { "_id": "$year", "lastCategory": { "$mergeObjects": { "category": "$category" } } } } ] }');

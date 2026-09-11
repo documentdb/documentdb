@@ -1,8 +1,10 @@
+NOTICE:  identifier "pg_regress/bson_aggregation_pipeline_tests_merge_objects_group_pg16" will be truncated to "pg_regress/bson_aggregation_pipeline_tests_merge_objects_group_"
+\i sql/bson_aggregation_pipeline_tests_merge_objects_group.sql
 SET search_path TO documentdb_api_catalog;
 SET documentdb.next_collection_id TO 14200;
 SET documentdb.next_collection_index_id TO 14200;
 SELECT documentdb_api.insert_one('db','mergeObjectsGroupColl','{ "_id": 1, "year": 2020, "category": "X", "stats": { "2020A": 10, "2020B": 20 } }', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_merge_objects_group.sql:6: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -104,7 +106,7 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson
 (11 rows)
 
 SELECT documentdb_api.insert_one('db','mergeObjectsGroupColl2','{ "_id": 13, "group": 1, "obj": {}, "val": null }', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_merge_objects_group.sql:20: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -137,7 +139,7 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "
 (2 rows)
 
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "mergeObjectsGroupColl2", "pipeline": [ { "$group": { "_id": "$group", "mergedObj": { "$mergeObjects": "$obj.x" } } } ] }');
-ERROR:  $mergeObjects needs both inputs to be objects, but the provided input 2 has the type int
+psql:sql/bson_aggregation_pipeline_tests_merge_objects_group.sql:27: ERROR:  $mergeObjects needs both inputs to be objects, but the provided input 2 has the type int
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "mergeObjectsGroupColl2", "pipeline": [ { "$group": { "_id": "$group", "mergedObj": { "$mergeObjects": { "result": "$obj.y" } } } } ] }');
                                         document                                         
 -----------------------------------------------------------------------------------------
@@ -252,7 +254,7 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "
 (2 rows)
 
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "mergeObjectsGroupColl", "pipeline": [ { "$sort": { "category": 1 } }, { "$group": { "_id": "$year", "shouldFail": { "$mergeObjects": "$category" } } } ] }');
-ERROR:  $mergeObjects needs both inputs to be objects, but the provided input "X" has the type string
+psql:sql/bson_aggregation_pipeline_tests_merge_objects_group.sql:42: ERROR:  $mergeObjects needs both inputs to be objects, but the provided input "X" has the type string
 /* The combined sort/group stage keeps the user sort for order-sensitive
  * $mergeObjects accumulators. */
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "mergeObjectsGroupColl", "pipeline": [ { "$sort": { "category": 1 } }, { "$group": { "_id": "$year", "mergedStats": { "$mergeObjects": "$stats" } } } ] }');
@@ -264,10 +266,10 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson
          Output: '_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_0_1.document, '{ "" : "$year" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'mergedStats'::text, documentdb_api_internal.bson_merge_objects_ordered(bson_expression_get(agg_stage_0_1.document, '{ "" : "$stats" }'::documentdb_core.bson, false) ORDER BY (bson_orderby(agg_stage_0_1.document, '{ "category" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST)
          Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_0_1.document, '{ "" : "$year" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
          ->  Sort
-               Output: (documentdb_api_internal.bson_expression_get(agg_stage_0_1.document, '{ "" : "$year" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), agg_stage_0_1.document
-               Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_0_1.document, '{ "" : "$year" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+               Output: (documentdb_api_internal.bson_expression_get(agg_stage_0_1.document, '{ "" : "$year" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), agg_stage_0_1.document, (bson_orderby(agg_stage_0_1.document, '{ "category" : { "$numberInt" : "1" } }'::documentdb_core.bson))
+               Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_0_1.document, '{ "" : "$year" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), (bson_orderby(agg_stage_0_1.document, '{ "category" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
                ->  Subquery Scan on agg_stage_0_1
-                     Output: documentdb_api_internal.bson_expression_get(agg_stage_0_1.document, '{ "" : "$year" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), agg_stage_0_1.document
+                     Output: documentdb_api_internal.bson_expression_get(agg_stage_0_1.document, '{ "" : "$year" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), agg_stage_0_1.document, bson_orderby(agg_stage_0_1.document, '{ "category" : { "$numberInt" : "1" } }'::documentdb_core.bson)
                      ->  Sort
                            Output: collection.document, (bson_orderby(collection.document, '{ "category" : { "$numberInt" : "1" } }'::documentdb_core.bson))
                            Sort Key: (bson_orderby(collection.document, '{ "category" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
@@ -290,7 +292,7 @@ select documentdb_api.drop_collection('db','mergeObjectsGroupColl2');
 /* Sorted merges must overwrite fields in sort order, independently per group. */
 SET documentdb.enableOrderByIndexTerm TO on;
 SELECT documentdb_api.insert_one('db', 'sortedMergeObjects', '{"_id":1,"group":"a","rank":2,"obj":{"value":2,"nested":{"new":2}}}');
-NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_merge_objects_group.sql:53: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -361,7 +363,7 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{"a
 (0 rows)
 
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{"aggregate":"sortedMergeObjects","pipeline":[{"$sort":{"rank":1}},{"$group":{"_id":null,"merged":{"$mergeObjects":"$rank"}}}]}');
-ERROR:  $mergeObjects needs both inputs to be objects, but the provided input 1 has the type int
+psql:sql/bson_aggregation_pipeline_tests_merge_objects_group.sql:69: ERROR:  $mergeObjects needs both inputs to be objects, but the provided input 1 has the type int
 /* A limit between sorting and grouping must still restrict the input. */
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{"aggregate":"sortedMergeObjects","pipeline":[{"$sort":{"rank":1,"_id":1}},{"$skip":1},{"$limit":3},{"$group":{"_id":null,"merged":{"$mergeObjects":"$obj"}}}]}');
                                                      document                                                     
@@ -388,28 +390,30 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{"a
 RESET documentdb.enableOrderByIndexTerm;
 /* A sorted merge uses the executor's ORDER BY, not the bounded N accumulator. */
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{"aggregate":"sortedMergeObjects","pipeline":[{"$sort":{"rank":1,"_id":1}},{"$group":{"_id":null,"merged":{"$mergeObjects":"$obj"}}}]}');
-                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                    
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate
-   Output: documentdb_core.bson_repath_and_build('_id'::text, '{ "" : null }'::documentdb_core.bson, 'merged'::text, documentdb_api_internal.bson_merge_objects_ordered(bson_expression_get(agg_stage_0.document, '{ "" : "$obj" }'::documentdb_core.bson, false) ORDER BY (bson_orderby(agg_stage_0.document, '{ "rank" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST, (bson_orderby(agg_stage_0.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST)), ('{ "" : null }'::documentdb_core.bson)
-   Group Key: '{ "" : null }'::documentdb_core.bson
-   ->  Subquery Scan on agg_stage_0
-         Output: '{ "" : null }'::documentdb_core.bson, agg_stage_0.document
-         ->  Sort
-               Output: collection.document, (bson_orderby(collection.document, '{ "rank" : { "$numberInt" : "1" } }'::documentdb_core.bson)), (bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson))
-               Sort Key: (bson_orderby(collection.document, '{ "rank" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST, (bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
-               ->  Bitmap Heap Scan on documentdb_data.documents_14202 collection
-                     Output: collection.document, bson_orderby(collection.document, '{ "rank" : { "$numberInt" : "1" } }'::documentdb_core.bson), bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-                     Recheck Cond: (collection.shard_key_value = '14202'::bigint)
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection.shard_key_value = '14202'::bigint)
-(13 rows)
+   Output: documentdb_core.bson_repath_and_build('_id'::text, '{ "" : null }'::documentdb_core.bson, 'merged'::text, documentdb_api_internal.bson_merge_objects_ordered(bson_expression_get(agg_stage_0.document, '{ "" : "$obj" }'::documentdb_core.bson, false) ORDER BY (bson_orderby(agg_stage_0.document, '{ "rank" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST, (bson_orderby(agg_stage_0.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST)), '{ "" : null }'::documentdb_core.bson
+   ->  Sort
+         Output: agg_stage_0.document, (bson_orderby(agg_stage_0.document, '{ "rank" : { "$numberInt" : "1" } }'::documentdb_core.bson)), (bson_orderby(agg_stage_0.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson))
+         Sort Key: (bson_orderby(agg_stage_0.document, '{ "rank" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST, (bson_orderby(agg_stage_0.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
+         ->  Subquery Scan on agg_stage_0
+               Output: agg_stage_0.document, bson_orderby(agg_stage_0.document, '{ "rank" : { "$numberInt" : "1" } }'::documentdb_core.bson), bson_orderby(agg_stage_0.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               ->  Sort
+                     Output: collection.document, (bson_orderby(collection.document, '{ "rank" : { "$numberInt" : "1" } }'::documentdb_core.bson)), (bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson))
+                     Sort Key: (bson_orderby(collection.document, '{ "rank" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST, (bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
+                     ->  Bitmap Heap Scan on documentdb_data.documents_14202 collection
+                           Output: collection.document, bson_orderby(collection.document, '{ "rank" : { "$numberInt" : "1" } }'::documentdb_core.bson), bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+                           Recheck Cond: (collection.shard_key_value = '14202'::bigint)
+                           ->  Bitmap Index Scan on _id_
+                                 Index Cond: (collection.shard_key_value = '14202'::bigint)
+(15 rows)
 
 /* Keep per-group results correct when the executor must spill sorted input. */
 SELECT count(documentdb_api.insert_one('db', 'mergeObjectsSpill',
     json_build_object('_id', i, 'group', i % 2, 'obj', json_build_object('version', i, 'padding', repeat('x', 128)))::text::documentdb_core.bson))
 FROM generate_series(1, 2000) i;
-NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_merge_objects_group.sql:86: NOTICE:  creating collection
  count 
 -------
   2000
@@ -428,7 +432,7 @@ RESET work_mem;
 SELECT count(documentdb_api.insert_one('db', 'mergeObjectsLargeInput',
     json_build_object('_id', i, 'obj', json_build_object('version', i, 'padding', repeat('x', 2097152)))::text::documentdb_core.bson))
 FROM generate_series(1, 51) i;
-NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_merge_objects_group.sql:93: NOTICE:  creating collection
  count 
 -------
     51

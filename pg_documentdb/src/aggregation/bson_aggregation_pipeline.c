@@ -6970,10 +6970,12 @@ RejectCollationForGroupAccumulator(const AggregationPipelineBuildContext *contex
  */
 static FuncExpr *
 MakeGroupAccumulatorExpressionGet(Expr *documentExpr, Expr *exprConst,
-								  Expr *variableSpec, const char *collationString)
+								  Expr *variableSpec, const char *collationString,
+								  bool isNullOnEmpty)
 {
-	Const *trueConst = makeConst(BOOLOID, -1, InvalidOid, 1, BoolGetDatum(true), false,
-								 true);
+	Const *nullOnEmptyConst = makeConst(BOOLOID, -1, InvalidOid, 1, BoolGetDatum(
+											isNullOnEmpty), false,
+										true);
 
 	List *args;
 	Oid functionId;
@@ -6984,18 +6986,18 @@ MakeGroupAccumulatorExpressionGet(Expr *documentExpr, Expr *exprConst,
 			variableSpec = (Expr *) MakeBsonConst(PgbsonInitEmpty());
 		}
 
-		args = list_make5(documentExpr, exprConst, trueConst, variableSpec,
+		args = list_make5(documentExpr, exprConst, nullOnEmptyConst, variableSpec,
 						  MakeTextConst(collationString, strlen(collationString)));
 		functionId = BsonExpressionGetWithLetAndCollationFunctionOid();
 	}
 	else if (variableSpec != NULL)
 	{
-		args = list_make4(documentExpr, exprConst, trueConst, variableSpec);
+		args = list_make4(documentExpr, exprConst, nullOnEmptyConst, variableSpec);
 		functionId = BsonExpressionGetWithLetFunctionOid();
 	}
 	else
 	{
-		args = list_make3(documentExpr, exprConst, trueConst);
+		args = list_make3(documentExpr, exprConst, nullOnEmptyConst);
 		functionId = BsonExpressionGetFunctionOid();
 	}
 
@@ -7036,7 +7038,7 @@ AddSimpleGroupAccumulator(Query *query, const bson_value_t *accumulatorValue,
 
 	FuncExpr *accumFunc = MakeGroupAccumulatorExpressionGet(documentExpr, constValue,
 															variableSpec,
-															collationString);
+															collationString, true);
 
 	Aggref *aggref = CreateSingleArgAggregate(aggregateFunctionOid,
 											  (Expr *) accumFunc, parseState);
@@ -7232,6 +7234,48 @@ AddMergeObjectsGroupAccumulator(Query *query, const bson_value_t *accumulatorVal
 {
 	/* First apply the sorted aggs */
 	int nelems = BsonDocumentValueCountKeys(sortSpec);
+	if (variableSpec != NULL)
+	{
+		/* If variableSpec only contains the time system variables, do not fail. */
+		Node *specNode = (Node *) variableSpec;
+		Const *specConst = (Const *) specNode;
+		pgbson *specBson = DatumGetPgBson(specConst->constvalue);
+
+		bson_iter_t iter;
+		if (PgbsonInitIteratorAtPath(specBson, "let", &iter))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+							errmsg("let with $mergeObjects is not supported yet")));
+		}
+	}
+
+	/* Both paths evaluate the input without filling missing fields with null. */
+	Expr *inputExpression = (Expr *) MakeBsonConst(BsonValueToDocumentPgbson(
+													   accumulatorValue));
+	if (nelems > 0 && nelems <= 32 &&
+		IsClusterVersionAtleast(DocDB_V0, 118, 0) &&
+		IsSortSpecCompatibleForPushToAccumulatorOperator(sortSpec))
+	{
+		/* Let PostgreSQL sort once rather than copying the growing N-aggregate
+		 * state for every input. Keep missing expression fields absent, as in
+		 * the legacy sorted merge's expression evaluation. */
+		FuncExpr *accumFunc = MakeGroupAccumulatorExpressionGet(documentExpr,
+																inputExpression, NULL,
+																NULL, false);
+		Aggref *orderedAggregate = CreateSingleArgAggregate(
+			BsonMergeObjectsOrderedFunctionOid(), (Expr *) accumFunc, parseState);
+		TargetEntry *accumulatorTle = NULL;
+		repathArgs = lappend(repathArgs, AddGroupExpression((Expr *) accumulatorText,
+															parseState, identifiers,
+															query, TEXTOID, NULL));
+		repathArgs = lappend(repathArgs, AddGroupExpression((Expr *) orderedAggregate,
+															parseState, identifiers,
+															query, BsonTypeId(),
+															&accumulatorTle));
+		SetAccumulatorSortOrder(accumulatorTle, documentExpr, sortSpec, NULL);
+		return repathArgs;
+	}
+
 	Datum *sortDatumArray = palloc(sizeof(Datum) * nelems);
 
 	bson_iter_t sortIter;
@@ -7256,28 +7300,6 @@ AddMergeObjectsGroupAccumulator(Query *query, const bson_value_t *accumulatorVal
 	Const *sortArrayConst = makeConst(GetBsonArrayTypeOid(), -1, InvalidOid, -1,
 									  PointerGetDatum(arrayValue), false, false);
 
-
-	if (variableSpec != NULL)
-	{
-		/* If variableSpec only contains the time system variables, do not fail. */
-		Node *specNode = (Node *) variableSpec;
-		Const *specConst = (Const *) specNode;
-		pgbson *specBson = DatumGetPgBson(specConst->constvalue);
-
-		bson_iter_t iter;
-		if (PgbsonInitIteratorAtPath(specBson, "let", &iter))
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-							errmsg("let with $mergeObjects is not supported yet")));
-		}
-	}
-
-	/*
-	 * Here we add a parameter with the input expression. The reason is we need
-	 * to evaluate it against the document after the sort takes place.
-	 */
-	Expr *inputExpression = (Expr *) MakeBsonConst(BsonValueToDocumentPgbson(
-													   accumulatorValue));
 	Aggref *aggref = CreateMultiArgAggregate(BsonMergeObjectsFunctionOid(),
 											 list_make4(documentExpr, nConst,
 														sortArrayConst,
@@ -7582,10 +7604,10 @@ AddPercentileMedianGroupAccumulator(Query *query, const bson_value_t *accumulato
 	FuncExpr *inputAccumFunc = MakeGroupAccumulatorExpressionGet(documentExpr,
 																 inputConstValue,
 																 variableSpec,
-																 collationString);
+																 collationString, true);
 	FuncExpr *pAccumFunc = MakeGroupAccumulatorExpressionGet(documentExpr, pConstValue,
 															 variableSpec,
-															 collationString);
+															 collationString, true);
 
 	Oid aggregateFunctionOid = isMedianOp ? BsonMedianAggregateFunctionOid() :
 							   BsonPercentileAggregateFunctionOid();
