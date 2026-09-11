@@ -116,6 +116,9 @@ int ScramDefaultSaltLen = SCRAM_DEFAULT_SALT_LEN;
 #define MAX_USER_LIMIT 100
 int MaxUserLimit = MAX_USER_LIMIT;
 
+#define DEFAULT_MAX_ROLES_PER_ROLE 50
+int MaxRolesPerRole = DEFAULT_MAX_ROLES_PER_ROLE;
+
 #define DEFAULT_TDIGEST_COMPRESSION_ACCURACY 1500
 int TdigestCompressionAccuracy = DEFAULT_TDIGEST_COMPRESSION_ACCURACY;
 
@@ -400,6 +403,15 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 		gettext_noop("The default number of users allowed."),
 		NULL, &MaxUserLimit,
 		MAX_USER_LIMIT, 1, 500,
+		PGC_SUSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.max_roles_per_role", newGucPrefix),
+		gettext_noop("The maximum number of roles allowed in a role assignment."),
+		NULL, &MaxRolesPerRole,
+		DEFAULT_MAX_ROLES_PER_ROLE, 1, INT_MAX,
 		PGC_SUSET,
 		0,
 		NULL, NULL, NULL);

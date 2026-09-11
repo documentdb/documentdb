@@ -87,8 +87,6 @@ GetShardIndexOids_HookType get_shard_index_oids_hook = NULL;
 UpdatePostgresIndex_HookType update_postgres_index_hook = NULL;
 GetOperationCancellationQuery_HookType get_operation_cancellation_query_hook = NULL;
 
-UserNameValidation_HookType
-	username_validation_hook = NULL;
 PasswordValidation_HookType
 	password_validation_hook = NULL;
 
@@ -451,22 +449,6 @@ IsPasswordValid(const char *username, const char *password)
 	{
 		return password_validation_hook(username, password);
 	}
-	return true;
-}
-
-
-/*
- * Default username validation implementation
- * Returns true if username is valid, false otherwise
- */
-bool
-IsUsernameValid(const char *username)
-{
-	if (username_validation_hook != NULL)
-	{
-		return username_validation_hook(username);
-	}
-
 	return true;
 }
 

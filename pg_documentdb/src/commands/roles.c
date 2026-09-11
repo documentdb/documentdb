@@ -35,6 +35,7 @@
  */
 #define IS_INHERITABLE_ROLE(roleName) \
 	(strcmp(roleName, ApiReadOnlyRole) == 0 || \
+	 strcmp(roleName, API_RBAC_READWRITE_ANYDB_ROLE) == 0 || \
 	 strcmp(roleName, ApiAdminRoleV2) == 0)
 
 #define DOCUMENTDB_DEFAULT_ROOT_ROLE "documentdb_root_role"
@@ -53,7 +54,6 @@ PG_FUNCTION_INFO_V1(command_grant_roles_to_role);
 PG_FUNCTION_INFO_V1(command_grant_privileges_to_role);
 PG_FUNCTION_INFO_V1(command_revoke_roles_from_role);
 PG_FUNCTION_INFO_V1(command_revoke_privileges_from_role);
-PG_FUNCTION_INFO_V1(documentdb_is_role_member_of_role);
 PG_FUNCTION_INFO_V1(documentdb_is_reserved_user);
 
 /*
@@ -159,6 +159,7 @@ static void DeleteCustomRoleFromRoleCatalog(const char *roleName);
 static CustomPrivilegeAction GetPrivilegeAction(const char *action);
 static void WriteRoles(List *parentRoles, pgbson_array_writer *rolesArrayWriter,
 					   HTAB *roleInheritanceTable, const char *childRoleName);
+static int RoleParentEntryListCellCompare(const ListCell *a, const ListCell *b);
 static pgbson * NormalizeRoleSpecForStorage(pgbson *createRoleBson, HTAB *rolesHash);
 static void UpdateCustomRoleInRoleCatalog(const char *roleName, HTAB *roles, bool
 										  isGrantRoles);
@@ -174,21 +175,6 @@ command_create_role(PG_FUNCTION_ARGS)
 	Datum response = create_role(createRoleSpec);
 
 	PG_RETURN_DATUM(response);
-}
-
-
-/*
- * Returns whether the first role is directly or transitively a member of the second.
- */
-Datum
-documentdb_is_role_member_of_role(PG_FUNCTION_ARGS)
-{
-	char *memberRoleName = text_to_cstring(PG_GETARG_TEXT_PP(0));
-	char *roleName = text_to_cstring(PG_GETARG_TEXT_PP(1));
-	Oid memberRoleId = get_role_oid(memberRoleName, false);
-	Oid roleId = get_role_oid(roleName, false);
-
-	PG_RETURN_BOOL(is_member_of_role(memberRoleId, roleId));
 }
 
 
@@ -365,6 +351,9 @@ create_role(pgbson *createRoleBson)
 	bool validateCommandContext = true;
 	ParseCreateRoleSpec(createRoleBson, &createRoleSpec, validateCommandContext);
 
+	EnsureRoleMembershipLimits(createRoleSpec.roleName, hash_get_num_entries(
+								   createRoleSpec.parentRoles));
+
 	/* Create the specified role in the database */
 	StringInfo createRoleInfo = makeStringInfo();
 	appendStringInfo(createRoleInfo, "CREATE ROLE %s", quote_identifier(
@@ -425,6 +414,13 @@ ParseCreateRoleSpec(pgbson *createRoleBson, CreateRoleSpec *createRoleSpec,
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 								errmsg(
 									"The 'createRole' field must not be left empty.")));
+			}
+
+			if (strlen(createRoleSpec->roleName) != strLength)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"'createRole' field contains invalid UTF-8 characters.")));
 			}
 
 			/*
@@ -989,6 +985,9 @@ grant_roles_to_role(pgbson *grantRolesBson)
 	 * capabilities that the rest of the system relies on.
 	 */
 	EnsureCustomRoleExists(grantRolesSpec.roleName);
+
+	EnsureRoleMembershipLimits(grantRolesSpec.roleName, hash_get_num_entries(
+								   grantRolesSpec.grantedRoles));
 
 	bool allowCustomRoles = true;
 	ValidateAndGrantParentRoles(grantRolesSpec.roleName, grantRolesSpec.grantedRoles,
@@ -1850,19 +1849,30 @@ ProcessAllRolesForRolesInfo(pgbson_array_writer *rolesArrayWriter, RolesInfoSpec
 {
 	HASH_SEQ_STATUS status;
 	RoleParentEntry *entry;
+	List *sortedRoleEntries = NIL;
 
 	hash_seq_init(&status, roleInheritanceTable);
 	while ((entry = hash_seq_search(&status)) != NULL)
 	{
-		/* Exclude built-in roles if not requested */
 		if (!rolesInfoSpec.showBuiltInRoles &&
 			IS_NATIVE_BUILTIN_ROLE(entry->nativeRoleName.string))
 		{
 			continue;
 		}
 
+		sortedRoleEntries = lappend(sortedRoleEntries, entry);
+	}
+
+	list_sort(sortedRoleEntries, RoleParentEntryListCellCompare);
+
+	ListCell *roleCell;
+	foreach(roleCell, sortedRoleEntries)
+	{
+		entry = lfirst(roleCell);
 		WriteRoleResponse(entry, rolesArrayWriter, rolesInfoSpec, roleInheritanceTable);
 	}
+
+	list_free(sortedRoleEntries);
 }
 
 
@@ -1878,6 +1888,11 @@ ProcessSpecificRolesForRolesInfo(pgbson_array_writer *rolesArrayWriter, RolesInf
 	foreach(currentRoleName, rolesInfoSpec.roleNames)
 	{
 		const char *nativeRoleName = (const char *) lfirst(currentRoleName);
+
+		if (IsReservedInternalRoleName(nativeRoleName))
+		{
+			continue;
+		}
 
 		/* Convert native role name to internal for HTAB lookup */
 		const char *internalRoleName = GetInternalRoleName(nativeRoleName);
@@ -1919,7 +1934,16 @@ WriteRoles(List *parentRoles, pgbson_array_writer *rolesArrayWriter,
 		RoleParentEntry *parentEntry = hash_search(roleInheritanceTable,
 												   &internalParentRoleView, HASH_FIND,
 												   &parentFound);
-		if (!parentFound)
+		const char *nativeParentRole = NULL;
+		if (parentFound)
+		{
+			nativeParentRole = parentEntry->nativeRoleName.string;
+		}
+		else if (strcmp(internalParentRole, API_RBAC_READWRITE_ANYDB_ROLE) == 0)
+		{
+			nativeParentRole = "readWriteAnyDatabase";
+		}
+		else
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
 							errmsg("Parent role '%s' of '%s' not found.",
@@ -1929,7 +1953,7 @@ WriteRoles(List *parentRoles, pgbson_array_writer *rolesArrayWriter,
 		pgbson_writer parentRoleWriter;
 		PgbsonArrayWriterStartDocument(rolesArrayWriter, &parentRoleWriter);
 		PgbsonWriterAppendUtf8(&parentRoleWriter, "role", 4,
-							   parentEntry->nativeRoleName.string);
+							   nativeParentRole);
 		PgbsonWriterAppendUtf8(&parentRoleWriter, "db", 2, "admin");
 		PgbsonArrayWriterEndDocument(rolesArrayWriter, &parentRoleWriter);
 	}
@@ -2092,6 +2116,7 @@ BuildRoleInheritanceTable(void)
 		 */
 		if (IS_SYSTEM_LOGIN_ROLE(childRole) ||
 			IS_CUSTOM_RBAC_ROLE(childRole) ||
+			strcmp(childRole, API_RBAC_READWRITE_ANYDB_ROLE) == 0 ||
 			strcmp(childRole, ApiAdminRoleV2) == 0 ||
 			strcmp(childRole, ApiAdminRole) == 0 ||
 			(strcmp(childRole, DOCUMENTDB_DEFAULT_ROOT_ROLE) == 0 &&
@@ -2133,15 +2158,22 @@ BuildRoleInheritanceTable(void)
 			{
 				const char *parentRole = (const char *) lfirst(cell);
 
+				if (IS_CUSTOM_RBAC_ROLE(parentRole))
+				{
+					pfree(lfirst(cell));
+					continue;
+				}
+
 				/*
 				 * ApiAdminRoleV2 represents both readWriteAnyDatabase and clusterAdmin.
-				 * When we encounter it as a parent, add both ApiReadWriteRole and
-				 * ApiClusterAdminRole instead to properly represent the inheritance.
+				 * When we encounter it as a parent, add both documented backing
+				 * roles instead to properly represent the inheritance.
 				 */
 				if (strcmp(parentRole, ApiAdminRoleV2) == 0)
 				{
 					entry->parentRoles = lappend(entry->parentRoles,
-												 pstrdup(ApiReadWriteRole));
+												 pstrdup(
+													 API_RBAC_READWRITE_ANYDB_ROLE));
 					entry->parentRoles = lappend(entry->parentRoles,
 												 pstrdup(ApiClusterAdminRole));
 					pfree(lfirst(cell));
@@ -2156,7 +2188,8 @@ BuildRoleInheritanceTable(void)
 	}
 
 	bool found;
-	StringView readWriteRoleView = CreateStringViewFromString(ApiReadWriteRole);
+	StringView readWriteRoleView = CreateStringViewFromString(
+		API_RBAC_READWRITE_ANYDB_ROLE);
 
 	RoleParentEntry *rwEntry = hash_search(roleInheritanceTable, &readWriteRoleView,
 										   HASH_ENTER, &found);
@@ -2270,8 +2303,8 @@ FreeRoleInheritanceTable(HTAB *roleInheritanceTable)
 
 /*
  * ValidateAndGrantParentRoles validates all parent roles and grants them to
- * targetRoleName. Enforces that readWriteAnyDatabase and clusterAdmin must be
- * specified together.
+ * targetRoleName. Standalone readWriteAnyDatabase is allowed only when its
+ * backing role is available.
  *
  * allowCustomRoles widens what may be granted to include custom roles. Role
  * creation keeps it false so that a new role's parents stay limited to the
@@ -2289,13 +2322,25 @@ ValidateAndGrantParentRoles(const char *targetRoleName, HTAB *parentRoles,
 	bool hasClusterAdmin = hash_search(parentRoles,
 									   &clusterAdminRoleView, HASH_FIND, NULL) != NULL;
 
-	if (hasReadWrite != hasClusterAdmin)
+	if (hasClusterAdmin && !hasReadWrite)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 						errmsg(
-							"Roles specified are invalid. 'readWriteAnyDatabase' and 'clusterAdmin' must be specified together."),
+							"Roles specified are invalid. 'clusterAdmin' must be specified with 'readWriteAnyDatabase'."),
 						errdetail_log(
-							"Roles specified are invalid. 'readWriteAnyDatabase' and 'clusterAdmin' must be specified together.")));
+							"Roles specified are invalid. 'clusterAdmin' must be specified with 'readWriteAnyDatabase'.")));
+	}
+
+	if (hasReadWrite && !hasClusterAdmin)
+	{
+		if (!IsReadWriteAnyDatabaseRoleAvailable())
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"Roles specified are invalid. 'readWriteAnyDatabase' and 'clusterAdmin' must be specified together."),
+							errdetail_log(
+								"Roles specified are invalid. 'readWriteAnyDatabase' and 'clusterAdmin' must be specified together.")));
+		}
 	}
 
 	/*
@@ -2322,7 +2367,7 @@ ValidateAndGrantParentRoles(const char *targetRoleName, HTAB *parentRoles,
 		 * ApiAdminRoleV2, which provides both capabilities.
 		 */
 		if (grantedApiAdminRole &&
-			(strcmp(internalRoleName, ApiReadWriteRole) == 0 ||
+			(strcmp(internalRoleName, API_RBAC_READWRITE_ANYDB_ROLE) == 0 ||
 			 strcmp(internalRoleName, ApiClusterAdminRole) == 0))
 		{
 			continue;
@@ -2335,26 +2380,47 @@ ValidateAndGrantParentRoles(const char *targetRoleName, HTAB *parentRoles,
 
 /*
  * ValidateAndRevokeParentRoles validates all parent roles and revokes them
- * from targetRoleName. Enforces that readWriteAnyDatabase and clusterAdmin
- * must be specified together, mirroring how they are granted.
+ * from targetRoleName, mirroring how they are granted.
  */
 void
 ValidateAndRevokeParentRoles(const char *targetRoleName, HTAB *parentRoles)
 {
 	StringView readWriteRoleView = CreateStringViewFromString("readWriteAnyDatabase");
 	StringView clusterAdminRoleView = CreateStringViewFromString("clusterAdmin");
+	Oid targetRoleOid = get_role_oid(targetRoleName, false);
 	bool hasReadWrite = hash_search(parentRoles, &readWriteRoleView,
 									HASH_FIND, NULL) != NULL;
 	bool hasClusterAdmin = hash_search(parentRoles,
 									   &clusterAdminRoleView, HASH_FIND, NULL) != NULL;
 
-	if (hasReadWrite != hasClusterAdmin)
+	if (hasClusterAdmin && !hasReadWrite)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 						errmsg(
 							"Roles specified are invalid. 'readWriteAnyDatabase' and 'clusterAdmin' must be specified together."),
 						errdetail_log(
 							"Roles specified are invalid. 'readWriteAnyDatabase' and 'clusterAdmin' must be specified together.")));
+	}
+
+	if (hasReadWrite && !hasClusterAdmin)
+	{
+		if (!IsReadWriteAnyDatabaseRoleAvailable())
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"Roles specified are invalid. 'readWriteAnyDatabase' and 'clusterAdmin' must be specified together."),
+							errdetail_log(
+								"Roles specified are invalid. 'readWriteAnyDatabase' and 'clusterAdmin' must be specified together.")));
+		}
+
+		if (is_member_of_role(targetRoleOid, get_role_oid(ApiAdminRoleV2, false)))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"Roles specified are invalid. 'readWriteAnyDatabase' and 'clusterAdmin' must be specified together."),
+							errdetail_log(
+								"Roles specified are invalid. 'readWriteAnyDatabase' and 'clusterAdmin' must be specified together.")));
+		}
 	}
 
 	/*
@@ -2366,6 +2432,14 @@ ValidateAndRevokeParentRoles(const char *targetRoleName, HTAB *parentRoles)
 	{
 		revokedApiAdminRole = true;
 		RevokeRoleInheritance(ApiAdminRoleV2, targetRoleName);
+
+		Oid readWriteAnyDatabaseRoleOid =
+			get_role_oid(API_RBAC_READWRITE_ANYDB_ROLE, true);
+		if (OidIsValid(readWriteAnyDatabaseRoleOid) &&
+			is_member_of_role(targetRoleOid, readWriteAnyDatabaseRoleOid))
+		{
+			RevokeRoleInheritance(API_RBAC_READWRITE_ANYDB_ROLE, targetRoleName);
+		}
 	}
 
 	HASH_SEQ_STATUS status;
@@ -2377,7 +2451,7 @@ ValidateAndRevokeParentRoles(const char *targetRoleName, HTAB *parentRoles)
 		const char *internalRoleName = GetInternalRoleName(nativeRoleName);
 
 		if (revokedApiAdminRole &&
-			(strcmp(internalRoleName, ApiReadWriteRole) == 0 ||
+			(strcmp(internalRoleName, API_RBAC_READWRITE_ANYDB_ROLE) == 0 ||
 			 strcmp(internalRoleName, ApiClusterAdminRole) == 0))
 		{
 			continue;
@@ -2405,7 +2479,7 @@ GetInternalRoleName(const char *nativeRoleName)
 	}
 	else if (strcmp(nativeRoleName, "readWriteAnyDatabase") == 0)
 	{
-		return ApiReadWriteRole;
+		return API_RBAC_READWRITE_ANYDB_ROLE;
 	}
 	else if (strcmp(nativeRoleName, "root") == 0)
 	{
@@ -2432,7 +2506,8 @@ GetNativeRoleName(const char *internalRoleName)
 	{
 		return "readAnyDatabase";
 	}
-	else if (strcmp(internalRoleName, ApiReadWriteRole) == 0)
+	else if (strcmp(internalRoleName, ApiReadWriteRole) == 0 ||
+			 strcmp(internalRoleName, API_RBAC_READWRITE_ANYDB_ROLE) == 0)
 	{
 		return "readWriteAnyDatabase";
 	}
@@ -2669,6 +2744,23 @@ StringViewListCellCompare(const ListCell *a, const ListCell *b)
 	StringView *svB = (StringView *) lfirst(b);
 
 	return CompareStringView(svA, svB);
+}
+
+
+static int
+RoleParentEntryListCellCompare(const ListCell *a, const ListCell *b)
+{
+	RoleParentEntry *entryA = lfirst(a);
+	RoleParentEntry *entryB = lfirst(b);
+	bool entryAIsBuiltIn = IS_NATIVE_BUILTIN_ROLE(entryA->nativeRoleName.string);
+	bool entryBIsBuiltIn = IS_NATIVE_BUILTIN_ROLE(entryB->nativeRoleName.string);
+
+	if (entryAIsBuiltIn != entryBIsBuiltIn)
+	{
+		return entryAIsBuiltIn ? -1 : 1;
+	}
+
+	return CompareStringView(&entryA->nativeRoleName, &entryB->nativeRoleName);
 }
 
 

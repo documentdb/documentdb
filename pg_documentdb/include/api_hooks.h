@@ -166,11 +166,6 @@ const pgbson * GetUserInfoFromExternalIdentityProvider(const char *userName);
  */
 bool IsPasswordValid(const char *username, const char *password);
 
-/*
- * Default username validation implementation
- * Returns true if username is valid, false otherwise
- */
-bool IsUsernameValid(const char *username);
 
 /*
  * Hook for handling colocation of tables

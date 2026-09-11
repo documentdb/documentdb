@@ -12,6 +12,7 @@
 #include "miscadmin.h"
 #include "utils/builtins.h"
 #include "utils/resowner.h"
+#include "utils/role_utils.h"
 #include "lib/stringinfo.h"
 #include "access/xact.h"
 #include "catalog/namespace.h"
@@ -72,6 +73,7 @@ static void ParseVersionString(ExtensionVersion *extensionVersion, char *version
 static bool SetupCluster(bool isInitialize);
 static void SetPermissionsForReadOnlyRole(void);
 static void SetPermissionsForReadWriteRole(void);
+static void GrantClusterDataReadToRbacApiAccessRole(void);
 static void CheckAndReplicateReferenceTable(const char *schema, const char *tableName);
 static void UpdateChangesTableOwnerToAdminRole(void);
 static bool MetadataColumnExists(const char *tableName, const char *columnName);
@@ -402,6 +404,12 @@ RunUpgradeActions(ExtensionVersion installedVersion, ExtensionVersion lastUpgrad
 		{
 			AlterRolesTablePrimaryKey();
 		}
+	}
+
+	if (ShouldRunSetupForVersion(&versions, DocDB_V0, 117, 3) ||
+		ShouldRunSetupForVersion(&versions, DocDB_V1, 0, 1))
+	{
+		GrantClusterDataReadToRbacApiAccessRole();
 	}
 
 	/* we call the post setup cluster hook to allow the extension to do any additional setup */
@@ -1022,6 +1030,25 @@ SetPermissionsForReadWriteRole(void)
 	ExtensionExecuteQueryViaSPI(cmdStr->data, false, SPI_OK_UTILITY,
 								&isNull);
 	resetStringInfo(cmdStr);
+}
+
+
+/*
+ * Restore API access to cluster metadata after the table is distributed.
+ */
+static void
+GrantClusterDataReadToRbacApiAccessRole(void)
+{
+	bool isNull = false;
+	bool readOnly = false;
+
+	ExtensionExecuteQueryViaSPI(
+		FormatSqlQuery(
+			"GRANT SELECT ON TABLE %s.%s_cluster_data TO %s",
+			ApiDistributedSchemaName,
+			ExtensionObjectPrefix,
+			quote_identifier(API_RBAC_API_ACCESS_ROLE)),
+		readOnly, SPI_OK_UTILITY, &isNull);
 }
 
 

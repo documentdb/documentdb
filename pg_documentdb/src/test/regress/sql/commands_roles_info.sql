@@ -29,6 +29,9 @@ SELECT documentdb_api.roles_info('{"rolesInfo":1, "showPrivileges":1, "$db":"adm
 -- Test rolesInfo with showBuiltInRoles
 SELECT documentdb_api.roles_info('{"rolesInfo":1, "showBuiltInRoles":true, "$db":"admin"}');
 
+-- Test internal RBAC roles are hidden from rolesInfo.
+SELECT documentdb_api.roles_info('{"rolesInfo":["documentdb_rbac_api_access_role", "documentdb_rbac_baseline_read_role", "documentdb_rbac_baseline_write_role", "documentdb_rbac_readwrite_anydb_role"], "$db":"admin"}');
+
 -- Test rolesInfo with showBuiltInRoles and showPrivileges
 SELECT documentdb_api.roles_info('{"rolesInfo":1, "showBuiltInRoles":true, "showPrivileges":true, "$db":"admin"}');
 

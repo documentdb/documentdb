@@ -134,7 +134,6 @@ Oid ExtensionTableSampleSystemRowsFunctionId(void);
 Oid BsonInRangeNumericFunctionId(void);
 Oid BsonInRangeIntervalFunctionId(void);
 Oid BsonQueryMatchWithLetAndCollationFunctionId(void);
-Oid IsRoleMemberOfRoleFunctionId(void);
 Oid IsReservedUserFunctionId(void);
 
 /* object_id functions */
@@ -521,6 +520,11 @@ Oid DocumentDBCoreBsonToBsonFunctionOId(void);
 
 /* Helper functions */
 TypeName * ParseTypeNameCore(const char *typeName);
+
+
+/* Roles */
+Oid ApiAdminV2RoleOid(void);
+Oid ApiReadOnlyRoleOid(void);
 
 
 /* Statistics functions */

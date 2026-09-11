@@ -48,6 +48,17 @@ SELECT documentdb_api.create_role('{"createRole":"multiInheritRole", "roles":["r
  { "ok" : { "$numberInt" : "1" } }
 (1 row)
 
+-- A role may be created at the configured membership limit, but not above it.
+SET documentdb.max_roles_per_role TO 1;
+SELECT documentdb_api.create_role('{"createRole":"limitCreateAtBoundary", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+            create_role            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.create_role('{"createRole":"limitCreateOver", "roles":["readWriteAnyDatabase", "clusterAdmin"], "privileges":[], "$db":"admin"}');
+ERROR:  Role "limitCreateOver" has reached the maximum number of allowed memberships.
+RESET documentdb.max_roles_per_role;
 -- Test createRole with empty roles array and empty privileges array
 SELECT documentdb_api.create_role('{"createRole":"emptyRolesRole", "roles":[], "privileges":[], "$db":"admin"}');
             create_role            
@@ -117,12 +128,31 @@ SELECT documentdb_api.create_role('{"createRole":"noDatabaseRole", "roles":["rea
 ERROR:  The required $db property is missing.
 -- Test createRole with just readWriteAnyDatabase role, should fail
 -- (must be specified together with clusterAdmin)
+SET documentdb.enable_readwrite_any_database_role_enforcement TO OFF;
 SELECT documentdb_api.create_role('{"createRole":"readWriteOnlyRole", "roles":["readWriteAnyDatabase"], "privileges":[], "$db":"admin"}');
 ERROR:  Roles specified are invalid. 'readWriteAnyDatabase' and 'clusterAdmin' must be specified together.
+-- Enabling enforcement permits standalone inheritance.
+SET documentdb.enable_readwrite_any_database_role_enforcement TO ON;
+SELECT documentdb_api.create_role('{"createRole":"readWriteOnlyRole", "roles":["readWriteAnyDatabase"], "privileges":[], "$db":"admin"}');
+            create_role            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT pg_has_role(
+    'readWriteOnlyRole',
+    'documentdb_rbac_readwrite_anydb_role',
+    'MEMBER');
+ pg_has_role 
+-------------
+ t
+(1 row)
+
+RESET documentdb.enable_readwrite_any_database_role_enforcement;
 -- Test createRole with just clusterAdmin role, should fail
 -- (must be specified together with readWriteAnyDatabase)
 SELECT documentdb_api.create_role('{"createRole":"clusterAdminOnlyRole", "roles":["clusterAdmin"], "$db":"admin", "privileges":[]}');
-ERROR:  Roles specified are invalid. 'readWriteAnyDatabase' and 'clusterAdmin' must be specified together.
+ERROR:  Roles specified are invalid. 'clusterAdmin' must be specified with 'readWriteAnyDatabase'.
 -- Test createRole with root role, should fail
 SELECT documentdb_api.create_role('{"createRole":"rootRoleTest", "roles":["root"], "privileges":[], "$db":"admin"}');
 ERROR:  Creating custom roles that inherit from 'root' is not supported.
@@ -521,6 +551,12 @@ DROP ROLE IF EXISTS "emptyInheritRole";
 NOTICE:  role "emptyInheritRole" does not exist, skipping
 DROP ROLE IF EXISTS "customAdminRole";
 DROP ROLE IF EXISTS "multiInheritRole";
+SELECT documentdb_api.drop_role('{"dropRole":"limitCreateAtBoundary", "$db":"admin"}');
+             drop_role             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
 DROP ROLE IF EXISTS "emptyRolesRole";
 DROP ROLE IF EXISTS "emptyBothRole";
 DROP ROLE IF EXISTS "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk";
@@ -538,6 +574,7 @@ DROP ROLE IF EXISTS "catalogStoreRole";
 DROP ROLE IF EXISTS "privOnlyCatalogRole";
 NOTICE:  role "privOnlyCatalogRole" does not exist, skipping
 DROP ROLE IF EXISTS "noGrantTestRole";
+DROP ROLE IF EXISTS "readWriteOnlyRole";
 DROP ROLE IF EXISTS "maxPrivOkRole";
 NOTICE:  role "maxPrivOkRole" does not exist, skipping
 DROP ROLE IF EXISTS "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -556,3 +593,4 @@ SELECT documentdb_api.drop_user('{"dropUser":"testRoleUser", "$db":"admin"}');
 RESET documentdb.enableRoleCrud;
 RESET documentdb.blockedRolePrefixList;
 RESET documentdb.enableRolesAdminDBCheck;
+RESET documentdb.max_roles_per_role;

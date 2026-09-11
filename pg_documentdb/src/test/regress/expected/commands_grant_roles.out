@@ -25,19 +25,91 @@ SELECT documentdb_api.create_user('{"createUser":"grantRoleUser", "pwd":"Valid$1
  { "ok" : { "$numberInt" : "1" } }
 (1 row)
 
--- Membership checks distinguish an absent grant from an existing direct grant.
-SELECT documentdb_api_internal.is_role_member_of_role(
-    'grantRoleUser', 'grantTargetRole') AS has_target_role;
- has_target_role 
------------------
- f
+-- Granting roles may reach the configured limit for both roles and users, but
+-- adding another direct membership is rejected.
+SELECT documentdb_api.create_role('{"createRole":"limitGrantSource1", "roles":[], "privileges":[], "$db":"admin"}');
+            create_role            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
 (1 row)
 
-SELECT documentdb_api_internal.is_role_member_of_role(
-    'grantRoleUser', 'documentdb_readonly_role') AS has_readonly_role;
- has_readonly_role 
--------------------
- t
+SELECT documentdb_api.create_role('{"createRole":"limitGrantSource2", "roles":[], "privileges":[], "$db":"admin"}');
+            create_role            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.create_role('{"createRole":"limitGrantSource3", "roles":[], "privileges":[], "$db":"admin"}');
+            create_role            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.create_role('{"createRole":"limitGrantTarget", "roles":[], "privileges":[], "$db":"admin"}');
+            create_role            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.create_user('{"createUser":"limitGrantUser", "pwd":"Valid$123Pass", "roles":[{"role":"readAnyDatabase","db":"admin"}], "$db":"admin"}');
+            create_user            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SET documentdb.max_roles_per_role TO 2;
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"limitGrantTarget", "roles":["limitGrantSource1","limitGrantSource2"], "$db":"admin"}');
+        grant_roles_to_role        
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"limitGrantTarget", "roles":["limitGrantSource3"], "$db":"admin"}');
+ERROR:  Role "limitGrantTarget" has reached the maximum number of allowed memberships.
+SET documentdb.max_roles_per_role TO 3;
+SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"limitGrantUser", "roles":["limitGrantSource1"], "$db":"admin"}');
+        grant_roles_to_user        
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"limitGrantUser", "roles":["limitGrantSource2"], "$db":"admin"}');
+        grant_roles_to_user        
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"limitGrantUser", "roles":["limitGrantSource3"], "$db":"admin"}');
+ERROR:  Role "limitGrantUser" has reached the maximum number of allowed memberships.
+RESET documentdb.max_roles_per_role;
+SELECT documentdb_api.drop_user('{"dropUser":"limitGrantUser", "$db":"admin"}');
+             drop_user             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.drop_role('{"dropRole":"limitGrantTarget", "$db":"admin"}');
+             drop_role             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.drop_role('{"dropRole":"limitGrantSource1", "$db":"admin"}');
+             drop_role             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.drop_role('{"dropRole":"limitGrantSource2", "$db":"admin"}');
+             drop_role             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.drop_role('{"dropRole":"limitGrantSource3", "$db":"admin"}');
+             drop_role             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
 (1 row)
 
 SELECT user_name,
@@ -50,7 +122,7 @@ FROM (VALUES
     ('documentdbXapi_user'),
     ('grantRoleUser')) AS users(user_name)
 ORDER BY user_name;
-         user_name         | is_reserved
+         user_name         | is_reserved 
 ---------------------------+-------------
  documentdb_api_user       | t
  documentdb_bg_worker_role | t
@@ -62,7 +134,7 @@ ORDER BY user_name;
 
 SELECT documentdb_api_internal.is_reserved_user(NULL) IS NULL
     AS null_user_returns_null;
- null_user_returns_null
+ null_user_returns_null 
 ------------------------
  t
 (1 row)
@@ -156,7 +228,7 @@ ERROR:  'roles' must not be empty.
 SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"grantTargetRole", "roles":["notARole"], "$db":"admin"}');
 ERROR:  Granting the role 'notARole' is not supported.
 SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"grantTargetRole", "roles":["clusterAdmin"], "$db":"admin"}');
-ERROR:  Roles specified are invalid. 'readWriteAnyDatabase' and 'clusterAdmin' must be specified together.
+ERROR:  Roles specified are invalid. 'clusterAdmin' must be specified with 'readWriteAnyDatabase'.
 SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"grantTargetRole", "$db":"admin"}');
 ERROR:  'roles' is a required field.
 SELECT documentdb_api.grant_roles_to_role('{"roles":["readAnyDatabase"], "$db":"admin"}');
@@ -190,43 +262,6 @@ SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"grantRoleUser", 
  { "ok" : { "$numberInt" : "1" } }
 (1 row)
 
--- Membership through grantTargetRole reaches its inherited custom role.
-SELECT documentdb_api_internal.is_role_member_of_role(
-    'grantRoleUser', 'grantTargetRole') AS has_target_role;
- has_target_role 
------------------
- t
-(1 row)
-
-SELECT documentdb_api_internal.is_role_member_of_role(
-    'grantRoleUser', 'grantSourceRole') AS has_transitive_source_role;
- has_transitive_source_role 
-----------------------------
- t
-(1 row)
-
--- Unknown names use PostgreSQL's standard role lookup errors.
-SELECT documentdb_api_internal.is_role_member_of_role(
-    'missingRoleUser', 'grantTargetRole');
-ERROR:  role "missingRoleUser" does not exist
-SELECT documentdb_api_internal.is_role_member_of_role(
-    'grantRoleUser', 'missingTargetRole');
-ERROR:  role "missingTargetRole" does not exist
--- The function is strict.
-SELECT documentdb_api_internal.is_role_member_of_role(
-    NULL, 'grantTargetRole') IS NULL AS null_user_returns_null;
- null_user_returns_null 
-------------------------
- t
-(1 row)
-
-SELECT documentdb_api_internal.is_role_member_of_role(
-    'grantRoleUser', NULL) IS NULL AS null_role_returns_null;
- null_role_returns_null 
-------------------------
- t
-(1 row)
-
 SELECT parent.rolname AS granted_role
 FROM pg_auth_members m
 JOIN pg_roles parent ON m.roleid = parent.oid
@@ -238,8 +273,7 @@ ORDER BY 1;
  documentdb_admin_role
  documentdb_readonly_role
  grantTargetRole
- pg_read_all_data
-(4 rows)
+(3 rows)
 
 -- grantRolesToUser: error cases
 SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"missingUser", "roles":["readAnyDatabase"], "$db":"admin"}');
@@ -360,3 +394,4 @@ RESET documentdb.enableUserCrud;
 RESET documentdb.enableRolesAdminDBCheck;
 RESET documentdb.enableUsersAdminDBCheck;
 RESET documentdb.maxUserLimit;
+RESET documentdb.max_roles_per_role;

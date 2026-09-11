@@ -20,6 +20,7 @@
 #include <nodes/makefuncs.h>
 #include <nodes/params.h>
 #include <utils/builtins.h>
+#include <utils/fmgroids.h>
 #include <utils/lsyscache.h>
 #include <catalog/namespace.h>
 #include <parser/parse_relation.h>
@@ -43,6 +44,7 @@ static Query * GenerateSettingsQuery(AggregationPipelineBuildContext *context);
 
 static Query * GenerateRolesQuery(AggregationPipelineBuildContext *context);
 static Query * GenerateUsersQuery(AggregationPipelineBuildContext *context);
+static SQLValueFunction * MakeCurrentUserNameExpr(void);
 static Expr * MakeCurrentUserTextExpr(void);
 static Expr * MakeIsCurrentUserMemberOfRoleExpr(Expr *roleName);
 static ParseNamespaceItem * AddCallerCheckedRte(ParseState *parseState, const
@@ -56,6 +58,7 @@ static ParseNamespaceItem * AddRelationRte(ParseState *parseState, const char *s
 										   const char *relationName,
 										   const char *aliasName, Oid *relationOwner);
 static CoerceViaIO * CoerceNameToText(Expr *nameExpr);
+static CoerceViaIO * CoerceTextToName(Expr *textExpr);
 static JoinExpr * MakeUsersJoin(ParseState *parseState, JoinType joinType,
 								ParseNamespaceItem *leftItem,
 								ParseNamespaceItem *rightItem, Node *left,
@@ -587,25 +590,22 @@ GenerateRolesQuery(AggregationPipelineBuildContext *context)
 	rtr->rtindex = 1;
 	query->jointree = makeFromExpr(list_make1(rtr), NULL);
 
-	if (IsClusterVersionAtleast(DocDB_V1, 1, 0))
+	AttrNumber roleNameAttributeNumber = get_attnum(rte->relid, "role_name");
+	Var *roleName = makeVar(1, roleNameAttributeNumber, TEXTOID, -1,
+							DEFAULT_COLLATION_OID, 0);
+	Expr *roleMembershipQual = MakeIsCurrentUserMemberOfRoleExpr(
+		(Expr *) roleName);
+
+	bool missingOk = true;
+	if (OidIsValid(get_role_oid(ApiRootRole, missingOk)))
 	{
-		AttrNumber roleNameAttributeNumber = get_attnum(rte->relid, "role_name");
-		Var *roleName = makeVar(1, roleNameAttributeNumber, TEXTOID, -1,
-								DEFAULT_COLLATION_OID, 0);
-		Expr *roleMembershipQual = MakeIsCurrentUserMemberOfRoleExpr(
-			(Expr *) roleName);
-
-		bool missingOk = true;
-		if (OidIsValid(get_role_oid(ApiRootRole, missingOk)))
-		{
-			Expr *rootMembershipQual = MakeIsCurrentUserMemberOfRoleExpr(
-				(Expr *) MakeTextConst(ApiRootRole, strlen(ApiRootRole)));
-			roleMembershipQual = (Expr *) makeBoolExpr(
-				OR_EXPR, list_make2(rootMembershipQual, roleMembershipQual), -1);
-		}
-
-		query->jointree->quals = (Node *) roleMembershipQual;
+		Expr *rootMembershipQual = MakeIsCurrentUserMemberOfRoleExpr(
+			(Expr *) MakeTextConst(ApiRootRole, strlen(ApiRootRole)));
+		roleMembershipQual = (Expr *) makeBoolExpr(
+			OR_EXPR, list_make2(rootMembershipQual, roleMembershipQual), -1);
 	}
+
+	query->jointree->quals = (Node *) roleMembershipQual;
 
 	/* Add a var to get the role_spec to make it a single bson document */
 	Var *rowExpr = makeVar(1, 2, BsonTypeId(), -1, InvalidOid, 0);
@@ -778,20 +778,18 @@ GenerateUsersQuery(AggregationPipelineBuildContext *context)
 	customRoleExists->argisrow = false;
 
 	List *usersQuals = list_make1(customRoleExists);
-	if (IsClusterVersionAtleast(DocDB_V1, 1, 0))
+	bool missingOk = true;
+	if (OidIsValid(get_role_oid(ApiRootRole, missingOk)))
 	{
-		bool missingOk = true;
-		if (OidIsValid(get_role_oid(ApiRootRole, missingOk)))
-		{
-			Expr *rootMembershipQual = MakeIsCurrentUserMemberOfRoleExpr(
-				(Expr *) MakeTextConst(ApiRootRole, strlen(ApiRootRole)));
-			currentUserQual = (Expr *) makeBoolExpr(
-				OR_EXPR, list_make2(rootMembershipQual, currentUserQual), -1);
-		}
+		Expr *rootMembershipQual = MakeIsCurrentUserMemberOfRoleExpr(
+			(Expr *) MakeTextConst(ApiRootRole, strlen(ApiRootRole)));
+		currentUserQual = (Expr *) makeBoolExpr(
+			OR_EXPR, list_make2(rootMembershipQual, currentUserQual), -1);
 	}
+
 	usersQuals = lappend(usersQuals, currentUserQual);
 
-	if (IsClusterVersionAtleast(DocDB_V1, 1, 0))
+	if (IsClusterVersionAtleast(DocDB_V0, 117, 3))
 	{
 		usersQuals = lappend(usersQuals, usersCanLogin);
 
@@ -869,8 +867,8 @@ GenerateUsersQuery(AggregationPipelineBuildContext *context)
 }
 
 
-static Expr *
-MakeCurrentUserTextExpr(void)
+static SQLValueFunction *
+MakeCurrentUserNameExpr(void)
 {
 	SQLValueFunction *currentUser = makeNode(SQLValueFunction);
 	currentUser->op = SVFOP_CURRENT_USER;
@@ -878,7 +876,14 @@ MakeCurrentUserTextExpr(void)
 	currentUser->typmod = -1;
 	currentUser->location = -1;
 
-	return (Expr *) CoerceNameToText((Expr *) currentUser);
+	return currentUser;
+}
+
+
+static Expr *
+MakeCurrentUserTextExpr(void)
+{
+	return (Expr *) CoerceNameToText((Expr *) MakeCurrentUserNameExpr());
 }
 
 
@@ -886,9 +891,10 @@ static Expr *
 MakeIsCurrentUserMemberOfRoleExpr(Expr *roleName)
 {
 	return (Expr *) makeFuncExpr(
-		IsRoleMemberOfRoleFunctionId(), BOOLOID,
-		list_make2(MakeCurrentUserTextExpr(), roleName),
-		InvalidOid, DEFAULT_COLLATION_OID, COERCE_EXPLICIT_CALL);
+		F_PG_HAS_ROLE_NAME_NAME_TEXT, BOOLOID,
+		list_make3(MakeCurrentUserNameExpr(), CoerceTextToName(roleName),
+				   MakeTextConst("MEMBER", 6)),
+		InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
 }
 
 
@@ -947,6 +953,19 @@ CoerceNameToText(Expr *nameExpr)
 	coerce->arg = nameExpr;
 	coerce->resulttype = TEXTOID;
 	coerce->resultcollid = DEFAULT_COLLATION_OID;
+	coerce->coerceformat = COERCE_EXPLICIT_CAST;
+	coerce->location = -1;
+	return coerce;
+}
+
+
+static CoerceViaIO *
+CoerceTextToName(Expr *textExpr)
+{
+	CoerceViaIO *coerce = makeNode(CoerceViaIO);
+	coerce->arg = textExpr;
+	coerce->resulttype = NAMEOID;
+	coerce->resultcollid = InvalidOid;
 	coerce->coerceformat = COERCE_EXPLICIT_CAST;
 	coerce->location = -1;
 	return coerce;

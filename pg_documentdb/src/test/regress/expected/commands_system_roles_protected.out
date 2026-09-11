@@ -37,30 +37,34 @@ INSERT INTO system_roles VALUES
     ('documentdb_api_insert_role'),
     ('documentdb_api_update_role'),
     ('documentdb_api_remove_role'),
+    ('documentdb_rbac_api_access_role'),
     ('documentdb_rbac_baseline_read_role'),
-    ('documentdb_rbac_baseline_write_role');
+    ('documentdb_rbac_baseline_write_role'),
+    ('documentdb_rbac_readwrite_anydb_role');
 -- Report which of them exist here. Rejection is by name and does not depend on
 -- the role being provisioned, but recording this makes it clear which checks
 -- below run against a role that is actually present.
 SELECT role_name, EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) AS role_exists
 FROM system_roles
 ORDER BY 1;
-              role_name              | role_exists 
--------------------------------------+-------------
- documentdb_admin_role               | t
- documentdb_api_find_role            | t
- documentdb_api_insert_role          | t
- documentdb_api_remove_role          | t
- documentdb_api_update_role          | t
- documentdb_bg_worker_role           | t
- documentdb_cluster_admin_role       | f
- documentdb_rbac_baseline_read_role  | f
- documentdb_rbac_baseline_write_role | f
- documentdb_readonly_role            | t
- documentdb_readwrite_role           | t
- documentdb_root_role                | t
- documentdb_user_admin_role          | f
-(13 rows)
+              role_name               | role_exists 
+--------------------------------------+-------------
+ documentdb_admin_role                | t
+ documentdb_api_find_role             | t
+ documentdb_api_insert_role           | t
+ documentdb_api_remove_role           | t
+ documentdb_api_update_role           | t
+ documentdb_bg_worker_role            | t
+ documentdb_cluster_admin_role        | f
+ documentdb_rbac_api_access_role      | t
+ documentdb_rbac_baseline_read_role   | t
+ documentdb_rbac_baseline_write_role  | t
+ documentdb_rbac_readwrite_anydb_role | t
+ documentdb_readonly_role             | t
+ documentdb_readwrite_role            | t
+ documentdb_root_role                 | t
+ documentdb_user_admin_role           | f
+(15 rows)
 
 -- Each management command must reject a system role used as its target.
 DO $$
@@ -150,6 +154,11 @@ NOTICE:  grantRolesToRole on documentdb_cluster_admin_role: Role 'documentdb_clu
 NOTICE:  revokeRolesFromRole on documentdb_cluster_admin_role: Role 'documentdb_cluster_admin_role' is reserved and cannot be modified.
 NOTICE:  grantRolesToUser on documentdb_cluster_admin_role: User 'documentdb_cluster_admin_role' is reserved and cannot be modified.
 NOTICE:  revokeRolesFromUser on documentdb_cluster_admin_role: User 'documentdb_cluster_admin_role' is reserved and cannot be modified.
+NOTICE:  dropRole on documentdb_rbac_api_access_role: Role 'documentdb_rbac_api_access_role' is reserved and cannot be dropped.
+NOTICE:  grantRolesToRole on documentdb_rbac_api_access_role: Role 'documentdb_rbac_api_access_role' is reserved and cannot be modified.
+NOTICE:  revokeRolesFromRole on documentdb_rbac_api_access_role: Role 'documentdb_rbac_api_access_role' is reserved and cannot be modified.
+NOTICE:  grantRolesToUser on documentdb_rbac_api_access_role: User 'documentdb_rbac_api_access_role' is reserved and cannot be modified.
+NOTICE:  revokeRolesFromUser on documentdb_rbac_api_access_role: User 'documentdb_rbac_api_access_role' is reserved and cannot be modified.
 NOTICE:  dropRole on documentdb_rbac_baseline_read_role: Role 'documentdb_rbac_baseline_read_role' is reserved and cannot be dropped.
 NOTICE:  grantRolesToRole on documentdb_rbac_baseline_read_role: Role 'documentdb_rbac_baseline_read_role' is reserved and cannot be modified.
 NOTICE:  revokeRolesFromRole on documentdb_rbac_baseline_read_role: Role 'documentdb_rbac_baseline_read_role' is reserved and cannot be modified.
@@ -160,6 +169,11 @@ NOTICE:  grantRolesToRole on documentdb_rbac_baseline_write_role: Role 'document
 NOTICE:  revokeRolesFromRole on documentdb_rbac_baseline_write_role: Role 'documentdb_rbac_baseline_write_role' is reserved and cannot be modified.
 NOTICE:  grantRolesToUser on documentdb_rbac_baseline_write_role: User 'documentdb_rbac_baseline_write_role' is reserved and cannot be modified.
 NOTICE:  revokeRolesFromUser on documentdb_rbac_baseline_write_role: User 'documentdb_rbac_baseline_write_role' is reserved and cannot be modified.
+NOTICE:  dropRole on documentdb_rbac_readwrite_anydb_role: Role 'documentdb_rbac_readwrite_anydb_role' is reserved and cannot be dropped.
+NOTICE:  grantRolesToRole on documentdb_rbac_readwrite_anydb_role: Role 'documentdb_rbac_readwrite_anydb_role' is reserved and cannot be modified.
+NOTICE:  revokeRolesFromRole on documentdb_rbac_readwrite_anydb_role: Role 'documentdb_rbac_readwrite_anydb_role' is reserved and cannot be modified.
+NOTICE:  grantRolesToUser on documentdb_rbac_readwrite_anydb_role: User 'documentdb_rbac_readwrite_anydb_role' is reserved and cannot be modified.
+NOTICE:  revokeRolesFromUser on documentdb_rbac_readwrite_anydb_role: User 'documentdb_rbac_readwrite_anydb_role' is reserved and cannot be modified.
 NOTICE:  dropRole on documentdb_readonly_role: Role 'documentdb_readonly_role' is reserved and cannot be dropped.
 NOTICE:  grantRolesToRole on documentdb_readonly_role: Role 'documentdb_readonly_role' is reserved and cannot be modified.
 NOTICE:  revokeRolesFromRole on documentdb_readonly_role: Role 'documentdb_readonly_role' is reserved and cannot be modified.
@@ -261,6 +275,10 @@ NOTICE:  grantRolesToRole of documentdb_cluster_admin_role: The specified value 
 NOTICE:  revokeRolesFromRole of documentdb_cluster_admin_role: The specified value for the role is invalid: 'documentdb_cluster_admin_role'.
 NOTICE:  grantRolesToUser of documentdb_cluster_admin_role: The specified value for the role is invalid: 'documentdb_cluster_admin_role'.
 NOTICE:  revokeRolesFromUser of documentdb_cluster_admin_role: The specified value for the role is invalid: 'documentdb_cluster_admin_role'.
+NOTICE:  grantRolesToRole of documentdb_rbac_api_access_role: The specified value for the role is invalid: 'documentdb_rbac_api_access_role'.
+NOTICE:  revokeRolesFromRole of documentdb_rbac_api_access_role: The specified value for the role is invalid: 'documentdb_rbac_api_access_role'.
+NOTICE:  grantRolesToUser of documentdb_rbac_api_access_role: The specified value for the role is invalid: 'documentdb_rbac_api_access_role'.
+NOTICE:  revokeRolesFromUser of documentdb_rbac_api_access_role: The specified value for the role is invalid: 'documentdb_rbac_api_access_role'.
 NOTICE:  grantRolesToRole of documentdb_rbac_baseline_read_role: The specified value for the role is invalid: 'documentdb_rbac_baseline_read_role'.
 NOTICE:  revokeRolesFromRole of documentdb_rbac_baseline_read_role: The specified value for the role is invalid: 'documentdb_rbac_baseline_read_role'.
 NOTICE:  grantRolesToUser of documentdb_rbac_baseline_read_role: The specified value for the role is invalid: 'documentdb_rbac_baseline_read_role'.
@@ -269,6 +287,10 @@ NOTICE:  grantRolesToRole of documentdb_rbac_baseline_write_role: The specified 
 NOTICE:  revokeRolesFromRole of documentdb_rbac_baseline_write_role: The specified value for the role is invalid: 'documentdb_rbac_baseline_write_role'.
 NOTICE:  grantRolesToUser of documentdb_rbac_baseline_write_role: The specified value for the role is invalid: 'documentdb_rbac_baseline_write_role'.
 NOTICE:  revokeRolesFromUser of documentdb_rbac_baseline_write_role: The specified value for the role is invalid: 'documentdb_rbac_baseline_write_role'.
+NOTICE:  grantRolesToRole of documentdb_rbac_readwrite_anydb_role: The specified value for the role is invalid: 'documentdb_rbac_readwrite_anydb_role'.
+NOTICE:  revokeRolesFromRole of documentdb_rbac_readwrite_anydb_role: The specified value for the role is invalid: 'documentdb_rbac_readwrite_anydb_role'.
+NOTICE:  grantRolesToUser of documentdb_rbac_readwrite_anydb_role: The specified value for the role is invalid: 'documentdb_rbac_readwrite_anydb_role'.
+NOTICE:  revokeRolesFromUser of documentdb_rbac_readwrite_anydb_role: The specified value for the role is invalid: 'documentdb_rbac_readwrite_anydb_role'.
 NOTICE:  grantRolesToRole of documentdb_readonly_role: The specified value for the role is invalid: 'documentdb_readonly_role'.
 NOTICE:  revokeRolesFromRole of documentdb_readonly_role: The specified value for the role is invalid: 'documentdb_readonly_role'.
 NOTICE:  grantRolesToUser of documentdb_readonly_role: The specified value for the role is invalid: 'documentdb_readonly_role'.
@@ -295,29 +317,30 @@ ORDER BY 1, 2;
       grantee      |       granted_role       
 -------------------+--------------------------
  systemProtectUser | documentdb_readonly_role
- systemProtectUser | pg_read_all_data
-(2 rows)
+(1 row)
 
 -- Every system role must still exist.
 SELECT role_name, EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) AS role_exists
 FROM system_roles
 ORDER BY 1;
-              role_name              | role_exists 
--------------------------------------+-------------
- documentdb_admin_role               | t
- documentdb_api_find_role            | t
- documentdb_api_insert_role          | t
- documentdb_api_remove_role          | t
- documentdb_api_update_role          | t
- documentdb_bg_worker_role           | t
- documentdb_cluster_admin_role       | f
- documentdb_rbac_baseline_read_role  | f
- documentdb_rbac_baseline_write_role | f
- documentdb_readonly_role            | t
- documentdb_readwrite_role           | t
- documentdb_root_role                | t
- documentdb_user_admin_role          | f
-(13 rows)
+              role_name               | role_exists 
+--------------------------------------+-------------
+ documentdb_admin_role                | t
+ documentdb_api_find_role             | t
+ documentdb_api_insert_role           | t
+ documentdb_api_remove_role           | t
+ documentdb_api_update_role           | t
+ documentdb_bg_worker_role            | t
+ documentdb_cluster_admin_role        | f
+ documentdb_rbac_api_access_role      | t
+ documentdb_rbac_baseline_read_role   | t
+ documentdb_rbac_baseline_write_role  | t
+ documentdb_rbac_readwrite_anydb_role | t
+ documentdb_readonly_role             | t
+ documentdb_readwrite_role            | t
+ documentdb_root_role                 | t
+ documentdb_user_admin_role           | f
+(15 rows)
 
 -- The prefixes the extension reserves for the roles it provisions are blocked
 -- unconditionally, so clearing the configured prefix list cannot expose them.

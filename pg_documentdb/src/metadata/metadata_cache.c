@@ -17,6 +17,7 @@
 #include <catalog/pg_type.h>
 #include <catalog/pg_operator.h>
 #include <utils/fmgroids.h>
+#include <utils/acl.h>
 
 #include "commands/extension.h"
 #include "executor/spi.h"
@@ -777,9 +778,6 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the websearch_to_tsquery function. */
 	Oid WebSearchToTsQueryFunctionId;
 
-	/* OID of the is_role_member_of_role function. */
-	Oid IsRoleMemberOfRoleFunctionId;
-
 	/* OID of the is_reserved_user function. */
 	Oid IsReservedUserFunctionId;
 
@@ -1361,6 +1359,12 @@ typedef struct DocumentDBApiOidCacheData
 
 	/* OID of the ApiInternalSchemaName.bson_stats_project function */
 	Oid BsonStatsProjectFunctionOid;
+
+	/* OID of the ApiReadOnlyRole */
+	Oid ApiReadOnlyRoleOid;
+
+	/* OID of the ApiAdminV2Role */
+	Oid ApiAdminV2RoleOid;
 } DocumentDBApiOidCacheData;
 
 static DocumentDBApiOidCacheData Cache;
@@ -7310,29 +7314,6 @@ WebSearchToTsQueryFunctionId(void)
 
 
 /*
- * Returns the OID of the internal is_role_member_of_role function.
- */
-Oid
-IsRoleMemberOfRoleFunctionId(void)
-{
-	InitializeDocumentDBApiExtensionCache();
-
-	if (Cache.IsRoleMemberOfRoleFunctionId == InvalidOid)
-	{
-		List *functionNameList = list_make2(makeString(ApiInternalSchemaName),
-											makeString("is_role_member_of_role"));
-		Oid paramOids[2] = { TEXTOID, TEXTOID };
-		bool missingOK = false;
-
-		Cache.IsRoleMemberOfRoleFunctionId =
-			LookupFuncName(functionNameList, 2, paramOids, missingOK);
-	}
-
-	return Cache.IsRoleMemberOfRoleFunctionId;
-}
-
-
-/*
  * Returns the OID of the internal is_reserved_user function.
  */
 Oid
@@ -8013,6 +7994,36 @@ GetBsonIndexBoundsArrayTypeOid(void)
 	}
 
 	return Cache.BsonIndexBoundsArrayTypeOid;
+}
+
+
+Oid
+ApiAdminV2RoleOid(void)
+{
+	InitializeDocumentDBApiExtensionCache();
+
+	if (Cache.ApiAdminV2RoleOid == InvalidOid)
+	{
+		bool missingOk = false;
+		Cache.ApiAdminV2RoleOid = get_role_oid(ApiAdminRoleV2, missingOk);
+	}
+
+	return Cache.ApiAdminV2RoleOid;
+}
+
+
+Oid
+ApiReadOnlyRoleOid(void)
+{
+	InitializeDocumentDBApiExtensionCache();
+
+	if (Cache.ApiReadOnlyRoleOid == InvalidOid)
+	{
+		bool missingOk = false;
+		Cache.ApiReadOnlyRoleOid = get_role_oid(ApiReadOnlyRole, missingOk);
+	}
+
+	return Cache.ApiReadOnlyRoleOid;
 }
 
 

@@ -17,6 +17,8 @@
 #include "libpq/scram.h"
 #include "metadata/metadata_cache.h"
 #include "utils/acl.h"
+#include "utils/syscache.h"
+#include "utils/catcache.h"
 #include "utils/documentdb_errors.h"
 #include "utils/documentdb_errors.h"
 #include "utils/feature_counter.h"
@@ -25,6 +27,7 @@
 #include "utils/query_utils.h"
 #include "utils/role_utils.h"
 #include "utils/string_view.h"
+#include "utils/version_utils.h"
 #include "api_hooks.h"
 #include "api_hooks_def.h"
 
@@ -35,6 +38,12 @@ extern char *BlockedRolePrefixList;
 
 /* GUC that controls enforcement of the always blocked role name prefixes */
 extern bool EnableFailureOnAlwaysBlockedRolePrefixes;
+
+/* GUC that controls the maximum number of roles allowed per role */
+extern int MaxRolesPerRole;
+
+/* GUC that controls standalone readWriteAnyDatabase assignment. */
+extern bool EnableReadWriteAnyDatabaseRoleEnforcement;
 
 static void WriteSinglePrivilegeDocument(const ConsolidatedPrivilege *privilege,
 										 pgbson_array_writer *privilegesArrayWriter);
@@ -387,107 +396,95 @@ ConsolidatePrivilegesForRole(const StringView *roleName, List **consolidatedPriv
 
 	if (StringViewEqualsCString(roleName, ApiReadOnlyRole))
 	{
-		sourcePrivilegeCount = sizeof(readOnlyPrivileges) / sizeof(readOnlyPrivileges[0]);
+		sourcePrivilegeCount = lengthof(readOnlyPrivileges);
 		ConsolidatePrivileges(consolidatedPrivileges, readOnlyPrivileges,
 							  sourcePrivilegeCount);
 	}
 	else if (StringViewEqualsCString(roleName, ApiReadWriteRole))
 	{
-		sourcePrivilegeCount = sizeof(readWritePrivileges) /
-							   sizeof(readWritePrivileges[0]);
+		sourcePrivilegeCount = lengthof(readWritePrivileges);
+		ConsolidatePrivileges(consolidatedPrivileges, readWritePrivileges,
+							  sourcePrivilegeCount);
+	}
+	else if (StringViewEqualsCString(roleName, API_RBAC_READWRITE_ANYDB_ROLE))
+	{
+		sourcePrivilegeCount = lengthof(readWritePrivileges);
 		ConsolidatePrivileges(consolidatedPrivileges, readWritePrivileges,
 							  sourcePrivilegeCount);
 	}
 	else if (StringViewEqualsCString(roleName, ApiAdminRoleV2))
 	{
-		sourcePrivilegeCount = sizeof(readWritePrivileges) /
-							   sizeof(readWritePrivileges[0]);
+		sourcePrivilegeCount = lengthof(readWritePrivileges);
 		ConsolidatePrivileges(consolidatedPrivileges, readWritePrivileges,
 							  sourcePrivilegeCount);
 
-		sourcePrivilegeCount = sizeof(clusterManagerPrivileges) /
-							   sizeof(clusterManagerPrivileges[0]);
+		sourcePrivilegeCount = lengthof(clusterManagerPrivileges);
 		ConsolidatePrivileges(consolidatedPrivileges, clusterManagerPrivileges,
 							  sourcePrivilegeCount);
 
-		sourcePrivilegeCount = sizeof(clusterMonitorPrivileges) /
-							   sizeof(clusterMonitorPrivileges[0]);
+		sourcePrivilegeCount = lengthof(clusterMonitorPrivileges);
 		ConsolidatePrivileges(consolidatedPrivileges, clusterMonitorPrivileges,
 							  sourcePrivilegeCount);
 
-		sourcePrivilegeCount = sizeof(hostManagerPrivileges) /
-							   sizeof(hostManagerPrivileges[0]);
+		sourcePrivilegeCount = lengthof(hostManagerPrivileges);
 		ConsolidatePrivileges(consolidatedPrivileges, hostManagerPrivileges,
 							  sourcePrivilegeCount);
 
-		sourcePrivilegeCount = sizeof(dropDatabasePrivileges) /
-							   sizeof(dropDatabasePrivileges[0]);
+		sourcePrivilegeCount = lengthof(dropDatabasePrivileges);
 		ConsolidatePrivileges(consolidatedPrivileges, dropDatabasePrivileges,
 							  sourcePrivilegeCount);
 	}
 	else if (StringViewEqualsCString(roleName, ApiClusterAdminRole))
 	{
-		sourcePrivilegeCount = sizeof(clusterManagerPrivileges) /
-							   sizeof(clusterManagerPrivileges[0]);
+		sourcePrivilegeCount = lengthof(clusterManagerPrivileges);
 		ConsolidatePrivileges(consolidatedPrivileges, clusterManagerPrivileges,
 							  sourcePrivilegeCount);
 
-		sourcePrivilegeCount = sizeof(clusterMonitorPrivileges) /
-							   sizeof(clusterMonitorPrivileges[0]);
+		sourcePrivilegeCount = lengthof(clusterMonitorPrivileges);
 		ConsolidatePrivileges(consolidatedPrivileges, clusterMonitorPrivileges,
 							  sourcePrivilegeCount);
 
-		sourcePrivilegeCount = sizeof(hostManagerPrivileges) /
-							   sizeof(hostManagerPrivileges[0]);
+		sourcePrivilegeCount = lengthof(hostManagerPrivileges);
 		ConsolidatePrivileges(consolidatedPrivileges, hostManagerPrivileges,
 							  sourcePrivilegeCount);
 
-		sourcePrivilegeCount = sizeof(dropDatabasePrivileges) /
-							   sizeof(dropDatabasePrivileges[0]);
+		sourcePrivilegeCount = lengthof(dropDatabasePrivileges);
 		ConsolidatePrivileges(consolidatedPrivileges, dropDatabasePrivileges,
 							  sourcePrivilegeCount);
 	}
 	else if (StringViewEqualsCString(roleName, ApiUserAdminRole))
 	{
-		sourcePrivilegeCount = sizeof(userAdminPrivileges) /
-							   sizeof(userAdminPrivileges[0]);
+		sourcePrivilegeCount = lengthof(userAdminPrivileges);
 		ConsolidatePrivileges(consolidatedPrivileges, userAdminPrivileges,
 							  sourcePrivilegeCount);
 	}
 	else if (StringViewEqualsCString(roleName, ApiRootRole))
 	{
-		sourcePrivilegeCount = sizeof(readWritePrivileges) /
-							   sizeof(readWritePrivileges[0]);
+		sourcePrivilegeCount = lengthof(readWritePrivileges);
 		ConsolidatePrivileges(consolidatedPrivileges, readWritePrivileges,
 							  sourcePrivilegeCount);
 
-		sourcePrivilegeCount = sizeof(dbAdminPrivileges) /
-							   sizeof(dbAdminPrivileges[0]);
+		sourcePrivilegeCount = lengthof(dbAdminPrivileges);
 		ConsolidatePrivileges(consolidatedPrivileges, dbAdminPrivileges,
 							  sourcePrivilegeCount);
 
-		sourcePrivilegeCount = sizeof(userAdminPrivileges) /
-							   sizeof(userAdminPrivileges[0]);
+		sourcePrivilegeCount = lengthof(userAdminPrivileges);
 		ConsolidatePrivileges(consolidatedPrivileges, userAdminPrivileges,
 							  sourcePrivilegeCount);
 
-		sourcePrivilegeCount = sizeof(clusterMonitorPrivileges) /
-							   sizeof(clusterMonitorPrivileges[0]);
+		sourcePrivilegeCount = lengthof(clusterMonitorPrivileges);
 		ConsolidatePrivileges(consolidatedPrivileges, clusterMonitorPrivileges,
 							  sourcePrivilegeCount);
 
-		sourcePrivilegeCount = sizeof(clusterManagerPrivileges) /
-							   sizeof(clusterManagerPrivileges[0]);
+		sourcePrivilegeCount = lengthof(clusterManagerPrivileges);
 		ConsolidatePrivileges(consolidatedPrivileges, clusterManagerPrivileges,
 							  sourcePrivilegeCount);
 
-		sourcePrivilegeCount = sizeof(hostManagerPrivileges) /
-							   sizeof(hostManagerPrivileges[0]);
+		sourcePrivilegeCount = lengthof(hostManagerPrivileges);
 		ConsolidatePrivileges(consolidatedPrivileges, hostManagerPrivileges,
 							  sourcePrivilegeCount);
 
-		sourcePrivilegeCount = sizeof(dropDatabasePrivileges) /
-							   sizeof(dropDatabasePrivileges[0]);
+		sourcePrivilegeCount = lengthof(dropDatabasePrivileges);
 		ConsolidatePrivileges(consolidatedPrivileges, dropDatabasePrivileges,
 							  sourcePrivilegeCount);
 	}
@@ -782,6 +779,17 @@ IsReservedRoleName(const char *name)
 
 
 /*
+ * Returns whether standalone readWriteAnyDatabase assignment is available.
+ */
+bool
+IsReadWriteAnyDatabaseRoleAvailable(void)
+{
+	return EnableReadWriteAnyDatabaseRoleEnforcement &&
+		   get_role_oid(API_RBAC_READWRITE_ANYDB_ROLE, true) != InvalidOid;
+}
+
+
+/*
  * IsCustomRole verifies that a given role has an entry in the roles table.
  *
  * The roles catalog table is only created at cluster version 0.116-0, so
@@ -811,6 +819,38 @@ IsCustomRole(const char *roleName)
 										readOnly, SPI_OK_SELECT, &isNull);
 
 	return !isNull;
+}
+
+
+void
+EnsureRoleMembershipLimits(const char *roleName, int64 numRolesToAdd)
+{
+	bool missingOk = true;
+	Oid roleOid = get_role_oid(roleName, missingOk);
+
+	int64 numMembers = 0;
+	if (!OidIsValid(roleOid))
+	{
+		numMembers = 0;
+	}
+	else
+	{
+		CatCList *memlist = SearchSysCacheList1(AUTHMEMMEMROLE,
+												ObjectIdGetDatum(roleOid));
+		numMembers = memlist->n_members;
+		ReleaseSysCacheList(memlist);
+	}
+
+	if ((numMembers + numRolesToAdd) > MaxRolesPerRole)
+	{
+		/*
+		 * This count includes only direct memberships.
+		 */
+		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+						errmsg(
+							"Role \"%s\" has reached the maximum number of allowed memberships.",
+							roleName)));
+	}
 }
 
 

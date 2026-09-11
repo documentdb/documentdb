@@ -29,6 +29,9 @@ s/""sn"" : \{ ""\$date"" : \{ ""\$numberLong"" : ""[0-9]*"" \} \}/""sn"" : NOW_S
 s/documentdb_api_catalog.shard_key_and_document/shard_key_and_document/g
 s/documentdb_api_internal.generate_unique_shard_document/generate_unique_shard_document/g
 s/documentdb_core.bson/bson/g
+# PostgreSQL versions can report collection ACL failures against either the
+# coordinator table or its physical shard.
+s/^(ERROR:  permission denied for table )documents_[0-9]+(_[0-9]+)?$/\1documents_<COLLECTION>/g
 s/TTL job elapsed time: [+-]?[0-9]*\.?[0-9]+([eE][+-]?[0-9]+)?ms,/TTL job elapsed time:<redacted>/g
 s/expiry_cutoff=[0-9]*,/expiry_cutoff=<redacted>/g
 s/coord_binary_combine_agg/coord_combine_agg/g

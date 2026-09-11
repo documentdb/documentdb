@@ -25,6 +25,43 @@ SELECT documentdb_api.create_user('{"createUser":"revokeRoleUser", "pwd":"Valid$
  { "ok" : { "$numberInt" : "1" } }
 (1 row)
 
+-- A read-only user can read collection tables before revocation, but loses
+-- that access when readAnyDatabase is revoked.
+SELECT documentdb_api.insert_one('revokeAccessDb', 'revokeAccessColl', '{"_id": 1}');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT format('documentdb_data.documents_%s', collection_id) AS revoke_access_table
+FROM documentdb_api_catalog.collections
+WHERE database_name = 'revokeAccessDb' AND collection_name = 'revokeAccessColl' \gset
+SET ROLE "revokeRoleUser";
+SELECT count(*) FROM :revoke_access_table;
+ count 
+-------
+     1
+(1 row)
+
+RESET ROLE;
+SELECT documentdb_api.revoke_roles_from_user('{"revokeRolesFromUser":"revokeRoleUser", "roles":["readAnyDatabase"], "$db":"admin"}');
+      revoke_roles_from_user       
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SET ROLE "revokeRoleUser";
+SELECT count(*) FROM :revoke_access_table;
+ERROR:  permission denied for schema documentdb_data at character 22
+RESET ROLE;
+-- Restore the initial membership for the remaining revoke tests.
+SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"revokeRoleUser", "roles":["readAnyDatabase"], "$db":"admin"}');
+        grant_roles_to_user        
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
 SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"revokeTargetRole", "roles":["readAnyDatabase"], "$db":"admin"}');
         grant_roles_to_role        
 -----------------------------------
@@ -198,9 +235,8 @@ ORDER BY 1;
 --------------------------
  documentdb_admin_role
  documentdb_readonly_role
- pg_read_all_data
  revokeTargetRole
-(4 rows)
+(3 rows)
 
 SELECT documentdb_api.revoke_roles_from_user('{"revokeRolesFromUser":"revokeRoleUser", "roles":[{"role":"revokeTargetRole","db":"admin"}], "$db":"admin"}');
       revoke_roles_from_user       
@@ -223,8 +259,7 @@ ORDER BY 1;
        granted_role       
 --------------------------
  documentdb_readonly_role
- pg_read_all_data
-(2 rows)
+(1 row)
 
 -- revokeRolesFromUser: error cases
 SELECT documentdb_api.revoke_roles_from_user('{"revokeRolesFromUser":"missingUser", "roles":["readAnyDatabase"], "$db":"admin"}');
@@ -255,8 +290,7 @@ ORDER BY 1;
  granted_role_after_root_attempts 
 ----------------------------------
  documentdb_readonly_role
- pg_read_all_data
-(2 rows)
+(1 row)
 
 -- The same applies on the revoke path: a role created while the admin-database
 -- check was disabled must still be revokable once the check is enabled.
@@ -310,6 +344,12 @@ ERROR:  The RevokeRolesFromUser command is currently unsupported.
 RESET documentdb.enableUserCrud;
 -- Clean up
 SET documentdb.enableRoleCrud TO ON;
+SELECT documentdb_api.drop_collection('revokeAccessDb', 'revokeAccessColl');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
 SELECT documentdb_api.drop_user('{"dropUser":"revokeRoleUser", "$db":"admin"}');
              drop_user             
 -----------------------------------

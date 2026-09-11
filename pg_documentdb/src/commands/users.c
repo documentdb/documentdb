@@ -41,7 +41,7 @@ extern int ScramDefaultSaltLen;
 /* GUC that controls the max number of users allowed*/
 extern int MaxUserLimit;
 
-/* GUC that controls whether we use username/password validation*/
+/* GUC that controls whether we use password validation*/
 extern bool EnableUsernamePasswordConstraints;
 
 /* GUC that controls whether the usersInfo command returns privileges*/
@@ -52,9 +52,6 @@ extern bool IsNativeAuthEnabled;
 
 /* GUC that controls whether the DB admin check is enabled*/
 extern bool EnableUsersAdminDBCheck;
-
-/* GUC that controls whether readWriteAnyDatabase can be assigned on its own */
-extern bool EnableReadWriteAnyDatabaseRoleEnforcement;
 
 PG_FUNCTION_INFO_V1(documentdb_extension_create_user);
 PG_FUNCTION_INFO_V1(documentdb_extension_drop_user);
@@ -318,6 +315,9 @@ documentdb_extension_create_user(PG_FUNCTION_ARGS)
 		CreateNativeUser(&createUserSpec);
 	}
 
+	/* CreateUser only supports 1 role */
+	EnsureRoleMembershipLimits(createUserSpec.createUser, 1);
+
 	/* Grant pgRole to user created */
 	readOnly = false;
 	const char *queryGrant = psprintf("GRANT %s TO %s",
@@ -326,7 +326,11 @@ documentdb_extension_create_user(PG_FUNCTION_ARGS)
 
 	ExtensionExecuteQueryViaSPI(queryGrant, readOnly, SPI_OK_UTILITY, &isNull);
 
-	if (strcmp(createUserSpec.pgRole, ApiReadOnlyRole) == 0)
+	/* Only add the Explicit grant if we're under DocDB V1.1 since that is now done via
+	 * the cluster-wide read role in later versions.
+	 */
+	if (strcmp(createUserSpec.pgRole, ApiReadOnlyRole) == 0 &&
+		!IsClusterVersionAtleast(DocDB_V0, 117, 3))
 	{
 		/* This is needed to grant ApiReadOnlyRole */
 		/* read access to all new and existing collections */
@@ -378,18 +382,26 @@ ParseCreateUserSpec(pgbson *createSpec, CreateUserSpec *spec)
 									"'createUser' is a required field.")));
 			}
 
+			if (strlen(spec->createUser) != strLength)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"'createUser' field contains invalid UTF-8 characters.")));
+			}
+
+			if (strLength >= NAMEDATALEN)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"The user name is too long. Try a user name shorter than %d characters.",
+									NAMEDATALEN)));
+			}
+
 			if (IsReservedRoleName(spec->createUser))
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 								errmsg(
 									"Username is reserved, use a different username.")));
-			}
-
-			if (EnableUsernamePasswordConstraints &&
-				!IsUsernameValid(spec->createUser))
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-								errmsg("Invalid username, use a different username.")));
 			}
 
 			userFound = true;
@@ -1469,7 +1481,7 @@ WriteSingleUserDocument(UserRoleHashEntry *userEntry, bool showPrivileges,
  *
  * Accepted built-in role combinations:
  *  1. { "clusterAdmin", "readWriteAnyDatabase" } → ApiAdminRoleV2
- *  2. { "readWriteAnyDatabase" }                 → ApiReadWriteRole
+ *  2. { "readWriteAnyDatabase" }                 → read-write-any-database role
  *  3. { "readAnyDatabase" }                      → ApiReadOnlyRole
  *
  * Any other combination of built-in roles is rejected rather than being
@@ -1599,7 +1611,7 @@ ValidateAndObtainUserRole(const bson_value_t *rolesDocument)
 
 		case DocumentDB_Role_ReadWrite_AnyDatabase:
 		{
-			if (!EnableReadWriteAnyDatabaseRoleEnforcement)
+			if (!IsReadWriteAnyDatabaseRoleAvailable())
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_ROLENOTFOUND),
 								errmsg(
@@ -1608,7 +1620,7 @@ ValidateAndObtainUserRole(const bson_value_t *rolesDocument)
 									"Roles specified are invalid. Only readAnyDatabase or readWriteAnyDatabase+clusterAdmin are allowed built-in roles.")));
 			}
 
-			systemRoleName = ApiReadWriteRole;
+			systemRoleName = API_RBAC_READWRITE_ANYDB_ROLE;
 			break;
 		}
 
@@ -1620,8 +1632,7 @@ ValidateAndObtainUserRole(const bson_value_t *rolesDocument)
 
 		default:
 		{
-			/* Covers every unsupported combination of built-in roles. */
-			if (EnableReadWriteAnyDatabaseRoleEnforcement)
+			if (IsReadWriteAnyDatabaseRoleAvailable())
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_ROLENOTFOUND),
 								errmsg(
@@ -1906,7 +1917,8 @@ WriteRoles(const char *parentRole, pgbson_array_writer *roleArrayWriter)
 									   PgbsonWriterGetPgbson(
 										   &roleWriter));
 	}
-	else if (strcmp(parentRole, ApiReadWriteRole) == 0)
+	else if (strcmp(parentRole, ApiReadWriteRole) == 0 ||
+			 strcmp(parentRole, API_RBAC_READWRITE_ANYDB_ROLE) == 0)
 	{
 		PgbsonWriterAppendUtf8(&roleWriter, "role", 4,
 							   "readWriteAnyDatabase");
@@ -2180,6 +2192,8 @@ grant_roles_to_user(pgbson *grantRolesBson)
 	ParseGrantRolesToUserSpec(grantRolesBson, &grantRolesSpec);
 
 	EnsureUserExists(grantRolesSpec.userName);
+	EnsureRoleMembershipLimits(grantRolesSpec.userName, hash_get_num_entries(
+								   grantRolesSpec.grantedRoles));
 
 	bool allowCustomRoles = true;
 	ValidateAndGrantParentRoles(grantRolesSpec.userName, grantRolesSpec.grantedRoles,

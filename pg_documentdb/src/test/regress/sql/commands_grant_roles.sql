@@ -14,11 +14,28 @@ SELECT documentdb_api.create_role('{"createRole":"grantTargetRole", "roles":[], 
 SELECT documentdb_api.create_role('{"createRole":"grantSourceRole", "roles":[], "privileges":[], "$db":"admin"}');
 SELECT documentdb_api.create_user('{"createUser":"grantRoleUser", "pwd":"Valid$123Pass", "roles":[{"role":"readAnyDatabase","db":"admin"}], "$db":"admin"}');
 
--- Membership checks distinguish an absent grant from an existing direct grant.
-SELECT documentdb_api_internal.is_role_member_of_role(
-    'grantRoleUser', 'grantTargetRole') AS has_target_role;
-SELECT documentdb_api_internal.is_role_member_of_role(
-    'grantRoleUser', 'documentdb_readonly_role') AS has_readonly_role;
+-- Granting roles may reach the configured limit for both roles and users, but
+-- adding another direct membership is rejected.
+SELECT documentdb_api.create_role('{"createRole":"limitGrantSource1", "roles":[], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"limitGrantSource2", "roles":[], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"limitGrantSource3", "roles":[], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"limitGrantTarget", "roles":[], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_user('{"createUser":"limitGrantUser", "pwd":"Valid$123Pass", "roles":[{"role":"readAnyDatabase","db":"admin"}], "$db":"admin"}');
+
+SET documentdb.max_roles_per_role TO 2;
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"limitGrantTarget", "roles":["limitGrantSource1","limitGrantSource2"], "$db":"admin"}');
+SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"limitGrantTarget", "roles":["limitGrantSource3"], "$db":"admin"}');
+SET documentdb.max_roles_per_role TO 3;
+SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"limitGrantUser", "roles":["limitGrantSource1"], "$db":"admin"}');
+SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"limitGrantUser", "roles":["limitGrantSource2"], "$db":"admin"}');
+SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"limitGrantUser", "roles":["limitGrantSource3"], "$db":"admin"}');
+RESET documentdb.max_roles_per_role;
+
+SELECT documentdb_api.drop_user('{"dropUser":"limitGrantUser", "$db":"admin"}');
+SELECT documentdb_api.drop_role('{"dropRole":"limitGrantTarget", "$db":"admin"}');
+SELECT documentdb_api.drop_role('{"dropRole":"limitGrantSource1", "$db":"admin"}');
+SELECT documentdb_api.drop_role('{"dropRole":"limitGrantSource2", "$db":"admin"}');
+SELECT documentdb_api.drop_role('{"dropRole":"limitGrantSource3", "$db":"admin"}');
 
 SELECT user_name,
        documentdb_api_internal.is_reserved_user(user_name) AS is_reserved
@@ -102,24 +119,6 @@ SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"root", "roles":[
 SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"grantRoleUser", "roles":[{"role":"grantTargetRole","db":"admin"}], "$db":"admin"}');
 SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"grantRoleUser", "roles":["readWriteAnyDatabase","clusterAdmin"], "$db":"admin"}');
 
--- Membership through grantTargetRole reaches its inherited custom role.
-SELECT documentdb_api_internal.is_role_member_of_role(
-    'grantRoleUser', 'grantTargetRole') AS has_target_role;
-SELECT documentdb_api_internal.is_role_member_of_role(
-    'grantRoleUser', 'grantSourceRole') AS has_transitive_source_role;
-
--- Unknown names use PostgreSQL's standard role lookup errors.
-SELECT documentdb_api_internal.is_role_member_of_role(
-    'missingRoleUser', 'grantTargetRole');
-SELECT documentdb_api_internal.is_role_member_of_role(
-    'grantRoleUser', 'missingTargetRole');
-
--- The function is strict.
-SELECT documentdb_api_internal.is_role_member_of_role(
-    NULL, 'grantTargetRole') IS NULL AS null_user_returns_null;
-SELECT documentdb_api_internal.is_role_member_of_role(
-    'grantRoleUser', NULL) IS NULL AS null_role_returns_null;
-
 SELECT parent.rolname AS granted_role
 FROM pg_auth_members m
 JOIN pg_roles parent ON m.roleid = parent.oid
@@ -189,3 +188,4 @@ RESET documentdb.enableUserCrud;
 RESET documentdb.enableRolesAdminDBCheck;
 RESET documentdb.enableUsersAdminDBCheck;
 RESET documentdb.maxUserLimit;
+RESET documentdb.max_roles_per_role;

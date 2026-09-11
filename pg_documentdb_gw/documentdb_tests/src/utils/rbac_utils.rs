@@ -17,6 +17,10 @@ pub const RESERVED_ROLE_NAMES: &[&str] = &[
     "documentdb_cluster_admin_role",
     "documentdb_readonly_role",
     "documentdb_readwrite_role",
+    "documentdb_rbac_api_access_role",
+    "documentdb_rbac_baseline_read_role",
+    "documentdb_rbac_baseline_write_role",
+    "documentdb_rbac_readwrite_anydb_role",
     "documentdb_root_role",
     "documentdb_user_admin_role",
 ];

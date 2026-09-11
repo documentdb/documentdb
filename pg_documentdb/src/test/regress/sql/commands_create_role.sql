@@ -32,6 +32,12 @@ WHERE r1.rolname = 'customAdminRole';
 -- the readWriteAnyDatabase + clusterAdmin admin pair)
 SELECT documentdb_api.create_role('{"createRole":"multiInheritRole", "roles":["readAnyDatabase", "readWriteAnyDatabase", "clusterAdmin"], "privileges":[], "$db":"admin"}');
 
+-- A role may be created at the configured membership limit, but not above it.
+SET documentdb.max_roles_per_role TO 1;
+SELECT documentdb_api.create_role('{"createRole":"limitCreateAtBoundary", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"limitCreateOver", "roles":["readWriteAnyDatabase", "clusterAdmin"], "privileges":[], "$db":"admin"}');
+RESET documentdb.max_roles_per_role;
+
 -- Test createRole with empty roles array and empty privileges array
 SELECT documentdb_api.create_role('{"createRole":"emptyRolesRole", "roles":[], "privileges":[], "$db":"admin"}');
 
@@ -90,7 +96,17 @@ SELECT documentdb_api.create_role('{"createRole":"noDatabaseRole", "roles":["rea
 
 -- Test createRole with just readWriteAnyDatabase role, should fail
 -- (must be specified together with clusterAdmin)
+SET documentdb.enable_readwrite_any_database_role_enforcement TO OFF;
 SELECT documentdb_api.create_role('{"createRole":"readWriteOnlyRole", "roles":["readWriteAnyDatabase"], "privileges":[], "$db":"admin"}');
+
+-- Enabling enforcement permits standalone inheritance.
+SET documentdb.enable_readwrite_any_database_role_enforcement TO ON;
+SELECT documentdb_api.create_role('{"createRole":"readWriteOnlyRole", "roles":["readWriteAnyDatabase"], "privileges":[], "$db":"admin"}');
+SELECT pg_has_role(
+    'readWriteOnlyRole',
+    'documentdb_rbac_readwrite_anydb_role',
+    'MEMBER');
+RESET documentdb.enable_readwrite_any_database_role_enforcement;
 
 -- Test createRole with just clusterAdmin role, should fail
 -- (must be specified together with readWriteAnyDatabase)
@@ -335,6 +351,7 @@ DROP ROLE IF EXISTS "longInheritRole";
 DROP ROLE IF EXISTS "emptyInheritRole";
 DROP ROLE IF EXISTS "customAdminRole";
 DROP ROLE IF EXISTS "multiInheritRole";
+SELECT documentdb_api.drop_role('{"dropRole":"limitCreateAtBoundary", "$db":"admin"}');
 DROP ROLE IF EXISTS "emptyRolesRole";
 DROP ROLE IF EXISTS "emptyBothRole";
 DROP ROLE IF EXISTS "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk";
@@ -350,6 +367,7 @@ DROP ROLE IF EXISTS "noDbFieldRole";
 DROP ROLE IF EXISTS "catalogStoreRole";
 DROP ROLE IF EXISTS "privOnlyCatalogRole";
 DROP ROLE IF EXISTS "noGrantTestRole";
+DROP ROLE IF EXISTS "readWriteOnlyRole";
 DROP ROLE IF EXISTS "maxPrivOkRole";
 DROP ROLE IF EXISTS "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 -- Remove any roles catalog rows left behind by the raw DROP ROLE statements
@@ -364,3 +382,4 @@ SELECT documentdb_api.drop_user('{"dropUser":"testRoleUser", "$db":"admin"}');
 RESET documentdb.enableRoleCrud;
 RESET documentdb.blockedRolePrefixList;
 RESET documentdb.enableRolesAdminDBCheck;
+RESET documentdb.max_roles_per_role;

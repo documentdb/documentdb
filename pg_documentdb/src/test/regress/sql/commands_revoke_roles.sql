@@ -14,6 +14,26 @@ SELECT documentdb_api.create_role('{"createRole":"revokeTargetRole", "roles":[],
 SELECT documentdb_api.create_role('{"createRole":"revokeSourceRole", "roles":[], "privileges":[], "$db":"admin"}');
 SELECT documentdb_api.create_user('{"createUser":"revokeRoleUser", "pwd":"Valid$123Pass", "roles":[{"role":"readAnyDatabase","db":"admin"}], "$db":"admin"}');
 
+-- A read-only user can read collection tables before revocation, but loses
+-- that access when readAnyDatabase is revoked.
+SELECT documentdb_api.insert_one('revokeAccessDb', 'revokeAccessColl', '{"_id": 1}');
+SELECT format('documentdb_data.documents_%s', collection_id) AS revoke_access_table
+FROM documentdb_api_catalog.collections
+WHERE database_name = 'revokeAccessDb' AND collection_name = 'revokeAccessColl' \gset
+
+SET ROLE "revokeRoleUser";
+SELECT count(*) FROM :revoke_access_table;
+RESET ROLE;
+
+SELECT documentdb_api.revoke_roles_from_user('{"revokeRolesFromUser":"revokeRoleUser", "roles":["readAnyDatabase"], "$db":"admin"}');
+
+SET ROLE "revokeRoleUser";
+SELECT count(*) FROM :revoke_access_table;
+RESET ROLE;
+
+-- Restore the initial membership for the remaining revoke tests.
+SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"revokeRoleUser", "roles":["readAnyDatabase"], "$db":"admin"}');
+
 SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"revokeTargetRole", "roles":["readAnyDatabase"], "$db":"admin"}');
 SELECT documentdb_api.grant_roles_to_role('{"grantRolesToRole":"revokeTargetRole", "roles":[{"role":"revokeSourceRole","db":"admin"}], "$db":"admin"}');
 
@@ -168,6 +188,7 @@ RESET documentdb.enableUserCrud;
 
 -- Clean up
 SET documentdb.enableRoleCrud TO ON;
+SELECT documentdb_api.drop_collection('revokeAccessDb', 'revokeAccessColl');
 SELECT documentdb_api.drop_user('{"dropUser":"revokeRoleUser", "$db":"admin"}');
 SELECT documentdb_api.drop_role('{"dropRole":"revokeTargetRole", "$db":"admin"}');
 SELECT documentdb_api.drop_role('{"dropRole":"revokeSourceRole", "$db":"admin"}');
