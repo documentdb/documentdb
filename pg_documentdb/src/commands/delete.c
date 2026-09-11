@@ -651,14 +651,15 @@ BuildDeletionSpec(bson_iter_t *deletionIter, const bson_value_t *variableSpec)
 		{
 			ReportFeatureUsage(FEATURE_COLLATION);
 
+			const bson_value_t *collationValue = bson_iter_value(deletionIter);
 			if (EnableCollation)
 			{
-				EnsureTopLevelFieldType("delete.collation", deletionIter,
-										BSON_TYPE_DOCUMENT);
-
-				const bson_value_t *collationValue = bson_iter_value(deletionIter);
-				ParseAndGetCollationString(collationValue,
-										   collationString);
+				if (EnsureTopLevelFieldIsDocumentNullOrEmptyOk(
+						"delete.collation", deletionIter))
+				{
+					ParseAndGetCollationString(collationValue,
+											   collationString);
+				}
 			}
 			else
 			{

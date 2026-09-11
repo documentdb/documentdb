@@ -91,6 +91,23 @@ EnsureTopLevelFieldTypeNullOk(const char *fieldName, const bson_iter_t *iter,
 
 
 /*
+ * Accept null and an empty document as omitted values. Return true only when
+ * the iterator holds a non-empty document.
+ */
+static inline bool
+EnsureTopLevelFieldIsDocumentNullOrEmptyOk(const char *fieldName,
+										   bson_iter_t *iter)
+{
+	if (!EnsureTopLevelFieldTypeNullOk(fieldName, iter, BSON_TYPE_DOCUMENT))
+	{
+		return false;
+	}
+
+	return !IsBsonValueEmptyDocument(bson_iter_value(iter));
+}
+
+
+/*
  * Similar to EnsureTopLevelFieldType, but null value is also ok even if
  * expectedType is not "null" or "undefined".
  *

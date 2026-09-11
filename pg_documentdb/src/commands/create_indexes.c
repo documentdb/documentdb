@@ -2122,6 +2122,12 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesDocIter,
 										BSON_TYPE_DOCUMENT);
 
 				const bson_value_t *value = bson_iter_value(&indexDefDocIter);
+				if (IsBsonValueEmptyDocument(value))
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+									errmsg(
+										"The field 'collation' cannot be an empty object.")));
+				}
 
 				char collationString[MAX_ICU_COLLATION_LENGTH] = { 0 };
 				ParseAndGetCollationString(value, collationString);

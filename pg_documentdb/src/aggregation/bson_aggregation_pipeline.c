@@ -1830,9 +1830,11 @@ ParseAggregationQueryAndLookupCollection(text *database, pgbson *aggregationSpec
 			ReportFeatureUsage(FEATURE_COLLATION);
 			if (EnableCollation)
 			{
-				EnsureTopLevelFieldType("collation", &aggregationIterator,
-										BSON_TYPE_DOCUMENT);
-				ParseAndGetCollationString(value, context->collationString);
+				if (EnsureTopLevelFieldIsDocumentNullOrEmptyOk(
+						"collation", &aggregationIterator))
+				{
+					ParseAndGetCollationString(value, context->collationString);
+				}
 			}
 			else if (!SkipFailOnCollation)
 			{
@@ -2184,7 +2186,11 @@ ParseFindQuery(pgbson *findSpec, QueryData *queryData,
 					{
 						EnsureTopLevelFieldType("collation", &findIterator,
 												BSON_TYPE_DOCUMENT);
-						ParseAndGetCollationString(value, context->collationString);
+						if (!IsBsonValueEmptyDocument(value))
+						{
+							ParseAndGetCollationString(value,
+													   context->collationString);
+						}
 					}
 					else if (!SkipFailOnCollation)
 					{
@@ -2963,9 +2969,11 @@ GenerateCountQuery(text *databaseDatum, pgbson *countSpec, bool setStatementTime
 			ReportFeatureUsage(FEATURE_COLLATION);
 			if (EnableCollation)
 			{
-				EnsureTopLevelFieldType("collation", &countIterator,
-										BSON_TYPE_DOCUMENT);
-				ParseAndGetCollationString(value, context.collationString);
+				if (EnsureTopLevelFieldIsDocumentNullOrEmptyOk(
+						"collation", &countIterator))
+				{
+					ParseAndGetCollationString(value, context.collationString);
+				}
 			}
 			else if (!SkipFailOnCollation)
 			{
@@ -3191,14 +3199,10 @@ GenerateDistinctQuery(text *databaseDatum, pgbson *distinctSpec, bool setStateme
 			if (EnableCollation &&
 				IsClusterVersionAtleast(DocDB_V1, 1, 0))
 			{
-				if (!BSON_ITER_HOLDS_NULL(&distinctIter))
+				if (EnsureTopLevelFieldIsDocumentNullOrEmptyOk(
+						"collation", &distinctIter))
 				{
-					EnsureTopLevelFieldType("collation", &distinctIter,
-											BSON_TYPE_DOCUMENT);
-					if (!IsBsonValueEmptyDocument(value))
-					{
-						ParseAndGetCollationString(value, context.collationString);
-					}
+					ParseAndGetCollationString(value, context.collationString);
 				}
 			}
 			else if (!SkipFailOnCollation)
