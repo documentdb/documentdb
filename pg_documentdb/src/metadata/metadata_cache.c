@@ -961,6 +961,7 @@ typedef struct DocumentDBApiOidCacheData
 
 	/* OID of the bson_merge_objects function */
 	Oid ApiCatalogBsonMergeObjectsFunctionOid;
+	Oid ApiCatalogBsonMergeObjectsOrderedFunctionOid;
 
 	/* OID of the BSONEXPMOVINGAVG window function */
 	Oid ApiCatalogBsonExpMovingAvgAggregateFunctionOid;
@@ -4546,6 +4547,15 @@ BsonMergeObjectsOnSortedFunctionOid(void)
 		&Cache.ApiCatalogBsonMergeObjectsOnSortedFunctionOid,
 		DocumentDBApiInternalSchemaName,
 		"bson_merge_objects_on_sorted");
+}
+
+
+Oid
+BsonMergeObjectsOrderedFunctionOid(void)
+{
+	return GetAggregateFunctionByName(&Cache.ApiCatalogBsonMergeObjectsOrderedFunctionOid,
+									  DocumentDBApiInternalSchemaName,
+									  "bson_merge_objects_ordered");
 }
 
 

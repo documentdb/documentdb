@@ -443,6 +443,7 @@ Oid BsonExpMovingAvgAggregateFunctionOid(void);
 Oid BsonObjectAggregateFunctionOid(void);
 Oid BsonMergeObjectsOnSortedFunctionOid(void);
 Oid BsonMergeObjectsFunctionOid(void);
+Oid BsonMergeObjectsOrderedFunctionOid(void);
 Oid BsonDollarFacetProjectFunctionOid(void);
 Oid BsonFirstOnSortedAggregateFunctionOid(void);
 Oid BsonFirstOnSortedAggregateAllArgsFunctionOid(void);
