@@ -1019,16 +1019,21 @@ verify_sample_data() {
     local sample_script=""
 
     sample_script="$(cat <<'EOF'
-const database = db.getSiblingDB("sampledb");
-const counts = {
-    users: database.users.countDocuments(),
-    products: database.products.countDocuments(),
-    orders: database.orders.countDocuments(),
-    analytics: database.analytics.countDocuments(),
-};
-printjson(counts);
-if (Object.values(counts).some((value) => value < 1)) {
-    quit(1);
+const database = db.getSiblingDB("StoreData");
+const fs = require("fs");
+const zlib = require("zlib");
+for (const collection of ["stores", "ratings"]) {
+    const file = `/usr/share/documentdb/sample-data/StoreData.${collection}.json.gz`;
+    const documents = JSON.parse(zlib.gunzipSync(fs.readFileSync(file)).toString("utf8"));
+    if (!Array.isArray(documents) || documents.length === 0) {
+        throw new Error(`${file} must contain a non-empty document array`);
+    }
+    const expected = documents.length;
+    const actual = database.getCollection(collection).countDocuments();
+    printjson({collection, expected, actual});
+    if (actual !== expected) {
+        quit(1);
+    }
 }
 EOF
 )"
@@ -1046,12 +1051,10 @@ verify_sample_data_absent() {
     local sample_script=""
 
     sample_script="$(cat <<'EOF'
-const database = db.getSiblingDB("sampledb");
+const database = db.getSiblingDB("StoreData");
 const counts = {
-    users: database.users.countDocuments(),
-    products: database.products.countDocuments(),
-    orders: database.orders.countDocuments(),
-    analytics: database.analytics.countDocuments(),
+    stores: database.stores.countDocuments(),
+    ratings: database.ratings.countDocuments(),
 };
 printjson(counts);
 if (Object.values(counts).some((value) => value !== 0)) {

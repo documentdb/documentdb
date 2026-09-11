@@ -36,6 +36,26 @@ check_mongosh() {
     echo
 }
 
+load_expected_sample_counts() {
+    local counts
+    counts="$(SAMPLE_DATA_DIR="$PROJECT_ROOT/documentdb-local/sample-data" \
+        mongosh --quiet --nodb --eval '
+            const fs = require("fs");
+            const path = require("path");
+            const zlib = require("zlib");
+            const counts = ["stores", "ratings"].map(collection => {
+                const file = path.join(process.env.SAMPLE_DATA_DIR, `StoreData.${collection}.json.gz`);
+                const documents = JSON.parse(zlib.gunzipSync(fs.readFileSync(file)).toString("utf8"));
+                if (!Array.isArray(documents) || documents.length === 0) {
+                    throw new Error(`${file} must contain a non-empty document array`);
+                }
+                return documents.length;
+            });
+            print(counts.join(" "));
+        ')" || return 1
+    read -r EXPECTED_STORES EXPECTED_RATINGS <<< "$counts"
+}
+
 # Function to build the Docker image
 build_image() {
     echo "=== Building Docker Image ==="
@@ -125,115 +145,33 @@ wait_for_data_initialization() {
 # Function to verify sample data was loaded correctly
 verify_sample_data() {
     echo "=== Verifying Sample Data Initialization ==="
-    
-    # Check if sampledb database exists and switch to it
-    echo "Checking sampledb database..."
+
+    echo "Checking StoreData database..."
     DB_LIST=$(mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "db.adminCommand('listDatabases')" --quiet 2>/dev/null)
-    
-    if [[ "$DB_LIST" == *"sampledb"* ]]; then
-        echo "✅ sampledb database found"
+
+    if [[ "$DB_LIST" == *"StoreData"* ]]; then
+        echo "StoreData database found"
     else
-        echo "❌ sampledb database not found"
+        echo "StoreData database not found"
         echo "Available databases:"
         echo "$DB_LIST"
         return 1
     fi
-    
-    # Check users collection
-    echo "Checking users collection..."
-    USER_COUNT=$(mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('sampledb'); db.users.countDocuments()" --quiet 2>/dev/null | tail -1)
-    echo "Users count: $USER_COUNT"
-    
-    # Check products collection
-    echo "Checking products collection..."
-    PRODUCT_COUNT=$(mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('sampledb'); db.products.countDocuments()" --quiet 2>/dev/null | tail -1)
-    echo "Products count: $PRODUCT_COUNT"
-    
-    # Check orders collection
-    echo "Checking orders collection..."
-    ORDER_COUNT=$(mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('sampledb'); db.orders.countDocuments()" --quiet 2>/dev/null | tail -1)
-    echo "Orders count: $ORDER_COUNT"
-    
-    # Check analytics collection
-    echo "Checking analytics collection..."
-    ANALYTICS_COUNT=$(mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('sampledb'); db.analytics.countDocuments()" --quiet 2>/dev/null | tail -1)
-    echo "Analytics count: $ANALYTICS_COUNT"
-    
-    # Show sample data from each collection
+
+    STORE_COUNT=$(mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('StoreData'); db.stores.countDocuments()" --quiet 2>/dev/null | tail -1)
+    RATING_COUNT=$(mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('StoreData'); db.ratings.countDocuments()" --quiet 2>/dev/null | tail -1)
+    echo "Stores count: $STORE_COUNT"
+    echo "Ratings count: $RATING_COUNT"
+
     echo
     echo "=== Sample Data Examples ==="
-    echo "Sample user:"
-    mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('sampledb'); db.users.findOne()" --quiet 2>/dev/null | head -10
-    
+    echo "Sample store:"
+    mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('StoreData'); db.stores.findOne()" --quiet 2>/dev/null | head -20
     echo
-    echo "Sample product:"
-    mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('sampledb'); db.products.findOne()" --quiet 2>/dev/null | head -10
-    
-    echo
-    echo "Sample order:"
-    mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('sampledb'); db.orders.findOne()" --quiet 2>/dev/null | head -10
-    
-    echo
-    echo "Sample analytics:"
-    mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('sampledb'); db.analytics.findOne()" --quiet 2>/dev/null | head -10
-    
-    # Verify indexes were created
-    echo
-    echo "=== Checking Indexes ==="
-    echo "Users indexes:"
-    USER_INDEXES=$(mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('sampledb'); db.users.getIndexes().length" --quiet 2>/dev/null | tail -1)
-    echo "Users has $USER_INDEXES indexes"
-    
-    echo "Products indexes:"
-    PRODUCT_INDEXES=$(mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('sampledb'); db.products.getIndexes().length" --quiet 2>/dev/null | tail -1)
-    echo "Products has $PRODUCT_INDEXES indexes"
-    
-    echo "Orders indexes:"
-    ORDER_INDEXES=$(mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('sampledb'); db.orders.getIndexes().length" --quiet 2>/dev/null | tail -1)
-    echo "Orders has $ORDER_INDEXES indexes"
-    
-    echo "Analytics indexes:"
-    ANALYTICS_INDEXES=$(mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('sampledb'); db.analytics.getIndexes().length" --quiet 2>/dev/null | tail -1)
-    echo "Analytics has $ANALYTICS_INDEXES indexes"
-    
-    # Test some complex queries to verify data relationships
-    echo
-    echo "=== Testing Data Relationships and Queries ==="
-    
-    echo "Testing query: Users in Seattle"
-    SEATTLE_USERS=$(mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('sampledb'); db.users.countDocuments({city: 'Seattle'})" --quiet 2>/dev/null | tail -1)
-    echo "Users in Seattle: $SEATTLE_USERS"
-    
-    echo "Testing query: Electronics products"
-    ELECTRONICS_PRODUCTS=$(mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('sampledb'); db.products.countDocuments({category: 'Electronics'})" --quiet 2>/dev/null | tail -1)
-    echo "Electronics products: $ELECTRONICS_PRODUCTS"
-    
-    echo "Testing query: Orders with status 'delivered'"
-    DELIVERED_ORDERS=$(mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('sampledb'); db.orders.countDocuments({status: 'delivered'})" --quiet 2>/dev/null | tail -1)
-    echo "Delivered orders: $DELIVERED_ORDERS"
-    
-    echo "Testing query: Premium users"
-    PREMIUM_USERS=$(mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('sampledb'); db.users.countDocuments({tags: 'premium'})" --quiet 2>/dev/null | tail -1)
-    echo "Premium users: $PREMIUM_USERS"
-    
-    # Test aggregation pipeline
-    echo "Testing aggregation: Total revenue by order status"
-    mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "
-        use('sampledb'); 
-        db.orders.aggregate([
-            { \$group: { 
-                _id: '\$status', 
-                totalRevenue: { \$sum: '\$orderSummary.total' },
-                orderCount: { \$sum: 1 }
-            }},
-            { \$sort: { totalRevenue: -1 }}
-        ]).forEach(printjson)
-    " --quiet 2>/dev/null
-    
-    # Return results for validation
-    export USER_COUNT PRODUCT_COUNT ORDER_COUNT ANALYTICS_COUNT
-    export USER_INDEXES PRODUCT_INDEXES ORDER_INDEXES ANALYTICS_INDEXES
-    export SEATTLE_USERS ELECTRONICS_PRODUCTS DELIVERED_ORDERS PREMIUM_USERS
+    echo "Sample rating:"
+    mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('StoreData'); db.ratings.findOne()" --quiet 2>/dev/null | head -10
+
+    export STORE_COUNT RATING_COUNT
 }
 
 # Function to verify sample data is not loaded by default
@@ -242,14 +180,14 @@ verify_sample_data_disabled_by_default() {
 
     DB_LIST=$(mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "db.adminCommand('listDatabases')" --quiet 2>/dev/null)
 
-    if [[ "$DB_LIST" == *"sampledb"* ]]; then
-        echo "❌ sampledb database found unexpectedly"
+    if [[ "$DB_LIST" == *"StoreData"* ]]; then
+        echo "StoreData database found unexpectedly"
         echo "Available databases:"
         echo "$DB_LIST"
         return 1
     fi
 
-    echo "✅ sampledb database not found"
+    echo "StoreData database not found"
 
     if docker logs $CONTAINER_NAME 2>&1 | grep -q "Initializing database with built-in sample data"; then
         echo "❌ Built-in sample data initialization ran unexpectedly"
@@ -419,17 +357,17 @@ test_environment_variable() {
     fi
     
     # Quick verification
-    ENV_USER_COUNT=$(mongosh localhost:$ENV_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('sampledb'); db.users.countDocuments()" --quiet 2>/dev/null | tail -1)
+    ENV_STORE_COUNT=$(mongosh localhost:$ENV_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('StoreData'); db.stores.countDocuments()" --quiet 2>/dev/null | tail -1)
     
     # Cleanup environment test container
     docker stop $ENV_CONTAINER_NAME 2>/dev/null || true
     docker rm $ENV_CONTAINER_NAME 2>/dev/null || true
     
-    if [ "$ENV_USER_COUNT" = "5" ]; then
-        echo "✅ Environment variable test passed (found $ENV_USER_COUNT users)"
+    if [ "$ENV_STORE_COUNT" = "$EXPECTED_STORES" ]; then
+        echo "Environment variable test passed (found $ENV_STORE_COUNT stores)"
         return 0
     else
-        echo "❌ Environment variable test failed (found $ENV_USER_COUNT users, expected 5)"
+        echo "Environment variable test failed (found $ENV_STORE_COUNT stores, expected $EXPECTED_STORES)"
         return 1
     fi
 }
@@ -495,16 +433,16 @@ test_skip_init_data_false_environment_variable() {
         return 1
     fi
 
-    LEGACY_ENV_USER_COUNT=$(mongosh localhost:$LEGACY_ENV_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('sampledb'); db.users.countDocuments()" --quiet 2>/dev/null | tail -1)
+    LEGACY_ENV_STORE_COUNT=$(mongosh localhost:$LEGACY_ENV_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "use('StoreData'); db.stores.countDocuments()" --quiet 2>/dev/null | tail -1)
 
     docker stop $LEGACY_ENV_CONTAINER_NAME 2>/dev/null || true
     docker rm $LEGACY_ENV_CONTAINER_NAME 2>/dev/null || true
 
-    if [ "$LEGACY_ENV_USER_COUNT" = "5" ]; then
-        echo "✅ Legacy environment variable test passed (found $LEGACY_ENV_USER_COUNT users)"
+    if [ "$LEGACY_ENV_STORE_COUNT" = "$EXPECTED_STORES" ]; then
+        echo "Legacy environment variable test passed (found $LEGACY_ENV_STORE_COUNT stores)"
         return 0
     else
-        echo "❌ Legacy environment variable test failed (found $LEGACY_ENV_USER_COUNT users, expected 5)"
+        echo "Legacy environment variable test failed (found $LEGACY_ENV_STORE_COUNT stores, expected $EXPECTED_STORES)"
         return 1
     fi
 }
@@ -513,6 +451,7 @@ test_skip_init_data_false_environment_variable() {
 main() {
     # Check prerequisites
     check_mongosh
+    load_expected_sample_counts
     
     # Cleanup any previous test runs
     cleanup
@@ -621,38 +560,14 @@ main() {
         EXPECTED_SKIP_ALIAS="PASS"
         EXPECTED_INVALID_VALUE="PASS"
         EXPECTED_LEGACY_ENV="PASS"
-        EXPECTED_USERS=5
-        EXPECTED_PRODUCTS=5
-        EXPECTED_ORDERS=4
-        EXPECTED_ANALYTICS=2
-        EXPECTED_SEATTLE_USERS=1
-        EXPECTED_ELECTRONICS=2
-        EXPECTED_DELIVERED=1
-        EXPECTED_PREMIUM=3
-        
-        # Minimum expected indexes (including default _id index)
-        MIN_USER_INDEXES=5  # _id + email + username + city + tags
-        MIN_PRODUCT_INDEXES=6  # _id + category + brand + price + tags + sku
-        MIN_ORDER_INDEXES=6  # _id + userId + orderNumber + status + orderDate + customerInfo.email
-        MIN_ANALYTICS_INDEXES=4  # _id + period + type + date
         
         # Test results
         DEFAULT_OFF_PASS=$([[ "$DEFAULT_OFF_RESULT" == "0" ]] && echo "✅" || echo "❌")
         SKIP_ALIAS_PASS=$([[ "$SKIP_ALIAS_RESULT" == "0" ]] && echo "✅" || echo "❌")
         INVALID_VALUE_PASS=$([[ "$INVALID_VALUE_RESULT" == "0" ]] && echo "✅" || echo "❌")
         LEGACY_ENV_PASS=$([[ "$LEGACY_ENV_TEST_RESULT" == "0" ]] && echo "✅" || echo "❌")
-        USERS_PASS=$([[ "$USER_COUNT" == "$EXPECTED_USERS" ]] && echo "✅" || echo "❌")
-        PRODUCTS_PASS=$([[ "$PRODUCT_COUNT" == "$EXPECTED_PRODUCTS" ]] && echo "✅" || echo "❌")
-        ORDERS_PASS=$([[ "$ORDER_COUNT" == "$EXPECTED_ORDERS" ]] && echo "✅" || echo "❌")
-        ANALYTICS_PASS=$([[ "$ANALYTICS_COUNT" == "$EXPECTED_ANALYTICS" ]] && echo "✅" || echo "❌")
-        SEATTLE_PASS=$([[ "$SEATTLE_USERS" == "$EXPECTED_SEATTLE_USERS" ]] && echo "✅" || echo "❌")
-        ELECTRONICS_PASS=$([[ "$ELECTRONICS_PRODUCTS" == "$EXPECTED_ELECTRONICS" ]] && echo "✅" || echo "❌")
-        DELIVERED_PASS=$([[ "$DELIVERED_ORDERS" == "$EXPECTED_DELIVERED" ]] && echo "✅" || echo "❌")
-        PREMIUM_PASS=$([[ "$PREMIUM_USERS" == "$EXPECTED_PREMIUM" ]] && echo "✅" || echo "❌")
-        USER_IDX_PASS=$([[ "$USER_INDEXES" -ge "$MIN_USER_INDEXES" ]] && echo "✅" || echo "❌")
-        PRODUCT_IDX_PASS=$([[ "$PRODUCT_INDEXES" -ge "$MIN_PRODUCT_INDEXES" ]] && echo "✅" || echo "❌")
-        ORDER_IDX_PASS=$([[ "$ORDER_INDEXES" -ge "$MIN_ORDER_INDEXES" ]] && echo "✅" || echo "❌")
-        ANALYTICS_IDX_PASS=$([[ "$ANALYTICS_INDEXES" -ge "$MIN_ANALYTICS_INDEXES" ]] && echo "✅" || echo "❌")
+        STORES_PASS=$([[ "$STORE_COUNT" == "$EXPECTED_STORES" ]] && echo "PASS" || echo "FAIL")
+        RATINGS_PASS=$([[ "$RATING_COUNT" == "$EXPECTED_RATINGS" ]] && echo "PASS" || echo "FAIL")
         ENV_PASS=$([[ "$ENV_TEST_RESULT" == "0" ]] && echo "✅" || echo "❌")
         
         echo "┌─────────────────────────────────┬──────────┬──────────┬────────┐"
@@ -662,18 +577,8 @@ main() {
         echo "│ Legacy Alias (--skip-init-data) │ $EXPECTED_SKIP_ALIAS     │ $([ "$SKIP_ALIAS_RESULT" = "0" ] && echo "PASS" || echo "FAIL")     │ $SKIP_ALIAS_PASS     │"
         echo "│ Invalid --init-data Value       │ $EXPECTED_INVALID_VALUE     │ $([ "$INVALID_VALUE_RESULT" = "0" ] && echo "PASS" || echo "FAIL")     │ $INVALID_VALUE_PASS     │"
         echo "│ Legacy Env (SKIP_INIT_DATA=false) │ $EXPECTED_LEGACY_ENV     │ $([ "$LEGACY_ENV_TEST_RESULT" = "0" ] && echo "PASS" || echo "FAIL")     │ $LEGACY_ENV_PASS     │"
-        echo "│ Users Collection                │ $EXPECTED_USERS        │ $USER_COUNT        │ $USERS_PASS     │"
-        echo "│ Products Collection             │ $EXPECTED_PRODUCTS        │ $PRODUCT_COUNT        │ $PRODUCTS_PASS     │"
-        echo "│ Orders Collection               │ $EXPECTED_ORDERS        │ $ORDER_COUNT        │ $ORDERS_PASS     │"
-        echo "│ Analytics Collection            │ $EXPECTED_ANALYTICS        │ $ANALYTICS_COUNT        │ $ANALYTICS_PASS     │"
-        echo "│ Seattle Users Query             │ $EXPECTED_SEATTLE_USERS        │ $SEATTLE_USERS        │ $SEATTLE_PASS     │"
-        echo "│ Electronics Products Query      │ $EXPECTED_ELECTRONICS        │ $ELECTRONICS_PRODUCTS        │ $ELECTRONICS_PASS     │"
-        echo "│ Delivered Orders Query          │ $EXPECTED_DELIVERED        │ $DELIVERED_ORDERS        │ $DELIVERED_PASS     │"
-        echo "│ Premium Users Query             │ $EXPECTED_PREMIUM        │ $PREMIUM_USERS        │ $PREMIUM_PASS     │"
-        echo "│ Users Indexes (min $MIN_USER_INDEXES)           │ >=$MIN_USER_INDEXES       │ $USER_INDEXES        │ $USER_IDX_PASS     │"
-        echo "│ Products Indexes (min $MIN_PRODUCT_INDEXES)        │ >=$MIN_PRODUCT_INDEXES       │ $PRODUCT_INDEXES        │ $PRODUCT_IDX_PASS     │"
-        echo "│ Orders Indexes (min $MIN_ORDER_INDEXES)          │ >=$MIN_ORDER_INDEXES       │ $ORDER_INDEXES        │ $ORDER_IDX_PASS     │"
-        echo "│ Analytics Indexes (min $MIN_ANALYTICS_INDEXES)       │ >=$MIN_ANALYTICS_INDEXES       │ $ANALYTICS_INDEXES        │ $ANALYTICS_IDX_PASS     │"
+        echo "│ Stores Collection               │ $EXPECTED_STORES    │ $STORE_COUNT    │ $STORES_PASS   │"
+        echo "│ Ratings Collection              │ $EXPECTED_RATINGS        │ $RATING_COUNT        │ $RATINGS_PASS  │"
         echo "│ Environment Variable Test       │ PASS     │ $([ "$ENV_TEST_RESULT" = "0" ] && echo "PASS" || echo "FAIL")     │ $ENV_PASS     │"
         echo "└─────────────────────────────────┴──────────┴──────────┴────────┘"
         echo
@@ -686,18 +591,8 @@ main() {
         [ "$SKIP_ALIAS_RESULT" != "0" ] && ALL_TESTS_PASSED=false
         [ "$INVALID_VALUE_RESULT" != "0" ] && ALL_TESTS_PASSED=false
         [ "$LEGACY_ENV_TEST_RESULT" != "0" ] && ALL_TESTS_PASSED=false
-        [ "$USER_COUNT" != "$EXPECTED_USERS" ] && ALL_TESTS_PASSED=false
-        [ "$PRODUCT_COUNT" != "$EXPECTED_PRODUCTS" ] && ALL_TESTS_PASSED=false
-        [ "$ORDER_COUNT" != "$EXPECTED_ORDERS" ] && ALL_TESTS_PASSED=false
-        [ "$ANALYTICS_COUNT" != "$EXPECTED_ANALYTICS" ] && ALL_TESTS_PASSED=false
-        [ "$SEATTLE_USERS" != "$EXPECTED_SEATTLE_USERS" ] && ALL_TESTS_PASSED=false
-        [ "$ELECTRONICS_PRODUCTS" != "$EXPECTED_ELECTRONICS" ] && ALL_TESTS_PASSED=false
-        [ "$DELIVERED_ORDERS" != "$EXPECTED_DELIVERED" ] && ALL_TESTS_PASSED=false
-        [ "$PREMIUM_USERS" != "$EXPECTED_PREMIUM" ] && ALL_TESTS_PASSED=false
-        [ "$USER_INDEXES" -lt "$MIN_USER_INDEXES" ] && ALL_TESTS_PASSED=false
-        [ "$PRODUCT_INDEXES" -lt "$MIN_PRODUCT_INDEXES" ] && ALL_TESTS_PASSED=false
-        [ "$ORDER_INDEXES" -lt "$MIN_ORDER_INDEXES" ] && ALL_TESTS_PASSED=false
-        [ "$ANALYTICS_INDEXES" -lt "$MIN_ANALYTICS_INDEXES" ] && ALL_TESTS_PASSED=false
+        [ "$STORE_COUNT" != "$EXPECTED_STORES" ] && ALL_TESTS_PASSED=false
+        [ "$RATING_COUNT" != "$EXPECTED_RATINGS" ] && ALL_TESTS_PASSED=false
         [ "$ENV_TEST_RESULT" != "0" ] && ALL_TESTS_PASSED=false
         
         if [ "$ALL_TESTS_PASSED" = true ]; then
@@ -709,9 +604,7 @@ main() {
             echo "✅ Invalid --init-data values are rejected"
             echo "✅ Legacy SKIP_INIT_DATA=false environment variable still enables sample data"
             echo "✅ All sample collections created with expected data"
-            echo "✅ All indexes created successfully"
-            echo "✅ All queries work as expected"
-            echo "✅ Data relationships are correct"
+            echo "StoreData collections contain the expected documents"
             echo "✅ Environment variable works correctly"
             echo "✅ --init-data feature is working perfectly!"
             OVERALL_RESULT="SUCCESS"
@@ -745,8 +638,8 @@ main() {
     echo "To manually explore the sample data:"
     echo "1. Start container: docker run -d --name documentdb-manual -p 10260:10260 -e PASSWORD=<PASSWORD> $IMAGE_NAME --password <PASSWORD> --init-data true"
     echo "2. Connect: mongosh localhost:10260 -u default_user -p <PASSWORD> --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates"
-    echo "3. Use database: use('sampledb')"
-    echo "4. Explore: db.users.find(), db.products.find(), db.orders.find(), db.analytics.find()"
+    echo "3. Use database: use('StoreData')"
+    echo "4. Explore: db.stores.find(), db.ratings.find()"
     echo
     echo "Cleanup commands:"
     echo "1. Remove container: docker rm $CONTAINER_NAME"

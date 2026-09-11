@@ -1455,13 +1455,11 @@ elif [ "$INIT_DATA" = "true" ]; then
             exit 1
         fi
         echo ""
-        echo "Sample data has been loaded into the 'sampledb' database with the following collections:"
-        echo "  - users (5 sample users)"
-        echo "  - products (5 sample products)"  
-        echo "  - orders (4 sample orders)"
-        echo "  - analytics (sample metrics and activity data)"
+        echo "Sample data has been loaded into the 'StoreData' database with the following collections:"
+        echo "  - stores (41,505 sample stores)"
+        echo "  - ratings (2 sample ratings)"
         echo ""
-        echo "Connect to your DocumentDB instance and use: use('sampledb')"
+        echo "Connect to your DocumentDB instance and use: use('StoreData')"
     else
         echo "Warning: Sample data or initialization script not found"
         if [ ! -f "$init_script" ]; then

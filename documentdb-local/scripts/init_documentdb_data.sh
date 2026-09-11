@@ -155,7 +155,7 @@ if (initMode === 'ping') {
     // init scripts that reference the ambient `db` without calling use().
     // The URI above targets /admin only for authentication (authSource=admin);
     // the previous `mongosh localhost:PORT --file` invocation defaulted to
-    // 'test'. Scripts that select their own db (e.g. use('sampledb')) are
+    // 'test'. Scripts that select their own db (e.g. use('StoreData')) are
     // unaffected because their use() runs after this and overrides it.
     db = db.getSiblingDB('test');
     load(initFile);

@@ -2233,7 +2233,12 @@ json.dump(data, sys.stdout)
             self.assertIn(
                 "countDocuments(",
                 text,
-                msg=f"{js.name} should guard inserts with an existence check (#612)",
+                msg=f"{js.name} should report the resulting collection size",
+            )
+            self.assertIn(
+                "duplicateKeyCode",
+                text,
+                msg=f"{js.name} should tolerate duplicate keys on direct re-runs (#612)",
             )
 
     def _set_blocked_role_prefixes(self, prefixes):

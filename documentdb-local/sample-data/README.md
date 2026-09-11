@@ -1,55 +1,60 @@
 # Sample Data for DocumentDB
 
-This directory contains sample JavaScript files that initialize a DocumentDB instance with demo data. The data represents a simple e-commerce application with users, products, orders, and analytics.
+This directory contains the built-in `StoreData` sample dataset used by
+DocumentDB local containers and native packages.
 
-## Collections Created
+## Collections
 
-### 1. Users Collection (`01-users.js`)
-Contains sample user accounts with the following structure:
-- User profiles with personal information
-- Preferences and settings
-- Tags for categorization
-- Indexed on email, username, city, and tags
+The loader creates the following collections in the `StoreData` database:
 
-### 2. Products Collection (`02-products.js`)
-Contains sample product catalog with:
-- Electronics, lifestyle, food, and photography items
-- Detailed specifications and pricing
-- Ratings and reviews data
-- Indexed on category, brand, price, tags, and SKU
+- `stores`: 41,505 retail store documents with varied schemas covering
+  locations, staffing, sales, inventory, promotions, operating hours, dates,
+  timestamps, and binary values.
+- `ratings`: 2 store rating documents whose `_id` values correspond to stores
+  in the main collection.
 
-### 3. Orders Collection (`03-orders.js`)
-Contains sample order data including:
-- Order details and customer information
-- Line items with product references
-- Order status tracking
-- Shipping and payment information
-- Indexed on userId, orderNumber, status, orderDate, and customer email
+The source exports are stored as deterministic gzip-compressed Extended JSON:
 
-### 4. Analytics Collection (`04-analytics.js`)
-Contains sample analytics and reporting data:
-- Monthly summary metrics
-- Daily user activity logs
-- Product performance data
-- Fields that can be queried with aggregation pipelines after startup
+- `StoreData.stores.json.gz`
+- `StoreData.ratings.json.gz`
 
-## Database Structure
+To regenerate the checked-in artifacts from equivalent uncompressed exports:
 
-All sample data is inserted into the `sampledb` database to keep it separate from any existing data.
+```bash
+jq -c . StoreData.stores.json | gzip -n -9 > StoreData.stores.json.gz
+jq -c . StoreData.ratings.json | gzip -n -9 > StoreData.ratings.json.gz
+```
+
+`01-store-data.js` decompresses and parses the files with mongosh's built-in
+Node.js and `EJSON` support. It inserts documents in bounded batches and ignores
+only duplicate-key errors, so direct re-runs repair missing documents without
+duplicating existing ones.
 
 ## Usage
 
-These files are executed when the DocumentDB container starts only if built-in sample data is explicitly enabled with `--init-data true` or `INIT_DATA=true`. Seeding runs once per data volume (on a fresh volume) and is skipped on subsequent restarts; the scripts are idempotent, so a re-run is a no-op. To seed again, start with a fresh data volume. Packaged installs likewise keep sample data optional: use `documentdb-setup --load-sample-data` to load it. `--load-sample-data` requires `mongosh` to be installed on the host. These files can also be run manually using mongosh:
+Built-in sample data is loaded only when explicitly enabled with
+`--init-data true` or `INIT_DATA=true`. Container seeding runs once per data
+volume and is skipped on later restarts. To seed again, start with a fresh data
+volume.
+
+Packaged installs also keep sample data optional:
 
 ```bash
-mongosh localhost:10260 -u username -p <password> --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --file 01-users.js
+sudo documentdb-setup --load-sample-data
 ```
 
-## Data Overview
+This option requires `mongosh` on the host.
 
-- **5 users** with diverse profiles and preferences
-- **5 products** across different categories
-- **4 orders** in various stages (pending, processing, shipped, delivered)
-- **2 analytics records** with sample metrics and user activity
+To run the loader manually, keep the loader and compressed files together:
 
-This sample data provides a foundation for testing queries, exploring DocumentDB features, and building applications.
+```bash
+cd /path/to/sample-data
+DOCUMENTDB_INIT_FILE="$PWD/01-store-data.js" \
+mongosh localhost:10260 \
+  -u username \
+  -p '<password>' \
+  --authenticationMechanism SCRAM-SHA-256 \
+  --tls \
+  --tlsAllowInvalidCertificates \
+  --file 01-store-data.js
+```
