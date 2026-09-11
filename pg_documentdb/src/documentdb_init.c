@@ -227,6 +227,11 @@ InitializeBackgroundWorkerJobAllowedCommands(void)
 		.name = "build_index_background", .schema = ApiInternalSchemaName
 	};
 	RegisterBackgroundWorkerJobAllowedCommand(buildIndexConcurrently);
+
+	BackgroundWorkerJobCommand cursorDirectoryCleanup = {
+		.name = "cursor_directory_cleanup", .schema = ApiInternalSchemaNameV2
+	};
+	RegisterBackgroundWorkerJobAllowedCommand(cursorDirectoryCleanup);
 }
 
 
@@ -237,6 +242,7 @@ void
 RegisterDocumentDBBackgroundWorkerJobs(void)
 {
 	RegisterIndexBuildBackgroundWorkerJobs();
+	RegisterCursorCleanupBackgroundWorkerJob();
 }
 
 

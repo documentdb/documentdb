@@ -1,5 +1,6 @@
 #include "rbac/setup_root_role--1.1-0.sql"
 #include "udfs/aggregation/bson_unwind_functions--1.1-0.sql"
+#include "udfs/schema_mgmt/cursor_support--1.1-0.sql"
 #include "udfs/roles/grant_roles_to_role--1.1-0.sql"
 #include "udfs/roles/grant_privileges_to_role--1.1-0.sql"
 #include "udfs/roles/grant_roles_to_user--1.1-0.sql"

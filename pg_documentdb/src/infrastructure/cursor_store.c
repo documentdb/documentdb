@@ -18,6 +18,8 @@
  */
 
 #include <postgres.h>
+#include <access/xlog.h>
+#include <catalog/pg_type_d.h>
 #include <miscadmin.h>
 #include <storage/sharedfileset.h>
 #include <storage/dsm.h>
@@ -45,9 +47,13 @@
 #include "metadata/metadata_cache.h"
 #include "utils/documentdb_errors.h"
 #include "io/bson_core.h"
+#include "background_worker/background_worker_job.h"
 #include "infrastructure/cursor_store.h"
+#include "infrastructure/job_management.h"
 
 extern char *ApiGucPrefix;
+extern bool EnableBackgroundWorker;
+extern bool EnableCursorCleanupInRecovery;
 extern bool UseFileBasedPersistedCursors;
 extern bool CleanupCursorFiles;
 extern int MaxAllowedCursorIntermediateFileSizeMB;
@@ -120,6 +126,7 @@ typedef struct CursorStoreSharedData
 
 
 PG_FUNCTION_INFO_V1(cursor_directory_cleanup);
+PG_FUNCTION_INFO_V1(cursor_directory_cleanup_background);
 
 
 static void FlushBuffer(CursorFileState *cursorFileState);
@@ -130,6 +137,8 @@ static bool IncrementCursorCount(void);
 
 static void TryCleanUpAndReserveCursor(void);
 static int64_t TryDeleteCursorFile(struct dirent *de, int64_t expirtyTimeLimitSeconds);
+static void CursorDirectoryCleanupCore(int64_t expiryTimeLimitSeconds);
+static bool ShouldScheduleCursorCleanupInRecovery(void);
 
 
 static CursorStoreSharedData *CursorStoreSharedState = NULL;
@@ -152,19 +161,45 @@ static const char *cursor_directory = "pg_documentdb_cursor_files";
 Datum
 cursor_directory_cleanup(PG_FUNCTION_ARGS)
 {
-	if (!cursor_set_initialized || !CleanupCursorFiles)
+	int64_t expiryTimeLimitSeconds = PG_ARGISNULL(0) ?
+									 DefaultCursorExpiryTimeLimitSeconds :
+									 PG_GETARG_INT64(0);
+
+	if (RecoveryInProgress() && !EnableCursorCleanupInRecovery)
 	{
 		PG_RETURN_VOID();
 	}
 
-	int64_t expiryTimeLimitSeconds = 0;
-	if (PG_ARGISNULL(0))
+	CursorDirectoryCleanupCore(expiryTimeLimitSeconds);
+	PG_RETURN_VOID();
+}
+
+
+/*
+ * Runs cursor cleanup only while the server is in recovery.
+ */
+Datum
+cursor_directory_cleanup_background(PG_FUNCTION_ARGS)
+{
+	if (!EnableCursorCleanupInRecovery || !RecoveryInProgress())
 	{
-		expiryTimeLimitSeconds = DefaultCursorExpiryTimeLimitSeconds;
+		PG_RETURN_VOID();
 	}
-	else
+
+	CursorDirectoryCleanupCore(DefaultCursorExpiryTimeLimitSeconds);
+	PG_RETURN_VOID();
+}
+
+
+/*
+ * Runs the common cursor directory cleanup implementation.
+ */
+static void
+CursorDirectoryCleanupCore(int64_t expiryTimeLimitSeconds)
+{
+	if (!cursor_set_initialized || !CleanupCursorFiles)
 	{
-		expiryTimeLimitSeconds = PG_GETARG_INT64(0);
+		return;
 	}
 
 	DIR *dirdesc;
@@ -176,7 +211,7 @@ cursor_directory_cleanup(PG_FUNCTION_ARGS)
 		/* Skip if dir doesn't exist appropriate */
 		if (errno == ENOENT)
 		{
-			PG_RETURN_VOID();
+			return;
 		}
 	}
 
@@ -213,7 +248,52 @@ cursor_directory_cleanup(PG_FUNCTION_ARGS)
 
 	ereport(DEBUG1, (errmsg("Total size of cursor files: %ld, count %d", totalCursorSize,
 							totalCursorCount)));
-	PG_RETURN_VOID();
+}
+
+
+/*
+ * Registers recovery-only cursor cleanup with the background worker.
+ * Use the existing UDF to remain compatible with the previous schema version.
+ *
+ * XXX: Migrate this job to the background-specific UDF once its schema is
+ * the minimum supported version. Retain the existing UDF until its pg_cron
+ * job is also migrated.
+ */
+void
+RegisterCursorCleanupBackgroundWorkerJob(void)
+{
+	if (!EnableBackgroundWorker)
+	{
+		return;
+	}
+
+	BackgroundWorkerJob cursorCleanupJob = {
+		.jobId = DOCUMENTDB_CURSOR_CLEANUP_JOBID,
+		.jobName = "documentdb_cursor_cleanup_background_job",
+		.roleExecutionProfile = BackgroundWorkerJobRoleExecutionProfile_RecoveryOnly,
+		.command = {
+			.schema = ApiInternalSchemaNameV2,
+			.name = "cursor_directory_cleanup"
+		},
+		.get_schedule_interval_in_seconds_hook = NULL,
+		.argument = {
+			.argType = INT8OID,
+			.argValue = NULL,
+			.isNull = true
+		},
+		.timeoutInSeconds = 300,
+		.toBeExecutedOnMetadataCoordinatorOnly = false,
+		.is_job_enabled_hook = ShouldScheduleCursorCleanupInRecovery
+	};
+
+	RegisterBackgroundWorkerJob(cursorCleanupJob);
+}
+
+
+static bool
+ShouldScheduleCursorCleanupInRecovery(void)
+{
+	return EnableCursorCleanupInRecovery;
 }
 
 

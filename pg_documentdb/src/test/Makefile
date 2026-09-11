@@ -9,10 +9,12 @@ check-extended-rum:
 check-extended-rum-recovery:
 	$(MAKE) -C extended_rum_recovery_tests all
 
+check-recovery:
+	$(MAKE) -C recovery_tests all
 check-background-worker:
 	$(MAKE) -C background_worker_tests all
 
 installcheck:
 	$(MAKE) -C regress installcheck
 
-all: check-regress check-extended-rum check-extended-rum-recovery check-background-worker
+all: check-regress check-extended-rum check-extended-rum-recovery check-recovery check-background-worker

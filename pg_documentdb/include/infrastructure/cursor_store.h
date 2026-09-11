@@ -15,6 +15,7 @@
 typedef struct CursorFileState CursorFileState;
 
 void SetupCursorStorage(void);
+void RegisterCursorCleanupBackgroundWorkerJob(void);
 void InitializeFileCursorShmem(void);
 Size FileCursorShmemSize(void);
 

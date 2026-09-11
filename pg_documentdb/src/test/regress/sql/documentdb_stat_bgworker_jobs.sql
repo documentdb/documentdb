@@ -18,6 +18,15 @@ SELECT p.proname,
       AND p.proname IN ('bgworker_job_registry', 'bgworker_job_stats')
     ORDER BY p.proname;
 
+SELECT p.proname,
+       has_function_privilege('documentdb_bg_worker_role', p.oid, 'EXECUTE') AS bgworker_has_exec,
+       has_function_privilege('documentdb_readonly_role', p.oid, 'EXECUTE') AS readonly_has_exec,
+       has_function_privilege('documentdb_readwrite_role', p.oid, 'EXECUTE') AS readwrite_has_exec
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'documentdb_api_internal'
+      AND p.proname = 'cursor_directory_cleanup_background';
+
 -- Column contracts: name + type of every column, in order.
 SELECT c.relname, a.attname, format_type(a.atttypid, a.atttypmod) AS type
     FROM pg_attribute a
@@ -48,6 +57,14 @@ SELECT job_id, schedule_interval_seconds
     ORDER BY job_id;
 
 RESET documentdb.indexBuildScheduleInSec;
+
+SET documentdb.enable_cursor_cleanup_in_recovery TO true;
+
+SELECT job_id, enabled
+    FROM documentdb_api_internal.documentdb_stat_bgworker_jobs
+    WHERE job_id = 92;
+
+RESET documentdb.enable_cursor_cleanup_in_recovery;
 
 -- The reset entry point is C-backed so the later shared-state implementation can land
 -- without requiring another SQL definition.

@@ -404,6 +404,10 @@ bool UseFileBasedPersistedCursors = DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS;
 #define DEFAULT_CLEANUP_CURSOR_FILES true
 bool CleanupCursorFiles = DEFAULT_CLEANUP_CURSOR_FILES;
 
+/* Added in v1.1, Pending stabilization, enable in v1.3 */
+#define DEFAULT_ENABLE_CURSOR_CLEANUP_IN_RECOVERY false
+bool EnableCursorCleanupInRecovery = DEFAULT_ENABLE_CURSOR_CLEANUP_IN_RECOVERY;
+
 /* Added in v0.114, enabled in v0.114, remove after v1.2 */
 #define DEFAULT_ENABLE_RUM_CURSOR_DYNAMIC_INDEX_SCANS true
 bool EnableRumCursorDynamicIndexScans = DEFAULT_ENABLE_RUM_CURSOR_DYNAMIC_INDEX_SCANS;
@@ -913,6 +917,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether or not to clean up cursor files via cleanup worker."),
 		NULL, &CleanupCursorFiles,
 		DEFAULT_CLEANUP_CURSOR_FILES,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_cursor_cleanup_in_recovery", newGucPrefix),
+		gettext_noop(
+			"Whether to enable cursor file cleanup during recovery."),
+		NULL, &EnableCursorCleanupInRecovery,
+		DEFAULT_ENABLE_CURSOR_CLEANUP_IN_RECOVERY,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

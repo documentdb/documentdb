@@ -11,6 +11,7 @@
 #include <postgres.h>
 #include <catalog/pg_extension.h>
 #include <catalog/namespace.h>
+#include <catalog/pg_proc.h>
 #include <nodes/pg_list.h>
 #include <tcop/utility.h>
 #include <postmaster/interrupt.h>
@@ -28,10 +29,8 @@
 #include <utils/builtins.h>
 #include <access/xact.h>
 #include <utils/snapmgr.h>
-#include <catalog/pg_proc_d.h>
 #include "utils/query_utils.h"
 #include "utils/documentdb_errors.h"
-#include "utils/syscache.h"
 #include "utils/lsyscache.h"
 #include "utils/acl.h"
 #include "parser/parse_func.h"
@@ -1088,9 +1087,12 @@ ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName, char *database
 		const char *query = jobExec->commandQuery;
 
 		/* We currently limit the number of arguments to be at most 1. */
-		int nParams = jobExec->job.argument.isNull ? 0 : 1;
+		bool hasArgument = jobExec->job.argument.argType != VOIDOID;
+		int nParams = hasArgument ? 1 : 0;
 		Oid paramTypes[1] = { jobExec->job.argument.argType };
-		const char *parameterValues[1] = { jobExec->job.argument.argValue };
+		const char *parameterValues[1] = {
+			jobExec->job.argument.isNull ? NULL : jobExec->job.argument.argValue
+		};
 
 		/* Result in text format. */
 		int resultFormat = 0;
@@ -1195,8 +1197,18 @@ ValidateJob(BackgroundWorkerJob job)
 		ereport(ERROR, (errmsg("Background worker job command schema can not be NULL")));
 	}
 
-	if (job.argument.isNull == false && (job.argument.argType == 0 ||
-										 job.argument.argValue == NULL))
+	if (!OidIsValid(job.argument.argType))
+	{
+		ereport(ERROR, (errmsg("Background worker job argument type is invalid.")));
+	}
+
+	if (job.argument.argType == VOIDOID && !job.argument.isNull)
+	{
+		ereport(ERROR, (errmsg(
+							"Background worker jobs without arguments must have isNull set to true.")));
+	}
+
+	if (!job.argument.isNull && job.argument.argValue == NULL)
 	{
 		ereport(ERROR, (errmsg(
 							"Background worker job argument can not be NULL when isnull is set to false.")));
@@ -1438,7 +1450,8 @@ GenerateCommandQuery(BackgroundWorkerJob job, MemoryContext stableContext)
 										   makeString(pstrdup(job.command.name)));
 		funcWithArgs->args_unspecified = false;
 
-		if (job.argument.isNull)
+		bool hasArgument = job.argument.argType != VOIDOID;
+		if (!hasArgument)
 		{
 			funcWithArgs->objargs = NIL;
 		}
@@ -1466,7 +1479,7 @@ GenerateCommandQuery(BackgroundWorkerJob job, MemoryContext stableContext)
 
 		/* The command prefix changes depending on the procType (Function or Procedure). */
 		char *commandPrefix = procType == 'p' ? "CALL" : "SELECT";
-		char *parameter = job.argument.isNull ? "" : "$1";
+		char *parameter = hasArgument ? "$1" : "";
 		char *tempQuery = psprintf("%s %s.%s(%s);", commandPrefix, job.command.schema,
 								   job.command.name, parameter);
 

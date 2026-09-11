@@ -426,3 +426,20 @@ BEGIN
 END;
 $$
 LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION documentdb_test_helpers.write_cursor_file(
+    file_name text,
+    contents text)
+RETURNS boolean
+AS $$
+BEGIN
+    EXECUTE format(
+        'COPY (SELECT %L) TO %L',
+        contents,
+        format('%s/pg_documentdb_cursor_files/%s',
+               current_setting('data_directory'),
+               file_name));
+    RETURN true;
+END;
+$$
+LANGUAGE plpgsql;
