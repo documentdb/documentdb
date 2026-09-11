@@ -30,6 +30,7 @@
 #include "infrastructure/cursor_store.h"
 #include "infrastructure/job_management.h"
 #include "background_worker/background_worker_job.h"
+#include "background_worker/background_worker_private.h"
 #include "utils/error_utils.h"
 #include "utils/roaring_bitmap_utils.h"
 
@@ -255,6 +256,7 @@ DocumentDBSharedMemoryRequest(void)
 	RequestAddinShmemSpace(SharedFeatureCounterShmemSize());
 	RequestAddinShmemSpace(VersionCacheShmemSize());
 	RequestAddinShmemSpace(FileCursorShmemSize());
+	RequestAddinShmemSpace(BackgroundWorkerJobStatsShmemSize());
 }
 
 
@@ -265,6 +267,7 @@ DocumentDBSharedMemoryInit(void)
 	SharedFeatureCounterShmemInit();
 	InitializeVersionCache();
 	InitializeFileCursorShmem();
+	InitializeBackgroundWorkerJobStatsShmem();
 
 	if (prev_shmem_startup_hook != NULL)
 	{

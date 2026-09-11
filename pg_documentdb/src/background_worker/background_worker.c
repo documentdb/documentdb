@@ -40,6 +40,7 @@
 #include "api_hooks.h"
 #include "api_hooks_def.h"
 #include "background_worker/background_worker_job.h"
+#include "background_worker/background_worker_private.h"
 #include "commands/connection_management.h"
 #include "infrastructure/job_management.h"
 #include "metadata/metadata_cache.h"
@@ -96,21 +97,6 @@ typedef enum
 	/* Connection was established and query is executing. */
 	JOB_RUNNING = 1,
 } BackgroundWorkerJobState;
-
-typedef enum
-{
-	/* A terminal command result reported failure. */
-	JOB_RESULT_FAILED = 0,
-
-	/* Every terminal command result reported success. */
-	JOB_RESULT_SUCCEEDED = 1,
-
-	/* The configured execution timeout elapsed before completion. */
-	JOB_RESULT_TIMED_OUT = 2,
-
-	/* Connection loss prevented authoritative result classification. */
-	JOB_RESULT_UNOBSERVED = 3,
-} BackgroundWorkerJobResult;
 
 /*
  * Boolean representation that accounts for absence of information (Undefined).
@@ -240,7 +226,6 @@ static int AllowedCommandEntries = 0;
  * access for consumers (e.g. the stats view) is provided via
  * GetBackgroundWorkerJobCount / GetBackgroundWorkerJob.
  */
-#define MAX_BACKGROUND_WORKER_JOBS 5
 static BackgroundWorkerJob JobRegistry[MAX_BACKGROUND_WORKER_JOBS];
 static int JobEntries = 0;
 
@@ -546,6 +531,7 @@ RegisterBackgroundWorkerJob(BackgroundWorkerJob job)
 	/* Fails if job is not valid. */
 	ValidateJob(job);
 
+	RegisterBackgroundWorkerJobStats(job.jobId);
 	JobRegistry[JobEntries++] = job;
 }
 
