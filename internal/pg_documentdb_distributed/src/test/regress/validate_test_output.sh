@@ -182,6 +182,15 @@ for validationFile in $(ls $scriptDir/expected/*.out); do
     fi
 
     if [ "$findResult" == "" ]; then
+        for macro in "!CITUS_14_OR_HIGHER!"; do
+            citusVersion=$(echo "$macro" | sed -E "s/!CITUS_([0-9]+)_OR_HIGHER!/\1/g")
+            fileNameMod=$(echo "$fileNameBase" | sed -E "s/_citus${citusVersion}$/${macro}/g")
+            findResult=$(grep -F "$fileNameMod" basic_schedule_core || true)
+            [ -n "$findResult" ] && break
+        done
+    fi
+
+    if [ "$findResult" == "" ]; then
         if [[ "$fileNameBase" =~ "pg15" ]] || [[ "$fileNameBase" =~ "pg16" ]] || [[ "$fileNameBase" =~ "pg17" ]] || [[ "$fileNameBase" =~ "pg18" ]] || [[ "$fileNameBase" =~ "_explain" ]]; then
             echo "Skipping schedule existence check for $fileNameBase"
         else
@@ -218,7 +227,7 @@ for validationFile in $(ls $scriptDir/expected/*.out); do
     if [[ "$sqlFile" =~ "tests_runtime.sql" ]] || [[ "$sqlFile" =~ "explain_index_comp_wild" ]] || [[ "$sqlFile" =~ "explain_index_composite" ]] || [[ "$sqlFile" =~ "explain_index_comp_desc.sql" ]] || [[ "$sqlFile" =~ "tests_index_no_bitmap.sql" ]] || [[ "$sqlFile" =~ "tests_index.sql" ]] ||  [[ "$sqlFile" =~ "tests_index_backcompat.sql" ]] || [[ "$sqlFile" =~ "tests_pg17_explain" ]] || [[ "$sqlFile" =~ "tests_explain_index.sql" ]] || [[ "$sqlFile" =~ "tests_explain_runtime.sql" ]] || [[ "$sqlFile" =~ "tests_dist_runtime.sql" ]] || [[ "$sqlFile" =~ "tests_dist_index.sql" ]] || [[ "$sqlFile" =~ "tests_dist_explain_index.sql" ]] || [[ "$sqlFile" =~ "tests_dist_explain_runtime.sql" ]] || [[ "$sqlFile" =~ "tests_explain_index_no_bitmap.sql" ]]; then
             skippedDuplicateCheckFile="$skippedDuplicateCheckFile $sqlFile"
             skipUniqueCheck="true"
-    elif [[ "$sqlFile" =~ _pg[0-9]+ ]]; then
+    elif [[ "$sqlFile" =~ _pg[0-9]+ ]] || [[ "$sqlFile" =~ _citus[0-9]+ ]]; then
         echo "Skipping duplicate collectionId check for $sqlFile"
         skippedDuplicateCheckFile="$skippedDuplicateCheckFile $sqlFile"
         skipUniqueCheck="true"
