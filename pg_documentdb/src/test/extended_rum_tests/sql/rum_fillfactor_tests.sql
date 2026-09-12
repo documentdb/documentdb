@@ -113,6 +113,8 @@ SELECT string_agg(md5(i::text), '_' ORDER BY i) AS split_long_1
 FROM generate_series(1, 100) i \gset
 SELECT string_agg(md5(i::text), '_' ORDER BY i) AS split_long_2
 FROM generate_series(101, 200) i \gset
+SELECT string_agg(md5(i::text), '_' ORDER BY i) AS split_long_3
+FROM generate_series(201, 300) i \gset
 SET documentdb_rum.rum_default_page_fill_factor TO 90;
 
 SELECT documentdb_api.create_collection('filltest', 'unique_split_90');
@@ -188,6 +190,45 @@ SELECT documentdb_api.insert_one(
     'unique_split_100',
     FORMAT('{ "_id": 101, "e": "%s_%s", "f": 1 }',
            md5('1'), :'split_long_1')::bson);
+
+-- A low fill factor must also leave enough space for every tuple assigned to
+-- the right page during a rightmost leaf split.
+SET documentdb_rum.rum_default_page_fill_factor TO 10;
+
+SELECT documentdb_api.create_collection('filltest', 'unique_split_10');
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'filltest',
+    '{ "createIndexes": "unique_split_10", "indexes": [
+        { "key": { "e": 1 }, "name": "e_1", "unique": true, "sparse": true }
+    ] }',
+    TRUE);
+
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_10',
+    bson_build_document('_id', 1, 'e', 'a' || repeat('a', 350)));
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_10',
+    bson_build_document('_id', 2, 'e', 'b' || repeat('b', 390)));
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_10',
+    bson_build_document('_id', 3, 'e', 'c' || repeat('c', 50)));
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_10',
+    bson_build_document('_id', 4, 'e', 'd_' || :'split_long_1'));
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_10',
+    bson_build_document('_id', 5, 'e', 'e_' || :'split_long_2'));
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_10',
+    bson_build_document('_id', 6, 'e', 'f_' || :'split_long_3'));
+
+SELECT COUNT(*) FROM documentdb_api.collection('filltest', 'unique_split_10');
 
 RESET documentdb_rum.rum_default_page_fill_factor;
 RESET documentdb.enable_large_unique_index_keys;

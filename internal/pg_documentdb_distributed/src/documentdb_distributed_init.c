@@ -34,9 +34,8 @@ char *ClusterAdminRole = DEFAULT_CLUSTER_ADMIN_ROLE;
 #define DEFAULT_ENABLE_MOVE_COLLECTION true
 bool EnableMoveCollection = DEFAULT_ENABLE_MOVE_COLLECTION;
 
-/* FeatureFlag */
-/* Added in v0.116, Pending stabilization, enable in v1.0 */
-#define DEFAULT_ENABLE_SKIP_UPGRADE_FOR_UNINITIALIZED_CLUSTER false
+/* SystemConfig */
+#define DEFAULT_ENABLE_SKIP_UPGRADE_FOR_UNINITIALIZED_CLUSTER true
 bool EnableSkipUpgradeForUninitializedCluster =
 	DEFAULT_ENABLE_SKIP_UPGRADE_FOR_UNINITIALIZED_CLUSTER;
 

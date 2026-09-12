@@ -858,6 +858,12 @@ entrySplitPage(RumBtree btree, Buffer lbuf, Buffer rbuf,
 	{
 		Size effectiveSize = Min(pageCapacity, totalsize);
 		splitPointSize = effectiveSize * btree->rumstate->fillFactor / 100;
+
+		/* Keep enough tuples on the left for the remainder to fit on the right. */
+		if (totalsize > pageCapacity)
+		{
+			splitPointSize = Max(splitPointSize, totalsize - pageCapacity);
+		}
 	}
 
 	ptr = tupstore;

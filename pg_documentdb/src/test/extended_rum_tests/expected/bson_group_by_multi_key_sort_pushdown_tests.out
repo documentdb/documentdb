@@ -18,6 +18,11 @@ set documentdb.enableExplainScanIndexCosts to off;
 -- the index ordering, so it would force a Sort/HashAggregate regardless.
 set enable_seqscan to off;
 set enable_bitmapscan to off;
+-- The safe multi-key group-by order pushdown is enabled by default.
+SELECT current_setting('documentdb.enable_group_by_multi_key_sort_pushdown') = 'on'
+       AS default_enabled \gset
+\echo :default_enabled
+t
 -- ============================================================================
 -- A per-path multi-key composite ordered index: the leading dotted prefix
 -- (region.city, region.area, region.grade) is an array path (multi-key), while
@@ -83,7 +88,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 --   * Order-by blocked => a HashAggregate (or a Sort under GroupAggregate)
 --     appears and the index scan has no "Order By:" line.
 -- ============================================================================
--- Flag OFF (default): a group-by over a multi-key index blocks order-by
+-- Flag OFF: a group-by over a multi-key index blocks order-by
 -- pushdown, so the grouping falls back to a HashAggregate.
 set documentdb.enable_group_by_multi_key_sort_pushdown to off;
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
@@ -362,3 +367,65 @@ SELECT documentdb_api.drop_collection('gbmk_db', 'recs3');
  t
 (1 row)
 
+-- ============================================================================
+-- A matching non-default collation must preserve both index ordering and group
+-- equivalence when the scalar group path follows a multi-key equality prefix.
+-- ============================================================================
+\pset format unaligned
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SELECT documentdb_api.insert_one('gbmk_db', 'recs4',
+    '{ "_id": 1, "labels": [ 1, 2 ], "cat": "cafe" }');
+NOTICE:  creating collection
+insert_one
+{ "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+SELECT documentdb_api.insert_one('gbmk_db', 'recs4',
+    '{ "_id": 2, "labels": [ 1, 3 ], "cat": "CAFE" }');
+insert_one
+{ "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+SELECT documentdb_api.insert_one('gbmk_db', 'recs4',
+    '{ "_id": 3, "labels": [ 1, 4 ], "cat": "tea" }');
+insert_one
+{ "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+SELECT documentdb_api.insert_one('gbmk_db', 'recs4',
+    '{ "_id": 4, "labels": [ 1, 5 ], "cat": "TEA" }');
+insert_one
+{ "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+SELECT documentdb_api_internal.create_indexes_non_concurrently('gbmk_db',
+    '{ "createIndexes": "recs4", "indexes": [ { "key": { "labels": 1, "cat": 1 }, "name": "idx_prefix_collation", "enableOrderedIndex": 1, "collation": { "locale": "en", "strength": 1 } } ] }',
+    true);
+create_indexes_non_concurrently
+{ "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+ANALYZE;
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs4", "pipeline": [ { "$match": { "labels": 1 } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } } ], "collation": { "locale": "en", "strength": 1 }, "cursor": {}, "hint": "idx_prefix_collation" }') $cmd$);
+run_explain_and_trim
+GroupAggregate
+  Group Key: bson_expression_get(document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
+  ->  Custom Scan (DocumentDBApiExplainQueryScan)
+        namespaceName: gbmk_db.recs4
+        indexName: idx_prefix_collation
+        indexKey: {"labels": 1,"cat": 1}
+        indexCollation: en-u-ks-level1
+        isMultiKey: true
+        multiKeyPaths: labels
+        indexBounds: ["labels": [1, 1], "cat": (MinKey, MaxKey)]
+        ->  Index Scan using idx_prefix_collation on documents_13304 collection
+              Index Cond: (document @= '{ "labels" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::bson)
+              Order By: (document |-<> '{ "cat" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
+SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs4", "pipeline": [ { "$match": { "labels": 1 } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 }, "cursor": {}, "hint": "idx_prefix_collation" }');
+document
+{ "_id" : "cafe", "n" : { "$numberInt" : "2" } }
+{ "_id" : "tea", "n" : { "$numberInt" : "2" } }
+(2 rows)
+SELECT documentdb_api.drop_collection('gbmk_db', 'recs4');
+drop_collection
+t
+(1 row)
+\pset format aligned

@@ -6453,9 +6453,8 @@ ProcessOrderByStatements(PlannerInfo *root,
 		 * element with a distinct sort value, so the grouped order (and the
 		 * group keys) would be unsound. A multi-key path in the equality
 		 * *prefix* ahead of the sort columns is permitted -- the sort columns
-		 * stay scalar-ordered -- though such a prefix can still emit one index
-		 * tuple per matching array element, so the streamed group may over-count
-		 * until de-duplication is layered on top.
+		 * stay scalar-ordered -- and the scan's de-duplication preserves one row
+		 * per document when the prefix emits multiple matching index tuples.
 		 *
 		 * This relaxation requires per-path multi-key metadata (an "mkp" index)
 		 * so we can tell which individual columns are multi-key, and is gated

@@ -127,7 +127,6 @@ typedef struct DollarExistsQueryData
 } DollarExistsQueryData;
 
 extern bool EnableGenerateNonExistsTerm;
-extern bool EnableSkipDottedFieldIndexTerms;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -1536,8 +1535,7 @@ GenerateTermPath(bson_iter_t *bsonIter, const char *basePath,
 				NotifyHasArrayAncestors(context, pathIndex, option);
 			}
 
-			if (EnableSkipDottedFieldIndexTerms && !isArrayTerm &&
-				strchr(fieldName, '.') != NULL)
+			if (!isArrayTerm && strchr(fieldName, '.') != NULL)
 			{
 				/* Field names with dotted path fields are not directly indexed since they can interfere with
 				 * queries for the same field.
@@ -1552,8 +1550,7 @@ GenerateTermPath(bson_iter_t *bsonIter, const char *basePath,
 		case IndexTraverse_MatchAndRecurse:
 		case IndexTraverse_Match:
 		{
-			if (EnableSkipDottedFieldIndexTerms && !isArrayTerm &&
-				strchr(fieldName, '.') != NULL)
+			if (!isArrayTerm && strchr(fieldName, '.') != NULL)
 			{
 				/* Field names with dotted path fields are not directly indexed since they can interfere with
 				 * queries for the same field.

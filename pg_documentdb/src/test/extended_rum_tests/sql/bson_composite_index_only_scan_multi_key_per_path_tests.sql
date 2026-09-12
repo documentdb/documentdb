@@ -16,6 +16,9 @@ set documentdb.enableIndexMetadataGlobalTracking to on;
 -- plan shapes are deterministic regardless of the default.
 set documentdb.enablePerPathMultiKeySortPushdown to on;
 
+-- Keep this suite focused on index-only eligibility rather than group order pushdown.
+set documentdb.enable_group_by_multi_key_sort_pushdown to off;
+
 set documentdb.enableExtendedExplainPlans to on;
 -- Suppress per-index cost details so explain output is stable across runs.
 set documentdb.enableExplainScanIndexCosts to off;

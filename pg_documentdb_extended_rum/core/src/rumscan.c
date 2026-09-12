@@ -563,20 +563,17 @@ initScanKey(RumScanOpaque so, ScanKey skey, bool *hasPartialMatch,
 	bool *partial_matches = NULL;
 	Pointer *extra_data = NULL;
 	bool *nullFlags = NULL;
-	bool setSearchMode = false;
 	int32 searchMode = GIN_SEARCH_MODE_DEFAULT;
 
 	/* Only apply the search mode when it's safe */
 	if (!ScanDirectionIsNoMovement(so->orderScanDirection))
 	{
 		/* Let extractQuery know we're doing an ordered scan */
-		setSearchMode = true;
 		searchMode = ScanDirectionIsBackward(so->orderScanDirection) ?
 					 RUM_SEARCH_MODE_ORDERED_REVERSE : RUM_SEARCH_MODE_ORDERED;
 	}
 	else if (useAnyOrderedScan)
 	{
-		setSearchMode = true;
 		searchMode = RUM_ORDERED_ANY_SCAN;
 	}
 
@@ -625,12 +622,6 @@ initScanKey(RumScanOpaque so, ScanKey skey, bool *hasPartialMatch,
 		{
 			ereport(ERROR, (errmsg(
 								"index does not support ordered scans, but ordering was requested")));
-		}
-
-		if (!setSearchMode && !RumEnableOrderedOperatorScans)
-		{
-			ereport(ERROR, (errmsg(
-								"operator class requested ordered scans, but index disallows it")));
 		}
 
 		if (searchMode == RUM_SEARCH_MODE_ORDERED)

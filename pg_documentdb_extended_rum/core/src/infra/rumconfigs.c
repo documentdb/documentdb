@@ -168,7 +168,7 @@ PGDLLEXPORT bool RumEnableSinglePassPostingTreeVacuum =
 	RUM_DEFAULT_ENABLE_SINGLE_PASS_POSTING_TREE_VACUUM;
 
 /* rumget.c */
-/* FeatureFlag: Added in v0.109, Pending stabilization, enable on v1.0 */
+/* FeatureFlag: Added in v0.109, Pending stabilization, enable on v1.3 */
 #define RUM_DEFAULT_ENABLE_SUPPORT_DEAD_INDEX_ITEMS false
 PGDLLEXPORT bool RumEnableSupportDeadIndexItems =
 	RUM_DEFAULT_ENABLE_SUPPORT_DEAD_INDEX_ITEMS;
@@ -178,11 +178,6 @@ PGDLLEXPORT bool RumEnableSupportDeadIndexItems =
 #define RUM_DEFAULT_ENABLE_EMIT_REUSE_PAGE_ON_RECYCLE false
 PGDLLEXPORT bool RumEnableEmitReusePageOnRecycle =
 	RUM_DEFAULT_ENABLE_EMIT_REUSE_PAGE_ON_RECYCLE;
-
-/* FeatureFlag: Added on v0.108, Enabled in v0.108, remove after v0.116 */
-#define RUM_DEFAULT_ENABLE_ORDERED_OPERATOR_SCANS true
-PGDLLEXPORT bool RumEnableOrderedOperatorScans =
-	RUM_DEFAULT_ENABLE_ORDERED_OPERATOR_SCANS;
 
 /* FeatureFlag: Added in v0.113, Enabled in v0.113, remove after v1.7 */
 #define RUM_DEFAULT_ENABLE_PAGE_FILL_FACTOR true
@@ -494,15 +489,6 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		NULL,
 		&RumFixIncompleteSplit,
 		RUM_DEFAULT_FIX_INCOMPLETE_SPLIT,
-		PGC_USERSET, 0,
-		NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enable_ordered_operator_scans", documentDBRumGucPrefix),
-		"Sets whether or not to enable ordered operator scans",
-		NULL,
-		&RumEnableOrderedOperatorScans,
-		RUM_DEFAULT_ENABLE_ORDERED_OPERATOR_SCANS,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 

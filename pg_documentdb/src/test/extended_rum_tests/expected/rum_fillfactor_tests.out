@@ -184,6 +184,8 @@ SELECT string_agg(md5(i::text), '_' ORDER BY i) AS split_long_1
 FROM generate_series(1, 100) i \gset
 SELECT string_agg(md5(i::text), '_' ORDER BY i) AS split_long_2
 FROM generate_series(101, 200) i \gset
+SELECT string_agg(md5(i::text), '_' ORDER BY i) AS split_long_3
+FROM generate_series(201, 300) i \gset
 SET documentdb_rum.rum_default_page_fill_factor TO 90;
 SELECT documentdb_api.create_collection('filltest', 'unique_split_90');
 NOTICE:  creating collection
@@ -334,6 +336,87 @@ SELECT documentdb_api.insert_one(
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- A low fill factor must also leave enough space for every tuple assigned to
+-- the right page during a rightmost leaf split.
+SET documentdb_rum.rum_default_page_fill_factor TO 10;
+SELECT documentdb_api.create_collection('filltest', 'unique_split_10');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'filltest',
+    '{ "createIndexes": "unique_split_10", "indexes": [
+        { "key": { "e": 1 }, "name": "e_1", "unique": true, "sparse": true }
+    ] }',
+    TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_10',
+    bson_build_document('_id', 1, 'e', 'a' || repeat('a', 350)));
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_10',
+    bson_build_document('_id', 2, 'e', 'b' || repeat('b', 390)));
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_10',
+    bson_build_document('_id', 3, 'e', 'c' || repeat('c', 50)));
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_10',
+    bson_build_document('_id', 4, 'e', 'd_' || :'split_long_1'));
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_10',
+    bson_build_document('_id', 5, 'e', 'e_' || :'split_long_2'));
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_10',
+    bson_build_document('_id', 6, 'e', 'f_' || :'split_long_3'));
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT COUNT(*) FROM documentdb_api.collection('filltest', 'unique_split_10');
+ count 
+-------
+     6
 (1 row)
 
 RESET documentdb_rum.rum_default_page_fill_factor;

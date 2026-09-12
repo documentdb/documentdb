@@ -161,6 +161,9 @@ int IndexTermCompressionThreshold = DEFAULT_INDEX_TERM_COMPRESSION_THRESHOLD;
 #define DEFAULT_ENABLE_USER_CRUD true
 bool EnableUserCrud = DEFAULT_ENABLE_USER_CRUD;
 
+#define DEFAULT_ENABLE_NATIVE_AUTHENTICATION true
+bool IsNativeAuthEnabled = DEFAULT_ENABLE_NATIVE_AUTHENTICATION;
+
 #define DEFAULT_VECTOR_ITERATIVE_SCAN_MODE VectorIterativeScan_RELAXED_ORDER
 int VectorPreFilterIterativeScanMode = DEFAULT_VECTOR_ITERATIVE_SCAN_MODE;
 
@@ -246,6 +249,14 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 			"Whether to enforce that $db in the command body matches the database argument."),
 		NULL, &EnableDbNameValidation, DEFAULT_ENABLE_DB_NAME_VALIDATION,
 		PGC_USERSET, GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.isNativeAuthEnabled", newGucPrefix),
+		gettext_noop(
+			"Determines whether native authentication is enabled."),
+		NULL, &IsNativeAuthEnabled,
+		DEFAULT_ENABLE_NATIVE_AUTHENTICATION,
+		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomIntVariable(
 		psprintf("%s.query_plan_cache_size", prefix),

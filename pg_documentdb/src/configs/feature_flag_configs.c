@@ -19,12 +19,12 @@
  * SECTION: Schema validation flags
  */
 
-/* Added in v0.108, enabled in v0.114, remove after v0.116 */
+/* Added in v0.108, enabled in v0.114, remove after v1.3 */
 #define DEFAULT_ENABLE_SCHEMA_VALIDATION true
 bool EnableSchemaValidation =
 	DEFAULT_ENABLE_SCHEMA_VALIDATION;
 
-/* Added in v0.108, enabled in v0.114, remove after v0.116 */
+/* Added in v0.108, enabled in v0.114, remove after v1.3 */
 #define DEFAULT_ENABLE_BYPASSDOCUMENTVALIDATION true
 bool EnableBypassDocumentValidation =
 	DEFAULT_ENABLE_BYPASSDOCUMENTVALIDATION;
@@ -58,10 +58,6 @@ bool EnableUsernamePasswordConstraints = DEFAULT_ENABLE_USERNAME_PASSWORD_CONSTR
 #define DEFAULT_ENABLE_USERS_INFO_PRIVILEGES true
 bool EnableUsersInfoPrivileges = DEFAULT_ENABLE_USERS_INFO_PRIVILEGES;
 
-/* Added in v0.108, enabled in v0.108, Why is this a feature flag */
-#define DEFAULT_ENABLE_NATIVE_AUTHENTICATION true
-bool IsNativeAuthEnabled = DEFAULT_ENABLE_NATIVE_AUTHENTICATION;
-
 /* Added in v0.108, Pending stabilization */
 #define DEFAULT_ENABLE_ROLE_CRUD false
 bool EnableRoleCrud = DEFAULT_ENABLE_ROLE_CRUD;
@@ -75,7 +71,7 @@ bool EnableUsersAdminDBCheck = DEFAULT_ENABLE_USERS_ADMIN_DB_CHECK;
 bool EnableReadWriteAnyDatabaseRoleEnforcement =
 	DEFAULT_ENABLE_READWRITE_ANY_DATABASE_ROLE_ENFORCEMENT;
 
-/* Added in v0.109, enabled in v0.109, Unknown stabilization time */
+/* Added in v0.109, enabled in v0.109, remove after v1.2 */
 #define DEFAULT_ENABLE_ROLES_ADMIN_DB_CHECK true
 bool EnableRolesAdminDBCheck = DEFAULT_ENABLE_ROLES_ADMIN_DB_CHECK;
 
@@ -205,8 +201,8 @@ bool EnableRequestIndexNameCache = DEFAULT_ENABLE_REQUEST_INDEX_NAME_CACHE;
 bool EnablePerPathMultiKeySortPushdown =
 	DEFAULT_ENABLE_PER_PATH_MULTI_KEY_SORT_PUSHDOWN;
 
-/* Added in v0.116, pending stabilization, enable in v1.0 */
-#define DEFAULT_ENABLE_GROUP_BY_MULTI_KEY_SORT_PUSHDOWN false
+/* Added in v0.116, enabled in v1.0, remove after v1.3 */
+#define DEFAULT_ENABLE_GROUP_BY_MULTI_KEY_SORT_PUSHDOWN true
 bool EnableGroupByMultiKeySortPushdown =
 	DEFAULT_ENABLE_GROUP_BY_MULTI_KEY_SORT_PUSHDOWN;
 
@@ -237,7 +233,7 @@ bool EnableExtendedIndexes = DEFAULT_ENABLE_EXTENDED_INDEXES;
 #define DEFAULT_ENABLE_COMPARABLE_TERMS false
 bool EnableComparableTerms = DEFAULT_ENABLE_COMPARABLE_TERMS;
 
-/* Added in v0.111, Pending stabilization, enable in v1.0 */
+/* Added in v0.111, Pending stabilization, enable in v1.5 */
 #define DEFAULT_ENABLE_ORDER_BY_INDEX_TERM false
 bool EnableOrderByIndexTerm = DEFAULT_ENABLE_ORDER_BY_INDEX_TERM;
 
@@ -261,13 +257,9 @@ bool EnableScalarAggregateAccumulatorPathCollection =
 bool EnableSkipSettingOrderScanDirectionForFullScanExpr =
 	DEFAULT_ENABLE_SKIP_SETTING_ORDER_SCAN_DIRECTION_FOR_FULL_SCAN_EXPR;
 
-/* Added in v0.112, enabled in v0.112, remove after v0.116 */
+/* Added in v0.112, enabled in v0.112, remove after v1.3 */
 #define DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK true
 bool EnablePartialMatchHasRecheck = DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK;
-
-/* Added in v0.113, enabled in v0.113, remove after v0.116 */
-#define DEFAULT_ENABLE_SKIP_DOTTED_FIELD_INDEX_TERMS true
-bool EnableSkipDottedFieldIndexTerms = DEFAULT_ENABLE_SKIP_DOTTED_FIELD_INDEX_TERMS;
 
 /* Added in v0.115, enabled in v0.115, remove after v1.0 */
 #define DEFAULT_ENABLE_PARTIAL_FILTER_EVAL_ON_PLANNER true
@@ -519,7 +511,7 @@ bool EnableLookupJoinIndexWithLinearPipeline =
 #define DEFAULT_SKIP_FAIL_ON_COLLATION false
 bool SkipFailOnCollation = DEFAULT_SKIP_FAIL_ON_COLLATION;
 
-/* Added in v0.110, Pending stabilization, enable in v1.0 */
+/* Added in v0.110, Pending stabilization, enable in v1.5 */
 #define DEFAULT_ENABLE_COLLATION_WITH_NON_UNIQUE_ORDERED_INDEXES false
 bool EnableCollationWithNonUniqueOrderedIndexes =
 	DEFAULT_ENABLE_COLLATION_WITH_NON_UNIQUE_ORDERED_INDEXES;
@@ -589,7 +581,7 @@ bool EnableCommutativeDeleteMany =
  * SECTION: Changestream feature flags
  */
 
-/* Added in v0.110, enabled in v0.110, unknown stabilization removal time */
+/* Added in v0.110, enabled in v0.110, remove after v1.4 */
 #define DEFAULT_REMOVE_MATCH_NAMESPACE_FILTERS true
 bool RemoveMatchNamespaceFilters = DEFAULT_REMOVE_MATCH_NAMESPACE_FILTERS;
 
@@ -936,14 +928,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.isNativeAuthEnabled", newGucPrefix),
-		gettext_noop(
-			"Determines whether native authentication is enabled."),
-		NULL, &IsNativeAuthEnabled,
-		DEFAULT_ENABLE_NATIVE_AUTHENTICATION,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.defaultUseCompositeOpClass", newGucPrefix),
 		gettext_noop(
 			"Whether to enable the new ordered index opclass for default index creates"),
@@ -986,14 +970,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		gettext_noop(
 			"Whether to enable partial match has recheck for queries that have partial index matches."),
 		NULL, &EnablePartialMatchHasRecheck, DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableSkipDottedFieldIndexTerms", newGucPrefix),
-		gettext_noop(
-			"Whether to skip generating index terms for fields with dotted names (e.g. literal \"a.b\" field)."),
-		NULL, &EnableSkipDottedFieldIndexTerms,
-		DEFAULT_ENABLE_SKIP_DOTTED_FIELD_INDEX_TERMS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -1259,7 +1235,7 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 	DefineCustomBoolVariable(
 		psprintf("%s.enable_group_by_multi_key_sort_pushdown", newGucPrefix),
 		gettext_noop(
-			"Whether to allow order-by pushdown for a group-by over a multi-key composite ordered index when the per-path multi-key bitmask proves the grouped/ordered columns are scalar. When off, any group-by on a multi-key index blocks order-by pushdown. A multi-key equality prefix can still emit one index tuple per matching array element, so the streamed group may over-count until de-duplication is layered on top."),
+			"Whether to allow order-by pushdown for a group-by over a multi-key composite ordered index when the per-path multi-key bitmask proves the grouped/ordered columns are scalar. When off, any group-by on a multi-key index blocks order-by pushdown. De-duplication preserves one row per document when a multi-key equality prefix emits multiple matching index tuples."),
 		NULL, &EnableGroupByMultiKeySortPushdown,
 		DEFAULT_ENABLE_GROUP_BY_MULTI_KEY_SORT_PUSHDOWN,
 		PGC_USERSET, 0, NULL, NULL, NULL);

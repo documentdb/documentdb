@@ -1197,7 +1197,6 @@ extern PGDLLIMPORT bool RumVacuumSkipPrunePostingTreePages;
 extern PGDLLIMPORT bool RumEnableSupportDeadIndexItems;
 extern PGDLLIMPORT bool RumEnableEmitReusePageOnRecycle;
 extern PGDLLIMPORT bool RumSkipResetOnDeadEntryPage;
-extern PGDLLIMPORT bool RumEnableOrderedOperatorScans;
 extern PGDLLIMPORT int RumDefaultPageFillFactor;
 extern PGDLLIMPORT bool RumEnablePageFillFactor;
 extern PGDLLIMPORT bool RumAllowReplaceOnInsertTuple;

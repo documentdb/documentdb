@@ -1,4 +1,9 @@
 ### documentdb v1.1-0 (Unreleased) ###
+* Prevent low-fill-factor rightmost RUM leaf splits from overflowing the right page when large index terms leave too little space under the requested split target. *[Bugfix]*
+* Retire the `enableSkipDottedFieldIndexTerms` feature flag and always skip index terms for non-array fields with dotted names. *[Refactor]*
+* Reclassify `isNativeAuthEnabled` as a long-term system configuration without changing its behavior or runtime name. *[Refactor]*
+* Retire the `enable_ordered_operator_scans` feature flag and retain ordered operator scans unconditionally. *[Refactor]*
+* Enable order-by pushdown for `$group` over multi-key composite ordered indexes by default when per-path metadata proves the grouped and ordered columns are scalar. *[Perf]*
 * Enable the field-pruning `$project` injection before `$unwind` (the `enableProjectPushUpBeforeUnwindWithGroup` feature flag) by default now that it has stabilized. *[Perf]*
 * Fall back to a logical posting-tree sweep when inline RUM vacuum observes a concurrent root split, ensuring dead TIDs are removed from leaves allocated behind the disk-order cursor. *[Bugfix]*
 * Support collation with `distinct` command *[Feature]*
