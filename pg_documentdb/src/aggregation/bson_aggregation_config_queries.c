@@ -703,6 +703,7 @@ GenerateUsersQuery(AggregationPipelineBuildContext *context)
 	AttrNumber usersCanLoginAttnum = get_attnum(usersItem->p_rte->relid, "rolcanlogin");
 	AttrNumber memberAttnum = get_attnum(membersItem->p_rte->relid, "member");
 	AttrNumber roleIdAttnum = get_attnum(membersItem->p_rte->relid, "roleid");
+	AttrNumber adminOptionAttnum = get_attnum(membersItem->p_rte->relid, "admin_option");
 	AttrNumber parentOidAttnum = get_attnum(parentItem->p_rte->relid, "oid");
 	AttrNumber parentNameAttnum = get_attnum(parentItem->p_rte->relid, "rolname");
 	AttrNumber customRoleNameAttnum = get_attnum(customRolesItem->p_rte->relid,
@@ -718,6 +719,8 @@ GenerateUsersQuery(AggregationPipelineBuildContext *context)
 						  InvalidOid, 0);
 	Var *roleId = makeVar(membersItem->p_rtindex, roleIdAttnum, OIDOID, -1,
 						  InvalidOid, 0);
+	Var *adminOption = makeVar(membersItem->p_rtindex, adminOptionAttnum, BOOLOID, -1,
+							   InvalidOid, 0);
 	Var *parentOid = makeVar(parentItem->p_rtindex, parentOidAttnum, OIDOID, -1,
 							 InvalidOid, 0);
 	Var *parentName = makeVar(parentItem->p_rtindex, parentNameAttnum, NAMEOID, -1,
@@ -777,7 +780,9 @@ GenerateUsersQuery(AggregationPipelineBuildContext *context)
 	customRoleExists->nulltesttype = IS_NOT_NULL;
 	customRoleExists->argisrow = false;
 
-	List *usersQuals = list_make1(customRoleExists);
+	Expr *nonAdministrativeMembershipQual = (Expr *) makeBoolExpr(
+		NOT_EXPR, list_make1(adminOption), -1);
+	List *usersQuals = list_make2(customRoleExists, nonAdministrativeMembershipQual);
 	bool missingOk = true;
 	if (OidIsValid(get_role_oid(ApiRootRole, missingOk)))
 	{

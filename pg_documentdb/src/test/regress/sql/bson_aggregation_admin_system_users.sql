@@ -7,6 +7,27 @@ SET documentdb.next_collection_index_id TO 2900;
 SET documentdb.enableRoleCrud TO ON;
 SET documentdb.enableRolesAdminDBCheck TO ON;
 
+CREATE ROLE "systemUsersRoleCreator" LOGIN CREATEROLE;
+GRANT documentdb_admin_role TO "systemUsersRoleCreator";
+GRANT documentdb_readonly_role TO "systemUsersRoleCreator";
+GRANT SELECT ON documentdb_api_catalog.roles TO "systemUsersRoleCreator";
+
+SET ROLE "systemUsersRoleCreator";
+SELECT documentdb_api.create_role(
+	'{"createRole":"systemUsersCreatorRole", "roles":[], "privileges":[], "$db":"admin"}') AS create_result \gset
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.users" }');
+RESET ROLE;
+
+SELECT documentdb_api.drop_role(
+	'{"dropRole":"systemUsersCreatorRole", "$db":"admin"}') AS drop_result \gset
+REVOKE SELECT ON documentdb_api_catalog.roles FROM "systemUsersRoleCreator";
+REVOKE documentdb_admin_role FROM "systemUsersRoleCreator";
+REVOKE documentdb_readonly_role FROM "systemUsersRoleCreator";
+DROP ROLE "systemUsersRoleCreator";
+
 SELECT documentdb_api.create_role('{"createRole":"systemUsersCustomRole", "roles":[], "privileges":[], "$db":"admin"}');
 
 GRANT "systemUsersCustomRole" TO CURRENT_USER;
