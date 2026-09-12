@@ -38,11 +38,11 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('reindex_db',
 
 -- Verify indexes before reindex
 SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('reindex_db', '{ "listIndexes": "reindex_unique_coll" }');
-                                                                                                                                                  bson_dollar_unwind                                                                                                                                                  
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                        bson_dollar_unwind                                                                                                                         
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "reindex_db.reindex_unique_coll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "reindex_db.reindex_unique_coll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "a" : { "$numberInt" : "1" } }, "name" : "a_1_unique", "unique" : true, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "reindex_db.reindex_unique_coll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "b" : { "$numberInt" : "1" } }, "name" : "b_1", "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "reindex_db.reindex_unique_coll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "a" : { "$numberInt" : "1" } }, "name" : "a_1_unique", "unique" : true } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "reindex_db.reindex_unique_coll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "b" : { "$numberInt" : "1" } }, "name" : "b_1" } }, "ok" : { "$numberDouble" : "1.0" } }
 (3 rows)
 
 ------------------------------------------------------------
@@ -155,11 +155,11 @@ ORDER BY conname;
 
 -- Verify the unique index still exists and is valid
 SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('reindex_db', '{ "listIndexes": "reindex_unique_coll" }');
-                                                                                                                                                  bson_dollar_unwind                                                                                                                                                  
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                        bson_dollar_unwind                                                                                                                         
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "reindex_db.reindex_unique_coll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "reindex_db.reindex_unique_coll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "a" : { "$numberInt" : "1" } }, "name" : "a_1_unique", "unique" : true, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "reindex_db.reindex_unique_coll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "b" : { "$numberInt" : "1" } }, "name" : "b_1", "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "reindex_db.reindex_unique_coll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "a" : { "$numberInt" : "1" } }, "name" : "a_1_unique", "unique" : true } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "reindex_db.reindex_unique_coll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "b" : { "$numberInt" : "1" } }, "name" : "b_1" } }, "ok" : { "$numberDouble" : "1.0" } }
 (3 rows)
 
 -- Verify uniqueness constraint still works after reindex (duplicate should fail)
@@ -461,10 +461,10 @@ SELECT cmd_type, index_cmd FROM documentdb_api_catalog.documentdb_index_queue WH
 
 -- Verify indexes after all reindex operations
 SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('reindex_db', '{ "listIndexes": "reindex_unique_sharded" }');
-                                                                                                                                                   bson_dollar_unwind                                                                                                                                                    
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                          bson_dollar_unwind                                                                                                                          
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "reindex_db.reindex_unique_sharded", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "reindex_db.reindex_unique_sharded", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "a" : { "$numberInt" : "1" } }, "name" : "a_1_unique", "unique" : true, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "reindex_db.reindex_unique_sharded", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "a" : { "$numberInt" : "1" } }, "name" : "a_1_unique", "unique" : true } }, "ok" : { "$numberDouble" : "1.0" } }
 (2 rows)
 
 ------------------------------------------------------------
