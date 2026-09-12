@@ -175,11 +175,11 @@ FROM documentdb_test_helpers.run_explain_and_trim(
          indexKey: {"a": 1}
          isMultiKey: false
          indexBounds: ["a": (MinKey, MaxKey)]
-         innerScanLoops: 147 loops
+         innerScanLoops: 263 loops
          parallelScanLoops: 1-1000 loops
          parallelScanCapable: true
          scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 147)]
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 263)]
          ->  Parallel Index Scan using a_1 on documents_901 collection (actual rows=xyz loops=3)
                Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
                Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)

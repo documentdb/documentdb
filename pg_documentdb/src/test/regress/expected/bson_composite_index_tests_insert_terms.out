@@ -746,6 +746,7 @@ LOG:  Name: documents_rum_index_5611, access method: documentdb_rum, 1st opfamil
    Index Cond: ((collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson) AND (collection.document @>= '{ "b" : { "$minKey" : 1 } }'::bson) AND (collection.document @>= '{ "c" : { "$minKey" : 1 } }'::bson))
 (3 rows)
 
+reset client_min_messages;
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'comp_db', '{ "createIndexes": "comp_collection", "indexes": [ { "name": "a_1_b_1_c_1_comp", "key": { "a": 1, "b": 1, "c": 1} } ] }', TRUE);
                                                                                                    create_indexes_non_concurrently                                                                                                    
@@ -753,6 +754,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "4" }, "numIndexesAfter" : { "$numberInt" : "5" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
+set client_min_messages to log;
 EXPLAIN VERBOSE SELECT document FROM documentdb_api_catalog.bson_aggregation_find('comp_db', '{ "find": "comp_collection", "filter": { "a": 1, "b": {"$exists": true}, "c": {"$exists": true} } }');
 LOG:  Name: collection_pk_5603, access method: btree, 1st opfamily: integer_ops, numPaths 2
 LOG:  Name: documents_rum_index_5610, access method: documentdb_rum, 1st opfamily: bson_rum_composite_path_ops, numPaths 1

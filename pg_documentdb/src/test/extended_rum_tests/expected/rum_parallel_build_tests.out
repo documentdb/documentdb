@@ -123,6 +123,7 @@ DEBUG:  executing "SELECT COUNT(*) FROM documentdb_api_catalog.collection_indexe
 DEBUG:  executing "INSERT INTO documentdb_api_catalog.collection_indexes (collection_id, index_spec, index_is_valid) VALUES ($1, $2, $3) RETURNING index_id" via SPI
 DEBUG:  executing "CREATE INDEX  documents_rum_index_1404 ON documentdb_data.documents_1401 USING documentdb_extended_rum ( document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops(pathspec='[ "a" ]',tl=2691)) " via SPI
 DEBUG:  building index "documents_rum_index_1404" on table "documents_1401" serially
+LOG:  Rum performing merge on 3000.000000 tuples.
 DEBUG:  executing "SELECT COUNT(*) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 1401 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
                                                                                                    create_indexes_non_concurrently                                                                                                    
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------

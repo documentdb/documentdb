@@ -324,11 +324,11 @@ SELECT documentdb_test_helpers.run_explain_and_trim(
    indexKey: {"a": 1}
    isMultiKey: true
    indexBounds: ["a": [MinKey, MaxKey]]
-   numDuplicates: 16500 entries
-   innerScanLoops: 16581 loops
-   deadEntriesOrPagesSkipped: 3419 items
+   numDuplicates: 16488 entries
+   innerScanLoops: 16575 loops
+   deadEntriesOrPagesSkipped: 3425 items
    scanType: ordered
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 26474)]
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 26462)]
    ->  Index Scan using a_1 on documents_601 collection (actual rows=9 loops=1)
          Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
 (13 rows)
@@ -344,11 +344,11 @@ SELECT documentdb_test_helpers.run_explain_and_trim(
    indexKey: {"a": 1}
    isMultiKey: true
    indexBounds: ["a": [MinKey, MaxKey]]
-   numDuplicates: 11381 entries
-   innerScanLoops: 13166 loops
-   deadEntriesOrPagesSkipped: 6834 items
+   numDuplicates: 11348 entries
+   innerScanLoops: 13146 loops
+   deadEntriesOrPagesSkipped: 6854 items
    scanType: ordered
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 21280)]
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 21237)]
    ->  Index Scan using a_1 on documents_601 collection (actual rows=9 loops=1)
          Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
 (13 rows)
@@ -364,11 +364,11 @@ SELECT documentdb_test_helpers.run_explain_and_trim(
    indexKey: {"a": 1}
    isMultiKey: true
    indexBounds: ["a": [MinKey, MaxKey]]
-   numDuplicates: 7717 entries
-   innerScanLoops: 8158 loops
-   deadEntriesOrPagesSkipped: 11842 items
+   numDuplicates: 7687 entries
+   innerScanLoops: 8143 loops
+   deadEntriesOrPagesSkipped: 11857 items
    scanType: ordered
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 14275)]
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 14241)]
    ->  Index Scan using a_1 on documents_601 collection (actual rows=9 loops=1)
          Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
 (13 rows)
@@ -387,7 +387,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim(
    indexBounds: ["a": [MinKey, MaxKey]]
    numDuplicates: 20000 entries
    innerScanLoops: 20000 loops
-   eligibleDeadItems: 24363 items
+   eligibleDeadItems: 24385 items
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 30000)]
    ->  Index Scan using a_1 on documents_601 collection (actual rows=9 loops=1)

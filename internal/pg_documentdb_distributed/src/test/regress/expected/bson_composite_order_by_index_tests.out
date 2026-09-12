@@ -2477,7 +2477,7 @@ $cmd$);
                indexBounds: ["filter1": ["filter1-5", "filter1-5"], "filter2": ["filter2-55", { }), "orderKey": (MinKey, MaxKey), "filter3": (50, Infinity]]
                innerScanLoops: 501 loops
                scanType: ordered
-               scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 51)]
+               scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 36)]
                ->  Index Scan using "filterSortIndex_1" on documents_68011_680022 collection (actual rows=255 loops=1)
                      Index Cond: ((document @= '{ "filter1" : "filter1-5" }'::bson) AND (document @>= '{ "filter2" : "filter2-55" }'::bson) AND (document @> '{ "filter3" : { "$numberInt" : "50" } }'::bson))
 (14 rows)

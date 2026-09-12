@@ -88,10 +88,6 @@ impl DynamicConfiguration for TestDynamicConfiguration {
         rawbson!({})
     }
 
-    fn enable_developer_explain(&self) -> bool {
-        false
-    }
-
     fn max_connections(&self) -> usize {
         16
     }

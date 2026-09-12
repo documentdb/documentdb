@@ -439,6 +439,8 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
 SELECT document FROM bson_aggregation_find('msdb',
   '{ "find": "flights", "filter": { "$or": [ { "departureAirport": "SEA" }, { "arrivalAirport": "SEA" } ] }, "sort": { "scheduledTime": -1 }, "limit": 10 }');
 
+SHOW documentdb.enable_cross_index_bitmap_or_sort_merge;
+SET documentdb.enable_cross_index_bitmap_or_sort_merge TO off;
 SET enable_sort TO off;
 SELECT line AS different_indexes_flag_off_plan
 FROM documentdb_test_helpers.run_explain_and_trim( $cmd$

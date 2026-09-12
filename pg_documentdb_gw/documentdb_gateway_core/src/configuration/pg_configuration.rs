@@ -408,10 +408,6 @@ impl DynamicConfiguration for PgConfiguration {
         *self.cluster_version.load_full().as_ref()
     }
 
-    fn enable_developer_explain(&self) -> bool {
-        self.get_bool("enableDeveloperExplain", false)
-    }
-
     fn max_connections(&self) -> usize {
         let max_connections = self.get_i32("max_connections", -1);
         match max_connections {

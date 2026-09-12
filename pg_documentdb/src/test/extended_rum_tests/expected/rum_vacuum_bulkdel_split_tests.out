@@ -39,9 +39,9 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
 SELECT index_id AS vacuum_index_id FROM documentdb_api_catalog.collection_indexes WHERE collection_id = :vacuum_col AND index_id != :vacuum_col \gset
 -- print stats per page
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page('documentdb_data.documents_rum_index_802', 0));
-                             documentdb_rum_get_meta_page_info                              
---------------------------------------------------------------------------------------------
- {"entries": 500, "dataPages": 0, "entryPages": 4, "totalPages": 5, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
+                                            documentdb_rum_get_meta_page_info                                             
+--------------------------------------------------------------------------------------------------------------------------
+ {"entries": 500, "dataPages": 0, "entryPages": 3, "totalPages": 4, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
 (1 row)
 
 -- insert many tuples at the end (this splits it to the higher pages)
@@ -62,9 +62,9 @@ SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON) do
 VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON) documentdb_data.documents_801;
 -- print stats per page
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page('documentdb_data.documents_rum_index_802', 0));
-                               documentdb_rum_get_meta_page_info                               
------------------------------------------------------------------------------------------------
- {"entries": 5000, "dataPages": 0, "entryPages": 35, "totalPages": 36, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
+                                              documentdb_rum_get_meta_page_info                                              
+-----------------------------------------------------------------------------------------------------------------------------
+ {"entries": 5000, "dataPages": 0, "entryPages": 20, "totalPages": 21, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
 (1 row)
 
 -- now delete the earlier rows in the tree (occupying the lower pages)
@@ -82,21 +82,28 @@ set documentdb_rum.skip_global_visibility_check_on_prune to on;
 set client_min_messages to LOG;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON) documentdb_data.documents_%s;', :vacuum_col) \gexec
 VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON) documentdb_data.documents_801;
-LOG:  Vacuum[index=xxx,vacuumCleanup=0] emptyEntryPages=20, emptyEntries=3000, emptyPostingTrees=0, prunedEntries=2980, prunedPages=19,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=35, numDataPages=0, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0
-LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=1, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=16, numDataPages=0, numVoidPages=19, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0
+LOG:  Vacuum[index=xxx,vacuumCleanup=0] emptyEntryPages=11, emptyEntries=3000, emptyPostingTrees=0, prunedEntries=2989, prunedPages=10,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=20, numDataPages=0, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0
+LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=1, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=10, numDataPages=0, numVoidPages=10, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0
 reset client_min_messages;
--- print stats per page: Note that the min/max dead pages that are void are less than 36.
+-- print the current range of void pages.
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page('documentdb_data.documents_rum_index_802', 0));
-                               documentdb_rum_get_meta_page_info                               
------------------------------------------------------------------------------------------------
- {"entries": 2001, "dataPages": 0, "entryPages": 16, "totalPages": 36, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
+                                              documentdb_rum_get_meta_page_info                                              
+-----------------------------------------------------------------------------------------------------------------------------
+ {"entries": 2001, "dataPages": 0, "entryPages": 10, "totalPages": 21, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
 (1 row)
 
-SELECT MIN(i), MAX(i), COUNT(*) FROM (SELECT i, documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_802', i)) entry FROM generate_series(1, 35) i) AS q1
+SELECT MIN(i), MAX(i), COUNT(*) FROM (
+    SELECT i,
+           documentdb_api_internal.documentdb_rum_page_get_stats(
+               public.get_raw_page('documentdb_data.documents_rum_index_802', i)) entry
+    FROM generate_series(
+        1,
+        (pg_relation_size('documentdb_data.documents_rum_index_802'::regclass) /
+         current_setting('block_size')::integer)::integer - 1) i) AS q1
     WHERE entry->>'flagsStr' LIKE '%HALFDEAD%' OR entry->>'flagsStr' LIKE '%DELETED%';
  min | max | count 
 -----+-----+-------
-   2 |  21 |    19
+   2 |  12 |    10
 (1 row)
 
 -- now that there's void pages, insert many docs to induce page splits (and that should reuse earlier pages).
@@ -121,7 +128,14 @@ SELECT COUNT(documentdb_api.insert_one('pvacuum_split_db', 'pbulkdel',  FORMAT('
 (1 row)
 
 -- should have no deleted/dead pages (all reused)
-SELECT MIN(i), MAX(i), COUNT(*) FROM (SELECT i, documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_802', i)) entry FROM generate_series(1, 56) i) AS q1
+SELECT MIN(i), MAX(i), COUNT(*) FROM (
+    SELECT i,
+           documentdb_api_internal.documentdb_rum_page_get_stats(
+               public.get_raw_page('documentdb_data.documents_rum_index_802', i)) entry
+    FROM generate_series(
+        1,
+        (pg_relation_size('documentdb_data.documents_rum_index_802'::regclass) /
+         current_setting('block_size')::integer)::integer - 1) i) AS q1
     WHERE entry->>'flagsStr' LIKE '%HALFDEAD%' OR entry->>'flagsStr' LIKE '%DELETED%';
  min | max | count 
 -----+-----+-------
@@ -129,19 +143,34 @@ SELECT MIN(i), MAX(i), COUNT(*) FROM (SELECT i, documentdb_api_internal.document
 (1 row)
 
 -- at least some pages should have a right link less than the current page
-SELECT COUNT(*) FROM (SELECT i, documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_802', i)) entry FROM generate_series(1, 56) i) AS q1
+SELECT COUNT(*) FROM (
+    SELECT i,
+           documentdb_api_internal.documentdb_rum_page_get_stats(
+               public.get_raw_page('documentdb_data.documents_rum_index_802', i)) entry
+    FROM generate_series(
+        1,
+        (pg_relation_size('documentdb_data.documents_rum_index_802'::regclass) /
+         current_setting('block_size')::integer)::integer - 1) i) AS q1
     WHERE (entry->>'rightLink')::int4 < i;
  count 
 -------
-    21
+    23
 (1 row)
 
 -- the new pages should have the appropriate vacuum cycleId
-SELECT COUNT(*), MIN((entry->>'cycleId')::int4), MAX((entry->>'cycleId')::int4) FROM (SELECT i, documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_802', i)) entry FROM generate_series(1, 56) i) AS q1
+SELECT COUNT(*), MIN((entry->>'cycleId')::int4), MAX((entry->>'cycleId')::int4)
+FROM (
+    SELECT i,
+           documentdb_api_internal.documentdb_rum_page_get_stats(
+               public.get_raw_page('documentdb_data.documents_rum_index_802', i)) entry
+    FROM generate_series(
+        1,
+        (pg_relation_size('documentdb_data.documents_rum_index_802'::regclass) /
+         current_setting('block_size')::integer)::integer - 1) i) AS q1
     WHERE (entry->>'cycleId')::int4 > 0;
  count | min | max 
 -------+-----+-----
-    54 | 917 | 917
+    53 | 917 | 917
 (1 row)
 
 -- delete everything
@@ -159,12 +188,20 @@ set documentdb_rum.default_traverse_rum_page_only_on_backtrack to on;
 set client_min_messages to LOG;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON) documentdb_data.documents_%s;', :vacuum_col) \gexec
 VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON) documentdb_data.documents_801;
-LOG:  Vacuum[index=xxx,vacuumCleanup=0] emptyEntryPages=55, emptyEntries=8001, emptyPostingTrees=0, prunedEntries=7946, prunedPages=53,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=22, isNewBulkDelete=1, numEntryPages=56, numDataPages=0, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0
-LOG:  Skipped buffers for the backtrack 21
-LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=2, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=3, numDataPages=0, numVoidPages=53, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0
+LOG:  Vacuum[index=xxx,vacuumCleanup=0] emptyEntryPages=54, emptyEntries=8001, emptyPostingTrees=0, prunedEntries=7947, prunedPages=52,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=24, isNewBulkDelete=1, numEntryPages=55, numDataPages=0, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0
+LOG:  Skipped buffers for the backtrack 23
+LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=2, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=3, numDataPages=0, numVoidPages=52, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0
 reset client_min_messages;
 -- should have no cycleid
-SELECT COUNT(*), MIN((entry->>'cycleId')::int4), MAX((entry->>'cycleId')::int4) FROM (SELECT i, documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_802', i)) entry FROM generate_series(1, 56) i) AS q1
+SELECT COUNT(*), MIN((entry->>'cycleId')::int4), MAX((entry->>'cycleId')::int4)
+FROM (
+    SELECT i,
+           documentdb_api_internal.documentdb_rum_page_get_stats(
+               public.get_raw_page('documentdb_data.documents_rum_index_802', i)) entry
+    FROM generate_series(
+        1,
+        (pg_relation_size('documentdb_data.documents_rum_index_802'::regclass) /
+         current_setting('block_size')::integer)::integer - 1) i) AS q1
     WHERE (entry->>'cycleId')::int4 > 0;
  count | min | max 
 -------+-----+-----
@@ -173,8 +210,8 @@ SELECT COUNT(*), MIN((entry->>'cycleId')::int4), MAX((entry->>'cycleId')::int4) 
 
 -- check the stats (should have 2 entries - one for the leftmost and rightmost).
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page('documentdb_data.documents_rum_index_802', 0));
-                             documentdb_rum_get_meta_page_info                             
--------------------------------------------------------------------------------------------
- {"entries": 2, "dataPages": 0, "entryPages": 3, "totalPages": 57, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
+                                            documentdb_rum_get_meta_page_info                                            
+-------------------------------------------------------------------------------------------------------------------------
+ {"entries": 2, "dataPages": 0, "entryPages": 3, "totalPages": 56, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
 (1 row)
 

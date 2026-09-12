@@ -70,7 +70,7 @@ extern void rum_end_vacuum_cycle_id(Relation rel);
 extern RumVacuumCycleId rum_vacuum_get_cycleId(Relation rel);
 
 /* rumconfigs.c */
-#define RUM_DEFAULT_FILL_FACTOR 50
+#define RUM_DEFAULT_FILL_FACTOR 90
 
 #define UNREDACTED_RUM_LOG_CODE MAKE_SQLSTATE('R', 'Z', 'Z', 'Z', 'Z')
 typedef int (*rum_format_log_hook)(const char *fmt, ...) pg_attribute_printf (1, 2);

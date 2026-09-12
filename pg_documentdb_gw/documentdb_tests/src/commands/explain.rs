@@ -19,7 +19,7 @@
     reason = "Test helper functions - expect failures indicate test failures"
 )]
 
-use bson::{doc, Bson};
+use bson::{doc, Bson, Document};
 use mongodb::{error::Error, Database};
 
 /// Extract an integer stat regardless of whether it was encoded as Int32,
@@ -34,6 +34,14 @@ fn stat_i64(stats: &bson::Document, key: &str) -> Option<i64> {
     }
 }
 
+fn assert_developer_explain_removed(result: &Document) {
+    assert!(!result.contains_key("internal"));
+    assert!(matches!(
+        result.get("explainVersion"),
+        Some(Bson::Double(version)) if (*version - 2.0).abs() < f64::EPSILON
+    ));
+}
+
 pub async fn validate_explain(db: &Database) -> Result<(), Error> {
     let coll = db.collection("test");
 
@@ -41,7 +49,7 @@ pub async fn validate_explain(db: &Database) -> Result<(), Error> {
     coll.insert_one(doc! {"a":2}).await?;
     coll.insert_one(doc! {"a":3}).await?;
 
-    let _result = db
+    let inline_result = db
         .run_command(doc! {
             "aggregate": "test",
             "explain": true,
@@ -51,18 +59,21 @@ pub async fn validate_explain(db: &Database) -> Result<(), Error> {
             }}]
         })
         .await?;
+    assert_developer_explain_removed(&inline_result);
 
-    db.run_command(doc! {
-        "explain": {
-            "aggregate": "test",
-            "cursor": {},
-            "pipeline":[{"$group": {
-                "_id": 1,
-                "sum": {"$sum":"$a"}
-            }}]
-        }
-    })
-    .await?;
+    let wrapped_result = db
+        .run_command(doc! {
+            "explain": {
+                "aggregate": "test",
+                "cursor": {},
+                "pipeline":[{"$group": {
+                    "_id": 1,
+                    "sum": {"$sum":"$a"}
+                }}]
+            }
+        })
+        .await?;
+    assert_developer_explain_removed(&wrapped_result);
 
     // Validate that executionStats counters come back as correct integers (not
     // just that the command succeeds). `test` holds 3 documents, so a scan

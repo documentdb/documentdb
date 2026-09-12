@@ -59,7 +59,7 @@ SELECT FORMAT(
 VACUUM (INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_2301
 SELECT documentdb_api_internal.rum_prune_empty_entries_on_index(
     :'entry_index_name'::regclass);
-INFO:  Vacuum found 20 empty pages, 21 empty entries, 0 pruned entries, 0 pruned pages, 0 pruned posting trees
+INFO:  Vacuum found 11 empty pages, 12 empty entries, 0 pruned entries, 0 pruned pages, 0 pruned posting trees
  rum_prune_empty_entries_on_index 
 ----------------------------------
  
@@ -95,7 +95,7 @@ SET documentdb_rum.fix_incomplete_split TO off;
 SET documentdb_rum.prune_rum_empty_pages TO on;
 SELECT documentdb_api_internal.rum_prune_empty_entries_on_index(
     :'entry_index_name'::regclass);
-INFO:  Vacuum found 20 empty pages, 21 empty entries, 0 pruned entries, 18 pruned pages, 0 pruned posting trees
+INFO:  Vacuum found 11 empty pages, 12 empty entries, 0 pruned entries, 9 pruned pages, 0 pruned posting trees
  rum_prune_empty_entries_on_index 
 ----------------------------------
  

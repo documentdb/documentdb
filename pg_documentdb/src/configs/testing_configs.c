@@ -139,9 +139,6 @@ bool RecreateRetryTableOnSharding = DEFAULT_RECREATE_RETRY_TABLE_ON_SHARDING;
 #define DEFAULT_ENABLE_LOCAL_RETRY_TABLE true
 bool EnableLocalRetryTable = DEFAULT_ENABLE_LOCAL_RETRY_TABLE;
 
-#define DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_SCAN false
-bool EnableCompositeParallelIndexScan = DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_SCAN;
-
 #define DEFAULT_SKIP_INDEX_CLEANUP_ON_FAILURE false
 bool SkipIndexCleanupOnFailure = DEFAULT_SKIP_INDEX_CLEANUP_ON_FAILURE;
 
@@ -248,14 +245,6 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		gettext_noop(
 			"Gets whether or not to recreate a retry table to match the main table"),
 		NULL, &RecreateRetryTableOnSharding, DEFAULT_RECREATE_RETRY_TABLE_ON_SHARDING,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableCompositeParallelIndexScan", newGucPrefix),
-		gettext_noop(
-			"Whether to enable parallel index scans for composite indexes."),
-		NULL, &EnableCompositeParallelIndexScan,
-		DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_SCAN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

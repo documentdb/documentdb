@@ -416,7 +416,7 @@ $cmd$);
    indexBounds: ["a": [2, 4], "b": (MinKey, MaxKey), "c": [3, 5]]
    innerScanLoops: 151 loops
    scanType: ordered
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 24)]
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 78)]
    ->  Index Scan using a_1 on documentdb_data.documents_68503_685006 collection (actual rows=90 loops=1)
          Output: document
          Index Cond: ((collection.document @>= '{ "a" : { "$numberInt" : "2" } }'::bson) AND (collection.document @<= '{ "a" : { "$numberInt" : "4" } }'::bson) AND (collection.document @>= '{ "c" : { "$numberInt" : "3" } }'::bson) AND (collection.document @<= '{ "c" : { "$numberInt" : "5" } }'::bson))
@@ -436,7 +436,7 @@ $cmd$);
    indexBounds: ["a": DESC[2, 4], "b": DESC(MinKey, MaxKey), "c": DESC[3, 5]]
    innerScanLoops: 151 loops
    scanType: ordered
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 63)]
    ->  Index Scan using a_1 on documentdb_data.documents_68504_685008 collection (actual rows=90 loops=1)
          Output: document
          Index Cond: ((collection.document @>= '{ "a" : { "$numberInt" : "2" } }'::bson) AND (collection.document @<= '{ "a" : { "$numberInt" : "4" } }'::bson) AND (collection.document @>= '{ "c" : { "$numberInt" : "3" } }'::bson) AND (collection.document @<= '{ "c" : { "$numberInt" : "5" } }'::bson))

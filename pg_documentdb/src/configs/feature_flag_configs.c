@@ -290,6 +290,11 @@ bool EnableDistinctExistsFilterPushdown =
 #define DEFAULT_ENABLE_DISTINCT_SKIP_SCAN_ON_KEY true
 bool EnableDistinctSkipScanOnKey = DEFAULT_ENABLE_DISTINCT_SKIP_SCAN_ON_KEY;
 
+/* Added in v0.115, pending stabilization, enable in v1.5 */
+#define DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_SCAN false
+bool EnableCompositeParallelIndexScan = DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_SCAN;
+
+
 /*
  * SECTION: Planner feature flags
  */
@@ -438,8 +443,8 @@ bool EnableMergeSortForInPrefix = DEFAULT_ENABLE_MERGE_SORT_FOR_IN_PREFIX;
 #define DEFAULT_ENABLE_MERGE_SORT_FOR_BITMAP_OR true
 bool EnableMergeSortForBitmapOr = DEFAULT_ENABLE_MERGE_SORT_FOR_BITMAP_OR;
 
-/* Added on v1.0, pending stabilization, enable on v1.5 */
-#define DEFAULT_ENABLE_CROSS_INDEX_BITMAP_OR_SORT_MERGE false
+/* Added on v1.0, enabled on v1.1, remove after v1.5 */
+#define DEFAULT_ENABLE_CROSS_INDEX_BITMAP_OR_SORT_MERGE true
 bool EnableCrossIndexBitmapOrSortMerge =
 	DEFAULT_ENABLE_CROSS_INDEX_BITMAP_OR_SORT_MERGE;
 
@@ -1625,4 +1630,12 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableCompositeParallelIndexScan", newGucPrefix),
+		gettext_noop(
+			"Whether to enable parallel index scans for composite indexes."),
+		NULL, &EnableCompositeParallelIndexScan,
+		DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_SCAN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
 }

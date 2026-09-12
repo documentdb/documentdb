@@ -1621,7 +1621,7 @@ $cmd$);
    rawBounds: ["a": [2, 2], [9, 9]], ["c": (5, Infinity]]
    innerScanLoops: 143 loops
    scanType: ordered
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 45)]
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 30)]
    ->  Index Scan using a_1_b_1_c_1 on documents_1202 collection (actual rows=100 loops=1)
          Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "2" }, { "$numberInt" : "9" } ] }'::bson) AND (document @> '{ "c" : { "$numberInt" : "5" } }'::bson))
 (12 rows)
@@ -1642,7 +1642,7 @@ $cmd$);
    rawBounds: ["a": DESC[9, 9], DESC[2, 2]], ["c": DESC(5, Infinity]]
    innerScanLoops: 142 loops
    scanType: ordered
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 45)]
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 30)]
    ->  Index Scan using "a_-1_b_-1_c_-1" on documents_1203 collection (actual rows=100 loops=1)
          Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "2" }, { "$numberInt" : "9" } ] }'::bson) AND (document @> '{ "c" : { "$numberInt" : "5" } }'::bson))
 (12 rows)
@@ -1663,7 +1663,7 @@ $cmd$);
    rawBounds: ["a": DESC[9, 9], DESC[2, 2]], ["c": DESC(5, Infinity]]
    innerScanLoops: 142 loops
    scanType: ordered
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 45)]
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 50)]
    ->  Index Scan using "a_-1_b_1_c_-1" on documents_1204 collection (actual rows=100 loops=1)
          Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "2" }, { "$numberInt" : "9" } ] }'::bson) AND (document @> '{ "c" : { "$numberInt" : "5" } }'::bson))
 (12 rows)
@@ -1684,7 +1684,7 @@ $cmd$);
    rawBounds: ["a": [2, 2], [9, 9]], ["c": DESC(5, Infinity]]
    innerScanLoops: 142 loops
    scanType: ordered
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 35)]
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 25)]
    ->  Index Scan using "a_1_b_-1_c_-1" on documents_1205 collection (actual rows=100 loops=1)
          Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "2" }, { "$numberInt" : "9" } ] }'::bson) AND (document @> '{ "c" : { "$numberInt" : "5" } }'::bson))
 (12 rows)
@@ -1826,7 +1826,7 @@ $cmd$);
    rawBounds: ["": [ { "a": 5 } ,  { "a": 5 } ], [ { "a": 16 } ,  { "a": 16 } ], [ { "a": 42 } ,  { "a": 42 } ], [ { "a": 77 } ,  { "a": 77 } ]]
    innerScanLoops: 8 loops
    scanType: ordered
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4)]
    ->  Index Scan using wc_1 on documents_1206 collection (actual rows=4 loops=1)
          Index Cond: (document @*= '{ "a" : [ { "$numberInt" : "5" }, { "$numberInt" : "16" }, { "$numberInt" : "42" }, { "$numberInt" : "77" } ] }'::bson)
 (12 rows)
@@ -1858,7 +1858,7 @@ $cmd$);
    rawBounds: ["": [ { "b": 10 } ,  { "b": 10 } ], [ { "b": 32 } ,  { "b": 32 } ], [ { "b": 84 } ,  { "b": 84 } ], [ { "b": 154 } ,  { "b": 154 } ]]
    innerScanLoops: 8 loops
    scanType: ordered
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4)]
    ->  Index Scan using wc_1 on documents_1206 collection (actual rows=4 loops=1)
          Index Cond: (document @*= '{ "b" : [ { "$numberInt" : "10" }, { "$numberInt" : "32" }, { "$numberInt" : "84" }, { "$numberInt" : "154" } ] }'::bson)
 (12 rows)
@@ -1925,7 +1925,7 @@ $cmd$);
    rawBounds: ["": [ { "a": 5 } ,  { "a": 5 } ], [ { "a": 16 } ,  { "a": 16 } ], [ { "a": 42 } ,  { "a": 42 } ], [ { "a": 77 } ,  { "a": 77 } ]]
    innerScanLoops: 8 loops
    scanType: ordered
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4)]
    ->  Index Scan using wc_1 on documents_1206 collection (actual rows=3 loops=1)
          Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "5" }, { "$numberInt" : "16" }, { "$numberInt" : "42" }, { "$numberInt" : "77" } ] }'::bson) AND (document @> '{ "b" : { "$numberInt" : "20" } }'::bson))
          Rows Removed by Index Recheck: 1

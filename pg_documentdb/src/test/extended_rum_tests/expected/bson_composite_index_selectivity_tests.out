@@ -100,8 +100,8 @@ $cmd$);
    isMultiKey: false
    indexBounds: ["path1": [5, 5]]
    comp_index1: (indexKey='{"path1": 1}', startup cost=xx.xx, total cost=xx.xx, selectivity=xx.xx, correlation=xx.xx, estimated index pages loaded=xx.xx%, estimated total index entries=xx.xx, boundary selectivity=xx.xx, num boundaries=xx.xx, estimated data pages loaded=xx.xx%)
-   _id_: (indexKey='{"_id": 1}', startup cost=xx.xx, total cost=xx.xx, selectivity=xx.xx, correlation=xx.xx, estimated index pages loaded=xx.xx%, estimated total index entries=xx.xx, boundary selectivity=xx.xx, num boundaries=xx.xx, estimated data pages loaded=xx.xx%)
    comp_index2: (indexKey='{"path2": 1}', startup cost=xx.xx, total cost=xx.xx, selectivity=xx.xx, correlation=xx.xx, estimated index pages loaded=xx.xx%, estimated total index entries=xx.xx, boundary selectivity=xx.xx, num boundaries=xx.xx, estimated data pages loaded=xx.xx%)
+   _id_: (indexKey='{"_id": 1}', startup cost=xx.xx, total cost=xx.xx, selectivity=xx.xx, correlation=xx.xx, estimated index pages loaded=xx.xx%, estimated total index entries=xx.xx, boundary selectivity=xx.xx, num boundaries=xx.xx, estimated data pages loaded=xx.xx%)
    ->  Index Scan using comp_index1 on documents_201 collection
          Index Cond: (document @= '{ "path1" : { "$numberInt" : "5" } }'::bson)
          Filter: (document @> '{ "path2" : { "$numberInt" : "500" } }'::bson)

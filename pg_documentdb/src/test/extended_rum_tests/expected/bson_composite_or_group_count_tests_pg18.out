@@ -116,7 +116,7 @@ $cmd$, p_ignore_heap_fetches => true);
          indexBounds: ["cat": (MinKey, MaxKey), "sub": (MinKey, MaxKey), "ord": DESC[50, 150]]
          innerScanLoops: 125 loops
          scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 51)]
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 8)]
          ->  Index Only Scan using idx_cat_sub_ord on documents_49401 collection (actual rows=17 loops=1)
                Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
                Filter: (((document @= '{ "cat" : "c1" }'::bson) AND (document @= '{ "sub" : "s1" }'::bson)) OR ((document @= '{ "cat" : "c2" }'::bson) AND (document @= '{ "sub" : "s2" }'::bson)))
@@ -250,7 +250,7 @@ $cmd$);
          numDuplicates: 101 entries
          innerScanLoops: 358 loops
          scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 202)]
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 19)]
          ->  Index Scan using idx_tags_ord on documents_49401 collection (actual rows=22 loops=1)
                Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
                Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) OR (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
@@ -353,7 +353,7 @@ $cmd$);
          numDuplicates: 101 entries
          innerScanLoops: 358 loops
          scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100)]
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 61)]
          ->  Index Scan using idx_tags_ord_ci on documents_49401 collection (actual rows=1 loops=1)
                Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
                Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) AND (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
@@ -399,7 +399,7 @@ $cmd$);
          numDuplicates: 101 entries
          innerScanLoops: 358 loops
          scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100)]
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 61)]
          ->  Index Scan using idx_tags_ord_ci on documents_49401 collection (actual rows=22 loops=1)
                Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
                Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) OR (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
@@ -482,7 +482,7 @@ $cmd$);
          numDuplicates: 101 entries
          innerScanLoops: 358 loops
          scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 202)]
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 19)]
          ->  Index Scan using idx_tags_ord on documents_49401 collection (actual rows=22 loops=1)
                Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
                Filter: ((document @#? '{ "tags" : { "name" : "NAME1", "val" : "V1" } }'::bson) OR (document @#? '{ "tags" : { "name" : "NAME2", "val" : "V2" } }'::bson))
@@ -580,7 +580,7 @@ $cmd$, p_ignore_heap_fetches => true);
          indexBounds: ["cat": (MinKey, MaxKey), "sub": (MinKey, MaxKey), "ord": DESC[50, 150]]
          innerScanLoops: 125 loops
          scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 51)]
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 8)]
          ->  Index Only Scan using idx_cat_sub_ord on documents_49401 collection (actual rows=17 loops=1)
                Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
                Filter: (((document @= '{ "cat" : "c1" }'::bson) AND (document @= '{ "sub" : "s1" }'::bson)) OR ((document @= '{ "cat" : "c2" }'::bson) AND (document @= '{ "sub" : "s2" }'::bson)))
@@ -682,7 +682,7 @@ $cmd$);
          numDuplicates: 101 entries
          innerScanLoops: 358 loops
          scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 202)]
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 19)]
          ->  Index Scan using idx_tags_ord on documents_49401 collection (actual rows=22 loops=1)
                Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
                Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) OR (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
@@ -761,7 +761,7 @@ $cmd$);
          numDuplicates: 101 entries
          innerScanLoops: 358 loops
          scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100)]
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 61)]
          ->  Index Scan using idx_tags_ord_ci on documents_49401 collection (actual rows=1 loops=1)
                Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
                Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) AND (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
@@ -796,7 +796,7 @@ $cmd$);
          numDuplicates: 101 entries
          innerScanLoops: 358 loops
          scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100)]
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 61)]
          ->  Index Scan using idx_tags_ord_ci on documents_49401 collection (actual rows=22 loops=1)
                Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
                Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) OR (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
@@ -863,7 +863,7 @@ $cmd$);
          numDuplicates: 101 entries
          innerScanLoops: 358 loops
          scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 202)]
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 19)]
          ->  Index Scan using idx_tags_ord on documents_49401 collection (actual rows=22 loops=1)
                Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
                Filter: ((document @#? '{ "tags" : { "name" : "NAME1", "val" : "V1" } }'::bson) OR (document @#? '{ "tags" : { "name" : "NAME2", "val" : "V2" } }'::bson))

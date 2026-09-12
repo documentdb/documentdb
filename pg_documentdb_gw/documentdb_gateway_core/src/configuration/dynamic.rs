@@ -75,7 +75,6 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
     fn get_u64(&self, key: &str, default: u64) -> u64;
     fn equals_value(&self, key: &str, value: &str) -> bool;
     fn topology(&self) -> RawBson;
-    fn enable_developer_explain(&self) -> bool;
     fn max_connections(&self) -> usize;
     fn allow_transaction_snapshot(&self) -> bool;
     fn enable_request_metrics(&self) -> bool;

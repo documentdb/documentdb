@@ -49,9 +49,16 @@ set client_min_messages to LOG;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON) documentdb_data.documents_%s;', :vacuum_col) \gexec
 reset client_min_messages;
 
--- print stats per page: Note that the min/max dead pages that are void are less than 36.
+-- print the current range of void pages.
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page('documentdb_data.documents_rum_index_802', 0));
-SELECT MIN(i), MAX(i), COUNT(*) FROM (SELECT i, documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_802', i)) entry FROM generate_series(1, 35) i) AS q1
+SELECT MIN(i), MAX(i), COUNT(*) FROM (
+    SELECT i,
+           documentdb_api_internal.documentdb_rum_page_get_stats(
+               public.get_raw_page('documentdb_data.documents_rum_index_802', i)) entry
+    FROM generate_series(
+        1,
+        (pg_relation_size('documentdb_data.documents_rum_index_802'::regclass) /
+         current_setting('block_size')::integer)::integer - 1) i) AS q1
     WHERE entry->>'flagsStr' LIKE '%HALFDEAD%' OR entry->>'flagsStr' LIKE '%DELETED%';
 
 -- now that there's void pages, insert many docs to induce page splits (and that should reuse earlier pages).
@@ -62,15 +69,37 @@ SELECT COUNT(documentdb_api.insert_one('pvacuum_split_db', 'pbulkdel',  FORMAT('
 SELECT COUNT(documentdb_api.insert_one('pvacuum_split_db', 'pbulkdel',  FORMAT('{ "_id": %s.3, "a": %s.3 }', i, i)::bson)) FROM generate_series(3001, 5000) AS i;
 
 -- should have no deleted/dead pages (all reused)
-SELECT MIN(i), MAX(i), COUNT(*) FROM (SELECT i, documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_802', i)) entry FROM generate_series(1, 56) i) AS q1
+SELECT MIN(i), MAX(i), COUNT(*) FROM (
+    SELECT i,
+           documentdb_api_internal.documentdb_rum_page_get_stats(
+               public.get_raw_page('documentdb_data.documents_rum_index_802', i)) entry
+    FROM generate_series(
+        1,
+        (pg_relation_size('documentdb_data.documents_rum_index_802'::regclass) /
+         current_setting('block_size')::integer)::integer - 1) i) AS q1
     WHERE entry->>'flagsStr' LIKE '%HALFDEAD%' OR entry->>'flagsStr' LIKE '%DELETED%';
 
 -- at least some pages should have a right link less than the current page
-SELECT COUNT(*) FROM (SELECT i, documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_802', i)) entry FROM generate_series(1, 56) i) AS q1
+SELECT COUNT(*) FROM (
+    SELECT i,
+           documentdb_api_internal.documentdb_rum_page_get_stats(
+               public.get_raw_page('documentdb_data.documents_rum_index_802', i)) entry
+    FROM generate_series(
+        1,
+        (pg_relation_size('documentdb_data.documents_rum_index_802'::regclass) /
+         current_setting('block_size')::integer)::integer - 1) i) AS q1
     WHERE (entry->>'rightLink')::int4 < i;
 
 -- the new pages should have the appropriate vacuum cycleId
-SELECT COUNT(*), MIN((entry->>'cycleId')::int4), MAX((entry->>'cycleId')::int4) FROM (SELECT i, documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_802', i)) entry FROM generate_series(1, 56) i) AS q1
+SELECT COUNT(*), MIN((entry->>'cycleId')::int4), MAX((entry->>'cycleId')::int4)
+FROM (
+    SELECT i,
+           documentdb_api_internal.documentdb_rum_page_get_stats(
+               public.get_raw_page('documentdb_data.documents_rum_index_802', i)) entry
+    FROM generate_series(
+        1,
+        (pg_relation_size('documentdb_data.documents_rum_index_802'::regclass) /
+         current_setting('block_size')::integer)::integer - 1) i) AS q1
     WHERE (entry->>'cycleId')::int4 > 0;
 
 -- delete everything
@@ -87,7 +116,15 @@ SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON) do
 reset client_min_messages;
 
 -- should have no cycleid
-SELECT COUNT(*), MIN((entry->>'cycleId')::int4), MAX((entry->>'cycleId')::int4) FROM (SELECT i, documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_802', i)) entry FROM generate_series(1, 56) i) AS q1
+SELECT COUNT(*), MIN((entry->>'cycleId')::int4), MAX((entry->>'cycleId')::int4)
+FROM (
+    SELECT i,
+           documentdb_api_internal.documentdb_rum_page_get_stats(
+               public.get_raw_page('documentdb_data.documents_rum_index_802', i)) entry
+    FROM generate_series(
+        1,
+        (pg_relation_size('documentdb_data.documents_rum_index_802'::regclass) /
+         current_setting('block_size')::integer)::integer - 1) i) AS q1
     WHERE (entry->>'cycleId')::int4 > 0;
 
 -- check the stats (should have 2 entries - one for the leftmost and rightmost).

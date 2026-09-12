@@ -105,3 +105,89 @@ WITH r1 AS (
     SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page('documentdb_data.documents_rum_index_1304', 0))->>'totalPages' AS total_pages),
 r2 AS (SELECT documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_1304', i)) AS page_stats FROM generate_series(1, (SELECT total_pages::int4 FROM r1) - 1) i)
 SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) BETWEEN 55 AND 65 FROM r2 WHERE page_stats->>'flagsStr' = 'LEAF';
+
+-- Large unique terms can make the requested split point exceed the physical
+-- page capacity. Cover both the default and maximum fill factors.
+SET documentdb.enable_large_unique_index_keys TO on;
+SELECT string_agg(md5(i::text), '_' ORDER BY i) AS split_long_1
+FROM generate_series(1, 100) i \gset
+SELECT string_agg(md5(i::text), '_' ORDER BY i) AS split_long_2
+FROM generate_series(101, 200) i \gset
+SET documentdb_rum.rum_default_page_fill_factor TO 90;
+
+SELECT documentdb_api.create_collection('filltest', 'unique_split_90');
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_90',
+    '{ "_id": "seed", "e": true }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'filltest',
+    '{ "createIndexes": "unique_split_90", "indexes": [
+        { "key": { "e": 1 }, "name": "e_1", "unique": true, "sparse": true }
+    ] }',
+    TRUE);
+
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_90',
+    FORMAT('{ "_id": 1, "e": "%s", "f": 1 }', :'split_long_1')::bson);
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_90',
+    FORMAT('{ "_id": 2, "e": [ "%s", "%s" ], "f": 1 }',
+           :'split_long_1', :'split_long_2')::bson);
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_90',
+    FORMAT('{ "_id": 3, "e": [ "%s-withsuffix", "%s" ], "f": 1 }',
+           :'split_long_1', :'split_long_2')::bson);
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_90',
+    FORMAT('{ "_id": 4, "e": "%s-withsuffix", "f": 1 }', :'split_long_2')::bson);
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_90',
+    FORMAT('{ "_id": 101, "e": "%s_%s", "f": 1 }',
+           md5('1'), :'split_long_1')::bson);
+
+SET documentdb_rum.rum_default_page_fill_factor TO 100;
+
+SELECT documentdb_api.create_collection('filltest', 'unique_split_100');
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_100',
+    '{ "_id": "seed", "e": true }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'filltest',
+    '{ "createIndexes": "unique_split_100", "indexes": [
+        { "key": { "e": 1 }, "name": "e_1", "unique": true, "sparse": true }
+    ] }',
+    TRUE);
+
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_100',
+    FORMAT('{ "_id": 1, "e": "%s", "f": 1 }', :'split_long_1')::bson);
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_100',
+    FORMAT('{ "_id": 2, "e": [ "%s", "%s" ], "f": 1 }',
+           :'split_long_1', :'split_long_2')::bson);
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_100',
+    FORMAT('{ "_id": 3, "e": [ "%s-withsuffix", "%s" ], "f": 1 }',
+           :'split_long_1', :'split_long_2')::bson);
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_100',
+    FORMAT('{ "_id": 4, "e": "%s-withsuffix", "f": 1 }', :'split_long_2')::bson);
+SELECT documentdb_api.insert_one(
+    'filltest',
+    'unique_split_100',
+    FORMAT('{ "_id": 101, "e": "%s_%s", "f": 1 }',
+           md5('1'), :'split_long_1')::bson);
+
+RESET documentdb_rum.rum_default_page_fill_factor;
+RESET documentdb.enable_large_unique_index_keys;

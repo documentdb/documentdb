@@ -1406,7 +1406,7 @@ $cmd$, true) AS explain_line;
    minKey: ["x010", 12]
    innerScanLoops: 324 loops
    scanType: ordered
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 24)]
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 12)]
    ->  Index Only Scan using idx_ab_ad on documents_9601 collection (actual rows=300 loops=1)
          Index Cond: ((document @*= '{ "a" : [ "x010", "x020", "x030", "x040", "x050", "x060", "x070", "x080", "x090", "x100", "x110", "x120", "x130", "x140", "x150", "x160", "x170", "x180", "x190", "x200", "x210", "x220", "x230", "x240", "x250" ] }'::bson) AND (document @*= '{ "b" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" }, { "$numberInt" : "8" }, { "$numberInt" : "9" }, { "$numberInt" : "10" }, { "$numberInt" : "11" }, { "$numberInt" : "12" } ] }'::bson) AND (document @<> '{ "a" : { "minIndexOp" : { "$binary" : { "base64" : "YAAAAAQXBQIAAwAAAHYxABGFEAADAAAA", "subType" : "00" } } } }'::bson))
          Heap Fetches: xxx

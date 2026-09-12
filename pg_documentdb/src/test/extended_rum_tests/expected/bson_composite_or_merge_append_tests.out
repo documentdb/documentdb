@@ -849,6 +849,13 @@ SELECT document FROM bson_aggregation_find('msdb',
  { "_id" : { "$numberInt" : "3" }, "departureAirport" : "SEA", "arrivalAirport" : "LAX", "scheduledTime" : { "$numberInt" : "10" } }
 (5 rows)
 
+SHOW documentdb.enable_cross_index_bitmap_or_sort_merge;
+ documentdb.enable_cross_index_bitmap_or_sort_merge 
+----------------------------------------------------
+ on
+(1 row)
+
+SET documentdb.enable_cross_index_bitmap_or_sort_merge TO off;
 SET enable_sort TO off;
 SELECT line AS different_indexes_flag_off_plan
 FROM documentdb_test_helpers.run_explain_and_trim( $cmd$

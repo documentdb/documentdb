@@ -152,7 +152,17 @@ SELECT COUNT(documentdb_api.insert_one('pvacuum_db', 'pclean',  FORMAT('{ "_id":
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :vacuum_col) \gexec
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page(('documentdb_data.documents_rum_index_' || :vacuum_index_id), 0));
 
-WITH r1 AS (SELECT i, documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page(('documentdb_data.documents_rum_index_' || :vacuum_index_id), i)) AS entry FROM generate_series(1, 21) i)
+WITH r1 AS (
+    SELECT i,
+           documentdb_api_internal.documentdb_rum_page_get_stats(
+               public.get_raw_page(
+                   ('documentdb_data.documents_rum_index_' || :vacuum_index_id),
+                   i)) AS entry
+    FROM generate_series(
+        1,
+        (pg_relation_size(
+             ('documentdb_data.documents_rum_index_' || :vacuum_index_id)::regclass) /
+         current_setting('block_size')::integer)::integer - 1) i)
 SELECT * FROM r1 WHERE entry->>'flagsStr' LIKE '%DATA%' ORDER by (entry->>'flags')::int8, i ASC;
 
 -- now delete everything.
@@ -163,5 +173,15 @@ CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 set client_min_messages to LOG;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :vacuum_col) \gexec
 
-WITH r1 AS (SELECT i, documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page(('documentdb_data.documents_rum_index_' || :vacuum_index_id), i)) AS entry FROM generate_series(1, 21) i)
+WITH r1 AS (
+    SELECT i,
+           documentdb_api_internal.documentdb_rum_page_get_stats(
+               public.get_raw_page(
+                   ('documentdb_data.documents_rum_index_' || :vacuum_index_id),
+                   i)) AS entry
+    FROM generate_series(
+        1,
+        (pg_relation_size(
+             ('documentdb_data.documents_rum_index_' || :vacuum_index_id)::regclass) /
+         current_setting('block_size')::integer)::integer - 1) i)
 SELECT * FROM r1 WHERE entry->>'flagsStr' LIKE '%DATA%' ORDER by (entry->>'flags')::int8, i ASC;

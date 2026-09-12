@@ -9,12 +9,11 @@
 use core::f64;
 use std::{cmp::Ordering, collections::HashMap, str::FromStr, sync::LazyLock};
 
-use bson::{rawdoc, DateTime, Document, RawArrayBuf, RawBson, RawDocument, RawDocumentBuf};
+use bson::{rawdoc, DateTime, Document, RawArrayBuf, RawBson, RawDocumentBuf};
 use model::{
     DistributedJob, DistributedQueryPlan, DistributedSubPlan, ExplainPlan, ExplainWorker,
     IndexCost, IndexDetails, PostgresExplain, VectorSearchParams,
 };
-use serde_json::Value;
 
 use crate::{
     context::{ConnectionContext, RequestContext},
@@ -199,7 +198,6 @@ impl Verbosity {
     }
 }
 
-#[expect(clippy::expect_used, reason = "values are checked before access")]
 async fn run_explain(
     request_context: &RequestContext<'_>,
     target: &ExplainTarget<'_>,
@@ -210,7 +208,7 @@ async fn run_explain(
 ) -> Result<Response> {
     let request = request_context.request();
 
-    let (explain_response, query) = pg_data_client
+    let (explain_response, _) = pg_data_client
         .execute_explain(
             request_context,
             target,
@@ -224,10 +222,6 @@ async fn run_explain(
 
     match explain_response {
         Some(content) => {
-            let explain_content = dynamic_config
-                .enable_developer_explain()
-                .then(|| convert_to_bson(content.clone()));
-
             let (collection_name, subtype) = get_subtype_and_collection_name(target)?;
             let (body, planning_time, execution_time, data_size) = transform_explain(
                 content,
@@ -287,18 +281,6 @@ async fn run_explain(
                 explain.append(key, val.to_raw_bson());
             }
 
-            if dynamic_config.enable_developer_explain() {
-                explain.append(
-                    "internal",
-                    developer_explain(
-                        &query,
-                        explain_content.expect("Set during developer explain"),
-                        target.document(),
-                        request.db(),
-                    ),
-                );
-            }
-
             explain.append("ok", OK_SUCCEEDED);
 
             Ok(Response::Raw(RawResponse::new(explain)))
@@ -306,21 +288,6 @@ async fn run_explain(
         None => Err(DocumentDBError::internal_error(
             "PG returned no rows in response".to_owned(),
         )),
-    }
-}
-
-fn developer_explain(
-    query: &str,
-    explain_content: RawBson,
-    request: &RawDocument,
-    db: &str,
-) -> RawDocumentBuf {
-    rawdoc! {
-        "sql": {
-            "query": query
-        },
-        "query_parameters":[db, request.to_raw_document_buf()],
-        "explain": explain_content
     }
 }
 
@@ -2357,37 +2324,6 @@ fn cursor_explain(
 
 fn truncate_latency(latency: f64) -> f64 {
     (latency * 1000.0).trunc() / 1000.0
-}
-
-fn convert_to_bson(val: serde_json::Value) -> RawBson {
-    match val {
-        Value::Number(n) => {
-            if let Some(n) = n.as_i64() {
-                RawBson::Int64(n)
-            } else if let Some(n) = n.as_f64() {
-                RawBson::Double(n)
-            } else {
-                RawBson::Double(f64::NAN)
-            }
-        }
-        Value::Object(map) => {
-            let mut doc = RawDocumentBuf::new();
-            for (k, v) in map {
-                doc.append(k, convert_to_bson(v));
-            }
-            RawBson::Document(doc)
-        }
-        Value::Array(arr) => {
-            let mut bson_array = RawArrayBuf::new();
-            for v in arr {
-                bson_array.push(convert_to_bson(v));
-            }
-            RawBson::Array(bson_array)
-        }
-        Value::Null => RawBson::Null,
-        Value::Bool(b) => RawBson::Boolean(b),
-        Value::String(s) => RawBson::String(s),
-    }
 }
 
 #[expect(

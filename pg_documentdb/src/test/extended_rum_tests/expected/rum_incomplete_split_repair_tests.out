@@ -44,7 +44,7 @@ FROM documentdb_api_internal.documentdb_rum_page_get_entries(
     FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass);
  count 
 -------
-     8
+     6
 (1 row)
 
 -- insert second batch of documents
@@ -63,7 +63,7 @@ FROM documentdb_api_internal.documentdb_rum_page_get_entries(
     FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass);
  count 
 -------
-    17
+    11
 (1 row)
 
 SELECT entry->> 'offset',
@@ -74,24 +74,18 @@ FROM documentdb_api_internal.documentdb_rum_page_get_entries(
     FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass) entry;
  ?column? |                           index_term_to_bson                           
 ----------+------------------------------------------------------------------------
- 1        | { "$" : { "$numberInt" : "99" }, "$flags" : { "$numberInt" : "0" } }
- 2        | { "$" : { "$numberInt" : "213" }, "$flags" : { "$numberInt" : "0" } }
- 3        | { "$" : { "$numberInt" : "327" }, "$flags" : { "$numberInt" : "0" } }
- 4        | { "$" : { "$numberInt" : "441" }, "$flags" : { "$numberInt" : "0" } }
- 5        | { "$" : { "$numberInt" : "555" }, "$flags" : { "$numberInt" : "0" } }
- 6        | { "$" : { "$numberInt" : "669" }, "$flags" : { "$numberInt" : "0" } }
- 7        | { "$" : { "$numberInt" : "783" }, "$flags" : { "$numberInt" : "0" } }
- 8        | { "$" : { "$numberInt" : "897" }, "$flags" : { "$numberInt" : "0" } }
- 9        | { "$" : { "$numberInt" : "2011" }, "$flags" : { "$numberInt" : "0" } }
- 10       | { "$" : { "$numberInt" : "2125" }, "$flags" : { "$numberInt" : "0" } }
- 11       | { "$" : { "$numberInt" : "2239" }, "$flags" : { "$numberInt" : "0" } }
- 12       | { "$" : { "$numberInt" : "2353" }, "$flags" : { "$numberInt" : "0" } }
- 13       | { "$" : { "$numberInt" : "2467" }, "$flags" : { "$numberInt" : "0" } }
- 14       | { "$" : { "$numberInt" : "2581" }, "$flags" : { "$numberInt" : "0" } }
- 15       | { "$" : { "$numberInt" : "2695" }, "$flags" : { "$numberInt" : "0" } }
- 16       | { "$" : { "$numberInt" : "2809" }, "$flags" : { "$numberInt" : "0" } }
- 17       | { "$" : { "$numberInt" : "212" }, "$flags" : { "$numberInt" : "0" } }
-(17 rows)
+ 1        | { "$" : { "$numberInt" : "76" }, "$flags" : { "$numberInt" : "0" } }
+ 2        | { "$" : { "$numberInt" : "189" }, "$flags" : { "$numberInt" : "0" } }
+ 3        | { "$" : { "$numberInt" : "393" }, "$flags" : { "$numberInt" : "0" } }
+ 4        | { "$" : { "$numberInt" : "597" }, "$flags" : { "$numberInt" : "0" } }
+ 5        | { "$" : { "$numberInt" : "801" }, "$flags" : { "$numberInt" : "0" } }
+ 6        | { "$" : { "$numberInt" : "2005" }, "$flags" : { "$numberInt" : "0" } }
+ 7        | { "$" : { "$numberInt" : "2209" }, "$flags" : { "$numberInt" : "0" } }
+ 8        | { "$" : { "$numberInt" : "2413" }, "$flags" : { "$numberInt" : "0" } }
+ 9        | { "$" : { "$numberInt" : "2617" }, "$flags" : { "$numberInt" : "0" } }
+ 10       | { "$" : { "$numberInt" : "2821" }, "$flags" : { "$numberInt" : "0" } }
+ 11       | { "$" : { "$numberInt" : "212" }, "$flags" : { "$numberInt" : "0" } }
+(11 rows)
 
 SELECT COUNT(*)
 FROM documentdb_api.collection('rumdb', 'incomplete_split')
@@ -146,7 +140,7 @@ FROM generate_series(1, 1000) i;
 SELECT COUNT(*) FROM documentdb_api.collection('rumdb', 'incomplete_split');
  count 
 -------
-   993
+   995
 (1 row)
 
 -- the root page doesn't have all the children (the tree is inconsistent)
@@ -192,7 +186,7 @@ FROM documentdb_api_internal.documentdb_rum_page_get_entries(
 SELECT COUNT(*) FROM documentdb_api.collection('rumdb', 'incomplete_split');
  count 
 -------
-   993
+   995
 (1 row)
 
 -- now enable tracking of the incomplete splits and repeat - the insert should go through (after finishing the incomplete split)
@@ -253,7 +247,7 @@ FROM documentdb_api_internal.documentdb_rum_page_get_entries(
     FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass) entry;
  ?column? |                          index_term_to_bson                           
 ----------+-----------------------------------------------------------------------
- 1        | { "$" : { "$numberInt" : "99" }, "$flags" : { "$numberInt" : "0" } }
+ 1        | { "$" : { "$numberInt" : "189" }, "$flags" : { "$numberInt" : "0" } }
  2        | { "$" : { "$numberInt" : "212" }, "$flags" : { "$numberInt" : "0" } }
 (2 rows)
 
@@ -261,7 +255,7 @@ FROM documentdb_api_internal.documentdb_rum_page_get_entries(
 SELECT COUNT(*) FROM documentdb_api.collection('rumdb', 'incomplete_split');
  count 
 -------
-   993
+   995
 (1 row)
 
 -- this no longer fails
@@ -284,7 +278,7 @@ FROM documentdb_api_internal.documentdb_rum_page_get_entries(
     FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass);
  count 
 -------
-    17
+    11
 (1 row)
 
 SELECT entry->> 'offset',
@@ -295,24 +289,18 @@ FROM documentdb_api_internal.documentdb_rum_page_get_entries(
     FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass) entry;
  ?column? |                           index_term_to_bson                           
 ----------+------------------------------------------------------------------------
- 1        | { "$" : { "$numberInt" : "99" }, "$flags" : { "$numberInt" : "0" } }
- 2        | { "$" : { "$numberInt" : "213" }, "$flags" : { "$numberInt" : "0" } }
- 3        | { "$" : { "$numberInt" : "327" }, "$flags" : { "$numberInt" : "0" } }
- 4        | { "$" : { "$numberInt" : "441" }, "$flags" : { "$numberInt" : "0" } }
- 5        | { "$" : { "$numberInt" : "555" }, "$flags" : { "$numberInt" : "0" } }
- 6        | { "$" : { "$numberInt" : "669" }, "$flags" : { "$numberInt" : "0" } }
- 7        | { "$" : { "$numberInt" : "783" }, "$flags" : { "$numberInt" : "0" } }
- 8        | { "$" : { "$numberInt" : "897" }, "$flags" : { "$numberInt" : "0" } }
- 9        | { "$" : { "$numberInt" : "2011" }, "$flags" : { "$numberInt" : "0" } }
- 10       | { "$" : { "$numberInt" : "2125" }, "$flags" : { "$numberInt" : "0" } }
- 11       | { "$" : { "$numberInt" : "2239" }, "$flags" : { "$numberInt" : "0" } }
- 12       | { "$" : { "$numberInt" : "2353" }, "$flags" : { "$numberInt" : "0" } }
- 13       | { "$" : { "$numberInt" : "2467" }, "$flags" : { "$numberInt" : "0" } }
- 14       | { "$" : { "$numberInt" : "2581" }, "$flags" : { "$numberInt" : "0" } }
- 15       | { "$" : { "$numberInt" : "2695" }, "$flags" : { "$numberInt" : "0" } }
- 16       | { "$" : { "$numberInt" : "2809" }, "$flags" : { "$numberInt" : "0" } }
- 17       | { "$" : { "$numberInt" : "212" }, "$flags" : { "$numberInt" : "0" } }
-(17 rows)
+ 1        | { "$" : { "$numberInt" : "76" }, "$flags" : { "$numberInt" : "0" } }
+ 2        | { "$" : { "$numberInt" : "189" }, "$flags" : { "$numberInt" : "0" } }
+ 3        | { "$" : { "$numberInt" : "393" }, "$flags" : { "$numberInt" : "0" } }
+ 4        | { "$" : { "$numberInt" : "598" }, "$flags" : { "$numberInt" : "0" } }
+ 5        | { "$" : { "$numberInt" : "802" }, "$flags" : { "$numberInt" : "0" } }
+ 6        | { "$" : { "$numberInt" : "2006" }, "$flags" : { "$numberInt" : "0" } }
+ 7        | { "$" : { "$numberInt" : "2210" }, "$flags" : { "$numberInt" : "0" } }
+ 8        | { "$" : { "$numberInt" : "2414" }, "$flags" : { "$numberInt" : "0" } }
+ 9        | { "$" : { "$numberInt" : "2618" }, "$flags" : { "$numberInt" : "0" } }
+ 10       | { "$" : { "$numberInt" : "2822" }, "$flags" : { "$numberInt" : "0" } }
+ 11       | { "$" : { "$numberInt" : "212" }, "$flags" : { "$numberInt" : "0" } }
+(11 rows)
 
 -- count is correct
 SELECT COUNT(*)
@@ -320,7 +308,7 @@ FROM documentdb_api.collection('rumdb', 'incomplete_split')
 WHERE document @@ '{ "a": { "$exists": true } }';
  count 
 -------
-  1993
+  1995
 (1 row)
 
 -- now repeat this exercise again but use the repair function to fix it.
@@ -383,7 +371,7 @@ FROM documentdb_api_internal.documentdb_rum_page_get_entries(
     FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass) entry;
  ?column? |                          index_term_to_bson                           
 ----------+-----------------------------------------------------------------------
- 1        | { "$" : { "$numberInt" : "99" }, "$flags" : { "$numberInt" : "0" } }
+ 1        | { "$" : { "$numberInt" : "189" }, "$flags" : { "$numberInt" : "0" } }
  2        | { "$" : { "$numberInt" : "212" }, "$flags" : { "$numberInt" : "0" } }
 (2 rows)
 
@@ -391,7 +379,7 @@ FROM documentdb_api_internal.documentdb_rum_page_get_entries(
 SELECT COUNT(*) FROM documentdb_api.collection('rumdb', 'incomplete_split');
  count 
 -------
-   994
+   996
 (1 row)
 
 -- now insert some more docs - we should get a lost path error
@@ -422,6 +410,7 @@ SELECT documentdb_api_internal.rum_repair_incomplete_split_on_index(
     FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass,
     FALSE, TRUE);
 INFO:  Repairing index with dryRunMode 1, and trackDataPages 0
+INFO:  Rum tree is in an inconsistent state. parentPage 1 has child 3 with rightLink 5, but parent right link is 2
 INFO:  Rum tree is in an inconsistent state. parentPage 1 has child 2 with rightLink 4, but parent right link is 4294967295
  rum_repair_incomplete_split_on_index 
 --------------------------------------
@@ -450,6 +439,7 @@ SELECT documentdb_api_internal.rum_repair_incomplete_split_on_index(
     FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass,
     FALSE, FALSE);
 INFO:  Repairing index with dryRunMode 0, and trackDataPages 0
+INFO:  Rum tree is in an inconsistent state. parentPage 1 has child 3 with rightLink 5, but parent right link is 2
 INFO:  Rum tree is in an inconsistent state. parentPage 1 has child 2 with rightLink 4, but parent right link is 4294967295
  rum_repair_incomplete_split_on_index 
 --------------------------------------
@@ -473,7 +463,7 @@ FROM documentdb_api_internal.documentdb_rum_page_get_entries(
     FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass);
  count 
 -------
-    17
+    11
 (1 row)
 
 SELECT entry->> 'offset',
@@ -484,24 +474,18 @@ FROM documentdb_api_internal.documentdb_rum_page_get_entries(
     FORMAT('documentdb_data.documents_rum_index_%s', :index_id)::regclass) entry;
  ?column? |                           index_term_to_bson                           
 ----------+------------------------------------------------------------------------
- 1        | { "$" : { "$numberInt" : "99" }, "$flags" : { "$numberInt" : "0" } }
- 2        | { "$" : { "$numberInt" : "213" }, "$flags" : { "$numberInt" : "0" } }
- 3        | { "$" : { "$numberInt" : "327" }, "$flags" : { "$numberInt" : "0" } }
- 4        | { "$" : { "$numberInt" : "441" }, "$flags" : { "$numberInt" : "0" } }
- 5        | { "$" : { "$numberInt" : "555" }, "$flags" : { "$numberInt" : "0" } }
- 6        | { "$" : { "$numberInt" : "669" }, "$flags" : { "$numberInt" : "0" } }
- 7        | { "$" : { "$numberInt" : "783" }, "$flags" : { "$numberInt" : "0" } }
- 8        | { "$" : { "$numberInt" : "897" }, "$flags" : { "$numberInt" : "0" } }
- 9        | { "$" : { "$numberInt" : "2011" }, "$flags" : { "$numberInt" : "0" } }
- 10       | { "$" : { "$numberInt" : "2125" }, "$flags" : { "$numberInt" : "0" } }
- 11       | { "$" : { "$numberInt" : "2239" }, "$flags" : { "$numberInt" : "0" } }
- 12       | { "$" : { "$numberInt" : "2353" }, "$flags" : { "$numberInt" : "0" } }
- 13       | { "$" : { "$numberInt" : "2467" }, "$flags" : { "$numberInt" : "0" } }
- 14       | { "$" : { "$numberInt" : "2581" }, "$flags" : { "$numberInt" : "0" } }
- 15       | { "$" : { "$numberInt" : "2695" }, "$flags" : { "$numberInt" : "0" } }
- 16       | { "$" : { "$numberInt" : "2809" }, "$flags" : { "$numberInt" : "0" } }
- 17       | { "$" : { "$numberInt" : "212" }, "$flags" : { "$numberInt" : "0" } }
-(17 rows)
+ 1        | { "$" : { "$numberInt" : "76" }, "$flags" : { "$numberInt" : "0" } }
+ 2        | { "$" : { "$numberInt" : "189" }, "$flags" : { "$numberInt" : "0" } }
+ 3        | { "$" : { "$numberInt" : "393" }, "$flags" : { "$numberInt" : "0" } }
+ 4        | { "$" : { "$numberInt" : "598" }, "$flags" : { "$numberInt" : "0" } }
+ 5        | { "$" : { "$numberInt" : "802" }, "$flags" : { "$numberInt" : "0" } }
+ 6        | { "$" : { "$numberInt" : "2006" }, "$flags" : { "$numberInt" : "0" } }
+ 7        | { "$" : { "$numberInt" : "2210" }, "$flags" : { "$numberInt" : "0" } }
+ 8        | { "$" : { "$numberInt" : "2414" }, "$flags" : { "$numberInt" : "0" } }
+ 9        | { "$" : { "$numberInt" : "2618" }, "$flags" : { "$numberInt" : "0" } }
+ 10       | { "$" : { "$numberInt" : "2822" }, "$flags" : { "$numberInt" : "0" } }
+ 11       | { "$" : { "$numberInt" : "212" }, "$flags" : { "$numberInt" : "0" } }
+(11 rows)
 
 -- count is correct
 SELECT COUNT(*)
@@ -509,7 +493,7 @@ FROM documentdb_api.collection('rumdb', 'incomplete_split')
 WHERE document @@ '{ "a": { "$exists": true } }';
  count 
 -------
-  1994
+  1996
 (1 row)
 
 -- now repeat with larger index keys to see if there's multiple levels.

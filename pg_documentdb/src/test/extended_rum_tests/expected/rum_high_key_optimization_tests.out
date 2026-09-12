@@ -137,7 +137,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
          isMultiKey: false
          indexBounds: ["a": [1, Infinity]]
          innerScanLoops: 5000 loops
-         highKeyEligiblePages: 33 pages
+         highKeyEligiblePages: 18 pages
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
          ->  Bitmap Heap Scan on documents_22001 collection (actual rows=5000 loops=1)
@@ -163,7 +163,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
          isMultiKey: false
          indexBounds: ["a": [-Infinity, 5000]]
          innerScanLoops: 5000 loops
-         highKeyEligiblePages: 33 pages
+         highKeyEligiblePages: 18 pages
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
          ->  Bitmap Heap Scan on documents_22001 collection (actual rows=5000 loops=1)
@@ -190,7 +190,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
          isMultiKey: false
          indexBounds: ["a": [4000, Infinity]]
          innerScanLoops: 1001 loops
-         highKeyEligiblePages: 6 pages
+         highKeyEligiblePages: 3 pages
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1001)]
          ->  Bitmap Heap Scan on documents_22001 collection (actual rows=1001 loops=1)
@@ -217,7 +217,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
          isMultiKey: false
          indexBounds: ["a": [-Infinity, 2500]]
          innerScanLoops: 2501 loops
-         highKeyEligiblePages: 16 pages
+         highKeyEligiblePages: 8 pages
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2500)]
          ->  Bitmap Heap Scan on documents_22001 collection (actual rows=2500 loops=1)
@@ -240,7 +240,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
    isMultiKey: false
    indexBounds: ["a": (1000, 2000)]
    innerScanLoops: 1002 loops
-   highKeyEligiblePages: 6 pages
+   highKeyEligiblePages: 3 pages
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 999)]
    ->  Index Scan using a_1 on documents_22001 collection (actual rows=999 loops=1)
@@ -316,7 +316,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
          isMultiKey: false
          indexBounds: ["a": [1, Infinity], "b": (MinKey, MaxKey)]
          innerScanLoops: 5000 loops
-         highKeyEligiblePages: 52 pages
+         highKeyEligiblePages: 29 pages
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
          ->  Bitmap Heap Scan on documents_22002 collection (actual rows=5000 loops=1)
@@ -629,7 +629,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
          isMultiKey: false
          indexBounds: ["n": [1, Infinity]]
          innerScanLoops: 5000 loops
-         highKeyEligiblePages: 33 pages
+         highKeyEligiblePages: 18 pages
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
          ->  Bitmap Heap Scan on documents_22004 collection (actual rows=5000 loops=1)
@@ -789,7 +789,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
          isMultiKey: false
          indexBounds: ["a": [MinKey, MaxKey]]
          innerScanLoops: 5000 loops
-         highKeyEligiblePages: 33 pages
+         highKeyEligiblePages: 18 pages
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
          ->  Bitmap Heap Scan on documents_22005 collection (actual rows=5000 loops=1)
@@ -815,7 +815,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
          isMultiKey: false
          indexBounds: ["a": [MinKey, MaxKey]]
          innerScanLoops: 5000 loops
-         highKeyEligiblePages: 33 pages
+         highKeyEligiblePages: 18 pages
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
          ->  Bitmap Heap Scan on documents_22005 collection (actual rows=5000 loops=1)
@@ -878,7 +878,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
          isMultiKey: false
          indexBounds: ["a": [MinKey, MaxKey]]
          innerScanLoops: 3002 loops
-         highKeyEligiblePages: 20 pages
+         highKeyEligiblePages: 11 pages
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
          ->  Bitmap Heap Scan on documents_22006 collection (actual rows=5000 loops=1)
@@ -904,7 +904,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
          isMultiKey: false
          indexBounds: ["a": [MinKey, MaxKey]]
          innerScanLoops: 3002 loops
-         highKeyEligiblePages: 20 pages
+         highKeyEligiblePages: 11 pages
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
          ->  Bitmap Heap Scan on documents_22006 collection (actual rows=5000 loops=1)
@@ -1035,7 +1035,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
          isMultiKey: false
          indexBounds: ["a": [-Infinity, 5000], "b": (MinKey, MaxKey)]
          innerScanLoops: 5000 loops
-         highKeyEligiblePages: 52 pages
+         highKeyEligiblePages: 29 pages
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
          ->  Bitmap Heap Scan on documents_22002 collection (actual rows=5000 loops=1)
