@@ -45,7 +45,6 @@
  #include "utils/string_view.h"
  #include "utils/utf8_utils.h"
 
-extern bool EnableCompositeReducedCorrelatedPrefixTrim;
 extern bool EnablePerPathMultiKeySortPushdown;
 extern bool EnableSkipSettingOrderScanDirectionForFullScanExpr;
 
@@ -830,27 +829,6 @@ TrimSecondaryVariableBounds(VariableIndexBounds *variableBounds,
 							bool enableMetadataBasedTracking)
 {
 	int32_t numPaths = runData->metaInfo->numIndexPaths;
-
-	/*
-	 * If prefix-group-aware trimming is disabled, fall back to the legacy
-	 * behavior: trim all variable bounds whose indexAttribute > 0.
-	 */
-	if (!EnableCompositeReducedCorrelatedPrefixTrim)
-	{
-		ListCell *cell;
-		foreach(cell, variableBounds->variableBoundsList)
-		{
-			CompositeIndexBoundsSet *set = (CompositeIndexBoundsSet *) lfirst(cell);
-			if (set->indexAttribute > 0)
-			{
-				runData->metaInfo->requiresRuntimeRecheck = true;
-				variableBounds->variableBoundsList = foreach_delete_current(
-					variableBounds->variableBoundsList, cell);
-				continue;
-			}
-		}
-		return;
-	}
 
 	/*
 	 * Build an htab mapping each dotted prefix to the lowest index attribute

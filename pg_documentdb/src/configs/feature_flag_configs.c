@@ -182,11 +182,6 @@ bool TrackIndexOnlyScanFindCandidate =
 bool EmitEnableOrderedIndexFalseInResponse =
 	DEFAULT_EMIT_ENABLE_ORDERED_INDEX_FALSE_IN_RESPONSE;
 
-/* Added in v0.113, enabled in v0.113, remove after v0.116 */
-#define DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_PREFIX_TRIM true
-bool EnableCompositeReducedCorrelatedPrefixTrim =
-	DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_PREFIX_TRIM;
-
 /* Added in v0.116, Pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_BOUNDS_PLANNING false
 bool EnableCompositeReducedCorrelatedBoundsPlanning =
@@ -1213,14 +1208,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"while index only scan for find with project is disabled."),
 		NULL, &TrackIndexOnlyScanFindCandidate,
 		DEFAULT_TRACK_INDEX_ONLY_SCAN_FIND_CANDIDATE,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableCompositeReducedCorrelatedPrefixTrim", newGucPrefix),
-		gettext_noop(
-			"Whether to enable prefix-group-aware trimming of secondary variable bounds for reduced correlated composite indexes."),
-		NULL, &EnableCompositeReducedCorrelatedPrefixTrim,
-		DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_PREFIX_TRIM,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

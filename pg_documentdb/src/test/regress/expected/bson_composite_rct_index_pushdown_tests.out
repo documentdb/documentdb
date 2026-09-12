@@ -636,32 +636,6 @@ $cmd$);
 (10 rows)
 
 -- =====================================================================
--- Test 11: GUC off fallback — all secondary bounds trimmed
--- Same query as Test 1 but with prefix trim disabled.
--- Expected: only a preserved, b.c and b.d both trimmed (old behavior)
--- =====================================================================
-SET documentdb.enableCompositeReducedCorrelatedPrefixTrim TO off;
-SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
-    SELECT document FROM bson_aggregation_find('trim_db', '{ "find": "single_prefix",
-      "filter": { "a": 10, "b.c": 1, "b.d": 100 }}')
-$cmd$);
-                                                                                           run_explain_and_trim                                                                                            
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
-   namespaceName: trim_db.single_prefix
-   indexName: idx_a_bc_bd
-   indexKey: {"a": 1,"b.c": 1,"b.d": 1}
-   isMultiKey: true
-   hasCorrelatedTerms: true
-   indexBounds: ["a": [10, 10], "b.c": (MinKey, MaxKey), "b.d": (MinKey, MaxKey)]
-   ->  Index Scan using idx_a_bc_bd on documents_2401 collection (actual rows=1 loops=1)
-         Index Cond: ((document @= '{ "a" : { "$numberInt" : "10" } }'::bson) AND (document @= '{ "b.c" : { "$numberInt" : "1" } }'::bson) AND (document @= '{ "b.d" : { "$numberInt" : "100" } }'::bson))
-         Rows Removed by Index Recheck: 3
-(10 rows)
-
-SET documentdb.enableCompositeReducedCorrelatedPrefixTrim TO on;
--- =====================================================================
 -- Cleanup
 -- =====================================================================
 SELECT documentdb_api.drop_collection('trim_db', 'single_prefix');

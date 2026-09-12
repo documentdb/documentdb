@@ -43,7 +43,6 @@ INSERT INTO documentdb_guc_naming_baseline (name) VALUES
     ('documentdb.enableComparableTerms'),
     ('documentdb.enableCompositeIndexPlanner'),
     ('documentdb.enableCompositeParallelIndexScan'),
-    ('documentdb.enableCompositeReducedCorrelatedPrefixTrim'),
     ('documentdb.enableCompositeReducedCorrelatedTermsOnCommonSubPath'),
     ('documentdb.enableCompositeShardDocumentTerms'),
     ('documentdb.enableCompositeUniqueHash'),

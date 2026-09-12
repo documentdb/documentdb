@@ -293,20 +293,6 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 $cmd$);
 
 -- =====================================================================
--- Test 11: GUC off fallback — all secondary bounds trimmed
--- Same query as Test 1 but with prefix trim disabled.
--- Expected: only a preserved, b.c and b.d both trimmed (old behavior)
--- =====================================================================
-SET documentdb.enableCompositeReducedCorrelatedPrefixTrim TO off;
-SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
-    SELECT document FROM bson_aggregation_find('trim_db', '{ "find": "single_prefix",
-      "filter": { "a": 10, "b.c": 1, "b.d": 100 }}')
-$cmd$);
-
-SET documentdb.enableCompositeReducedCorrelatedPrefixTrim TO on;
-
--- =====================================================================
 -- Cleanup
 -- =====================================================================
 SELECT documentdb_api.drop_collection('trim_db', 'single_prefix');

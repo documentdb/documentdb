@@ -346,7 +346,6 @@ extern bool EnableCollationWithNonUniqueOrderedIndexes;
 extern bool EnablePerPathMultiKeySortPushdown;
 extern bool EnableSupportFunctionIdPushdown;
 extern bool EnableGroupByMultiKeySortPushdown;
-extern bool EnableCompositeReducedCorrelatedPrefixTrim;
 extern bool EnableCompositeReducedCorrelatedBoundsPlanning;
 extern bool EnableMergeSortForBitmapOr;
 extern bool EnableCrossIndexBitmapOrSortMerge;
@@ -7669,7 +7668,6 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 						  indexPath->indexinfo->opclassoptions[0] : NULL;
 	bool prunedCorrelatedIndexQuals = false;
 	if (EnableCompositeReducedCorrelatedBoundsPlanning &&
-		EnableCompositeReducedCorrelatedPrefixTrim &&
 		hasPerPathMetadata &&
 		indexMetadata.hasCorrelatedReducedTerms)
 	{
