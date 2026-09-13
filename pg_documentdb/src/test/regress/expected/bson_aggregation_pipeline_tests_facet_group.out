@@ -102,6 +102,154 @@ SELECT documentdb_api.shard_collection('db', 'agg_facet_group', '{ "_id": "hashe
  
 (1 row)
 
+-- $documents is a collectionless source stage and cannot appear inside a $facet sub-pipeline; reject at parse time.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$facet": { "a": [ { "$documents": [ { "x": 1 } ] } ] } } ] }');
+ERROR:  $documents cannot be utilized within an operators facet processing stage
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$facet": { "a": [ { "$lookup": { "from": "_facet_test_foreign", "let": {}, "pipeline": [ { "$indexStats": {} } ], "as": "j" } } ], "total": [ { "$count": "n" } ] } } ] }');
+ERROR:  $indexStats cannot be utilized within an operators facet processing stage
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$facet": { "a": [ { "$unionWith": { "coll": "agg_facet_group", "pipeline": [ { "$indexStats": {} } ] } } ] } } ] }');
+ERROR:  $indexStats cannot be utilized within an operators facet processing stage
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$match": { "_id": "never" } }, { "$facet": { "a": [ { "$lookup": { "from": "_facet_test_foreign", "pipeline": [ { "$unionWith": { "coll": "agg_facet_group", "pipeline": [ { "$indexStats": {} } ] } } ], "as": "j" } } ] } } ] }');
+ERROR:  $indexStats cannot be utilized within an operators facet processing stage
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$facet": { "a": [ { "$lookup": { "from": "_facet_test_foreign", "let": {}, "pipeline": [ { "$collStats": {} } ], "as": "j" } } ] } } ] }');
+ERROR:  $collStats cannot be utilized within an operators facet processing stage
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$facet": { "a": [ { "$lookup": { "from": "_facet_test_foreign", "let": {}, "pipeline": [ { "$geoNear": { "near": { "type": "Point", "coordinates": [0, 0] }, "distanceField": "d", "spherical": true } } ], "as": "j" } } ] } } ] }');
+ERROR:  $geoNear cannot be utilized within an operators facet processing stage
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$facet": { "a": [ { "$lookup": { "from": "_facet_test_foreign", "let": {}, "pipeline": [ { "$planCacheStats": {} } ], "as": "j" } } ] } } ] }');
+ERROR:  $planCacheStats cannot be utilized within an operators facet processing stage
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$facet": { "a": [ { "$lookup": { "from": "_facet_test_foreign", "let": {}, "pipeline": [ { "$facet": { "b": [ { "$match": {} } ] } } ], "as": "j" } } ] } } ] }');
+ERROR:  $facet cannot be utilized within an operators facet processing stage
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$facet": { "a": [ { "$unionWith": { "coll": "agg_facet_group", "pipeline": [ { "$facet": { "b": [ { "$count": "n" } ] } } ] } } ] } } ] }');
+ERROR:  $facet cannot be utilized within an operators facet processing stage
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$facet": { "a": [ { "$lookup": { "from": "_facet_test_foreign", "pipeline": [ 1, { "$indexStats": {} } ], "as": "j" } } ] } } ] }');
+ERROR:  Pipeline stage for lookup pipeline must be a document
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$facet": { "a": [ { "$unionWith": { "coll": "agg_facet_group", "pipeline": [ { "$match": {}, "$indexStats": {} } ] } } ] } } ] }');
+ERROR:  A pipeline stage specification object is required to have one and only one field.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$match": { "_id": 1 } }, { "$facet": { "a": [ { "$project": { "_id": 0, "value": { "$literal": { "$unionWith": { "pipeline": [ { "$indexStats": {} } ] } } } } } ] } } ] }');
+                                           document                                           
+----------------------------------------------------------------------------------------------
+ { "a" : [ { "value" : { "$unionWith" : { "pipeline" : [ { "$indexStats" : {  } } ] } } } ] }
+(1 row)
+
+-- $documents remains valid inside a nested collectionless $unionWith pipeline.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$facet": { "a": [ { "$match": { "_id": "never" } }, { "$unionWith": { "pipeline": [ { "$documents": [ { "x": 1 } ] } ] } } ] } } ] }');
+                    document                    
+------------------------------------------------
+ { "a" : [ { "x" : { "$numberInt" : "1" } } ] }
+(1 row)
+
+CREATE FUNCTION pg_temp.facet_pipeline_sqlstate(pipeline jsonb)
+RETURNS text LANGUAGE plpgsql AS $$
+BEGIN
+	EXECUTE format('SELECT document FROM bson_aggregation_pipeline(''db'', %L::bson)',
+		jsonb_build_object('aggregate', 'agg_facet_group', 'pipeline', pipeline)::text);
+	RETURN '00000';
+EXCEPTION WHEN OTHERS THEN
+	RETURN SQLSTATE;
+END;
+$$;
+WITH stages(stage_name, stage_spec) AS (
+	VALUES ('$collStats', '{}'::jsonb),
+		   ('$facet', '{"b": [{"$match": {}}]}'::jsonb),
+		   ('$geoNear', '{"near": {"type": "Point", "coordinates": [0, 0]}, "distanceField": "d", "spherical": true}'::jsonb),
+		   ('$indexStats', '{}'::jsonb),
+		   ('$planCacheStats', '{}'::jsonb)
+), pipelines AS (
+	SELECT stage_name, jsonb_build_array(jsonb_build_object(stage_name, stage_spec)) AS pipeline
+	FROM stages
+), nested AS (
+	SELECT stage_name, pipeline,
+		   jsonb_build_array(jsonb_build_object('$lookup', jsonb_build_object(
+			   'from', '_facet_test_foreign', 'let', '{}'::jsonb, 'pipeline', pipeline, 'as', 'j'))) AS lookup_pipeline,
+		   jsonb_build_array(jsonb_build_object('$unionWith', jsonb_build_object(
+			   'coll', 'agg_facet_group', 'pipeline', pipeline))) AS union_pipeline
+	FROM pipelines
+)
+SELECT stage_name,
+	   pg_temp.facet_pipeline_sqlstate(jsonb_build_array(jsonb_build_object(
+		   '$facet', jsonb_build_object('a', pipeline)))) AS direct,
+	   pg_temp.facet_pipeline_sqlstate(jsonb_build_array(jsonb_build_object(
+		   '$facet', jsonb_build_object('a', lookup_pipeline)))) AS lookup,
+	   pg_temp.facet_pipeline_sqlstate(jsonb_build_array(jsonb_build_object(
+		   '$facet', jsonb_build_object('a', union_pipeline)))) AS union_with,
+	   pg_temp.facet_pipeline_sqlstate(jsonb_build_array(jsonb_build_object(
+		   '$facet', jsonb_build_object('a', jsonb_build_array(jsonb_build_object(
+			   '$lookup', jsonb_build_object('from', '_facet_test_foreign', 'as', 'j',
+				   'pipeline', union_pipeline))))))) AS lookup_union,
+	   pg_temp.facet_pipeline_sqlstate(jsonb_build_array(jsonb_build_object(
+		   '$facet', jsonb_build_object('a', jsonb_build_array(jsonb_build_object(
+			   '$unionWith', jsonb_build_object('coll', 'agg_facet_group',
+				   'pipeline', lookup_pipeline))))))) AS union_lookup
+FROM nested ORDER BY stage_name;
+   stage_name    | direct | lookup | union_with | lookup_union | union_lookup 
+-----------------+--------+--------+------------+--------------+--------------
+ $collStats      | M008T  | M008T  | M008T      | M008T        | M008T
+ $facet          | M008T  | M008T  | M008T      | M008T        | M008T
+ $geoNear        | M008T  | M008T  | M008T      | M008T        | M008T
+ $indexStats     | M008T  | M008T  | M008T      | M008T        | M008T
+ $planCacheStats | M008T  | M008T  | M008T      | M008T        | M008T
+(5 rows)
+
+WITH stages(stage_name, stage_spec) AS (
+	VALUES ('$changeStream', '{}'::jsonb),
+		   ('$merge', '{"into": "facet_rule_output"}'::jsonb),
+		   ('$out', '"facet_rule_output"'::jsonb)
+), pipelines AS (
+	SELECT stage_name, jsonb_build_array(jsonb_build_object(stage_name, stage_spec)) AS pipeline
+	FROM stages
+), variants AS (
+	SELECT stage_name, variant_name, variants.pipeline
+	FROM pipelines CROSS JOIN LATERAL (
+		VALUES ('alone', pipelines.pipeline),
+			   ('before_facet_rule', pipelines.pipeline || '[{"$indexStats": {}}]'::jsonb),
+			   ('after_facet_rule', '[{"$indexStats": {}}]'::jsonb || pipelines.pipeline)
+	) AS variants(variant_name, pipeline)
+)
+SELECT stage_name, variant_name,
+	   pg_temp.facet_pipeline_sqlstate(jsonb_build_array(jsonb_build_object(
+		   '$facet', jsonb_build_object('a', jsonb_build_array(jsonb_build_object(
+			   '$lookup', jsonb_build_object('from', '_facet_test_foreign', 'let', '{}'::jsonb,
+				   'pipeline', pipeline, 'as', 'j'))))))) AS lookup,
+	   pg_temp.facet_pipeline_sqlstate(jsonb_build_array(jsonb_build_object(
+		   '$facet', jsonb_build_object('a', jsonb_build_array(jsonb_build_object(
+			   '$unionWith', jsonb_build_object('coll', 'agg_facet_group',
+				   'pipeline', pipeline))))))) AS union_with
+FROM variants ORDER BY stage_name, variant_name;
+  stage_name   |   variant_name    | lookup | union_with 
+---------------+-------------------+--------+------------
+ $changeStream | after_facet_rule  | M009A  | M005I
+ $changeStream | alone             | M009A  | M005I
+ $changeStream | before_facet_rule | M009A  | M005I
+ $merge        | after_facet_rule  | M009A  | M005I
+ $merge        | alone             | M009A  | M005I
+ $merge        | before_facet_rule | M009A  | M005I
+ $out          | after_facet_rule  | M009A  | M005I
+ $out          | alone             | M009A  | M005I
+ $out          | before_facet_rule | M009A  | M005I
+(9 rows)
+
+SELECT pg_temp.facet_pipeline_sqlstate('[{"$facet": {"a": [{"$out": "facet_rule_output"}]}}]') AS direct_out,
+	   pg_temp.facet_pipeline_sqlstate('[{"$facet": {"a": [{"$merge": {"into": "facet_rule_output"}}]}}]') AS direct_merge,
+	   pg_temp.facet_pipeline_sqlstate('[{"$facet": {"a": [{"$changeStream": {}}]}}]') AS direct_change_stream,
+	   pg_temp.facet_pipeline_sqlstate('[{"$facet": {"a": [{"$search": {}}]}}]') AS direct_search;
+ direct_out | direct_merge | direct_change_stream | direct_search 
+------------+--------------+----------------------+---------------
+ M008T      | M008T        | M008T                | M008T
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$match": { "_id": 1 } }, { "$facet": { "a": [ { "$lookup": { "pipeline": [ { "$documents": [ { "x": 1 } ] } ], "as": "j" } }, { "$project": { "_id": 0, "j": 1 } } ] } } ] }');
+                           document                           
+--------------------------------------------------------------
+ { "a" : [ { "j" : [ { "x" : { "$numberInt" : "1" } } ] } ] }
+(1 row)
+
+SELECT pg_temp.facet_pipeline_sqlstate('[{"$match": {"_id": 1}}, {"$lookup": {"from": "_facet_test_foreign", "pipeline": [{"$facet": {"a": [{"$count": "n"}]}}], "as": "j"}}]') AS facet_without_facet_ancestor;
+ facet_without_facet_ancestor 
+------------------------------
+ 00000
+(1 row)
+
+DROP FUNCTION pg_temp.facet_pipeline_sqlstate(jsonb);
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$addFields": {"name": "$a.c"} }, { "$sort": { "a.b": 1, "name" : 1 } }, { "$facet": { "facet1" : [ { "$group": { "_id": "$a.b", "first": { "$first" : "$name" } } } ], "facet2" : [ { "$group": { "_id": "$a.b", "last": { "$last" : "$name" }}}]}} ] }');
                                                                                                                                                                                                                              document                                                                                                                                                                                                                              
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------

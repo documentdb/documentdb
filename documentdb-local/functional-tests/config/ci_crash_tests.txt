@@ -46,14 +46,6 @@ docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/window
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/window/stdDevSamp/test_window_stdDevSamp_numeric_precision.py::test_stdDevSamp_large_int64_near_max[documentdb]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/window/stdDevSamp/test_window_stdDevSamp_numeric_precision.py::test_stdDevSamp_large_int64_spread[documentdb]
 
-# A $facet sub-pipeline re-enters distributed execution from a query already
-# running on a shard, which the planner refuses. File level rather than one
-# case: the engine log names a fixture database shared by every case in the
-# file, and the cases finish within seconds of each other, so the log cannot
-# say which one it is. A file entry also keeps covering it once a pin bump
-# re-strides the legs.
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/facet/test_facet_errors.py
-
 # A non-inlined $lookup sub-pipeline leaves a correlated column out of the
 # GROUP BY it generates, so the query is rejected before it runs.
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/lookup/test_lookup_verbose_let_wiring.py

@@ -7,6 +7,8 @@
 * Enable the field-pruning `$project` injection before `$unwind` (the `enableProjectPushUpBeforeUnwindWithGroup` feature flag) by default now that it has stabilized. *[Perf]*
 * Fall back to a logical posting-tree sweep when inline RUM vacuum observes a concurrent root split, ensuring dead TIDs are removed from leaves allocated behind the disk-order cursor. *[Bugfix]*
 * Support collation with `distinct` command *[Feature]*
+* Prevent a backend crash by rejecting `$documents` directly inside a `$facet` sub-pipeline. *[Bugfix]*
+* Enforce `$facet` restrictions on `$collStats`, `$facet`, `$geoNear`, `$indexStats`, and `$planCacheStats` in nested `$lookup` and `$unionWith` pipelines while preserving parent-stage validation and valid collectionless pipelines. *[Bugfix]*
 
 ### documentdb v1.0-0 (Unreleased) ###
 * Release executable memory allocated for PCRE2 JIT-compiled regular expressions when their memory context resets. *[Bugfix]* (work item 5530914)

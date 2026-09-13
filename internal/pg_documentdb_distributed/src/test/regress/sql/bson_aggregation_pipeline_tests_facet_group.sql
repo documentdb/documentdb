@@ -30,6 +30,31 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_
 
 SELECT documentdb_api.shard_collection('db', 'agg_facet_group', '{ "_id": "hashed" }', false);
 
+-- $documents is a collectionless source stage and cannot appear inside a $facet sub-pipeline; reject at parse time.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$facet": { "a": [ { "$documents": [ { "x": 1 } ] } ] } } ] }');
+
+-- Exercise the cursor entry point used by wire-protocol aggregate commands.
+SELECT * FROM documentdb_api.aggregate_cursor_first_page('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$facet": { "a": [ { "$documents": [ { "x": 1 } ] } ] } } ], "cursor": {} }', 4294967294);
+
+SELECT * FROM documentdb_api.aggregate_cursor_first_page('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$facet": { "a": [ { "$lookup": { "from": "_facet_test_foreign", "let": {}, "pipeline": [ { "$indexStats": {} } ], "as": "j" } } ], "total": [ { "$count": "n" } ] } } ], "cursor": {} }', 4294967294);
+
+SELECT * FROM documentdb_api.aggregate_cursor_first_page('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$facet": { "a": [ { "$unionWith": { "coll": "_facet_test_foreign", "pipeline": [ { "$indexStats": {} } ] } } ], "total": [ { "$count": "n" } ] } } ], "cursor": {} }', 4294967294);
+
+SELECT * FROM documentdb_api.aggregate_cursor_first_page('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$facet": { "a": [ { "$lookup": { "from": "_facet_test_foreign", "let": {}, "pipeline": [ { "$collStats": {} } ], "as": "j" } } ] } } ], "cursor": {} }', 4294967294);
+
+SELECT * FROM documentdb_api.aggregate_cursor_first_page('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$facet": { "a": [ { "$lookup": { "from": "_facet_test_foreign", "let": {}, "pipeline": [ { "$geoNear": { "near": { "type": "Point", "coordinates": [0, 0] }, "distanceField": "d", "spherical": true } } ], "as": "j" } } ] } } ], "cursor": {} }', 4294967294);
+
+SELECT * FROM documentdb_api.aggregate_cursor_first_page('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$facet": { "a": [ { "$lookup": { "from": "_facet_test_foreign", "let": {}, "pipeline": [ { "$planCacheStats": {} } ], "as": "j" } } ] } } ], "cursor": {} }', 4294967294);
+
+SELECT * FROM documentdb_api.aggregate_cursor_first_page('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$facet": { "a": [ { "$lookup": { "from": "_facet_test_foreign", "let": {}, "pipeline": [ { "$facet": { "b": [ { "$match": {} } ] } } ], "as": "j" } } ] } } ], "cursor": {} }', 4294967294);
+
+SELECT * FROM documentdb_api.aggregate_cursor_first_page('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$facet": { "a": [ { "$unionWith": { "coll": "agg_facet_group", "pipeline": [ { "$facet": { "b": [ { "$count": "n" } ] } } ] } } ] } } ], "cursor": {} }', 4294967294);
+
+SELECT * FROM documentdb_api.aggregate_cursor_first_page('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$match": { "_id": "never" } }, { "$facet": { "a": [ { "$lookup": { "from": "_facet_test_foreign", "pipeline": [ { "$unionWith": { "coll": "_facet_test_foreign", "pipeline": [ { "$collStats": {} } ] } } ], "as": "j" } } ] } } ], "cursor": {} }', 4294967294);
+
+-- $documents remains valid inside a nested collectionless $unionWith pipeline.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$facet": { "a": [ { "$match": { "_id": "never" } }, { "$unionWith": { "pipeline": [ { "$documents": [ { "x": 1 } ] } ] } } ] } } ] }');
+
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$addFields": {"name": "$a.c"} }, { "$sort": { "a.b": 1, "name" : 1 } }, { "$facet": { "facet1" : [ { "$group": { "_id": "$a.b", "first": { "$first" : "$name" } } } ], "facet2" : [ { "$group": { "_id": "$a.b", "last": { "$last" : "$name" }}}]}} ] }');
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$addFields": {"name": "$a.c"} }, { "$sort": { "a.b": 1, "name" : 1 } }, { "$facet": { "facet1" : [ { "$group": { "_id": "$a.b", "first": { "$first" : "$name" } } } ], "facet1" : [ { "$group": { "_id": "$a.b", "last": { "$last" : "$name" }}}]}} ] }');

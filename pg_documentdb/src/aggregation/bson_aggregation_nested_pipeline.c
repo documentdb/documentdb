@@ -245,7 +245,35 @@ typedef struct InverseMatchArgs
 } InverseMatchArgs;
 
 
+typedef enum FacetRestrictionScope
+{
+	FacetRestrictionScope_DirectOnly,
+	FacetRestrictionScope_AllDescendants
+} FacetRestrictionScope;
+
+typedef struct FacetStageRule
+{
+	const char *stage;
+	FacetRestrictionScope scope;
+} FacetStageRule;
+
+static const FacetStageRule FacetStageRules[] = {
+	{ "$changeStream", FacetRestrictionScope_DirectOnly },
+	{ "$collStats", FacetRestrictionScope_AllDescendants },
+	{ "$documents", FacetRestrictionScope_DirectOnly },
+	{ "$facet", FacetRestrictionScope_AllDescendants },
+	{ "$geoNear", FacetRestrictionScope_AllDescendants },
+	{ "$indexStats", FacetRestrictionScope_AllDescendants },
+	{ "$merge", FacetRestrictionScope_DirectOnly },
+	{ "$out", FacetRestrictionScope_DirectOnly },
+	{ "$planCacheStats", FacetRestrictionScope_AllDescendants },
+	{ "$search", FacetRestrictionScope_DirectOnly }
+};
+
+
 static int ValidateFacet(const bson_value_t *facetValue);
+static const char * FindDisallowedFacetStage(const pgbsonelement *stageElement,
+											 FacetRestrictionScope scope);
 static Query * BuildFacetUnionAllQuery(int numStages, const bson_value_t *facetValue,
 									   CommonTableExpr *baseCte, QuerySource querySource,
 									   const bson_value_t *sortSpec,
@@ -1172,32 +1200,23 @@ ValidateFacet(const bson_value_t *facetValue)
 		EnsureTopLevelFieldValueType("$facet.pipeline", pipeline, BSON_TYPE_ARRAY);
 
 		numStages++;
-
 		bson_iter_t pipelineArray;
 		BsonValueInitIterator(pipeline, &pipelineArray);
-
-		/* These stages are not allowed when executing $facet */
 		while (bson_iter_next(&pipelineArray))
 		{
+			CHECK_FOR_INTERRUPTS();
 			pgbsonelement stageElement = GetPipelineStage(&pipelineArray, "facet", key);
-			const char *nestedPipelineStage = stageElement.path;
-			if (strcmp(nestedPipelineStage, "$collStats") == 0 ||
-				strcmp(nestedPipelineStage, "$facet") == 0 ||
-				strcmp(nestedPipelineStage, "$geoNear") == 0 ||
-				strcmp(nestedPipelineStage, "$indexStats") == 0 ||
-				strcmp(nestedPipelineStage, "$out") == 0 ||
-				strcmp(nestedPipelineStage, "$merge") == 0 ||
-				strcmp(nestedPipelineStage, "$planCacheStats") == 0 ||
-				strcmp(nestedPipelineStage, "$search") == 0 ||
-				strcmp(nestedPipelineStage, "$changeStream") == 0)
+			const char *disallowedStage = FindDisallowedFacetStage(&stageElement,
+																   FacetRestrictionScope_DirectOnly);
+			if (disallowedStage != NULL)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION40600),
 								errmsg(
 									"%s cannot be utilized within an operators facet processing stage",
-									nestedPipelineStage),
+									disallowedStage),
 								errdetail_log(
 									"%s cannot be utilized within an operators facet processing stage",
-									nestedPipelineStage)));
+									disallowedStage)));
 			}
 		}
 	}
@@ -1210,6 +1229,73 @@ ValidateFacet(const bson_value_t *facetValue)
 	}
 
 	return numStages;
+}
+
+
+static const char *
+FindDisallowedFacetStage(const pgbsonelement *stageElement, FacetRestrictionScope scope)
+{
+	check_stack_depth();
+	for (size_t ruleIndex = 0; ruleIndex < lengthof(FacetStageRules); ruleIndex++)
+	{
+		const FacetStageRule *rule = &FacetStageRules[ruleIndex];
+		if ((scope == FacetRestrictionScope_DirectOnly ||
+			 rule->scope == FacetRestrictionScope_AllDescendants) &&
+			strcmp(stageElement->path, rule->stage) == 0)
+		{
+			return rule->stage;
+		}
+	}
+
+	/*
+	 * Recurse through $lookup and $unionWith only: $facet is rejected above,
+	 * $graphLookup has no pipeline, and $inverseMatch only allows $match,
+	 * $project and $limit. Arbitrary fields named "pipeline" are not sub-pipelines.
+	 * Keep stage-specific parsing and validation to preserve error precedence.
+	 *
+	 * If more general-purpose sub-pipeline stages are supported, extend this
+	 * traversal and consider a stage-to-extractor table separate from
+	 * FacetStageRules.
+	 */
+	bson_value_t pipeline = { 0 };
+	if (strcmp(stageElement->path, "$lookup") == 0)
+	{
+		LookupArgs lookupArgs = { 0 };
+		ParseLookupStage(&stageElement->bsonValue, &lookupArgs);
+		pipeline = lookupArgs.pipeline;
+	}
+	else if (strcmp(stageElement->path, "$unionWith") == 0)
+	{
+		StringView collectionFrom = { 0 };
+		ParseUnionWith(&stageElement->bsonValue, &collectionFrom, &pipeline);
+		if (pipeline.value_type == BSON_TYPE_ARRAY)
+		{
+			bool hasCollection = collectionFrom.length != 0;
+			ValidateUnionWithPipeline(&pipeline, hasCollection);
+		}
+	}
+
+	if (pipeline.value_type != BSON_TYPE_ARRAY)
+	{
+		return NULL;
+	}
+
+	bson_iter_t pipelineIter;
+	BsonValueInitIterator(&pipeline, &pipelineIter);
+	while (bson_iter_next(&pipelineIter))
+	{
+		CHECK_FOR_INTERRUPTS();
+		pgbsonelement nestedStage = GetPipelineStage(&pipelineIter, stageElement->path,
+													 "pipeline");
+		const char *disallowedStage = FindDisallowedFacetStage(&nestedStage,
+															   FacetRestrictionScope_AllDescendants);
+		if (disallowedStage != NULL)
+		{
+			return disallowedStage;
+		}
+	}
+
+	return NULL;
 }
 
 
