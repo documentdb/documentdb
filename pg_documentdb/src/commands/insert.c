@@ -163,7 +163,6 @@ bool EnableCreateCollectionOnInsert = true;
 extern bool UseLocalExecutionShardQueries;
 extern bool EnableBypassDocumentValidation;
 extern int BatchUpdateLockTimeoutMs;
-extern bool EnableInsertDuplicateInlineHandling;
 
 /*
  * command_insert handles the insert command invocation through a PostgreSQL function.
@@ -992,8 +991,7 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 			}
 		}
 
-		if (EnableInsertDuplicateInlineHandling &&
-			hasBatchedInsertFailed && insertIndex >= insertIncrIndex)
+		if (hasBatchedInsertFailed && insertIndex >= insertIncrIndex)
 		{
 			elog_unredacted(
 				"Single-insert retries for the current sub-batch encountered %d failures",

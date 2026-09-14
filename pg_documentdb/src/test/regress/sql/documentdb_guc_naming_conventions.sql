@@ -70,7 +70,6 @@ INSERT INTO documentdb_guc_naming_baseline (name) VALUES
     ('documentdb.enableIndexMetadataGlobalTracking'),
     ('documentdb.enableIndexOnlyScanForFindProject'),
     ('documentdb.enableIndexPathKeySummarization'),
-    ('documentdb.enableInsertDuplicateInlineHandling'),
     ('documentdb.enableMultiIndexRumJoin'),
     ('documentdb.enableNativeColocation'),
     ('documentdb.enableNewMinMaxAccumulators'),

@@ -6,7 +6,6 @@ SET documentdb.next_collection_index_id TO 25830000;
 -- Tests for bulk insert behavior with duplicate _id values.
 -- Validates correctness (n, writeErrors count) across:
 --   - Different duplicate ratios (0%, 10%, 50%, 100%)
---   - GUC enableInsertDuplicateInlineHandling ON vs OFF
 --   - ordered:true vs ordered:false
 --   - Multiple batch sizes (1, 10, 100)
 -- ============================================================
@@ -28,8 +27,6 @@ $$ LANGUAGE SQL;
 -- Part 1: Baseline — ordered:false, GUC ON (default)
 -- ============================================================
 \echo '--- Part 1: GUC ON, ordered:false ---'
-
-SET documentdb.enableInsertDuplicateInlineHandling = ON;
 
 SELECT documentdb_api.create_collection('insertdupdb', 'dup_test');
 
@@ -67,57 +64,11 @@ SELECT COUNT(*) AS total_docs FROM documentdb_api.collection('insertdupdb', 'dup
 
 SELECT documentdb_api.drop_collection('insertdupdb', 'dup_test');
 
-
 -- ============================================================
--- Part 2: GUC OFF, ordered:false — same scenarios
--- ============================================================
-\echo '--- Part 2: GUC OFF, ordered:false ---'
-
-SET documentdb.enableInsertDuplicateInlineHandling = OFF;
-
-SELECT documentdb_api.create_collection('insertdupdb', 'dup_test');
-
--- 2a: Insert 10 unique documents
-SELECT * FROM pg_temp.do_insert('insertdupdb',
-    '{"insert": "dup_test", "ordered": false, "documents": [
-        {"_id": 1}, {"_id": 2}, {"_id": 3}, {"_id": 4}, {"_id": 5},
-        {"_id": 6}, {"_id": 7}, {"_id": 8}, {"_id": 9}, {"_id": 10}
-    ]}');
-
--- 2b: 100% duplicates
-SELECT * FROM pg_temp.do_insert('insertdupdb',
-    '{"insert": "dup_test", "ordered": false, "documents": [
-        {"_id": 1}, {"_id": 2}, {"_id": 3}, {"_id": 4}, {"_id": 5},
-        {"_id": 6}, {"_id": 7}, {"_id": 8}, {"_id": 9}, {"_id": 10}
-    ]}');
-
--- 2c: 50% duplicates
-SELECT * FROM pg_temp.do_insert('insertdupdb',
-    '{"insert": "dup_test", "ordered": false, "documents": [
-        {"_id": 1}, {"_id": 2}, {"_id": 3}, {"_id": 4}, {"_id": 5},
-        {"_id": 11}, {"_id": 12}, {"_id": 13}, {"_id": 14}, {"_id": 15}
-    ]}');
-
--- 2d: 10% duplicate
-SELECT * FROM pg_temp.do_insert('insertdupdb',
-    '{"insert": "dup_test", "ordered": false, "documents": [
-        {"_id": 1},
-        {"_id": 16}, {"_id": 17}, {"_id": 18}, {"_id": 19}, {"_id": 20},
-        {"_id": 21}, {"_id": 22}, {"_id": 23}, {"_id": 24}
-    ]}');
-
--- Verify same total: 24
-SELECT COUNT(*) AS total_docs FROM documentdb_api.collection('insertdupdb', 'dup_test');
-
-SELECT documentdb_api.drop_collection('insertdupdb', 'dup_test');
-
-
--- ============================================================
--- Part 3: ordered:true — duplicates stop further inserts
+-- Part 2: ordered:true — duplicates stop further inserts
 -- ============================================================
 \echo '--- Part 3: ordered:true, duplicate stops batch ---'
 
-SET documentdb.enableInsertDuplicateInlineHandling = ON;
 
 SELECT documentdb_api.create_collection('insertdupdb', 'dup_test');
 
@@ -138,29 +89,12 @@ SELECT * FROM pg_temp.do_insert('insertdupdb',
 -- Verify: 5 original + 2 new (6,7) = 7
 SELECT COUNT(*) AS total_docs FROM documentdb_api.collection('insertdupdb', 'dup_test');
 
--- Same test with GUC OFF
-SET documentdb.enableInsertDuplicateInlineHandling = OFF;
-
-SELECT * FROM pg_temp.do_insert('insertdupdb',
-    '{"insert": "dup_test", "ordered": true, "documents": [
-        {"_id": 10}, {"_id": 11},
-        {"_id": 1},
-        {"_id": 12}, {"_id": 13}
-    ]}');
-
--- Verify: 7 + 2 new (10,11) = 9
-SELECT COUNT(*) AS total_docs FROM documentdb_api.collection('insertdupdb', 'dup_test');
-
 SELECT documentdb_api.drop_collection('insertdupdb', 'dup_test');
 
-
 -- ============================================================
--- Part 4: Larger batches — 100 docs with various dup ratios
+-- Part 3: Larger batches — 100 docs with various dup ratios
 -- ============================================================
-\echo '--- Part 4: 100-doc batches ---'
-
-SET documentdb.enableInsertDuplicateInlineHandling = ON;
-
+\echo '--- Part 3: 100-doc batches ---'
 SELECT documentdb_api.create_collection('insertdupdb', 'dup_test');
 
 -- Populate 100 unique docs (ids 1-100)
@@ -218,77 +152,11 @@ SELECT COUNT(*) AS total_docs FROM documentdb_api.collection('insertdupdb', 'dup
 SELECT documentdb_api.drop_collection('insertdupdb', 'dup_test');
 
 
--- ============================================================
--- Part 5: Same 100-doc batches with GUC OFF
--- ============================================================
-\echo '--- Part 5: 100-doc batches, GUC OFF ---'
-
-SET documentdb.enableInsertDuplicateInlineHandling = OFF;
-
-SELECT documentdb_api.create_collection('insertdupdb', 'dup_test');
-
--- Populate 100
-SELECT * FROM pg_temp.do_insert('insertdupdb',
-    documentdb_core.bson_build_document(
-        'insert', 'dup_test'::text,
-        'ordered', false,
-        'documents', (SELECT array_agg(documentdb_core.bson_build_document('_id', i))
-                      FROM generate_series(1, 100) i)
-    ));
-
--- 0% dups
-SELECT * FROM pg_temp.do_insert('insertdupdb',
-    documentdb_core.bson_build_document(
-        'insert', 'dup_test'::text,
-        'ordered', false,
-        'documents', (SELECT array_agg(documentdb_core.bson_build_document('_id', i))
-                      FROM generate_series(101, 200) i)
-    ));
-
--- 10% dups
-SELECT * FROM pg_temp.do_insert('insertdupdb',
-    documentdb_core.bson_build_document(
-        'insert', 'dup_test'::text,
-        'ordered', false,
-        'documents', (SELECT array_agg(documentdb_core.bson_build_document('_id', i))
-                      FROM (SELECT i FROM generate_series(1, 10) i
-                            UNION ALL
-                            SELECT i FROM generate_series(201, 290) i) sub)
-    ));
-
--- 50% dups
-SELECT * FROM pg_temp.do_insert('insertdupdb',
-    documentdb_core.bson_build_document(
-        'insert', 'dup_test'::text,
-        'ordered', false,
-        'documents', (SELECT array_agg(documentdb_core.bson_build_document('_id', i))
-                      FROM (SELECT i FROM generate_series(1, 50) i
-                            UNION ALL
-                            SELECT i FROM generate_series(291, 340) i) sub)
-    ));
-
--- 100% dups
-SELECT * FROM pg_temp.do_insert('insertdupdb',
-    documentdb_core.bson_build_document(
-        'insert', 'dup_test'::text,
-        'ordered', false,
-        'documents', (SELECT array_agg(documentdb_core.bson_build_document('_id', i))
-                      FROM generate_series(1, 100) i)
-    ));
-
--- Same total: 340
-SELECT COUNT(*) AS total_docs FROM documentdb_api.collection('insertdupdb', 'dup_test');
-
-SELECT documentdb_api.drop_collection('insertdupdb', 'dup_test');
-
 
 -- ============================================================
--- Part 6: Single-doc batch with duplicate
+-- Part 5: Single-doc batch with duplicate
 -- ============================================================
-\echo '--- Part 6: Single-doc batches ---'
-
-SET documentdb.enableInsertDuplicateInlineHandling = ON;
-
+\echo '--- Part 5: Single-doc batches ---'
 SELECT documentdb_api.create_collection('insertdupdb', 'dup_test');
 
 -- Insert a doc
@@ -299,22 +167,13 @@ SELECT * FROM pg_temp.do_insert('insertdupdb',
 SELECT * FROM pg_temp.do_insert('insertdupdb',
     '{"insert": "dup_test", "ordered": false, "documents": [{"_id": 1}]}');
 
--- Same with GUC OFF
-SET documentdb.enableInsertDuplicateInlineHandling = OFF;
 
-SELECT * FROM pg_temp.do_insert('insertdupdb',
-    '{"insert": "dup_test", "ordered": false, "documents": [{"_id": 1}]}');
-
--- Still only 1 doc
-SELECT COUNT(*) AS total_docs FROM documentdb_api.collection('insertdupdb', 'dup_test');
-
-SELECT documentdb_api.drop_collection('insertdupdb', 'dup_test');
 
 
 -- ============================================================
--- Part 7: Repeated duplicates on the same secondary index
+-- Part 6: Repeated duplicates on the same secondary index
 -- ============================================================
-\echo '--- Part 7: Secondary-index duplicate errors ---'
+\echo '--- Part 6: Secondary-index duplicate errors ---'
 
 SELECT documentdb_api.create_collection('insertdupdb', 'secondary_dup_test');
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
@@ -369,6 +228,3 @@ SELECT documentdb_api.drop_collection('insertdupdb', 'secondary_dup_test');
 -- Cleanup
 -- ============================================================
 SELECT documentdb_api.drop_database('insertdupdb');
-
--- Reset GUC
-RESET documentdb.enableInsertDuplicateInlineHandling;

@@ -550,11 +550,6 @@ bool EnableCompactVacuumFull = DEFAULT_ENABLE_COMPACT_VACUUM_FULL;
 bool EnableNewNamespaceValidation =
 	DEFAULT_ENABLE_NEW_NAMESPACE_VALIDATION;
 
-/* Added in v0.114, enabled in v0.114, remove after v0.116 */
-#define DEFAULT_ENABLE_INSERT_DUPLICATE_INLINE_HANDLING true
-bool EnableInsertDuplicateInlineHandling =
-	DEFAULT_ENABLE_INSERT_DUPLICATE_INLINE_HANDLING;
-
 /*
  * SECTION: Write path feature flags
  */
@@ -1429,14 +1424,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable new namespace validation."),
 		NULL, &EnableNewNamespaceValidation,
 		DEFAULT_ENABLE_NEW_NAMESPACE_VALIDATION,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableInsertDuplicateInlineHandling", newGucPrefix),
-		gettext_noop(
-			"Whether to enable inline handling of duplicate inserts."),
-		NULL, &EnableInsertDuplicateInlineHandling,
-		DEFAULT_ENABLE_INSERT_DUPLICATE_INLINE_HANDLING,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
