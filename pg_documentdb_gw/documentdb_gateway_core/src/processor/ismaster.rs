@@ -63,7 +63,7 @@ pub fn process(
         "localTime": local_time,
         "logicalSessionTimeoutMinutes": 30,
         "minWireVersion": 0,
-        "maxWireVersion": dynamic_configuration.server_version().max_wire_protocol(),
+        "maxWireVersion": dynamic_configuration.max_wire_version(),
         "readOnly": dynamic_configuration.read_only(),
         "connectionId": connection_context.get_connection_id_hash(),
         "saslSupportedMechs": ["SCRAM-SHA-256"],
