@@ -161,8 +161,12 @@ async fn pool_backend_error_converts_to_pool_kind_documentdb_error() {
 
     let error = DocumentDBError::from(pool_error);
 
-    assert_eq!(error.error_code(), ErrorCode::InternalError);
+    assert_eq!(error.error_code(), ErrorCode::HostUnreachable);
     assert_eq!(error.kind(), &ErrorKind::Pool);
+    assert_eq!(
+        error.error_message_user(),
+        "Could not establish a connection to the server."
+    );
     // The Backend arm stores the inner tokio_postgres error as the source, so it
     // downcasts to a postgres error rather than back to a PoolError.
     let pg_error = error

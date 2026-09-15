@@ -144,6 +144,11 @@ impl DocumentDBError {
     }
 
     #[must_use]
+    pub fn postgres_io_error_kind(&self) -> Option<io::ErrorKind> {
+        self.as_postgres_error().and_then(backend_io_error_kind)
+    }
+
+    #[must_use]
     pub fn as_pool_error(&self) -> Option<&PoolError> {
         self.0
             .source
@@ -409,6 +414,40 @@ impl From<io::Error> for DocumentDBError {
     }
 }
 
+pub(crate) const fn is_connection_closed_error_kind(kind: io::ErrorKind) -> bool {
+    matches!(
+        kind,
+        io::ErrorKind::UnexpectedEof
+            | io::ErrorKind::BrokenPipe
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::NotConnected
+            | io::ErrorKind::TimedOut
+    )
+}
+
+pub(crate) const fn is_transient_backend_io_error(kind: io::ErrorKind) -> bool {
+    is_connection_closed_error_kind(kind)
+        || matches!(
+            kind,
+            io::ErrorKind::ConnectionRefused | io::ErrorKind::HostUnreachable
+        )
+}
+
+pub(crate) fn backend_io_error_kind(error: &tokio_postgres::Error) -> Option<io::ErrorKind> {
+    use std::error::Error;
+
+    let mut source = error.source();
+    while let Some(error) = source {
+        if let Some(io_error) = error.downcast_ref::<io::Error>() {
+            return Some(io_error.kind());
+        }
+        source = error.source();
+    }
+
+    None
+}
+
 impl From<tokio_postgres::Error> for DocumentDBError {
     fn from(error: tokio_postgres::Error) -> Self {
         Self::new_documentdb_error(
@@ -488,9 +527,23 @@ impl From<PoolError> for DocumentDBError {
                     let error_message = format!("Pool error due to database error: {db_error}");
                     map_pool_db_error_code(&state, error_message, Box::new(pg_error))
                 } else {
+                    let is_connectivity_error = pg_error.is_closed()
+                        || backend_io_error_kind(&pg_error)
+                            .is_some_and(is_transient_backend_io_error);
+                    let error_code = if is_connectivity_error {
+                        ErrorCode::HostUnreachable
+                    } else {
+                        ErrorCode::InternalError
+                    };
+                    let error_message_user = if is_connectivity_error {
+                        "Could not establish a connection to the server.".to_owned()
+                    } else {
+                        generic_internal_error_message().to_owned()
+                    };
+
                     Self::new_documentdb_error(
-                        ErrorCode::InternalError,
-                        generic_internal_error_message().to_owned(),
+                        error_code,
+                        error_message_user,
                         Some(format!(
                             "Pool error due to generic postgres error: {pg_error}"
                         )),
@@ -605,6 +658,8 @@ impl std::error::Error for DocumentDBError {}
 #[cfg(test)]
 mod tests {
     use deadpool::managed::TimeoutType;
+    use tokio::net::TcpListener;
+    use tokio_postgres::NoTls;
 
     use super::*;
 
@@ -647,6 +702,39 @@ mod tests {
     #[test]
     fn from_pool_error_create_timeout_uses_other_branch() {
         assert_other_branch(PoolError::Timeout(TimeoutType::Create));
+    }
+
+    #[tokio::test]
+    async fn from_pool_backend_connectivity_error_maps_to_host_unreachable() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let accept_task = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            drop(socket);
+        });
+
+        let connection_string = format!("host=127.0.0.1 port={port} user=test connect_timeout=1");
+        let Err(pg_error) = tokio_postgres::connect(&connection_string, NoTls).await else {
+            panic!("connection should fail when the server closes during startup");
+        };
+        accept_task.await.unwrap();
+
+        let error = DocumentDBError::from(PoolError::Backend(pg_error));
+
+        assert_eq!(error.error_code(), ErrorCode::HostUnreachable);
+        assert_eq!(*error.kind(), ErrorKind::Pool);
+        assert_eq!(
+            error.error_message_user(),
+            "Could not establish a connection to the server."
+        );
+        assert!(
+            error.as_postgres_error().is_some(),
+            "postgres source should be preserved"
+        );
+        assert!(
+            error.postgres_io_error_kind().is_some(),
+            "transport error kind should be available for diagnostics"
+        );
     }
 
     /// A recognized connection-exhaustion `SqlState` is remapped to

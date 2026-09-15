@@ -22,7 +22,7 @@ use tokio::{
 };
 
 use crate::{
-    error::{DocumentDBError, Result},
+    error::{is_connection_closed_error_kind, DocumentDBError, Result},
     protocol::{
         bson_scanner,
         header::Header,
@@ -35,18 +35,6 @@ use crate::{
         RequestPreview, RequestType, StrictRequestInfo, WireRequest, WireRequestFrame,
     },
 };
-
-const fn is_connection_closed_error_kind(kind: ErrorKind) -> bool {
-    matches!(
-        kind,
-        ErrorKind::UnexpectedEof
-            | ErrorKind::BrokenPipe
-            | ErrorKind::ConnectionReset
-            | ErrorKind::ConnectionAborted
-            | ErrorKind::NotConnected
-            | ErrorKind::TimedOut
-    )
-}
 
 pub(crate) fn is_connection_closed_error(error: &DocumentDBError) -> bool {
     error

@@ -16,7 +16,9 @@ use tokio_postgres::error::SqlState;
 use crate::{
     configuration::DynamicConfiguration,
     context::RequestContext,
-    error::{DocumentDBError, ErrorCode, Result},
+    error::{
+        backend_io_error_kind, is_transient_backend_io_error, DocumentDBError, ErrorCode, Result,
+    },
     postgres::conn_mgmt::{
         connection::{Connection, QueryOptions, RequestOptions},
         retry_policies::{LongRetryPolicy, RetryPolicyBuilder, ShortRetryPolicy},
@@ -61,44 +63,12 @@ struct RetryContext {
     long_retry_policy: Option<LongRetryPolicy>,
 }
 
-const fn is_transient_io_error(kind: io::ErrorKind) -> bool {
-    matches!(
-        kind,
-        io::ErrorKind::TimedOut
-            | io::ErrorKind::BrokenPipe
-            | io::ErrorKind::ConnectionAborted
-            | io::ErrorKind::ConnectionRefused
-            | io::ErrorKind::ConnectionReset
-            | io::ErrorKind::HostUnreachable
-            | io::ErrorKind::NotConnected
-            | io::ErrorKind::UnexpectedEof
-    )
-}
-
 fn is_connectivity_error(error: &tokio_postgres::Error) -> bool {
-    use std::error::Error;
-
-    let mut source = error.source();
-    while let Some(err) = source {
-        if let Some(io_err) = err.downcast_ref::<io::Error>() {
-            return is_transient_io_error(io_err.kind());
-        }
-        source = err.source();
-    }
-    false
+    backend_io_error_kind(error).is_some_and(is_transient_backend_io_error)
 }
 
 fn is_timeout_error(error: &tokio_postgres::Error) -> bool {
-    use std::error::Error;
-
-    let mut source = error.source();
-    while let Some(err) = source {
-        if let Some(io_err) = err.downcast_ref::<io::Error>() {
-            return io_err.kind() == io::ErrorKind::TimedOut;
-        }
-        source = err.source();
-    }
-    false
+    backend_io_error_kind(error).is_some_and(|kind| kind == io::ErrorKind::TimedOut)
 }
 
 fn classify_retry(
@@ -676,52 +646,58 @@ mod tests {
 
     #[test]
     fn test_is_transient_io_error_with_timed_out_returns_true() {
-        assert!(is_transient_io_error(io::ErrorKind::TimedOut));
+        assert!(is_transient_backend_io_error(io::ErrorKind::TimedOut));
     }
 
     #[test]
     fn test_is_transient_io_error_with_connection_reset_returns_true() {
-        assert!(is_transient_io_error(io::ErrorKind::ConnectionReset));
+        assert!(is_transient_backend_io_error(
+            io::ErrorKind::ConnectionReset
+        ));
     }
 
     #[test]
     fn test_is_transient_io_error_with_connection_aborted_returns_true() {
-        assert!(is_transient_io_error(io::ErrorKind::ConnectionAborted));
+        assert!(is_transient_backend_io_error(
+            io::ErrorKind::ConnectionAborted
+        ));
     }
 
     #[test]
     fn test_is_transient_io_error_with_not_connected_returns_true() {
-        assert!(is_transient_io_error(io::ErrorKind::NotConnected));
+        assert!(is_transient_backend_io_error(io::ErrorKind::NotConnected));
     }
 
     #[test]
     fn test_is_transient_io_error_with_broken_pipe_returns_true() {
-        assert!(is_transient_io_error(io::ErrorKind::BrokenPipe));
+        assert!(is_transient_backend_io_error(io::ErrorKind::BrokenPipe));
     }
 
     #[test]
     fn test_is_transient_io_error_with_unexpected_eof_returns_true() {
-        assert!(is_transient_io_error(io::ErrorKind::UnexpectedEof));
+        assert!(is_transient_backend_io_error(io::ErrorKind::UnexpectedEof));
     }
 
     #[test]
     fn test_is_transient_io_error_with_permission_denied_returns_false() {
-        assert!(!is_transient_io_error(io::ErrorKind::PermissionDenied));
+        assert!(!is_transient_backend_io_error(
+            io::ErrorKind::PermissionDenied
+        ));
     }
 
     #[test]
     fn test_is_transient_io_error_with_not_found_returns_false() {
-        assert!(!is_transient_io_error(io::ErrorKind::NotFound));
+        assert!(!is_transient_backend_io_error(io::ErrorKind::NotFound));
     }
 
     #[test]
     fn test_is_transient_io_error_with_addr_in_use_returns_false() {
-        assert!(!is_transient_io_error(io::ErrorKind::AddrInUse));
+        assert!(!is_transient_backend_io_error(io::ErrorKind::AddrInUse));
     }
 
     #[test]
     fn test_is_transient_io_error_with_would_block_returns_false() {
-        assert!(!is_transient_io_error(io::ErrorKind::WouldBlock));
+        assert!(!is_transient_backend_io_error(io::ErrorKind::WouldBlock));
     }
 
     // ── classify_retry: closed connection ──────────────────────────────
