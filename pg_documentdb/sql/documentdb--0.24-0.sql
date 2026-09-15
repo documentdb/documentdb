@@ -243,3 +243,8 @@ CREATE SCHEMA documentdb_data;
  */
 #include "schema/background_index_queue--0.11-0.sql"
 #include "schema/background_index_queue--0.14-0.sql"
+
+/*
+ * Region: pg_dump configuration
+ */
+#include "schema/extension_config_dump--0.24-0.sql"

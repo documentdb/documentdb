@@ -729,7 +729,7 @@ This split is deliberate because the design also explicitly does **not** provide
 
 There is no `documentdb-local-migrate N M` command for major-version upgrades. Private stand-alone PostgreSQL instances are intentionally outside `postgresql-common`'s cluster discovery model, so `pg_upgradecluster` does not apply.
 
-**Workaround:** install both majors side-by-side (`documentdb-N` and `documentdb-M`), run `documentdb-setup` for each, migrate application data through the wire protocol or `pg_dump`/`pg_restore`, then decommission the old stand-alone-package-owned private major with `documentdb-local-reset --pg-version N --confirm-destroy`.
+**Workaround:** install both majors side-by-side (`documentdb-N` and `documentdb-M`), run `documentdb-setup` for each, migrate application data through the wire protocol or `pg_dump`/`pg_restore` (restore into `postgres` on the same major), then decommission the old stand-alone-package-owned private major with `documentdb-local-reset --pg-version N --confirm-destroy`.
 
 ### 10.3 First-user bootstrap for Workflow A/B
 
