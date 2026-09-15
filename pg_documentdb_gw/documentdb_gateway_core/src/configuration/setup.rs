@@ -206,7 +206,7 @@ impl DocumentDBSetupConfiguration {
     /// Returns whether the v2 gateway runtime is enabled.
     #[must_use]
     pub fn enable_v2_runtime(&self) -> bool {
-        self.enable_v2_runtime.unwrap_or(false)
+        self.enable_v2_runtime.unwrap_or(true)
     }
 
     /// Load configuration strictly from a JSON file.

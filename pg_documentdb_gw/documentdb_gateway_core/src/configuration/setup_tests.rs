@@ -46,8 +46,8 @@ impl Drop for TempPath {
 }
 
 #[test]
-fn v2_runtime_is_disabled_by_default() {
-    assert!(!DocumentDBSetupConfiguration::default().enable_v2_runtime());
+fn v2_runtime_is_enabled_by_default() {
+    assert!(DocumentDBSetupConfiguration::default().enable_v2_runtime());
 }
 
 #[test]
