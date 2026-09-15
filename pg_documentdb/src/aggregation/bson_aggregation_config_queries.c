@@ -47,6 +47,8 @@ static Query * GenerateUsersQuery(AggregationPipelineBuildContext *context);
 static SQLValueFunction * MakeCurrentUserNameExpr(void);
 static Expr * MakeCurrentUserTextExpr(void);
 static Expr * MakeIsCurrentUserMemberOfRoleExpr(Expr *roleName);
+static Expr * MakeHasRolePrivsExpr(Expr *memberOid, Expr *roleOid);
+static Expr * MakeCurrentUserHasRolePrivsExpr(Expr *roleName);
 static ParseNamespaceItem * AddCallerCheckedRte(ParseState *parseState, const
 												char *schemaName, const
 												char *relationName,
@@ -593,7 +595,7 @@ GenerateRolesQuery(AggregationPipelineBuildContext *context)
 	AttrNumber roleNameAttributeNumber = get_attnum(rte->relid, "role_name");
 	Var *roleName = makeVar(1, roleNameAttributeNumber, TEXTOID, -1,
 							DEFAULT_COLLATION_OID, 0);
-	Expr *roleMembershipQual = MakeIsCurrentUserMemberOfRoleExpr(
+	Expr *roleMembershipQual = MakeCurrentUserHasRolePrivsExpr(
 		(Expr *) roleName);
 
 	bool missingOk = true;
@@ -703,7 +705,6 @@ GenerateUsersQuery(AggregationPipelineBuildContext *context)
 	AttrNumber usersCanLoginAttnum = get_attnum(usersItem->p_rte->relid, "rolcanlogin");
 	AttrNumber memberAttnum = get_attnum(membersItem->p_rte->relid, "member");
 	AttrNumber roleIdAttnum = get_attnum(membersItem->p_rte->relid, "roleid");
-	AttrNumber adminOptionAttnum = get_attnum(membersItem->p_rte->relid, "admin_option");
 	AttrNumber parentOidAttnum = get_attnum(parentItem->p_rte->relid, "oid");
 	AttrNumber parentNameAttnum = get_attnum(parentItem->p_rte->relid, "rolname");
 	AttrNumber customRoleNameAttnum = get_attnum(customRolesItem->p_rte->relid,
@@ -719,8 +720,6 @@ GenerateUsersQuery(AggregationPipelineBuildContext *context)
 						  InvalidOid, 0);
 	Var *roleId = makeVar(membersItem->p_rtindex, roleIdAttnum, OIDOID, -1,
 						  InvalidOid, 0);
-	Var *adminOption = makeVar(membersItem->p_rtindex, adminOptionAttnum, BOOLOID, -1,
-							   InvalidOid, 0);
 	Var *parentOid = makeVar(parentItem->p_rtindex, parentOidAttnum, OIDOID, -1,
 							 InvalidOid, 0);
 	Var *parentName = makeVar(parentItem->p_rtindex, parentNameAttnum, NAMEOID, -1,
@@ -780,9 +779,20 @@ GenerateUsersQuery(AggregationPipelineBuildContext *context)
 	customRoleExists->nulltesttype = IS_NOT_NULL;
 	customRoleExists->argisrow = false;
 
-	Expr *nonAdministrativeMembershipQual = (Expr *) makeBoolExpr(
-		NOT_EXPR, list_make1(adminOption), -1);
-	List *usersQuals = list_make2(customRoleExists, nonAdministrativeMembershipQual);
+	/*
+	 * PostgreSQL 16 and later records a membership for the role that runs
+	 * CREATE ROLE when that role is not a superuser. It carries ADMIN OPTION
+	 * but neither INHERIT nor SET, so it only allows administering the new role
+	 * and confers none of its privileges. Report a membership only when the
+	 * member actually has the privileges of the role.
+	 *
+	 * Testing ADMIN OPTION alone is not sufficient, because an explicit
+	 * GRANT ... WITH ADMIN OPTION both confers the role and sets that flag, and
+	 * would otherwise be hidden.
+	 */
+	Expr *membershipConfersRoleQual = MakeHasRolePrivsExpr((Expr *) member,
+														   (Expr *) roleId);
+	List *usersQuals = list_make2(customRoleExists, membershipConfersRoleQual);
 	bool missingOk = true;
 	if (OidIsValid(get_role_oid(ApiRootRole, missingOk)))
 	{
@@ -868,6 +878,15 @@ GenerateUsersQuery(AggregationPipelineBuildContext *context)
 
 	query = HandleGroup(&groupValue, query, context);
 
+	/*
+	 * The grouping stage leaves aggregates in the target list. A later stage
+	 * such as a user supplied filter adds its quals to the current query level,
+	 * and those quals reference the grouped output. Push the grouping into a
+	 * subquery so that any such qual is applied above the aggregation instead
+	 * of landing in a plan node that cannot evaluate an aggregate.
+	 */
+	query = MigrateQueryToSubQuery(query, context);
+
 	return query;
 }
 
@@ -900,6 +919,85 @@ MakeIsCurrentUserMemberOfRoleExpr(Expr *roleName)
 		list_make3(MakeCurrentUserNameExpr(), CoerceTextToName(roleName),
 				   MakeTextConst("MEMBER", 6)),
 		InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+}
+
+
+/*
+ * Builds a test for whether the member actually holds the role, rather than
+ * merely being recorded as a member of it.
+ *
+ * This is deliberately stricter than the 'MEMBER' privilege. On PostgreSQL 16
+ * and later, the membership automatically recorded for the role that runs
+ * CREATE ROLE satisfies 'MEMBER' even though it carries neither INHERIT nor
+ * SET and confers none of the role's privileges, so 'MEMBER' would report every
+ * role an administrator defines as a role they hold.
+ *
+ * A membership confers the role when its privileges are inherited, reported as
+ * 'USAGE', or when the member may assume the role with SET ROLE, reported as
+ * 'SET'. Testing both covers a grant made WITH INHERIT FALSE, SET TRUE, which
+ * does confer the role, while still excluding the automatic membership.
+ *
+ * PostgreSQL 15 records no automatic membership, so every recorded membership is
+ * an explicit grant that confers the role. It also has no 'SET' privilege
+ * string, which makes a grant to a NOINHERIT member indistinguishable from one
+ * that confers nothing. Testing 'USAGE' there would hide those memberships
+ * without excluding anything, so PostgreSQL 15 keeps the 'MEMBER' test.
+ */
+static Expr *
+MakeHasRolePrivsExpr(Expr *memberOid, Expr *roleOid)
+{
+#if PG_VERSION_NUM >= 160000
+	Expr *usageExpr = (Expr *) makeFuncExpr(
+		F_PG_HAS_ROLE_OID_OID_TEXT, BOOLOID,
+		list_make3(memberOid, roleOid, MakeTextConst("USAGE", 5)),
+		InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+
+	Expr *setExpr = (Expr *) makeFuncExpr(
+		F_PG_HAS_ROLE_OID_OID_TEXT, BOOLOID,
+		list_make3(copyObject(memberOid), copyObject(roleOid),
+				   MakeTextConst("SET", 3)),
+		InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+
+	return (Expr *) makeBoolExpr(OR_EXPR, list_make2(usageExpr, setExpr), -1);
+#else
+	return (Expr *) makeFuncExpr(
+		F_PG_HAS_ROLE_OID_OID_TEXT, BOOLOID,
+		list_make3(memberOid, roleOid, MakeTextConst("MEMBER", 6)),
+		InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+#endif
+}
+
+
+/*
+ * Builds the same test as MakeHasRolePrivsExpr for the current user against a
+ * role named by text. See MakeHasRolePrivsExpr for why this is stricter than
+ * the 'MEMBER' privilege.
+ */
+static Expr *
+MakeCurrentUserHasRolePrivsExpr(Expr *roleName)
+{
+#if PG_VERSION_NUM >= 160000
+	Expr *usageExpr = (Expr *) makeFuncExpr(
+		F_PG_HAS_ROLE_NAME_NAME_TEXT, BOOLOID,
+		list_make3(MakeCurrentUserNameExpr(), CoerceTextToName(roleName),
+				   MakeTextConst("USAGE", 5)),
+		InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+
+	Expr *setExpr = (Expr *) makeFuncExpr(
+		F_PG_HAS_ROLE_NAME_NAME_TEXT, BOOLOID,
+		list_make3(MakeCurrentUserNameExpr(),
+				   CoerceTextToName((Expr *) copyObject(roleName)),
+				   MakeTextConst("SET", 3)),
+		InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+
+	return (Expr *) makeBoolExpr(OR_EXPR, list_make2(usageExpr, setExpr), -1);
+#else
+	return (Expr *) makeFuncExpr(
+		F_PG_HAS_ROLE_NAME_NAME_TEXT, BOOLOID,
+		list_make3(MakeCurrentUserNameExpr(), CoerceTextToName(roleName),
+				   MakeTextConst("MEMBER", 6)),
+		InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+#endif
 }
 
 

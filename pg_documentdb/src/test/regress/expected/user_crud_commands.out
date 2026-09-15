@@ -977,3 +977,65 @@ SELECT documentdb_api.users_info('{"usersInfo":"documentdb_readonly_role", "$db"
 (1 row)
 
 DROP FUNCTION documentdb_test_helpers.test_is_reserved_role_name(text);
+-- A role that a user merely created must not be reported as a role the user holds.
+-- PostgreSQL 16 and later records a membership for the role that runs CREATE ROLE
+-- carrying ADMIN OPTION but neither INHERIT nor SET, so it confers none of the new
+-- role's privileges. connectionStatus resolves the caller's role by picking the
+-- first membership in name order, so such a membership on a name that sorts early
+-- would otherwise displace the role the user actually holds.
+SET documentdb.enableRoleCrud TO ON;
+SET documentdb.enableRolesAdminDBCheck TO ON;
+CREATE ROLE "connStatusRoleCreator" LOGIN CREATEROLE;
+GRANT documentdb_admin_role TO "connStatusRoleCreator";
+GRANT SELECT ON documentdb_api_catalog.roles TO "connStatusRoleCreator";
+-- Baseline: the creator reports readWriteAnyDatabase and clusterAdmin.
+SET ROLE "connStatusRoleCreator";
+SELECT documentdb_api.connection_status('{"connectionStatus": 1, "$db":"admin"}');
+                                                                                                                          connection_status                                                                                                                           
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "authInfo" : { "authenticatedUsers" : [ { "user" : "connStatusRoleCreator", "db" : "admin" } ], "authenticatedUserRoles" : [ { "role" : "readWriteAnyDatabase", "db" : "admin" }, { "role" : "clusterAdmin", "db" : "admin" } ] }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- aaaConnStatusCreatedRole sorts before documentdb_admin_role, so an unfiltered
+-- membership would win the ordering and blank out the reported roles.
+SELECT documentdb_api.create_role(
+    '{"createRole":"aaaConnStatusCreatedRole", "roles":[], "privileges":[], "$db":"admin"}');
+            create_role            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- The reported roles must be identical to the baseline above.
+SELECT documentdb_api.connection_status('{"connectionStatus": 1, "$db":"admin"}');
+                                                                                                                          connection_status                                                                                                                           
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "authInfo" : { "authenticatedUsers" : [ { "user" : "connStatusRoleCreator", "db" : "admin" } ], "authenticatedUserRoles" : [ { "role" : "readWriteAnyDatabase", "db" : "admin" }, { "role" : "clusterAdmin", "db" : "admin" } ] }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+RESET ROLE;
+SELECT documentdb_api.drop_role('{"dropRole":"aaaConnStatusCreatedRole", "$db":"admin"}');
+             drop_role             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+REVOKE SELECT ON documentdb_api_catalog.roles FROM "connStatusRoleCreator";
+REVOKE documentdb_admin_role FROM "connStatusRoleCreator";
+DROP ROLE "connStatusRoleCreator";
+-- Positive control: a membership granted WITH ADMIN OPTION does confer the role,
+-- so it must still be reported. Filtering on ADMIN OPTION alone would wrongly
+-- hide it, which is why the filter tests INHERIT and SET instead.
+CREATE ROLE "connStatusAdminOptionUser" LOGIN;
+GRANT documentdb_readonly_role TO "connStatusAdminOptionUser" WITH ADMIN OPTION;
+SET ROLE "connStatusAdminOptionUser";
+SELECT documentdb_api.connection_status('{"connectionStatus": 1, "$db":"admin"}');
+                                                                                                   connection_status                                                                                                    
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "authInfo" : { "authenticatedUsers" : [ { "user" : "connStatusAdminOptionUser", "db" : "admin" } ], "authenticatedUserRoles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ] }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+RESET ROLE;
+REVOKE documentdb_readonly_role FROM "connStatusAdminOptionUser";
+DROP ROLE "connStatusAdminOptionUser";
+RESET documentdb.enableRoleCrud;
+RESET documentdb.enableRolesAdminDBCheck;

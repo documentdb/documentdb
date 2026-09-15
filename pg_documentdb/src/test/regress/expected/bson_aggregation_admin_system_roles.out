@@ -43,6 +43,80 @@ FROM documentdb_api_catalog.bson_aggregation_find(
  { "_id" : "admin.systemRolesParent", "role" : "systemRolesParent", "db" : "admin", "privileges" : [  ], "roles" : [  ] }
 (3 rows)
 
+-- A filter must discriminate, not merely avoid an error. Pair each matching
+-- filter with a non-matching one so an unconditionally empty or unconditionally
+-- full result is visible.
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles", "filter": { "role": "noSuchRole" } }');
+ document 
+----------
+(0 rows)
+
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles", "filter": { "_id": "admin.systemRolesParent" } }');
+                                                         document                                                         
+--------------------------------------------------------------------------------------------------------------------------
+ { "_id" : "admin.systemRolesParent", "role" : "systemRolesParent", "db" : "admin", "privileges" : [  ], "roles" : [  ] }
+(1 row)
+
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles", "filter": { "_id": "admin.noSuchRole" } }');
+ document 
+----------
+(0 rows)
+
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles", "filter": { "db": "admin", "role": "systemRolesChildOne" } }');
+                                                                                  document                                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : "admin.systemRolesChildOne", "role" : "systemRolesChildOne", "db" : "admin", "privileges" : [  ], "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ] }
+(1 row)
+
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles", "filter": { "db": "notAdmin", "role": "systemRolesChildOne" } }');
+ document 
+----------
+(0 rows)
+
+-- Filter into the inherited roles array that $replaceRoot assembles.
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles", "filter": { "roles.role": "readAnyDatabase" }, "sort": { "role": 1 } }');
+                                                                                  document                                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : "admin.systemRolesChildOne", "role" : "systemRolesChildOne", "db" : "admin", "privileges" : [  ], "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ] }
+(1 row)
+
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles", "filter": { "roles.role": "noSuchInheritedRole" } }');
+ document 
+----------
+(0 rows)
+
+-- A filter combined with a projection must still resolve against the
+-- reshaped document.
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles", "filter": { "role": "systemRolesChildTwo" }, "projection": { "_id": 0, "role": 1, "db": 1 } }');
+                      document                      
+----------------------------------------------------
+ { "role" : "systemRolesChildTwo", "db" : "admin" }
+(1 row)
+
 GRANT USAGE ON SCHEMA documentdb_api_catalog TO "documentdb_root_role";
 GRANT SELECT ON documentdb_api_catalog.roles TO "documentdb_root_role";
 SET ROLE "documentdb_root_role";

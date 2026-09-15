@@ -19,6 +19,13 @@ SELECT document
 FROM documentdb_api_catalog.bson_aggregation_find(
 	'admin',
 	'{ "find": "system.users" }');
+-- system.roles must not report the created role either. The creator only holds
+-- the membership PostgreSQL 16 and later records for the role running
+-- CREATE ROLE, which carries ADMIN OPTION but confers neither INHERIT nor SET.
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles" }');
 RESET ROLE;
 
 SELECT documentdb_api.drop_role(
@@ -133,12 +140,109 @@ FROM documentdb_api.find_cursor_first_page(
 
 \echo :page_matches
 
+-- A filter must be applied above the grouping stage that assembles each user
+-- document. Applying it at the grouping level would leave the qual in a plan
+-- node that cannot evaluate an aggregate.
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.users", "filter": { "user": "systemUsersReader" } }');
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.users", "filter": { "user": "noSuchUser" } }');
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.users", "filter": { "_id": "admin.systemUsersReader" } }');
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.users", "filter": { "roles.role": "systemUsersCustomRole" } }');
+
 RESET ROLE;
 
 REVOKE SELECT ON documentdb_api_catalog.roles FROM "systemUsersReader";
 SELECT documentdb_api.drop_user(
 	'{"dropUser":"systemUsersReader", "$db":"admin"}') AS drop_result \gset
 SELECT documentdb_api.drop_role('{"dropRole":"systemUsersCustomRole", "$db":"admin"}');
+
+-- A membership granted WITH ADMIN OPTION does confer the role, so both
+-- system.users and system.roles must report it. Suppressing creator
+-- memberships by testing ADMIN OPTION alone would wrongly hide this one,
+-- which is why the filter tests whether the member holds the privileges of
+-- the role instead.
+SELECT documentdb_api.create_role(
+	'{"createRole":"systemUsersAdminOptionRole", "roles":[], "privileges":[], "$db":"admin"}') AS create_result \gset
+
+CREATE ROLE "systemUsersAdminOptionUser" LOGIN;
+GRANT "systemUsersAdminOptionRole" TO "systemUsersAdminOptionUser" WITH ADMIN OPTION;
+GRANT documentdb_readonly_role TO "systemUsersAdminOptionUser";
+GRANT SELECT ON documentdb_api_catalog.roles TO "systemUsersAdminOptionUser";
+
+SET ROLE "systemUsersAdminOptionUser";
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.users" }');
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles" }');
+RESET ROLE;
+
+REVOKE SELECT ON documentdb_api_catalog.roles FROM "systemUsersAdminOptionUser";
+REVOKE documentdb_readonly_role FROM "systemUsersAdminOptionUser";
+REVOKE "systemUsersAdminOptionRole" FROM "systemUsersAdminOptionUser";
+DROP ROLE "systemUsersAdminOptionUser";
+SELECT documentdb_api.drop_role(
+	'{"dropRole":"systemUsersAdminOptionRole", "$db":"admin"}') AS drop_result \gset
+
+-- A membership granted WITH INHERIT FALSE, SET TRUE also confers the role: the
+-- member cannot use it implicitly but can assume it with SET ROLE. Testing only
+-- for inherited privileges would wrongly hide it, so both system.users and
+-- system.roles must report it. The automatic creator membership carries neither
+-- option and so stays excluded.
+--
+-- Those grant options, and the automatic membership they exist to distinguish,
+-- were both added in PostgreSQL 16. The grant is issued through dynamic SQL so
+-- that earlier versions never parse the newer syntax, and falls back to a plain
+-- grant there, which is the only membership shape those versions record. Both
+-- branches must report the role, so the expected output is version independent.
+SELECT documentdb_api.create_role(
+	'{"createRole":"systemUsersSetOnlyRole", "roles":[], "privileges":[], "$db":"admin"}') AS create_result \gset
+
+CREATE ROLE "systemUsersSetOnlyUser" LOGIN;
+DO $$
+BEGIN
+	IF current_setting('server_version_num')::int >= 160000 THEN
+		EXECUTE 'GRANT "systemUsersSetOnlyRole" TO "systemUsersSetOnlyUser"'
+				' WITH INHERIT FALSE, SET TRUE';
+	ELSE
+		EXECUTE 'GRANT "systemUsersSetOnlyRole" TO "systemUsersSetOnlyUser"';
+	END IF;
+END
+$$;
+GRANT documentdb_readonly_role TO "systemUsersSetOnlyUser";
+GRANT SELECT ON documentdb_api_catalog.roles TO "systemUsersSetOnlyUser";
+
+SET ROLE "systemUsersSetOnlyUser";
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.users" }');
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles" }');
+RESET ROLE;
+
+REVOKE SELECT ON documentdb_api_catalog.roles FROM "systemUsersSetOnlyUser";
+REVOKE documentdb_readonly_role FROM "systemUsersSetOnlyUser";
+REVOKE "systemUsersSetOnlyRole" FROM "systemUsersSetOnlyUser";
+DROP ROLE "systemUsersSetOnlyUser";
+SELECT documentdb_api.drop_role(
+	'{"dropRole":"systemUsersSetOnlyRole", "$db":"admin"}') AS drop_result \gset
 
 RESET documentdb.enableRoleCrud;
 RESET documentdb.enableRolesAdminDBCheck;

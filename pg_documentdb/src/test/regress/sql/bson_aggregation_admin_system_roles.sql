@@ -23,6 +23,47 @@ FROM documentdb_api_catalog.bson_aggregation_find(
 	'admin',
 	'{ "find": "system.roles", "filter": { "role": { "$in": [ "systemRolesParent", "systemRolesChildOne", "systemRolesChildTwo" ] } }, "sort": { "role": 1 } }');
 
+-- A filter must discriminate, not merely avoid an error. Pair each matching
+-- filter with a non-matching one so an unconditionally empty or unconditionally
+-- full result is visible.
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles", "filter": { "role": "noSuchRole" } }');
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles", "filter": { "_id": "admin.systemRolesParent" } }');
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles", "filter": { "_id": "admin.noSuchRole" } }');
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles", "filter": { "db": "admin", "role": "systemRolesChildOne" } }');
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles", "filter": { "db": "notAdmin", "role": "systemRolesChildOne" } }');
+
+-- Filter into the inherited roles array that $replaceRoot assembles.
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles", "filter": { "roles.role": "readAnyDatabase" }, "sort": { "role": 1 } }');
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles", "filter": { "roles.role": "noSuchInheritedRole" } }');
+
+-- A filter combined with a projection must still resolve against the
+-- reshaped document.
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles", "filter": { "role": "systemRolesChildTwo" }, "projection": { "_id": 0, "role": 1, "db": 1 } }');
+
 GRANT USAGE ON SCHEMA documentdb_api_catalog TO "documentdb_root_role";
 GRANT SELECT ON documentdb_api_catalog.roles TO "documentdb_root_role";
 

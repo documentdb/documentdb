@@ -32,6 +32,41 @@
 
 #define SCRAM_MAX_SALT_LEN 64
 
+/*
+ * PostgreSQL 16 and later automatically records a role membership for the role
+ * that runs CREATE ROLE when that role is not a superuser. The membership
+ * carries ADMIN OPTION but neither INHERIT nor SET, so it only lets the creator
+ * administer the new role and confers none of its privileges. Reporting it
+ * would make every role an administrator defines look like a role they hold, so
+ * the user listings below count a membership only when the member actually has
+ * the privileges of the role.
+ *
+ * pg_has_role answers that question directly, and is preferred over testing the
+ * catalog columns: it does not confuse the automatic membership with an
+ * explicit GRANT ... WITH ADMIN OPTION, which sets the same ADMIN OPTION flag
+ * but does confer the role.
+ *
+ * A membership confers the role when its privileges are inherited, which
+ * pg_has_role reports as USAGE, or when the member may assume the role with
+ * SET ROLE, which it reports as SET. Testing both covers a grant made WITH
+ * INHERIT FALSE, SET TRUE, which does confer the role. The automatic creator
+ * membership has neither option, so it remains excluded.
+ *
+ * PostgreSQL 15 records no automatic membership, so every recorded membership
+ * is an explicit grant that confers the role. It also has no SET privilege
+ * string, which makes a grant to a NOINHERIT member indistinguishable from one
+ * that confers nothing. Testing USAGE there would hide those memberships
+ * without excluding anything, so PostgreSQL 15 keeps the plain membership test.
+ */
+#if PG_VERSION_NUM >= 160000
+#define MEMBERSHIP_CONFERS_ROLE_CLAUSE \
+	" AND (pg_has_role(child.rolname, parent.rolname, 'USAGE') " \
+	" OR pg_has_role(child.rolname, parent.rolname, 'SET')) "
+#else
+#define MEMBERSHIP_CONFERS_ROLE_CLAUSE \
+	" AND pg_has_role(child.rolname, parent.rolname, 'MEMBER') "
+#endif
+
 /* GUC to enable user crud operations */
 extern bool EnableUserCrud;
 
@@ -1774,6 +1809,7 @@ GetAllUsersInfo(void)
 		"  JOIN pg_auth_members am ON parent.oid = am.roleid "
 		"  JOIN pg_roles child ON am.member = child.oid "
 		"  WHERE child.rolcanlogin = true "
+		MEMBERSHIP_CONFERS_ROLE_CLAUSE
 		"    AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s') "
 		") "
 		"SELECT ARRAY_AGG(%s.row_get_bson(r) ORDER BY r.child_role, r.parent_role) "
@@ -1818,6 +1854,7 @@ GetSingleUserInfo(const char *userName, bool returnDocuments)
 			"  JOIN pg_auth_members am ON parent.oid = am.roleid "
 			"  JOIN pg_roles child ON am.member = child.oid "
 			"  WHERE child.rolcanlogin = true "
+			MEMBERSHIP_CONFERS_ROLE_CLAUSE
 			"    AND child.rolname = $1"
 			"    AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s') "
 			") "
@@ -1839,6 +1876,7 @@ GetSingleUserInfo(const char *userName, bool returnDocuments)
 			"JOIN pg_auth_members am ON parent.oid = am.roleid "
 			"JOIN pg_roles child ON am.member = child.oid "
 			"WHERE child.rolcanlogin = true "
+			MEMBERSHIP_CONFERS_ROLE_CLAUSE
 			"  AND child.rolname = $1 "
 			"  AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s') "
 			"ORDER BY parent.rolname "
