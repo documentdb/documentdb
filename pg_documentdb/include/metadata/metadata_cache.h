@@ -525,6 +525,9 @@ TypeName * ParseTypeNameCore(const char *typeName);
 /* Roles */
 Oid ApiAdminV2RoleOid(void);
 Oid ApiReadOnlyRoleOid(void);
+Oid CollectionRbacBaselineReadRoleOid(void);
+Oid CollectionRbacBaselineWriteRoleOid(void);
+Oid CollectionRbacReadWriteAnyDatabaseRoleOid(void);
 
 
 /* Statistics functions */

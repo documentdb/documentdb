@@ -55,11 +55,6 @@ typedef void (*RemoveCollectionPrivileges_HookType)(const char *roleName);
 extern RemoveCollectionPrivileges_HookType
 	remove_collection_privileges_hook;
 
-typedef void (*GrantCollectionPrivilegesToBaselineRoles_HookType)(uint64 collectionId,
-																  bool
-																  includeRetryTable);
-extern GrantCollectionPrivilegesToBaselineRoles_HookType
-	grant_collection_privileges_to_baseline_roles_hook;
 
 /*
  * Persists collection-scoped privileges for a newly created role.
@@ -75,19 +70,6 @@ void GrantCollectionPrivilegesToRole(const char *roleName, List *collectionPrivi
  * No-op when no implementation is registered.
  */
 void RemoveCollectionPrivileges(const char *roleName);
-
-/*
- * Grants baseline privileges on a collection's tables.
- *
- * The collection is identified by id rather than by table name so that the
- * names are derived here and a caller cannot supply one, keeping externally
- * supplied text out of the resulting GRANT statements.
- *
- * includeRetryTable is false when the collection has no dedicated retry table.
- * No-op when no implementation is registered.
- */
-void GrantCollectionPrivilegesToBaselineRoles(uint64 collectionId,
-											  bool includeRetryTable);
 
 /* Runs optional work after a collection is created. */
 void PostCreateCollection(uint64 collectionId);

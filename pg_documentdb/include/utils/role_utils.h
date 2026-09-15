@@ -137,4 +137,7 @@ List * ConvertUserOrRoleNamesDatumToList(Datum *parentRolesDatums, int parentRol
 
 void EnsureRoleMembershipLimits(const char *roleName, int64 numRolesToAdd);
 
+void GrantCollectionPrivilegesToBaselineRoles(uint64 collectionId, bool
+											  includeRetryTable);
+
 #endif

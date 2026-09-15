@@ -19,8 +19,6 @@ GrantCollectionPrivilegesToRole_HookType
 	grant_collection_privileges_to_role_hook = NULL;
 RemoveCollectionPrivileges_HookType
 	remove_collection_privileges_hook = NULL;
-GrantCollectionPrivilegesToBaselineRoles_HookType
-	grant_collection_privileges_to_baseline_roles_hook = NULL;
 PostCreateCollection_HookType post_create_collection_hook = NULL;
 ApplyCollectionAccessIdentityToPlan_HookType
 	apply_collection_access_identity_to_plan_hook = NULL;
@@ -74,25 +72,6 @@ RemoveCollectionPrivileges(const char *roleName)
 	if (remove_collection_privileges_hook != NULL)
 	{
 		remove_collection_privileges_hook(roleName);
-	}
-}
-
-
-/*
- * Grants baseline privileges on a collection's tables.
- *
- * Collection creation and sharding reach this unconditionally, so it stays a
- * no-op without an implementation: there are no baseline privileges to grant,
- * and failing would break collection creation in a build that never had the
- * feature.
- */
-void
-GrantCollectionPrivilegesToBaselineRoles(uint64 collectionId, bool includeRetryTable)
-{
-	if (grant_collection_privileges_to_baseline_roles_hook != NULL)
-	{
-		grant_collection_privileges_to_baseline_roles_hook(collectionId,
-														   includeRetryTable);
 	}
 }
 

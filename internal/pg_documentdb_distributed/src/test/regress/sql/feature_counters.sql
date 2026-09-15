@@ -118,7 +118,7 @@ RESET documentdb_core.enablecollation;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "feature_counter_col2", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
 
 -- Run validate command
-SELECT documentdb_api.validate('db', '{ "validate" : "validatecoll", "repair" : true }' );
+SELECT documentdb_api.validate('db', '{ "validate" : "feature_counter_col2", "repair" : true }' );
 
 -- Print without resetting the counters
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(false);

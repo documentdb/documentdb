@@ -10,10 +10,6 @@
  * therefore pre-created by the cluster admin below; the "Known gaps" section
  * at the end exercises these operations as the role and documents that they
  * still fail.
- *
- * Known gap: with documentdb.enableRbacCompliantSchemas off, this OSS build
- * has no mechanism to grant the readwrite role access to collection tables
- * it did not create.
  */
 
 SET citus.next_shard_id TO 19841000;
@@ -43,6 +39,7 @@ SELECT documentdb_api.create_collection('db', 'agg_facet_group');
 SELECT documentdb_api.create_collection('db', 'graphlookup_places');
 SELECT documentdb_api.create_collection('db', 'graphlookup_visitors');
 
+\set original_user :USER
 \c regression user_rw
 
 SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog;
@@ -84,7 +81,11 @@ SELECT document FROM documentdb_api.count_query('db', '{ "count": "aggregation_p
 
 SELECT document FROM documentdb_api.distinct_query('db', '{ "distinct": "aggregation_pipeline", "key": "_id" }');
 
-SELECT documentdb_api.db_stats('db');
+SELECT bson_dollar_project(documentdb_api.db_stats('db'), '{ "ok": 1 }');
+
+SELECT bson_dollar_project(
+    documentdb_api.coll_stats('db', 'aggregation_pipeline'),
+    '{ "ok": 1 }');
 
 SELECT 1 FROM documentdb_api.insert_one('db', 'coll_to_update', '{"a": 10,"b":7}');
 SELECT documentdb_api.find_and_modify('db', '{"findAndModify": "coll_to_update", "query": {"a": 10}, "update": {"$set": {"a": 1000}}, "fields": {"_id": 0}, "new": true}');
@@ -121,7 +122,7 @@ SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch')
 FROM documentdb_api.list_indexes_cursor_first_page('db', '{ "listIndexes": "newColl" }') 
 ORDER BY 1;
 
-SELECT cursorpage, continuation, persistconnection, cursorid 
+SELECT bson_dollar_project(cursorpage, '{ "ok": 1 }')
 FROM documentdb_api.list_collections_cursor_first_page('db', '{ "listCollections": 1, "nameOnly": true }');
 
 SELECT documentdb_api.insert_one('db', 'coll_agg_proj', '{ "_id": 1, "a": "cat" }');
@@ -179,3 +180,19 @@ SELECT documentdb_api.rename_collection('db','my_coll1', 'my_coll1_renamed');
 SELECT documentdb_api.drop_database('test');
 
 SELECT documentdb_api.drop_collection('test','my_coll1');
+
+\c regression :original_user
+SET documentdb.enable_readwrite_any_database_role_enforcement TO ON;
+SELECT documentdb_api.revoke_roles_from_user(
+	'{"revokeRolesFromUser":"user_rw","roles":["readWriteAnyDatabase"],"$db":"admin"}');
+SELECT NOT pg_has_role(
+	'user_rw',
+	'documentdb_rbac_readwrite_anydb_role',
+	'MEMBER') AS role_revoked;
+
+\c regression user_rw
+\set VERBOSITY terse
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find(
+	'db', '{"find":"updateme","filter":{}}');
+SELECT documentdb_api.insert_one(
+	'db', 'updateme', '{"_id":99,"value":"after role revocation"}');

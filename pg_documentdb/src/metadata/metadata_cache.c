@@ -33,6 +33,7 @@
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/version_utils.h"
+#include "utils/role_utils.h"
 #include "catalog/pg_am.h"
 
 #include "metadata/metadata_cache.h"
@@ -62,6 +63,8 @@ typedef enum CacheValidityValue
 
 
 static void InvalidateDocumentDBApiCache(Datum argument, Oid relationId);
+static void InvalidateDocumentDBApiRoleOidCache(Datum argument, int cacheId,
+												uint32 hashValue);
 static Oid GetBinaryOperatorId(Oid *operatorId, Oid leftTypeOid, char *operatorName,
 							   Oid rightTypeOid);
 static Oid GetInternalBinaryOperatorId(Oid *operatorId, Oid leftTypeOid,
@@ -1360,11 +1363,23 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the ApiInternalSchemaName.bson_stats_project function */
 	Oid BsonStatsProjectFunctionOid;
 
-	/* OID of the ApiReadOnlyRole */
-	Oid ApiReadOnlyRoleOid;
+	struct
+	{
+		/* OID of the ApiReadOnlyRole */
+		Oid ApiReadOnlyRoleOid;
 
-	/* OID of the ApiAdminV2Role */
-	Oid ApiAdminV2RoleOid;
+		/* OID of the ApiAdminV2Role */
+		Oid ApiAdminV2RoleOid;
+
+		/* OID of the CollectionRbacBaselineReadRole */
+		Oid CollectionRbacBaselineReadRoleOid;
+
+		/* OID of the CollectionRbacBaselineWriteRole */
+		Oid CollectionRbacBaselineWriteRoleOid;
+
+		/* OID of the CollectionRbacReadWriteAnyDatabaseRole */
+		Oid CollectionRbacReadWriteAnyDatabaseRoleOid;
+	} RoleOids;
 } DocumentDBApiOidCacheData;
 
 static DocumentDBApiOidCacheData Cache;
@@ -1395,6 +1410,8 @@ InitializeDocumentDBApiExtensionCache(void)
 																  ALLOCSET_DEFAULT_SIZES);
 
 		CacheRegisterRelcacheCallback(InvalidateDocumentDBApiCache, (Datum) 0);
+		CacheRegisterSyscacheCallback(AUTHOID, InvalidateDocumentDBApiRoleOidCache,
+									  (Datum) 0);
 	}
 
 	/* reset any previously allocated memory. Code below is sensitive to OOMs */
@@ -1430,6 +1447,20 @@ InitializeDocumentDBApiExtensionCache(void)
 
 	/* we made it here without out of memory errors */
 	CacheValidity = CACHE_VALID;
+}
+
+
+static void
+InvalidateDocumentDBApiRoleOidCache(Datum argument, int cacheId, uint32 hashValue)
+{
+	Assert(cacheId == AUTHOID);
+
+	if (CacheValidity == CACHE_INVALID)
+	{
+		return;
+	}
+
+	memset(&Cache.RoleOids, 0, sizeof(Cache.RoleOids));
 }
 
 
@@ -8002,13 +8033,13 @@ ApiAdminV2RoleOid(void)
 {
 	InitializeDocumentDBApiExtensionCache();
 
-	if (Cache.ApiAdminV2RoleOid == InvalidOid)
+	if (Cache.RoleOids.ApiAdminV2RoleOid == InvalidOid)
 	{
 		bool missingOk = false;
-		Cache.ApiAdminV2RoleOid = get_role_oid(ApiAdminRoleV2, missingOk);
+		Cache.RoleOids.ApiAdminV2RoleOid = get_role_oid(ApiAdminRoleV2, missingOk);
 	}
 
-	return Cache.ApiAdminV2RoleOid;
+	return Cache.RoleOids.ApiAdminV2RoleOid;
 }
 
 
@@ -8017,13 +8048,64 @@ ApiReadOnlyRoleOid(void)
 {
 	InitializeDocumentDBApiExtensionCache();
 
-	if (Cache.ApiReadOnlyRoleOid == InvalidOid)
+	if (Cache.RoleOids.ApiReadOnlyRoleOid == InvalidOid)
 	{
 		bool missingOk = false;
-		Cache.ApiReadOnlyRoleOid = get_role_oid(ApiReadOnlyRole, missingOk);
+		Cache.RoleOids.ApiReadOnlyRoleOid = get_role_oid(ApiReadOnlyRole, missingOk);
 	}
 
-	return Cache.ApiReadOnlyRoleOid;
+	return Cache.RoleOids.ApiReadOnlyRoleOid;
+}
+
+
+Oid
+CollectionRbacBaselineReadRoleOid(void)
+{
+	InitializeDocumentDBApiExtensionCache();
+
+	if (!OidIsValid(Cache.RoleOids.CollectionRbacBaselineReadRoleOid))
+	{
+		bool missingOk = true;
+
+		Cache.RoleOids.CollectionRbacBaselineReadRoleOid =
+			get_role_oid(API_RBAC_BASELINE_READ_ROLE, missingOk);
+	}
+
+	return Cache.RoleOids.CollectionRbacBaselineReadRoleOid;
+}
+
+
+Oid
+CollectionRbacBaselineWriteRoleOid(void)
+{
+	InitializeDocumentDBApiExtensionCache();
+
+	if (!OidIsValid(Cache.RoleOids.CollectionRbacBaselineWriteRoleOid))
+	{
+		bool missingOk = true;
+
+		Cache.RoleOids.CollectionRbacBaselineWriteRoleOid =
+			get_role_oid(API_RBAC_BASELINE_WRITE_ROLE, missingOk);
+	}
+
+	return Cache.RoleOids.CollectionRbacBaselineWriteRoleOid;
+}
+
+
+Oid
+CollectionRbacReadWriteAnyDatabaseRoleOid(void)
+{
+	InitializeDocumentDBApiExtensionCache();
+
+	if (!OidIsValid(Cache.RoleOids.CollectionRbacReadWriteAnyDatabaseRoleOid))
+	{
+		bool missingOk = true;
+
+		Cache.RoleOids.CollectionRbacReadWriteAnyDatabaseRoleOid =
+			get_role_oid(API_RBAC_READWRITE_ANYDB_ROLE, missingOk);
+	}
+
+	return Cache.RoleOids.CollectionRbacReadWriteAnyDatabaseRoleOid;
 }
 
 

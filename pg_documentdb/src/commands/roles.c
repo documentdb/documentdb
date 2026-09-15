@@ -2428,17 +2428,22 @@ ValidateAndRevokeParentRoles(const char *targetRoleName, HTAB *parentRoles)
 	 * it once removes both capabilities.
 	 */
 	bool revokedApiAdminRole = false;
-	if (hasReadWrite && hasClusterAdmin)
+	bool revokedReadWriteRole = false;
+	if (hasClusterAdmin && hasReadWrite)
 	{
 		revokedApiAdminRole = true;
 		RevokeRoleInheritance(ApiAdminRoleV2, targetRoleName);
+	}
 
+	if (hasReadWrite)
+	{
 		Oid readWriteAnyDatabaseRoleOid =
-			get_role_oid(API_RBAC_READWRITE_ANYDB_ROLE, true);
+			CollectionRbacReadWriteAnyDatabaseRoleOid();
 		if (OidIsValid(readWriteAnyDatabaseRoleOid) &&
 			is_member_of_role(targetRoleOid, readWriteAnyDatabaseRoleOid))
 		{
 			RevokeRoleInheritance(API_RBAC_READWRITE_ANYDB_ROLE, targetRoleName);
+			revokedReadWriteRole = true;
 		}
 	}
 
@@ -2450,9 +2455,17 @@ ValidateAndRevokeParentRoles(const char *targetRoleName, HTAB *parentRoles)
 		const char *nativeRoleName = CreateStringFromStringView(entry);
 		const char *internalRoleName = GetInternalRoleName(nativeRoleName);
 
+		/* Even though we don't grant both roles for admin + readwrite pairing,
+		 * we still will see the readwrite any database role in the parent roles response.
+		 */
 		if (revokedApiAdminRole &&
-			(strcmp(internalRoleName, API_RBAC_READWRITE_ANYDB_ROLE) == 0 ||
-			 strcmp(internalRoleName, ApiClusterAdminRole) == 0))
+			strcmp(internalRoleName, ApiClusterAdminRole) == 0)
+		{
+			continue;
+		}
+
+		if ((revokedReadWriteRole || revokedApiAdminRole) &&
+			strcmp(internalRoleName, API_RBAC_READWRITE_ANYDB_ROLE) == 0)
 		{
 			continue;
 		}

@@ -745,11 +745,19 @@ SELECT documentdb_api.insert_one(
     'gating_user_db',
     'gating_user_collection',
     '{"_id":1,"value":"standalone"}');
-ERROR:  permission denied for table documents_2
+                              insert_one
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
 SELECT documentdb_api.count_query(
     'gating_user_db',
     '{"count":"gating_user_collection","query":{"value":"standalone"}}');
-ERROR:  permission denied for table documents_2
+                             count_query
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
 RESET ROLE;
 -- Case 6: clusterAdmin on its own stays rejected.
 SELECT documentdb_api.create_user('{"createUser":"gatingUserClusterOnly", "pwd":"test_password", "roles":[{"role":"clusterAdmin","db":"admin"}], "$db":"admin"}');

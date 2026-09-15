@@ -258,8 +258,12 @@ NOTICE:  creating collection
 (1 row)
 
 -- Run validate command
-SELECT documentdb_api.validate('db', '{ "validate" : "validatecoll", "repair" : true }' );
-ERROR:  Running the validate command with { repair: true } is not supported yet.
+SELECT documentdb_api.validate('db', '{ "validate" : "feature_counter_col2", "repair" : true }' );
+                                                                                                                                 validate
+---------------------------------------------------------------------
+ { "ns" : "db.feature_counter_col2", "nIndexes" : { "$numberLong" : "2" }, "indexDetails" : { "_id_" : { "valid" : true }, "ttl_index" : { "valid" : true } }, "valid" : true, "repaired" : true, "warnings" : [  ], "errors" : [  ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
 -- Print without resetting the counters
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(false);
                                                                                                                                                                                                                                                                                                                                                                                                                                                         get_feature_counter_pretty                                                                                                                                                                                                                                                                                                                                                                                                                                                         

@@ -17,7 +17,9 @@
 #include <executor/spi.h>
 #include <fmgr.h>
 #include <funcapi.h>
+#include <utils/acl.h>
 #include <utils/builtins.h>
+#include <utils/lsyscache.h>
 
 #include "utils/documentdb_errors.h"
 #include "commands/commands_common.h"
@@ -26,6 +28,7 @@
 #include "metadata/index.h"
 #include "utils/feature_counter.h"
 #include "utils/query_utils.h"
+#include "utils/role_utils.h"
 #include "commands/parse_error.h"
 
 PG_FUNCTION_INFO_V1(command_validate);
@@ -41,11 +44,14 @@ typedef struct
 	/* if full validation is required, currently a no-op*/
 	bool full;
 
-	/* if repair is required, currently a no-op */
+	/* if baseline collection privileges should be repaired */
 	bool repair;
 
 	/* if ONLY metadata validation is required, currently a no-op */
 	bool metadata;
+
+	/* if document conformance validation is required, currently a no-op */
+	bool checkBsonConformance;
 } ValidateSpec;
 
 typedef struct
@@ -78,6 +84,8 @@ typedef struct
 static void validateCollection(MongoCollection *collection, ValidateResult *result);
 static void CheckIndisvalid(uint64 collectionId, ValidateResult *result);
 static pgbson * BuildResponseMessage(ValidateResult *result);
+static bool HasBaselineRolePrivileges(Oid relationId, Oid baselineReadRole,
+									  Oid baselineWriteRole);
 
 /*
  * command_validate is the implementation of the internal logic for
@@ -112,6 +120,7 @@ command_validate(PG_FUNCTION_ARGS)
 								errmsg(
 									"Collection name contains an invalid object type")));
 			}
+
 			EnsureTopLevelFieldType("validate", &validateIter, BSON_TYPE_UTF8);
 			ValidateNamespaceStringForEmbeddedNull(value->value.v_utf8.str,
 												   value->value.v_utf8.len);
@@ -133,12 +142,17 @@ command_validate(PG_FUNCTION_ARGS)
 		{
 			validateSpec.metadata = BsonValueAsBool(value);
 		}
+		else if (StringViewEqualsCString(&keyView, "checkBSONConformance"))
+		{
+			validateSpec.checkBsonConformance = BsonValueAsBool(value);
+		}
 	}
 
 	if (databaseNameDatum == (Datum) 0)
 	{
 		ereport(ERROR, (errmsg("Database name must not be NULL")));
 	}
+
 	validateSpec.databaseName = TextDatumGetCString(databaseNameDatum);
 
 	if (validateSpec.collectionName == NULL || strlen(validateSpec.collectionName) == 0)
@@ -156,19 +170,20 @@ command_validate(PG_FUNCTION_ARGS)
 							"Running the validate command with { metadata: true } is not supported with any other options")));
 	}
 
-	if (validateSpec.repair)
+	if (validateSpec.checkBsonConformance && validateSpec.repair)
 	{
-		ReportFeatureUsage(FEATURE_COMMAND_VALIDATE_REPAIR);
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS), errmsg(
-							"Running the validate command with { repair: true } is not supported yet.")));
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
+						errmsg(
+							"Cannot specify both { checkBSONConformance: true } and { repair: true }")));
 	}
 
 	MongoCollection *collection =
-		GetMongoCollectionByNameDatum(PointerGetDatum(cstring_to_text(
-														  validateSpec.databaseName)),
-									  PointerGetDatum(cstring_to_text(
-														  validateSpec.collectionName)),
-									  AccessShareLock);
+		GetMongoCollectionOrViewByNameDatum(PointerGetDatum(cstring_to_text(
+																validateSpec.databaseName)),
+											PointerGetDatum(cstring_to_text(
+																validateSpec.
+																collectionName)),
+											AccessShareLock);
 
 	if (collection == NULL)
 	{
@@ -177,7 +192,74 @@ command_validate(PG_FUNCTION_ARGS)
 							validateSpec.databaseName, validateSpec.collectionName)));
 	}
 
+	if (collection->viewDefinition != NULL)
+	{
+		if (validateSpec.repair)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+							errmsg(
+								"Running the validate command with { repair: true } is not supported on views.")));
+		}
+
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTEDONVIEW),
+						errmsg(
+							"The namespace %s.%s refers to a view object rather than a collection",
+							collection->name.databaseName,
+							collection->name.collectionName)));
+	}
+
+	/* TODO: This should happen before checking for views, however EnsureCollectionOwner can't do that yet. */
 	EnsureCollectionOwner(collection);
+
+	char retryTableName[NAMEDATALEN] = { 0 };
+	pg_snprintf(retryTableName, NAMEDATALEN, "retry_" INT64_FORMAT,
+				collection->collectionId);
+	Oid retryTableOid = get_relname_relid(retryTableName, ApiDataNamespaceOid());
+
+	bool isRepaired = false;
+	List *warnings = NIL;
+	if (validateSpec.repair)
+	{
+		ReportFeatureUsage(FEATURE_COMMAND_VALIDATE_REPAIR);
+
+		if (CollectionRbacBaselineReadRoleOid() == InvalidOid ||
+			CollectionRbacBaselineWriteRoleOid() == InvalidOid)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED), errmsg(
+								"Running the validate command with { repair: true } is not supported yet.")));
+		}
+
+		isRepaired = true;
+		bool includeRetryTable = OidIsValid(retryTableOid);
+		GrantCollectionPrivilegesToBaselineRoles(collection->collectionId,
+												 includeRetryTable);
+	}
+	else if (collection != NULL && collection->viewDefinition == NULL)
+	{
+		Oid baselineReadRole = CollectionRbacBaselineReadRoleOid();
+		Oid baselineWriteRole = CollectionRbacBaselineWriteRoleOid();
+		if (OidIsValid(baselineReadRole) && OidIsValid(baselineWriteRole))
+		{
+			bool hasValidAcl = HasBaselineRolePrivileges(collection->relationId,
+														 baselineReadRole,
+														 baselineWriteRole);
+			if (OidIsValid(retryTableOid))
+			{
+				hasValidAcl = HasBaselineRolePrivileges(retryTableOid,
+														baselineReadRole,
+														baselineWriteRole) &&
+							  hasValidAcl;
+			}
+
+			if (!hasValidAcl)
+			{
+				StringInfo warning = makeStringInfo();
+				appendStringInfoString(warning,
+									   "Collection is missing readWriteAnyDatabase access, run repair to fix it.");
+				warnings = lappend(warnings, warning);
+			}
+		}
+	}
 
 	StringInfo namespaceString = makeStringInfo();
 	appendStringInfo(namespaceString, "%s.%s", validateSpec.databaseName,
@@ -185,10 +267,10 @@ command_validate(PG_FUNCTION_ARGS)
 
 	ValidateResult result;
 	result.ns = namespaceString->data;
-	result.isValid = true;
-	result.isRepaired = false;
+	result.isValid = list_length(warnings) == 0;
+	result.isRepaired = isRepaired;
 	result.indexDetailsPgbson = NULL;
-	result.warnings = NIL;
+	result.warnings = warnings;
 	result.errors = NIL;
 	result.ok = 1;
 
@@ -196,6 +278,25 @@ command_validate(PG_FUNCTION_ARGS)
 	validateCollection(collection, &result);
 	pgbson *response = BuildResponseMessage(&result);
 	PG_RETURN_POINTER(response);
+}
+
+
+static bool
+HasBaselineRolePrivileges(Oid relationId, Oid baselineReadRole,
+						  Oid baselineWriteRole)
+{
+	AclMode expectedMask = ACL_SELECT;
+	AclMode aclMode = pg_class_aclmask(relationId, baselineReadRole,
+									   expectedMask, ACLMASK_ALL);
+	if (aclMode != expectedMask)
+	{
+		return false;
+	}
+
+	expectedMask = ACL_SELECT | ACL_INSERT | ACL_UPDATE | ACL_DELETE;
+	aclMode = pg_class_aclmask(relationId, baselineWriteRole, expectedMask,
+							   ACLMASK_ALL);
+	return aclMode == expectedMask;
 }
 
 

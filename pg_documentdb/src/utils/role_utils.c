@@ -59,6 +59,9 @@ static void ConsolidatePrivilegesForRole(const StringView *roleName,
 static void WritePrivilegeListToArray(List *consolidatedPrivileges,
 									  pgbson_array_writer *privilegesArrayWriter);
 static void DeepFreePrivileges(List *consolidatedPrivileges);
+static void GrantTablePrivileges(uint64 collectionId, bool includeRetryTable,
+								 const char *privilegesSqlQueryString,
+								 const char *roleName);
 
 /*
  * Static definitions for user privileges and roles
@@ -377,6 +380,64 @@ ContainsReservedPgRoleNamePrefix(const char *name)
 
 	pfree(blockedRolePrefixList);
 	return containsBlockedPrefix;
+}
+
+
+/*
+ * Grants baseline privileges on a collection's tables.
+ *
+ * Collection creation and sharding reach this unconditionally. It is a no-op
+ * when the baseline roles have not been created.
+ */
+void
+GrantCollectionPrivilegesToBaselineRoles(uint64 collectionId, bool includeRetryTable)
+{
+	if (CollectionRbacBaselineReadRoleOid() != InvalidOid)
+	{
+		GrantTablePrivileges(collectionId, includeRetryTable, "SELECT",
+							 API_RBAC_BASELINE_READ_ROLE);
+	}
+
+	if (CollectionRbacBaselineWriteRoleOid() != InvalidOid)
+	{
+		/*
+		 * The write role also carries SELECT because enforcement resolves a
+		 * range table entry to a single identity, and a filtered write needs
+		 * read access under that same identity.
+		 */
+		GrantTablePrivileges(collectionId, includeRetryTable,
+							 "SELECT, INSERT, UPDATE, DELETE",
+							 API_RBAC_BASELINE_WRITE_ROLE);
+	}
+}
+
+
+/*
+ * Grants table privileges on a collection's tables to a baseline group role.
+ *
+ * The table names are derived from the collection id here rather than taken
+ * from the caller, so the only text this builds a statement from is the fixed
+ * schema name, a numeric id, and the constants passed by the caller above.
+ */
+static void
+GrantTablePrivileges(uint64 collectionId, bool includeRetryTable,
+					 const char *privilegesSqlQueryString,
+					 const char *roleName)
+{
+	StringInfo query = makeStringInfo();
+	appendStringInfo(query, "GRANT %s ON TABLE %s.%s" UINT64_FORMAT,
+					 privilegesSqlQueryString, ApiDataSchemaName,
+					 DOCUMENT_DATA_TABLE_NAME_PREFIX, collectionId);
+	if (includeRetryTable)
+	{
+		appendStringInfo(query, ", %s.retry_" UINT64_FORMAT, ApiDataSchemaName,
+						 collectionId);
+	}
+	appendStringInfo(query, " TO %s", quote_identifier(roleName));
+
+	bool readOnly = false;
+	bool isNull = false;
+	ExtensionExecuteQueryViaSPI(query->data, readOnly, SPI_OK_UTILITY, &isNull);
 }
 
 
@@ -785,7 +846,7 @@ bool
 IsReadWriteAnyDatabaseRoleAvailable(void)
 {
 	return EnableReadWriteAnyDatabaseRoleEnforcement &&
-		   get_role_oid(API_RBAC_READWRITE_ANYDB_ROLE, true) != InvalidOid;
+		   CollectionRbacReadWriteAnyDatabaseRoleOid() != InvalidOid;
 }
 
 
