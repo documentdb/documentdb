@@ -102,7 +102,7 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
     }
 
     fn enable_write_procedures(&self) -> bool {
-        self.get_bool("enableWriteProcedures", false)
+        self.get_bool("enableWriteProcedures", true)
     }
 
     fn enable_write_procedures_with_batch_commit(&self) -> bool {
@@ -259,6 +259,7 @@ mod tests {
     use bson::{rawdoc, RawArrayBuf};
 
     use super::*;
+    use crate::testing::TestDynamicConfiguration;
 
     fn topology_with_versions(versions: &[&str]) -> RawBson {
         let mut arr = RawArrayBuf::new();
@@ -268,6 +269,13 @@ mod tests {
         RawBson::Document(rawdoc! {
             "documentdb_versions": arr,
         })
+    }
+
+    #[test]
+    fn write_procedures_enabled_by_default() {
+        let config = TestDynamicConfiguration::default();
+
+        assert!(config.enable_write_procedures());
     }
 
     #[test]
