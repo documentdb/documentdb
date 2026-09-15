@@ -458,6 +458,11 @@ bool EnableObjectIdFuncExprConversion = DEFAULT_ENABLE_OBJECTID_FUNC_EXPR_CONVER
 #define DEFAULT_ENABLE_SAMPLE_SCAN_FIX_ON_SHARDED true
 bool EnableSampleScanFixOnSharded = DEFAULT_ENABLE_SAMPLE_SCAN_FIX_ON_SHARDED;
 
+/* Added on v1.1, enabled on v1.1, remove after v1.3 */
+#define DEFAULT_ENABLE_SAMPLE_SCAN_PUSHDOWN_FOR_DYNAMIC_CURSOR true
+bool EnableSampleScanPushdownForDynamicCursor =
+	DEFAULT_ENABLE_SAMPLE_SCAN_PUSHDOWN_FOR_DYNAMIC_CURSOR;
+
 /* Added in v0.115, Pending stabilization, enable in v1.1 */
 #define DEFAULT_ENABLE_ADD_SHARD_KEY_ONLY_ON_PRIMARY_KEY_FILTERS false
 bool EnableAddShardKeyOnlyOnPrimaryKeyFilters =
@@ -1441,6 +1446,18 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableSampleScanFixOnSharded,
 		DEFAULT_ENABLE_SAMPLE_SCAN_FIX_ON_SHARDED,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_sample_scan_pushdown_for_dynamic_cursor", newGucPrefix),
+		gettext_noop(
+			"Recognize that a dynamic cursor marker qualification is not a filter, "
+			"allowing unfiltered $sample queries to be pushed down to a Sample Scan."),
+		NULL,
+		&EnableSampleScanPushdownForDynamicCursor,
+		DEFAULT_ENABLE_SAMPLE_SCAN_PUSHDOWN_FOR_DYNAMIC_CURSOR,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

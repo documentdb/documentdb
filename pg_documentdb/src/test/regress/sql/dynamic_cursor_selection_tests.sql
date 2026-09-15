@@ -382,9 +382,38 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$sortByCount": "$a" }], "cursor": {} }');
 
--- Stage: $sample (non-streamable - RequiresPersistentCursorTrue)
+-- Stage: $sample with cursor tracker remains eligible for TABLESAMPLE
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$sample": { "size": 2 } }], "cursor": {} }');
+
+-- An empty match remains eligible for TABLESAMPLE.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": {} }, { "$sample": { "size": 2 } }], "cursor": {} }');
+
+-- A user filter remains ineligible for TABLESAMPLE.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": 1 } }, { "$sample": { "size": 2 } }], "cursor": {} }');
+
+-- Disabling sample scan pushdown restores reservoir sampling.
+SET documentdb.enable_sample_scan_pushdown_for_dynamic_cursor TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$sample": { "size": 2 } }], "cursor": {} }');
+
+-- An empty match also restores reservoir sampling when pushdown is disabled.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": {} }, { "$sample": { "size": 2 } }], "cursor": {} }');
+
+-- The flag does not affect sampling when dynamic cursors are disabled.
+SET documentdb.enableDynamicCursors TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$sample": { "size": 2 } }], "cursor": {} }');
+RESET documentdb.enable_sample_scan_pushdown_for_dynamic_cursor;
+
+-- Verify cursor execution succeeds and returns the complete sample.
+SET documentdb.enableDynamicCursors TO on;
+SELECT persistconnection,
+       continuation IS NULL AS fully_drained,
+       bson_dollar_project(cursorpage, '{ "_id": 0, "batchCount": { "$size": "$cursor.firstBatch" } }') AS result
+FROM aggregate_cursor_first_page(
+    'dyncurdb',
+    '{ "aggregate": "dyncoll", "pipeline": [{ "$sample": { "size": 2 } }], "cursor": { "batchSize": 10 } }',
+    2601);
+
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$sample": { "size": 2 } }], "cursor": {} }');
 

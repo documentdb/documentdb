@@ -1073,8 +1073,54 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                      Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
 (10 rows)
 
--- Stage: $sample (non-streamable - RequiresPersistentCursorTrue)
+-- Stage: $sample with cursor tracker remains eligible for TABLESAMPLE
 SET documentdb.enableDynamicCursors TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$sample": { "size": 2 } }], "cursor": {} }');
+                              QUERY PLAN                              
+----------------------------------------------------------------------
+ Limit
+   Output: document, (random())
+   ->  Sort
+         Output: document, (random())
+         Sort Key: (random())
+         ->  Sample Scan on documentdb_data.documents_2601 collection
+               Output: document, random()
+               Sampling: system_rows ('2'::bigint)
+(8 rows)
+
+-- An empty match remains eligible for TABLESAMPLE.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": {} }, { "$sample": { "size": 2 } }], "cursor": {} }');
+                              QUERY PLAN                              
+----------------------------------------------------------------------
+ Limit
+   Output: document, (random())
+   ->  Sort
+         Output: document, (random())
+         Sort Key: (random())
+         ->  Sample Scan on documentdb_data.documents_2601 collection
+               Output: document, random()
+               Sampling: system_rows ('2'::bigint)
+(8 rows)
+
+-- A user filter remains ineligible for TABLESAMPLE.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": 1 } }, { "$sample": { "size": 2 } }], "cursor": {} }');
+                                       QUERY PLAN                                        
+-----------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 2
+   Sample Reservoir Method: Materialize
+   ->  Custom Scan (DocumentDBApiCursorScan)
+         Output: document
+         cursorScanType: Primary Key Scan
+         indexName: _id_
+         ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
+               Output: shard_key_value, object_id, document
+               Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
+(11 rows)
+
+-- Disabling sample scan pushdown restores reservoir sampling.
+SET documentdb.enable_sample_scan_pushdown_for_dynamic_cursor TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$sample": { "size": 2 } }], "cursor": {} }');
                                    QUERY PLAN                                   
 --------------------------------------------------------------------------------
@@ -1089,6 +1135,52 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
                Output: shard_key_value, object_id, document
 (10 rows)
+
+-- An empty match also restores reservoir sampling when pushdown is disabled.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": {} }, { "$sample": { "size": 2 } }], "cursor": {} }');
+                                   QUERY PLAN                                   
+--------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 2
+   Sample Reservoir Method: Materialize
+   ->  Custom Scan (DocumentDBApiCursorScan)
+         Output: document
+         cursorScanType: Primary Key Scan
+         indexName: _id_
+         ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
+               Output: shard_key_value, object_id, document
+(10 rows)
+
+-- The flag does not affect sampling when dynamic cursors are disabled.
+SET documentdb.enableDynamicCursors TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$sample": { "size": 2 } }], "cursor": {} }');
+                              QUERY PLAN                              
+----------------------------------------------------------------------
+ Limit
+   Output: document, (random())
+   ->  Sort
+         Output: document, (random())
+         Sort Key: (random())
+         ->  Sample Scan on documentdb_data.documents_2601 collection
+               Output: document, random()
+               Sampling: system_rows ('2'::bigint)
+(8 rows)
+
+RESET documentdb.enable_sample_scan_pushdown_for_dynamic_cursor;
+-- Verify cursor execution succeeds and returns the complete sample.
+SET documentdb.enableDynamicCursors TO on;
+SELECT persistconnection,
+       continuation IS NULL AS fully_drained,
+       bson_dollar_project(cursorpage, '{ "_id": 0, "batchCount": { "$size": "$cursor.firstBatch" } }') AS result
+FROM aggregate_cursor_first_page(
+    'dyncurdb',
+    '{ "aggregate": "dyncoll", "pipeline": [{ "$sample": { "size": 2 } }], "cursor": { "batchSize": 10 } }',
+    2601);
+ persistconnection | fully_drained |                  result                   
+-------------------+---------------+-------------------------------------------
+ t                 | t             | { "batchCount" : { "$numberInt" : "2" } }
+(1 row)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$sample": { "size": 2 } }], "cursor": {} }');
@@ -1675,7 +1767,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- ============================================================================
 -- Create collection with vector data
 SELECT documentdb_api.insert_one('dyncurdb', 'veccoll', '{ "_id": 1, "v": [1.0, 2.0, 3.0], "a": "hello" }');
-psql:sql/dynamic_cursor_selection_tests.sql:536: NOTICE:  creating collection
+psql:sql/dynamic_cursor_selection_tests.sql:565: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1771,7 +1863,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- ============================================================================
 -- Create collection with geo data and 2dsphere index
 SELECT documentdb_api.insert_one('dyncurdb', 'geocoll', '{ "_id": 1, "loc": { "type": "Point", "coordinates": [0, 0] } }');
-psql:sql/dynamic_cursor_selection_tests.sql:560: NOTICE:  creating collection
+psql:sql/dynamic_cursor_selection_tests.sql:589: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1834,7 +1926,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- $merge — non-streamable (RequiresPersistentCursorTrue)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$merge": { "into": "merge_output" } }], "cursor": {} }');
-psql:sql/dynamic_cursor_selection_tests.sql:584: NOTICE:  creating collection
+psql:sql/dynamic_cursor_selection_tests.sql:613: NOTICE:  creating collection
                                                                                       QUERY PLAN                                                                                      
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Merge on documentdb_data.documents_2605
@@ -1864,7 +1956,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- $out — non-streamable (RequiresPersistentCursorTrue)
 -- $out creates the target collection, so we need it to exist first
 SELECT documentdb_api.insert_one('dyncurdb', 'out_target', '{ "_id": 0 }');
-psql:sql/dynamic_cursor_selection_tests.sql:590: NOTICE:  creating collection
+psql:sql/dynamic_cursor_selection_tests.sql:619: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }

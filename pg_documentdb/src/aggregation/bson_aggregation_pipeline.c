@@ -99,6 +99,7 @@ extern bool EnableScalarAggregateAccumulatorPathCollection;
 extern bool EnableProjectPushUpBeforeUnwindWithGroup;
 extern bool EnableSortPushToAccumulatorWithPrefix;
 extern bool EnableSampleScanFixOnSharded;
+extern bool EnableSampleScanPushdownForDynamicCursor;
 extern bool EnableDistinctIndexPushdown;
 extern bool EnableDistinctExistsFilterPushdown;
 extern bool EnableSubqueryPushdownForMatch;
@@ -300,7 +301,7 @@ static void SetBatchSize(const char *fieldName, const bson_value_t *value,
 						 QueryData *queryData);
 
 static int CompareStageByStageName(const void *a, const void *b);
-static bool IsDefaultJoinTree(Node *node);
+static bool IsSampleScanEligibleJoinTree(Node *node);
 static List * AddShardKeyAndIdFilters(const bson_value_t *existingValue, Query *query,
 									  AggregationPipelineBuildContext *context,
 									  TargetEntry *entry, List *existingQuals);
@@ -10051,10 +10052,9 @@ HandleSample(const bson_value_t *existingValue, Query *query,
 	/* If the sample is against the base RTE - convert to a sample CTE */
 	RangeTblEntry *rte = linitial(query->rtable);
 
-	/* If there is a filter that's not the default filter then we can't push down sample */
 	/* TODO: Pushdown sample to base RTE for $lookup. */
 	if (rte->rtekind == RTE_RELATION &&
-		IsDefaultJoinTree(query->jointree->quals))
+		IsSampleScanEligibleJoinTree(query->jointree->quals))
 	{
 		/* Then just convert this to a Sample RTE */
 		if (rte->tablesample != NULL)
@@ -10212,15 +10212,18 @@ IsBooleanTrueConst(Node *node)
 
 
 /*
- * Checks whether the given node represents the default state
- * (i.e. no user-specified filter). This is true when:
+ * Checks whether the given node is compatible with a Sample Scan. The default
+ * state (i.e. no user-specified filter) is eligible when:
  *  - node is NULL (no filter applied)
  *  - node is BoolConst(TRUE) (empty match on sharded collections)
  *  - node is a single OpExpr of shard_key_value = <bigint>
  *    (the default shard key equality filter)
+ *
+ * Additional planner-only qualifications can be accepted when they are
+ * compatible with a Sample Scan.
  */
 static bool
-IsDefaultJoinTree(Node *node)
+IsSampleScanEligibleJoinTree(Node *node)
 {
 	if (node == NULL)
 	{
@@ -10233,7 +10236,7 @@ IsDefaultJoinTree(Node *node)
 	 * different hash-based shard key value). When HandleMatch({})
 	 * processes an empty match, it calls make_ands_explicit(NIL) which
 	 * returns a BoolConst(TRUE) node (the PG representation of an
-	 * always-true condition). Without this check, IsDefaultJoinTree
+	 * always-true condition). Without this check, this function
 	 * would not recognize BoolConst(TRUE) as equivalent to "no filter",
 	 * so HandleSample would conclude there was a user filter and skip
 	 * the TABLESAMPLE optimization.
@@ -10243,19 +10246,48 @@ IsDefaultJoinTree(Node *node)
 		return true;
 	}
 
-	if (!IsA(node, OpExpr))
+	List *quals = make_ands_implicit((Expr *) node);
+
+	/* If no qualifications remain and the checks above did not pass, reject the node. */
+	if (quals == NIL)
 	{
 		return false;
 	}
 
-	/* Check that it's a bigint equality on the shard_key_value column
-	 * specifically, not just any bigint equality (e.g. collection_id). */
-	OpExpr *opExpr = (OpExpr *) node;
-	Expr *firstArg = linitial(opExpr->args);
-	return opExpr->opno == BigintEqualOperatorId() &&
-		   IsA(firstArg, Var) &&
-		   ((Var *) firstArg)->varattno ==
-		   DOCUMENT_DATA_TABLE_SHARD_KEY_VALUE_VAR_ATTR_NUMBER;
+	ListCell *cell;
+	foreach(cell, quals)
+	{
+		Node *qual = (Node *) lfirst(cell);
+
+		if (IsA(qual, OpExpr))
+		{
+			/* Check that it's a bigint equality on the shard_key_value column
+			 * specifically, not just any bigint equality (e.g. collection_id). */
+			OpExpr *opExpr = (OpExpr *) qual;
+			Expr *firstArg = linitial(opExpr->args);
+			if (opExpr->opno == BigintEqualOperatorId() &&
+				IsA(firstArg, Var) &&
+				((Var *) firstArg)->varattno ==
+				DOCUMENT_DATA_TABLE_SHARD_KEY_VALUE_VAR_ATTR_NUMBER)
+			{
+				continue;
+			}
+		}
+
+		/* The cursor tracker is a marker added by dynamic cursors and can be ignored. */
+		if (EnableSampleScanPushdownForDynamicCursor &&
+			IsA(qual, FuncExpr) &&
+			((FuncExpr *) qual)->funcid == ApiCursorTrackerFunctionId())
+		{
+			continue;
+		}
+
+		/* Reject qualifications that are not compatible with a Sample Scan. */
+		return false;
+	}
+
+	/* All qualifications are compatible with a Sample Scan. */
+	return true;
 }
 
 

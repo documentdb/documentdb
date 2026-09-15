@@ -1,4 +1,5 @@
 ### documentdb v1.1-0 (Unreleased) ###
+* Allow unfiltered `$sample` queries to be pushed down to a `Sample Scan` when a dynamic cursor marker is present. Guarded by the `enable_sample_scan_pushdown_for_dynamic_cursor` feature flag. *[Bugfix/Perf]*
 * Prevent low-fill-factor rightmost RUM leaf splits from overflowing the right page when large index terms leave too little space under the requested split target. *[Bugfix]*
 * Retire the `enableSkipDottedFieldIndexTerms` feature flag and always skip index terms for non-array fields with dotted names. *[Refactor]*
 * Reclassify `isNativeAuthEnabled` as a long-term system configuration without changing its behavior or runtime name. *[Refactor]*
