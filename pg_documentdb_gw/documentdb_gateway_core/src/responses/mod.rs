@@ -24,6 +24,7 @@ pub use custom_error_mapping::{
 pub use custom_pg_db_error::CustomPgDbError;
 pub(crate) use error::enhance_internal_error_message;
 pub use error::error_to_raw_document_buf;
+pub(crate) use pg::map_connection_level_sqlstate;
 pub use pg::{
     from_known_external_error_code, i32_to_postgres_sqlstate, map_pg_db_error, map_pg_error,
     postgres_sqlstate_to_i32, PgResponse, PostgresErrorMappedResult,

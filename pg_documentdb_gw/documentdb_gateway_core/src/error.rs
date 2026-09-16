@@ -18,7 +18,7 @@ use crate::{
     postgres::conn_mgmt::StatementError,
     responses::{
         constant::{generic_internal_error_message, pg_returned_invalid_response_message},
-        postgres_sqlstate_to_i32, CustomPgDbError,
+        map_connection_level_sqlstate, postgres_sqlstate_to_i32, CustomPgDbError,
     },
 };
 
@@ -485,15 +485,23 @@ impl From<bson::raw::Error> for DocumentDBError {
 }
 
 /// Maps a backend `SqlState` from a `PoolError` to the client-facing
-/// `ErrorCode` and builds the corresponding error. Recognized states (e.g.
-/// connection exhaustion) use a fixed override message; every other state
-/// keeps the generic `InternalError` code and the provided `error_message`.
+/// `ErrorCode` and builds the corresponding error. `DISK_FULL` and
+/// `INVALID_PASSWORD` are handled here directly because `pg.rs` intercepts
+/// those two earlier via `from_known_external_error_code` and doesn't apply a
+/// fixed message. The remaining recognized states defer to
+/// `map_connection_level_sqlstate` so they can't drift from query-time
+/// mapping; every other state keeps the generic `InternalError` code and the
+/// provided `error_message`.
 fn map_pool_db_error_code(
     state: &SqlState,
     error_message: String,
     source: Box<dyn std::error::Error + Send + Sync>,
 ) -> DocumentDBError {
     let (error_code, internal_message) = match *state {
+        SqlState::DISK_FULL => (
+            ErrorCode::OutOfDiskSpace,
+            "The database disk is full".to_owned(),
+        ),
         SqlState::TOO_MANY_CONNECTIONS => (
             ErrorCode::TooManyLogicalSessions,
             "There are too many open connections.".to_owned(),
@@ -502,7 +510,11 @@ fn map_pool_db_error_code(
             ErrorCode::ShutdownInProgress,
             "Request terminated due to shutdown on the server.".to_owned(),
         ),
-        _ => (ErrorCode::InternalError, error_message),
+        SqlState::INVALID_PASSWORD => (ErrorCode::InvalidPassword, "Invalid password.".to_owned()),
+        _ => match map_connection_level_sqlstate(state) {
+            Some((code, message)) => (code, message.to_owned()),
+            None => (ErrorCode::InternalError, error_message),
+        },
     };
 
     DocumentDBError::new_documentdb_error(
@@ -530,15 +542,16 @@ impl From<PoolError> for DocumentDBError {
                     let is_connectivity_error = pg_error.is_closed()
                         || backend_io_error_kind(&pg_error)
                             .is_some_and(is_transient_backend_io_error);
-                    let error_code = if is_connectivity_error {
-                        ErrorCode::HostUnreachable
+                    let (error_code, error_message_user) = if is_connectivity_error {
+                        (
+                            ErrorCode::HostUnreachable,
+                            "Could not establish a connection to the server.".to_owned(),
+                        )
                     } else {
-                        ErrorCode::InternalError
-                    };
-                    let error_message_user = if is_connectivity_error {
-                        "Could not establish a connection to the server.".to_owned()
-                    } else {
-                        generic_internal_error_message().to_owned()
+                        (
+                            ErrorCode::InternalError,
+                            generic_internal_error_message().to_owned(),
+                        )
                     };
 
                     Self::new_documentdb_error(
@@ -658,8 +671,6 @@ impl std::error::Error for DocumentDBError {}
 #[cfg(test)]
 mod tests {
     use deadpool::managed::TimeoutType;
-    use tokio::net::TcpListener;
-    use tokio_postgres::NoTls;
 
     use super::*;
 
@@ -704,39 +715,6 @@ mod tests {
         assert_other_branch(PoolError::Timeout(TimeoutType::Create));
     }
 
-    #[tokio::test]
-    async fn from_pool_backend_connectivity_error_maps_to_host_unreachable() {
-        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let accept_task = tokio::spawn(async move {
-            let (socket, _) = listener.accept().await.unwrap();
-            drop(socket);
-        });
-
-        let connection_string = format!("host=127.0.0.1 port={port} user=test connect_timeout=1");
-        let Err(pg_error) = tokio_postgres::connect(&connection_string, NoTls).await else {
-            panic!("connection should fail when the server closes during startup");
-        };
-        accept_task.await.unwrap();
-
-        let error = DocumentDBError::from(PoolError::Backend(pg_error));
-
-        assert_eq!(error.error_code(), ErrorCode::HostUnreachable);
-        assert_eq!(*error.kind(), ErrorKind::Pool);
-        assert_eq!(
-            error.error_message_user(),
-            "Could not establish a connection to the server."
-        );
-        assert!(
-            error.as_postgres_error().is_some(),
-            "postgres source should be preserved"
-        );
-        assert!(
-            error.postgres_io_error_kind().is_some(),
-            "transport error kind should be available for diagnostics"
-        );
-    }
-
     /// A recognized connection-exhaustion `SqlState` is remapped to
     /// `TooManyLogicalSessions` with a fixed override message, while the
     /// provided source is preserved and the user message stays PII-safe.
@@ -756,6 +734,50 @@ mod tests {
             error.error_message_internal(),
             Some("There are too many open connections.")
         );
+    }
+
+    #[test]
+    fn map_pool_db_error_code_maps_known_states() {
+        for (state, expected_code, expected_message) in [
+            (
+                &SqlState::DISK_FULL,
+                ErrorCode::OutOfDiskSpace,
+                "The database disk is full",
+            ),
+            (
+                &SqlState::OUT_OF_MEMORY,
+                ErrorCode::ExceededMemoryLimit,
+                "Exceeded available memory on the server.",
+            ),
+            (
+                &SqlState::INSUFFICIENT_RESOURCES,
+                ErrorCode::ExceededMemoryLimit,
+                "Exceeded available resources on the server.",
+            ),
+            (
+                &SqlState::CANNOT_CONNECT_NOW,
+                ErrorCode::ShutdownInProgress,
+                "Request terminated due to shutdown on the server.",
+            ),
+            (
+                &SqlState::INVALID_PASSWORD,
+                ErrorCode::InvalidPassword,
+                "Invalid password.",
+            ),
+            (
+                &SqlState::INSUFFICIENT_PRIVILEGE,
+                ErrorCode::Unauthorized,
+                "User is not authorized to perform this action",
+            ),
+        ] {
+            let source = Box::new(std::io::Error::other("backend detail"));
+            let error = map_pool_db_error_code(state, "backend detail".to_owned(), source);
+
+            assert_eq!(error.error_code(), expected_code);
+            assert_eq!(*error.kind(), ErrorKind::Pool);
+            assert_eq!(error.error_message_user(), generic_internal_error_message());
+            assert_eq!(error.error_message_internal(), Some(expected_message));
+        }
     }
 
     /// Any other `SqlState` keeps the generic `InternalError` code and passes

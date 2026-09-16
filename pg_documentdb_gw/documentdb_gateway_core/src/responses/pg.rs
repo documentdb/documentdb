@@ -153,6 +153,34 @@ pub fn map_pg_db_error<'a>(
     )
 }
 
+/// Resource-exhaustion and privilege `SqlState`s whose mapping does not depend on
+/// transaction or activity context. Shared by query-time (`map_pg_db_error_fallback`) and
+/// pool-acquisition-time (`error::map_pool_db_error_code`) mapping so the two tables can't
+/// drift apart. `DISK_FULL` and `INVALID_PASSWORD` are deliberately not included here: those
+/// states are already intercepted earlier by `from_known_external_error_code`, so their match
+/// arms below are unreachable for real postgres errors and surface the raw `msg` rather than a
+/// fixed message; error.rs keeps its own mapping for those two.
+pub const fn map_connection_level_sqlstate(
+    sql_state: &SqlState,
+) -> Option<(ErrorCode, &'static str)> {
+    match *sql_state {
+        SqlState::OUT_OF_MEMORY => Some((
+            ErrorCode::ExceededMemoryLimit,
+            "Exceeded available memory on the server.",
+        )),
+        // Closest proxy — all cases seen so far have been OOM for this error code.
+        SqlState::INSUFFICIENT_RESOURCES => Some((
+            ErrorCode::ExceededMemoryLimit,
+            "Exceeded available resources on the server.",
+        )),
+        SqlState::INSUFFICIENT_PRIVILEGE => Some((
+            ErrorCode::Unauthorized,
+            "User is not authorized to perform this action",
+        )),
+        _ => None,
+    }
+}
+
 /// Errors which are related to open sourced documentdb extension functionality should be mapped in this function.
 #[expect(clippy::too_many_lines, reason = "complex error mapping logic")]
 fn map_pg_db_error_fallback<'a>(
@@ -189,6 +217,21 @@ fn map_pg_db_error_fallback<'a>(
             error_code: known_error_code,
             error_message: msg,
             internal_note: None,
+        };
+    }
+
+    if let Some((error_code, error_message)) = map_connection_level_sqlstate(sql_state) {
+        if matches!(
+            *sql_state,
+            SqlState::OUT_OF_MEMORY | SqlState::INSUFFICIENT_RESOURCES
+        ) {
+            tracing::error!(activity_id = activity_id, "{error_message}");
+        }
+
+        return PostgresErrorMappedResult {
+            error_code,
+            error_message,
+            internal_note: Some(msg),
         };
     }
 
@@ -418,11 +461,6 @@ fn map_pg_db_error_fallback<'a>(
             error_message: "Exceeded time limit while waiting for a new primary to be elected",
             internal_note: Some(msg),
         },
-        SqlState::INSUFFICIENT_PRIVILEGE => PostgresErrorMappedResult {
-            error_code: ErrorCode::Unauthorized,
-            error_message: "User is not authorized to perform this action",
-            internal_note: Some(msg),
-        },
         SqlState::T_R_DEADLOCK_DETECTED => PostgresErrorMappedResult {
             error_code: ErrorCode::WriteConflict,
             error_message: "Could not acquire lock for operation due to deadlock",
@@ -478,25 +516,6 @@ fn map_pg_db_error_fallback<'a>(
             let error_message = "Operation was attempted in a transaction that was aborted";
             PostgresErrorMappedResult {
                 error_code: ErrorCode::OperationNotSupportedInTransaction,
-                error_message,
-                internal_note: Some(msg),
-            }
-        }
-        SqlState::OUT_OF_MEMORY => {
-            let error_message = "Exceeded available memory on the server.";
-            tracing::error!(activity_id = activity_id, "{error_message}");
-            PostgresErrorMappedResult {
-                error_code: ErrorCode::ExceededMemoryLimit,
-                error_message,
-                internal_note: Some(msg),
-            }
-        }
-        SqlState::INSUFFICIENT_RESOURCES => {
-            // Closest proxy — all cases seen so far have been OOM for this error code.
-            let error_message = "Exceeded available resources on the server.";
-            tracing::error!(activity_id = activity_id, "{error_message}");
-            PostgresErrorMappedResult {
-                error_code: ErrorCode::ExceededMemoryLimit,
                 error_message,
                 internal_note: Some(msg),
             }
