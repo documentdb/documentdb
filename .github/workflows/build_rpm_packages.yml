@@ -127,11 +127,12 @@ jobs:
           compression-level: 0
       # rpmbuild must be present before the gateway clean-install test, which
       # exercises the RPM extras path (build_extra_packages.sh --type rpm) on
-      # the runner. It is also reused by the noarch extras build below.
-      - name: Install rpmbuild
+      # the runner. The repository tools are also used by the installer E2E
+      # after every package has been assembled.
+      - name: Install RPM build and repository tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends rpm
+          sudo apt-get install -y --no-install-recommends rpm createrepo-c gnupg
 
       - name: Build Gateway RPM Package
         run: |
@@ -198,6 +199,26 @@ jobs:
             --version ${{ env.DOCUMENTDB_VERSION }} \
             --output-dir "$(pwd)/packaging" \
             --default-pg-major ${{ env.PAVED_PG_MAJOR }}
+
+      # Execute install.sh against a signed temporary DNF repository in a
+      # clean systemd container. The PR matrix contains native amd64 and arm64
+      # cells, and the full/release matrix runs every PG and architecture cell.
+      - name: Run clean-container installer E2E
+        run: |
+          if ! ./packaging/test_packages/installer/run-installer-e2e.sh \
+              --type rpm \
+              --pg ${{ matrix.pg_version }} \
+              --arch ${{ matrix.arch }} \
+              --os-prefix ${{ matrix.os }} \
+              --packages-dir "$(pwd)/packaging"; then
+            echo "::warning::Installer E2E failed; retrying once to absorb upstream repository failures."
+            ./packaging/test_packages/installer/run-installer-e2e.sh \
+              --type rpm \
+              --pg ${{ matrix.pg_version }} \
+              --arch ${{ matrix.arch }} \
+              --os-prefix ${{ matrix.os }} \
+              --packages-dir "$(pwd)/packaging"
+          fi
 
       # Package lint, v1 = informational only (continue-on-error): the first
       # runs establish the real rpmlint baseline; the follow-up is a curated

@@ -19,6 +19,69 @@ below, which is the authoritative statement of the CI scope); other OS/PG
 combinations are exposed by the build scripts below for community packagers and
 validation runs.
 
+## Clean-host installer
+
+`packaging/install.sh` bootstraps a new installation from the signed package
+repositories on these hosts:
+
+| Distribution | Architectures | PostgreSQL |
+|---|---|---|
+| Ubuntu 24.04 LTS | amd64, arm64 | 17, 18 |
+| EL9 family, including RHEL, Rocky Linux, AlmaLinux, and CentOS Stream | amd64 (x86_64), arm64 (aarch64) | 17, 18 |
+
+Full setup requires a running systemd environment and root or `sudo` access.
+This includes clean systemd-enabled containers. `--packages-only` does not
+require systemd because it does not configure or start an instance. "Clean"
+means no conflicting DocumentDB packages, repository configuration, setup
+state, or residual data; it does not require a dedicated physical or virtual
+machine.
+
+Download the installer before executing it:
+
+```sh
+curl -fsSLo documentdb-install.sh \
+  https://github.com/documentdb/documentdb/releases/latest/download/install.sh &&
+sh documentdb-install.sh
+```
+
+Direct piping is also compatible:
+
+```sh
+curl -fsSL \
+  https://github.com/documentdb/documentdb/releases/latest/download/install.sh |
+sh
+```
+
+PostgreSQL 18 is the default. An interactive PostgreSQL 17 install is:
+
+```sh
+sh documentdb-install.sh --pg-major 17
+```
+
+For unattended setup, provide a protected password file and acknowledge the
+listener behavior:
+
+```sh
+sh documentdb-install.sh \
+  --yes \
+  --pg-major 18 \
+  --admin-user admin \
+  --admin-password-file /secure/path/admin-password \
+  --listen-port 10260 \
+  --accept-external-listen
+```
+
+Use `--dry-run` to preview operations, `--packages-only` to install packages
+without configuring an instance, and `--no-enable` to configure the new
+instance without starting or enabling its gateway.
+
+The installer selects the repositories required for the detected operating
+system and verifies trusted signing keys before installing packages. It does
+not replace conflicting repository or key configuration. An already configured
+setup is not overwritten, and brownfield or otherwise conflicting package,
+configuration, or data state is refused. This bootstrap makes no upgrade or
+repair promise.
+
 ## What CI builds (package-production tiers)
 
 First-party CI does **not** build the full distro × PG-major cartesian product.
@@ -33,7 +96,10 @@ majors), the build is tiered:
   and **RHEL/Rocky 9** (RPM), for **amd64 + arm64**. The install/start E2E
   (install → `documentdb-setup` → wire protocol) runs on **every cell of that
   matrix**, not just the paved-road default — a combination we ship is a
-  combination we installed and started at least once.
+  combination we installed and started at least once. The package workflows
+  also invoke `install.sh` against signed temporary repositories in clean
+  systemd containers on native amd64 and arm64 runners. Pull requests gate on
+  both architectures, and full/release runs cover both PostgreSQL majors.
 - **Tier 2 / 3 — build on demand (not built by CI).** Every other supported
   combination — **PostgreSQL 15/16**, **Debian 11/12/13**, **Ubuntu 22.04**,
   **RHEL/Rocky 8** — is produced by running the version-parametric build scripts

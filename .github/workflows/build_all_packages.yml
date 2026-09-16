@@ -7,7 +7,8 @@
 # documentdb meta — across the OS/arch/PG matrix, and upload each slice as a
 # short-lived (7-day) artifact. That is convenient for per-cell debugging but
 # leaves no single, durable, verified place to pick up "all packages for
-# version X".
+# version X". The bundle also carries the reviewed clean-host `install.sh`
+# bootstrap; it is checksummed but excluded from package-count math.
 #
 # This workflow fans out to those two reusable workflows over the FULL matrix,
 # then aggregates every produced .deb/.rpm into one durable bundle with a
@@ -126,6 +127,7 @@ jobs:
           set -euo pipefail
 
           mkdir -p packages
+          install -m 0755 packaging/install.sh packages/install.sh
 
           # Collect every .deb/.rpm except Debian debug-symbol packages and
           # dedup by basename: the noarch extras and the PG-agnostic gateway
@@ -256,8 +258,10 @@ jobs:
             exit 1
           fi
 
-          # Reproducible, sorted checksum manifest over the package files only.
-          find . -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -printf '%f\0' \
+          # Reproducible, sorted checksum manifest over packages and the
+          # clean-host installer. Package category/total math below continues
+          # to count only .deb/.rpm files.
+          find . -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' -o -name 'install.sh' \) -printf '%f\0' \
             | sort -z | xargs -0 sha256sum > SHA256SUMS
 
           count_glob() { find . -maxdepth 1 -type f -name "$1" | wc -l | tr -d ' '; }
@@ -351,6 +355,9 @@ jobs:
             echo
             echo "Files:"
             find . -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -printf '  %f\n' | sort
+            echo
+            echo "Installer:"
+            echo "  install.sh"
           } >> manifest.txt
 
           echo "----- manifest.txt -----"
@@ -452,6 +459,7 @@ jobs:
           path: |
             packages/*.deb
             packages/*.rpm
+            packages/install.sh
             packages/SHA256SUMS
             packages/manifest.txt
           retention-days: 90
@@ -482,7 +490,7 @@ jobs:
             echo "### ⬇️ Download"
             echo
             if [ -n "${ARTIFACT_URL}" ]; then
-              echo "**[Download \`${ARTIFACT_NAME}.zip\`](${ARTIFACT_URL})** — one archive with every \`.deb\` + \`.rpm\`, plus \`SHA256SUMS\` and \`manifest.txt\`."
+              echo "**[Download \`${ARTIFACT_NAME}.zip\`](${ARTIFACT_URL})**: one archive with every \`.deb\` + \`.rpm\`, \`install.sh\`, \`SHA256SUMS\`, and \`manifest.txt\`."
             else
               echo "Download the **\`${ARTIFACT_NAME}\`** artifact from the [run page](${run_url}) (see the Artifacts section)."
             fi

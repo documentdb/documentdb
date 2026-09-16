@@ -123,6 +123,12 @@ jobs:
           echo "DOCUMENTDB_VERSION=${{ steps.version.outputs.version }}" >> "$GITHUB_ENV"
           echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
 
+      # Keep the installer contract test on the paved Ubuntu cell. The
+      # deterministic suite covers both supported package families.
+      - name: Test clean-host installer contract
+        if: matrix.os == 'ubuntu24.04' && matrix.arch == 'amd64' && matrix.pg_version == env.PAVED_PG_MAJOR
+        run: bash packaging/test_packages/test-install-script.sh
+
       - name: Build Debian Package
         run: |
           # Build the extension .deb only. `build_packages.sh
@@ -217,6 +223,36 @@ jobs:
             --output-dir "$(pwd)/packaging" \
             --default-pg-major ${{ env.PAVED_PG_MAJOR }} \
             --os-prefix ${{ matrix.os }}
+
+      # Execute the public bootstrap itself in a clean systemd container. This
+      # is separate from the gateway package E2E above: that suite installs
+      # local files directly, while this path creates a signed temporary APT
+      # repository and proves repository setup, dependency resolution, setup,
+      # and service readiness through install.sh. Both native architectures
+      # are required on PRs and every full/release matrix cell runs it.
+      - name: Install installer E2E repository tools
+        if: matrix.os == 'ubuntu24.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends apt-utils dpkg-dev gnupg
+
+      - name: Run clean-container installer E2E
+        if: matrix.os == 'ubuntu24.04'
+        run: |
+          if ! ./packaging/test_packages/installer/run-installer-e2e.sh \
+              --type deb \
+              --pg ${{ matrix.pg_version }} \
+              --arch ${{ matrix.arch }} \
+              --os-prefix ${{ matrix.os }} \
+              --packages-dir "$(pwd)/packaging"; then
+            echo "::warning::Installer E2E failed; retrying once to absorb upstream repository failures."
+            ./packaging/test_packages/installer/run-installer-e2e.sh \
+              --type deb \
+              --pg ${{ matrix.pg_version }} \
+              --arch ${{ matrix.arch }} \
+              --os-prefix ${{ matrix.os }} \
+              --packages-dir "$(pwd)/packaging"
+          fi
 
       # Package lint, v1 = informational only (continue-on-error): the first
       # runs establish the real lintian baseline; the follow-up is a curated

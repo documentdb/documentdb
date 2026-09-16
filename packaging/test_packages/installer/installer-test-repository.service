@@ -1,0 +1,14 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[Unit]
+Description=Installer test package repository
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/serve-test-repository.py --root /srv/documentdb-installer-repository --cert /etc/documentdb-installer-e2e/repository-server.crt --key /etc/documentdb-installer-e2e/repository-server.key --port 8443
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
