@@ -223,8 +223,7 @@ auto_detect_connection() {
             _d_port="$(grep -E '^PG_PORT=' "${sf}" 2>/dev/null | head -1 | cut -d= -f2- || true)"
             _d_mode="$(grep -E '^DOCUMENTDB_MODE=' "${sf}" 2>/dev/null | head -1 | cut -d= -f2- || true)"
             if [[ "${_d_mode}" == "brownfield" ]]; then
-                _d_socket="/var/run/postgresql"
-                [[ -d /var/run/postgresql ]] || { [[ -d /run/postgresql ]] && _d_socket="/run/postgresql"; }
+                _d_socket="$(documentdb_distro_pg_socket_dir || true)"
             elif [[ "${sf}" == "/etc/documentdb/documentdb-postgresql.env" ]]; then
                 # The legacy env file records neither PG_PORT nor PG_OWNER;
                 # port/socket live in the managed block of the CONFIG_FILE it
@@ -251,8 +250,8 @@ auto_detect_connection() {
 
     if (( ${#state_files[@]} == 0 )); then
         # No appliance state found — use system PG defaults
-        [[ -z "${PG_PORT}" ]] && PG_PORT="5432"
-        [[ -z "${SOCKET_DIR}" ]] && SOCKET_DIR="/var/run/postgresql"
+        [[ -z "${PG_PORT}" ]] && PG_PORT="${DOCUMENTDB_DISTRO_PG_PORT}"
+        [[ -z "${SOCKET_DIR}" ]] && SOCKET_DIR="$(documentdb_distro_pg_socket_dir || true)"
         return 0
     fi
 
@@ -305,11 +304,7 @@ auto_detect_connection() {
     elif [[ -n "${detected_ver}" ]]; then
         if [[ "${mode_marker}" == "brownfield" ]]; then
             # Brownfield: adopted system PG, use the distro socket dir.
-            if [[ -d /var/run/postgresql ]]; then
-                detected_socket="/var/run/postgresql"
-            elif [[ -d /run/postgresql ]]; then
-                detected_socket="/run/postgresql"
-            fi
+            detected_socket="$(documentdb_distro_pg_socket_dir)" || detected_socket=""
         else
             detected_socket="/run/documentdb-local/${detected_ver}/postgresql"
             [[ -d "${detected_socket}" ]] || detected_socket="/run/documentdb-local/postgresql"
@@ -885,7 +880,7 @@ main() {
     # (explicit-flags early return, no-state default, state-derived): a
     # plain system PostgreSQL runs as "postgres". State files and the
     # legacy-host branch normally resolve PG_OWNER before this fires.
-    [[ -n "${PG_OWNER}" ]] || PG_OWNER="postgres"
+    [[ -n "${PG_OWNER}" ]] || PG_OWNER="${DOCUMENTDB_DISTRO_PG_OWNER}"
 
     log_verbose "subcommand: ${subcmd}"
     log_verbose "connection: db=${TARGET_DB} socket=${SOCKET_DIR} port=${PG_PORT} pg-owner=${PG_OWNER}"

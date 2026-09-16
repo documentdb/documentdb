@@ -65,7 +65,13 @@ data_path="${1:?usage: documentdb_prepare_data_directory.sh <data_path>}"
 while [ "${#data_path}" -gt 1 ] && [ "${data_path%/}" != "$data_path" ]; do
     data_path="${data_path%/}"
 done
-template_path="${DOCUMENTDB_PGDATA_TEMPLATE:-/data}"
+# The baked template lives at the image's default data path.
+# shellcheck source=documentdb_local_settings.sh
+. "$(dirname "${BASH_SOURCE[0]}")/documentdb_local_settings.sh" || {
+    echo "Error: cannot load documentdb_local_settings.sh beside this script." >&2
+    exit 1
+}
+template_path="${DOCUMENTDB_PGDATA_TEMPLATE:-$(documentdb_local_setting_default DATA_PATH)}"
 template_marker_rel=".documentdb-local/baked_template"
 needs_reinit=false
 
@@ -208,7 +214,7 @@ if [ -f "$data_path/$template_marker_rel" ]; then
         # non-destructive.
         echo "Re-initializing data directory: the pre-initialized template holds a PostgreSQL ${data_pg_major} cluster but this image runs PostgreSQL ${image_pg_major}."
         needs_reinit=true
-    elif [ "${DISABLE_EXTENDED_RUM:-false}" = "true" ]; then
+    elif [ "${DISABLE_EXTENDED_RUM:-}" = "true" ]; then
         # The fingerprint proof above established the cluster never ran, so
         # there is no user data and re-initializing with the requested options
         # is safe (this is the pre-template fresh-boot path).
@@ -222,7 +228,7 @@ elif [ "$data_path" != "$template_path" ] && \
      [ -f "$template_path/$template_marker_rel" ] && \
      [ ! -f "$data_path/PG_VERSION" ] && \
      [ -z "$(ls -A "$data_path" 2>/dev/null)" ] && \
-     [ "${DISABLE_EXTENDED_RUM:-false}" != "true" ] && \
+     [ "${DISABLE_EXTENDED_RUM:-}" != "true" ] && \
      template_is_pristine "$template_path"; then
     # A custom, still-empty data path: instantiate it from the pristine baked
     # template instead of running full initialization.
@@ -252,7 +258,7 @@ elif [ "$data_path" = "$template_path" ] && \
     echo "Data directory $data_path is empty and was not populated from the image template (host bind mounts are not populated by Docker); running full initialization, so this first boot will be slower."
 fi
 
-if [ "${DISABLE_EXTENDED_RUM:-false}" = "true" ] && [ "$needs_reinit" = "false" ] \
+if [ "${DISABLE_EXTENDED_RUM:-}" = "true" ] && [ "$needs_reinit" = "false" ] \
         && [ -f "$data_path/PG_VERSION" ]; then
     # Deliberately not "the flag is ignored": whatever was selected when this
     # directory was initialized is still in effect -- including a previous boot

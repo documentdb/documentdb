@@ -333,10 +333,9 @@ resolve_cluster_paths() {
                 [[ "${_pm_sock}" == /* ]] && SOCKET_DIR="${_pm_sock}"
             fi
         fi
-        # /var/run/postgresql is the convention on both Debian and RHEL
-        # packaged PostgreSQL. Operators using a non-default socket dir on a
-        # stopped cluster (no postmaster.pid) must still pass --socket-dir.
-        [[ -z "${SOCKET_DIR}" ]] && SOCKET_DIR="/var/run/postgresql"
+        # Operators using a non-default socket dir on a stopped cluster (no
+        # postmaster.pid) must still pass --socket-dir.
+        [[ -z "${SOCKET_DIR}" ]] && SOCKET_DIR="$(documentdb_distro_pg_socket_dir || true)"
         return 0
     fi
 
@@ -345,12 +344,12 @@ resolve_cluster_paths() {
         PGDATA="/var/lib/postgresql/${PG_VERSION}/${CLUSTER_NAME}"
         HBA_FILE="${pg_conf_dir}/pg_hba.conf"
         IDENT_FILE="${pg_conf_dir}/pg_ident.conf"
-        [[ -z "${SOCKET_DIR}" ]] && SOCKET_DIR="/var/run/postgresql"
+        [[ -z "${SOCKET_DIR}" ]] && SOCKET_DIR="$(documentdb_distro_pg_socket_dir || true)"
     else
         PGDATA="/var/lib/pgsql/${PG_VERSION}/data"
         HBA_FILE="${PGDATA}/pg_hba.conf"
         IDENT_FILE="${PGDATA}/pg_ident.conf"
-        [[ -z "${SOCKET_DIR}" ]] && SOCKET_DIR="/var/run/postgresql"
+        [[ -z "${SOCKET_DIR}" ]] && SOCKET_DIR="$(documentdb_distro_pg_socket_dir || true)"
     fi
     # Explicit return so the function's exit status never reflects the trailing
     # `[[ -z SOCKET_DIR ]] && ...` short-circuit (which returns 1 when
@@ -445,7 +444,7 @@ resolve_target_pg_major() {
         # falling back to 'postgres'. server_version_num is available from any
         # database, and probing TARGET_DB gives the cross-check the same
         # reachability as the operations that follow.
-        vnum="$(run_as_user "${PG_OWNER:-postgres}" "${PSQL}" -h "${SOCKET_DIR}" -p "${PG_PORT}" \
+        vnum="$(run_as_user "${PG_OWNER:-${DOCUMENTDB_DISTRO_PG_OWNER}}" "${PSQL}" -h "${SOCKET_DIR}" -p "${PG_PORT}" \
             -d "${TARGET_DB:-postgres}" -X -tA -c 'SHOW server_version_num;' 2>/dev/null | tr -d '[:space:]' || true)"
         [[ "${vnum}" =~ ^[0-9]+$ ]] && live=$(( vnum / 10000 ))
     fi
@@ -677,7 +676,7 @@ do_setup() {
         elif [[ "${has_systemd}" == "1" ]]; then
             local reload_cmd="sudo systemctl reload postgresql"
         else
-            local reload_cmd="sudo -u ${PG_OWNER:-postgres} psql -c 'SELECT pg_reload_conf();'  # (no systemd detected)"
+            local reload_cmd="sudo -u ${PG_OWNER:-${DOCUMENTDB_DISTRO_PG_OWNER}} psql -c 'SELECT pg_reload_conf();'  # (no systemd detected)"
         fi
     fi
 
@@ -752,7 +751,7 @@ do_setup() {
     # 10260 default. A wildcard/unspecified host is not connectable, so fall back
     # to loopback.
     local connect_host="127.0.0.1"
-    local connect_port="10260"
+    local connect_port="${DOCUMENTDB_DEFAULT_GATEWAY_PORT}"
     if [[ -n "${GATEWAY_LISTEN_ADDR:-}" ]]; then
         local _la="${GATEWAY_LISTEN_ADDR}"
         if [[ "${_la}" =~ ^:[0-9]+$ ]]; then
@@ -1873,10 +1872,10 @@ main() {
     fi
 
     # Default socket/port if not set
-    [[ -z "${PG_PORT}" ]] && PG_PORT="5432"
-    # PG_OWNER defaults to "postgres" (distro-managed PG instances). For
-    # stand-alone greenfield, the wizard passes --pg-owner documentdb-local.
-    [[ -z "${PG_OWNER}" ]] && PG_OWNER="postgres"
+    [[ -z "${PG_PORT}" ]] && PG_PORT="${DOCUMENTDB_DISTRO_PG_PORT}"
+    # PG_OWNER defaults to the distro's PostgreSQL OS user. For stand-alone
+    # greenfield, the wizard passes --pg-owner documentdb-local.
+    [[ -z "${PG_OWNER}" ]] && PG_OWNER="${DOCUMENTDB_DISTRO_PG_OWNER}"
 
     # Determine secret/state file paths.
     # Track 1 paths (per packaging-design.md §4.4):

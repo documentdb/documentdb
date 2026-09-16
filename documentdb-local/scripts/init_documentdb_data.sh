@@ -6,13 +6,16 @@
 set -e
 set -u
 
-# Default values
-USERNAME="default_user"
+# Defaults come from the image's settings table beside this script; the
+# entrypoint passes every value explicitly, so these only apply standalone.
+# shellcheck source=documentdb_local_settings.sh
+. "$(dirname "${BASH_SOURCE[0]}")/documentdb_local_settings.sh"
+USERNAME="$(documentdb_local_setting_default USERNAME)"
 PASSWORD=""
-INIT_DATA_PATH="/init_doc_db.d"
+INIT_DATA_PATH="$(documentdb_local_setting_default INIT_DATA_PATH)"
 VERBOSE="false"
 DOCUMENTDB_HOST="localhost"
-DOCUMENTDB_PORT="10260"
+DOCUMENTDB_PORT="$(documentdb_local_setting_default DOCUMENTDB_PORT)"
 # When set (custom user-provided initialization only), this marker is written immediately
 # before the first user script runs, so a non-idempotent init that fails partway is not
 # re-run on a restart and cannot loop. Empty for built-in sample data, which is idempotent.
@@ -38,10 +41,10 @@ Usage: $0 [OPTIONS]
 Options:
   -h, --help                    Show this help message
   -H, --host HOST              DocumentDB host (default: localhost)
-  -P, --port PORT              DocumentDB port (default: 10260)
-  -u, --username USERNAME      DocumentDB username (default: default_user)
+  -P, --port PORT              DocumentDB port (default: $(documentdb_local_setting_default DOCUMENTDB_PORT))
+  -u, --username USERNAME      DocumentDB username (default: $(documentdb_local_setting_default USERNAME))
   -d, --data-path PATH         Path to directory containing .js initialization files
-                               (default: /init_doc_db.d)
+                               (default: $(documentdb_local_setting_default INIT_DATA_PATH))
   -v, --verbose                Enable verbose output
   --attempt-marker PATH        Internal: marker file recorded immediately before the first
                                user script runs, making custom initialization one-shot per

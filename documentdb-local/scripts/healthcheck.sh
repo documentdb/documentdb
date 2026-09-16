@@ -38,8 +38,23 @@ set -u
 STATE_FILE="${DOCUMENTDB_RUNTIME_STATE_FILE:-/tmp/documentdb-local-runtime.env}"
 
 # Precedence per setting: CLI argument > state file > environment > default.
-documentdb_port="${DOCUMENTDB_PORT:-10260}"
-postgresql_port="${POSTGRESQL_PORT:-9712}"
+# Defaults come from the image's settings table beside this script. Builtins
+# only, so a probe with a minimal PATH still reports the real failure; the
+# /usr/local/bin symlink the image installs is followed when readlink exists.
+case "${BASH_SOURCE[0]}" in
+    */*) _hc_dir="${BASH_SOURCE[0]%/*}" ;;
+    *)   _hc_dir="." ;;
+esac
+if [ -L "${BASH_SOURCE[0]}" ] && command -v readlink >/dev/null 2>&1; then
+    _hc_real="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null)" && _hc_dir="${_hc_real%/*}"
+fi
+# shellcheck source=documentdb_local_settings.sh
+if ! . "${_hc_dir}/documentdb_local_settings.sh" 2>/dev/null; then
+    echo "unhealthy: documentdb_local_settings.sh not found beside healthcheck.sh"
+    exit 1
+fi
+documentdb_port="${DOCUMENTDB_PORT:-$(documentdb_local_setting_default DOCUMENTDB_PORT)}"
+postgresql_port="${POSTGRESQL_PORT:-$(documentdb_local_setting_default POSTGRESQL_PORT)}"
 
 # Open explicitly and FAIL CLOSED: `[ -f ]` only proves the path stats, not
 # that it can be opened. With a plain `done < "$STATE_FILE"` an open failure

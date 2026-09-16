@@ -744,8 +744,8 @@ exit 0
         # as a fallback — a foreign pg_config earlier on PATH must not answer
         # for the server's build.
         entrypoint = ENTRYPOINT.read_text(encoding="utf-8")
-        versioned = entrypoint.index('/usr/lib/postgresql/${PG_VERSION_USED:-17}/bin')
-        self.assertIn('/usr/pgsql-${PG_VERSION_USED:-17}/bin', entrypoint)
+        versioned = entrypoint.index('/usr/lib/postgresql/${PG_MAJOR_ASSUMED}/bin')
+        self.assertIn('/usr/pgsql-${PG_MAJOR_ASSUMED}/bin', entrypoint)
         path_fallback = entrypoint.index("command -v pg_config")
         self.assertLess(versioned, path_fallback)
 
@@ -2250,7 +2250,7 @@ exit 1
         result = self._run_entrypoint("--password", _TEST_PW)
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         config = self._read_config()
-        self.assertEqual(config["TlsMode"], "allowTLS")
+        self.assertNotIn("TlsMode", config, "the gateway has no TlsMode field; only EnforceTls is written")
         self.assertEqual(config["EnforceTls"], False)
         self.assertEqual(config["GatewayListenPort"], 10260)
         self.assertEqual(config["PostgresPort"], 9712)
@@ -2262,7 +2262,7 @@ exit 1
         )
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         config = self._read_config()
-        self.assertEqual(config["TlsMode"], "requireTLS")
+        self.assertNotIn("TlsMode", config, "the gateway has no TlsMode field; only EnforceTls is written")
         self.assertEqual(config["EnforceTls"], True)
 
     def test_tlsMode_disabled_flag_sets_disabled_in_config(self):
@@ -2271,7 +2271,7 @@ exit 1
         )
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         config = self._read_config()
-        self.assertEqual(config["TlsMode"], "disabled")
+        self.assertNotIn("TlsMode", config, "the gateway has no TlsMode field; only EnforceTls is written")
         self.assertEqual(config["EnforceTls"], False)
         self.assertIn("does not turn TLS off", result.stdout + result.stderr)
 
@@ -2283,7 +2283,7 @@ exit 1
         )
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         config = self._read_config()
-        self.assertEqual(config["TlsMode"], "requireTLS")
+        self.assertNotIn("TlsMode", config, "the gateway has no TlsMode field; only EnforceTls is written")
         self.assertEqual(config["EnforceTls"], True)
 
     def test_tlsMode_env_var_allowTLS_does_not_enforce_tls(self):
@@ -2294,7 +2294,7 @@ exit 1
         )
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         config = self._read_config()
-        self.assertEqual(config["TlsMode"], "allowTLS")
+        self.assertNotIn("TlsMode", config, "the gateway has no TlsMode field; only EnforceTls is written")
         self.assertEqual(config["EnforceTls"], False)
 
     def test_system_postgres_log_defaults_to_runtime_pg_version(self):

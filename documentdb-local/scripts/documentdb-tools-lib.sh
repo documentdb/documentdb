@@ -10,8 +10,9 @@
 # previously copy-pasted (with renamed locals) into multiple tools, so the tools
 # cannot drift on marker or parser semantics.
 #
-# Contract — this library is safe to source under `set -u`. The sourcing script
-# MUST define the host hooks required by the helpers it calls:
+# Contract — this library is safe to source under `set -u`: sourcing it only
+# defines functions and constants. The sourcing script MUST define, before the
+# first helper call:
 #  * die <msg> — print an error and exit non-zero.
 #  * log_verbose <msg> — verbose diagnostic to stderr (no-op unless verbose).
 #  * create_temp_in_dir <var> <dir> — create a temp file in <dir>, assign its
@@ -20,7 +21,10 @@
 #
 # merge_shared_preload_libraries additionally requires HAS_EXTENDED_RUM to be
 # set before it is called: "true" when pg_documentdb_extended_rum must be added
-# to shared_preload_libraries, "false" otherwise.
+# to shared_preload_libraries, "false" otherwise. The required-library set
+# itself comes from documentdb_required_preload_libraries, which delegates to
+# the extension-owned preload_libraries.sh -- the tools no longer carry their
+# own copies of that list.
 # documentdb_resolve_toast_compression sets TOAST_COMPRESSION in the sourcing
 # script: the value to write for default_toast_compression, or "" to leave the
 # setting alone.
@@ -119,17 +123,71 @@ read_shared_preload_libraries_from_file() {
     read_shared_preload_libraries_from_stdin < "${config_path}"
 }
 
+# documentdb_required_preload_libraries <true|false>: print the libraries
+# DocumentDB requires in shared_preload_libraries, one per line, derived from
+# the extension-owned GetDocumentDBBasePreloadLibraries in preload_libraries.sh.
+documentdb_required_preload_libraries() {
+    local with_rum="$1"
+    local -a args=()
+    local raw item
+
+    [[ "${with_rum}" == "true" ]] && args+=("--rum")
+
+    # Always re-sourced: callers run this inside $(), so a declare -F guard
+    # caches nothing and would accept any same-named function in scope.
+    _documentdb_source_preload_authority \
+        || die "cannot locate preload_libraries.sh, the shared_preload_libraries authority."
+
+    # A partial answer (printed "pg_cron", then failed) is non-empty and would
+    # pass the emptiness check, so the helper's own status must be fatal.
+    raw="$(GetDocumentDBBasePreloadLibraries "${args[@]+"${args[@]}"}")" \
+        || die "GetDocumentDBBasePreloadLibraries failed; refusing to write a partial shared_preload_libraries list."
+
+    local -a fields=() items=()
+    IFS=',' read -r -a fields <<< "${raw}"
+    for item in "${fields[@]}"; do
+        item="$(trim_whitespace "${item}")"
+        [[ -n "${item}" ]] && items+=("${item}")
+    done
+    (( ${#items[@]} > 0 )) \
+        || die "the required shared_preload_libraries set came back empty; refusing to write a configuration without it."
+    printf '%s\n' "${items[@]}"
+    return 0
+}
+
+# Lazy (per call, not at source time) so sourcers that never need the preload
+# list do not depend on preload_libraries.sh being installed. The packages
+# install it beside this library; a checkout has it at oss/scripts/.
+_documentdb_source_preload_authority() {
+    local here candidate
+    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    for candidate in \
+        "${here}/preload_libraries.sh" \
+        "${here}/../../scripts/preload_libraries.sh"; do
+        if [[ -r "${candidate}" ]]; then
+            # shellcheck source=/dev/null
+            . "${candidate}"
+            return 0
+        fi
+    done
+    return 1
+}
+
 merge_shared_preload_libraries() {
     local current_value="$1"
     local item joined=""
     local -a merged=() current_items=()
-    local -a required=(
-        "pg_cron"
-        "pg_documentdb_core"
-        "pg_documentdb"
-    )
+    local -a required=()
     : "${HAS_EXTENDED_RUM:?merge_shared_preload_libraries requires HAS_EXTENDED_RUM to be 'true' or 'false'}"
-    [[ "${HAS_EXTENDED_RUM}" == "true" ]] && required+=("pg_documentdb_extended_rum")
+
+    # Command substitution, not `< <(...)`: a process substitution runs in a
+    # subshell, so a die() inside it would end only that subshell and leave this
+    # function running with an empty array -- rendering a managed block with no
+    # shared_preload_libraries line at all.
+    local _raw
+    _raw="$(documentdb_required_preload_libraries "${HAS_EXTENDED_RUM}")" \
+        || die "cannot determine the required shared_preload_libraries set."
+    mapfile -t required <<< "${_raw}"
 
     local cleaned
     cleaned="$(strip_wrapping_quotes "${current_value}")"
@@ -150,6 +208,106 @@ merge_shared_preload_libraries() {
         joined+="${joined:+, }${item}"
     done
     printf '%s' "${joined}"
+}
+
+# render_documentdb_pg_conf: the one DocumentDB settings-block renderer behind
+# documentdb-tune, documentdb-setup and the generated documentdb.conf.sample.
+#   --preload VALUE         shared_preload_libraries; required, non-empty
+#   --localhost-conn VALUE  documentdb.localhost_connection_string; omitted if empty
+#   --toast VALUE           default_toast_compression; omitted if empty
+#   --extended-rum true     add the extended RUM overlay
+# No option has a default here; defaults belong to the caller.
+render_documentdb_pg_conf() {
+    local preload="" localhost_conn="" toast="" extended_rum="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --preload|--localhost-conn|--toast|--extended-rum)
+                # Every known option takes a value; keep unknown options on
+                # the unknown-option path.
+                if [[ $# -lt 2 ]]; then
+                    echo "render_documentdb_pg_conf: option '$1' requires a value" >&2
+                    return 1
+                fi
+                case "$1" in
+                    --preload)        preload="$2" ;;
+                    --localhost-conn) localhost_conn="$2" ;;
+                    --toast)          toast="$2" ;;
+                    --extended-rum)   extended_rum="$2" ;;
+                esac
+                shift 2 ;;
+            *)
+                echo "render_documentdb_pg_conf: unknown option '$1'" >&2
+                return 1 ;;
+        esac
+    done
+
+    [[ -n "${preload}" ]] || {
+        echo "render_documentdb_pg_conf: --preload is required and must not be empty" >&2
+        return 1
+    }
+    [[ "${extended_rum}" == "true" || "${extended_rum}" == "false" ]] || {
+        echo "render_documentdb_pg_conf: --extended-rum must be true or false (got: ${extended_rum})" >&2
+        return 1
+    }
+
+    local _guard
+    for _guard in "${preload}" "${localhost_conn}" "${toast}"; do
+        case "${_guard}" in
+            *\'*|*\\*|*$'\n'*)
+                echo "render_documentdb_pg_conf: values must not contain single quotes, backslashes, or newlines (got: ${_guard})" >&2
+                return 1 ;;
+        esac
+    done
+
+    local -a lines=()
+    lines+=("shared_preload_libraries = '${preload}'")
+    lines+=("cron.database_name = 'postgres'")
+    # Background-worker mode: the hardened pg_hba.conf admits no pg_cron client
+    # connection, so client mode fails every job and createIndexes hangs.
+    lines+=("cron.use_background_workers = on")
+    lines+=("documentdb.enableBackgroundWorker = true")
+    lines+=("documentdb.enableBackgroundWorkerJobs = true")
+    lines+=("documentdb.indexBuildsScheduledOnBgWorker = false")
+    if [[ -n "${localhost_conn}" ]]; then
+        lines+=("documentdb.localhost_connection_string = '${localhost_conn}'")
+    fi
+    if [[ -n "${toast}" ]]; then
+        lines+=("default_toast_compression = '${toast}'")
+    fi
+    if [[ "${extended_rum}" == "true" ]]; then
+        lines+=("documentdb.rum_library_load_option = 'require_documentdb_extended_rum'")
+        lines+=("documentdb.alternate_index_handler_name = 'extended_rum'")
+    fi
+
+    # Trailing newline; callers capture this in $( ), which strips it.
+    printf '%s\n' "${lines[@]}"
+}
+
+# documentdb_rendered_value <name>: print the value the settings block on
+# stdin assigns to <name>, wrapping quotes stripped; non-zero when the block
+# does not set it. Lets a consumer compare against what the renderer writes
+# instead of carrying its own copy of the value.
+documentdb_rendered_value() {
+    local name="$1" line key value
+    while IFS= read -r line; do
+        [[ "${line}" == *=* ]] || continue
+        key="$(trim_whitespace "${line%%=*}")"
+        [[ "${key}" == "${name}" ]] || continue
+        value="$(trim_whitespace "${line#*=}")"
+        printf '%s' "$(strip_wrapping_quotes "${value}")"
+        return 0
+    done
+    return 1
+}
+
+# documentdb_normalize_pg_bool <value>: print on/off for any spelling
+# PostgreSQL accepts for a boolean GUC; anything else passes through unchanged.
+documentdb_normalize_pg_bool() {
+    case "${1,,}" in
+        on|true|yes|1) printf 'on' ;;
+        off|false|no|0) printf 'off' ;;
+        *) printf '%s' "$1" ;;
+    esac
 }
 
 # assert_managed_markers_balanced <file> <start> <end>: fail closed (die) when a
@@ -368,12 +526,56 @@ check_foreign_markers() {
     fi
 }
 
+# Port the gateway listens on when the administrator does not choose one. The
+# tools, the gateway registration and the documented client URI all read it here.
+# shellcheck disable=SC2034  # read by the sourcing script
+DOCUMENTDB_DEFAULT_GATEWAY_PORT=10260
+
+# Managed-block markers. documentdb-tune writes documentdb-setup's pair so the
+# existing postrm cleanup keeps matching both.
+# shellcheck disable=SC2034  # read by the sourcing script
+DOCUMENTDB_MANAGED_BLOCK_START="# >>> documentdb-setup managed configuration >>>"
+# shellcheck disable=SC2034  # read by the sourcing script
+DOCUMENTDB_MANAGED_BLOCK_END="# <<< documentdb-setup managed configuration <<<"
+
+# Base the per-major PostgreSQL port is derived from; see
+# documentdb_default_pg_port below.
+DOCUMENTDB_PG_PORT_BASE_PER_MAJOR=9700
+
+# Defaults of a distro-managed PostgreSQL instance the tools adopt rather than
+# create: PostgreSQL's own default port and OS account.
+# shellcheck disable=SC2034  # read by the sourcing scripts
+DOCUMENTDB_DISTRO_PG_PORT=5432
+# shellcheck disable=SC2034  # read by the sourcing scripts
+DOCUMENTDB_DISTRO_PG_OWNER=postgres
+
+# documentdb_distro_pg_socket_dir: print the distro socket directory, Debian's
+# /var/run/postgresql when present, else RHEL's /run/postgresql. When neither
+# exists it prints the Debian convention and returns 1, so a caller can die
+# or accept the conventional default.
+documentdb_distro_pg_socket_dir() {
+    if [[ -d /var/run/postgresql ]]; then
+        printf '/var/run/postgresql'
+    elif [[ -d /run/postgresql ]]; then
+        printf '/run/postgresql'
+    else
+        printf '/var/run/postgresql'
+        return 1
+    fi
+}
+
 # documentdb_default_pg_port <major>: print the per-major default PostgreSQL
-# port (9700 + major, e.g. 9718 for PG 18) so the private stand-alone instance
+# port (base + major, e.g. 9718 for PG 18) so the private stand-alone instance
 # gets a predictable, collision-avoiding port that never lands on 5432. Single-
 # sourced so the formula lives in exactly one place.
 documentdb_default_pg_port() {
-    printf '%s' "$(( 9700 + $1 ))"
+    # $(( )) is an eval context and an empty operand is an arithmetic error, so
+    # the major is validated as digits and quoted before it is substituted.
+    if [[ -z "${1:-}" || ! "${1}" =~ ^[0-9]+$ ]]; then
+        echo "documentdb_default_pg_port: requires a numeric PostgreSQL major version (got: '${1:-}')" >&2
+        return 1
+    fi
+    printf '%s' "$(( DOCUMENTDB_PG_PORT_BASE_PER_MAJOR + ${1} ))"
 }
 
 # documentdb_pg_bindir_candidates <major>: print the candidate PostgreSQL bin

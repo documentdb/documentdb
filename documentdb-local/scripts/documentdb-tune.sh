@@ -16,10 +16,6 @@ set -euo pipefail
 umask 077
 
 readonly PROG="documentdb-tune"
-# Managed block markers — intentionally match documentdb-setup.sh for backward
-# compatibility with existing postrm cleanup scripts.
-readonly MANAGED_BLOCK_START="# >>> documentdb-setup managed configuration >>>"
-readonly MANAGED_BLOCK_END="# <<< documentdb-setup managed configuration <<<"
 
 # ── Defaults ────────────────────────────────────────────────────────
 PG_VERSION=""
@@ -146,46 +142,21 @@ for _ddb_cand in "${_DDB_TOOLS_LIB_DIR}/documentdb-tools-lib.sh" \
 done
 [[ "${_DDB_TOOLS_LIB_LOADED:-}" == "1" ]] \
     || die "cannot locate documentdb-tools-lib.sh (looked beside ${BASH_SOURCE[0]} and in /usr/share/documentdb/scripts)."
+readonly MANAGED_BLOCK_START="${DOCUMENTDB_MANAGED_BLOCK_START}"
+readonly MANAGED_BLOCK_END="${DOCUMENTDB_MANAGED_BLOCK_END}"
 
 # ── Config generation ───────────────────────────────────────────────
 
 build_config_block() {
     local merged_preload="$1"
-    local block=""
 
-    block="shared_preload_libraries = '${merged_preload}'"
-    block+=$'\n'"cron.database_name = 'postgres'"
-    # Run pg_cron jobs in background workers rather than via a libpq client
-    # connection. documentdb-setup installs a hardened pg_hba.conf that only
-    # admits the documentdb-gateway role (peer + ident map) on the local
-    # socket and requires scram-sha-256 over TCP, so pg_cron's default client
-    # mode (cron.use_background_workers = off, which dials cron.host=localhost
-    # over TCP) cannot authenticate and every scheduled job fails with
-    # "connection failed". That silently breaks index creation: createIndexes
-    # enqueues the build and the documentdb_api_internal.build_index_concurrently
-    # pg_cron job that actually builds it never runs, so the gateway polls for a
-    # completion that never arrives and the command hangs. Background-worker mode
-    # runs the jobs in-process with no connection or authentication, which is the
-    # correct model for the self-contained stand-alone cluster. (Requires a
-    # restart to take effect, which documentdb-setup performs after tuning.)
-    block+=$'\n'"cron.use_background_workers = on"
-    block+=$'\n'"documentdb.enableBackgroundWorker = true"
-    block+=$'\n'"documentdb.enableBackgroundWorkerJobs = true"
-    block+=$'\n'"documentdb.indexBuildsScheduledOnBgWorker = false"
-    block+=$'\n'"documentdb.localhost_connection_string = '$(resolve_localhost_connection)'"
-
-    # Empty means the operator asked us to leave the server's own setting alone,
-    # or the build has no lz4 support.
-    if [[ -n "${TOAST_COMPRESSION}" ]]; then
-        block+=$'\n'"default_toast_compression = '${TOAST_COMPRESSION}'"
-    fi
-
-    if [[ "${HAS_EXTENDED_RUM}" == "true" ]]; then
-        block+=$'\n'"documentdb.rum_library_load_option = 'require_documentdb_extended_rum'"
-        block+=$'\n'"documentdb.alternate_index_handler_name = 'extended_rum'"
-    fi
-
-    printf '%s' "${block}"
+    # Shared renderer (documentdb-tools-lib.sh); an empty TOAST_COMPRESSION
+    # means "leave the server's setting alone" and omits the line.
+    render_documentdb_pg_conf \
+        --preload "${merged_preload}" \
+        --localhost-conn "$(resolve_localhost_connection)" \
+        --toast "${TOAST_COMPRESSION}" \
+        --extended-rum "${HAS_EXTENDED_RUM}"
 }
 
 # ── Distro / path resolution ───────────────────────────────────────
@@ -696,7 +667,7 @@ _resolve_effective_port() {
     local port="${PG_PORT_OVERRIDE}"
     if [[ -z "${port}" ]]; then
         port="$(_read_effective_scalar_guc 'port')"
-        [[ -n "${port}" ]] || port="5432"
+        [[ -n "${port}" ]] || port="${DOCUMENTDB_DISTRO_PG_PORT}"
     fi
     printf '%s' "${port}"
 }
@@ -803,8 +774,13 @@ enforce_autoconf_preload_not_overriding() {
     [[ -n "${autoconf}" ]] || return 0
     _spl_assigned_in_file "${autoconf}" || return 0
 
-    local -a required=("pg_cron" "pg_documentdb_core" "pg_documentdb")
-    [[ "${HAS_EXTENDED_RUM}" == "true" ]] && required+=("pg_documentdb_extended_rum")
+    # Same authority as merge_shared_preload_libraries, so what we enforce here
+    # cannot drift from what we write.
+    local -a required=()
+    local _raw
+    _raw="$(documentdb_required_preload_libraries "${HAS_EXTENDED_RUM}")" \
+        || die "cannot determine the required shared_preload_libraries set."
+    mapfile -t required <<< "${_raw}"
 
     local auto_val
     auto_val="$(strip_wrapping_quotes "$(read_shared_preload_libraries_from_file "${autoconf}")")"
@@ -977,11 +953,16 @@ do_print() {
 
     current_preload="$(fold_in_debian_live_preload "${current_preload}")"
     merged_preload="$(merge_shared_preload_libraries "${current_preload}")"
-    block="$(build_config_block "${merged_preload}")"
 
+    # Before rendering: the renderer rejects the same unrepresentable socket dir
+    # enforce_localhost_conn_safe explains, so its remediation must be printed
+    # rather than replaced by the renderer's bare parameter error.
     enforce_config_includes_resolved warn
     enforce_unix_sockets_enabled warn
     enforce_localhost_conn_safe warn
+
+    block="$(build_config_block "${merged_preload}")" \
+        || die "Failed to render the DocumentDB configuration block."
 
     printf '%s\n' "${MANAGED_BLOCK_START}"
     printf '%s\n' "${block}"
@@ -998,12 +979,10 @@ do_apply() {
 
     current_preload="$(fold_in_debian_live_preload "${current_preload}")"
     merged_preload="$(merge_shared_preload_libraries "${current_preload}")"
-    block="$(build_config_block "${merged_preload}")"
 
     # If postgresql.auto.conf (ALTER SYSTEM) overrides shared_preload_libraries
     # away from the required documentdb libraries, the fragment we are about to
     # write is ineffective — fail on apply rather than report a broken success;
-    # a --dry-run preview only warns.
     if [[ "${DRY_RUN}" == "true" ]]; then
         enforce_autoconf_preload_not_overriding warn
         enforce_config_includes_resolved warn
@@ -1015,6 +994,9 @@ do_apply() {
         enforce_unix_sockets_enabled die
         enforce_localhost_conn_safe die
     fi
+
+    block="$(build_config_block "${merged_preload}")" \
+        || die "Failed to render the DocumentDB configuration block."
 
     if [[ -f "${CONFIG_TARGET}" ]]; then
         local fragment_is_current=false

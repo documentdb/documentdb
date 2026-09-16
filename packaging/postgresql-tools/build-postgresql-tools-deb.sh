@@ -83,6 +83,11 @@ install -m 0755 "${REPO_ROOT}/documentdb-local/scripts/documentdb-gateway-admin.
 install -d "${PKG_DIR}/usr/share/documentdb/scripts"
 install -m 0644 "${REPO_ROOT}/documentdb-local/scripts/documentdb-tools-lib.sh" \
     "${PKG_DIR}/usr/share/documentdb/scripts/documentdb-tools-lib.sh"
+# The shared_preload_libraries authority, installed beside the library that
+# resolves it. The tools package owns the installed copy: documentdb-common
+# already depends on it, so every appliance consumer reaches it through here.
+install -m 0644 "${REPO_ROOT}/scripts/preload_libraries.sh" \
+    "${PKG_DIR}/usr/share/documentdb/scripts/preload_libraries.sh"
 
 # ── createcluster.d hook (Debian/Ubuntu only) ───────────────────────
 install -m 0644 "${REPO_ROOT}/documentdb-local/conf/99-documentdb.conf" \
@@ -90,8 +95,11 @@ install -m 0644 "${REPO_ROOT}/documentdb-local/conf/99-documentdb.conf" \
 
 # ── Inert config sample (PostgreSQL .sample convention) ─────────────
 install -d "${PKG_DIR}/usr/share/doc/${FILE_PKG_NAME}/examples"
-install -m 0644 "${REPO_ROOT}/packaging/postgresql-tools/documentdb.conf.sample" \
-    "${PKG_DIR}/usr/share/doc/${FILE_PKG_NAME}/examples/documentdb.conf.sample"
+# Rendered from the STAGED library, so the sample ships the settings and
+# preload list of the tree being packaged rather than the build host's.
+"${REPO_ROOT}/packaging/postgresql-tools/generate-conf-sample.sh" \
+    --tools-lib "${PKG_DIR}/usr/share/documentdb/scripts/documentdb-tools-lib.sh" \
+    --output "${PKG_DIR}/usr/share/doc/${FILE_PKG_NAME}/examples/documentdb.conf.sample"
 
 # ── Copyright + changelog ──────────────────────────────────────────
 deb_install_mit_copyright "${PKG_DIR}" "${FILE_PKG_NAME}" "${REPO_ROOT}/LICENSE"

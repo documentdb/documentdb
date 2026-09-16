@@ -16,6 +16,13 @@ source "${SCRIPT_DIR}/../deb-common.sh"
 
 VERSION=""
 DEFAULT_PG_MAJOR="18"
+# The gateway port the postinst hint prints, read from its owner so the hint
+# cannot drift from documentdb-setup's default. A subshell keeps the library's
+# functions out of this script.
+# shellcheck source=../../documentdb-local/scripts/documentdb-tools-lib.sh
+GATEWAY_PORT="$(. "${SCRIPT_DIR}/../../documentdb-local/scripts/documentdb-tools-lib.sh" \
+    && printf '%s' "${DOCUMENTDB_DEFAULT_GATEWAY_PORT}")"
+[ -n "${GATEWAY_PORT}" ] || { echo "ERROR: DOCUMENTDB_DEFAULT_GATEWAY_PORT is not set by documentdb-tools-lib.sh" >&2; exit 1; }
 OUTPUT_DIR="."
 
 # die comes from deb-common.sh (sourced above).
@@ -184,7 +191,7 @@ DROPIN2
         echo "Pass --no-enable to defer the start-at-boot step.)"
         echo ""
         echo "When the wizard finishes, connect via mongosh:"
-        echo "  mongosh 'mongodb://admin:<password>@127.0.0.1:10260/mydb?tls=true&tlsAllowInvalidCertificates=true'"
+        echo "  mongosh 'mongodb://admin:<password>@127.0.0.1:${GATEWAY_PORT}/mydb?tls=true&tlsAllowInvalidCertificates=true'"
         echo "  (Replace <password> with the admin password you set during setup.)"
         ;;
 esac

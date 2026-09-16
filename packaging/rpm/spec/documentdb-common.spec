@@ -88,6 +88,8 @@ install -Dpm 0644 %{_sourcedir}/documentdb-local-sysusers.conf %{buildroot}%{_sy
 install -Dpm 0644 %{_sourcedir}/documentdb-local-tmpfiles.conf %{buildroot}%{_tmpfilesdir}/documentdb-local.conf
 install -Dpm 0755 %{_sourcedir}/documentdb_postgresql_service.sh %{buildroot}/usr/share/documentdb/scripts/documentdb_postgresql_service.sh
 install -Dpm 0755 %{_sourcedir}/init_documentdb_data.sh %{buildroot}/usr/share/documentdb/scripts/init_documentdb_data.sh
+# init_documentdb_data.sh reads its defaults from this table beside it.
+install -Dpm 0644 %{_sourcedir}/documentdb_local_settings.sh %{buildroot}/usr/share/documentdb/scripts/documentdb_local_settings.sh
 # Install every sample-data file (glob, not an enumerated list) so adding or
 # removing a sample file stays in lock-step with the DEB build
 # (build-common-deb.sh globs the same directory) instead of silently shipping
@@ -127,6 +129,7 @@ fi
 %attr(0644,root,root) %{_tmpfilesdir}/documentdb-local.conf
 %attr(0755,root,root) /usr/share/documentdb/scripts/documentdb_postgresql_service.sh
 %attr(0755,root,root) /usr/share/documentdb/scripts/init_documentdb_data.sh
+%attr(0644,root,root) /usr/share/documentdb/scripts/documentdb_local_settings.sh
 %attr(0644,root,root) /usr/share/documentdb/sample-data/*
 
 %changelog

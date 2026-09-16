@@ -45,6 +45,18 @@ TUNE_SCRIPT = SCRIPTS_DIR / "documentdb-tune.sh"
 GATEWAY_SETUP_SCRIPT = SCRIPTS_DIR / "documentdb-register-gateway.sh"
 ENTRYPOINT = SCRIPTS_DIR / "emulator_entrypoint.sh"
 TOOLS_LIB = SCRIPTS_DIR / "documentdb-tools-lib.sh"
+PRELOAD_LIB = OSS_ROOT / "scripts" / "preload_libraries.sh"
+
+
+def stage_tools_lib(directory):
+    """Stage documentdb-tools-lib.sh with the file it is installed beside.
+
+    The library takes its required shared_preload_libraries set from the
+    extension-owned preload_libraries.sh and fails closed without it.
+    """
+    directory = Path(directory)
+    shutil.copy2(TOOLS_LIB, directory / "documentdb-tools-lib.sh")
+    shutil.copy2(PRELOAD_LIB, directory / "preload_libraries.sh")
 UTILS_SH = OSS_ROOT / "scripts" / "utils.sh"
 
 
@@ -234,7 +246,7 @@ class TuneDebianIncludeLineAnchoringTests(unittest.TestCase):
                 if line != 'main "$@"'
             )
             (td_path / "documentdb-tune.sh").write_text(stripped, encoding="utf-8")
-            shutil.copy2(TOOLS_LIB, td_path / "documentdb-tools-lib.sh")
+            stage_tools_lib(td_path)
             live = td_path / "postgresql.conf"
             live.write_text(live_content, encoding="utf-8")
             script = (

@@ -52,6 +52,10 @@ install -Dpm 0755 %{_sourcedir}/documentdb-gateway-admin.sh %{buildroot}/usr/bin
 # Shared managed-block / config-mutation library, sourced by documentdb-tune
 # and documentdb-register-gateway (single-source so they cannot drift).
 install -Dpm 0644 %{_sourcedir}/documentdb-tools-lib.sh %{buildroot}/usr/share/documentdb/scripts/documentdb-tools-lib.sh
+# The shared_preload_libraries authority, installed beside the library that
+# resolves it. This package owns the installed copy; documentdb-common already
+# requires it.
+install -Dpm 0644 %{_sourcedir}/preload_libraries.sh %{buildroot}/usr/share/documentdb/scripts/preload_libraries.sh
 # Note: the /etc/postgresql-common/createcluster.d/99-documentdb.conf hook is
 # intentionally NOT installed on RHEL. Per packaging-design.md §4.2 and §8 it
 # is a Debian/Ubuntu-only mechanism (RHEL has no postgresql-common /
@@ -75,6 +79,7 @@ echo "  documentdb-register-gateway --target-postgres-instance N/C --yes"
 %attr(0755,root,root) /usr/bin/documentdb-register-gateway
 %attr(0755,root,root) /usr/bin/documentdb-gateway-admin
 %attr(0644,root,root) /usr/share/documentdb/scripts/documentdb-tools-lib.sh
+%attr(0644,root,root) /usr/share/documentdb/scripts/preload_libraries.sh
 # /etc/postgresql-common/createcluster.d/99-documentdb.conf is intentionally
 # omitted here — see the comment in the install section above.
 %doc %attr(0644,root,root) /usr/share/doc/%{name}/examples/documentdb.conf.sample

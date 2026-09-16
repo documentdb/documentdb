@@ -120,6 +120,13 @@ LABEL org.opencontainers.image.title="DocumentDB Local" \
 ENV LANGUAGE=en_US.UTF-8 \
     TERM=xterm-256color
 
+# Mirror of documentdb-local/scripts/documentdb_local_settings.sh, the table
+# the in-image scripts read. Kept as ENV because the bake step below reads
+# DATA_PATH and POSTGRESQL_PORT at build time, because a USERNAME set here is
+# what keeps `docker run -e PASSWORD=...` from tripping the default-credentials
+# warning, and so `docker inspect` shows the defaults. ImageDefaultPinTests
+# holds it equal to the table. OWNER, PG_VERSION_USED and PATH are image
+# facts, not table rows.
 ENV CERT_PATH="" \
     KEY_FILE="" \
     DATA_PATH="/data" \
@@ -154,6 +161,7 @@ COPY pg_documentdb_gw/SetupConfiguration.json /home/documentdb/gateway/pg_docume
 COPY scripts/start_oss_server.sh /home/documentdb/gateway/scripts/start_oss_server.sh
 COPY scripts/build_and_start_gateway.sh /home/documentdb/gateway/scripts/build_and_start_gateway.sh
 COPY documentdb-local/scripts/emulator_entrypoint.sh /home/documentdb/gateway/scripts/emulator_entrypoint.sh
+COPY documentdb-local/scripts/documentdb_local_settings.sh /home/documentdb/gateway/scripts/documentdb_local_settings.sh
 COPY documentdb-local/scripts/documentdb_validate_username.sh /home/documentdb/gateway/scripts/documentdb_validate_username.sh
 COPY documentdb-local/scripts/documentdb_install_getparameter_stub.sh /home/documentdb/gateway/scripts/documentdb_install_getparameter_stub.sh
 COPY documentdb-local/scripts/documentdb_prepare_data_directory.sh /home/documentdb/gateway/scripts/documentdb_prepare_data_directory.sh
@@ -168,7 +176,7 @@ COPY documentdb-local/scripts/init_documentdb_data.sh /home/documentdb/gateway/s
 COPY documentdb-local/sample-data /home/documentdb/gateway/sample-data
 
 # Create default initialization directory for user-provided scripts
-RUN sudo mkdir -p /init_doc_db.d
+RUN sudo mkdir -p "$INIT_DATA_PATH"
 
 USER documentdb
 RUN sudo chown -R documentdb:documentdb /home/documentdb/gateway
@@ -227,7 +235,7 @@ WORKDIR /home/documentdb/gateway/scripts
 # it into each fresh /data volume at container create. See the container's
 # "ready" banner (printed by the entrypoint) for the `-v` guidance users must
 # follow to persist.
-VOLUME ["/data"]
+VOLUME ["$DATA_PATH"]
 
 RUN v="$(dpkg-query -W -f='${Version}' "postgresql-${POSTGRES_VERSION}-documentdb")" \
         && [ -n "$v" ] \

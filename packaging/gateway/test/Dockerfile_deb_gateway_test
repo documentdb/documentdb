@@ -34,7 +34,9 @@ RUN [ -n "${STANDALONE_PACKAGE_REL_PATH}" ] || (echo "ERROR: STANDALONE_PACKAGE_
 # verify_systemd_unit_files in test-gateway-install-entrypoint.sh.
 # `apt-get install systemd` does not start any services in a container
 # without PID 1; it just lays down the binaries.
-RUN apt-get update; \
+# && throughout: with `;` the trailing rm always succeeds, so a failed
+# apt-get install would leave a layer missing packages and still build.
+RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         wget \
         gnupg2 \
@@ -43,31 +45,31 @@ RUN apt-get update; \
         ca-certificates \
         locales \
         sudo \
-        systemd; \
-    echo "en_US.UTF-8 UTF-8" > /etc/locale.gen; \
-    locale-gen; \
+        systemd && \
+    echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
+    locale-gen && \
     rm -rf /var/lib/apt/lists/*
 
 # Minimal locale env (others inherit)
 ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 
 # Add PostgreSQL upstream repo so apt can resolve local package dependencies.
-RUN install -d -m 0755 /etc/apt/keyrings; \
-    wget -qO /etc/apt/keyrings/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc; \
+RUN install -d -m 0755 /etc/apt/keyrings && \
+    wget -qO /etc/apt/keyrings/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc && \
     echo "deb [signed-by=/etc/apt/keyrings/pgdg.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main ${POSTGRES_VERSION}" \
-        > /etc/apt/sources.list.d/pgdg.list; \
-    apt-get update; \
-    RUM_PKG=""; \
+        > /etc/apt/sources.list.d/pgdg.list && \
+    apt-get update && \
+    RUM_PKG="" && \
     if [ "${POSTGRES_VERSION}" -lt 18 ]; then \
         RUM_PKG="postgresql-${POSTGRES_VERSION}-rum"; \
-    fi; \
+    fi && \
     apt-get install -y --no-install-recommends \
         postgresql-${POSTGRES_VERSION} \
         postgresql-${POSTGRES_VERSION}-cron \
         postgresql-${POSTGRES_VERSION}-pgvector \
         postgresql-${POSTGRES_VERSION}-postgis-3 \
         $RUM_PKG \
-    ; \
+    && \
     rm -rf /var/lib/apt/lists/*
 
 # Stage all four packages from packaging-design.md §4 and install with
@@ -155,20 +157,9 @@ RUN sudo apt-get update && \
 ENV LANGUAGE=en_US.UTF-8 \
     TERM=xterm-256color
 
-ENV CERT_PATH="" \
-    KEY_FILE="" \
-    DATA_PATH="/data" \
-    DOCUMENTDB_PORT="10260" \
-    ENABLE_TELEMETRY="false" \
-    LOG_LEVEL="info" \
-    USERNAME="default_user" \
-    CREATE_USER="true" \
-    START_POSTGRESQL="true" \
-    POSTGRESQL_PORT="9712" \
-    OWNER="documentdb" \
-    PG_VERSION_USED="${POSTGRES_VERSION}" \
-    ALLOW_EXTERNAL_CONNECTIONS="false" \
-    PATH=/usr/lib/postgresql/${POSTGRES_VERSION}/bin:$PATH
+# Only PATH: this image never runs emulator_entrypoint.sh, so the emulator's
+# operator defaults would be an unread copy. The test entrypoint sets its own.
+ENV PATH=/usr/lib/postgresql/${POSTGRES_VERSION}/bin:$PATH
 
 # Ensure /var/run/postgresql exists and stays owned by postgres so the system
 # postgresql@N-main cluster can create its socket and lock file there. The

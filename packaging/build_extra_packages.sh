@@ -271,7 +271,15 @@ elif [[ "${PACKAGE_TYPE}" == "rpm" ]]; then
     cp "${SCRIPTS_SRC}/documentdb-register-gateway.sh" "${RPM_TOPDIR}/SOURCES/"
     cp "${SCRIPTS_SRC}/documentdb-gateway-admin.sh" "${RPM_TOPDIR}/SOURCES/"
     cp "${SCRIPTS_SRC}/documentdb-tools-lib.sh" "${RPM_TOPDIR}/SOURCES/"
-    cp "${SCRIPT_DIR}/postgresql-tools/documentdb.conf.sample" "${RPM_TOPDIR}/SOURCES/"
+    # The shared_preload_libraries authority, staged beside the library that
+    # resolves it.
+    cp "${REPO_ROOT}/scripts/preload_libraries.sh" "${RPM_TOPDIR}/SOURCES/"
+    # The configuration sample is generated from the same renderer and preload
+    # authority the tools use, not copied from a handwritten file, and from the
+    # STAGED library so it describes the tree being packaged.
+    "${SCRIPT_DIR}/postgresql-tools/generate-conf-sample.sh" \
+        --tools-lib "${RPM_TOPDIR}/SOURCES/documentdb-tools-lib.sh" \
+        --output "${RPM_TOPDIR}/SOURCES/documentdb.conf.sample"
     cp "${SCRIPT_DIR}/rpm/spec/documentdb-tools.spec" "${RPM_TOPDIR}/SPECS/"
     sed -i "s/DOCUMENTDB_VERSION/${DOCUMENTDB_VERSION}/g" "${RPM_TOPDIR}/SPECS/documentdb-tools.spec"
     rpmbuild -bb "${RPM_TOPDIR}/SPECS/documentdb-tools.spec" --define "_topdir ${RPM_TOPDIR}"
@@ -284,6 +292,7 @@ elif [[ "${PACKAGE_TYPE}" == "rpm" ]]; then
         cp "${SCRIPTS_SRC}/documentdb-local-reset.sh" "${RPM_TOPDIR}/SOURCES/"
         cp "${SCRIPTS_SRC}/documentdb_postgresql_service.sh" "${RPM_TOPDIR}/SOURCES/"
         cp "${SCRIPTS_SRC}/init_documentdb_data.sh" "${RPM_TOPDIR}/SOURCES/"
+        cp "${SCRIPTS_SRC}/documentdb_local_settings.sh" "${RPM_TOPDIR}/SOURCES/"
         cp "${APPLIANCE_SRC}/systemd/documentdb-local@.target" "${RPM_TOPDIR}/SOURCES/"
         cp "${APPLIANCE_SRC}/systemd/documentdb-postgresql@.service" "${RPM_TOPDIR}/SOURCES/"
         cp "${APPLIANCE_SRC}/systemd/documentdb-gateway-local@.service" "${RPM_TOPDIR}/SOURCES/"

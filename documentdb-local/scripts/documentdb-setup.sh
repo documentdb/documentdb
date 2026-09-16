@@ -25,8 +25,65 @@ done
 SCRIPT_DIR="$(cd -P "$(dirname "${SCRIPT_SOURCE}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-readonly POSTGRES_CONF_BLOCK_START="# >>> documentdb-setup managed configuration >>>"
-readonly POSTGRES_CONF_BLOCK_END="# <<< documentdb-setup managed configuration <<<"
+log_info() {
+    echo "[documentdb-setup] $*"
+}
+
+log_warn() {
+    echo "[documentdb-setup] WARNING: $*" >&2
+}
+
+log_verbose() {
+    if [[ "${VERBOSE}" == "true" ]]; then
+        echo "[documentdb-setup] $*" >&2
+    fi
+}
+
+log_success() {
+    echo "[documentdb-setup] SUCCESS: $*"
+}
+
+die() {
+    echo "[documentdb-setup] ERROR: $*" >&2
+    exit 1
+}
+
+# ── Managed-block helpers (shared) ──────────────────────────────────
+#
+# The managed-block / config-mutation primitives and shared_preload_libraries
+# helpers are single-sourced from
+# documentdb-tools-lib.sh so documentdb-setup cannot drift from documentdb-tune
+# and documentdb-register-gateway. Sourcing the library also makes every
+# managed-block rewrite atomic — temp files are created in the target file's
+# directory via create_temp_in_dir, so the final mv is a same-filesystem rename
+# rather than a copy-then-unlink that could truncate a live config on a crash or
+# leak config contents into /tmp — and fail-closed on a torn/unbalanced block.
+# The library lives beside this script in a dev checkout and at
+# /usr/share/documentdb/scripts/ when installed (documentdb-N hard-depends on
+# the documentdb-postgresql-tools package that ships it). die (above) and
+# log_verbose / create_temp_in_dir / HAS_EXTENDED_RUM (defined further down, and
+# only ever called after that point) satisfy the library's host contract;
+# has_line_outside_managed_block below is documentdb-setup-specific and calls
+# the shared strip_managed_block. prepend_with_managed_block is single-sourced
+# from the library so the tools cannot drift on this security-sensitive helper.
+#
+# Sourced here, ahead of the defaults below, because the library also owns the
+# shared gateway port and per-major PG port base those defaults read.
+_DDB_TOOLS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+for _ddb_cand in "${_DDB_TOOLS_LIB_DIR}/documentdb-tools-lib.sh" \
+                 "/usr/share/documentdb/scripts/documentdb-tools-lib.sh"; do
+    if [[ -f "${_ddb_cand}" ]]; then
+        # shellcheck source=documentdb-tools-lib.sh
+        source "${_ddb_cand}"
+        _DDB_TOOLS_LIB_LOADED=1
+        break
+    fi
+done
+[[ "${_DDB_TOOLS_LIB_LOADED:-}" == "1" ]] \
+    || die "cannot locate documentdb-tools-lib.sh (looked beside ${BASH_SOURCE[0]} and in /usr/share/documentdb/scripts)."
+
+readonly POSTGRES_CONF_BLOCK_START="${DOCUMENTDB_MANAGED_BLOCK_START}"
+readonly POSTGRES_CONF_BLOCK_END="${DOCUMENTDB_MANAGED_BLOCK_END}"
 readonly POSTGRES_LISTEN_BLOCK_START="# >>> documentdb-setup managed listen >>>"
 readonly POSTGRES_LISTEN_BLOCK_END="# <<< documentdb-setup managed listen <<<"
 readonly PG_HBA_BLOCK_START="# >>> documentdb-setup managed hba >>>"
@@ -44,7 +101,7 @@ readonly POSTGRES_SERVICE_ENV_FILE="/etc/documentdb/documentdb-postgresql.env"
 # `[[ PG_PORT == DEFAULT_PG_PORT ]]` continue to work as the "still at
 # sentinel default" discriminator without further refactoring.
 readonly DEFAULT_PG_PORT="0"
-readonly DEFAULT_GATEWAY_PORT="10260"
+readonly DEFAULT_GATEWAY_PORT="${DOCUMENTDB_DEFAULT_GATEWAY_PORT}"
 readonly DEFAULT_DATA_DIR="/var/lib/documentdb-local/data"
 readonly DEFAULT_PG_SOCKET_DIR="/run/documentdb-local/postgresql"
 # Must match the meta packages' default major (build-meta-deb.sh
@@ -123,7 +180,9 @@ trap 'error ${LINENO} $?' ERR
 trap cleanup_temp_files EXIT
 
 usage() {
-    cat <<'EOF'
+    # Unquoted heredoc so the port defaults interpolate from their single
+    # source; literal $ and trailing backslashes below are escaped.
+    cat <<EOF
 Usage: documentdb-setup [OPTIONS]
 
 Appliance setup wizard for DocumentDB Local.
@@ -140,7 +199,7 @@ Authentication (one of the following; interactive prompt is the default):
   --admin-password-stdin Read the admin password from stdin (single line).
                          Best practice for piping a secret without
                          touching disk:
-                           printf '%s' "$PW" | sudo documentdb-setup ... \
+                           printf '%s' "\$PW" | sudo documentdb-setup ... \\
                              --admin-password-stdin
   DOCUMENTDB_PASSWORD    Environment variable alternative (DEPRECATED —
                          leaks via /proc/<pid>/environ; prefer
@@ -161,7 +220,7 @@ TOAST compression (environment variable):
                          workloads must keep the server's own setting.
                          sudo strips environment variables by
                          default, so pass it THROUGH sudo:
-                           sudo DOCUMENTDB_TOAST_COMPRESSION=default \
+                           sudo DOCUMENTDB_TOAST_COMPRESSION=default \\
                              documentdb-setup ...
                          Apply runs validate it up front: an invalid value,
                          or an lz4 request the build cannot be verified for,
@@ -182,8 +241,8 @@ gateway env file; design §4.3 is the source of truth on precedence):
 
 Options:
   --pg-version <VER>      PostgreSQL version (auto-detected if not specified)
-  --pg-port <PORT>        PostgreSQL port (default: 9700 + PG_VERSION)
-  --listen-port <PORT>    Gateway listen port (default: 10260; also: --gateway-port)
+  --pg-port <PORT>        PostgreSQL port (default: ${DOCUMENTDB_PG_PORT_BASE_PER_MAJOR} + PG_VERSION)
+  --listen-port <PORT>    Gateway listen port (default: ${DEFAULT_GATEWAY_PORT}; also: --gateway-port)
   --data-dir <DIR>        PostgreSQL data directory
                           (default: /var/lib/documentdb-local/<VER>/data)
   --use-new-postgres-instance
@@ -217,29 +276,6 @@ Options:
   --verbose               Show detailed output
   -h, --help              Show this help message
 EOF
-}
-
-log_info() {
-    echo "[documentdb-setup] $*"
-}
-
-log_warn() {
-    echo "[documentdb-setup] WARNING: $*" >&2
-}
-
-log_verbose() {
-    if [[ "${VERBOSE}" == "true" ]]; then
-        echo "[documentdb-setup] $*" >&2
-    fi
-}
-
-log_success() {
-    echo "[documentdb-setup] SUCCESS: $*"
-}
-
-die() {
-    echo "[documentdb-setup] ERROR: $*" >&2
-    exit 1
 }
 
 cleanup_temp_files() {
@@ -301,37 +337,6 @@ preserve_file_metadata() {
         chmod --reference="${source_file}" "${target_file}"
     fi
 }
-
-# ── Managed-block helpers (shared) ──────────────────────────────────
-#
-# The managed-block / config-mutation primitives and shared_preload_libraries
-# helpers are single-sourced from
-# documentdb-tools-lib.sh so documentdb-setup cannot drift from documentdb-tune
-# and documentdb-register-gateway. Sourcing the library also makes every
-# managed-block rewrite atomic — temp files are created in the target file's
-# directory via create_temp_in_dir, so the final mv is a same-filesystem rename
-# rather than a copy-then-unlink that could truncate a live config on a crash or
-# leak config contents into /tmp — and fail-closed on a torn/unbalanced block.
-# The library lives beside this script in a dev checkout and at
-# /usr/share/documentdb/scripts/ when installed (documentdb-N hard-depends on
-# the documentdb-postgresql-tools package that ships it). Die / log_verbose /
-# create_temp_in_dir (defined above) and HAS_EXTENDED_RUM (set by
-# detect_extended_rum) satisfy the library's host contract;
-# has_line_outside_managed_block below is documentdb-setup-specific and calls
-# the shared strip_managed_block. prepend_with_managed_block is single-sourced
-# from the library so the tools cannot drift on this security-sensitive helper.
-_DDB_TOOLS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-for _ddb_cand in "${_DDB_TOOLS_LIB_DIR}/documentdb-tools-lib.sh" \
-                 "/usr/share/documentdb/scripts/documentdb-tools-lib.sh"; do
-    if [[ -f "${_ddb_cand}" ]]; then
-        # shellcheck source=documentdb-tools-lib.sh
-        source "${_ddb_cand}"
-        _DDB_TOOLS_LIB_LOADED=1
-        break
-    fi
-done
-[[ "${_DDB_TOOLS_LIB_LOADED:-}" == "1" ]] \
-    || die "cannot locate documentdb-tools-lib.sh (looked beside ${BASH_SOURCE[0]} and in /usr/share/documentdb/scripts)."
 
 has_line_outside_managed_block() {
     local target_file="$1"
@@ -1254,7 +1259,7 @@ persist_brownfield_state() {
         printf 'DOCUMENTDB_MODE=brownfield\n'
         printf 'PG_VERSION=%s\n' "${PG_VERSION}"
         printf 'PG_PORT=%s\n' "${PG_PORT}"
-        printf 'PG_OWNER=%s\n' "${PG_OWNER:-postgres}"
+        printf 'PG_OWNER=%s\n' "${PG_OWNER:-${DOCUMENTDB_DISTRO_PG_OWNER}}"
         printf 'DATA_DIR=%s\n' "${LIVE_DATA_DIR}"
         printf 'CONFIG_FILE=%s\n' "${LIVE_CONFIG_FILE}"
         printf 'HBA_FILE=%s\n' "${LIVE_HBA_FILE}"
@@ -1566,35 +1571,30 @@ build_postgres_conf_block() {
     local ssl_setting="${2:-}"
     local postgres_conf_block=""
 
+    # The cluster-shape settings are this tool's own: they describe the private
+    # instance documentdb-setup provisions, and no other consumer emits them.
     postgres_conf_block=$(
         cat <<EOF
 listen_addresses = 'localhost'
 port = ${PG_PORT}
 unix_socket_directories = '${PG_SOCKET_DIR}'
-shared_preload_libraries = '${merged_preload}'
-cron.database_name = 'postgres'
-cron.use_background_workers = on
-documentdb.localhost_connection_string = 'host=${PG_SOCKET_DIR} port=${PG_PORT}'
 EOF
     )
 
+    # `|| die` is load-bearing: this function runs inside $(...), where bash
+    # drops errexit, so a failed render would otherwise yield a block with no
+    # shared_preload_libraries line.
+    local documentdb_settings=""
+    documentdb_settings="$(render_documentdb_pg_conf \
+        --preload "${merged_preload}" \
+        --localhost-conn "host=${PG_SOCKET_DIR} port=${PG_PORT}" \
+        --toast "${TOAST_COMPRESSION:-}" \
+        --extended-rum "${HAS_EXTENDED_RUM}")" \
+        || die "Failed to render the DocumentDB settings for ${config_file:-postgresql.conf}."
+    postgres_conf_block+=$'\n'"${documentdb_settings}"
+
     if [[ -n "${ssl_setting}" ]]; then
         postgres_conf_block+=$'\n'"ssl = ${ssl_setting}"
-    fi
-
-    postgres_conf_block+=$'\n'"documentdb.enableBackgroundWorker = true"
-    postgres_conf_block+=$'\n'"documentdb.enableBackgroundWorkerJobs = true"
-    postgres_conf_block+=$'\n'"documentdb.indexBuildsScheduledOnBgWorker = false"
-
-    # Kept in step with documentdb-tune's block: empty means the operator asked
-    # to leave the setting alone, or the build has no lz4 support.
-    if [[ -n "${TOAST_COMPRESSION:-}" ]]; then
-        postgres_conf_block+=$'\n'"default_toast_compression = '${TOAST_COMPRESSION}'"
-    fi
-
-    if [[ "${HAS_EXTENDED_RUM}" == "true" ]]; then
-        postgres_conf_block+=$'\n'"documentdb.rum_library_load_option = 'require_documentdb_extended_rum'"
-        postgres_conf_block+=$'\n'"documentdb.alternate_index_handler_name = 'extended_rum'"
     fi
 
     printf '%s' "${postgres_conf_block}"
@@ -2125,7 +2125,13 @@ preflight_validation() {
                     && "${listener_uid}" != "${documentdb_local_uid}" ]]; then
                 local existing_owner=""
                 existing_owner="$(ps -o user= -p "${_pf_uid_target}" 2>/dev/null | awk '{print $1}' || true)"
-                die "Port ${PG_PORT} is already in use by a process owned by ${existing_owner:-uid ${listener_uid}} (pid ${_pf_uid_target}) — NOT the documentdb-local OS user. The greenfield setup wizard needs an unused per-major PG port. Choose another with --pg-port, or stop the existing service on ${PG_PORT}. (Per-major default is 9700 + PG_VERSION; 9718 for PG 18.)"
+                # The worked example only when the major is known: preflight can
+                # run before detection has pinned PG_VERSION.
+                local _pf_example=""
+                if [[ "${PG_VERSION}" =~ ^[0-9]+$ ]]; then
+                    _pf_example="; $(documentdb_default_pg_port "${PG_VERSION}") for PG ${PG_VERSION}"
+                fi
+                die "Port ${PG_PORT} is already in use by a process owned by ${existing_owner:-uid ${listener_uid}} (pid ${_pf_uid_target}) — NOT the documentdb-local OS user. The greenfield setup wizard needs an unused per-major PG port. Choose another with --pg-port, or stop the existing service on ${PG_PORT}. (Per-major default is ${DOCUMENTDB_PG_PORT_BASE_PER_MAJOR} + PG_VERSION${_pf_example}.)"
             fi
             # Else: listener IS owned by documentdb-local → our own PG.
             # Fall through; the wizard will adopt it via the live-cluster path.
@@ -2656,13 +2662,8 @@ prepare_brownfield_instance() {
     # standard distro socket directory; the gateway will use its own socket
     # via DOCUMENTDB_PG_URL_FILE later.
     local distro_socket
-    if [[ -d /var/run/postgresql ]]; then
-        distro_socket="/var/run/postgresql"
-    elif [[ -d /run/postgresql ]]; then
-        distro_socket="/run/postgresql"
-    else
-        die "Cannot find the system PostgreSQL socket directory (/var/run/postgresql or /run/postgresql)."
-    fi
+    distro_socket="$(documentdb_distro_pg_socket_dir)" \
+        || die "Cannot find the system PostgreSQL socket directory (/var/run/postgresql or /run/postgresql)."
 
     # Discover the live instance's port (defaults: 5432 unless the operator
     # overrode it via --pg-port). For multi-cluster Debian setups, the port
@@ -2694,7 +2695,7 @@ prepare_brownfield_instance() {
             PG_PORT="${discovered_port}"
             log_verbose "Brownfield: discovered PostgreSQL port ${PG_PORT} from ${candidate_conf}."
         else
-            PG_PORT="5432"
+            PG_PORT="${DOCUMENTDB_DISTRO_PG_PORT}"
             log_verbose "Brownfield: no port found in the adopted instance's postgresql.conf; assuming the PostgreSQL default ${PG_PORT} (override with --pg-port)."
         fi
     fi
@@ -2782,9 +2783,9 @@ prepare_brownfield_instance() {
         fi
     fi
 
-    # Brownfield's PG runs under the distro's "postgres" OS user; that's
+    # Brownfield's PG runs under the distro's PostgreSQL OS user; that's
     # who we connect as for CREATE EXTENSION + admin bootstrap.
-    PG_OWNER="postgres"
+    PG_OWNER="${DOCUMENTDB_DISTRO_PG_OWNER}"
 
     log_info "Brownfield instance discovered:"
     log_info "  data_directory: ${LIVE_DATA_DIR}"
@@ -2831,8 +2832,8 @@ prepare_self_managed_cluster() {
         # legitimately adopts 5432, and an already-initialized data dir above
         # must stay re-runnable regardless of its recorded port — refusing
         # here would brick day-2 re-runs of an existing install.
-        if [[ "${PG_PORT}" == "5432" ]]; then
-            die "--pg-port 5432 is not allowed for a new package-private PostgreSQL instance: the design reserves the default PostgreSQL port for system instances so they can never collide with this one (packaging-design.md §4.4). Choose another port (default: $(documentdb_default_pg_port "${PG_VERSION}")), or adopt an existing 5432 instance with --target-postgres-instance."
+        if [[ "${PG_PORT}" == "${DOCUMENTDB_DISTRO_PG_PORT}" ]]; then
+            die "--pg-port ${DOCUMENTDB_DISTRO_PG_PORT} is not allowed for a new package-private PostgreSQL instance: the design reserves the default PostgreSQL port for system instances so they can never collide with this one (packaging-design.md §4.4). Choose another port (default: $(documentdb_default_pg_port "${PG_VERSION}")), or adopt an existing ${DOCUMENTDB_DISTRO_PG_PORT} instance with --target-postgres-instance."
         fi
 
         live_listener_pid="$(find_listener_pid "${PG_PORT}")"
@@ -3263,6 +3264,8 @@ update_gateway_configuration() {
         if command_exists jq && [[ -f "${CONFIG_FILE}" ]]; then
             local cleaned_tmp=""
             create_temp_in_dir cleaned_tmp "$(dirname "${CONFIG_FILE}")"
+            # Same field list as packaging/gateway/strip-setup-config.sh; a
+            # test holds the two equal.
             if jq 'del(.PostgresPort, .GatewayListenPort, .PostgresHostName, .PostgresSystemUser, .PostgresDataUser, .PostgresDataUserPassword)' \
                     "${CONFIG_FILE}" > "${cleaned_tmp}" 2>/dev/null; then
                 preserve_file_metadata "${CONFIG_FILE}" "${cleaned_tmp}"
@@ -4973,9 +4976,9 @@ main() {
         # Same mirroring for the greenfield never-5432 rule enforced on the
         # create-new-cluster branch of prepare_self_managed_cluster: only for
         # a NEW instance (an already-initialized data dir stays re-runnable).
-        if [[ -z "${TARGET_CLUSTER}" && "${PG_PORT}" == "5432" \
+        if [[ -z "${TARGET_CLUSTER}" && "${PG_PORT}" == "${DOCUMENTDB_DISTRO_PG_PORT}" \
                 && ! -f "${DATA_DIR}/PG_VERSION" ]]; then
-            die "--pg-port 5432 is not allowed for a new package-private PostgreSQL instance: the design reserves the default PostgreSQL port for system instances so they can never collide with this one (packaging-design.md §4.4). Choose another port, or adopt an existing 5432 instance with --target-postgres-instance."
+            die "--pg-port ${DOCUMENTDB_DISTRO_PG_PORT} is not allowed for a new package-private PostgreSQL instance: the design reserves the default PostgreSQL port for system instances so they can never collide with this one (packaging-design.md §4.4). Choose another port, or adopt an existing ${DOCUMENTDB_DISTRO_PG_PORT} instance with --target-postgres-instance."
         fi
         log_info "[dry-run] documentdb-setup invoked with --dry-run:"
         # Probe existing state so the
@@ -5138,13 +5141,15 @@ main() {
             -c "SHOW shared_preload_libraries;" 2>/dev/null | tr -d '[:space:]' || true)"
 
         local need_restart=false
-        # Mirror merge_shared_preload_libraries' required set, including
-        # pg_documentdb_extended_rum when HAS_EXTENDED_RUM=true (its _PG_init
-        # errors unless loaded via shared_preload_libraries).
-        local -a required_live_libs=(pg_cron pg_documentdb_core pg_documentdb)
-        if [[ "${HAS_EXTENDED_RUM}" == "true" ]]; then
-            required_live_libs+=(pg_documentdb_extended_rum)
-        fi
+        # The same required set merge_shared_preload_libraries writes, from the
+        # one shared authority -- including pg_documentdb_extended_rum when
+        # HAS_EXTENDED_RUM=true (its _PG_init errors unless loaded via
+        # shared_preload_libraries).
+        local -a required_live_libs=()
+        local _raw
+        _raw="$(documentdb_required_preload_libraries "${HAS_EXTENDED_RUM}")" \
+            || die "cannot determine the required shared_preload_libraries set."
+        mapfile -t required_live_libs <<< "${_raw}"
         if [[ -z "${live_preload}" ]]; then
             # The adopted postmaster reports no shared_preload_libraries (a
             # vanilla first-time adoption) or its state could not be read; in
@@ -5191,32 +5196,38 @@ main() {
         # The owning library is loaded (checked above), so SHOW returns a value;
         # an empty result means the value could not be read, which we leave to the
         # library check rather than risk a restart loop (matching the loop-safe
-        # treatment of an unreadable live_preload). Booleans render as on/off, but
-        # synonyms are tolerated so a representation quirk cannot wedge a loop.
+        # treatment of an unreadable live_preload). Both sides of a boolean are
+        # normalized to on/off, so a representation quirk cannot wedge a loop.
         if [[ "${need_restart}" != "true" ]]; then
-            local guc_spec guc_name guc_rest guc_expected guc_is_bool live_guc
+            # Expected values are read from the renderer that writes them, so
+            # this check cannot drift from the managed block. Only the names,
+            # and which of them are booleans, are the wizard's own.
+            local rendered_settings=""
+            rendered_settings="$(render_documentdb_pg_conf \
+                --preload "${merged_preload}" \
+                --extended-rum "${HAS_EXTENDED_RUM}")" \
+                || die "Failed to render the DocumentDB settings for the live-value check."
+            local guc_spec guc_name guc_expected guc_is_bool live_guc
             local -a managed_restart_gucs=(
-                "cron.use_background_workers|on|1"
-                "cron.database_name|postgres|0"
-                "documentdb.enableBackgroundWorker|on|1"
+                "cron.use_background_workers|1"
+                "cron.database_name|0"
+                "documentdb.enableBackgroundWorker|1"
             )
             if [[ "${HAS_EXTENDED_RUM}" == "true" ]]; then
-                managed_restart_gucs+=("documentdb.rum_library_load_option|require_documentdb_extended_rum|0")
+                managed_restart_gucs+=("documentdb.rum_library_load_option|0")
             fi
             for guc_spec in "${managed_restart_gucs[@]}"; do
                 guc_name="${guc_spec%%|*}"
-                guc_rest="${guc_spec#*|}"
-                guc_expected="${guc_rest%%|*}"
-                guc_is_bool="${guc_rest#*|}"
+                guc_is_bool="${guc_spec#*|}"
+                guc_expected="$(documentdb_rendered_value "${guc_name}" <<< "${rendered_settings}")" \
+                    || die "render_documentdb_pg_conf no longer writes ${guc_name}; remove it from managed_restart_gucs or restore it in the renderer."
                 live_guc="$(run_as_user "${PG_OWNER}" "${PSQL}" -h "${PG_SOCKET_DIR}" -p "${PG_PORT}" \
                     -d postgres -X -tA -v ON_ERROR_STOP=1 \
                     -c "SHOW ${guc_name};" 2>/dev/null | tr -d '[:space:]' || true)"
                 [[ -z "${live_guc}" ]] && continue
                 if [[ "${guc_is_bool}" == "1" ]]; then
-                    case "${live_guc,,}" in
-                        on|true|yes|1) live_guc="on" ;;
-                        off|false|no|0) live_guc="off" ;;
-                    esac
+                    live_guc="$(documentdb_normalize_pg_bool "${live_guc}")"
+                    guc_expected="$(documentdb_normalize_pg_bool "${guc_expected}")"
                 fi
                 if [[ "${live_guc}" != "${guc_expected}" ]]; then
                     need_restart=true

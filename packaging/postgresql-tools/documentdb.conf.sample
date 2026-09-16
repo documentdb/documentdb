@@ -8,25 +8,52 @@
 #      .conf filename.
 #   2. Review the settings below for the target cluster.
 #   3. Restart PostgreSQL.
+#
+# What the managed block below sets:
+#   - shared_preload_libraries: the libraries DocumentDB requires, loaded at
+#     startup. Preserve existing entries when applying this manually.
+#   - cron.database_name: store pg_cron job metadata in that database.
+#   - cron.use_background_workers: run pg_cron jobs in background workers. The
+#     hardened pg_hba.conf documentdb-setup installs does not admit pg_cron's
+#     client-mode TCP connection, so without this scheduled jobs -- including
+#     the index builds createIndexes enqueues -- fail silently. It is a
+#     cluster-wide pg_cron setting and changes how every job on the cluster
+#     runs. On a shared cluster, omit that line and keep pg_cron's default
+#     client mode, with a pg_hba.conf rule that lets cron connect.
+#   - documentdb.enableBackgroundWorker / ...Jobs: enable DocumentDB background
+#     workers and their jobs.
+#   - documentdb.indexBuildsScheduledOnBgWorker: keep index builds off the
+#     DocumentDB background-worker queue.
+#   - default_toast_compression: compression for newly written TOAST values.
+#     lz4 requires an lz4-enabled PostgreSQL build and applies instance-wide.
+#     On a shared cluster, omit that line or pass --toast-compression default
+#     to documentdb-tune.
+#
+# Two settings documentdb-tune writes are deliberately absent here:
+#   documentdb.localhost_connection_string = 'host=<socket-dir> port=<port>'
+#     is per-instance; add it with your own socket directory and port.
+#   documentdb.rum_library_load_option / documentdb.alternate_index_handler_name
+#     are written only when the extended RUM extension is installed, which
+#     documentdb-tune detects at run time and a static sample cannot.
+#
+# For an automated, tracked configuration, use documentdb-tune instead of
+# copying this sample.
+#
+# The block between the markers is GENERATED at package build time by
+# generate-conf-sample.sh, from the same renderer the tools use
+# (render_documentdb_pg_conf) and the same shared_preload_libraries authority
+# (GetDocumentDBBasePreloadLibraries). Do not hand-edit it: run
+# oss/packaging/postgresql-tools/generate-conf-sample.sh. The prose above and
+# below is handwritten.
 
 # >>> documentdb-setup managed configuration >>>
 
-# Required libraries. PostgreSQL loads these at startup. Preserve existing
-# entries when applying this manually.
 shared_preload_libraries = 'pg_cron, pg_documentdb_core, pg_documentdb'
-
-# Scheduled and background work.
-# Store pg_cron job metadata in the postgres database.
 cron.database_name = 'postgres'
-# Enable DocumentDB background workers and their jobs.
+cron.use_background_workers = on
 documentdb.enableBackgroundWorker = true
 documentdb.enableBackgroundWorkerJobs = true
-# Keep index builds off the DocumentDB background-worker queue.
 documentdb.indexBuildsScheduledOnBgWorker = false
-
-# Compression for newly written TOAST values. lz4 requires an lz4-enabled
-# PostgreSQL build and applies instance-wide. On a shared cluster, omit this
-# line or pass --toast-compression default to documentdb-tune.
 default_toast_compression = 'lz4'
 
 # <<< documentdb-setup managed configuration <<<
