@@ -342,9 +342,8 @@ HashStringWithCollation(const char *collationString, const char *string,
 /*
  * Hashes a bson value for use in hash set.
  *
- * (1) No collation to apply, either because none was given, collation is disabled, the
- *     locale is the binary "simple" one, or the type is not collation aware: hash the
- *     bson value directly.
+ * (1) No collation to apply, either because none was given, collation is disabled, or
+ *     the type is not collation aware: hash the bson value directly.
  * (2) string-family bson value: hash its collation sort key.
  * (3) arrays and documents: recurse into them, applying (1), (2), (3) to each entry.
  *
@@ -357,11 +356,10 @@ BsonValueHashFuncCore(const bson_value_t *bsonValue, const
 	check_stack_depth();
 
 	/*
-	 * (1) No collation, the binary "simple" locale, or a type that collation does not
-	 * apply to: hash the bson value directly.
+	 * (1) No collation, or a type that collation does not apply to: hash the bson
+	 * value directly.
 	 */
 	if (!IsCollationApplicable(collationString) ||
-		IsSimpleCollation(collationString) ||
 		!IsBsonTypeCollationAware(bsonValue->value_type))
 	{
 		*hashValue += BsonValueHashUint32(bsonValue);

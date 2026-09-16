@@ -8146,6 +8146,170 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          Heap Fetches: xxx
 (14 rows)
 
+-- ===== Section 31: explicit simple uses binary index paths ======
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'simple_coll', '{"_id": "apple", "a": "apple", "b": 2}');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'simple_coll', '{"_id": "banana", "a": "banana", "b": 1}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'simple_coll', '{"_id": "APPLE", "a": "APPLE", "b": 3}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ord_coll_ordered_db',
+  '{ "createIndexes": "simple_coll", "indexes": [
+    { "key": {"a": 1, "b": 1}, "name": "simpleidx", "collation": {"locale": "simple"} }
+  ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "simple_coll", "filter": {"a": "apple"}, "collation": {"locale": "simple"} }')
+$cmd$);
+                      run_explain_and_trim                       
+-----------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   namespaceName: ord_coll_ordered_db.simple_coll
+   indexName: simpleidx
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   indexBounds: ["a": ["apple", "apple"], "b": (MinKey, MaxKey)]
+   ->  Index Scan using simpleidx on documents_8130 collection
+         Index Cond: (document @= '{ "a" : "apple" }'::bson)
+(8 rows)
+
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "simple_coll", "filter": {"a": "apple"}, "collation": {"locale": "simple"} }');
+                             document                             
+------------------------------------------------------------------
+ { "_id" : "apple", "a" : "apple", "b" : { "$numberInt" : "2" } }
+(1 row)
+
+-- Binary $in prefixes may merge per-value ordered scans for a suffix sort.
+SET documentdb.enable_merge_sort_for_in_prefix TO on;
+SET enable_sort TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "simple_coll", "filter": {"a": {"$in": ["apple", "banana"]}}, "sort": {"b": 1}, "collation": {"locale": "simple"} }')
+$cmd$);
+                                                         run_explain_and_trim                                                         
+--------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   namespaceName: ord_coll_ordered_db.simple_coll
+   indexName: simpleidx
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   indexBounds: ["a": ["apple", "apple"], "b": (MinKey, MaxKey)]
+   indexName: simpleidx
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   indexBounds: ["a": ["banana", "banana"], "b": (MinKey, MaxKey)]
+   ->  Result
+         ->  Merge Append
+               Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+               ->  Index Scan using simpleidx on documents_8130 collection
+                     Index Cond: (document @= '{ "a" : "apple" }'::bson)
+                     Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "b" : { "$numberInt" : "1" } }'::bson)
+               ->  Index Scan using simpleidx on documents_8130 collection
+                     Index Cond: (document @= '{ "a" : "banana" }'::bson)
+                     Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "b" : { "$numberInt" : "1" } }'::bson)
+(19 rows)
+
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "simple_coll", "filter": {"a": {"$in": ["apple", "banana"]}}, "sort": {"b": 1}, "collation": {"locale": "simple"} }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : "banana", "a" : "banana", "b" : { "$numberInt" : "1" } }
+ { "_id" : "apple", "a" : "apple", "b" : { "$numberInt" : "2" } }
+(2 rows)
+
+-- simple is discarded from both the query and the index spec, so this is an
+-- ordinary uncollated query and the index gate permits the index.
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "simple_coll", "filter": {"a": {"$in": ["apple", "banana"]}}, "sort": {"b": 1}, "collation": {"locale": "simple"} }')
+$cmd$);
+                                                         run_explain_and_trim                                                         
+--------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   namespaceName: ord_coll_ordered_db.simple_coll
+   indexName: simpleidx
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   indexBounds: ["a": ["apple", "apple"], "b": (MinKey, MaxKey)]
+   indexName: simpleidx
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   indexBounds: ["a": ["banana", "banana"], "b": (MinKey, MaxKey)]
+   ->  Result
+         ->  Merge Append
+               Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+               ->  Index Scan using simpleidx on documents_8130 collection
+                     Index Cond: (document @= '{ "a" : "apple" }'::bson)
+                     Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "b" : { "$numberInt" : "1" } }'::bson)
+               ->  Index Scan using simpleidx on documents_8130 collection
+                     Index Cond: (document @= '{ "a" : "banana" }'::bson)
+                     Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "b" : { "$numberInt" : "1" } }'::bson)
+(19 rows)
+
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+-- A non-binary $in must retain the runtime sort and case-insensitive matches.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "simple_coll", "filter": {"a": {"$in": ["apple", "banana"]}}, "sort": {"b": 1}, "collation": {"locale": "en", "strength": 1} }')
+$cmd$);
+                                                               run_explain_and_trim                                                               
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "b" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: ord_coll_ordered_db.simple_coll
+         indexName: _id_
+         ->  Index Scan using _id_ on documents_8130 collection
+               Index Cond: (shard_key_value = '8130'::bigint)
+               Filter: (document @*= '{ "a" : [ "apple", "banana" ], "collation" : "en-u-ks-level1" }'::bson)
+(8 rows)
+
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "simple_coll", "filter": {"a": {"$in": ["apple", "banana"]}}, "sort": {"b": 1}, "collation": {"locale": "en", "strength": 1} }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : "banana", "a" : "banana", "b" : { "$numberInt" : "1" } }
+ { "_id" : "apple", "a" : "apple", "b" : { "$numberInt" : "2" } }
+ { "_id" : "APPLE", "a" : "APPLE", "b" : { "$numberInt" : "3" } }
+(3 rows)
+
+RESET enable_sort;
+RESET documentdb.enable_merge_sort_for_in_prefix;
+-- The _id point-lookup optimization applies, since simple leaves no collation.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "simple_coll", "filter": {"_id": "apple"}, "collation": {"locale": "simple"} }')
+$cmd$);
+                                     run_explain_and_trim                                      
+-----------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_8130 collection
+   Index Cond: ((shard_key_value = '8130'::bigint) AND (object_id = '{ "" : "apple" }'::bson))
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "simple_coll", "filter": {"_id": "apple"}, "collation": {"locale": "simple"} }');
+                             document                             
+------------------------------------------------------------------
+ { "_id" : "apple", "a" : "apple", "b" : { "$numberInt" : "2" } }
+(1 row)
+
+SELECT documentdb_api.drop_collection('ord_coll_ordered_db', 'simple_coll');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
 RESET enable_bitmapscan;
 RESET documentdb.max_non_ordered_term_scan_threshold;
 RESET documentdb.enableOrderByIndexTerm;

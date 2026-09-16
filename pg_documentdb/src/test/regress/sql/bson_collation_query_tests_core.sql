@@ -1453,6 +1453,28 @@ SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "coll_multi_coll
 -- update with collation + arrayFilters.
 SELECT documentdb_api.update('update', '{"update":"coll_multi_collation", "updates":[{"q":{"_id": 134111, "b": [ 5, 2, 4 ] },"u":{"$set" : {"b.$[a]":3} },"upsert":true,"collation" : {"locale" : "en", "strength": 1}, "arrayFilters": [ { "a": 2 } ]}]}');
 
+-- ==============================================================================
+-- SECTION 26: shard-key targeting under explicit simple
+-- ==============================================================================
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_delete_simple', '{"_id": 1, "a": "cat"}');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_delete_simple', '{"_id": 2, "a": "CAT"}');
+SELECT documentdb_api.shard_collection('coll_q_db', 'coll_delete_simple', '{"a":"hashed"}', false);
+
+-- Explicit simple and omitted collation must both target the binary shard key.
+BEGIN;
+SELECT documentdb_api.delete('coll_q_db', '{ "delete": "coll_delete_simple", "deletes": [ { "q": {"a": "cat"}, "limit": 1, "collation": {"locale": "simple"} } ] }');
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_delete_simple", "filter": {}, "sort": {"_id": 1} }');
+ROLLBACK;
+
+BEGIN;
+SELECT documentdb_api.delete('coll_q_db', '{ "delete": "coll_delete_simple", "deletes": [ { "q": {"a": "cat"}, "limit": 1 } ] }');
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_delete_simple", "filter": {}, "sort": {"_id": 1} }');
+ROLLBACK;
+
+-- Non-binary comparison must not target a binary string shard key.
+SELECT documentdb_api.delete('coll_q_db', '{ "delete": "coll_delete_simple", "deletes": [ { "q": {"a": "cat"}, "limit": 1, "collation": {"locale": "en", "strength": 2} } ] }');
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_delete_simple');
+
 -- ======================================================================
 -- CLEANUP
 -- ======================================================================

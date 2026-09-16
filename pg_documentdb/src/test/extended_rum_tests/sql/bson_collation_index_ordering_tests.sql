@@ -2389,6 +2389,51 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 -- A collated query can still project numeric-filtered values from a simple index.
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "seq": { "$gte": 1 } }, "projection": { "country": 1, "_id": 0 }, "hint": "ios_seq_country_simple", "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
 
+-- ===== Section 31: explicit simple uses binary index paths ======
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'simple_coll', '{"_id": "apple", "a": "apple", "b": 2}');
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'simple_coll', '{"_id": "banana", "a": "banana", "b": 1}');
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'simple_coll', '{"_id": "APPLE", "a": "APPLE", "b": 3}');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ord_coll_ordered_db',
+  '{ "createIndexes": "simple_coll", "indexes": [
+    { "key": {"a": 1, "b": 1}, "name": "simpleidx", "collation": {"locale": "simple"} }
+  ] }', TRUE);
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "simple_coll", "filter": {"a": "apple"}, "collation": {"locale": "simple"} }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "simple_coll", "filter": {"a": "apple"}, "collation": {"locale": "simple"} }');
+
+-- Binary $in prefixes may merge per-value ordered scans for a suffix sort.
+SET documentdb.enable_merge_sort_for_in_prefix TO on;
+SET enable_sort TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "simple_coll", "filter": {"a": {"$in": ["apple", "banana"]}}, "sort": {"b": 1}, "collation": {"locale": "simple"} }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "simple_coll", "filter": {"a": {"$in": ["apple", "banana"]}}, "sort": {"b": 1}, "collation": {"locale": "simple"} }');
+
+-- simple is discarded from both the query and the index spec, so this is an
+-- ordinary uncollated query and the index gate permits the index.
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "simple_coll", "filter": {"a": {"$in": ["apple", "banana"]}}, "sort": {"b": 1}, "collation": {"locale": "simple"} }')
+$cmd$);
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+
+-- A non-binary $in must retain the runtime sort and case-insensitive matches.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "simple_coll", "filter": {"a": {"$in": ["apple", "banana"]}}, "sort": {"b": 1}, "collation": {"locale": "en", "strength": 1} }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "simple_coll", "filter": {"a": {"$in": ["apple", "banana"]}}, "sort": {"b": 1}, "collation": {"locale": "en", "strength": 1} }');
+RESET enable_sort;
+RESET documentdb.enable_merge_sort_for_in_prefix;
+
+-- The _id point-lookup optimization applies, since simple leaves no collation.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "simple_coll", "filter": {"_id": "apple"}, "collation": {"locale": "simple"} }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "simple_coll", "filter": {"_id": "apple"}, "collation": {"locale": "simple"} }');
+SELECT documentdb_api.drop_collection('ord_coll_ordered_db', 'simple_coll');
+
 RESET enable_bitmapscan;
 
 RESET documentdb.max_non_ordered_term_scan_threshold;

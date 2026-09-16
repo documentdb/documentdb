@@ -4940,6 +4940,70 @@ psql:sql/bson_collation_query_tests_core.sql:1451: ERROR:  findAndModify.collati
 -- update with collation + arrayFilters.
 SELECT documentdb_api.update('update', '{"update":"coll_multi_collation", "updates":[{"q":{"_id": 134111, "b": [ 5, 2, 4 ] },"u":{"$set" : {"b.$[a]":3} },"upsert":true,"collation" : {"locale" : "en", "strength": 1}, "arrayFilters": [ { "a": 2 } ]}]}');
 psql:sql/bson_collation_query_tests_core.sql:1454: ERROR:  BSON field 'update.updates.collation' is not yet supported
+-- ==============================================================================
+-- SECTION 26: shard-key targeting under explicit simple
+-- ==============================================================================
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_delete_simple', '{"_id": 1, "a": "cat"}');
+psql:sql/bson_collation_query_tests_core.sql:1459: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_delete_simple', '{"_id": 2, "a": "CAT"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection('coll_q_db', 'coll_delete_simple', '{"a":"hashed"}', false);
+ shard_collection 
+------------------
+ 
+(1 row)
+
+-- Explicit simple and omitted collation must both target the binary shard key.
+BEGIN;
+SELECT documentdb_api.delete('coll_q_db', '{ "delete": "coll_delete_simple", "deletes": [ { "q": {"a": "cat"}, "limit": 1, "collation": {"locale": "simple"} } ] }');
+                                         delete                                         
+----------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_delete_simple", "filter": {}, "sort": {"_id": 1} }');
+                    document                     
+-------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "a" : "CAT" }
+(1 row)
+
+ROLLBACK;
+BEGIN;
+SELECT documentdb_api.delete('coll_q_db', '{ "delete": "coll_delete_simple", "deletes": [ { "q": {"a": "cat"}, "limit": 1 } ] }');
+                                         delete                                         
+----------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_delete_simple", "filter": {}, "sort": {"_id": 1} }');
+                    document                     
+-------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "a" : "CAT" }
+(1 row)
+
+ROLLBACK;
+-- Non-binary comparison must not target a binary string shard key.
+SELECT documentdb_api.delete('coll_q_db', '{ "delete": "coll_delete_simple", "deletes": [ { "q": {"a": "cat"}, "limit": 1, "collation": {"locale": "en", "strength": 2} } ] }');
+                                                                                                                                                      delete                                                                                                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""1088"" }, ""errmsg"" : ""delete query with limit 1 must include either _id or collation-insensitive shard key filter"" } ] }",f)
+(1 row)
+
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_delete_simple');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
 -- ======================================================================
 -- CLEANUP
 -- ======================================================================

@@ -478,21 +478,21 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_agg_proj",  "filter": { "$expr": {"$eq": ["$a", "CAT"]} }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "simple"} }')
 $cmd$);
-                                                                                                          run_explain_and_trim                                                                                                          
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                              run_explain_and_trim                                                                                              
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
+   Output: document, (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
    ->  Sort
-         Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)) NULLS FIRST
+         Output: document, (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+         Sort Key: (bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)
+               Output: document, bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
                namespaceName: coll_q_db.coll_agg_proj
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
                      Output: document
                      Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-                     Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "CAT" ] }, "collation" : "simple" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+                     Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "CAT" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
                      ->  Bitmap Index Scan on _id_
                            Index Cond: (collection.shard_key_value = '8801'::bigint)
 (15 rows)
@@ -500,21 +500,21 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_agg_proj",  "filter": { "$expr": {"$eq": ["$a", "cat"]} }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "simple"} }')
 $cmd$);
-                                                                                                          run_explain_and_trim                                                                                                          
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                              run_explain_and_trim                                                                                              
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
+   Output: document, (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
    ->  Sort
-         Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)) NULLS FIRST
+         Output: document, (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+         Sort Key: (bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)
+               Output: document, bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
                namespaceName: coll_q_db.coll_agg_proj
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
                      Output: document
                      Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-                     Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "cat" ] }, "collation" : "simple" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+                     Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "cat" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
                      ->  Bitmap Index Scan on _id_
                            Index Cond: (collection.shard_key_value = '8801'::bigint)
 (15 rows)
@@ -523,21 +523,21 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_agg_proj",  "filter": { "$expr": {"$eq": ["$a", "cat"]} }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "simple", "strength": 1} }')
 $cmd$);
-                                                                                                          run_explain_and_trim                                                                                                          
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                              run_explain_and_trim                                                                                              
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
+   Output: document, (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
    ->  Sort
-         Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)) NULLS FIRST
+         Output: document, (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+         Sort Key: (bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)
+               Output: document, bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
                namespaceName: coll_q_db.coll_agg_proj
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
                      Output: document
                      Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-                     Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "cat" ] }, "collation" : "simple" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+                     Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "cat" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
                      ->  Bitmap Index Scan on _id_
                            Index Cond: (collection.shard_key_value = '8801'::bigint)
 (15 rows)
@@ -545,21 +545,21 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_agg_proj",  "filter": { "$expr": {"$eq": ["$a", "cat"]} }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "simple", "strength": 3} }')
 $cmd$);
-                                                                                                          run_explain_and_trim                                                                                                          
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                              run_explain_and_trim                                                                                              
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
+   Output: document, (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
    ->  Sort
-         Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)) NULLS FIRST
+         Output: document, (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+         Sort Key: (bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)
+               Output: document, bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
                namespaceName: coll_q_db.coll_agg_proj
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
                      Output: document
                      Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-                     Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "cat" ] }, "collation" : "simple" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+                     Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "cat" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
                      ->  Bitmap Index Scan on _id_
                            Index Cond: (collection.shard_key_value = '8801'::bigint)
 (15 rows)
@@ -567,21 +567,21 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_agg_proj",  "filter": { "$expr": {"$eq": ["$a", "cat"]} }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "simple", "caseFirst": "upper"} }')
 $cmd$);
-                                                                                                          run_explain_and_trim                                                                                                          
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                              run_explain_and_trim                                                                                              
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
+   Output: document, (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
    ->  Sort
-         Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)) NULLS FIRST
+         Output: document, (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+         Sort Key: (bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)
+               Output: document, bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
                namespaceName: coll_q_db.coll_agg_proj
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
                      Output: document
                      Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-                     Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "cat" ] }, "collation" : "simple" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+                     Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "cat" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
                      ->  Bitmap Index Scan on _id_
                            Index Cond: (collection.shard_key_value = '8801'::bigint)
 (15 rows)
@@ -589,21 +589,21 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_agg_proj",  "filter": { "$expr": {"$eq": ["$a", "cat"]} }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "simple", "caseFirst": "lower"} }')
 $cmd$);
-                                                                                                          run_explain_and_trim                                                                                                          
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                              run_explain_and_trim                                                                                              
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
+   Output: document, (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
    ->  Sort
-         Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)) NULLS FIRST
+         Output: document, (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+         Sort Key: (bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)
+               Output: document, bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
                namespaceName: coll_q_db.coll_agg_proj
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
                      Output: document
                      Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-                     Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "cat" ] }, "collation" : "simple" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+                     Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "cat" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
                      ->  Bitmap Index Scan on _id_
                            Index Cond: (collection.shard_key_value = '8801'::bigint)
 (15 rows)
@@ -4490,6 +4490,553 @@ $cmd$),
 
 SET documentdb.enable_distinct_exists_filter_pushdown TO off;
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_distinct_explain');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- ======================================================================
+-- SECTION: binary $expr index pushdown
+-- ======================================================================
+SELECT documentdb_api.insert_one('coll_q_db', 'single_field_binary', '{"_id": 1, "a": "apple", "b": "apple"}');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'single_field_binary', '{"_id": 2, "a": "APPLE", "b": "APPLE"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "single_field_binary", "indexes": [
+    { "key": {"a": 1}, "name": "idx_a_binary", "collation": {"locale": "simple"} },
+    { "key": {"b": 1}, "name": "idx_b_binary" }
+  ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Explicit simple and omitted collation can use an index carrying simple.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"$expr": {"$eq": ["$a", "apple"]}}, "collation": {"locale": "simple"} }')
+$cmd$);
+                                                                                         run_explain_and_trim                                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: coll_q_db.single_field_binary
+   indexName: idx_a_binary
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": ["apple", "apple"]]
+   ->  Index Scan using idx_a_binary on documentdb_data.documents_8820 collection
+         Output: document
+         Index Cond: (collection.document @= '{ "a" : "apple" }'::bson)
+         Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "apple" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+(11 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"$expr": {"$eq": ["$a", "apple"]}} }')
+$cmd$);
+                                                                                         run_explain_and_trim                                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: coll_q_db.single_field_binary
+   indexName: idx_a_binary
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": ["apple", "apple"]]
+   ->  Index Scan using idx_a_binary on documentdb_data.documents_8820 collection
+         Output: document
+         Index Cond: (collection.document @= '{ "a" : "apple" }'::bson)
+         Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "apple" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+(11 rows)
+
+-- Explicit simple can also use an index without any collation option.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"$expr": {"$eq": ["$b", "apple"]}}, "collation": {"locale": "simple"} }')
+$cmd$);
+                                                                                         run_explain_and_trim                                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: coll_q_db.single_field_binary
+   indexName: idx_b_binary
+   indexKey: {"b": 1}
+   isMultiKey: false
+   indexBounds: ["b": ["apple", "apple"]]
+   ->  Index Scan using idx_b_binary on documentdb_data.documents_8820 collection
+         Output: document
+         Index Cond: (collection.document @= '{ "b" : "apple" }'::bson)
+         Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$b", "apple" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+(11 rows)
+
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"$expr": {"$eq": ["$a", "apple"]}}, "collation": {"locale": "simple"} }');
+                             document                             
+------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "apple", "b" : "apple" }
+(1 row)
+
+-- Non-binary $expr comparison still requires a runtime filter.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"$expr": {"$eq": ["$a", "apple"]}}, "collation": {"locale": "en", "strength": 1} }')
+$cmd$);
+                                                                                                         run_explain_and_trim                                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: coll_q_db.single_field_binary
+   indexName: _id_
+   ->  Index Scan using _id_ on documentdb_data.documents_8820 collection
+         Output: document
+         Index Cond: (collection.shard_key_value = '8820'::bigint)
+         Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "apple" ] }, "collation" : "en-u-ks-level1" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+(8 rows)
+
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"$expr": {"$eq": ["$a", "apple"]}}, "sort": {"_id": 1}, "collation": {"locale": "en", "strength": 1} }');
+                             document                             
+------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "apple", "b" : "apple" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "APPLE", "b" : "APPLE" }
+(2 rows)
+
+-- The same binary gate permits indexed $lookup without folding case variants.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "single_field_binary", "pipeline": [{"$lookup": {"from": "single_field_binary", "localField": "a", "foreignField": "b", "as": "matches"}}], "collation": {"locale": "simple"} }')
+$cmd$);
+                                                                                                           run_explain_and_trim                                                                                                           
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   Output: documentdb_api_internal.bson_dollar_merge_documents(collection.document, (COALESCE(bson_array_agg(collection_0_1.document, 'matches'::text), '{ "matches" : [  ] }'::bson)), true)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         Output: collection.document
+         namespaceName: coll_q_db.single_field_binary
+         indexName: _id_
+         ->  Index Scan using _id_ on documentdb_data.documents_8820 collection
+               Output: collection.document
+               Index Cond: (collection.shard_key_value = '8820'::bigint)
+   ->  Aggregate
+         Output: COALESCE(bson_array_agg(collection_0_1.document, 'matches'::text), '{ "matches" : [  ] }'::bson)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan)
+               Output: collection_0_1.document
+               namespaceName: coll_q_db.single_field_binary
+               indexName: idx_b_binary
+               indexKey: {"b": 1}
+               isMultiKey: false
+               ->  Index Scan using idx_b_binary on documentdb_data.documents_8820 collection_0_1
+                     Output: collection_0_1.document
+                     Index Cond: (collection_0_1.document @*= documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "b" : "a" }'::bson))
+                     Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "b" : "a" }'::bson), 'b'::text)
+(21 rows)
+
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "single_field_binary", "pipeline": [{"$lookup": {"from": "single_field_binary", "localField": "a", "foreignField": "b", "as": "matches"}}, {"$project": {"_id": 1, "matchedIds": "$matches._id"}}, {"$sort": {"_id": 1}}], "collation": {"locale": "simple"} }');
+                                   document                                    
+-------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "matchedIds" : [ { "$numberInt" : "1" } ] }
+ { "_id" : { "$numberInt" : "2" }, "matchedIds" : [ { "$numberInt" : "2" } ] }
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "single_field_binary", "pipeline": [{"$lookup": {"from": "single_field_binary", "localField": "a", "foreignField": "b", "as": "matches"}}], "collation": {"locale": "en", "strength": 1} }')
+$cmd$);
+                                                                                                                           run_explain_and_trim                                                                                                                           
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   Output: documentdb_api_internal.bson_dollar_merge_documents(collection.document, (COALESCE(bson_array_agg(collection_0_1.document, 'matches'::text), '{ "matches" : [  ] }'::bson)), true)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         Output: collection.document
+         namespaceName: coll_q_db.single_field_binary
+         indexName: _id_
+         ->  Index Scan using _id_ on documentdb_data.documents_8820 collection
+               Output: collection.document
+               Index Cond: (collection.shard_key_value = '8820'::bigint)
+   ->  Aggregate
+         Output: COALESCE(bson_array_agg(collection_0_1.document, 'matches'::text), '{ "matches" : [  ] }'::bson)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan)
+               Output: collection_0_1.document
+               namespaceName: coll_q_db.single_field_binary
+               indexName: _id_
+               ->  Index Scan using _id_ on documentdb_data.documents_8820 collection_0_1
+                     Output: collection_0_1.document
+                     Index Cond: (collection_0_1.shard_key_value = '8820'::bigint)
+                     Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "b" : "a", "collation" : "en-u-ks-level1" }'::bson), 'b'::text)
+(19 rows)
+
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "single_field_binary", "pipeline": [{"$lookup": {"from": "single_field_binary", "localField": "a", "foreignField": "b", "as": "matches"}}, {"$project": {"_id": 1, "matchCount": {"$size": "$matches"}}}, {"$sort": {"_id": 1}}], "collation": {"locale": "en", "strength": 1} }');
+                                 document                                  
+---------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "matchCount" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "2" }, "matchCount" : { "$numberInt" : "2" } }
+(2 rows)
+
+-- Simple must not bypass disabled index collation support.
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"b": "apple"}, "collation": {"locale": "simple"} }')
+$cmd$);
+                               run_explain_and_trim                               
+----------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: coll_q_db.single_field_binary
+   indexName: idx_b_binary
+   indexKey: {"b": 1}
+   isMultiKey: false
+   indexBounds: ["b": ["apple", "apple"]]
+   ->  Index Scan using idx_b_binary on documentdb_data.documents_8820 collection
+         Output: document
+         Index Cond: (collection.document @= '{ "b" : "apple" }'::bson)
+(10 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"a": "apple"}, "collation": {"locale": "simple"} }')
+$cmd$);
+                               run_explain_and_trim                               
+----------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: coll_q_db.single_field_binary
+   indexName: idx_a_binary
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": ["apple", "apple"]]
+   ->  Index Scan using idx_a_binary on documentdb_data.documents_8820 collection
+         Output: document
+         Index Cond: (collection.document @= '{ "a" : "apple" }'::bson)
+(10 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"$expr": {"$eq": ["$b", "apple"]}}, "collation": {"locale": "simple"} }')
+$cmd$);
+                                                                                         run_explain_and_trim                                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: coll_q_db.single_field_binary
+   indexName: idx_b_binary
+   indexKey: {"b": 1}
+   isMultiKey: false
+   indexBounds: ["b": ["apple", "apple"]]
+   ->  Index Scan using idx_b_binary on documentdb_data.documents_8820 collection
+         Output: document
+         Index Cond: (collection.document @= '{ "b" : "apple" }'::bson)
+         Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$b", "apple" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+(11 rows)
+
+-- An ordinary query without collation can still use the uncollated index.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"b": "apple"} }')
+$cmd$);
+                               run_explain_and_trim                               
+----------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: coll_q_db.single_field_binary
+   indexName: idx_b_binary
+   indexKey: {"b": 1}
+   isMultiKey: false
+   indexBounds: ["b": ["apple", "apple"]]
+   ->  Index Scan using idx_b_binary on documentdb_data.documents_8820 collection
+         Output: document
+         Index Cond: (collection.document @= '{ "b" : "apple" }'::bson)
+(10 rows)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "single_field_binary", "indexes": [{ "key": {"a": 1, "b": 1}, "name": "gate_disabled_support", "collation": {"locale": "simple"} }] }', TRUE);
+ERROR:  Error in specification { "key" : { "a" : 1, "b" : 1 }, "name" : "gate_disabled_support", "collation" : { "locale" : "simple" } }:createIndex.collation is not implemented yet
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+-- With collation disabled, a stored collation option remains a pushdown barrier.
+SET documentdb_core.enableCollation TO off;
+SET documentdb.skipFailOnCollation TO off;
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"b": "apple"}, "collation": {"locale": "simple"} }');
+ERROR:  collation is not supported in the find command yet.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"$expr": {"$eq": ["$a", "apple"]}} }')
+$cmd$);
+                                                                                         run_explain_and_trim                                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: coll_q_db.single_field_binary
+   indexName: idx_a_binary
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": ["apple", "apple"]]
+   ->  Index Scan using idx_a_binary on documentdb_data.documents_8820 collection
+         Output: document
+         Index Cond: (collection.document @= '{ "a" : "apple" }'::bson)
+         Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "apple" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+(11 rows)
+
+RESET documentdb.skipFailOnCollation;
+SET documentdb_core.enableCollation TO on;
+SELECT documentdb_api.drop_collection('coll_q_db', 'single_field_binary');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- Simple must not bypass unsupported single-path, hashed, or wildcard indexes.
+SET documentdb.defaultUseCompositeOpClass TO off;
+SELECT documentdb_api.insert_one('coll_q_db', 'simple_gate_single', '{"_id": 1, "a": "apple"}');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'simple_gate_single', '{"_id": 2, "a": "APPLE"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "simple_gate_single", "indexes": [{ "key": {"a": 1}, "name": "gate_single" }] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'simple_gate_hashed', '{"_id": 1, "a": "apple"}');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'simple_gate_hashed', '{"_id": 2, "a": "APPLE"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "simple_gate_hashed", "indexes": [{ "key": {"a": "hashed"}, "name": "gate_hashed" }] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'simple_gate_wildcard', '{"_id": 1, "a": "apple"}');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'simple_gate_wildcard', '{"_id": 2, "a": "APPLE"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "simple_gate_wildcard", "indexes": [{ "key": {"$**": 1}, "name": "gate_wildcard", "wildcardProjection": {"a": 1} }] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "simple_gate_single", "indexes": [{ "key": {"a": 1}, "name": "gate_single_collation", "collation": {"locale": "simple"} }] }', TRUE);
+ERROR:  Index already exists with a different name: gate_single
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "simple_gate_hashed", "indexes": [{ "key": {"a": "hashed"}, "name": "gate_hashed_collation", "collation": {"locale": "simple"} }] }', TRUE);
+ERROR:  Index already exists with a different name: gate_hashed
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "simple_gate_wildcard", "indexes": [{ "key": {"$**": 1}, "name": "gate_wildcard_collation", "wildcardProjection": {"a": 1}, "collation": {"locale": "simple"} }] }', TRUE);
+ERROR:  Index already exists with a different name: gate_wildcard
+SET documentdb.defaultUseCompositeOpClass TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "simple_gate_single", "filter": {"a": "apple"} }')
+$cmd$);
+                              run_explain_and_trim                               
+---------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: coll_q_db.simple_gate_single
+   indexName: gate_single
+   ->  Index Scan using gate_single on documentdb_data.documents_8821 collection
+         Output: document
+         Index Cond: (collection.document @= '{ "a" : "apple" }'::bson)
+(7 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "simple_gate_single", "filter": {"a": "apple"}, "collation": {"locale": "simple"} }')
+$cmd$);
+                              run_explain_and_trim                               
+---------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: coll_q_db.simple_gate_single
+   indexName: gate_single
+   ->  Index Scan using gate_single on documentdb_data.documents_8821 collection
+         Output: document
+         Index Cond: (collection.document @= '{ "a" : "apple" }'::bson)
+(7 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "simple_gate_single", "filter": {"a": "apple"}, "collation": {"locale": "en", "strength": 1} }')
+$cmd$);
+                                        run_explain_and_trim                                        
+----------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: coll_q_db.simple_gate_single
+   indexName: _id_
+   ->  Index Scan using _id_ on documentdb_data.documents_8821 collection
+         Output: document
+         Index Cond: (collection.shard_key_value = '8821'::bigint)
+         Filter: (collection.document @= '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::bson)
+(8 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "simple_gate_single", "filter": {"$expr": {"$eq": ["$a", "apple"]}}, "collation": {"locale": "simple"} }')
+$cmd$);
+                                                                                         run_explain_and_trim                                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: coll_q_db.simple_gate_single
+   indexName: _id_
+   ->  Index Scan using _id_ on documentdb_data.documents_8821 collection
+         Output: document
+         Index Cond: (collection.shard_key_value = '8821'::bigint)
+         Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "apple" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+(8 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "simple_gate_single", "pipeline": [{"$lookup": {"from": "simple_gate_single", "localField": "a", "foreignField": "a", "as": "matches"}}], "collation": {"locale": "simple"} }')
+$cmd$);
+                                                                                                           run_explain_and_trim                                                                                                           
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   Output: documentdb_api_internal.bson_dollar_merge_documents(collection.document, (COALESCE(bson_array_agg(collection_0_1.document, 'matches'::text), '{ "matches" : [  ] }'::bson)), true)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         Output: collection.document
+         namespaceName: coll_q_db.simple_gate_single
+         indexName: _id_
+         ->  Index Scan using _id_ on documentdb_data.documents_8821 collection
+               Output: collection.document
+               Index Cond: (collection.shard_key_value = '8821'::bigint)
+   ->  Aggregate
+         Output: COALESCE(bson_array_agg(collection_0_1.document, 'matches'::text), '{ "matches" : [  ] }'::bson)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan)
+               Output: collection_0_1.document
+               namespaceName: coll_q_db.simple_gate_single
+               indexName: gate_single
+               ->  Index Scan using gate_single on documentdb_data.documents_8821 collection_0_1
+                     Output: collection_0_1.document
+                     Index Cond: (collection_0_1.document @*= documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "a" : "a" }'::bson))
+                     Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "a" : "a" }'::bson), 'a'::text)
+(19 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "simple_gate_hashed", "filter": {"a": "apple"} }')
+$cmd$);
+                              run_explain_and_trim                               
+---------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: coll_q_db.simple_gate_hashed
+   indexName: gate_hashed
+   ->  Index Scan using gate_hashed on documentdb_data.documents_8822 collection
+         Output: document
+         Index Cond: (collection.document @= '{ "a" : "apple" }'::bson)
+(7 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "simple_gate_hashed", "filter": {"a": "apple"}, "collation": {"locale": "simple"} }')
+$cmd$);
+                              run_explain_and_trim                               
+---------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: coll_q_db.simple_gate_hashed
+   indexName: gate_hashed
+   ->  Index Scan using gate_hashed on documentdb_data.documents_8822 collection
+         Output: document
+         Index Cond: (collection.document @= '{ "a" : "apple" }'::bson)
+(7 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "simple_gate_hashed", "filter": {"a": "apple"}, "collation": {"locale": "en", "strength": 1} }')
+$cmd$);
+                                        run_explain_and_trim                                        
+----------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: coll_q_db.simple_gate_hashed
+   indexName: _id_
+   ->  Index Scan using _id_ on documentdb_data.documents_8822 collection
+         Output: document
+         Index Cond: (collection.shard_key_value = '8822'::bigint)
+         Filter: (collection.document @= '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::bson)
+(8 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "simple_gate_wildcard", "filter": {"a": "apple"} }')
+$cmd$);
+                               run_explain_and_trim                                
+-----------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: coll_q_db.simple_gate_wildcard
+   indexName: gate_wildcard
+   ->  Index Scan using gate_wildcard on documentdb_data.documents_8823 collection
+         Output: document
+         Index Cond: (collection.document @= '{ "a" : "apple" }'::bson)
+(7 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "simple_gate_wildcard", "filter": {"a": "apple"}, "collation": {"locale": "simple"} }')
+$cmd$);
+                               run_explain_and_trim                                
+-----------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: coll_q_db.simple_gate_wildcard
+   indexName: gate_wildcard
+   ->  Index Scan using gate_wildcard on documentdb_data.documents_8823 collection
+         Output: document
+         Index Cond: (collection.document @= '{ "a" : "apple" }'::bson)
+(7 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "simple_gate_wildcard", "filter": {"a": "apple"}, "collation": {"locale": "en", "strength": 1} }')
+$cmd$);
+                                        run_explain_and_trim                                        
+----------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: coll_q_db.simple_gate_wildcard
+   indexName: _id_
+   ->  Index Scan using _id_ on documentdb_data.documents_8823 collection
+         Output: document
+         Index Cond: (collection.shard_key_value = '8823'::bigint)
+         Filter: (collection.document @= '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::bson)
+(8 rows)
+
+SELECT documentdb_api.drop_collection('coll_q_db', 'simple_gate_single');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('coll_q_db', 'simple_gate_hashed');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('coll_q_db', 'simple_gate_wildcard');
  drop_collection 
 -----------------
  t

@@ -1189,3 +1189,137 @@ $cmd$),
 SET documentdb.enable_distinct_exists_filter_pushdown TO off;
 
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_distinct_explain');
+
+-- ======================================================================
+-- SECTION: binary $expr index pushdown
+-- ======================================================================
+SELECT documentdb_api.insert_one('coll_q_db', 'single_field_binary', '{"_id": 1, "a": "apple", "b": "apple"}');
+SELECT documentdb_api.insert_one('coll_q_db', 'single_field_binary', '{"_id": 2, "a": "APPLE", "b": "APPLE"}');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "single_field_binary", "indexes": [
+    { "key": {"a": 1}, "name": "idx_a_binary", "collation": {"locale": "simple"} },
+    { "key": {"b": 1}, "name": "idx_b_binary" }
+  ] }', TRUE);
+
+-- Explicit simple and omitted collation can use an index carrying simple.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"$expr": {"$eq": ["$a", "apple"]}}, "collation": {"locale": "simple"} }')
+$cmd$);
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"$expr": {"$eq": ["$a", "apple"]}} }')
+$cmd$);
+
+-- Explicit simple can also use an index without any collation option.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"$expr": {"$eq": ["$b", "apple"]}}, "collation": {"locale": "simple"} }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"$expr": {"$eq": ["$a", "apple"]}}, "collation": {"locale": "simple"} }');
+
+-- Non-binary $expr comparison still requires a runtime filter.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"$expr": {"$eq": ["$a", "apple"]}}, "collation": {"locale": "en", "strength": 1} }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"$expr": {"$eq": ["$a", "apple"]}}, "sort": {"_id": 1}, "collation": {"locale": "en", "strength": 1} }');
+
+-- The same binary gate permits indexed $lookup without folding case variants.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "single_field_binary", "pipeline": [{"$lookup": {"from": "single_field_binary", "localField": "a", "foreignField": "b", "as": "matches"}}], "collation": {"locale": "simple"} }')
+$cmd$);
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "single_field_binary", "pipeline": [{"$lookup": {"from": "single_field_binary", "localField": "a", "foreignField": "b", "as": "matches"}}, {"$project": {"_id": 1, "matchedIds": "$matches._id"}}, {"$sort": {"_id": 1}}], "collation": {"locale": "simple"} }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "single_field_binary", "pipeline": [{"$lookup": {"from": "single_field_binary", "localField": "a", "foreignField": "b", "as": "matches"}}], "collation": {"locale": "en", "strength": 1} }')
+$cmd$);
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "single_field_binary", "pipeline": [{"$lookup": {"from": "single_field_binary", "localField": "a", "foreignField": "b", "as": "matches"}}, {"$project": {"_id": 1, "matchCount": {"$size": "$matches"}}}, {"$sort": {"_id": 1}}], "collation": {"locale": "en", "strength": 1} }');
+
+-- Simple must not bypass disabled index collation support.
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"b": "apple"}, "collation": {"locale": "simple"} }')
+$cmd$);
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"a": "apple"}, "collation": {"locale": "simple"} }')
+$cmd$);
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"$expr": {"$eq": ["$b", "apple"]}}, "collation": {"locale": "simple"} }')
+$cmd$);
+-- An ordinary query without collation can still use the uncollated index.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"b": "apple"} }')
+$cmd$);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "single_field_binary", "indexes": [{ "key": {"a": 1, "b": 1}, "name": "gate_disabled_support", "collation": {"locale": "simple"} }] }', TRUE);
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+
+-- With collation disabled, a stored collation option remains a pushdown barrier.
+SET documentdb_core.enableCollation TO off;
+SET documentdb.skipFailOnCollation TO off;
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"b": "apple"}, "collation": {"locale": "simple"} }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"$expr": {"$eq": ["$a", "apple"]}} }')
+$cmd$);
+RESET documentdb.skipFailOnCollation;
+SET documentdb_core.enableCollation TO on;
+
+SELECT documentdb_api.drop_collection('coll_q_db', 'single_field_binary');
+
+-- Simple must not bypass unsupported single-path, hashed, or wildcard indexes.
+SET documentdb.defaultUseCompositeOpClass TO off;
+SELECT documentdb_api.insert_one('coll_q_db', 'simple_gate_single', '{"_id": 1, "a": "apple"}');
+SELECT documentdb_api.insert_one('coll_q_db', 'simple_gate_single', '{"_id": 2, "a": "APPLE"}');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "simple_gate_single", "indexes": [{ "key": {"a": 1}, "name": "gate_single" }] }', TRUE);
+SELECT documentdb_api.insert_one('coll_q_db', 'simple_gate_hashed', '{"_id": 1, "a": "apple"}');
+SELECT documentdb_api.insert_one('coll_q_db', 'simple_gate_hashed', '{"_id": 2, "a": "APPLE"}');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "simple_gate_hashed", "indexes": [{ "key": {"a": "hashed"}, "name": "gate_hashed" }] }', TRUE);
+SELECT documentdb_api.insert_one('coll_q_db', 'simple_gate_wildcard', '{"_id": 1, "a": "apple"}');
+SELECT documentdb_api.insert_one('coll_q_db', 'simple_gate_wildcard', '{"_id": 2, "a": "APPLE"}');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "simple_gate_wildcard", "indexes": [{ "key": {"$**": 1}, "name": "gate_wildcard", "wildcardProjection": {"a": 1} }] }', TRUE);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "simple_gate_single", "indexes": [{ "key": {"a": 1}, "name": "gate_single_collation", "collation": {"locale": "simple"} }] }', TRUE);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "simple_gate_hashed", "indexes": [{ "key": {"a": "hashed"}, "name": "gate_hashed_collation", "collation": {"locale": "simple"} }] }', TRUE);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "simple_gate_wildcard", "indexes": [{ "key": {"$**": 1}, "name": "gate_wildcard_collation", "wildcardProjection": {"a": 1}, "collation": {"locale": "simple"} }] }', TRUE);
+SET documentdb.defaultUseCompositeOpClass TO on;
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "simple_gate_single", "filter": {"a": "apple"} }')
+$cmd$);
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "simple_gate_single", "filter": {"a": "apple"}, "collation": {"locale": "simple"} }')
+$cmd$);
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "simple_gate_single", "filter": {"a": "apple"}, "collation": {"locale": "en", "strength": 1} }')
+$cmd$);
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "simple_gate_single", "filter": {"$expr": {"$eq": ["$a", "apple"]}}, "collation": {"locale": "simple"} }')
+$cmd$);
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "simple_gate_single", "pipeline": [{"$lookup": {"from": "simple_gate_single", "localField": "a", "foreignField": "a", "as": "matches"}}], "collation": {"locale": "simple"} }')
+$cmd$);
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "simple_gate_hashed", "filter": {"a": "apple"} }')
+$cmd$);
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "simple_gate_hashed", "filter": {"a": "apple"}, "collation": {"locale": "simple"} }')
+$cmd$);
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "simple_gate_hashed", "filter": {"a": "apple"}, "collation": {"locale": "en", "strength": 1} }')
+$cmd$);
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "simple_gate_wildcard", "filter": {"a": "apple"} }')
+$cmd$);
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "simple_gate_wildcard", "filter": {"a": "apple"}, "collation": {"locale": "simple"} }')
+$cmd$);
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "simple_gate_wildcard", "filter": {"a": "apple"}, "collation": {"locale": "en", "strength": 1} }')
+$cmd$);
+
+SELECT documentdb_api.drop_collection('coll_q_db', 'simple_gate_single');
+SELECT documentdb_api.drop_collection('coll_q_db', 'simple_gate_hashed');
+SELECT documentdb_api.drop_collection('coll_q_db', 'simple_gate_wildcard');

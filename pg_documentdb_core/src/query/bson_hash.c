@@ -619,13 +619,9 @@ HashBsonValueCompare(const bson_value_t *value,
 		{
 			typeCodeInt = (int) BSON_TYPE_UTF8;
 
-			/*
-			 * Collate the whole string family, matching CompareBsonValue. The simple
-			 * locale is binary comparison, so it keeps the raw-byte hash.
-			 */
+			/* Collate the whole string family, matching CompareBsonValue. */
 			uint64 stringHash;
-			if (!IsCollationApplicable(collationString) ||
-				IsSimpleCollation(collationString))
+			if (!IsCollationApplicable(collationString))
 			{
 				stringHash = hash_bytes_func((uint8_t *) value->value.v_utf8.str,
 											 value->value.v_utf8.len, seed);
