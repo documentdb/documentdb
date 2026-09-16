@@ -22,7 +22,7 @@ use tokio::{
 };
 
 use crate::{
-    error::{is_connection_closed_error_kind, DocumentDBError, Result},
+    error::{is_connection_closed_error_kind, DocumentDBError, ErrorCode, Result},
     protocol::{
         bson_scanner,
         header::Header,
@@ -92,7 +92,8 @@ fn request_message_size(authenticated: bool, header: &Header) -> Result<usize> {
 
     if !authenticated && header.message_length() > crate::protocol::MAX_PRE_AUTH_MESSAGE_SIZE_BYTES
     {
-        return Err(DocumentDBError::internal_error(
+        return Err(DocumentDBError::documentdb_error(
+            ErrorCode::InvalidLength,
             "Message size exceeds the maximum allowed size.".to_owned(),
         ));
     }
@@ -158,7 +159,8 @@ pub fn parse_request<'a>(
             reason = "OP_INSERT is still supported for legacy clients and testing"
         )]
         OpCode::Insert => op_insert::parse_insert(message)?,
-        _ => Err(DocumentDBError::internal_error(format!(
+        // Any other opcode is a structurally valid frame the gateway does not implement.
+        _ => Err(DocumentDBError::command_not_supported(format!(
             "Unimplemented: {:?}",
             message.op_code()
         )))?,
@@ -194,7 +196,8 @@ pub fn parse_request_payload<'a>(
             reason = "OP_INSERT is still supported for legacy clients and testing"
         )]
         OpCode::Insert => op_insert::parse_insert_payload(message)?,
-        _ => Err(DocumentDBError::internal_error(format!(
+        // Any other opcode is a structurally valid frame the gateway does not implement.
+        _ => Err(DocumentDBError::command_not_supported(format!(
             "Unimplemented: {:?}",
             message.op_code()
         )))?,
@@ -957,6 +960,21 @@ mod tests {
             parse_cmd_payload(&doc, None).expect("payload parsing should preserve identity");
 
         assert_eq!(request.db_hint(), Some("myapp"));
+    }
+
+    #[test]
+    fn request_message_size_rejects_oversized_pre_auth_message() {
+        let header = Header::new(
+            crate::protocol::MAX_PRE_AUTH_MESSAGE_SIZE_BYTES + 1,
+            1,
+            0,
+            OpCode::Msg,
+        )
+        .unwrap();
+
+        let error = request_message_size(false, &header)
+            .expect_err("oversized pre-auth message should be rejected");
+        assert_eq!(error.error_code(), crate::error::ErrorCode::InvalidLength);
     }
 }
 

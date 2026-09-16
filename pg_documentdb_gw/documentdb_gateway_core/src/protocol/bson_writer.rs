@@ -12,7 +12,7 @@
 
 use bytes::{Buf, BufMut};
 
-use crate::error::{DocumentDBError, Result};
+use crate::error::{DocumentDBError, ErrorCode, Result};
 
 // BSON element type tags
 const BSON_TYPE_STRING: u8 = 0x02;
@@ -28,14 +28,18 @@ const BSON_TYPE_BOOLEAN: u8 = 0x08;
 #[inline]
 pub fn bson_doc_size(buf: &[u8]) -> Result<usize> {
     if buf.len() < 4 {
-        return Err(DocumentDBError::internal_error(
+        return Err(DocumentDBError::documentdb_error(
+            ErrorCode::InvalidLength,
             "Buffer too short to read BSON document size".to_owned(),
         ));
     }
     let size = i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
     usize::try_from(size).map_err(|error| {
         tracing::error!("BSON document size is negative: {error}");
-        DocumentDBError::internal_error("BSON document size is negative".to_owned())
+        DocumentDBError::documentdb_error(
+            ErrorCode::InvalidLength,
+            "BSON document size is negative".to_owned(),
+        )
     })
 }
 
@@ -81,7 +85,8 @@ pub fn append_bson_raw_doc_array(buf: &mut Vec<u8>, key: &str, docs_bytes: &[u8]
     let mut index = 0u32;
     while src.has_remaining() {
         if src.remaining() < 5 {
-            return Err(DocumentDBError::internal_error(
+            return Err(DocumentDBError::documentdb_error(
+                ErrorCode::InvalidLength,
                 "Truncated document in insert batch".to_owned(),
             ));
         }
@@ -91,13 +96,15 @@ pub fn append_bson_raw_doc_array(buf: &mut Vec<u8>, key: &str, docs_bytes: &[u8]
         // A valid BSON document is at least 5 bytes (4-byte length + null terminator).
         // Reject smaller sizes to prevent infinite loops on malformed input.
         if doc_size < 5 {
-            return Err(DocumentDBError::internal_error(
+            return Err(DocumentDBError::documentdb_error(
+                ErrorCode::InvalidLength,
                 "BSON document size too small (minimum 5 bytes)".to_owned(),
             ));
         }
 
         if src.remaining() < doc_size {
-            return Err(DocumentDBError::internal_error(
+            return Err(DocumentDBError::documentdb_error(
+                ErrorCode::InvalidLength,
                 "Document extends beyond insert message boundary".to_owned(),
             ));
         }

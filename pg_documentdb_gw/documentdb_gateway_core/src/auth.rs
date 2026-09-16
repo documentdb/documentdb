@@ -700,7 +700,7 @@ async fn handle_sasl_continue(
         let username = payload
             .username
             .or(connection_context.auth_state.username.as_deref())
-            .ok_or(DocumentDBError::internal_error(
+            .ok_or(DocumentDBError::authentication_failed(
                 "Username missing from SaslContinue".to_owned(),
             ))?;
 
