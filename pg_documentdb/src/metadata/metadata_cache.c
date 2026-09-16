@@ -961,9 +961,6 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the BSONDERIVATIVE aggregate function */
 	Oid ApiCatalogBsonDerivativeAggregateFunctionOid;
 
-	/* OID of the BSONAVERAGE aggregate function */
-	Oid ApiCatalogBsonAverageAggregateFunctionOid;
-
 	/* OID of the bson_array_agg function. TODO remove this in favor of the below. */
 	Oid ApiCatalogBsonArrayAggregateFunctionOid;
 
@@ -984,12 +981,6 @@ typedef struct DocumentDBApiOidCacheData
 
 	/* OID of the BSONEXPMOVINGAVG window function */
 	Oid ApiCatalogBsonExpMovingAvgAggregateFunctionOid;
-
-	/* OID of the BSONMAX aggregate function */
-	Oid ApiCatalogBsonMaxAggregateFunctionOid;
-
-	/* OID of the BSONMIN aggregate function */
-	Oid ApiCatalogBsonMinAggregateFunctionOid;
 
 	/* OID of the BSONMAXWITHEXPR aggregate function */
 	Oid ApiInternalBsonMaxWithExprAggregateFunctionOid;
@@ -1020,18 +1011,6 @@ typedef struct DocumentDBApiOidCacheData
 
 	/* OID of the BSONAVERAGEWITHEXPR aggregate function */
 	Oid ApiInternalBsonAvgWithExprAggregateFunctionOid;
-
-	/* OID of the BSONFIRSTONSORTED aggregate function */
-	Oid ApiCatalogBsonFirstOnSortedAggregateFunctionOid;
-
-	/* OID of the BSONLASTONSORTED aggregate function */
-	Oid ApiCatalogBsonLastOnSortedAggregateFunctionOid;
-
-	/* OID of the BSONFIRSTONSORTED aggregate function */
-	Oid BsonFirstOnSortedAggregateAllArgsFunctionOid;
-
-	/* OID of the BSONLASTONSORTED aggregate function */
-	Oid BsonLastOnSortedAggregateAllArgsFunctionOid;
 
 	/* OID of the BSONFIRST aggregate function */
 	Oid ApiCatalogBsonFirstAggregateFunctionOid;
@@ -4513,14 +4492,6 @@ BsonDerivativeAggregateFunctionOid(void)
 
 
 Oid
-BsonAvgAggregateFunctionOid(void)
-{
-	return GetAggregateFunctionByName(&Cache.ApiCatalogBsonAverageAggregateFunctionOid,
-									  ApiCatalogSchemaName, "bsonaverage");
-}
-
-
-Oid
 BsonCovariancePopAggregateFunctionOid(void)
 {
 	return GetAggregateFunctionByName(
@@ -4662,14 +4633,6 @@ BsonMergeObjectsFunctionOid(void)
 
 
 Oid
-BsonMaxAggregateFunctionOid(void)
-{
-	return GetAggregateFunctionByName(&Cache.ApiCatalogBsonMaxAggregateFunctionOid,
-									  ApiCatalogSchemaName, "bsonmax");
-}
-
-
-Oid
 BsonMaxWithExprAggregateFunctionOid(void)
 {
 	return GetAggregateFunctionByName(
@@ -4684,14 +4647,6 @@ BsonMaxWithExprInternalAggregateFunctionOid(void)
 	return GetAggregateFunctionByName(
 		&Cache.ApiInternalBsonMaxWithExprInternalAggregateFunctionOid,
 		DocumentDBApiInternalSchemaName, "bsonmaxwithexprinternal");
-}
-
-
-Oid
-BsonMinAggregateFunctionOid(void)
-{
-	return GetAggregateFunctionByName(&Cache.ApiCatalogBsonMinAggregateFunctionOid,
-									  ApiCatalogSchemaName, "bsonmin");
 }
 
 
@@ -4916,26 +4871,6 @@ GetBsonFirstNLastNOnSortedAggregateFunctionOid(Oid *function, bool allArgs,
 
 
 Oid
-BsonFirstOnSortedAggregateFunctionOid(void)
-{
-	bool allArgs = false;
-	return GetBsonFirstNLastNOnSortedAggregateFunctionOid(
-		&Cache.ApiCatalogBsonFirstOnSortedAggregateFunctionOid, allArgs,
-		"bsonfirstonsorted");
-}
-
-
-Oid
-BsonFirstOnSortedAggregateAllArgsFunctionOid(void)
-{
-	bool allArgs = true;
-	return GetBsonFirstNLastNOnSortedAggregateFunctionOid(
-		&Cache.BsonFirstOnSortedAggregateAllArgsFunctionOid, allArgs,
-		"bsonfirstonsorted");
-}
-
-
-Oid
 BsonFirstAggregateFunctionOid(void)
 {
 	bool allArgs = false;
@@ -4968,26 +4903,6 @@ BsonLastAggregateAllArgsFunctionOid(void)
 	bool allArgs = true;
 	return GetBsonFirstNLastNAggregateFunctionOid(
 		&Cache.BsonLastAggregateAllArgsFunctionOid, allArgs, "bsonlast");
-}
-
-
-Oid
-BsonLastOnSortedAggregateFunctionOid(void)
-{
-	bool allArgs = false;
-	return GetBsonFirstNLastNOnSortedAggregateFunctionOid(
-		&Cache.ApiCatalogBsonLastOnSortedAggregateFunctionOid, allArgs,
-		"bsonlastonsorted");
-}
-
-
-Oid
-BsonLastOnSortedAggregateAllArgsFunctionOid(void)
-{
-	bool allArgs = true;
-	return GetBsonFirstNLastNOnSortedAggregateFunctionOid(
-		&Cache.BsonLastOnSortedAggregateAllArgsFunctionOid, allArgs,
-		"bsonlastonsorted");
 }
 
 

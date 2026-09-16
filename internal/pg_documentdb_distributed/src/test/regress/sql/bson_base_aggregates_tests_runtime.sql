@@ -14,9 +14,6 @@ SELECT documentdb_api.insert_one('db','testAggregates','{"_id":"3", "i32": { "$n
 
 -- Compute sum/Avg; they should be in the respective types.
 SELECT BSONSUM(document-> 'i32'), BSONSUM(document-> 'i64'), BSONSUM(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates');
-SELECT BSONAVERAGE(document-> 'i32'), BSONAVERAGE(document-> 'i64'), BSONAVERAGE(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates');
-
-
 SELECT BSONSUMWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
 SELECT BSONAVERAGEWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
 
@@ -27,15 +24,13 @@ SELECT documentdb_api.insert_one('db','testAggregates','{"_id":"6", "i32": [1, 2
 
 -- Compute sum and average for filters that result in 0 rows.
 SELECT BSONSUM(document-> 'i32'), BSONSUM(document-> 'i64'), BSONSUM(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates') WHERE document @@ '{ "nonExistentField": 1 }';
-SELECT BSONAVERAGE(document-> 'i32'), BSONAVERAGE(document-> 'i64'), BSONAVERAGE(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates') WHERE document @@ '{ "nonExistentField": 1 }';
-SELECT BSONSUM(document), BSONAVERAGE(document) FROM documentdb_api.collection('db', 'testAggregates') WHERE document @@ '{ "nonExistentField": 1 }';
+SELECT BSONAVERAGEWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates') WHERE document @@ '{ "nonExistentField": 1 }';
+SELECT BSONSUM(document), BSONAVERAGEWITHEXPR(document, '{ "": "$$ROOT" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates') WHERE document @@ '{ "nonExistentField": 1 }';
 
 -- Compute sum/Avg; They should be the same since non-numeric values do not impact the sum/avg.
 SELECT BSONSUM(document-> 'i32'), BSONSUM(document-> 'i64'), BSONSUM(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates');
-SELECT BSONAVERAGE(document-> 'i32'), BSONAVERAGE(document-> 'i64'), BSONAVERAGE(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates');
-SELECT BSONSUM(document), BSONAVERAGE(document) FROM documentdb_api.collection('db', 'testAggregates');
+SELECT BSONSUM(document), BSONAVERAGEWITHEXPR(document, '{ "": "$$ROOT" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
 
--- BSONSUMWITHEXPR and BSONAVERAGEWITHEXPR versions for non-numeric values.
 SELECT BSONSUMWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
 SELECT BSONAVERAGEWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
 
@@ -44,9 +39,6 @@ SELECT documentdb_api.insert_one('db','testAggregates','{"_id":"7", "i32": { "$n
 
 -- sum/Avg should now move to the next available type
 SELECT BSONSUM(document-> 'i32'), BSONSUM(document-> 'i64'), BSONSUM(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates');
-SELECT BSONAVERAGE(document-> 'i32'), BSONAVERAGE(document-> 'i64'), BSONAVERAGE(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates');
-
--- add BSONSUMWITHEXPR and BSONAVERAGEWITHEXPR versions for above queries
 SELECT BSONSUMWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
 SELECT BSONAVERAGEWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
 
@@ -55,17 +47,13 @@ SELECT documentdb_api.insert_one('db','testAggregates','{"_id":"8", "i32": { "$n
 
 -- sum/Avg They all should be dbl and partial data should be ignored for i64/idbl
 SELECT BSONSUM(document-> 'i32'), BSONSUM(document-> 'i64'), BSONSUM(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates');
-SELECT BSONAVERAGE(document-> 'i32'), BSONAVERAGE(document-> 'i64'), BSONAVERAGE(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates');
-
--- BSONSUMWITHEXPR and BSONAVERAGEWITHEXPR versions for above queries
 SELECT BSONSUMWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
 SELECT BSONAVERAGEWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
 
 
 -- Query non existent field.
-SELECT BSONSUM(document -> 'nao existe'), BSONAVERAGE(document -> 'nao existe') FROM documentdb_api.collection('db', 'testAggregates');
+SELECT BSONSUM(document -> 'nao existe'), BSONAVERAGEWITHEXPR(document, '{ "": "$nao existe" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
 
--- BSONSUMWITHEXPR/BSONAVERAGEWITHEXPR version of the above
 SELECT BSONSUMWITHEXPR(document, '{ "": "$nao_existe" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$nao_existe" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
 
 SELECT documentdb_api.insert_one('db','testAggregates','{"_id":"9",  "a" : { "b" : 1 } }');
@@ -77,81 +65,55 @@ SELECT documentdb_api.insert_one('db','testAggregates','{"_id":"14", "a" : [ { "
 SELECT documentdb_api.insert_one('db','testAggregates','{"_id":"15", "a" : [ { "b" : [ -1, 1, 2 ] }, { "b" : [ 0, 1, 2 ] }, { "b" : [ 0, 1, 7 ] } ]}');
 SELECT documentdb_api.insert_one('db','testAggregates','{"_id":"16",  "a" : [ { "b" : 9 } ]}');
 
-SELECT BSONMAX(bson_expression_get(document, '{ "": "$a.b" }')) FROM documentdb_api.collection('db', 'testAggregates') WHERE document @? '{ "a.b": 1}';
-SELECT BSONMIN(bson_expression_get(document, '{ "": "$a.b" }')) FROM documentdb_api.collection('db', 'testAggregates') WHERE document @? '{ "a.b": 1}';
--- BSONMAXWITHEXPR parity tests for nested path
+-- Min/max on a nested path
 SELECT BSONMAXWITHEXPR(document, '{ "": "$a.b" }', NULL, '') FROM documentdb_api.collection('db', 'testAggregates') WHERE document @? '{ "a.b": 1}';
 SELECT BSONMINWITHEXPR(document, '{ "": "$a.b" }', NULL, '') FROM documentdb_api.collection('db', 'testAggregates') WHERE document @? '{ "a.b": 1}';
 
--- BSONSUM and BSONAVG equivalents of the below
+-- Sum/average on a nested path
 SELECT BSONSUM(bson_expression_get(document, '{ "": "$a.b" }')) FROM documentdb_api.collection('db', 'testAggregates') WHERE document @? '{ "a.b": 1}';
-SELECT BSONAVERAGE(bson_expression_get(document, '{ "": "$a.b" }')) FROM documentdb_api.collection('db', 'testAggregates') WHERE document @? '{ "a.b": 1}';
-
--- BSONSUMWITHEXPR/BSONAVERAGEWITHEXPR parity tests for nested path
 SELECT BSONSUMWITHEXPR(document, '{ "": "$a.b" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates') WHERE document @? '{ "a.b": 1}';
 SELECT BSONAVERAGEWITHEXPR(document, '{ "": "$a.b" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates') WHERE document @? '{ "a.b": 1}';
 
 -- Rebuild bson objects from aggregates
-SELECT bson_repath_and_build('max'::text, BSONMAX(document-> 'i32'), 'sum'::text, BSONSUM(document-> 'i32'), 'average'::text, BSONAVERAGE(document-> 'i32')) FROM documentdb_api.collection('db', 'testAggregates');
+SELECT bson_repath_and_build('max'::text, BSONMAXWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), 'sum'::text, BSONSUM(document-> 'i32'), 'average'::text, BSONAVERAGEWITHEXPR(document, '{ "": "$i32" }', NULL, NULL)) FROM documentdb_api.collection('db', 'testAggregates');
 
 -- Null values in aggregates
-SELECT BSONMAX(document-> 'nao existe') FROM documentdb_api.collection('db', 'testAggregates');
--- BSONMAXWITHEXPR parity test for null/non-existent field
+SELECT BSONMAXWITHEXPR(document, '{ "": "$nao existe" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
 SELECT BSONMAXWITHEXPR(document, '{ "": "$nao_existe" }', NULL, '') FROM documentdb_api.collection('db', 'testAggregates');
 
--- BSONSUM / BSONAVG parity test for null/non-existent field
-SELECT BSONSUM(document-> 'nao_existe'), BSONAVERAGE(document-> 'nao_existe') FROM documentdb_api.collection('db', 'testAggregates');
-
--- BSONSUMWITHEXPR/BSONAVERAGEWITHEXPR parity test for null/non-existent field
+SELECT BSONSUM(document-> 'nao_existe'), BSONAVERAGEWITHEXPR(document, '{ "": "$nao_existe" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
 SELECT BSONSUMWITHEXPR(document, '{ "": "$nao_existe" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$nao_existe" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
 
-SELECT bson_repath_and_build('max'::text, BSONMAX(document-> 'nao existe'), 'sum'::text, BSONSUM(document-> 'i32')) FROM documentdb_api.collection('db', 'testAggregates');
+SELECT bson_repath_and_build('max'::text, BSONMAXWITHEXPR(document, '{ "": "$nao existe" }', NULL, NULL), 'sum'::text, BSONSUM(document-> 'i32')) FROM documentdb_api.collection('db', 'testAggregates');
 
 -- Rebuild with prepared statement
-PREPARE q1 (text, text, text) AS SELECT bson_repath_and_build($1, BSONMAX(document-> 'i32'), $2, BSONSUM(document-> 'i32'), $3, BSONAVERAGE(document-> 'i32')) FROM documentdb_api.collection('db', 'testAggregates');
+PREPARE q1 (text, text, text) AS SELECT bson_repath_and_build($1, BSONMAXWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), $2, BSONSUM(document-> 'i32'), $3, BSONAVERAGEWITHEXPR(document, '{ "": "$i32" }', NULL, NULL)) FROM documentdb_api.collection('db', 'testAggregates');
 EXECUTE q1 ('max', 'sum', 'average');
 
 -- Invalid rebuild arguments
-SELECT bson_repath_and_build('max'::text, BSONMAX(document-> 'i32'), 'sum'::text, BSONSUM(document-> 'i32'), 'average'::text, BSONAVERAGE(document-> 'i32')) FROM documentdb_api.collection('db', 'testAggregates');
-SELECT bson_repath_and_build(BSONMAX(document-> 'i32'), 'sum'::text, BSONSUM(document-> 'i32'), 'average'::text, BSONAVERAGE(document-> 'i32')) FROM documentdb_api.collection('db', 'testAggregates');
-SELECT bson_repath_and_build('max'::text, 'max2', BSONMAX(document-> 'i32'), 'sum'::text, BSONSUM(document-> 'i32'), 'average'::text, BSONAVERAGE(document-> 'i32')) FROM documentdb_api.collection('db', 'testAggregates');
-SELECT bson_repath_and_build(BSONMAX(document-> 'i32'), 'max'::text, 'sum'::text, BSONSUM(document-> 'i32'), 'average'::text, BSONAVERAGE(document-> 'i32')) FROM documentdb_api.collection('db', 'testAggregates');
+SELECT bson_repath_and_build('max'::text, BSONMAXWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), 'sum'::text, BSONSUM(document-> 'i32'), 'average'::text, BSONAVERAGEWITHEXPR(document, '{ "": "$i32" }', NULL, NULL)) FROM documentdb_api.collection('db', 'testAggregates');
+SELECT bson_repath_and_build(BSONMAXWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), 'sum'::text, BSONSUM(document-> 'i32'), 'average'::text, BSONAVERAGEWITHEXPR(document, '{ "": "$i32" }', NULL, NULL)) FROM documentdb_api.collection('db', 'testAggregates');
+SELECT bson_repath_and_build('max'::text, 'max2', BSONMAXWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), 'sum'::text, BSONSUM(document-> 'i32'), 'average'::text, BSONAVERAGEWITHEXPR(document, '{ "": "$i32" }', NULL, NULL)) FROM documentdb_api.collection('db', 'testAggregates');
+SELECT bson_repath_and_build(BSONMAXWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), 'max'::text, 'sum'::text, BSONSUM(document-> 'i32'), 'average'::text, BSONAVERAGEWITHEXPR(document, '{ "": "$i32" }', NULL, NULL)) FROM documentdb_api.collection('db', 'testAggregates');
 
 -- Shard the collection
 SELECT documentdb_api.shard_collection('db', 'testAggregates', '{"_id":"hashed"}', false);
 
 -- Try basic aggregates when sharded
 SELECT BSONSUM(document-> 'i32'), BSONSUM(document-> 'i64'), BSONSUM(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates');
-SELECT BSONAVERAGE(document-> 'i32'), BSONAVERAGE(document-> 'i64'), BSONAVERAGE(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates');
-SELECT BSONMIN(document-> 'i32'), BSONMIN(document-> 'i64'), BSONMIN(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates');
-SELECT BSONMAX(document-> 'i32'), BSONMAX(document-> 'i64'), BSONMAX(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates');
--- BSONMINWITHEXPR parity tests when sharded
 SELECT BSONMINWITHEXPR(document, '{ "": "$i32" }', NULL, ''), BSONMINWITHEXPR(document, '{ "": "$i64" }', NULL, ''), BSONMINWITHEXPR(document, '{ "": "$idbl" }', NULL, '') FROM documentdb_api.collection('db', 'testAggregates');
--- BSONMAXWITHEXPR parity tests when sharded
 SELECT BSONMAXWITHEXPR(document, '{ "": "$i32" }', NULL, ''), BSONMAXWITHEXPR(document, '{ "": "$i64" }', NULL, ''), BSONMAXWITHEXPR(document, '{ "": "$idbl" }', NULL, '') FROM documentdb_api.collection('db', 'testAggregates');
 
--- BSONSUM and BSONAVG equivalents of sharded collections
 SELECT BSONSUM(document-> 'i32'), BSONSUM(document-> 'i64'), BSONSUM(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates');
-SELECT BSONAVERAGE(document-> 'i32'), BSONAVERAGE(document-> 'i64'), BSONAVERAGE(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates');
-
--- BSONSUMWITHEXPR parity tests when sharded
 SELECT BSONSUMWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
--- BSONAVERAGEWITHEXPR parity tests when sharded
 SELECT BSONAVERAGEWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
 
 -- shard on a path that not all documents have:
 SELECT documentdb_api.shard_collection('db', 'testAggregates', '{"_id":"hashed"}', false);
 SELECT BSONSUM(document-> 'i32'), BSONSUM(document-> 'i64'), BSONSUM(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates');
-SELECT BSONAVERAGE(document-> 'i32'), BSONAVERAGE(document-> 'i64'), BSONAVERAGE(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates');
-SELECT BSONMIN(document-> 'i32'), BSONMIN(document-> 'i64'), BSONMIN(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates');
-SELECT BSONMAX(document-> 'i32'), BSONMAX(document-> 'i64'), BSONMAX(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates');
--- BSONMINWITHEXPR parity tests (re-sharded)
 SELECT BSONMINWITHEXPR(document, '{ "": "$i32" }', NULL, ''), BSONMINWITHEXPR(document, '{ "": "$i64" }', NULL, ''), BSONMINWITHEXPR(document, '{ "": "$idbl" }', NULL, '') FROM documentdb_api.collection('db', 'testAggregates');
--- BSONMAXWITHEXPR parity tests (re-sharded)
 SELECT BSONMAXWITHEXPR(document, '{ "": "$i32" }', NULL, ''), BSONMAXWITHEXPR(document, '{ "": "$i64" }', NULL, ''), BSONMAXWITHEXPR(document, '{ "": "$idbl" }', NULL, '') FROM documentdb_api.collection('db', 'testAggregates');
--- BSONSUMWITHEXPR parity tests (re-sharded)
 SELECT BSONSUMWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
--- BSONAVERAGEWITHEXPR parity tests (re-sharded)
 SELECT BSONAVERAGEWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
 
 

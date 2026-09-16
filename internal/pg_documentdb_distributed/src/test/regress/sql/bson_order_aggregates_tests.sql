@@ -49,25 +49,25 @@ SELECT BSONFIRST(document, ARRAY['{ "a.b":-1}', '{"a.c":-1}']::bson[])
 FROM documentdb_api.collection('db', 'bsonorderaggregates') 
 GROUP BY bson_expression_get(document, '{ "": "$a.b" }');
 
-SELECT BSONLASTONSORTED(document) 
+SELECT BSONLASTWITHEXPRINTERNAL(document, '{ "": "$$ROOT" }', NULL, NULL) 
 FROM documentdb_api.collection('db', 'bsonorderaggregates') 
 GROUP BY bson_expression_get(document, '{ "": "$a.c" }');
 
-SELECT BSONFIRSTONSORTED(document) 
+SELECT BSONFIRSTWITHEXPRINTERNAL(document, '{ "": "$$ROOT" }', NULL, NULL) 
 FROM documentdb_api.collection('db', 'bsonorderaggregates') 
 GROUP BY bson_expression_get(document, '{ "": "$a.b" }');
 
-SELECT BSONLASTONSORTED(document) 
+SELECT BSONLASTWITHEXPRINTERNAL(document, '{ "": "$$ROOT" }', NULL, NULL) 
 FROM documentdb_api.collection('db', 'bsonorderaggregates') 
 GROUP BY bson_expression_get(document, '{ "": "$a.b" }');
 
-SELECT BSONFIRSTONSORTED(document) 
+SELECT BSONFIRSTWITHEXPRINTERNAL(document, '{ "": "$$ROOT" }', NULL, NULL) 
 FROM documentdb_api.collection('db', 'bsonorderaggregates') 
 GROUP BY bson_expression_get(document, '{ "": "$a.b" }');
 
 -- last/first field not present
 
-SELECT bson_repath_and_build('firstonsorted'::text, BSONFIRSTONSORTED(bson_expression_get(document, '{ "": "$a.f" }')))
+SELECT bson_repath_and_build('firstonsorted'::text, BSONFIRSTWITHEXPRINTERNAL(document, '{ "": "$a.f" }', NULL, NULL))
 FROM documentdb_api.collection('db', 'bsonorderaggregates') 
 GROUP BY bson_expression_get(document, '{ "": "$a.c" }');
 
@@ -181,25 +181,25 @@ FROM documentdb_api.collection('db', 'bsonorderaggregates')
 GROUP BY bson_expression_get(document, '{ "": "$a.b" }');
 
 
-SELECT BSONLASTONSORTED(document) 
+SELECT BSONLASTWITHEXPRINTERNAL(document, '{ "": "$$ROOT" }', NULL, NULL) 
 FROM documentdb_api.collection('db', 'bsonorderaggregates') 
 GROUP BY bson_expression_get(document, '{ "": "$a.c" }');
 
-SELECT BSONFIRSTONSORTED(document) 
+SELECT BSONFIRSTWITHEXPRINTERNAL(document, '{ "": "$$ROOT" }', NULL, NULL) 
 FROM documentdb_api.collection('db', 'bsonorderaggregates') 
 GROUP BY bson_expression_get(document, '{ "": "$a.b" }');
 
-SELECT BSONLASTONSORTED(document) 
+SELECT BSONLASTWITHEXPRINTERNAL(document, '{ "": "$$ROOT" }', NULL, NULL) 
 FROM documentdb_api.collection('db', 'bsonorderaggregates') 
 GROUP BY bson_expression_get(document, '{ "": "$a.b" }');
 
-SELECT BSONFIRSTONSORTED(document) 
+SELECT BSONFIRSTWITHEXPRINTERNAL(document, '{ "": "$$ROOT" }', NULL, NULL) 
 FROM documentdb_api.collection('db', 'bsonorderaggregates') 
 GROUP BY bson_expression_get(document, '{ "": "$a.b" }');
 
 -- last/first field not present
 
-SELECT bson_repath_and_build('firstonsorted'::text, BSONFIRSTONSORTED(bson_expression_get(document, '{ "": "$a.f" }')))
+SELECT bson_repath_and_build('firstonsorted'::text, BSONFIRSTWITHEXPRINTERNAL(document, '{ "": "$a.f" }', NULL, NULL))
 FROM documentdb_api.collection('db', 'bsonorderaggregates') 
 GROUP BY bson_expression_get(document, '{ "": "$a.c" }');
 

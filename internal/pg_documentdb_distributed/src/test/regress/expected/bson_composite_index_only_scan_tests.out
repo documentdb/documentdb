@@ -516,27 +516,6 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 (13 rows)
 
 -- this will need index scan
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{"$match": { "_id": { "$gt": 3, "$lt": 8 }}}, { "$limit": 10 }, { "$group": { "_id": 1, "c": { "$max": "$_id" } } }]}')$$, p_ignore_heap_fetches => true);
-                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                        
----------------------------------------------------------------------
- GroupAggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'c'::text, bsonmax(bson_expression_get(agg_stage_2.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), ('{ "" : { "$numberInt" : "1" } }'::bson)
-   Group Key: '{ "" : { "$numberInt" : "1" } }'::bson
-   ->  Subquery Scan on agg_stage_2 (actual rows=4 loops=1)
-         Output: '{ "" : { "$numberInt" : "1" } }'::bson, agg_stage_2.document
-         ->  Limit (actual rows=4 loops=1)
-               Output: collection.document
-               ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
-                     Output: collection.document
-                     indexName: _id_
-                     ->  Index Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=4 loops=1)
-                           Output: collection.document
-                           Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
-(13 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{"$match": { "_id": { "$gt": 3, "$lt": 8 }}}, { "$limit": 10 }, { "$group": { "_id": 1, "c": { "$max": "$_id" } } }]}')$$, p_ignore_heap_fetches => true);
                                                                                                                                                                                        run_explain_and_trim                                                                                                                                                                                        
 ---------------------------------------------------------------------
@@ -555,8 +534,24 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
                            Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
 (13 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{"$match": { "_id": { "$gt": 3, "$lt": 8 }}}, { "$limit": 10 }, { "$group": { "_id": 1, "c": { "$max": "$_id" } } }]}')$$, p_ignore_heap_fetches => true);
+                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                        
+---------------------------------------------------------------------
+ GroupAggregate (actual rows=1 loops=1)
+   Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'c'::text, bsonmaxwithexprinternal(agg_stage_2.document, '{ "" : "$_id" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : { "$numberInt" : "1" } }'::bson)
+   Group Key: '{ "" : { "$numberInt" : "1" } }'::bson
+   ->  Subquery Scan on agg_stage_2 (actual rows=4 loops=1)
+         Output: '{ "" : { "$numberInt" : "1" } }'::bson, agg_stage_2.document
+         ->  Limit (actual rows=4 loops=1)
+               Output: collection.document
+               ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+                     Output: collection.document
+                     indexName: _id_
+                     ->  Index Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=4 loops=1)
+                           Output: collection.document
+                           Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+(13 rows)
+
 -- HINTED QUERIES: hint should preserve IOS behavior without bypassing coverage checks
 -- hint by name + $match + $count: should use IOS
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "hint" : "country_1", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
@@ -677,7 +672,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
                                                                                                                                            run_explain_and_trim                                                                                                                                           
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'maxProvider'::text, bsonmax(bson_expression_get(document, '{ "" : "$provider" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), ('{ "" : { "$numberInt" : "1" } }'::bson)
+   Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'maxProvider'::text, bsonmaxwithexprinternal(document, '{ "" : "$provider" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : { "$numberInt" : "1" } }'::bson)
    Group Key: '{ "" : { "$numberInt" : "1" } }'::bson
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
          Output: '{ "" : { "$numberInt" : "1" } }'::bson, document
@@ -790,7 +785,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                       
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'n'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'n'::text, bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=8 loops=1)
          Output: bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
@@ -1319,7 +1314,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
                                                                                                                                                                                                                                      run_explain_and_trim                                                                                                                                                                                                                                     
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalAge'::text, bsonsum(bson_expression_get(document, '{ "" : "$age" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalAge'::text, bsonsumwithexpr(document, '{ "" : "$age" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          Output: bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
@@ -1348,7 +1343,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
                                                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                                                      
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgAge'::text, bsonaverage(bson_expression_get(document, '{ "" : "$age" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgAge'::text, bsonaveragewithexpr(document, '{ "" : "$age" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          Output: bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
@@ -1383,7 +1378,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
    ->  Subquery Scan on agg_stage_1 (actual rows=2 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=2 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalAge'::text, bsonsum(bson_expression_get(collection.document, '{ "" : "$age" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgAge'::text, bsonaverage(bson_expression_get(collection.document, '{ "" : "$age" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalAge'::text, bsonsumwithexpr(collection.document, '{ "" : "$age" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'avgAge'::text, bsonaveragewithexpr(collection.document, '{ "" : "$age" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
                Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
                ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
                      Output: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
@@ -1409,7 +1404,6 @@ SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate
 (2 rows)
 
 -- $sum on indexed numeric field with new accumulators
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$match" : {"dept": {"$eq": "eng"}} }, { "$group": { "_id": "$dept", "totalAge": { "$sum": "$age" } } }]}')$$);
                                                                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                                                                  
 ---------------------------------------------------------------------
@@ -1503,8 +1497,6 @@ SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate
  { "_id" : "sales", "totalAge" : { "$numberInt" : "113" }, "avgAge" : { "$numberDouble" : "37.666666666666664298" } }
 (2 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 ---------------------------------------------------------------------
 -- Sharded collection: verify index-only scan with covered $group accumulators pushes down to shard workers
 ---------------------------------------------------------------------

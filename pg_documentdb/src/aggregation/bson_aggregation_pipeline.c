@@ -7367,29 +7367,13 @@ AddSumGroupAccumulator(Query *query, const bson_value_t *accumulatorValue,
 
 	if (!useNewCountAggregate)
 	{
-		if (CanUseWithExprAggregates())
-		{
-			return AddSimpleGroupAccumulatorWithExpr(query, accumulatorValue,
-													 repathArgs, accumulatorText,
-													 parseState, identifiers,
-													 documentExpr,
-													 BsonSumWithExprAggregateFunctionOid(),
-													 context,
-													 NULL);
-		}
-		else
-		{
-			RejectCollationForGroupAccumulator(context, "$sum");
-
-			const char *collationStringIgnore = NULL;
-			return AddSimpleGroupAccumulator(query, accumulatorValue, repathArgs,
-											 accumulatorText, parseState,
-											 identifiers, documentExpr,
-											 BsonSumAggregateFunctionOid(),
-											 context->variableSpec,
-											 collationStringIgnore,
-											 NULL);
-		}
+		return AddSimpleGroupAccumulatorWithExpr(query, accumulatorValue,
+												 repathArgs, accumulatorText,
+												 parseState, identifiers,
+												 documentExpr,
+												 BsonSumWithExprAggregateFunctionOid(),
+												 context,
+												 NULL);
 	}
 
 	Expr *constValue = (Expr *) makeConst(INT4OID, -1, InvalidOid, 4, Int32GetDatum(1),
@@ -7876,17 +7860,6 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 				AggregationPipelineBuildContext *context,
 				const bson_value_t *accumulatorSortSpec)
 {
-	/*
-	 * Collation in $group needs the WithExpr aggregates. Accumulators that
-	 * still cannot honor it are rejected individually below.
-	 */
-	if (IsCollationApplicable(context->collationString) &&
-		!(CanUseWithExprMinMaxAggregates() || CanUseWithExprAggregates()))
-	{
-		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						errmsg("collation is not supported in $group stage yet.")));
-	}
-
 	ReportFeatureUsage(FEATURE_STAGE_GROUP);
 
 	/* Part 1, let's do the group */
@@ -8237,32 +8210,14 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_AVG);
 
-			if (CanUseWithExprAggregates())
-			{
-				repathArgs = AddSimpleGroupAccumulatorWithExpr(
-					query, &accumulatorElement.bsonValue,
-					repathArgs,
-					accumulatorText, parseState,
-					identifiers, origEntry->expr,
-					BsonAvgWithExprAggregateFunctionOid(),
-					context,
-					NULL);
-			}
-			else
-			{
-				RejectCollationForGroupAccumulator(context, accumulatorElement.path);
-
-				repathArgs = AddSimpleGroupAccumulator(query,
-													   &accumulatorElement.bsonValue,
-													   repathArgs,
-													   accumulatorText, parseState,
-													   identifiers,
-													   origEntry->expr,
-													   BsonAvgAggregateFunctionOid(),
-													   context->variableSpec,
-													   collationStringIgnore,
-													   NULL);
-			}
+			repathArgs = AddSimpleGroupAccumulatorWithExpr(
+				query, &accumulatorElement.bsonValue,
+				repathArgs,
+				accumulatorText, parseState,
+				identifiers, origEntry->expr,
+				BsonAvgWithExprAggregateFunctionOid(),
+				context,
+				NULL);
 		}
 		else if (StringViewEqualsCString(&accumulatorName, "$sum"))
 		{
@@ -8279,69 +8234,33 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_MAX);
 
-			if (CanUseWithExprMinMaxAggregates())
-			{
-				repathArgs = AddSimpleGroupAccumulatorWithExpr(
-					query, &accumulatorElement.bsonValue,
-					repathArgs,
-					accumulatorText, parseState,
-					identifiers, origEntry->expr,
-					CanUseParallelSafeWithExprAccumulators(
-						context->allowShardBaseTable) ?
-					BsonMaxWithExprInternalAggregateFunctionOid() :
-					BsonMaxWithExprAggregateFunctionOid(),
-					context,
-					NULL);
-			}
-			else
-			{
-				RejectCollationForGroupAccumulator(context, accumulatorElement.path);
-
-				repathArgs = AddSimpleGroupAccumulator(query,
-													   &accumulatorElement.bsonValue,
-													   repathArgs,
-													   accumulatorText, parseState,
-													   identifiers,
-													   origEntry->expr,
-													   BsonMaxAggregateFunctionOid(),
-													   context->variableSpec,
-													   collationStringIgnore,
-													   NULL);
-			}
+			repathArgs = AddSimpleGroupAccumulatorWithExpr(
+				query, &accumulatorElement.bsonValue,
+				repathArgs,
+				accumulatorText, parseState,
+				identifiers, origEntry->expr,
+				CanUseParallelSafeWithExprAccumulators(
+					context->allowShardBaseTable) ?
+				BsonMaxWithExprInternalAggregateFunctionOid() :
+				BsonMaxWithExprAggregateFunctionOid(),
+				context,
+				NULL);
 		}
 		else if (StringViewEqualsCString(&accumulatorName, "$min"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_MIN);
 
-			if (CanUseWithExprMinMaxAggregates())
-			{
-				repathArgs = AddSimpleGroupAccumulatorWithExpr(
-					query, &accumulatorElement.bsonValue,
-					repathArgs,
-					accumulatorText, parseState,
-					identifiers, origEntry->expr,
-					CanUseParallelSafeWithExprAccumulators(
-						context->allowShardBaseTable) ?
-					BsonMinWithExprInternalAggregateFunctionOid() :
-					BsonMinWithExprAggregateFunctionOid(),
-					context,
-					NULL);
-			}
-			else
-			{
-				RejectCollationForGroupAccumulator(context, accumulatorElement.path);
-
-				repathArgs = AddSimpleGroupAccumulator(query,
-													   &accumulatorElement.bsonValue,
-													   repathArgs,
-													   accumulatorText, parseState,
-													   identifiers,
-													   origEntry->expr,
-													   BsonMinAggregateFunctionOid(),
-													   context->variableSpec,
-													   collationStringIgnore,
-													   NULL);
-			}
+			repathArgs = AddSimpleGroupAccumulatorWithExpr(
+				query, &accumulatorElement.bsonValue,
+				repathArgs,
+				accumulatorText, parseState,
+				identifiers, origEntry->expr,
+				CanUseParallelSafeWithExprAccumulators(
+					context->allowShardBaseTable) ?
+				BsonMinWithExprInternalAggregateFunctionOid() :
+				BsonMinWithExprAggregateFunctionOid(),
+				context,
+				NULL);
 		}
 		else if (StringViewEqualsCString(&accumulatorName, "$count"))
 		{
@@ -8385,36 +8304,17 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 				accumulatorSortSpec != NULL)
 			{
 				TargetEntry *accumulatorTle = NULL;
-				if (CanUseWithExprAggregates())
-				{
-					repathArgs = AddSimpleGroupAccumulatorWithExpr(
-						query, &accumulatorElement.bsonValue,
-						repathArgs,
-						accumulatorText, parseState,
-						identifiers, origEntry->expr,
-						CanUseParallelSafeWithExprAccumulators(
-							context->allowShardBaseTable) ?
-						BsonFirstWithExprInternalAggregateFunctionOid() :
-						BsonFirstWithExprAggregateFunctionOid(),
-						context,
-						&accumulatorTle);
-				}
-				else
-				{
-					RejectCollationForGroupAccumulator(context,
-													   accumulatorElement.path);
-
-					repathArgs = AddSimpleGroupAccumulator(query,
-														   &accumulatorElement.bsonValue,
-														   repathArgs,
-														   accumulatorText, parseState,
-														   identifiers,
-														   origEntry->expr,
-														   BsonFirstOnSortedAggregateFunctionOid(),
-														   context->variableSpec,
-														   collationStringIgnore,
-														   &accumulatorTle);
-				}
+				repathArgs = AddSimpleGroupAccumulatorWithExpr(
+					query, &accumulatorElement.bsonValue,
+					repathArgs,
+					accumulatorText, parseState,
+					identifiers, origEntry->expr,
+					CanUseParallelSafeWithExprAccumulators(
+						context->allowShardBaseTable) ?
+					BsonFirstWithExprInternalAggregateFunctionOid() :
+					BsonFirstWithExprAggregateFunctionOid(),
+					context,
+					&accumulatorTle);
 
 				if (accumulatorSortSpec != NULL)
 				{
@@ -8443,36 +8343,17 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_LAST);
 			if (context->sortSpec.value_type == BSON_TYPE_EOD)
 			{
-				if (CanUseWithExprAggregates())
-				{
-					repathArgs = AddSimpleGroupAccumulatorWithExpr(
-						query, &accumulatorElement.bsonValue,
-						repathArgs,
-						accumulatorText, parseState,
-						identifiers, origEntry->expr,
-						CanUseParallelSafeWithExprAccumulators(
-							context->allowShardBaseTable) ?
-						BsonLastWithExprInternalAggregateFunctionOid() :
-						BsonLastWithExprAggregateFunctionOid(),
-						context,
-						NULL);
-				}
-				else
-				{
-					RejectCollationForGroupAccumulator(context,
-													   accumulatorElement.path);
-
-					repathArgs = AddSimpleGroupAccumulator(query,
-														   &accumulatorElement.bsonValue,
-														   repathArgs,
-														   accumulatorText, parseState,
-														   identifiers,
-														   origEntry->expr,
-														   BsonLastOnSortedAggregateFunctionOid(),
-														   context->variableSpec,
-														   collationStringIgnore,
-														   NULL);
-				}
+				repathArgs = AddSimpleGroupAccumulatorWithExpr(
+					query, &accumulatorElement.bsonValue,
+					repathArgs,
+					accumulatorText, parseState,
+					identifiers, origEntry->expr,
+					CanUseParallelSafeWithExprAccumulators(
+						context->allowShardBaseTable) ?
+					BsonLastWithExprInternalAggregateFunctionOid() :
+					BsonLastWithExprAggregateFunctionOid(),
+					context,
+					NULL);
 			}
 			else
 			{

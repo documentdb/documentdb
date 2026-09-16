@@ -34,9 +34,7 @@ WITH "stage0" as (
     WITH "FacetStage00" as (
       SELECT 
         bson_expression_get(document, '{ "" : "$unitPrice" }'::bson, true) AS "accid",
-        BSONFIRSTONSORTED(
-          bson_expression_get(document, '{ "" : "$stock" }'::bson, true)
-        ) AS "acc0" 
+        BSONFIRSTWITHEXPRINTERNAL(document, '{ "" : "$stock" }', NULL, NULL) AS "acc0" 
       FROM 
         documentdb_api.collection('db', 'facetTest')
       GROUP BY 
@@ -53,9 +51,7 @@ WITH "stage0" as (
     "FacetStage10" as (
       SELECT 
         bson_expression_get(document, '{ "" : "$unitPrice" }'::bson, true) AS "accid",
-        BSONLASTONSORTED(
-          bson_expression_get(document, '{ "" : "$stock" }'::bson, true)
-        ) AS "acc0" 
+        BSONLASTWITHEXPRINTERNAL(document, '{ "" : "$stock" }', NULL, NULL) AS "acc0" 
       FROM 
         documentdb_api.collection('db', 'facetTest') 
       GROUP BY 
@@ -109,9 +105,7 @@ WITH "stage0" as (
     WITH "FacetStage00" as (
       SELECT 
         bson_expression_get(document, '{ "" : "$unitPrice" }'::bson, true) AS "accid",
-        BSONFIRSTONSORTED(
-          bson_expression_get(document, '{ "" : "$stock" }'::bson, true)
-        ) AS "acc0" 
+        BSONFIRSTWITHEXPRINTERNAL(document, '{ "" : "$stock" }', NULL, NULL) AS "acc0" 
       FROM 
         documentdb_api.collection('db', 'facetTest')
       GROUP BY 
@@ -128,9 +122,7 @@ WITH "stage0" as (
     "FacetStage10" as (
       SELECT 
         bson_expression_get(document, '{ "" : "$unitPrice" }'::bson, true) AS "accid",
-        BSONLASTONSORTED(
-          bson_expression_get(document, '{ "" : "$stock" }'::bson, true)
-        ) AS "acc0" 
+        BSONLASTWITHEXPRINTERNAL(document, '{ "" : "$stock" }', NULL, NULL) AS "acc0" 
       FROM 
         documentdb_api.collection('db', 'facetTest') 
       GROUP BY 

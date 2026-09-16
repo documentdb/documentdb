@@ -572,15 +572,11 @@ BsonOrderTransition(PG_FUNCTION_ARGS, bool invertSort, bool isSingle, bool
  *      0) The current aggregation state
  *      1) The document/evaluated expression which will eventually be returned
  *
- * For isSingle == 'true' && storeInputExpression == 'true
- *      2) The input expression to be applied on the results.
- *
- * For isSingle == 'false' && storeInputExpression == 'true
  *      2) The number of documents to be returned or 'N'
  *      3) The input expression to be applied on the results.
  */
 Datum
-BsonOrderTransitionOnSorted(PG_FUNCTION_ARGS, bool invertSort, bool isSingle)
+BsonOrderTransitionOnSorted(PG_FUNCTION_ARGS, bool invertSort)
 {
 	MemoryContext aggregateContext;
 	int aggContext = AggCheckCallContext(fcinfo, &aggregateContext);
@@ -623,18 +619,9 @@ BsonOrderTransitionOnSorted(PG_FUNCTION_ARGS, bool invertSort, bool isSingle)
 		copySize = 0;
 		sourcePtr = NULL;
 		currentCount = 1;
-		if (!isSingle)
-		{
-			/* The third parameter specifies the number of results that should be returned */
-			returnCount = PG_GETARG_INT64(2);
-			inputExpression = storeInputExpression ? PG_GETARG_MAYBE_NULL_PGBSON(3) :
-							  NULL;
-		}
-		else
-		{
-			inputExpression = storeInputExpression ? PG_GETARG_MAYBE_NULL_PGBSON(2) :
-							  NULL;
-		}
+		returnCount = PG_GETARG_INT64(2);
+		inputExpression = storeInputExpression ? PG_GETARG_MAYBE_NULL_PGBSON(3) :
+						  NULL;
 
 		if (inputExpression != NULL)
 		{
@@ -1174,11 +1161,9 @@ BsonOrderFinal(PG_FUNCTION_ARGS, bool isSingle, bool invert)
  *
  * The args of PG_FUNCTION_ARGS are:
  *      0) Current state
- * if IsSingle is true a single value will be returned
- * otherwise an array of values will be returned.
  */
 Datum
-BsonOrderFinalOnSorted(PG_FUNCTION_ARGS, bool isSingle)
+BsonOrderFinalOnSorted(PG_FUNCTION_ARGS)
 {
 	MemoryContext aggregateContext;
 	int aggContext = AggCheckCallContext(fcinfo, &aggregateContext);
@@ -1217,25 +1202,6 @@ BsonOrderFinalOnSorted(PG_FUNCTION_ARGS, bool isSingle)
 		{
 			inputExpression = (pgbson *) sourcePtr;
 			sourcePtr += inputExpressionSize;
-		}
-
-		if (isSingle)
-		{
-			/* validate the return value */
-			if (currentCount == 0)
-			{
-				returnNull = true;
-			}
-			else
-			{
-				pgbson *currentValue = (pgbson *) sourcePtr;
-				bson_iter_t pathSpecIter;
-				PgbsonInitIterator(currentValue, &pathSpecIter);
-				if (!bson_iter_next(&pathSpecIter))
-				{
-					returnNull = true;
-				}
-			}
 		}
 	}
 
@@ -1287,53 +1253,12 @@ BsonOrderFinalOnSorted(PG_FUNCTION_ARGS, bool isSingle)
 		}
 	}
 
-	/* If there were no regular rows, or the last result was NULL, the result is $null */
 	if (returnNull)
 	{
-		pgbson *finalPgbson;
-
-		if (isSingle)
-		{
-			/* Returns $null for empty sets */
-			pgbsonelement finalValue;
-			finalValue.path = "";
-			finalValue.pathLength = 0;
-			finalValue.bsonValue.value_type = BSON_TYPE_NULL;
-			finalPgbson = PgbsonElementToPgbson(&finalValue);
-		}
-		else
-		{
-			/* empty array */
-			pgbson_writer writer;
-			PgbsonWriterInit(&writer);
-			PgbsonWriterAppendEmptyArray(&writer, "", 0);
-			finalPgbson = PgbsonWriterGetPgbson(&writer);
-		}
-
-		PG_RETURN_POINTER(finalPgbson);
-	}
-	else if (isSingle)
-	{
-		if (aggContext == AGG_CONTEXT_WINDOW)
-		{
-			if (inputExpression != NULL)
-			{
-				/* Apply the inputExpression to the result documents to calculate result for $first/$last */
-				bool isNullOnEmpty = true;
-				pgbson_writer writer;
-				PgbsonWriterInit(&writer);
-				EvaluateAggregationExpressionDataToWriter(aggregationExpressionState,
-														  (pgbson *) sourcePtr,
-														  path,
-														  &writer,
-														  variableContext, isNullOnEmpty);
-
-				pgbson *result = PgbsonWriterGetPgbson(&writer);
-				PG_RETURN_POINTER(result);
-			}
-		}
-
-		PG_RETURN_POINTER((pgbson *) sourcePtr);
+		pgbson_writer writer;
+		PgbsonWriterInit(&writer);
+		PgbsonWriterAppendEmptyArray(&writer, "", 0);
+		PG_RETURN_POINTER(PgbsonWriterGetPgbson(&writer));
 	}
 	else
 	{

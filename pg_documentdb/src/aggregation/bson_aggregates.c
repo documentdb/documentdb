@@ -121,11 +121,6 @@ PG_FUNCTION_INFO_V1(bson_sum_final);
 PG_FUNCTION_INFO_V1(bson_avg_final);
 PG_FUNCTION_INFO_V1(bson_sum_avg_combine);
 PG_FUNCTION_INFO_V1(bson_sum_avg_minvtransition);
-PG_FUNCTION_INFO_V1(bson_min_transition);
-PG_FUNCTION_INFO_V1(bson_max_transition);
-PG_FUNCTION_INFO_V1(bson_min_max_final);
-PG_FUNCTION_INFO_V1(bson_min_combine);
-PG_FUNCTION_INFO_V1(bson_max_combine);
 PG_FUNCTION_INFO_V1(bson_build_distinct_response);
 PG_FUNCTION_INFO_V1(bson_array_agg_transition);
 PG_FUNCTION_INFO_V1(bson_array_agg_minvtransition);
@@ -727,7 +722,7 @@ bson_sum_avg_minvtransition(PG_FUNCTION_ARGS)
 
 	bool overflowedFromInt64Ignore = false;
 
-	/* Aply the inverse of $sum and $avg */
+	/* Apply the inverse of $sum and $avg. */
 	if (currentState->count > 0 &&
 		SubtractNumberFromBsonValue(&currentState->sum, &currentValueElement.bsonValue,
 									&overflowedFromInt64Ignore))
@@ -822,136 +817,6 @@ CanSkipNullInMinMax(void)
 
 
 /*
- * Applies the "final calculation" (FINALFUNC) for min and max.
- * This takes the final value fills in a null bson for empty sets
- */
-Datum
-bson_min_max_final(PG_FUNCTION_ARGS)
-{
-	pgbson *current = PG_GETARG_MAYBE_NULL_PGBSON(0);
-
-	if (current != NULL)
-	{
-		PG_RETURN_POINTER(current);
-	}
-	else
-	{
-		/* Mongo returns $null for empty sets */
-		pgbsonelement finalValue;
-		finalValue.path = "";
-		finalValue.pathLength = 0;
-		finalValue.bsonValue.value_type = BSON_TYPE_NULL;
-
-		PG_RETURN_POINTER(PgbsonElementToPgbson(&finalValue));
-	}
-}
-
-
-/*
- * Applies the "state transition" (SFUNC) for max.
- * This returns the max value of the currently computed max
- * and the next candidate value.
- * if the current max is null, returns the next candidate value
- * If the candidate is null, returns the current max.
- */
-Datum
-bson_max_transition(PG_FUNCTION_ARGS)
-{
-	pgbson *left = PG_GETARG_MAYBE_NULL_PGBSON(0);
-	pgbson *right = PG_GETARG_MAYBE_NULL_PGBSON(1);
-
-	/*
-	 * Treat an explicit null candidate as a skipped value so only non-null,
-	 * non-missing values are considered. Missing values already arrive as null
-	 * here (projected with isNullOnEmpty), so this covers both cases.
-	 */
-	if (right != NULL && CanSkipNullInMinMax())
-	{
-		pgbsonelement candidateElement;
-		PgbsonToSinglePgbsonElement(right, &candidateElement);
-		if (candidateElement.bsonValue.value_type == BSON_TYPE_NULL)
-		{
-			right = NULL;
-		}
-	}
-
-	if (left == NULL)
-	{
-		if (right == NULL)
-		{
-			PG_RETURN_NULL();
-		}
-
-		PG_RETURN_POINTER(right);
-	}
-	else if (right == NULL)
-	{
-		PG_RETURN_POINTER(left);
-	}
-
-	int32_t compResult = ComparePgbson(left, right);
-	if (compResult > 0)
-	{
-		PG_RETURN_POINTER(left);
-	}
-
-	PG_RETURN_POINTER(right);
-}
-
-
-/*
- * Applies the "state transition" (SFUNC) for min.
- * This returns the min value of the currently computed min
- * and the next candidate value.
- * if the current min is null, returns the next candidate value
- * If the candidate is null, returns the current min.
- */
-Datum
-bson_min_transition(PG_FUNCTION_ARGS)
-{
-	pgbson *left = PG_GETARG_MAYBE_NULL_PGBSON(0);
-	pgbson *right = PG_GETARG_MAYBE_NULL_PGBSON(1);
-
-	/*
-	 * Treat an explicit null candidate as a skipped value so only non-null,
-	 * non-missing values are considered. Missing values already arrive as null
-	 * here (projected with isNullOnEmpty), so this covers both cases.
-	 */
-	if (right != NULL && CanSkipNullInMinMax())
-	{
-		pgbsonelement candidateElement;
-		PgbsonToSinglePgbsonElement(right, &candidateElement);
-		if (candidateElement.bsonValue.value_type == BSON_TYPE_NULL)
-		{
-			right = NULL;
-		}
-	}
-
-	if (left == NULL)
-	{
-		if (right == NULL)
-		{
-			PG_RETURN_NULL();
-		}
-
-		PG_RETURN_POINTER(right);
-	}
-	else if (right == NULL)
-	{
-		PG_RETURN_POINTER(left);
-	}
-
-	int32_t compResult = ComparePgbson(left, right);
-	if (compResult < 0)
-	{
-		PG_RETURN_POINTER(left);
-	}
-
-	PG_RETURN_POINTER(right);
-}
-
-
-/*
  * Applies the "combine function" (COMBINEFUNC) for sum and average.
  * takes two of the aggregate state structures (bson_numeric_agg_state)
  * and combines them to form a new bson_numeric_agg_state that has the combined
@@ -1018,126 +883,6 @@ bson_sum_avg_combine(PG_FUNCTION_ARGS)
 	}
 
 	PG_RETURN_POINTER(combinedStateBytes);
-}
-
-
-/*
- * Applies the "combine function" (COMBINEFUNC) for min.
- * takes two bsons
- * makes a new bson equal to the minimum
- */
-Datum
-bson_min_combine(PG_FUNCTION_ARGS)
-{
-	MemoryContext aggregateContext;
-	if (!AggCheckCallContext(fcinfo, &aggregateContext))
-	{
-		ereport(ERROR, errmsg(
-					"Aggregate function invoked in non-aggregate context"));
-	}
-
-	/* Create the aggregate state in the aggregate context. */
-	MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
-
-	pgbson *left = PG_GETARG_MAYBE_NULL_PGBSON(0);
-	pgbson *right = PG_GETARG_MAYBE_NULL_PGBSON(1);
-	pgbson *result;
-	if (left == NULL)
-	{
-		if (right == NULL)
-		{
-			result = NULL;
-		}
-		else
-		{
-			result = PgbsonCloneFromPgbson(right);
-		}
-	}
-	else if (right == NULL)
-	{
-		result = PgbsonCloneFromPgbson(left);
-	}
-	else
-	{
-		int32_t compResult = ComparePgbson(left, right);
-		if (compResult < 0)
-		{
-			result = PgbsonCloneFromPgbson(left);
-		}
-		else
-		{
-			result = PgbsonCloneFromPgbson(right);
-		}
-	}
-
-	MemoryContextSwitchTo(oldContext);
-
-	if (result == NULL)
-	{
-		PG_RETURN_NULL();
-	}
-
-	PG_RETURN_POINTER(result);
-}
-
-
-/*
- * Applies the "combine function" (COMBINEFUNC) for max.
- * takes two bsons
- * makes a new bson equal to the maximum
- */
-Datum
-bson_max_combine(PG_FUNCTION_ARGS)
-{
-	MemoryContext aggregateContext;
-	if (!AggCheckCallContext(fcinfo, &aggregateContext))
-	{
-		ereport(ERROR, errmsg(
-					"Aggregate function invoked in non-aggregate context"));
-	}
-
-	/* Create the aggregate state in the aggregate context. */
-	MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
-
-	pgbson *left = PG_GETARG_MAYBE_NULL_PGBSON(0);
-	pgbson *right = PG_GETARG_MAYBE_NULL_PGBSON(1);
-	pgbson *result;
-	if (left == NULL)
-	{
-		if (right == NULL)
-		{
-			result = NULL;
-		}
-		else
-		{
-			result = PgbsonCloneFromPgbson(right);
-		}
-	}
-	else if (right == NULL)
-	{
-		result = PgbsonCloneFromPgbson(left);
-	}
-	else
-	{
-		int32_t compResult = ComparePgbson(left, right);
-		if (compResult > 0)
-		{
-			result = PgbsonCloneFromPgbson(left);
-		}
-		else
-		{
-			result = PgbsonCloneFromPgbson(right);
-		}
-	}
-
-	MemoryContextSwitchTo(oldContext);
-
-	if (result == NULL)
-	{
-		PG_RETURN_NULL();
-	}
-
-	PG_RETURN_POINTER(result);
 }
 
 

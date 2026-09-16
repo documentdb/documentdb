@@ -507,24 +507,6 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 (10 rows)
 
 -- this will need index scan
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{"$match": { "_id": { "$gt": 3, "$lt": 8 }}}, { "$limit": 10 }, { "$group": { "_id": 1, "c": { "$max": "$_id" } } }]}')$$, p_ignore_heap_fetches => true);
-                                                                                                                                                                                    run_explain_and_trim                                                                                                                                                                                     
----------------------------------------------------------------------
- GroupAggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'c'::text, bsonmax(bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), '{ "" : { "$numberInt" : "1" } }'::bson
-   ->  Limit (actual rows=4 loops=1)
-         Output: collection.document
-         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
-               Output: collection.document
-               indexName: _id_
-               ->  Index Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=4 loops=1)
-                     Output: collection.document
-                     Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
-(10 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{"$match": { "_id": { "$gt": 3, "$lt": 8 }}}, { "$limit": 10 }, { "$group": { "_id": 1, "c": { "$max": "$_id" } } }]}')$$, p_ignore_heap_fetches => true);
                                                                                                                                                                                     run_explain_and_trim                                                                                                                                                                                     
 ---------------------------------------------------------------------
@@ -540,8 +522,21 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
                      Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
 (10 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{"$match": { "_id": { "$gt": 3, "$lt": 8 }}}, { "$limit": 10 }, { "$group": { "_id": 1, "c": { "$max": "$_id" } } }]}')$$, p_ignore_heap_fetches => true);
+                                                                                                                                                                                    run_explain_and_trim                                                                                                                                                                                     
+---------------------------------------------------------------------
+ GroupAggregate (actual rows=1 loops=1)
+   Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'c'::text, bsonmaxwithexprinternal(collection.document, '{ "" : "$_id" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), '{ "" : { "$numberInt" : "1" } }'::bson
+   ->  Limit (actual rows=4 loops=1)
+         Output: collection.document
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+               Output: collection.document
+               indexName: _id_
+               ->  Index Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=4 loops=1)
+                     Output: collection.document
+                     Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+(10 rows)
+
 -- HINTED QUERIES: hint should preserve IOS behavior without bypassing coverage checks
 -- hint by name + $match + $count: should use IOS
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "hint" : "country_1", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
@@ -655,10 +650,10 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 
 -- hint + $match + uncovered accumulator (provider not in country_1 index): should NOT use IOS
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "hint" : "country_1", "pipeline" : [{ "$match" : {"country": {"$eq": "Mexico"}} }, { "$group" : { "_id" : 1, "maxProvider" : { "$max" : "$provider" } } }]}')$$, p_ignore_heap_fetches => true);
-                                                                                                                                          run_explain_and_trim                                                                                                                                          
+                                                                                                                                          run_explain_and_trim                                                                                                                                           
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'maxProvider'::text, bsonmax(bson_expression_get(document, '{ "" : "$provider" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), '{ "" : { "$numberInt" : "1" } }'::bson
+   Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'maxProvider'::text, bsonmaxwithexprinternal(document, '{ "" : "$provider" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), '{ "" : { "$numberInt" : "1" } }'::bson
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
          Output: document
          indexName: country_1
@@ -767,10 +762,10 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 VACUUM documentdb_data.documents_69001;
 -- if we project something out it shouldn't do index only scan
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$gte": "Mexico"}} }, { "$group" : { "_id" : "$country", "n" : { "$sum" : 1 } } }]}')$$, p_ignore_heap_fetches => true);
-                                                                                                                                                                                      run_explain_and_trim                                                                                                                                                                                       
+                                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                                           
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'n'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'n'::text, bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=8 loops=1)
          Output: bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
@@ -1053,7 +1048,7 @@ SELECT documentdb_api.delete('idx_only_scan_db', '{ "delete": "idx_only_scan_col
 CALL documentdb_distributed_test_helpers.wait_for_vacuum_horizon();
 set client_min_messages to DEBUG1;
 VACUUM (FREEZE ON) documentdb_data.documents_69001;
-psql:sql/bson_composite_index_only_scan_tests.sql:186: LOG:  Vacuum[index=87786,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=0, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0
+psql:sql/bson_composite_index_only_scan_tests.sql:181: LOG:  Vacuum[index=92002,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=0, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0
 reset client_min_messages;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$eq": "Mexico"}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
                                                    run_explain_and_trim                                                   
@@ -1119,7 +1114,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 
 -- Sharded collections can't be supported with a shard key filter because in RUM indexes the shard_key_value becomes a runtime filter and for index only scans everything needs to be satisfied by the index. 
 SELECT COUNT(documentdb_api.insert_one('idx_only_scan_db', 'idx_only_scan_sharded', bson_build_document('_id'::text, i, 'shardKey'::text, i % 10, 'value'::text, i))) FROM generate_series(1, 1000) i;
-psql:sql/bson_composite_index_only_scan_tests.sql:198: NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_tests.sql:193: NOTICE:  creating collection
  count 
 ---------------------------------------------------------------------
   1000
@@ -1186,7 +1181,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 ROLLBACK;
 -- test index only scan is not enabled for wildcard indexes
 SELECT documentdb_api.insert_one('idx_only_scan_db', 'compwildcard2', '{ "a": { "b": 1, "c": 5 }}');
-psql:sql/bson_composite_index_only_scan_tests.sql:217: NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_tests.sql:212: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1244,7 +1239,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 RESET documentdb.forceIndexOnlyScanIfAvailable;
 -- test $sum/$avg on numeric field with ordered index (future index-only scan optimization candidate)
 SELECT documentdb_api.create_collection('idx_only_scan_db', 'idx_only_scan_numeric');
-psql:sql/bson_composite_index_only_scan_tests.sql:230: NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_tests.sql:225: NOTICE:  creating collection
  create_collection 
 ---------------------------------------------------------------------
  t
@@ -1296,10 +1291,10 @@ ANALYZE documentdb_data.documents_69003;
 VACUUM (FREEZE ON) documentdb_data.documents_69003;
 -- $sum on indexed numeric field with old accumulators (needs index scan, not IOS — reads document for field value)
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$match" : {"dept": {"$eq": "eng"}} }, { "$group": { "_id": "$dept", "totalAge": { "$sum": "$age" } } }]}')$$);
-                                                                                                                                                                                                                                     run_explain_and_trim                                                                                                                                                                                                                                     
+                                                                                                                                                                                                                                 run_explain_and_trim                                                                                                                                                                                                                                  
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalAge'::text, bsonsum(bson_expression_get(document, '{ "" : "$age" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalAge'::text, bsonsumwithexpr(document, '{ "" : "$age" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          Output: bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
@@ -1325,10 +1320,10 @@ SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate
 
 -- $avg on indexed numeric field with old accumulators
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$match" : {"dept": {"$eq": "eng"}} }, { "$group": { "_id": "$dept", "avgAge": { "$avg": "$age" } } }]}')$$);
-                                                                                                                                                                                                                                      run_explain_and_trim                                                                                                                                                                                                                                      
+                                                                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                                                                   
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgAge'::text, bsonaverage(bson_expression_get(document, '{ "" : "$age" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgAge'::text, bsonaveragewithexpr(document, '{ "" : "$age" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          Output: bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
@@ -1354,7 +1349,7 @@ SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate
 
 -- $sum and $avg across all groups
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$group": { "_id": "$dept", "totalAge": { "$sum": "$age" }, "avgAge": { "$avg": "$age" } } }, { "$sort": { "_id": 1 } }]}')$$);
-                                                                                                                                                                                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                  
+                                                                                                                                                                                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                                                                                                                                                                                           
 ---------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
    Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
@@ -1363,7 +1358,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
    ->  Subquery Scan on agg_stage_1 (actual rows=2 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=2 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalAge'::text, bsonsum(bson_expression_get(collection.document, '{ "" : "$age" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgAge'::text, bsonaverage(bson_expression_get(collection.document, '{ "" : "$age" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalAge'::text, bsonsumwithexpr(collection.document, '{ "" : "$age" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'avgAge'::text, bsonaveragewithexpr(collection.document, '{ "" : "$age" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
                Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
                ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
                      Output: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
@@ -1389,7 +1384,6 @@ SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate
 (2 rows)
 
 -- $sum on indexed numeric field with new accumulators
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$match" : {"dept": {"$eq": "eng"}} }, { "$group": { "_id": "$dept", "totalAge": { "$sum": "$age" } } }]}')$$);
                                                                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                                                                  
 ---------------------------------------------------------------------
@@ -1483,13 +1477,11 @@ SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate
  { "_id" : "sales", "totalAge" : { "$numberInt" : "113" }, "avgAge" : { "$numberDouble" : "37.666666666666664298" } }
 (2 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 ---------------------------------------------------------------------
 -- Sharded collection: verify index-only scan with covered $group accumulators pushes down to shard workers
 ---------------------------------------------------------------------
 SELECT documentdb_api.create_collection('idx_only_scan_db', 'ios_sharded_accum');
-psql:sql/bson_composite_index_only_scan_tests.sql:274: NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_tests.sql:266: NOTICE:  creating collection
  create_collection 
 ---------------------------------------------------------------------
  t

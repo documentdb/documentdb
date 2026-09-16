@@ -530,8 +530,7 @@ ContainsDisqualifyingAggref(Node *node, void *context)
 static bool
 IsSafeFirstAggregateFunctionOid(Oid aggregateFunctionOid)
 {
-	return aggregateFunctionOid == BsonFirstOnSortedAggregateFunctionOid() ||
-		   aggregateFunctionOid == BsonFirstWithExprAggregateFunctionOid() ||
+	return aggregateFunctionOid == BsonFirstWithExprAggregateFunctionOid() ||
 		   aggregateFunctionOid == BsonFirstWithExprInternalAggregateFunctionOid();
 }
 

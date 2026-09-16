@@ -72,9 +72,7 @@ INSERT INTO documentdb_guc_naming_baseline (name) VALUES
     ('documentdb.enableIndexPathKeySummarization'),
     ('documentdb.enableMultiIndexRumJoin'),
     ('documentdb.enableNativeColocation'),
-    ('documentdb.enableNewMinMaxAccumulators'),
     ('documentdb.enableNewNamespaceValidation'),
-    ('documentdb.enableNewWithExprAccumulators'),
     ('documentdb.enableNonBlockingUniqueIndexBuild'),
     ('documentdb.enableObjectIdFuncExprConversion'),
     ('documentdb.enableOrderByIdOnCostFunction'),
@@ -205,3 +203,8 @@ SELECT
     ) AS stale_baseline_entries;
 
 DROP TABLE documentdb_guc_naming_baseline;
+
+SELECT count(*) = 0 AS retired_accumulator_gucs_absent
+FROM pg_settings
+WHERE lower(name) IN ('documentdb.enablenewminmaxaccumulators',
+                      'documentdb.enablenewwithexpraccumulators');

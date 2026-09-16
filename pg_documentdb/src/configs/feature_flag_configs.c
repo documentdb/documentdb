@@ -291,14 +291,6 @@ bool EnableCompositeParallelIndexScan = DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_
  * SECTION: Planner feature flags
  */
 
-/* Added in v0.110, enable in v0.114, remove after v0.116 */
-#define DEFAULT_ENABLE_NEW_MIN_MAX_ACCUMULATORS true
-bool EnableNewMinMaxAccumulators = DEFAULT_ENABLE_NEW_MIN_MAX_ACCUMULATORS;
-
-/* Added in v0.111, enable in v0.114, remove after v0.116 */
-#define DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS true
-bool EnableNewWithExprAccumulators = DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS;
-
 /* Added in v0.117, enabled on v0.117, remove after v1.2 */
 #define DEFAULT_ENABLE_PARALLEL_SAFE_WITH_EXPR_ACCUMULATORS true
 bool EnableParallelSafeWithExprAccumulators =
@@ -1326,14 +1318,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enableNewMinMaxAccumulators", newGucPrefix),
-		gettext_noop(
-			"Whether to enable new min and max aggregate optimizations."),
-		NULL, &EnableNewMinMaxAccumulators,
-		DEFAULT_ENABLE_NEW_MIN_MAX_ACCUMULATORS,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enable_min_max_skip_null_values", newGucPrefix),
 		gettext_noop(
 			"Whether $min and $max accumulators skip null values, matching the documented wire-protocol semantics of only considering non-null, non-missing values."),
@@ -1381,14 +1365,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable custom planner statistics for any new collections."),
 		NULL, &EnablePlannerStatisticsNewCollections,
 		DEFAULT_ENABLE_PLANNER_STATISTICS_NEW_COLLECTIONS,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableNewWithExprAccumulators", newGucPrefix),
-		gettext_noop(
-			"Whether to enable new WithExpr aggregate optimizations for min, max, sum, avg, first, and last accumulators."),
-		NULL, &EnableNewWithExprAccumulators,
-		DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

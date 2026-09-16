@@ -37,7 +37,7 @@ set local min_parallel_table_scan_size TO 0;
 set local min_parallel_index_scan_size TO 0;
 SET local enable_seqscan to OFF;
 SET LOCAL documentdb.ForceUseIndexIfAvailable to OFF;
-EXPLAIN (COSTS OFF) WITH t1 as (SELECT document FROM documentdb_api.collection('db', 'bson_index_rum_index_scan_to_bitmap_heap_scan') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"order_id": "ORD2" , "$and": [{"timestamp" : { "$lte":2000000}}]}'::bson  ) SELECT bson_repath_and_build('rxCount'::text, BSONAVERAGE(document -> 'month')) from t1 group by bson_expression_get(document, '{ "": "$product_name" }');
+EXPLAIN (COSTS OFF) WITH t1 as (SELECT document FROM documentdb_api.collection('db', 'bson_index_rum_index_scan_to_bitmap_heap_scan') WHERE document OPERATOR(documentdb_api_catalog.@@) '{"order_id": "ORD2" , "$and": [{"timestamp" : { "$lte":2000000}}]}'::bson  ) SELECT bson_repath_and_build('rxCount'::text, BSONAVERAGEWITHEXPR(document, '{ "": "$month" }', NULL, NULL)) from t1 group by bson_expression_get(document, '{ "": "$product_name" }');
 ROLLBACK;
 
 BEGIN;

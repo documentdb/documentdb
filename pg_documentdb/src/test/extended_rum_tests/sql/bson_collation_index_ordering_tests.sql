@@ -2222,7 +2222,6 @@ $cmd$);
 -- 29ag: a collated group cannot stream from a simple index. "item02" and
 -- "item2" compare equal with numericOrdering but are separated in binary index
 -- order, so omitting the Sort would split one logical group into two.
-SET documentdb.enableNewWithExprAccumulators TO on;
 
 SELECT documentdb_api.insert_one(
   'ord_coll_ordered_db',
@@ -2277,7 +2276,6 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
          "collation": { "locale": "en", "numericOrdering": true } }')
 $cmd$);
 
-RESET documentdb.enableNewWithExprAccumulators;
 
 -- ============================================================
 -- Section 30: index-only scan under collation on collation-aware
@@ -2375,13 +2373,11 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "usa", "_id": { "$in": ["cat", "dog"] } }, "projection": { "country": 1, "_id": 1 }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 
 -- Field-consuming aggregate targets also require the stored row values.
-SET documentdb.enableNewWithExprAccumulators TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": "usa" } }, { "$group": { "_id": null, "value": { "$first": "$country" } } } ], "hint": "ios_country_id_en_s1", "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": "usa" } }, { "$group": { "_id": null, "value": { "$last": "$country" } } } ], "hint": "ios_country_id_en_s1", "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": "usa" } }, { "$group": { "_id": "$country", "count": { "$sum": 1 } } } ], "hint": "ios_country_id_en_s1", "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
 
-RESET documentdb.enableNewWithExprAccumulators;
 
 -- The index, rather than the query, determines whether values can be reconstructed.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('ord_coll_ios_db', '{ "createIndexes": "ios_coll", "indexes": [ { "key": { "seq": 1, "country": 1 }, "storageEngine": { "enableOrderedIndex": true }, "collation": { "locale": "en", "strength": 1 }, "name": "ios_seq_country_en_s1" }, { "key": { "seq": 1, "country": 1 }, "storageEngine": { "enableOrderedIndex": true }, "name": "ios_seq_country_simple" } ] }', true);

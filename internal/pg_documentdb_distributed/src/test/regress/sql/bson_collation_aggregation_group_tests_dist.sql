@@ -8,7 +8,6 @@ SET citus.next_shard_id TO 257000000;
 SET documentdb.next_collection_id TO 25700000;
 SET documentdb.next_collection_index_id TO 25700000;
 SET documentdb_core.enableCollation TO on;
-SET documentdb.enableNewWithExprAccumulators TO on;
 SET documentdb.useLocalExecutionShardQueries TO off;
 SET citus.enable_local_execution TO off;
 
@@ -204,5 +203,4 @@ SELECT documentdb_api.drop_collection('db', 'group_collation_dist_test');
 
 RESET citus.enable_local_execution;
 RESET documentdb.useLocalExecutionShardQueries;
-RESET documentdb.enableNewWithExprAccumulators;
 RESET documentdb_core.enableCollation;

@@ -22,9 +22,6 @@ PG_FUNCTION_INFO_V1(bson_last_transition);
 PG_FUNCTION_INFO_V1(bson_first_combine);
 PG_FUNCTION_INFO_V1(bson_last_combine);
 PG_FUNCTION_INFO_V1(bson_first_last_final);
-PG_FUNCTION_INFO_V1(bson_first_transition_on_sorted);
-PG_FUNCTION_INFO_V1(bson_last_transition_on_sorted);
-PG_FUNCTION_INFO_V1(bson_first_last_final_on_sorted);
 PG_FUNCTION_INFO_V1(bson_firstn_transition);
 PG_FUNCTION_INFO_V1(bson_lastn_transition);
 PG_FUNCTION_INFO_V1(bson_firstn_combine);
@@ -64,31 +61,6 @@ bson_last_transition(PG_FUNCTION_ARGS)
 
 
 /*
- * Applies the "state transition" (SFUNC) for first.
- */
-Datum
-bson_first_transition_on_sorted(PG_FUNCTION_ARGS)
-{
-	bool isLast = false;
-	bool isSingle = true;
-	return BsonOrderTransitionOnSorted(fcinfo, isLast, isSingle);
-}
-
-
-/*
- * Applies the "state transition" (SFUNC) for last.
- */
-Datum
-bson_last_transition_on_sorted(PG_FUNCTION_ARGS)
-{
-	/* LAST will invert the transition so that it takes the element opposite of the true comparison result */
-	bool isLast = true;
-	bool isSingle = true;
-	return BsonOrderTransitionOnSorted(fcinfo, isLast, isSingle);
-}
-
-
-/*
  * Applies the "final" (FINALFUNC) for first and last.
  */
 Datum
@@ -97,17 +69,6 @@ bson_first_last_final(PG_FUNCTION_ARGS)
 	bool isSingle = true;
 	bool invert = false;
 	return BsonOrderFinal(fcinfo, isSingle, invert);
-}
-
-
-/*
- * Applies the "final" (FINALFUNC) for first and last.
- */
-Datum
-bson_first_last_final_on_sorted(PG_FUNCTION_ARGS)
-{
-	bool isSingle = true;
-	return BsonOrderFinalOnSorted(fcinfo, isSingle);
 }
 
 
@@ -167,8 +128,7 @@ Datum
 bson_firstn_transition_on_sorted(PG_FUNCTION_ARGS)
 {
 	bool isLast = false;
-	bool isSingle = false;
-	return BsonOrderTransitionOnSorted(fcinfo, isLast, isSingle);
+	return BsonOrderTransitionOnSorted(fcinfo, isLast);
 }
 
 
@@ -180,8 +140,7 @@ bson_lastn_transition_on_sorted(PG_FUNCTION_ARGS)
 {
 	/* LAST will invert the transition so that it takes the element opposite of the true comparison result */
 	bool isLast = true;
-	bool isSingle = false;
-	return BsonOrderTransitionOnSorted(fcinfo, isLast, isSingle);
+	return BsonOrderTransitionOnSorted(fcinfo, isLast);
 }
 
 
@@ -230,8 +189,7 @@ bson_lastn_final(PG_FUNCTION_ARGS)
 Datum
 bson_firstn_lastn_final_on_sorted(PG_FUNCTION_ARGS)
 {
-	bool isSingle = false;
-	return BsonOrderFinalOnSorted(fcinfo, isSingle);
+	return BsonOrderFinalOnSorted(fcinfo);
 }
 
 

@@ -1841,14 +1841,8 @@ static WindowFunc *
 HandleDollarSumWindowOperator(const bson_value_t *opValue,
 							  WindowOperatorContext *context)
 {
-	if (CanUseWithExprAggregates())
-	{
-		return GetWindowFuncWithExprAggregate(opValue, context,
-											  BsonSumWithExprAggregateFunctionOid());
-	}
-
-	return GetSimpleBsonExpressionGetWindowFunc(opValue, context,
-												BsonSumAggregateFunctionOid());
+	return GetWindowFuncWithExprAggregate(opValue, context,
+										  BsonSumWithExprAggregateFunctionOid());
 }
 
 
@@ -1860,14 +1854,8 @@ static WindowFunc *
 HandleDollarAvgWindowOperator(const bson_value_t *opValue,
 							  WindowOperatorContext *context)
 {
-	if (CanUseWithExprAggregates())
-	{
-		return GetWindowFuncWithExprAggregate(opValue, context,
-											  BsonAvgWithExprAggregateFunctionOid());
-	}
-
-	return GetSimpleBsonExpressionGetWindowFunc(opValue, context,
-												BsonAvgAggregateFunctionOid());
+	return GetWindowFuncWithExprAggregate(opValue, context,
+										  BsonAvgWithExprAggregateFunctionOid());
 }
 
 
@@ -1893,6 +1881,7 @@ HandleDollarCountWindowOperator(const bson_value_t *opValue,
 	};
 
 
+	/* TODO: Migrate window $count to the WithExpr aggregate */
 	return GetSimpleBsonExpressionGetWindowFunc(&newOpValue, context,
 												BsonSumAggregateFunctionOid());
 }
@@ -2887,14 +2876,10 @@ HandleDollarFirstWindowOperator(const bson_value_t *opValue,
 	{
 		functionOid = BsonFirstAggregateAllArgsFunctionOid();
 	}
-	else if (CanUseWithExprAggregates())
+	else
 	{
 		functionOid = BsonFirstWithExprAggregateFunctionOid();
 		useWithExpr = true;
-	}
-	else
-	{
-		functionOid = BsonFirstOnSortedAggregateAllArgsFunctionOid();
 	}
 
 	return HandleDollarFirstLastOperators(opValue, context, "$first", functionOid,
@@ -2919,14 +2904,10 @@ HandleDollarLastWindowOperator(const bson_value_t *opValue,
 	{
 		functionOid = BsonLastAggregateAllArgsFunctionOid();
 	}
-	else if (CanUseWithExprAggregates())
+	else
 	{
 		functionOid = BsonLastWithExprAggregateFunctionOid();
 		useWithExpr = true;
-	}
-	else
-	{
-		functionOid = BsonLastOnSortedAggregateAllArgsFunctionOid();
 	}
 
 	return HandleDollarFirstLastOperators(opValue, context, "$last", functionOid,
@@ -3183,41 +3164,23 @@ HandleDollarConstFillWindowOperator(const bson_value_t *opValue,
 
 /*
  * Handle the $min window operator.
- *
- * Uses the optimized bsonminwithexpr aggregate when available (v0.110+),
- * otherwise falls back to the legacy bsonmin aggregate with bson_expression_get wrapper.
  */
 static WindowFunc *
 HandleDollarMinWindowOperator(const bson_value_t *opValue,
 							  WindowOperatorContext *context)
 {
-	if (CanUseWithExprMinMaxAggregates())
-	{
-		return GetWindowFuncWithExprAggregate(opValue, context,
-											  BsonMinWithExprAggregateFunctionOid());
-	}
-
-	return GetSimpleBsonExpressionGetWindowFunc(opValue, context,
-												BsonMinAggregateFunctionOid());
+	return GetWindowFuncWithExprAggregate(opValue, context,
+										  BsonMinWithExprAggregateFunctionOid());
 }
 
 
 /*
  * Handle the $max window operator.
- *
- * Uses the optimized bsonmaxwithexpr aggregate when available (v0.110+),
- * otherwise falls back to the legacy bsonmax aggregate with bson_expression_get wrapper.
  */
 static WindowFunc *
 HandleDollarMaxWindowOperator(const bson_value_t *opValue,
 							  WindowOperatorContext *context)
 {
-	if (CanUseWithExprMinMaxAggregates())
-	{
-		return GetWindowFuncWithExprAggregate(opValue, context,
-											  BsonMaxWithExprAggregateFunctionOid());
-	}
-
-	return GetSimpleBsonExpressionGetWindowFunc(opValue, context,
-												BsonMaxAggregateFunctionOid());
+	return GetWindowFuncWithExprAggregate(opValue, context,
+										  BsonMaxWithExprAggregateFunctionOid());
 }

@@ -5,7 +5,6 @@ SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_core,pg_cata
 SET documentdb.next_collection_id TO 25700000;
 SET documentdb.next_collection_index_id TO 25700000;
 SET documentdb_core.enableCollation TO on;
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT documentdb_api.insert_one('db', 'group_collation_test',
     '{ "_id": 1, "category": "Cat", "region": "North", "value": 10 }');
 NOTICE:  creating collection
@@ -396,29 +395,42 @@ SELECT document FROM bson_aggregation_pipeline('db',
  { "_id" : null, "n" : { "$numberInt" : "6" }, "total" : { "$numberInt" : "6" } }
 (1 row)
 
--- Legacy accumulator paths cannot evaluate collation-sensitive expressions.
-SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "group_collation_test", "pipeline": [
         { "$group": { "_id": null, "acc": { "$avg": "$value" } } }
     ], "collation": { "locale": "en", "strength": 1 } }');
-ERROR:  collation is not supported with the $avg accumulator in $group yet.
+                        document                        
+--------------------------------------------------------
+ { "_id" : null, "acc" : { "$numberDouble" : "35.0" } }
+(1 row)
+
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "group_collation_test", "pipeline": [
         { "$group": { "_id": null, "acc": { "$sum": "$value" } } }
     ], "collation": { "locale": "en", "strength": 1 } }');
-ERROR:  collation is not supported with the $sum accumulator in $group yet.
+                      document                      
+----------------------------------------------------
+ { "_id" : null, "acc" : { "$numberInt" : "210" } }
+(1 row)
+
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "group_collation_test", "pipeline": [
         { "$group": { "_id": null, "acc": { "$first": "$value" } } }
     ], "collation": { "locale": "en", "strength": 1 } }');
-ERROR:  collation is not supported with the $first accumulator in $group yet.
+                     document                      
+---------------------------------------------------
+ { "_id" : null, "acc" : { "$numberInt" : "10" } }
+(1 row)
+
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "group_collation_test", "pipeline": [
         { "$group": { "_id": null, "acc": { "$last": "$value" } } }
     ], "collation": { "locale": "en", "strength": 1 } }');
-ERROR:  collation is not supported with the $last accumulator in $group yet.
-RESET documentdb.enableNewWithExprAccumulators;
+                     document                      
+---------------------------------------------------
+ { "_id" : null, "acc" : { "$numberInt" : "60" } }
+(1 row)
+
 -- After a $sort, $first and $last use the sorted accumulator, which sorts the
 -- values itself byte by byte and cannot honor the collation.
 SELECT document FROM bson_aggregation_pipeline('db',
@@ -498,5 +510,4 @@ SELECT documentdb_api.drop_collection('db', 'group_collation_test');
  t
 (1 row)
 
-RESET documentdb.enableNewWithExprAccumulators;
 RESET documentdb_core.enableCollation;

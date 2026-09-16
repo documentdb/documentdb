@@ -279,10 +279,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          Index Cond: (collection.document @<> '{ "a" : { "fullScan" : true } }'::bson)
 (5 rows)
 
--- WithExpr accumulators (enableNewWithExprAccumulators on): $sum/$avg/$max/$min
+-- WithExpr accumulators: $sum/$avg/$max/$min
 -- take a different code path -- verify pushdown still works and is correct.
 BEGIN;
-set local documentdb.enableNewWithExprAccumulators to on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" }, "average": { "$avg": "$a" }, "mx": { "$max": "$b" }, "mn": { "$min": "$b" } } } ] }');
                                                                                                                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                                                                                                                         
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -399,7 +398,7 @@ set documentdb.enable_scalar_aggregate_index_pushdown to off;
 -- =============================================================================
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'scalar_agg_db', '{ "createIndexes": "scalar_agg_few", "indexes": [ { "name": "a_1", "key": { "a": 1 } } ] }', TRUE);
-psql:sql/bson_aggregation_group_scalar_index_pushdown_tests.sql:168: NOTICE:  creating collection
+psql:sql/bson_aggregation_group_scalar_index_pushdown_tests.sql:167: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -617,7 +616,7 @@ BEGIN
     RAISE NOTICE 'field-cap group top-level field count: %',
         (bson_dollar_project(v_doc, '{ "n": { "$size": { "$objectToArray": "$$ROOT" } } }') ->> 'n');
 END $prj$;
-psql:sql/bson_aggregation_group_scalar_index_pushdown_tests.sql:294: NOTICE:  field-cap group top-level field count: 41
+psql:sql/bson_aggregation_group_scalar_index_pushdown_tests.sql:293: NOTICE:  field-cap group top-level field count: 41
 set documentdb.enable_scalar_aggregate_index_pushdown to off;
 -- =============================================================================
 -- Cursor coverage.  A constant _id $group is a single group with no ordered
@@ -712,7 +711,7 @@ SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;
 -- =============================================================================
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'scalar_agg_db', '{ "createIndexes": "scalar_agg_multi", "indexes": [ { "name": "x_y_z_1", "key": { "x": 1, "y": 1, "z": 1 } } ] }', TRUE);
-psql:sql/bson_aggregation_group_scalar_index_pushdown_tests.sql:370: NOTICE:  creating collection
+psql:sql/bson_aggregation_group_scalar_index_pushdown_tests.sql:369: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -776,7 +775,7 @@ set documentdb.enable_scalar_aggregate_index_pushdown to off;
 -- =============================================================================
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'scalar_agg_db', '{ "createIndexes": "scalar_agg_sep", "indexes": [ { "name": "x_1", "key": { "x": 1 } }, { "name": "y_1", "key": { "y": 1 } }, { "name": "z_1", "key": { "z": 1 } } ] }', TRUE);
-psql:sql/bson_aggregation_group_scalar_index_pushdown_tests.sql:402: NOTICE:  creating collection
+psql:sql/bson_aggregation_group_scalar_index_pushdown_tests.sql:401: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }

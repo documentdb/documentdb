@@ -2,8 +2,6 @@ SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 SET documentdb.next_collection_id TO 3500;
 SET documentdb.next_collection_index_id TO 3500;
 SET documentdb.failOnNonEmptyGroupCountArg TO on;
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT documentdb_api.insert_one('db','aggregation_pipeline','{"_id":"1", "int": 10, "a" : { "b" : [ "x", 1, 2.0, true ] } }', NULL);
 NOTICE:  creating collection
                               insert_one                              
@@ -387,7 +385,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
  { "_id" : { "$numberInt" : "1" }, "d" : "3", "e" : { "$numberInt" : "2" } }
 (2 rows)
 
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
                                   document                                   
 -----------------------------------------------------------------------------
@@ -395,8 +392,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
  { "_id" : { "$numberInt" : "1" }, "d" : "3", "e" : { "$numberInt" : "2" } }
 (2 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 -- $group $count with arguments should error
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": 1 } } }], "cursor": {} }');
 ERROR:  $count:{} accumulator requires 0 arguments
@@ -412,15 +407,10 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 (2 rows)
 
 SET documentdb.failOnNonEmptyGroupCountArg TO on;
-SET documentdb.enableNewMinMaxAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": 1 } } }], "cursor": {} }');
 ERROR:  $count:{} accumulator requires 0 arguments
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$sum": "$_id" }, "e": { "$count": 1 } } }], "cursor": {} }');
 ERROR:  $count:{} accumulator requires 0 arguments
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 -- $group with duplicate _id should error
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": "$int", "_id": "$a" } }], "cursor": {} }');
 ERROR:  a group's _id may only be specified once
@@ -433,10 +423,10 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 (2 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$first": "$_id" }, "e": { "$last":  "$_id" } } }], "cursor": {} }');
-                                                                                                                                                                                                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                    
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                             
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'd'::text, bsonfirstonsorted(documentdb_api_internal.bson_expression_get(document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'e'::text, bsonlastonsorted(documentdb_api_internal.bson_expression_get(document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'd'::text, documentdb_api_internal.bsonfirstwithexprinternal(document, '{ "" : "$_id" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'e'::text, documentdb_api_internal.bsonlastwithexprinternal(document, '{ "" : "$_id" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
          Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document

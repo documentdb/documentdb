@@ -6,13 +6,6 @@ SET documentdb.next_collection_index_id TO 25705000;
 -- =============================================================================
 -- $min / $max null / missing handling matrix.
 --
--- The behavior is governed by two independent axes, so the tests below exercise
--- the full 2x2 grid for both $group and $setWindowFields:
---
---   Accumulator implementation:
---     * Legacy   -> enableNewMinMaxAccumulators = off, enableNewWithExprAccumulators = off
---     * WithExpr -> enableNewMinMaxAccumulators = on,  enableNewWithExprAccumulators = on
---
 --   Skip-null flag (documentdb.enable_min_max_skip_null_values):
 --     * on  -> $min / $max ignore explicit null and missing values, returning
 --              null only when every value in the group is null / missing.
@@ -20,9 +13,7 @@ SET documentdb.next_collection_index_id TO 25705000;
 --              wins $min (sorts below numbers) and, being above MinKey, changes
 --              $max for a { MinKey, null } group.
 --
--- Note the missing-only group ("miss"): on the legacy path a missing field is
--- projected to null, so with the flag off $min sees a null and returns null; on
--- the WithExpr path the missing field is already excluded, so $min is unchanged.
+-- Missing fields are excluded by WithExpr, independently of the skip-null flag.
 -- =============================================================================
 
 SELECT documentdb_api.insert_one('db','minmax_null_test','{ "_id": "normal_100", "score": 100 }');
@@ -54,70 +45,8 @@ SELECT documentdb_api.insert_one('db','minmax_null_test','{ "_id": "allmissing_1
 SELECT documentdb_api.insert_one('db','minmax_null_test','{ "_id": "allmissing_2", "grp": "allmissing" }');
 
 -- =============================================================================
--- 1. Legacy accumulators, skip-null OFF
+-- 1. WithExpr accumulators, skip-null OFF
 -- =============================================================================
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SET documentdb.enable_min_max_skip_null_values TO off;
-
--- $group: $min considers explicit null / missing-as-null -> null wins
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": { "$exists": false } } }, { "$group": { "_id": null, "min_score": { "$min": "$score" } } } ] }');
--- $group: $max unaffected by null -> 100
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": { "$exists": false } } }, { "$group": { "_id": null, "max_score": { "$max": "$score" } } } ] }');
--- $group: all values null/missing -> null
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": "empty" } }, { "$group": { "_id": "$grp", "min_score": { "$min": "$score" }, "max_score": { "$max": "$score" } } } ] }');
--- $group: all explicit null (no missing) -> null
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": "allnull" } }, { "$group": { "_id": "$grp", "min_score": { "$min": "$score" }, "max_score": { "$max": "$score" } } } ] }');
--- $group: all missing (no explicit null) -> null
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": "allmissing" } }, { "$group": { "_id": "$grp", "min_score": { "$min": "$score" }, "max_score": { "$max": "$score" } } } ] }');
--- $group: $max over { MinKey, null } -> null (null sorts above MinKey)
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": "mk" } }, { "$group": { "_id": "$grp", "max_score": { "$max": "$score" } } } ] }');
--- $group: missing-only group; legacy projects missing to null -> $min null
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": "miss" } }, { "$group": { "_id": "$grp", "min_score": { "$min": "$score" }, "max_score": { "$max": "$score" } } } ] }');
--- $setWindowFields: mixed null/missing partition
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": { "$exists": false } } }, { "$setWindowFields": { "sortBy": { "_id": 1 }, "output": { "min_score": { "$min": "$score", "window": { "documents": [ "unbounded", "unbounded" ] } }, "max_score": { "$max": "$score", "window": { "documents": [ "unbounded", "unbounded" ] } } } } }, { "$limit": 1 }, { "$project": { "_id": 0, "min_score": 1, "max_score": 1 } } ] }');
--- $setWindowFields: all null/missing partition
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": "empty" } }, { "$setWindowFields": { "sortBy": { "_id": 1 }, "output": { "min_score": { "$min": "$score", "window": { "documents": [ "unbounded", "unbounded" ] } }, "max_score": { "$max": "$score", "window": { "documents": [ "unbounded", "unbounded" ] } } } } }, { "$limit": 1 }, { "$project": { "_id": 0, "min_score": 1, "max_score": 1 } } ] }');
--- $setWindowFields: { MinKey, null } partition -> $max null
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": "mk" } }, { "$setWindowFields": { "sortBy": { "_id": 1 }, "output": { "max_score": { "$max": "$score", "window": { "documents": [ "unbounded", "unbounded" ] } } } } }, { "$limit": 1 }, { "$project": { "_id": 0, "max_score": 1 } } ] }');
--- $setWindowFields: missing-only partition -> $min null
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": "miss" } }, { "$setWindowFields": { "sortBy": { "_id": 1 }, "output": { "min_score": { "$min": "$score", "window": { "documents": [ "unbounded", "unbounded" ] } }, "max_score": { "$max": "$score", "window": { "documents": [ "unbounded", "unbounded" ] } } } } }, { "$limit": 1 }, { "$project": { "_id": 0, "min_score": 1, "max_score": 1 } } ] }');
-
--- =============================================================================
--- 2. Legacy accumulators, skip-null ON
--- =============================================================================
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SET documentdb.enable_min_max_skip_null_values TO on;
-
--- $group: $min skips explicit null / missing -> 65
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": { "$exists": false } } }, { "$group": { "_id": null, "min_score": { "$min": "$score" } } } ] }');
--- $group: $max skips explicit null / missing -> 100
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": { "$exists": false } } }, { "$group": { "_id": null, "max_score": { "$max": "$score" } } } ] }');
--- $group: all values null/missing -> null
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": "empty" } }, { "$group": { "_id": "$grp", "min_score": { "$min": "$score" }, "max_score": { "$max": "$score" } } } ] }');
--- $group: all explicit null (no missing) -> null
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": "allnull" } }, { "$group": { "_id": "$grp", "min_score": { "$min": "$score" }, "max_score": { "$max": "$score" } } } ] }');
--- $group: all missing (no explicit null) -> null
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": "allmissing" } }, { "$group": { "_id": "$grp", "min_score": { "$min": "$score" }, "max_score": { "$max": "$score" } } } ] }');
--- $group: $max over { MinKey, null } skips null -> MinKey
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": "mk" } }, { "$group": { "_id": "$grp", "max_score": { "$max": "$score" } } } ] }');
--- $group: missing-only group -> $min 65, $max 100
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": "miss" } }, { "$group": { "_id": "$grp", "min_score": { "$min": "$score" }, "max_score": { "$max": "$score" } } } ] }');
--- $setWindowFields: mixed null/missing partition
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": { "$exists": false } } }, { "$setWindowFields": { "sortBy": { "_id": 1 }, "output": { "min_score": { "$min": "$score", "window": { "documents": [ "unbounded", "unbounded" ] } }, "max_score": { "$max": "$score", "window": { "documents": [ "unbounded", "unbounded" ] } } } } }, { "$limit": 1 }, { "$project": { "_id": 0, "min_score": 1, "max_score": 1 } } ] }');
--- $setWindowFields: all null/missing partition
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": "empty" } }, { "$setWindowFields": { "sortBy": { "_id": 1 }, "output": { "min_score": { "$min": "$score", "window": { "documents": [ "unbounded", "unbounded" ] } }, "max_score": { "$max": "$score", "window": { "documents": [ "unbounded", "unbounded" ] } } } } }, { "$limit": 1 }, { "$project": { "_id": 0, "min_score": 1, "max_score": 1 } } ] }');
--- $setWindowFields: { MinKey, null } partition -> $max MinKey
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": "mk" } }, { "$setWindowFields": { "sortBy": { "_id": 1 }, "output": { "max_score": { "$max": "$score", "window": { "documents": [ "unbounded", "unbounded" ] } } } } }, { "$limit": 1 }, { "$project": { "_id": 0, "max_score": 1 } } ] }');
--- $setWindowFields: missing-only partition -> $min 65, $max 100
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": "miss" } }, { "$setWindowFields": { "sortBy": { "_id": 1 }, "output": { "min_score": { "$min": "$score", "window": { "documents": [ "unbounded", "unbounded" ] } }, "max_score": { "$max": "$score", "window": { "documents": [ "unbounded", "unbounded" ] } } } } }, { "$limit": 1 }, { "$project": { "_id": 0, "min_score": 1, "max_score": 1 } } ] }');
-
--- =============================================================================
--- 3. WithExpr accumulators, skip-null OFF
--- =============================================================================
-SET documentdb.enableNewMinMaxAccumulators TO on;
-SET documentdb.enableNewWithExprAccumulators TO on;
 SET documentdb.enable_min_max_skip_null_values TO off;
 
 -- $group: explicit null considered (missing already excluded) -> $min null
@@ -144,10 +73,8 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_nul
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": "miss" } }, { "$setWindowFields": { "sortBy": { "_id": 1 }, "output": { "min_score": { "$min": "$score", "window": { "documents": [ "unbounded", "unbounded" ] } }, "max_score": { "$max": "$score", "window": { "documents": [ "unbounded", "unbounded" ] } } } } }, { "$limit": 1 }, { "$project": { "_id": 0, "min_score": 1, "max_score": 1 } } ] }');
 
 -- =============================================================================
--- 4. WithExpr accumulators, skip-null ON
+-- 2. WithExpr accumulators, skip-null ON
 -- =============================================================================
-SET documentdb.enableNewMinMaxAccumulators TO on;
-SET documentdb.enableNewWithExprAccumulators TO on;
 SET documentdb.enable_min_max_skip_null_values TO on;
 
 -- $group: $min skips explicit null / missing -> 65
@@ -174,5 +101,3 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_nul
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "minmax_null_test", "pipeline": [ { "$match": { "grp": "miss" } }, { "$setWindowFields": { "sortBy": { "_id": 1 }, "output": { "min_score": { "$min": "$score", "window": { "documents": [ "unbounded", "unbounded" ] } }, "max_score": { "$max": "$score", "window": { "documents": [ "unbounded", "unbounded" ] } } } } }, { "$limit": 1 }, { "$project": { "_id": 0, "min_score": 1, "max_score": 1 } } ] }');
 
 RESET documentdb.enable_min_max_skip_null_values;
-RESET documentdb.enableNewMinMaxAccumulators;
-RESET documentdb.enableNewWithExprAccumulators;

@@ -34,24 +34,7 @@ set citus.propagate_set_commands to 'local';
 
 -- ===== $first without $sort =====
 
--- GUC OFF: should show bsonfirstonsorted
-SET documentdb.enableNewWithExprAccumulators TO off;
-BEGIN;
-set local citus.max_adaptive_executor_pool_size to 1;
-set local citus.enable_local_execution to off;
-set local citus.explain_analyze_sort_method to taskId;
-SET documentdb.enableDebugQueryText TO on;
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
-  EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF, VERBOSE ON)
-  SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_firstlast_dist", "pipeline": [ { "$group": { "_id": "$category", "firstVal": { "$first": "$val" }, "firstName": { "$first": "$name" } } } ], "cursor": {} }')
-$cmd$);
-ROLLBACK;
-
--- GUC OFF + direct-field $first: worker should not use the distinct scan.
--- This is the old accumulator path: shard workers project rows and the final
--- grouped $first is applied above the distributed scan, so this plan is
--- expected to differ from the with-expr case below.
-SET documentdb.enableNewWithExprAccumulators TO off;
+-- Direct-field $first with the distinct-scan optimization enabled.
 BEGIN;
 set local citus.max_adaptive_executor_pool_size to 1;
 set local citus.enable_local_execution to off;
@@ -67,8 +50,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
   SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_firstlast_dist", "pipeline": [ { "$group": { "_id": "$category", "firstVal": { "$first": "$val" } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }')
 $cmd$);
 ROLLBACK;
--- GUC ON: should show bsonfirstwithexpr
-SET documentdb.enableNewWithExprAccumulators TO on;
+-- should show bsonfirstwithexpr
 BEGIN;
 set local citus.max_adaptive_executor_pool_size to 1;
 set local citus.enable_local_execution to off;
@@ -80,7 +62,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 $cmd$);
 ROLLBACK;
 
--- GUC ON + distinct scan for $first with expression: worker should use
+-- Distinct scan for $first with expression: worker should use
 -- DocumentDBApiDistinctQueryScan with bsonfirstwithexpr.
 -- With the new accumulator path, Citus pushes a worker_partial_agg wrapper to
 -- shard workers. The relpath distinct-scan hook unwraps that wrapper, sees the
@@ -100,7 +82,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
   SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_firstlast_dist", "pipeline": [ { "$group": { "_id": "$category", "firstExpr": { "$first": { "$concat": ["$name", "-seen"] } } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }')
 $cmd$);
 ROLLBACK;
--- Single group without $sort (GUC on) - should show bsonfirstwithexpr
+-- Single group without $sort - should show bsonfirstwithexpr
 BEGIN;
 set local citus.max_adaptive_executor_pool_size to 1;
 set local citus.enable_local_execution to off;
@@ -114,8 +96,7 @@ ROLLBACK;
 
 -- ===== $first with $sort =====
 
--- GUC OFF: with $sort - uses bsonfirst
-SET documentdb.enableNewWithExprAccumulators TO off;
+-- should still use bsonfirst (not new accumulators) when $sort precedes
 BEGIN;
 set local citus.max_adaptive_executor_pool_size to 1;
 set local citus.enable_local_execution to off;
@@ -127,20 +108,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 $cmd$);
 ROLLBACK;
 
--- GUC ON: should still use bsonfirst (not new accumulators) when $sort precedes
-SET documentdb.enableNewWithExprAccumulators TO on;
-BEGIN;
-set local citus.max_adaptive_executor_pool_size to 1;
-set local citus.enable_local_execution to off;
-set local citus.explain_analyze_sort_method to taskId;
-SET documentdb.enableDebugQueryText TO on;
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
-  EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF, VERBOSE ON)
-  SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_firstlast_dist", "pipeline": [ { "$sort": { "val": -1 } }, { "$group": { "_id": "$category", "firstVal": { "$first": "$val" }, "firstName": { "$first": "$name" } } } ], "cursor": {} }')
-$cmd$);
-ROLLBACK;
-
--- Single group with $sort (GUC on)
+-- Single group with $sort
 BEGIN;
 set local citus.max_adaptive_executor_pool_size to 1;
 set local citus.enable_local_execution to off;
@@ -154,8 +122,7 @@ ROLLBACK;
 
 -- ===== $last without $sort =====
 
--- GUC OFF: should show bsonlastonsorted
-SET documentdb.enableNewWithExprAccumulators TO off;
+-- should show bsonlastwithexpr
 BEGIN;
 set local citus.max_adaptive_executor_pool_size to 1;
 set local citus.enable_local_execution to off;
@@ -167,20 +134,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 $cmd$);
 ROLLBACK;
 
--- GUC ON: should show bsonlastwithexpr
-SET documentdb.enableNewWithExprAccumulators TO on;
-BEGIN;
-set local citus.max_adaptive_executor_pool_size to 1;
-set local citus.enable_local_execution to off;
-set local citus.explain_analyze_sort_method to taskId;
-SET documentdb.enableDebugQueryText TO on;
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
-  EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF, VERBOSE ON)
-  SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_firstlast_dist", "pipeline": [ { "$group": { "_id": "$category", "lastVal": { "$last": "$val" }, "lastName": { "$last": "$name" } } } ], "cursor": {} }')
-$cmd$);
-ROLLBACK;
-
--- Single group without $sort (GUC on) - should show bsonlastwithexpr
+-- Single group without $sort - should show bsonlastwithexpr
 BEGIN;
 set local citus.max_adaptive_executor_pool_size to 1;
 set local citus.enable_local_execution to off;
@@ -194,8 +148,7 @@ ROLLBACK;
 
 -- ===== $last with $sort =====
 
--- GUC ON: should still use bsonlast (not new accumulators) when $sort precedes
-SET documentdb.enableNewWithExprAccumulators TO on;
+-- should still use bsonlast (not new accumulators) when $sort precedes
 BEGIN;
 set local citus.max_adaptive_executor_pool_size to 1;
 set local citus.enable_local_execution to off;
@@ -207,7 +160,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 $cmd$);
 ROLLBACK;
 
--- Single group with $sort (GUC on)
+-- Single group with $sort
 BEGIN;
 set local citus.max_adaptive_executor_pool_size to 1;
 set local citus.enable_local_execution to off;
@@ -221,9 +174,8 @@ ROLLBACK;
 
 -- ===== Collation EXPLAIN =====
 
--- GUC ON + collation: should show bsonfirstwithexpr / bsonlastwithexpr with collation locale
+-- Collation: should show bsonfirstwithexpr / bsonlastwithexpr with collation locale
 SET documentdb_core.enableCollation TO on;
-SET documentdb.enableNewWithExprAccumulators TO on;
 BEGIN;
 set local citus.max_adaptive_executor_pool_size to 1;
 set local citus.enable_local_execution to off;
@@ -235,7 +187,6 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 $cmd$);
 ROLLBACK;
 
-SET documentdb.enableNewWithExprAccumulators TO off;
 SET documentdb_core.enableCollation TO off;
 
 -- ===== $sort + $group with $first =====

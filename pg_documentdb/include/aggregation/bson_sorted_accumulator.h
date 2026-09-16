@@ -78,9 +78,9 @@ void DeserializeOrderState(bytea *bytes,
  */
 Datum BsonOrderTransition(PG_FUNCTION_ARGS, bool invertSort, bool isSingle, bool
 						  storeInputExpression);
-Datum BsonOrderTransitionOnSorted(PG_FUNCTION_ARGS, bool invertSort, bool isSingle);
+Datum BsonOrderTransitionOnSorted(PG_FUNCTION_ARGS, bool invertSort);
 Datum BsonOrderCombine(PG_FUNCTION_ARGS, bool invertSort);
 Datum BsonOrderFinal(PG_FUNCTION_ARGS, bool isSingle, bool invert);
-Datum BsonOrderFinalOnSorted(PG_FUNCTION_ARGS, bool isSingle);
+Datum BsonOrderFinalOnSorted(PG_FUNCTION_ARGS);
 
 #endif

@@ -253,36 +253,7 @@ GenerateFirstPageQueryData(void)
 }
 
 
-/*
- * Feature flag and version check for using optimized "WithExpr" aggregate functions
- * (e.g., bsonmaxwithexpr, bsonminwithexpr, etc.) instead of the legacy aggregates
- * that wrap bson_expression_get.
- *
- * Used by both $group accumulators and $setWindowFields window operators.
- */
-extern bool EnableNewMinMaxAccumulators;
-extern bool EnableNewWithExprAccumulators;
 extern bool EnableParallelSafeWithExprAccumulators;
-
-inline static bool
-CanUseWithExprMinMaxAggregates(void)
-{
-	return (EnableNewMinMaxAccumulators || EnableNewWithExprAccumulators) &&
-		   IsClusterVersionAtleast(DocDB_V0, 110, 0);
-}
-
-
-/*
- * Feature flag and version check for using the superset EnableNewWithExprAccumulators
- * GUC. Gates WithExpr aggregates introduced in v111.
- */
-inline static bool
-CanUseWithExprAggregates(void)
-{
-	return EnableNewWithExprAccumulators &&
-		   IsClusterVersionAtleast(DocDB_V0, 111, 0);
-}
-
 
 /*
  * Feature flag and version check for the parallel-safe internal-state variants

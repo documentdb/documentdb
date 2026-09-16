@@ -2,8 +2,6 @@ SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documen
 SET citus.next_shard_id TO 411000;
 SET documentdb.next_collection_id TO 4110;
 SET documentdb.next_collection_index_id TO 4110;
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT documentdb_api.insert_one('db','aggregation_pipeline','{"_id":"1", "int": 10, "a" : { "b" : [ "x", 1, 2.0, true ] } }', NULL);
 NOTICE:  creating collection
                               insert_one                              
@@ -476,7 +474,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
  { "_id" : { "$numberInt" : "1" }, "d" : "3", "e" : { "$numberInt" : "2" } }
 (2 rows)
 
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
                                   document                                   
 ---------------------------------------------------------------------
@@ -484,16 +481,11 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
  { "_id" : { "$numberInt" : "1" }, "d" : "3", "e" : { "$numberInt" : "2" } }
 (2 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 -- $group with keys having dotted path
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d.e": { "$max": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
 ERROR:  The specified field name d.e is not allowed to include the '.' character.
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d.e": { "$max": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
 ERROR:  The specified field name d.e is not allowed to include the '.' character.
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 -- $group with first/last
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$first": "$_id" }, "e": { "$last":  "$_id" } } }], "cursor": {} }');
                          document                         
@@ -510,10 +502,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build('_id'::text, documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'd'::text, documentdb_api_catalog.bsonfirstonsorted(documentdb_api_internal.bson_expression_get(document, '{ "" : "$_id" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'e'::text, documentdb_api_catalog.bsonlastonsorted(documentdb_api_internal.bson_expression_get(document, '{ "" : "$_id" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))) AS document FROM documentdb_data.documents_4110_411001 collection WHERE (shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) GROUP BY (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+         Query: SELECT bson_repath_and_build('_id'::text, documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'd'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$_id" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'e'::text, documentdb_api_internal.bsonlastwithexpr(document, '{ "" : "$_id" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)) AS document FROM documentdb_data.documents_4110_411001 collection WHERE (shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) GROUP BY (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
          Node: host=localhost port=58070 dbname=regression
          ->  GroupAggregate
-               Output: documentdb_core.bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'd'::text, documentdb_api_catalog.bsonfirstonsorted(documentdb_api_internal.bson_expression_get(document, '{ "" : "$_id" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'e'::text, documentdb_api_catalog.bsonlastonsorted(documentdb_api_internal.bson_expression_get(document, '{ "" : "$_id" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'd'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$_id" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'e'::text, documentdb_api_internal.bsonlastwithexpr(document, '{ "" : "$_id" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
                Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
                ->  Sort
                      Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), document
@@ -1901,7 +1893,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
  { "_id" : null, "count" : { "$numberInt" : "0" } }
 (1 row)
 
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": {"_id": null, "count": { "$sum": 1 } } }], "cursor": {} }');
                       document                      
 ---------------------------------------------------------------------
@@ -1914,8 +1905,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
  { "_id" : null, "count" : { "$numberInt" : "0" } }
 (1 row)
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 -- Pipeline directly push to shards if all stages refer to same collection and that is not sharded and is present on the same node as coordinator.
 SELECT documentdb_api.insert_one('pipelineDB','agg_pipeline_optimizations','{ "_id": 1, "a": "RANDOM_A", "b": {"c": ["SAMPLE1", "SAMPLE2"], "d": [[1,2], [3, 4]]} }', NULL);
 NOTICE:  creating collection

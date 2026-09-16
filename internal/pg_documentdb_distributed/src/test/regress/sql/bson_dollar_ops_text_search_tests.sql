@@ -133,7 +133,7 @@ SELECT bson_dollar_project(document, '{ "_id": 1, "titular": 1, "rank": { "$meta
 
 -- now do group
 WITH r1 AS (SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana" } }' )
-SELECT BSONMAX(bson_expression_get(document, '{ "": "$score" }')), bson_expression_get(document, '{ "": { "$meta": "textScore" } }') FROM r1 GROUP BY bson_expression_get(document, '{ "": { "$meta": "textScore" } }');
+SELECT documentdb_api_internal.BSONMAXWITHEXPR(document, '{ "": "$score" }', NULL, NULL), bson_expression_get(document, '{ "": { "$meta": "textScore" } }') FROM r1 GROUP BY bson_expression_get(document, '{ "": { "$meta": "textScore" } }');
 -- BSONMAXWITHEXPR parity test for text search group
 WITH r1 AS (SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana" } }' )
 SELECT documentdb_api_internal.BSONMAXWITHEXPR(document, '{ "": "$score" }', NULL, ''), bson_expression_get(document, '{ "": { "$meta": "textScore" } }') FROM r1 GROUP BY bson_expression_get(document, '{ "": { "$meta": "textScore" } }');
@@ -145,7 +145,7 @@ SELECT bson_dollar_add_fields(document, '{ "_id": 1, "headline": 1, "rank": { "$
 SELECT bson_dollar_project_find(document, '{ "_id": 1, "headline": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "score": { "$exists": true } }';
 SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "score": { "$exists": true } }' ORDER BY bson_orderby(document, '{ "score": {"$meta": "textScore"} }') DESC;
 WITH r1 AS (SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "score": { "$exists": true } }' )
-SELECT BSONMAX(bson_expression_get(document, '{ "": "$score" }')) FROM r1 GROUP BY bson_expression_get(document, '{ "": { "$meta": "textScore" } }');
+SELECT documentdb_api_internal.BSONMAXWITHEXPR(document, '{ "": "$score" }', NULL, NULL) FROM r1 GROUP BY bson_expression_get(document, '{ "": { "$meta": "textScore" } }');
 -- BSONMAXWITHEXPR parity test (error case - no text query)
 WITH r1 AS (SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "score": { "$exists": true } }' )
 SELECT documentdb_api_internal.BSONMAXWITHEXPR(document, '{ "": "$score" }', NULL, '') FROM r1 GROUP BY bson_expression_get(document, '{ "": { "$meta": "textScore" } }');

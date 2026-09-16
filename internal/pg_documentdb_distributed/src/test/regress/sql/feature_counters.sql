@@ -71,14 +71,9 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_co
 -- sortByCount
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$sortByCount": { "$eq": [ { "$mod": [ { "$toInt": "$_id" }, 2 ] }, 0  ] } }, { "$sort": { "_id": 1 } }], "cursor": {} }');
 -- $group
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
 
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- $group with $count with non-empty arg (tracks group_count_with_arg feature counter)
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": null, "e": { "$count": 1 } } }], "cursor": {} }');
@@ -86,10 +81,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_co
 -- $group scalar aggregate: constant _id with a simple $field accumulator (tracks group_scalar_agg_index_pushdown feature counter)
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col", "pipeline": [ { "$group": { "_id": null, "m": { "$max": "$a" } } }], "cursor": {} }');
 
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$sum": "$_id" }, "e": { "$count": 1 } } }], "cursor": {} }');
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- $group with first/last
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$first": "$_id" }, "e": { "$last":  "$_id" } } }], "cursor": {} }');
@@ -101,16 +93,11 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_co
 SET documentdb_core.enablecollation TO on;
 SELECT document FROM bson_aggregation_find('db', '{ "find": "feature_counter_col2", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "a": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1} }');
 SELECT document FROM bson_aggregation_find('db', '{ "find": "feature_counter_col2", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 10, "collation": { "locale": "fr_CA", "strength" : 3 } }');
--- $group accumulator that cannot honor the collation. The WithExpr accumulators
--- must be on to get past the stage check, and skipFailOnCollation lets the
--- accumulator run so the counter is reported without the error.
-SET documentdb.enableNewMinMaxAccumulators TO on;
-SET documentdb.enableNewWithExprAccumulators TO on;
+-- $group accumulator that cannot honor the collation. skipFailOnCollation lets
+-- the accumulator run so the counter is reported without the error.
 SET documentdb.skipFailOnCollation TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": null, "a": { "$addToSet": "$a" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
 RESET documentdb.skipFailOnCollation;
-RESET documentdb.enableNewMinMaxAccumulators;
-RESET documentdb.enableNewWithExprAccumulators;
 RESET documentdb_core.enablecollation;
 
 

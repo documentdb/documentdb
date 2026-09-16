@@ -105,10 +105,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- the a_1 index scan.
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "let": { "myVar": "hi" }, "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" }, "v": { "$max": "$$myVar" } } } ] }');
 
--- WithExpr accumulators (enableNewWithExprAccumulators on): $sum/$avg/$max/$min
+-- WithExpr accumulators: $sum/$avg/$max/$min
 -- take a different code path -- verify pushdown still works and is correct.
 BEGIN;
-set local documentdb.enableNewWithExprAccumulators to on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" }, "average": { "$avg": "$a" }, "mx": { "$max": "$b" }, "mn": { "$min": "$b" } } } ] }');
 SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" }, "average": { "$avg": "$a" }, "mx": { "$max": "$b" }, "mn": { "$min": "$b" } } } ] }');
 -- Negative case under WithExpr -- still no pushdown.

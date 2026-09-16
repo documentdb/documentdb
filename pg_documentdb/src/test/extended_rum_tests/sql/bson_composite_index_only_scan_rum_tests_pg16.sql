@@ -8,8 +8,6 @@ SET documentdb.enableDistinctScanForGroupFirst TO off;
 
 SET documentdb.next_collection_id TO 9100;
 SET documentdb.next_collection_index_id TO 9100;
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- Tests for composite on non-primary key
 
@@ -491,15 +489,11 @@ SELECT COUNT(documentdb_api.insert_one('iosdb_rum', 'sum_const_test', FORMAT('{ 
 
 -- Result correctness must hold both with the legacy $sum accumulator and the
 -- new with-expr accumulator path; both runs should produce the same counts.
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate": "sum_const_test", "pipeline": [ { "$match": { "region": 100, "dept": 20, "level": 5 } }, { "$group": { "_id": "$tag", "count": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "cursor": {}, "hint": "region_1_dept_1_level_1_tag_1" }');
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate": "sum_const_test", "pipeline": [ { "$match": { "region": 100, "dept": 20, "level": 5 } }, { "$group": { "_id": "$tag", "count": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "cursor": {}, "hint": "region_1_dept_1_level_1_tag_1" }');
 
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate": "sum_const_test", "pipeline": [ { "$match": { "region": 100, "dept": 20, "level": 5 } }, { "$group": { "_id": "$tag", "count": { "$sum": 1 } } } ], "cursor": {}, "hint": "region_1_dept_1_level_1_tag_1" }') $$, p_ignore_heap_fetches => true);
 
-RESET documentdb.enableNewWithExprAccumulators;
 SELECT documentdb_api.drop_collection('iosdb_rum', 'sum_const_test');
 
 -- Test: Partial composite index with 0 scan keys should not crash

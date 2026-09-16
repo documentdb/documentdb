@@ -3,8 +3,6 @@ SET search_path TO documentdb_api_catalog;
 SET citus.next_shard_id TO 455000;
 SET documentdb.next_collection_id TO 4550;
 SET documentdb.next_collection_index_id TO 4550;
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 
 SELECT 1 from documentdb_api.drop_collection('db','setWindowFields');
 
@@ -161,69 +159,6 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson
 -----------------------------------------------------------
 -- $sum accumulator tests
 -----------------------------------------------------------
-----------------------
--- Document window
-----------------------
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "output": {"totalQuantity": { "$sum": "$quantity"}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "output": {"totalQuantity": { "$sum": "$quantity", "window": {"documents": ["unbounded", "unbounded"]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$sum": "$quantity", "window": {"documents": ["unbounded", "current"]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$sum": "$quantity", "window": {"documents": ["current", "current"]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$sum": "$quantity", "window": {"documents": ["current", "unbounded"]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$sum": "$quantity", "window": {"documents": [0, 0]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$sum": "$quantity", "window": {"documents": [-1, 1]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$sum": "$quantity", "window": {"documents": [-10, 10]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$sum": "$quantity", "window": {"documents": ["current", 1]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$sum": "$quantity", "window": {"documents": ["unbounded", 1]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$sum": "$quantity", "window": {"documents": ["unbounded", -1]}}}}}]}');
-
-----------------------------
--- Document window with sort
-----------------------------
-
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"_id": -1}, "output": {"totalQuantity": { "$sum": "$quantity"}}} }]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"quantity": 1}, "output": {"totalQuantity": { "$sum": "$quantity", "window": {"documents": ["unbounded", "current"]}}}} }]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"date": -1}, "output": {"totalQuantity": { "$sum": "$quantity", "window": {"documents": [-1, 1]}}}} }]}');
-
-----------------------
--- Range window
-----------------------
-
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "quantity": 1 }, "output": {"totalInGroup": { "$sum": 1, "window": {"range": [-3, 3]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "quantity": 1 }, "output": {"totalInGroup": { "$sum": 1, "window": {"range": ["unbounded", "current"]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "quantity": 1 }, "output": {"totalInGroup": { "$sum": 1, "window": {"range": ["current", "unbounded"]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$sum": 1, "window": {"range": [-5, 5], "unit": "second"}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$sum": 1, "window": {"range": [-5, 5], "unit": "minute"}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$sum": 1, "window": {"range": [-5, 5], "unit": "day"}}}}}]}');
--- "CURRENT ROW" in a range frame does not always refer to the current physical row; it refers to the first peer with the same sort key value.
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$sum": 1, "window": {"range": ["current", "current"], "unit": "day"}}}}}]}');
-
-
------------------------------------------------------------
--- $sum accumulator tests with new accumulator (enableNewWithExprAccumulators = on)
--- Tests with enableNewWithExprAccumulators = on
------------------------------------------------------------
-SET documentdb.enableNewWithExprAccumulators TO on;
 
 ----------------------
 -- Document window
@@ -280,8 +215,6 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
     '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$sum": 1, "window": {"range": ["current", "current"], "unit": "day"}}}}}]}');
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 
 
 -----------------------------------------------------------
@@ -389,43 +322,6 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
 ----------------------------
 -- Document window with sort
 ----------------------------
-
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"_id": -1}, "output": {"totalQuantity": { "$avg": "$quantity"}}} }]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"quantity": 1}, "output": {"totalQuantity": { "$avg": "$quantity", "window": {"documents": ["unbounded", "current"]}}}} }]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"date": -1}, "output": {"totalQuantity": { "$avg": "$quantity", "window": {"documents": [-1, 1]}}}} }]}');
-
-----------------------
--- Range window
-----------------------
-
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "quantity": 1 }, "output": {"totalInGroup": { "$avg": "$quantity", "window": {"range": [-3, 3]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$avg": "$quantity", "window": {"range": [-5, 5], "unit": "minute"}}}}}]}');
-
-
------------------------------------------------------------
--- $avg accumulator tests with new accumulator (enableNewWithExprAccumulators = on)
--- Tests with enableNewWithExprAccumulators = on
------------------------------------------------------------
-SET documentdb.enableNewWithExprAccumulators TO on;
-
-----------------------
--- Document window
-----------------------
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$avg": "$quantity", "window": {"documents": [-1, 1]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$avg": "$quantity", "window": {"documents": ["current", "current"]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$avg": "$quantity", "window": {"documents": ["unbounded", "unbounded"]}}}}}]}');
-
-----------------------------
--- Document window with sort
-----------------------------
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
     '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"_id": -1}, "output": {"totalQuantity": { "$avg": "$quantity"}}} }]}');
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
@@ -441,8 +337,6 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
     '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$avg": "$quantity", "window": {"range": [-5, 5], "unit": "minute"}}}}}]}');
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 
 
 -----------------------------------------------------------
@@ -1645,69 +1539,6 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
 -----------------------------------------------------------
 -- $min accumulator tests
 -----------------------------------------------------------
-----------------------
--- Document window
-----------------------
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "output": {"totalQuantity": { "$min": "$quantity"}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "output": {"totalQuantity": { "$min": "$quantity", "window": {"documents": ["unbounded", "unbounded"]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$min": "$quantity", "window": {"documents": ["unbounded", "current"]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$min": "$quantity", "window": {"documents": ["current", "current"]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$min": "$quantity", "window": {"documents": ["current", "unbounded"]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$min": "$quantity", "window": {"documents": [0, 0]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$min": "$quantity", "window": {"documents": [-1, 1]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$min": "$quantity", "window": {"documents": [-10, 10]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$min": "$quantity", "window": {"documents": ["current", 1]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$min": "$quantity", "window": {"documents": ["unbounded", 1]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$min": "$quantity", "window": {"documents": ["unbounded", -1]}}}}}]}');
-
-----------------------------
--- Document window with sort
-----------------------------
-
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"_id": -1}, "output": {"totalQuantity": { "$min": "$quantity"}}} }]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"quantity": 1}, "output": {"totalQuantity": { "$min": "$quantity", "window": {"documents": ["unbounded", "current"]}}}} }]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"date": -1}, "output": {"totalQuantity": { "$min": "$quantity", "window": {"documents": [-1, 1]}}}} }]}');
-
-----------------------
--- Range window
-----------------------
-
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "quantity": 1 }, "output": {"totalInGroup": { "$min": "$quantity", "window": {"range": [-3, 3]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "quantity": 1 }, "output": {"totalInGroup": { "$min": "$quantity", "window": {"range": ["unbounded", "current"]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "quantity": 1 }, "output": {"totalInGroup": { "$min": "$quantity", "window": {"range": ["current", "unbounded"]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$min": "$quantity", "window": {"range": [-5, 5], "unit": "second"}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$min": "$quantity", "window": {"range": [-5, 5], "unit": "minute"}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$min": "$quantity", "window": {"range": [-5, 5], "unit": "day"}}}}}]}');
--- "CURRENT ROW" in a range frame does not always refer to the current physical row; it refers to the first peer with the same sort key value.
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$max": "$quantity", "window": {"range": ["current", "current"], "unit": "day"}}}}}]}');
-
-
------------------------------------------------------------
--- $min accumulator tests with new accumulator (enableNewWithExprAccumulators = on)
--- Tests with enableNewWithExprAccumulators = on
------------------------------------------------------------
-SET documentdb.enableNewWithExprAccumulators TO on;
 
 ----------------------
 -- Document window
@@ -1764,75 +1595,11 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
     '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$min": "$quantity", "window": {"range": ["current", "current"], "unit": "day"}}}}}]}');
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 
 
 -----------------------------------------------------------
 -- $max accumulator tests
 -----------------------------------------------------------
-----------------------
--- Document window
-----------------------
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "output": {"totalQuantity": { "$max": "$quantity"}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "output": {"totalQuantity": { "$max": "$quantity", "window": {"documents": ["unbounded", "unbounded"]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$max": "$quantity", "window": {"documents": ["unbounded", "current"]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$max": "$quantity", "window": {"documents": ["current", "current"]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$max": "$quantity", "window": {"documents": ["current", "unbounded"]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$max": "$quantity", "window": {"documents": [0, 0]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$max": "$quantity", "window": {"documents": [-1, 1]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$max": "$quantity", "window": {"documents": [-10, 10]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$max": "$quantity", "window": {"documents": ["current", 1]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$max": "$quantity", "window": {"documents": ["unbounded", 1]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"totalQuantity": { "$max": "$quantity", "window": {"documents": ["unbounded", -1]}}}}}]}');
-
-----------------------------
--- Document window with sort
-----------------------------
-
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"_id": -1}, "output": {"totalQuantity": { "$max": "$quantity"}}} }]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"quantity": 1}, "output": {"totalQuantity": { "$max": "$quantity", "window": {"documents": ["unbounded", "current"]}}}} }]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"date": -1}, "output": {"totalQuantity": { "$max": "$quantity", "window": {"documents": [-1, 1]}}}} }]}');
-
-----------------------
--- Range window
-----------------------
-
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "quantity": 1 }, "output": {"totalInGroup": { "$max": "$quantity", "window": {"range": [-3, 3]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "quantity": 1 }, "output": {"totalInGroup": { "$max": "$quantity", "window": {"range": ["unbounded", "current"]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "quantity": 1 }, "output": {"totalInGroup": { "$max": "$quantity", "window": {"range": ["current", "unbounded"]}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$max": "$quantity", "window": {"range": [-5, 5], "unit": "second"}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$max": "$quantity", "window": {"range": [-5, 5], "unit": "minute"}}}}}]}');
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$max": "$quantity", "window": {"range": [-5, 5], "unit": "day"}}}}}]}');
--- "CURRENT ROW" in a range frame does not always refer to the current physical row; it refers to the first peer with the same sort key value.
-SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
-    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$max": "$quantity", "window": {"range": ["current", "current"], "unit": "day"}}}}}]}');
-
------------------------------------------------------------
--- $max accumulator tests with new accumulator (enableNewWithExprAccumulators = on)
--- Tests with enableNewWithExprAccumulators = on
------------------------------------------------------------
-SET documentdb.enableNewWithExprAccumulators TO on;
 
 ----------------------
 -- Document window
@@ -1889,8 +1656,6 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
     '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$max": "$quantity", "window": {"range": ["current", "current"], "unit": "day"}}}}}]}');
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 
 
 -- Tests for $last

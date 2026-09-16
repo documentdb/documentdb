@@ -8,6 +8,7 @@
 #include "udfs/roles/revoke_roles_from_role--1.1-0.sql"
 #include "udfs/roles/revoke_privileges_from_role--1.1-0.sql"
 #include "udfs/roles/revoke_roles_from_user--1.1-0.sql"
+#include "udfs/aggregation/retire_legacy_accumulators--1.1-0.sql"
 
 -- Grant read to all data for the cluster wide read role.
 GRANT pg_read_all_data TO documentdb_readonly_role;

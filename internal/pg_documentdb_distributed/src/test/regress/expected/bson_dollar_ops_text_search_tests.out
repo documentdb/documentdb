@@ -525,8 +525,8 @@ SELECT bson_dollar_project(document, '{ "_id": 1, "titular": 1, "rank": { "$meta
 
 -- now do group
 WITH r1 AS (SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana" } }' )
-SELECT BSONMAX(bson_expression_get(document, '{ "": "$score" }')), bson_expression_get(document, '{ "": { "$meta": "textScore" } }') FROM r1 GROUP BY bson_expression_get(document, '{ "": { "$meta": "textScore" } }');
-              bsonmax              |         bson_expression_get          
+SELECT documentdb_api_internal.BSONMAXWITHEXPR(document, '{ "": "$score" }', NULL, NULL), bson_expression_get(document, '{ "": { "$meta": "textScore" } }') FROM r1 GROUP BY bson_expression_get(document, '{ "": { "$meta": "textScore" } }');
+          bsonmaxwithexpr          |         bson_expression_get          
 ---------------------------------------------------------------------
  { "" : { "$numberInt" : "200" } } | { "" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -553,7 +553,7 @@ SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_searc
 ERROR:  The query needs text score metadata, but this required information is currently unavailable.
 CONTEXT:  while executing command on localhost:58070
 WITH r1 AS (SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "score": { "$exists": true } }' )
-SELECT BSONMAX(bson_expression_get(document, '{ "": "$score" }')) FROM r1 GROUP BY bson_expression_get(document, '{ "": { "$meta": "textScore" } }');
+SELECT documentdb_api_internal.BSONMAXWITHEXPR(document, '{ "": "$score" }', NULL, NULL) FROM r1 GROUP BY bson_expression_get(document, '{ "": { "$meta": "textScore" } }');
 ERROR:  The query needs text score metadata, but this required information is currently unavailable.
 CONTEXT:  while executing command on localhost:58070
 -- BSONMAXWITHEXPR parity test (error case - no text query)

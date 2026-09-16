@@ -43,16 +43,6 @@ SELECT documentdb_api.insert_one('db','maxmin_string_test','{ "_id": 6, "categor
 (1 row)
 
 -- $max on string field without collation (BSON type ordering)
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_string_test", "pipeline": [ { "$group": { "_id": "$category", "maxName": { "$max": "$name" } } }, { "$sort": { "_id": 1 } } ] }');
-               document               
----------------------------------------------------------------------
- { "_id" : "A", "maxName" : "apple" }
- { "_id" : "B", "maxName" : "grape" }
-(2 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_string_test", "pipeline": [ { "$group": { "_id": "$category", "maxName": { "$max": "$name" } } }, { "$sort": { "_id": 1 } } ] }');
                document               
 ---------------------------------------------------------------------
@@ -61,16 +51,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_str
 (2 rows)
 
 -- $min on string field without collation
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_string_test", "pipeline": [ { "$group": { "_id": "$category", "minName": { "$min": "$name" } } }, { "$sort": { "_id": 1 } } ] }');
-               document                
----------------------------------------------------------------------
- { "_id" : "A", "minName" : "BANANA" }
- { "_id" : "B", "minName" : "FIG" }
-(2 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_string_test", "pipeline": [ { "$group": { "_id": "$category", "minName": { "$min": "$name" } } }, { "$sort": { "_id": 1 } } ] }');
                document                
 ---------------------------------------------------------------------
@@ -79,16 +59,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_str
 (2 rows)
 
 -- $max and $min together without collation
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_string_test", "pipeline": [ { "$group": { "_id": "$category", "maxName": { "$max": "$name" }, "minName": { "$min": "$name" } } }, { "$sort": { "_id": 1 } } ] }');
-                          document                          
----------------------------------------------------------------------
- { "_id" : "A", "maxName" : "apple", "minName" : "BANANA" }
- { "_id" : "B", "maxName" : "grape", "minName" : "FIG" }
-(2 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_string_test", "pipeline": [ { "$group": { "_id": "$category", "maxName": { "$max": "$name" }, "minName": { "$min": "$name" } } }, { "$sort": { "_id": 1 } } ] }');
                           document                          
 ---------------------------------------------------------------------
@@ -216,18 +186,6 @@ SELECT documentdb_api.insert_one('db','maxmin_types_test','{ "_id": 19, "group":
 (1 row)
 
 -- $max across mixed types (BSON type ordering)
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_types_test", "pipeline": [ { "$group": { "_id": "$group", "maxVal": { "$max": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
-                                     document                                      
----------------------------------------------------------------------
- { "_id" : "dates", "maxVal" : { "$date" : { "$numberLong" : "1767225599000" } } }
- { "_id" : "ints", "maxVal" : { "$numberInt" : "50" } }
- { "_id" : "mixed", "maxVal" : { "$date" : { "$numberLong" : "1704067200000" } } }
- { "_id" : "strings", "maxVal" : "zzz" }
-(4 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_types_test", "pipeline": [ { "$group": { "_id": "$group", "maxVal": { "$max": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
                                      document                                      
 ---------------------------------------------------------------------
@@ -238,18 +196,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_typ
 (4 rows)
 
 -- $min across mixed types
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_types_test", "pipeline": [ { "$group": { "_id": "$group", "minVal": { "$min": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
-                                     document                                      
----------------------------------------------------------------------
- { "_id" : "dates", "minVal" : { "$date" : { "$numberLong" : "1577836800000" } } }
- { "_id" : "ints", "minVal" : { "$numberInt" : "10" } }
- { "_id" : "mixed", "minVal" : { "$numberDouble" : "3.1400000000000001243" } }
- { "_id" : "strings", "minVal" : "aaa" }
-(4 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_types_test", "pipeline": [ { "$group": { "_id": "$group", "minVal": { "$min": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
                                      document                                      
 ---------------------------------------------------------------------
@@ -260,18 +206,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_typ
 (4 rows)
 
 -- Both $max and $min
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_types_test", "pipeline": [ { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
-                                                                    document                                                                     
----------------------------------------------------------------------
- { "_id" : "dates", "maxVal" : { "$date" : { "$numberLong" : "1767225599000" } }, "minVal" : { "$date" : { "$numberLong" : "1577836800000" } } }
- { "_id" : "ints", "maxVal" : { "$numberInt" : "50" }, "minVal" : { "$numberInt" : "10" } }
- { "_id" : "mixed", "maxVal" : { "$date" : { "$numberLong" : "1704067200000" } }, "minVal" : { "$numberDouble" : "3.1400000000000001243" } }
- { "_id" : "strings", "maxVal" : "zzz", "minVal" : "aaa" }
-(4 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_types_test", "pipeline": [ { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
                                                                     document                                                                     
 ---------------------------------------------------------------------
@@ -304,28 +238,12 @@ SELECT documentdb_api.insert_one('db','maxmin_empty_test','{ "_id": 3, "category
 (1 row)
 
 -- Match filters everything - should return empty result
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_empty_test", "pipeline": [ { "$match": { "_id": { "$eq": "nonexistent" } } }, { "$group": { "_id": null, "maxVal": { "$max": "$value" }, "minVal": { "$min": "$value" } } } ] }');
- document 
----------------------------------------------------------------------
-(0 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_empty_test", "pipeline": [ { "$match": { "_id": { "$eq": "nonexistent" } } }, { "$group": { "_id": null, "maxVal": { "$max": "$value" }, "minVal": { "$min": "$value" } } } ] }');
  document 
 ---------------------------------------------------------------------
 (0 rows)
 
 -- Match filters everything with _id grouping
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_empty_test", "pipeline": [ { "$match": { "category": "Z" } }, { "$group": { "_id": "$category", "maxVal": { "$max": "$value" } } } ] }');
- document 
----------------------------------------------------------------------
-(0 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_empty_test", "pipeline": [ { "$match": { "category": "Z" } }, { "$group": { "_id": "$category", "maxVal": { "$max": "$value" } } } ] }');
  document 
 ---------------------------------------------------------------------
@@ -390,17 +308,6 @@ SELECT documentdb_api.insert_one('db','maxmin_null_test','{ "_id": 9, "group": "
 (1 row)
 
 -- All null/undefined/missing - should return null
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_null_test", "pipeline": [ { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
-                                           document                                            
----------------------------------------------------------------------
- { "_id" : "allmissing", "maxVal" : null, "minVal" : null }
- { "_id" : "allnull", "maxVal" : { "$undefined" : true }, "minVal" : { "$undefined" : true } }
- { "_id" : "mixed", "maxVal" : { "$numberInt" : "10" }, "minVal" : { "$numberInt" : "5" } }
-(3 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_null_test", "pipeline": [ { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
                                            document                                            
 ---------------------------------------------------------------------
@@ -492,15 +399,6 @@ SELECT documentdb_api.insert_one('db','maxmin_extreme_test','{ "_id": 13, "group
 (1 row)
 
 -- Int64 extremes
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_extreme_test", "pipeline": [ { "$match": { "group": "int64" } }, { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } } ] }');
-                                                             document                                                             
----------------------------------------------------------------------
- { "_id" : "int64", "maxVal" : { "$numberLong" : "9223372036854775807" }, "minVal" : { "$numberLong" : "-9223372036854775808" } }
-(1 row)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_extreme_test", "pipeline": [ { "$match": { "group": "int64" } }, { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } } ] }');
                                                              document                                                             
 ---------------------------------------------------------------------
@@ -508,15 +406,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_ext
 (1 row)
 
 -- Decimal128 extremes
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_extreme_test", "pipeline": [ { "$match": { "group": "decimal" } }, { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } } ] }');
-                                                                                       document                                                                                       
----------------------------------------------------------------------
- { "_id" : "decimal", "maxVal" : { "$numberDecimal" : "9.999999999999999999999999999999999E+6144" }, "minVal" : { "$numberDecimal" : "-9.999999999999999999999999999999999E+6144" } }
-(1 row)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_extreme_test", "pipeline": [ { "$match": { "group": "decimal" } }, { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } } ] }');
                                                                                        document                                                                                       
 ---------------------------------------------------------------------
@@ -524,15 +413,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_ext
 (1 row)
 
 -- Special values (Infinity, -Infinity, NaN)
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_extreme_test", "pipeline": [ { "$match": { "group": "special" } }, { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } } ] }');
-                                                   document                                                   
----------------------------------------------------------------------
- { "_id" : "special", "maxVal" : { "$numberDecimal" : "Infinity" }, "minVal" : { "$numberDecimal" : "NaN" } }
-(1 row)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_extreme_test", "pipeline": [ { "$match": { "group": "special" } }, { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } } ] }');
                                                    document                                                   
 ---------------------------------------------------------------------
@@ -540,15 +420,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_ext
 (1 row)
 
 -- Mixed numeric types
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_extreme_test", "pipeline": [ { "$match": { "group": "mixednums" } }, { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } } ] }');
-                                                                           document                                                                           
----------------------------------------------------------------------
- { "_id" : "mixednums", "maxVal" : { "$numberDecimal" : "1.000000000000000000000000000000000E+6144" }, "minVal" : { "$numberLong" : "9223372036854775807" } }
-(1 row)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_extreme_test", "pipeline": [ { "$match": { "group": "mixednums" } }, { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } } ] }');
                                                                            document                                                                           
 ---------------------------------------------------------------------
@@ -556,18 +427,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_ext
 (1 row)
 
 -- All groups
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_extreme_test", "pipeline": [ { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
-                                                                                       document                                                                                       
----------------------------------------------------------------------
- { "_id" : "decimal", "maxVal" : { "$numberDecimal" : "9.999999999999999999999999999999999E+6144" }, "minVal" : { "$numberDecimal" : "-9.999999999999999999999999999999999E+6144" } }
- { "_id" : "int64", "maxVal" : { "$numberLong" : "9223372036854775807" }, "minVal" : { "$numberLong" : "-9223372036854775808" } }
- { "_id" : "mixednums", "maxVal" : { "$numberDecimal" : "1.000000000000000000000000000000000E+6144" }, "minVal" : { "$numberLong" : "9223372036854775807" } }
- { "_id" : "special", "maxVal" : { "$numberDecimal" : "Infinity" }, "minVal" : { "$numberDecimal" : "NaN" } }
-(4 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_extreme_test", "pipeline": [ { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
                                                                                        document                                                                                       
 ---------------------------------------------------------------------
@@ -612,16 +471,6 @@ SELECT documentdb_api.insert_one('db','maxmin_variable_test','{ "_id": 5, "group
 (1 row)
 
 -- Using $$variable with $add
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_variable_test", "pipeline": [ { "$group": { "_id": "$group", "maxWithOffset": { "$max": { "$add": ["$val", "$$offset"] } } } }, { "$sort": { "_id": 1 } } ], "let": { "offset": 100 } }');
-                          document                           
----------------------------------------------------------------------
- { "_id" : "A", "maxWithOffset" : { "$numberInt" : "120" } }
- { "_id" : "B", "maxWithOffset" : { "$numberInt" : "125" } }
-(2 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_variable_test", "pipeline": [ { "$group": { "_id": "$group", "maxWithOffset": { "$max": { "$add": ["$val", "$$offset"] } } } }, { "$sort": { "_id": 1 } } ], "let": { "offset": 100 } }');
                           document                           
 ---------------------------------------------------------------------
@@ -630,16 +479,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_var
 (2 rows)
 
 -- Using $$variable with $min
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_variable_test", "pipeline": [ { "$group": { "_id": "$group", "minWithOffset": { "$min": { "$add": ["$val", "$$offset"] } } } }, { "$sort": { "_id": 1 } } ], "let": { "offset": 50 } }');
-                          document                          
----------------------------------------------------------------------
- { "_id" : "A", "minWithOffset" : { "$numberInt" : "60" } }
- { "_id" : "B", "minWithOffset" : { "$numberInt" : "55" } }
-(2 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_variable_test", "pipeline": [ { "$group": { "_id": "$group", "minWithOffset": { "$min": { "$add": ["$val", "$$offset"] } } } }, { "$sort": { "_id": 1 } } ], "let": { "offset": 50 } }');
                           document                          
 ---------------------------------------------------------------------
@@ -648,16 +487,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_var
 (2 rows)
 
 -- Multiple variables
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_variable_test", "pipeline": [ { "$group": { "_id": "$group", "maxCalc": { "$max": { "$add": [{ "$multiply": ["$val", "$$multiplier"] }, "$$offset"] } } } }, { "$sort": { "_id": 1 } } ], "let": { "offset": 10, "multiplier": 2 } }');
-                       document                       
----------------------------------------------------------------------
- { "_id" : "A", "maxCalc" : { "$numberInt" : "50" } }
- { "_id" : "B", "maxCalc" : { "$numberInt" : "60" } }
-(2 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_variable_test", "pipeline": [ { "$group": { "_id": "$group", "maxCalc": { "$max": { "$add": [{ "$multiply": ["$val", "$$multiplier"] }, "$$offset"] } } } }, { "$sort": { "_id": 1 } } ], "let": { "offset": 10, "multiplier": 2 } }');
                        document                       
 ---------------------------------------------------------------------
@@ -666,16 +495,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_var
 (2 rows)
 
 -- Using $$CURRENT
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_variable_test", "pipeline": [ { "$group": { "_id": "$group", "maxVal": { "$max": "$$CURRENT.val" } } }, { "$sort": { "_id": 1 } } ] }');
-                      document                       
----------------------------------------------------------------------
- { "_id" : "A", "maxVal" : { "$numberInt" : "20" } }
- { "_id" : "B", "maxVal" : { "$numberInt" : "25" } }
-(2 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_variable_test", "pipeline": [ { "$group": { "_id": "$group", "maxVal": { "$max": "$$CURRENT.val" } } }, { "$sort": { "_id": 1 } } ] }');
                       document                       
 ---------------------------------------------------------------------
@@ -684,16 +503,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_var
 (2 rows)
 
 -- Using $$ROOT
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_variable_test", "pipeline": [ { "$group": { "_id": "$group", "maxVal": { "$max": "$$ROOT.val" } } }, { "$sort": { "_id": 1 } } ] }');
-                      document                       
----------------------------------------------------------------------
- { "_id" : "A", "maxVal" : { "$numberInt" : "20" } }
- { "_id" : "B", "maxVal" : { "$numberInt" : "25" } }
-(2 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_variable_test", "pipeline": [ { "$group": { "_id": "$group", "maxVal": { "$max": "$$ROOT.val" } } }, { "$sort": { "_id": 1 } } ] }');
                       document                       
 ---------------------------------------------------------------------
@@ -736,8 +545,6 @@ SELECT documentdb_api.insert_one('db','maxmin_expr_test','{ "_id": 5, "group": "
 (1 row)
 
 -- $add expression
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_expr_test", "pipeline": [ { "$group": { "_id": "$group", "maxSum": { "$max": { "$add": ["$a", "$b"] } } } }, { "$sort": { "_id": 1 } } ] }');
                        document                       
 ---------------------------------------------------------------------
@@ -745,24 +552,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_exp
  { "_id" : "B", "maxSum" : { "$numberInt" : "101" } }
 (2 rows)
 
-SET documentdb.enableNewWithExprAccumulators TO on;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_expr_test", "pipeline": [ { "$group": { "_id": "$group", "maxSum": { "$max": { "$add": ["$a", "$b"] } } } }, { "$sort": { "_id": 1 } } ] }');
-                       document                       
----------------------------------------------------------------------
- { "_id" : "A", "maxSum" : { "$numberInt" : "23" } }
- { "_id" : "B", "maxSum" : { "$numberInt" : "101" } }
-(2 rows)
-
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_expr_test", "pipeline": [ { "$group": { "_id": "$group", "minSum": { "$min": { "$add": ["$a", "$b"] } } } }, { "$sort": { "_id": 1 } } ] }');
-                       document                       
----------------------------------------------------------------------
- { "_id" : "A", "minSum" : { "$numberInt" : "15" } }
- { "_id" : "B", "minSum" : { "$numberInt" : "100" } }
-(2 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_expr_test", "pipeline": [ { "$group": { "_id": "$group", "minSum": { "$min": { "$add": ["$a", "$b"] } } } }, { "$sort": { "_id": 1 } } ] }');
                        document                       
 ---------------------------------------------------------------------
@@ -771,16 +560,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_exp
 (2 rows)
 
 -- $subtract expression
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_expr_test", "pipeline": [ { "$group": { "_id": "$group", "maxDiff": { "$max": { "$subtract": ["$a", "$b"] } } } }, { "$sort": { "_id": 1 } } ] }');
-                       document                       
----------------------------------------------------------------------
- { "_id" : "A", "maxDiff" : { "$numberInt" : "5" } }
- { "_id" : "B", "maxDiff" : { "$numberInt" : "99" } }
-(2 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_expr_test", "pipeline": [ { "$group": { "_id": "$group", "maxDiff": { "$max": { "$subtract": ["$a", "$b"] } } } }, { "$sort": { "_id": 1 } } ] }');
                        document                       
 ---------------------------------------------------------------------
@@ -789,16 +568,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_exp
 (2 rows)
 
 -- $multiply expression
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_expr_test", "pipeline": [ { "$group": { "_id": "$group", "maxProduct": { "$max": { "$multiply": ["$a", "$b"] } } } }, { "$sort": { "_id": 1 } } ] }');
-                         document                          
----------------------------------------------------------------------
- { "_id" : "A", "maxProduct" : { "$numberInt" : "64" } }
- { "_id" : "B", "maxProduct" : { "$numberInt" : "2500" } }
-(2 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_expr_test", "pipeline": [ { "$group": { "_id": "$group", "maxProduct": { "$max": { "$multiply": ["$a", "$b"] } } } }, { "$sort": { "_id": 1 } } ] }');
                          document                          
 ---------------------------------------------------------------------
@@ -807,16 +576,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_exp
 (2 rows)
 
 -- Nested expression: multiply then add
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_expr_test", "pipeline": [ { "$group": { "_id": "$group", "maxCalc": { "$max": { "$add": [{ "$multiply": ["$a", 2] }, "$b"] } } } }, { "$sort": { "_id": 1 } } ] }');
-                       document                        
----------------------------------------------------------------------
- { "_id" : "A", "maxCalc" : { "$numberInt" : "26" } }
- { "_id" : "B", "maxCalc" : { "$numberInt" : "201" } }
-(2 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_expr_test", "pipeline": [ { "$group": { "_id": "$group", "maxCalc": { "$max": { "$add": [{ "$multiply": ["$a", 2] }, "$b"] } } } }, { "$sort": { "_id": 1 } } ] }');
                        document                        
 ---------------------------------------------------------------------
@@ -825,16 +584,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_exp
 (2 rows)
 
 -- Complex nested expression
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_expr_test", "pipeline": [ { "$group": { "_id": "$group", "maxComplex": { "$max": { "$multiply": [{ "$add": ["$a", "$b"] }, 2] } } } }, { "$sort": { "_id": 1 } } ] }');
-                         document                         
----------------------------------------------------------------------
- { "_id" : "A", "maxComplex" : { "$numberInt" : "46" } }
- { "_id" : "B", "maxComplex" : { "$numberInt" : "202" } }
-(2 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_expr_test", "pipeline": [ { "$group": { "_id": "$group", "maxComplex": { "$max": { "$multiply": [{ "$add": ["$a", "$b"] }, 2] } } } }, { "$sort": { "_id": 1 } } ] }');
                          document                         
 ---------------------------------------------------------------------
@@ -895,17 +644,6 @@ SELECT documentdb_api.insert_one('db','maxmin_cond_test','{ "_id": 8, "group": "
 (1 row)
 
 -- $cond: if active then val else null
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_cond_test", "pipeline": [ { "$group": { "_id": "$group", "maxActive": { "$max": { "$cond": { "if": "$active", "then": "$val", "else": null } } } } }, { "$sort": { "_id": 1 } } ] }');
-                        document                         
----------------------------------------------------------------------
- { "_id" : "A", "maxActive" : { "$numberInt" : "30" } }
- { "_id" : "B", "maxActive" : { "$numberInt" : "100" } }
- { "_id" : "C", "maxActive" : null }
-(3 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_cond_test", "pipeline": [ { "$group": { "_id": "$group", "maxActive": { "$max": { "$cond": { "if": "$active", "then": "$val", "else": null } } } } }, { "$sort": { "_id": 1 } } ] }');
                         document                         
 ---------------------------------------------------------------------
@@ -915,17 +653,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_con
 (3 rows)
 
 -- $cond: if active then val else 0
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_cond_test", "pipeline": [ { "$group": { "_id": "$group", "minActive": { "$min": { "$cond": { "if": "$active", "then": "$val", "else": 0 } } } } }, { "$sort": { "_id": 1 } } ] }');
-                       document                        
----------------------------------------------------------------------
- { "_id" : "A", "minActive" : { "$numberInt" : "0" } }
- { "_id" : "B", "minActive" : { "$numberInt" : "0" } }
- { "_id" : "C", "minActive" : { "$numberInt" : "0" } }
-(3 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_cond_test", "pipeline": [ { "$group": { "_id": "$group", "minActive": { "$min": { "$cond": { "if": "$active", "then": "$val", "else": 0 } } } } }, { "$sort": { "_id": 1 } } ] }');
                        document                        
 ---------------------------------------------------------------------
@@ -935,17 +662,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_con
 (3 rows)
 
 -- $cond with array syntax
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_cond_test", "pipeline": [ { "$group": { "_id": "$group", "tier": { "$max": { "$cond": [{ "$gt": ["$val", 50] }, { "$multiply": ["$val", 2] }, "$val"] } } } }, { "$sort": { "_id": 1 } } ] }');
-                      document                      
----------------------------------------------------------------------
- { "_id" : "A", "tier" : { "$numberInt" : "50" } }
- { "_id" : "B", "tier" : { "$numberInt" : "400" } }
- { "_id" : "C", "tier" : { "$numberInt" : "50" } }
-(3 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_cond_test", "pipeline": [ { "$group": { "_id": "$group", "tier": { "$max": { "$cond": [{ "$gt": ["$val", 50] }, { "$multiply": ["$val", 2] }, "$val"] } } } }, { "$sort": { "_id": 1 } } ] }');
                       document                      
 ---------------------------------------------------------------------
@@ -955,17 +671,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_con
 (3 rows)
 
 -- $ifNull expression
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_cond_test", "pipeline": [ { "$group": { "_id": "$group", "maxWithDefault": { "$max": { "$ifNull": ["$optionalField", 0] } } } }, { "$sort": { "_id": 1 } } ] }');
-                           document                           
----------------------------------------------------------------------
- { "_id" : "A", "maxWithDefault" : { "$numberInt" : "0" } }
- { "_id" : "B", "maxWithDefault" : { "$numberInt" : "0" } }
- { "_id" : "C", "maxWithDefault" : { "$numberInt" : "999" } }
-(3 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_cond_test", "pipeline": [ { "$group": { "_id": "$group", "maxWithDefault": { "$max": { "$ifNull": ["$optionalField", 0] } } } }, { "$sort": { "_id": 1 } } ] }');
                            document                           
 ---------------------------------------------------------------------
@@ -975,17 +680,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_con
 (3 rows)
 
 -- Nested $cond
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_cond_test", "pipeline": [ { "$group": { "_id": "$group", "categorized": { "$max": { "$cond": { "if": { "$gt": ["$val", 100] }, "then": 3, "else": { "$cond": { "if": { "$gt": ["$val", 50] }, "then": 2, "else": 1 } } } } } } }, { "$sort": { "_id": 1 } } ] }');
-                        document                         
----------------------------------------------------------------------
- { "_id" : "A", "categorized" : { "$numberInt" : "1" } }
- { "_id" : "B", "categorized" : { "$numberInt" : "3" } }
- { "_id" : "C", "categorized" : { "$numberInt" : "1" } }
-(3 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_cond_test", "pipeline": [ { "$group": { "_id": "$group", "categorized": { "$max": { "$cond": { "if": { "$gt": ["$val", 100] }, "then": 3, "else": { "$cond": { "if": { "$gt": ["$val", 50] }, "then": 2, "else": 1 } } } } } } }, { "$sort": { "_id": 1 } } ] }');
                         document                         
 ---------------------------------------------------------------------
@@ -1059,8 +753,6 @@ SELECT documentdb_api.insert_one('db','maxmin_shard_types_test','{ "_id": 10, "g
 (1 row)
 
 -- Pre-sharding results
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_shard_types_test", "pipeline": [ { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
                                              document                                              
 ---------------------------------------------------------------------
@@ -1068,38 +760,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_sha
  { "_id" : "nums", "maxVal" : { "$numberDecimal" : "75.25" }, "minVal" : { "$numberInt" : "10" } }
 (2 rows)
 
-SET documentdb.enableNewWithExprAccumulators TO on;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_shard_types_test", "pipeline": [ { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
-                                             document                                              
----------------------------------------------------------------------
- { "_id" : "mixed", "maxVal" : true, "minVal" : { "$numberDouble" : "42.0" } }
- { "_id" : "nums", "maxVal" : { "$numberDecimal" : "75.25" }, "minVal" : { "$numberInt" : "10" } }
-(2 rows)
-
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_shard_types_test", "pipeline": [ { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
-                                                                                                                      QUERY PLAN                                                                                                                      
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Task Count: 1
-   Tasks Shown: All
-   ->  Task
-         Node: host=localhost port=58070 dbname=regression
-         ->  Sort
-               Sort Key: (documentdb_api_catalog.bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
-               ->  Subquery Scan on agg_stage_1
-                     ->  GroupAggregate
-                           Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-                           ->  Sort
-                                 Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-                                 ->  Bitmap Heap Scan on documents_11178_1117128 collection
-                                       Recheck Cond: (shard_key_value = '11178'::bigint)
-                                       ->  Bitmap Index Scan on _id_
-                                             Index Cond: (shard_key_value = '11178'::bigint)
-(16 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_shard_types_test", "pipeline": [ { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
                                                                                                                       QUERY PLAN                                                                                                                      
 ---------------------------------------------------------------------
@@ -1129,16 +789,6 @@ SELECT documentdb_api.shard_collection('db', 'maxmin_shard_types_test', '{ "_id"
 (1 row)
 
 -- Post-sharding results (should be same as pre-sharding)
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_shard_types_test", "pipeline": [ { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
-                                             document                                              
----------------------------------------------------------------------
- { "_id" : "mixed", "maxVal" : true, "minVal" : { "$numberInt" : "42" } }
- { "_id" : "nums", "maxVal" : { "$numberDecimal" : "75.25" }, "minVal" : { "$numberInt" : "10" } }
-(2 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_shard_types_test", "pipeline": [ { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
                                              document                                              
 ---------------------------------------------------------------------
@@ -1146,38 +796,11 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_sha
  { "_id" : "nums", "maxVal" : { "$numberDecimal" : "75.25" }, "minVal" : { "$numberInt" : "10" } }
 (2 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_shard_types_test", "pipeline": [ { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
                                                                                                                                                           QUERY PLAN                                                                                                                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
-   ->  Distributed Subplan 247_1
-         ->  HashAggregate
-               Group Key: remote_scan.c2
-               ->  Custom Scan (Citus Adaptive)
-                     Task Count: 8
-                     Tasks Shown: One of 8
-                     ->  Task
-                           Node: host=localhost port=58070 dbname=regression
-                           ->  HashAggregate
-                                 Group Key: documentdb_api_internal.bson_expression_get(document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
-                                 ->  Seq Scan on documents_11178_1117144 collection
-   Task Count: 1
-   Tasks Shown: All
-   ->  Task
-         Node: host=localhost port=58070 dbname=regression
-         ->  Sort
-               Sort Key: (documentdb_api_catalog.bson_orderby(documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6), '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
-               ->  Function Scan on read_intermediate_result intermediate_result
-(19 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_shard_types_test", "pipeline": [ { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
-                                                                                                                                                          QUERY PLAN                                                                                                                                                          
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   ->  Distributed Subplan 249_1
+   ->  Distributed Subplan 213_1
          ->  HashAggregate
                Group Key: remote_scan.c2
                ->  Custom Scan (Citus Adaptive)
@@ -1201,27 +824,8 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "agg
 -- Test 10: BSONMAXWITHEXPR - Query plan verification
 -- =============================================================================
 -- EXPLAIN to verify query plan for $group
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_cache_test", "pipeline": [ { "$group": { "_id": "$category", "maxA": { "$max": "$fieldA" }, "maxB": { "$max": "$fieldB" } } }, { "$sort": { "_id": 1 } } ] }');
-                                                                                                                                                                                                                                                                                                                                                                                                         QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                         
----------------------------------------------------------------------
- Sort
-   Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
-   Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   ->  Subquery Scan on agg_stage_1
-         Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
-         ->  HashAggregate
-               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'maxA'::text, bsonmax(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$fieldA" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'maxB'::text, bsonmax(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$fieldB" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-               ->  Function Scan on documentdb_api_internal.empty_data_table collection
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
-                     Function Call: documentdb_api_internal.empty_data_table()
-(11 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_cache_test", "pipeline": [ { "$group": { "_id": "$category", "maxA": { "$max": "$fieldA" }, "maxB": { "$max": "$fieldB" } } }, { "$sort": { "_id": 1 } } ] }');
-                                                                                                                                                                                                                                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                  
+                                                                                                                                                                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                          
 ---------------------------------------------------------------------
  Sort
    Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
@@ -1237,33 +841,6 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 (11 rows)
 
 -- EXPLAIN to verify query plan for $setWindowFields
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_variable_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$group", "sortBy": { "val": 1 }, "output": { "maxVal": { "$max": "$val", "window": { "documents": ["unbounded", "current"] } }, "minVal": { "$min": "$val", "window": { "documents": ["unbounded", "current"] } } } } } ] }');
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Output: remote_scan.document
-   Task Count: 1
-   Tasks Shown: All
-   ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('maxVal'::text, "maxVal", 'minVal'::text, "minVal"), false) AS document FROM (SELECT collection.document, documentdb_api_catalog.bsonmax(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$val" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)) OVER (PARTITION BY (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)) ORDER BY (documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS "maxVal", documentdb_api_catalog.bsonmin(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$val" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)) OVER (PARTITION BY (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)) ORDER BY (documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS "minVal" FROM documentdb_data.documents_11175_1117086 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '11175'::bigint)) agg_stage_0
-         Node: host=localhost port=58070 dbname=regression
-         ->  Subquery Scan on agg_stage_0
-               Output: documentdb_api_internal.bson_dollar_merge_documents(agg_stage_0.document, documentdb_core.bson_repath_and_build('maxVal'::text, agg_stage_0."maxVal", 'minVal'::text, agg_stage_0."minVal"), false)
-               ->  WindowAgg
-                     Output: collection.document, documentdb_api_catalog.bsonmax(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$val" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)) OVER (?), documentdb_api_catalog.bsonmin(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$val" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)) OVER (?), (documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "1" } }'::documentdb_core.bson)), (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-                     ->  Sort
-                           Output: (documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "1" } }'::documentdb_core.bson)), (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), collection.document
-                           Sort Key: (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), (documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
-                           ->  Bitmap Heap Scan on documentdb_data.documents_11175_1117086 collection
-                                 Output: documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "1" } }'::documentdb_core.bson), documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), collection.document
-                                 Recheck Cond: (collection.shard_key_value = '11175'::bigint)
-                                 ->  Bitmap Index Scan on _id_
-                                       Index Cond: (collection.shard_key_value = '11175'::bigint)
-(19 rows)
-
-SET documentdb.enableNewWithExprAccumulators TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_variable_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$group", "sortBy": { "val": 1 }, "output": { "maxVal": { "$max": "$val", "window": { "documents": ["unbounded", "current"] } }, "minVal": { "$min": "$val", "window": { "documents": ["unbounded", "current"] } } } } } ] }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
 ---------------------------------------------------------------------
@@ -1325,7 +902,6 @@ SELECT documentdb_api.insert_one('db','maxmin_collation_test','{ "_id": 5, "grou
 (1 row)
 
 SET documentdb_core.enableCollation TO on;
-SET documentdb.enableNewWithExprAccumulators TO on;
 -- $max on string field with collation (locale: en, strength: 1 = case-insensitive)
 -- Uses maxmin_string_test collection from Test 1: apple, BANANA, Cherry (cat A), date, FIG, grape (cat B)
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_string_test", "pipeline": [ { "$group": { "_id": "$category", "maxName": { "$max": "$name" } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
@@ -1599,13 +1175,14 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_num
 (2 rows)
 
 -- =============================================================================
--- Test 15: collation blocked when enableNewWithExprAccumulators is off
+-- Test 15: collation with the default accumulator implementation
 -- =============================================================================
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_collation_test", "pipeline": [ { "$group": { "_id": "$group", "maxName": { "$max": "$name" } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
-ERROR:  collation is not supported in $group stage yet.
-SET documentdb.enableNewWithExprAccumulators TO on;
+              document              
+---------------------------------------------------------------------
+ { "_id" : "A", "maxName" : "FIG" }
+(1 row)
+
 -- =============================================================================
 -- Test 16: sharded collection with collation on $min/$max
 -- Exercises the combine function (send/recv) path with collation across shards.
@@ -1868,7 +1445,6 @@ SELECT documentdb_api.shard_collection('db', 'maxmin_project_group_test', '{ "_i
  
 (1 row)
 
-SET documentdb.enableNewMinMaxAccumulators TO on;
 SET citus.enable_local_execution TO off;
 -- Global group after a $project: $max/$min on a projected field.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_project_group_test", "pipeline": [ { "$project": { "_id": 0, "a": 1, "b": 1 } }, { "$group": { "_id": null, "hi": { "$max": "$a" }, "lo": { "$min": "$a" } } } ] }');
@@ -1893,7 +1469,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_pro
 (1 row)
 
 RESET citus.enable_local_execution;
-SET documentdb.enableNewMinMaxAccumulators TO off;
 SELECT documentdb_api.drop_collection('db', 'maxmin_project_group_test');
  drop_collection 
 ---------------------------------------------------------------------
@@ -1907,9 +1482,8 @@ SELECT documentdb_api.drop_collection('db', 'maxmin_project_group_test');
 -- citus.propagate_set_commands = 'local' and issues the flag as a SET LOCAL
 -- inside a transaction. Citus then ships the GUC to the workers, so the
 -- worker-side $min/$max transition honors it. With skipping off, explicit null
--- is considered again across shards; on the legacy path a missing field
--- (projected to null) is also considered, while the WithExpr path still excludes
--- missing regardless of the flag.
+-- is considered again across shards; WithExpr excludes missing fields
+-- regardless of the flag.
 -- =============================================================================
 -- Group "mixed": explicit null + missing + numbers. Skip on => min 5, max 100.
 SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 1,  "grp": "mixed", "val": 50 }');
@@ -2035,9 +1609,8 @@ SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 20,
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
--- Group "missingonly": numbers + missing, no explicit null. Isolates the
--- legacy-vs-WithExpr divergence with skipping off: legacy projects missing to
--- null and considers it (min null), WithExpr excludes missing (min 5).
+-- Group "missingonly": numbers + missing, no explicit null. WithExpr excludes
+-- missing fields even with skipping off (min 5).
 SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 21, "grp": "missingonly", "val": 30 }');
                               insert_one                              
 ---------------------------------------------------------------------
@@ -2076,40 +1649,7 @@ SELECT documentdb_api.shard_collection('db', 'maxmin_null_prop_dist_test', '{ "_
 
 -- Propagate SET LOCAL commands to workers for the queries below.
 SET citus.propagate_set_commands TO 'local';
--- Legacy accumulator path, skipping ON (propagated): nulls/missing skipped.
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-BEGIN;
-SET LOCAL citus.enable_local_execution TO off;
-SET LOCAL documentdb.enable_min_max_skip_null_values TO on;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_null_prop_dist_test", "pipeline": [ { "$group": { "_id": "$grp", "minVal": { "$min": "$val" }, "maxVal": { "$max": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
-                                             document                                             
----------------------------------------------------------------------
- { "_id" : "allnull", "minVal" : null, "maxVal" : null }
- { "_id" : "missingonly", "minVal" : { "$numberInt" : "5" }, "maxVal" : { "$numberInt" : "42" } }
- { "_id" : "mixed", "minVal" : { "$numberInt" : "5" }, "maxVal" : { "$numberInt" : "100" } }
- { "_id" : "mk", "minVal" : { "$minKey" : 1 }, "maxVal" : { "$minKey" : 1 } }
-(4 rows)
-
-COMMIT;
--- Legacy accumulator path, skipping OFF (propagated): explicit null and missing
--- (projected to null) are considered on the workers.
-BEGIN;
-SET LOCAL citus.enable_local_execution TO off;
-SET LOCAL documentdb.enable_min_max_skip_null_values TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_null_prop_dist_test", "pipeline": [ { "$group": { "_id": "$grp", "minVal": { "$min": "$val" }, "maxVal": { "$max": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
-                                    document                                    
----------------------------------------------------------------------
- { "_id" : "allnull", "minVal" : null, "maxVal" : null }
- { "_id" : "missingonly", "minVal" : null, "maxVal" : { "$numberInt" : "42" } }
- { "_id" : "mixed", "minVal" : null, "maxVal" : { "$numberInt" : "100" } }
- { "_id" : "mk", "minVal" : { "$minKey" : 1 }, "maxVal" : null }
-(4 rows)
-
-COMMIT;
 -- WithExpr accumulator path, skipping ON (propagated).
-SET documentdb.enableNewMinMaxAccumulators TO on;
-SET documentdb.enableNewWithExprAccumulators TO on;
 BEGIN;
 SET LOCAL citus.enable_local_execution TO off;
 SET LOCAL documentdb.enable_min_max_skip_null_values TO on;
@@ -2139,8 +1679,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_nul
 
 COMMIT;
 RESET citus.propagate_set_commands;
-RESET documentdb.enableNewMinMaxAccumulators;
-RESET documentdb.enableNewWithExprAccumulators;
 SELECT documentdb_api.drop_collection('db', 'maxmin_null_prop_dist_test');
  drop_collection 
 ---------------------------------------------------------------------
@@ -2153,8 +1691,7 @@ SELECT documentdb_api.drop_collection('db', 'maxmin_null_prop_dist_test');
 -- so the SET LOCAL flag must reach the worker for the window transition to honor
 -- it. This exercises the window-function transition path (distinct from $group).
 -- With skipping on, null/missing are excluded on the workers; with skipping off,
--- explicit null is considered; on the legacy path missing (projected to null) is
--- considered too, while the WithExpr path excludes it.
+-- explicit null is considered while missing fields remain excluded.
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','maxmin_null_prop_window_dist_test','{ "_id": 1, "grp": "mixed", "val": 50 }');
 NOTICE:  creating collection
@@ -2218,51 +1755,7 @@ SELECT documentdb_api.shard_collection('db', 'maxmin_null_prop_window_dist_test'
 (1 row)
 
 SET citus.propagate_set_commands TO 'local';
--- Legacy accumulator path, skipping ON (propagated): the window transition on
--- workers excludes null/missing, so partitions with real values ignore them.
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SET documentdb.enableNewWithExprAccumulators TO off;
-BEGIN;
-SET LOCAL citus.enable_local_execution TO off;
-SET LOCAL documentdb.enable_min_max_skip_null_values TO on;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_null_prop_window_dist_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$grp", "sortBy": { "_id": 1 }, "output": { "minVal": { "$min": "$val", "window": { "documents": [ "unbounded", "unbounded" ] } }, "maxVal": { "$max": "$val", "window": { "documents": [ "unbounded", "unbounded" ] } } } } }, { "$project": { "_id": 1, "grp": 1, "minVal": 1, "maxVal": 1 } }, { "$sort": { "_id": 1 } } ] }');
-                                                             document                                                             
----------------------------------------------------------------------
- { "_id" : { "$numberInt" : "1" }, "grp" : "mixed", "minVal" : { "$numberInt" : "5" }, "maxVal" : { "$numberInt" : "50" } }
- { "_id" : { "$numberInt" : "2" }, "grp" : "mixed", "minVal" : { "$numberInt" : "5" }, "maxVal" : { "$numberInt" : "50" } }
- { "_id" : { "$numberInt" : "3" }, "grp" : "mixed", "minVal" : { "$numberInt" : "5" }, "maxVal" : { "$numberInt" : "50" } }
- { "_id" : { "$numberInt" : "4" }, "grp" : "mixed", "minVal" : { "$numberInt" : "5" }, "maxVal" : { "$numberInt" : "50" } }
- { "_id" : { "$numberInt" : "5" }, "grp" : "allnull", "minVal" : null, "maxVal" : null }
- { "_id" : { "$numberInt" : "6" }, "grp" : "allnull", "minVal" : null, "maxVal" : null }
- { "_id" : { "$numberInt" : "7" }, "grp" : "missingonly", "minVal" : { "$numberInt" : "5" }, "maxVal" : { "$numberInt" : "30" } }
- { "_id" : { "$numberInt" : "8" }, "grp" : "missingonly", "minVal" : { "$numberInt" : "5" }, "maxVal" : { "$numberInt" : "30" } }
- { "_id" : { "$numberInt" : "9" }, "grp" : "missingonly", "minVal" : { "$numberInt" : "5" }, "maxVal" : { "$numberInt" : "30" } }
-(9 rows)
-
-COMMIT;
--- Legacy accumulator path, skipping OFF (propagated).
-BEGIN;
-SET LOCAL citus.enable_local_execution TO off;
-SET LOCAL documentdb.enable_min_max_skip_null_values TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_null_prop_window_dist_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$grp", "sortBy": { "_id": 1 }, "output": { "minVal": { "$min": "$val", "window": { "documents": [ "unbounded", "unbounded" ] } }, "maxVal": { "$max": "$val", "window": { "documents": [ "unbounded", "unbounded" ] } } } } }, { "$project": { "_id": 1, "grp": 1, "minVal": 1, "maxVal": 1 } }, { "$sort": { "_id": 1 } } ] }');
-                                                    document                                                    
----------------------------------------------------------------------
- { "_id" : { "$numberInt" : "1" }, "grp" : "mixed", "minVal" : null, "maxVal" : { "$numberInt" : "50" } }
- { "_id" : { "$numberInt" : "2" }, "grp" : "mixed", "minVal" : null, "maxVal" : { "$numberInt" : "50" } }
- { "_id" : { "$numberInt" : "3" }, "grp" : "mixed", "minVal" : null, "maxVal" : { "$numberInt" : "50" } }
- { "_id" : { "$numberInt" : "4" }, "grp" : "mixed", "minVal" : null, "maxVal" : { "$numberInt" : "50" } }
- { "_id" : { "$numberInt" : "5" }, "grp" : "allnull", "minVal" : null, "maxVal" : null }
- { "_id" : { "$numberInt" : "6" }, "grp" : "allnull", "minVal" : null, "maxVal" : null }
- { "_id" : { "$numberInt" : "7" }, "grp" : "missingonly", "minVal" : null, "maxVal" : { "$numberInt" : "30" } }
- { "_id" : { "$numberInt" : "8" }, "grp" : "missingonly", "minVal" : null, "maxVal" : { "$numberInt" : "30" } }
- { "_id" : { "$numberInt" : "9" }, "grp" : "missingonly", "minVal" : null, "maxVal" : { "$numberInt" : "30" } }
-(9 rows)
-
-COMMIT;
--- WithExpr accumulator path, skipping ON (propagated): matches the legacy ON
--- results since both exclude null/missing in the window transition.
-SET documentdb.enableNewMinMaxAccumulators TO on;
-SET documentdb.enableNewWithExprAccumulators TO on;
+-- WithExpr accumulator path, skipping ON (propagated): excludes null/missing.
 BEGIN;
 SET LOCAL citus.enable_local_execution TO off;
 SET LOCAL documentdb.enable_min_max_skip_null_values TO on;
@@ -2301,8 +1794,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_nul
 
 COMMIT;
 RESET citus.propagate_set_commands;
-RESET documentdb.enableNewMinMaxAccumulators;
-RESET documentdb.enableNewWithExprAccumulators;
 SELECT documentdb_api.drop_collection('db', 'maxmin_null_prop_window_dist_test');
  drop_collection 
 ---------------------------------------------------------------------
