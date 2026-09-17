@@ -4769,7 +4769,7 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 				continue;
 			}
 		}
-		else if (entry->nlist == 1)
+		else if (entry->nlist == 1 && !BufferIsValid(entry->buffer))
 		{
 			/* Special case to not roundtrip over checking isFinished again */
 			Assert(entry->nlist > 0 && entry->list);

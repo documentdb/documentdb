@@ -5,6 +5,9 @@ SET documentdb.next_collection_index_id TO 1200;
 
 set documentdb.defaultUseCompositeOpClass to on;
 
+SELECT current_setting('documentdb.enable_ordered_saop_multi_range_skip_advance') AS ordered_saop_multi_range_skip_advance \gset
+\echo ordered_saop_multi_range_skip_advance: :ordered_saop_multi_range_skip_advance
+
 CREATE SCHEMA ordered_saop_scan_test;
 CREATE FUNCTION ordered_saop_scan_test.insert_documents(collection_name text) RETURNS void
  LANGUAGE plpgsql
@@ -66,6 +69,7 @@ CREATE FUNCTION ordered_saop_scan_test.validate_index_runtime_equivalence(queryS
         index_query_spec bson;
         index_reverse_query_spec bson;
         index_mixed_query_spec bson;
+        index_mixed2_query_spec bson;
         runtime_query_spec bson;
         index_query_backwards_spec bson;
     BEGIN
@@ -73,6 +77,7 @@ CREATE FUNCTION ordered_saop_scan_test.validate_index_runtime_equivalence(queryS
         SELECT bson_dollar_add_fields(querySpec, '{ "find": "ordered_saop_index_coll" }') INTO index_query_spec;
         SELECT bson_dollar_add_fields(querySpec, '{ "find": "ordered_saop_index_reverse_coll" }') INTO index_reverse_query_spec;
         SELECT bson_dollar_add_fields(querySpec, '{ "find": "ordered_saop_index_mixed_coll" }') INTO index_mixed_query_spec;
+        SELECT bson_dollar_add_fields(querySpec, '{ "find": "ordered_saop_index_mixed2_coll" }') INTO index_mixed2_query_spec;
         SELECT bson_dollar_add_fields(querySpec, '{ "find": "ordered_saop_index_coll", "sort": { "a": -1 } }') INTO index_query_backwards_spec;
 
         set client_min_messages to warning;
@@ -80,6 +85,7 @@ CREATE FUNCTION ordered_saop_scan_test.validate_index_runtime_equivalence(queryS
         DROP TABLE IF EXISTS index_results;
         DROP TABLE IF EXISTS index_reverse_results;
         DROP TABLE IF EXISTS index_mixed_results;
+        DROP TABLE IF EXISTS index_mixed2_results;
         DROP TABLE IF EXISTS index_backwards_results;
         reset client_min_messages;
 
@@ -94,6 +100,9 @@ CREATE FUNCTION ordered_saop_scan_test.validate_index_runtime_equivalence(queryS
 
         -- run the mixed query
         CREATE TEMP TABLE index_mixed_results AS SELECT document FROM bson_aggregation_find('ordered_saop_scan_test', index_mixed_query_spec);
+
+        -- run the second mixed query
+        CREATE TEMP TABLE index_mixed2_results AS SELECT document FROM bson_aggregation_find('ordered_saop_scan_test', index_mixed2_query_spec);
 
         -- run the backwards scan query
         CREATE TEMP TABLE index_backwards_results AS SELECT document FROM bson_aggregation_find('ordered_saop_scan_test', index_query_backwards_spec);
@@ -117,6 +126,13 @@ CREATE FUNCTION ordered_saop_scan_test.validate_index_runtime_equivalence(queryS
         END IF;
         IF (SELECT COUNT(*) FROM (SELECT * FROM index_mixed_results EXCEPT SELECT * FROM runtime_results) AS subquery) > 0 THEN
             RAISE EXCEPTION 'Index mixed has results that are not in runtime results, runtime query %, index mixed query %', runtime_query_spec, index_mixed_query_spec;
+        END IF;
+
+        IF (SELECT COUNT(*) FROM (SELECT * FROM runtime_results EXCEPT SELECT * FROM index_mixed2_results) AS subquery) > 0 THEN
+            RAISE EXCEPTION 'Runtime has results that are not in index mixed2 results, runtime query %, index mixed2 query %', runtime_query_spec, index_mixed2_query_spec;
+        END IF;
+        IF (SELECT COUNT(*) FROM (SELECT * FROM index_mixed2_results EXCEPT SELECT * FROM runtime_results) AS subquery) > 0 THEN
+            RAISE EXCEPTION 'Index mixed2 has results that are not in runtime results, runtime query %, index mixed2 query %', runtime_query_spec, index_mixed2_query_spec;
         END IF;
 
         IF (SELECT COUNT(*) FROM (SELECT * FROM runtime_results EXCEPT SELECT * FROM index_backwards_results) AS subquery) > 0 THEN
@@ -288,6 +304,20 @@ SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
 SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
     '{ "filter": { "a": { "$in": [ 5, 2005, 16, 3001 ], "$lte": 2005 }, "b": { "$in": [ 8, 6, 2005, 2995, 2996, 4000 ], "$lte": 8 } } }'::bson
 );
+
+-- Intervening index entries must not skip the next leading scalar-array value
+-- when the descending suffix has values excluded by its fixed upper bound.
+WITH results AS (SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
+    '{ "filter": { "a": { "$in": [ 5, 16, 2005 ] }, "b": { "$in": [ 8, 2005, 2995 ], "$lte": 8 } } }'::bson
+)) SELECT COUNT(*) AS preserved_leading_value_count FROM results \gset
+\echo preserved leading scalar-array value count: :preserved_leading_value_count
+
+-- Advancing past an excluded suffix scalar-array value must preserve the next
+-- valid leading/suffix pair.
+WITH results AS (SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
+    '{ "filter": { "a": { "$in": [ 5, 16, 17, 2005 ], "$lte": 2005 }, "b": { "$in": [ 6, 8, 27, 2005 ], "$lte": 8 } } }'::bson
+)) SELECT COUNT(*) AS preserved_suffix_pair_count FROM results \gset
+\echo preserved valid leading/suffix pair count: :preserved_suffix_pair_count
 
 -- $in on 'a' with $ne on 'b' (not equal)
 SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
@@ -612,6 +642,130 @@ SELECT COUNT(documentdb_api.insert_one('ordered_saop_scan_test', 'ordered_saop_i
 SELECT COUNT(documentdb_api.insert_one('ordered_saop_scan_test', 'ordered_saop_index_reverse_coll', bson_build_document('_id', i * 10 + j, 'a', i, 'b', j))) FROM generate_series(1, 10) AS i, generate_series(1, 10) AS j;
 SELECT COUNT(documentdb_api.insert_one('ordered_saop_scan_test', 'ordered_saop_index_mixed_coll', bson_build_document('_id', i * 10 + j, 'a', i, 'b', j))) FROM generate_series(1, 10) AS i, generate_series(1, 10) AS j;
 SELECT COUNT(documentdb_api.insert_one('ordered_saop_scan_test', 'ordered_saop_index_mixed2_coll', bson_build_document('_id', i * 10 + j, 'a', i, 'b', j))) FROM generate_series(1, 10) AS i, generate_series(1, 10) AS j;
+
+-- Verify that fixed bounds and scalar-array/range intersections return the
+-- same results for runtime evaluation and every ordered index direction.
+SET enable_seqscan TO off;
+
+DO $$
+DECLARE
+    case_name text;
+    query_spec_text text;
+    expected_count bigint;
+    plan_name text;
+    command_fields_text text;
+    index_query_spec_text text;
+    result_count bigint;
+    uses_ordered_scan bool;
+BEGIN
+FOR case_name, query_spec_text, expected_count IN
+    SELECT *
+    FROM (VALUES
+        ('nin_with_equality',
+         '{ "filter": { "a": { "$in": [ 2, 7 ] }, "$and": [ { "b": { "$nin": [ 1, 3 ] } }, { "b": 4 } ] } }',
+         2::bigint),
+        ('in_with_equality',
+         '{ "filter": { "a": { "$in": [ 2, 7 ] }, "$and": [ { "b": { "$in": [ 2, 4, 8 ] } }, { "b": 4 } ] } }',
+         2::bigint),
+        ('gte_with_equality',
+         '{ "filter": { "a": { "$in": [ 2, 7 ] }, "$and": [ { "b": { "$gte": 3 } }, { "b": 4 } ] } }',
+         2::bigint),
+        ('lte_with_equality',
+         '{ "filter": { "a": { "$in": [ 2, 7 ] }, "$and": [ { "b": { "$lte": 8 } }, { "b": 4 } ] } }',
+         2::bigint),
+        ('bounded_range_with_equality',
+         '{ "filter": { "a": { "$in": [ 2, 7 ] }, "$and": [ { "b": { "$gte": 3 } }, { "b": { "$lte": 8 } }, { "b": 4 } ] } }',
+         2::bigint),
+        ('all_operators_with_equality',
+         '{ "filter": { "a": { "$in": [ 2, 7 ] }, "$and": [ { "b": { "$nin": [ 3, 7 ] } }, { "b": { "$in": [ 2, 4, 6, 8 ] } }, { "b": { "$gte": 4 } }, { "b": { "$lte": 8 } }, { "b": 6 } ] } }',
+         2::bigint),
+        ('all_operators_without_equality',
+         '{ "filter": { "a": { "$in": [ 2, 7 ] }, "$and": [ { "b": { "$nin": [ 3, 7 ] } }, { "b": { "$in": [ 2, 4, 6, 8 ] } }, { "b": { "$gte": 4 } }, { "b": { "$lte": 8 } } ] } }',
+         6::bigint),
+        ('nin_excludes_equality',
+         '{ "filter": { "a": { "$in": [ 2, 7 ] }, "$and": [ { "b": { "$nin": [ 4, 7 ] } }, { "b": { "$in": [ 2, 4, 6, 8 ] } }, { "b": { "$gte": 4 } }, { "b": { "$lte": 8 } }, { "b": 4 } ] } }',
+         0::bigint),
+        ('inclusive_lower_boundary',
+         '{ "filter": { "a": { "$in": [ 2, 7 ] }, "$and": [ { "b": { "$gte": 4 } }, { "b": { "$lte": 8 } }, { "b": 4 } ] } }',
+         2::bigint),
+        ('inclusive_upper_boundary',
+         '{ "filter": { "a": { "$in": [ 2, 7 ] }, "$and": [ { "b": { "$gte": 4 } }, { "b": { "$lte": 8 } }, { "b": 8 } ] } }',
+         2::bigint),
+        ('disjoint_in_and_range',
+         '{ "filter": { "a": { "$in": [ 2, 7 ] }, "$and": [ { "b": { "$in": [ 2, 4 ] } }, { "b": { "$gte": 6 } }, { "b": { "$lte": 8 } } ] } }',
+         0::bigint),
+        ('in_value_outside_upper_bound',
+         '{ "filter": { "a": { "$in": [ 2, 7 ] }, "$and": [ { "b": { "$in": [ 4, 8 ] } }, { "b": { "$gte": 2 } }, { "b": { "$lte": 6 } }, { "b": 8 } ] } }',
+         0::bigint)
+    ) AS cases(case_name, query_spec, expected_count)
+LOOP
+    FOR plan_name, command_fields_text IN
+        SELECT *
+        FROM (VALUES
+            ('ascending', '{ "find": "ordered_saop_index_coll" }'),
+            ('descending', '{ "find": "ordered_saop_index_reverse_coll" }'),
+            ('mixed', '{ "find": "ordered_saop_index_mixed_coll" }'),
+            ('mixed_reverse', '{ "find": "ordered_saop_index_mixed2_coll" }'),
+            ('backward', '{ "find": "ordered_saop_index_coll", "sort": { "a": -1 } }')
+        ) AS plans(plan_name, command_fields)
+    LOOP
+        SELECT bson_dollar_add_fields(query_spec_text::bson, command_fields_text::bson)::text
+        INTO index_query_spec_text;
+
+        SELECT bool_or(line LIKE '%scanType: ordered%') INTO uses_ordered_scan
+        FROM documentdb_test_helpers.run_explain_and_trim(format(
+            'EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+             SELECT document FROM bson_aggregation_find(
+                 ''ordered_saop_scan_test'', %L::bson)',
+            index_query_spec_text)) AS plan(line);
+
+        IF NOT COALESCE(uses_ordered_scan, false) THEN
+            RAISE EXCEPTION 'case % did not use an ordered % scan',
+                case_name, plan_name;
+        END IF;
+    END LOOP;
+
+    SELECT count(*) INTO result_count
+    FROM ordered_saop_scan_test.validate_index_runtime_equivalence(query_spec_text::bson);
+
+    SELECT bson_dollar_add_fields(
+        query_spec_text::bson,
+        '{ "find": "ordered_saop_index_mixed2_coll" }')::text
+    INTO index_query_spec_text;
+
+    SET client_min_messages TO warning;
+    DROP TABLE IF EXISTS matrix_mixed2_results;
+    RESET client_min_messages;
+
+    CREATE TEMP TABLE matrix_mixed2_results AS
+    SELECT document
+    FROM bson_aggregation_find('ordered_saop_scan_test', index_query_spec_text::bson);
+
+    IF EXISTS (
+        SELECT * FROM runtime_results
+        EXCEPT
+        SELECT * FROM matrix_mixed2_results
+    ) OR EXISTS (
+        SELECT * FROM matrix_mixed2_results
+        EXCEPT
+        SELECT * FROM runtime_results
+    ) THEN
+        RAISE EXCEPTION 'case % differs for the second mixed-direction index',
+            case_name;
+    END IF;
+
+    IF result_count <> expected_count THEN
+        RAISE EXCEPTION 'case % expected % matching documents, found %',
+            case_name, expected_count, result_count;
+    END IF;
+
+    RAISE NOTICE 'ordered SAOP case % matched runtime results for all 5 ordered scans: % documents (expected %)',
+        case_name, result_count, expected_count;
+END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+RESET enable_seqscan;
 
 SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
     '{ "filter": { "a": { "$in": [ 1, 2, 3 ] }, "b": { "$in": [ 1, 4, 7 ] } } }'::bson

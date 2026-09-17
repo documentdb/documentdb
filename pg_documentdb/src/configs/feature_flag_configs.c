@@ -437,6 +437,11 @@ bool EnableCrossIndexBitmapOrSortMerge =
 bool EnableCompositeSecondaryPathOrderPushdown =
 	DEFAULT_ENABLE_COMPOSITE_SECONDARY_PATH_ORDER_PUSHDOWN;
 
+/* Added on v1.1, enabled on v1.1, remove after v1.3 */
+#define DEFAULT_ENABLE_ORDERED_SAOP_MULTI_RANGE_SKIP_ADVANCE true
+bool EnableOrderedSaopMultiRangeSkipAdvance =
+	DEFAULT_ENABLE_ORDERED_SAOP_MULTI_RANGE_SKIP_ADVANCE;
+
 /* Added in v0.114, enabled in v0.114, remove after v0.117 */
 #define DEFAULT_ENABLE_STRICT_ADDTOSET_MODIFIER_VALIDATION true
 bool EnableStrictAddToSetModifierValidation =
@@ -1138,6 +1143,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to push an order-by down to a non-leading top-level path of a composite index whose reduced correlated terms carry metadata-based tracking."),
 		NULL, &EnableCompositeSecondaryPathOrderPushdown,
 		DEFAULT_ENABLE_COMPOSITE_SECONDARY_PATH_ORDER_PUSHDOWN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_ordered_saop_multi_range_skip_advance", newGucPrefix),
+		gettext_noop(
+			"Whether ordered scalar-array scans advance across multiple unsatisfiable ranges before generating a skip bound."),
+		NULL, &EnableOrderedSaopMultiRangeSkipAdvance,
+		DEFAULT_ENABLE_ORDERED_SAOP_MULTI_RANGE_SKIP_ADVANCE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

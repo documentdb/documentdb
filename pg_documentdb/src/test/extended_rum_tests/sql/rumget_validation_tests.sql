@@ -131,3 +131,90 @@ SELECT document FROM bson_aggregation_find('rumget_db',
     '{ "find": "rumget_ordered_any_multikey", "filter": { "a": { "$gt": 4, "$lt": 6 } }, "hint": "a_1" }');
 
 RESET documentdb_rum.forcerumorderedindexscan;
+
+-- Scenario 5.
+-- A singleton left posting-tree leaf can contain a dead TID while its right
+-- sibling still contains visible equality matches.
+SELECT documentdb_api.create_collection('rumget_db', 'rumget_singleton_left_leaf');
+
+SELECT collection_id AS singleton_leaf_collection_id
+FROM documentdb_api_catalog.collections
+WHERE database_name = 'rumget_db'
+  AND collection_name = 'rumget_singleton_left_leaf' \gset
+
+SELECT FORMAT(
+    'ALTER TABLE documentdb_data.documents_%s SET (autovacuum_enabled = off)',
+    :singleton_leaf_collection_id) \gexec
+
+SELECT COUNT(documentdb_api.insert_one(
+    'rumget_db',
+    'rumget_singleton_left_leaf',
+    FORMAT('{ "_id": %s, "a": 5 }', i)::bson))
+FROM generate_series(1, 4500) AS i;
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'rumget_db',
+    '{ "createIndexes": "rumget_singleton_left_leaf", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "enableCompositeTerm": true } ] }',
+    TRUE);
+
+SELECT index_id AS singleton_leaf_index_id,
+       FORMAT('documentdb_data.documents_rum_index_%s', index_id) AS singleton_leaf_index_name
+FROM documentdb_api_catalog.collection_indexes
+WHERE collection_id = :singleton_leaf_collection_id
+  AND (index_spec).index_name = 'a_1' \gset
+
+SELECT documentdb_api.delete(
+    'rumget_db',
+    '{ "delete": "rumget_singleton_left_leaf", "deletes": [ { "q": { "_id": { "$lte": 2250 } }, "limit": 0 } ] }');
+
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
+
+SELECT FORMAT(
+    'VACUUM (INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s',
+    :singleton_leaf_collection_id) \gexec
+
+WITH pages AS
+(
+    SELECT documentdb_api_internal.documentdb_rum_page_get_stats(
+               public.get_raw_page(:'singleton_leaf_index_name', page_number)) AS page_stats
+    FROM generate_series(
+        1,
+        (pg_relation_size(:'singleton_leaf_index_name'::regclass) /
+         current_setting('block_size')::integer)::integer - 1) AS page_number
+)
+SELECT COUNT(*) FILTER (
+           WHERE page_stats->>'flagsStr' = 'DATA') = 1 AS has_posting_tree_root,
+       COUNT(*) FILTER (
+           WHERE page_stats->>'flagsStr' = 'LEAF|DATA') = 2 AS has_two_leaf_pages,
+       COUNT(*) FILTER (
+           WHERE page_stats->>'flagsStr' = 'LEAF|DATA'
+             AND (page_stats->>'nEntries')::integer = 1
+             AND page_stats->>'leftLink' IS NULL
+             AND page_stats->>'rightLink' IS NOT NULL) = 1 AS has_singleton_left_leaf,
+       COUNT(*) FILTER (
+           WHERE page_stats->>'flagsStr' = 'LEAF|DATA'
+             AND (page_stats->>'nEntries')::integer > 1
+             AND page_stats->>'leftLink' IS NOT NULL
+             AND page_stats->>'rightLink' IS NULL) = 1 AS has_populated_right_leaf
+FROM pages;
+
+SELECT documentdb_api.delete(
+    'rumget_db',
+    '{ "delete": "rumget_singleton_left_leaf", "deletes": [ { "q": { "_id": 2251 }, "limit": 1 } ] }');
+
+SET documentdb_rum.forcerumorderedindexscan TO on;
+
+SELECT plan
+FROM documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rumget_db',
+        '{ "find": "rumget_singleton_left_leaf", "filter": { "a": 5 }, "projection": { "_id": 1 }, "hint": "a_1", "limit": 1 }') $cmd$)
+    AS explain_output(plan)
+WHERE plan NOT LIKE '%eligibleDeadItems:%';
+
+SELECT document FROM bson_aggregation_find(
+    'rumget_db',
+    '{ "find": "rumget_singleton_left_leaf", "filter": { "a": 5 }, "projection": { "_id": 1 }, "hint": "a_1", "limit": 1 }');
+
+RESET documentdb_rum.forcerumorderedindexscan;

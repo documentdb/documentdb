@@ -222,6 +222,7 @@ extern bool EnableHighKeyOptimization;
 extern bool EnableFailureOnParallelIndexArraysForMetadataTracking;
 extern bool EnableDynamicCursorDedupTracking;
 extern bool EnableCompositeSecondaryPathOrderPushdown;
+extern bool EnableOrderedSaopMultiRangeSkipAdvance;
 
 static void ValidateCompositePathSpec(const char *prefix);
 static Size FillCompositePathSpec(const char *prefix, void *buffer);
@@ -1764,6 +1765,18 @@ CompareOnBoundsForSearch(const void *a, const void *b, void *arg)
 }
 
 
+inline static void
+EnsureUnsatisfiableIndexBounds(int unsatisfiableIndex, int compareIndex)
+{
+	if (unsatisfiableIndex != -1 && unsatisfiableIndex < compareIndex)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg(
+							"Ordered scan found an unsatisfiable bound before the current scan path. This is a bug.")));
+	}
+}
+
+
 static int
 AdvanceOrderedScanData(CompositeQueryRunData *runData,
 					   SerializedCompositeTermPair *serializedTermsSet,
@@ -1778,6 +1791,7 @@ AdvanceOrderedScanData(CompositeQueryRunData *runData,
 	ListCell *pathCell;
 	CompositeOrderedScanEntryData *entryData = runData->metaInfo->orderedScanEntryData;
 	IndexTermCreateMetadata metadata;
+
 	PopulateTermMetadataForTruncation(&metadata, &entryData->basePathMetadata,
 									  runData, entryData->indexPaths[compareIndex],
 									  entryData->indexPathLengths[compareIndex],
@@ -1786,6 +1800,7 @@ AdvanceOrderedScanData(CompositeQueryRunData *runData,
 advance_ordered_scan_data_start:
 	finalResult = -2;
 	perPathEntries = entryData->perPathEntries[compareIndex].entries;
+	bool hasScalarArrayMismatch = false;
 
 	/* If we exhausted on the current equality, first retry without the equality */
 	if (entryData->perPathEntries[compareIndex].currentPathEqualityTerm != NULL)
@@ -1823,6 +1838,7 @@ advance_ordered_scan_data_start:
 			entry->boundsSet->wildcardPath != NULL, allowSkipScansOnBoundary,
 			&priorMatchesEquality, &hasUnspecifiedPrefix,
 			runData->metaInfo->collation);
+		hasScalarArrayMismatch = hasScalarArrayMismatch || compareResult != 0;
 		if (compareResult == 1)
 		{
 			/* This particular bound is exhausted - move to the next one
@@ -1871,6 +1887,47 @@ advance_ordered_scan_data_start:
 		}
 	}
 
+	int32_t unsatisfiableIndex = -1;
+	if (EnableOrderedSaopMultiRangeSkipAdvance && !hasScalarArrayMismatch)
+	{
+		UpdateRunDataForOrderedBounds(runData, entryData, &unsatisfiableIndex);
+		EnsureUnsatisfiableIndexBounds(unsatisfiableIndex, compareIndex);
+
+		MemoryContext context = MemoryContextSwitchTo(entryData->scanKeyMemoryContext);
+		TryUpdateBoundsForTruncation(
+			runData, &entryData->basePathMetadata, entryData->indexPaths,
+			entryData->indexPathLengths, entryData->sortOrders);
+		MemoryContextSwitchTo(context);
+
+		bool priorMatchesEquality = true;
+		bool hasUnspecifiedPrefix = false;
+		bool hasEqualityPrefix = true;
+		bool allowSkipScanBoundaries = true;
+		int combinedCompareResult = RunCompareOnPathIndex(
+			runData, serializedTermsSet, allowSkipScanBoundaries,
+			&priorMatchesEquality, &hasUnspecifiedPrefix, &hasEqualityPrefix,
+			compareIndex);
+
+		/*
+		 * The scalar-array cursor may already have advanced while runData still
+		 * contains the prior intersection. Recheck after rebuilding the bounds.
+		 * If the full path still rejects the key, no scalar-array bound can move
+		 * it forward and requesting the same skip boundary would not progress.
+		 */
+		if (combinedCompareResult != 0)
+		{
+			*hasNoScalarArrayBounds = true;
+			if (combinedCompareResult == 1 && compareIndex == 0)
+			{
+				return 1;
+			}
+
+			return -2;
+		}
+
+		return finalResult;
+	}
+
 	/* Reset all subsequent bounds back to the start */
 	for (int i = compareIndex + 1; i < runData->metaInfo->numIndexPaths; i++)
 	{
@@ -1884,26 +1941,54 @@ advance_ordered_scan_data_start:
 		}
 	}
 
-	int32_t unsatisfiableIndex = -1;
 	UpdateRunDataForOrderedBounds(runData, entryData, &unsatisfiableIndex);
-
-	if (unsatisfiableIndex != -1)
+	if (!EnableOrderedSaopMultiRangeSkipAdvance)
 	{
-		/* One of the bounds can't be pushed forward, restart with that index */
-		compareIndex = unsatisfiableIndex;
-		if (!MoveUnsatisfiableBoundForward(runData, compareIndex))
+		if (unsatisfiableIndex != -1)
 		{
-			if (compareIndex == 0)
+			compareIndex = unsatisfiableIndex;
+			if (!MoveUnsatisfiableBoundForward(runData, compareIndex))
+			{
+				if (compareIndex == 0)
+				{
+					return 1;
+				}
+
+				UpdateRunDataForOrderedBounds(runData, entryData,
+											  &unsatisfiableIndex);
+			}
+			else
+			{
+				goto advance_ordered_scan_data_start;
+			}
+		}
+	}
+	else
+	{
+		EnsureUnsatisfiableIndexBounds(unsatisfiableIndex, compareIndex);
+		while (unsatisfiableIndex != -1)
+		{
+			/*
+			 * A leading-path advance resets each following scalar-array cursor.
+			 * Move those cursors past values excluded by the fixed bounds before
+			 * comparing them with the current index key, which belongs to the
+			 * prior prefix.
+			 */
+			int previousUnsatisfiableIndex = unsatisfiableIndex;
+			if (!MoveUnsatisfiableBoundForward(runData, unsatisfiableIndex) &&
+				unsatisfiableIndex == 0)
 			{
 				return 1;
 			}
 
-			/* Move forward after moving the bounds to infinity */
 			UpdateRunDataForOrderedBounds(runData, entryData, &unsatisfiableIndex);
-		}
-		else
-		{
-			goto advance_ordered_scan_data_start;
+			if (unsatisfiableIndex != -1 &&
+				unsatisfiableIndex < previousUnsatisfiableIndex)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+								errmsg(
+									"Ordered scan bounds moved to an earlier index path. This is a bug.")));
+			}
 		}
 	}
 
