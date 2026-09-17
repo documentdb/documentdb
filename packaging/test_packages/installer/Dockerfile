@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-ARG BASE_IMAGE=ubuntu:24.04
+ARG BASE_IMAGE=""
 FROM ${BASE_IMAGE}
 
 ARG DEBIAN_FRONTEND=noninteractive
