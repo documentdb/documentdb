@@ -34,22 +34,28 @@ fn validate_get_more_request(
     // Session id validation
     match (connection_lsid, cursor_lsid) {
         (Some(req_sid), None) => {
-            // ErrorCode: 50736
-            return Err(DocumentDBError::internal_error(format!(
-                "Cannot run getMore on cursor, which was not created in a session, in session {req_sid:?}"
-            )));
+            return Err(DocumentDBError::documentdb_error(
+                ErrorCode::Location50736,
+                format!(
+                    "Cannot run getMore on cursor, which was not created in a session, in session {req_sid:?}"
+                ),
+            ));
         }
         (None, Some(cur_sid)) => {
-            // ErrorCode: 50737
-            return Err(DocumentDBError::internal_error(format!(
-                "Cannot run getMore on cursor, which was created in session {cur_sid:?}, without an lsid."
-            )));
+            return Err(DocumentDBError::documentdb_error(
+                ErrorCode::Location50737,
+                format!(
+                    "Cannot run getMore on cursor, which was created in session {cur_sid:?}, without an lsid."
+                ),
+            ));
         }
         (Some(req_sid), Some(cur_sid)) if req_sid != cur_sid => {
-            // ErrorCode: 50738
-            return Err(DocumentDBError::internal_error(format!(
-                "Cannot run getMore on cursor, which was created in session {cur_sid:?}, in session {req_sid:?}"
-            )));
+            return Err(DocumentDBError::documentdb_error(
+                ErrorCode::Location50738,
+                format!(
+                    "Cannot run getMore on cursor, which was created in session {cur_sid:?}, in session {req_sid:?}"
+                ),
+            ));
         }
         _ => {}
     }
@@ -58,22 +64,28 @@ fn validate_get_more_request(
     if connection_lsid.is_none() {
         match (connection_transaction_number, cursor_transaction_number) {
             (Some(req_tn), None) => {
-                // ErrorCode: 50739
-                return Err(DocumentDBError::internal_error(format!(
-                    "Cannot run getMore on cursor, which was not created in a transaction, in transaction {req_tn}"
-                )));
+                return Err(DocumentDBError::documentdb_error(
+                    ErrorCode::Location50739,
+                    format!(
+                        "Cannot run getMore on cursor, which was not created in a transaction, in transaction {req_tn}"
+                    ),
+                ));
             }
             (None, Some(cur_tn)) => {
-                // ErrorCode: 50740
-                return Err(DocumentDBError::internal_error(format!(
-                    "Cannot run getMore on cursor, which was created in a transaction {cur_tn}, without a transaction."
-                )));
+                return Err(DocumentDBError::documentdb_error(
+                    ErrorCode::Location50740,
+                    format!(
+                        "Cannot run getMore on cursor, which was created in a transaction {cur_tn}, without a transaction."
+                    ),
+                ));
             }
             (Some(req_tn), Some(cur_tn)) if req_tn != cur_tn => {
-                // ErrorCode: 50741
-                return Err(DocumentDBError::internal_error(format!(
-                    "Cannot run getMore on cursor, which was created in a transaction {cur_tn}, in transaction {req_tn}"
-                )));
+                return Err(DocumentDBError::documentdb_error(
+                    ErrorCode::Location50741,
+                    format!(
+                        "Cannot run getMore on cursor, which was created in a transaction {cur_tn}, in transaction {req_tn}"
+                    ),
+                ));
             }
             _ => {}
         }
@@ -437,6 +449,7 @@ mod tests {
     fn validate_get_more_request_request_session_but_cursor_has_none() {
         let s = sid(b"session-1");
         let err = validate_get_more_request(Some(&s), None, None, None).unwrap_err();
+        assert_eq!(err.error_code(), ErrorCode::Location50736);
         assert!(
             err.to_string().contains("was not created in a session"),
             "unexpected error: {err}"
@@ -447,6 +460,7 @@ mod tests {
     fn validate_get_more_request_cursor_session_but_request_has_none() {
         let s = sid(b"session-1");
         let err = validate_get_more_request(None, None, Some(&s), None).unwrap_err();
+        assert_eq!(err.error_code(), ErrorCode::Location50737);
         assert!(
             err.to_string().contains("without an lsid"),
             "unexpected error: {err}"
@@ -458,6 +472,7 @@ mod tests {
         let req = sid(b"session-req");
         let cur = sid(b"session-cur");
         let err = validate_get_more_request(Some(&req), None, Some(&cur), None).unwrap_err();
+        assert_eq!(err.error_code(), ErrorCode::Location50738);
         let msg = err.to_string();
         assert!(msg.contains("session-cur") || msg.contains("SessionId"));
         assert!(msg.contains("in session"), "unexpected error: {err}");
@@ -467,6 +482,7 @@ mod tests {
     fn validate_get_more_request_request_transaction_but_cursor_has_none() {
         let t = tn(3);
         let err = validate_get_more_request(None, Some(&t), None, None).unwrap_err();
+        assert_eq!(err.error_code(), ErrorCode::Location50739);
         assert!(
             err.to_string().contains("was not created in a transaction"),
             "unexpected error: {err}"
@@ -477,6 +493,7 @@ mod tests {
     fn validate_get_more_request_cursor_transaction_but_request_has_none() {
         let t = tn(3);
         let err = validate_get_more_request(None, None, None, Some(&t)).unwrap_err();
+        assert_eq!(err.error_code(), ErrorCode::Location50740);
         assert!(
             err.to_string().contains("without a transaction"),
             "unexpected error: {err}"
@@ -488,6 +505,7 @@ mod tests {
         let req = tn(1);
         let cur = tn(2);
         let err = validate_get_more_request(None, Some(&req), None, Some(&cur)).unwrap_err();
+        assert_eq!(err.error_code(), ErrorCode::Location50741);
         let msg = err.to_string();
         assert!(
             msg.contains("created in a transaction 2") && msg.contains("in transaction 1"),
