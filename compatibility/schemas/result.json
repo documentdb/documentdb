@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "integration", "repository", "owner", "profile", "suite_digest", "documentdb", "upstream", "expected_tests", "tests", "started_at", "finished_at", "trigger", "run_url", "demonstration", "execution_error"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
+    "integration": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,39}$"},
+    "repository": {"type": "string", "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+    "owner": {"type": "string", "pattern": "^@[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+    "profile": {"type": "string", "pattern": "^[a-z0-9_-]{1,80}$"},
+    "suite_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "documentdb": {
+      "type": "object", "additionalProperties": false,
+      "required": ["version", "image", "actual_extension_version", "actual_postgres_version"],
+      "properties": {
+        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "image": {"type": "string", "pattern": "^ghcr\\.io/documentdb/documentdb/documentdb-local@sha256:[a-f0-9]{64}$"},
+        "actual_extension_version": {"type": ["string", "null"], "maxLength": 40},
+        "actual_postgres_version": {"type": ["string", "null"], "maxLength": 120}
+      }
+    },
+    "upstream": {
+      "type": "object", "additionalProperties": false,
+      "required": ["version", "actual_version", "wheel_sha256", "client_image", "python_version", "dependencies"],
+      "properties": {
+        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "actual_version": {"type": ["string", "null"], "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "wheel_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+        "client_image": {"type": ["string", "null"], "pattern": "^sha256:[a-f0-9]{64}$"},
+        "python_version": {"type": ["string", "null"], "pattern": "^3\\.12\\.[0-9]+$"},
+        "dependencies": {
+          "type": "array", "maxItems": 100,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["name", "version", "sha256"],
+            "properties": {
+              "name": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,100}$"},
+              "version": {"type": "string", "pattern": "^[A-Za-z0-9_.+-]{1,100}$"},
+              "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+            }
+          }
+        }
+      }
+    },
+    "expected_tests": {
+      "type": "array", "minItems": 1, "maxItems": 101, "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^test_[a-z0-9_]+$"}
+    },
+    "tests": {
+      "type": "array", "maxItems": 101,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "outcome", "message"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^test_[a-z0-9_]+$"},
+          "outcome": {"enum": ["passed", "failed", "skipped", "error"]},
+          "message": {"type": "string", "maxLength": 2000}
+        }
+      }
+    },
+    "started_at": {"type": "string", "format": "date-time"},
+    "finished_at": {"type": "string", "format": "date-time"},
+    "trigger": {"enum": ["manual", "push", "documentdb_release", "upstream_release", "scheduled"]},
+    "run_url": {"type": ["string", "null"], "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/runs/[0-9]+$"},
+    "demonstration": {"type": "boolean"},
+    "execution_error": {"type": ["string", "null"], "maxLength": 2000}
+  }
+}

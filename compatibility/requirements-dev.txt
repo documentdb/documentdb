@@ -1,0 +1,8 @@
+-r requirements.txt
+-r integrations/pymongo/requirements.txt
+pymongo==4.18.0
+black>=24
+isort>=5.12
+flake8>=6
+mypy>=1.5
+types-PyYAML>=6
