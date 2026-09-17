@@ -30,7 +30,11 @@ use tokio::{
     task::JoinHandle,
     time::{Duration, Instant},
 };
-use tokio_postgres::NoTls;
+use tokio_postgres::{
+    config::SslMode,
+    tls::{MakeTlsConnect, TlsConnect},
+    NoTls, Socket,
+};
 
 use crate::{
     configuration::{DynamicConfiguration, SetupConfiguration},
@@ -45,10 +49,13 @@ use crate::{
     time::{self, EpochClock},
 };
 
+/// Per-connection settings not derived from the setup configuration.
 #[derive(Clone, Copy)]
-struct BackendTimeouts {
-    command: Duration,
-    transaction: Duration,
+struct BackendConnectionConfig {
+    command_timeout: Duration,
+    transaction_timeout: Duration,
+    connect_timeout: Option<Duration>,
+    ssl_mode: SslMode,
 }
 
 fn pg_configuration(
@@ -58,13 +65,13 @@ fn pg_configuration(
     password: Option<&str>,
     application_name: &str,
     connection_buffer_size: usize,
-    timeouts: BackendTimeouts,
+    connection: BackendConnectionConfig,
 ) -> tokio_postgres::Config {
     let mut config = tokio_postgres::Config::new();
 
-    let command_timeout_ms = timeouts.command.as_millis().to_string();
+    let command_timeout_ms = connection.command_timeout.as_millis().to_string();
 
-    let transaction_timeout_ms = timeouts.transaction.as_millis().to_string();
+    let transaction_timeout_ms = connection.transaction_timeout.as_millis().to_string();
 
     config
         .host(setup_configuration.postgres_host_name())
@@ -79,6 +86,14 @@ fn pg_configuration(
     if let Some(pass) = password {
         config.password(pass);
     }
+
+    // Bounds each socket attempt, which is per resolved address. The pool's
+    // create timeout bounds the attempt as a whole.
+    if let Some(connect_timeout) = connection.connect_timeout {
+        config.connect_timeout(connect_timeout);
+    }
+
+    config.ssl_mode(connection.ssl_mode);
 
     set_connection_buffer_size(&mut config, connection_buffer_size);
 
@@ -220,11 +235,54 @@ impl ConnectionPool {
         application_name: &str,
         pool_settings: PgPoolSettings,
     ) -> Result<Self> {
+        Self::new_with_user_and_tls(
+            setup_configuration,
+            query_catalog,
+            user,
+            password,
+            application_name,
+            pool_settings,
+            &NoTls,
+            SslMode::Prefer,
+        )
+    }
+
+    /// Builds a pool whose transport security is supplied by the caller.
+    ///
+    /// `tls` is the mechanism, `ssl_mode` the policy: supplying a connector does
+    /// not by itself require the backend to negotiate.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if either underlying pool fails to build.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "mirrors `new_with_user` plus the transport the caller supplies"
+    )]
+    pub fn new_with_user_and_tls<T>(
+        setup_configuration: &dyn SetupConfiguration,
+        query_catalog: &QueryCatalog,
+        user: &str,
+        password: Option<&str>,
+        application_name: &str,
+        pool_settings: PgPoolSettings,
+        tls: &T,
+        ssl_mode: SslMode,
+    ) -> Result<Self>
+    where
+        T: MakeTlsConnect<Socket> + Clone + Send + Sync + 'static,
+        T::Stream: Send + Sync,
+        T::TlsConnect: Send + Sync,
+        <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
+    {
         let command_timeout = command_timeout_for(pool_settings);
-        let timeouts = BackendTimeouts {
-            command: command_timeout,
-            transaction: pool_settings.transaction_timeout(),
+        let connection = BackendConnectionConfig {
+            command_timeout,
+            transaction_timeout: pool_settings.transaction_timeout(),
+            connect_timeout: pool_settings.connect_timeout(),
+            ssl_mode,
         };
+
         let config = pg_configuration(
             setup_configuration,
             query_catalog,
@@ -232,7 +290,7 @@ impl ConnectionPool {
             password,
             application_name,
             pool_settings.connection_buffer_size(),
-            timeouts,
+            connection,
         );
 
         let metrics = Arc::new(ConnectionPoolMetrics::default());
@@ -240,7 +298,11 @@ impl ConnectionPool {
                           recycling_method: RecyclingMethod,
                           metrics: Arc<ConnectionPoolMetrics>| {
             let manager = InstrumentedManager::new(
-                PostgresManager::from_config(pg_config, NoTls, ManagerConfig { recycling_method }),
+                PostgresManager::from_config(
+                    pg_config,
+                    T::clone(tls),
+                    ManagerConfig { recycling_method },
+                ),
                 metrics,
             );
 
@@ -248,6 +310,9 @@ impl ConnectionPool {
                 .runtime(Runtime::Tokio1)
                 .max_size(pool_settings.adjusted_max_connections())
                 .wait_timeout(Some(command_timeout))
+                // A second, outer bound: the client-side connect timeout covers
+                // the socket only, leaving negotiation and startup unbounded.
+                .create_timeout(pool_settings.connect_timeout())
                 .build()
         };
 
@@ -463,10 +528,11 @@ impl Drop for ConnectionPool {
 
 #[cfg(test)]
 mod tests {
-    use tokio::task::yield_now;
+    use tokio::{net::TcpListener, task::yield_now};
 
     use super::*;
     use crate::{
+        configuration::DocumentDBSetupConfiguration,
         postgres::create_query_catalog,
         testing::{test_connection_pool, test_setup_configuration},
     };
@@ -657,10 +723,7 @@ mod tests {
             Some("secret"),
             "app",
             262_144,
-            BackendTimeouts {
-                command: Duration::from_mins(1),
-                transaction: Duration::from_secs(30),
-            },
+            test_connection(None),
         );
         let password = config.get_password().expect("password should be set");
         assert_eq!(password, b"secret");
@@ -678,11 +741,136 @@ mod tests {
             None,
             "app",
             262_144,
-            BackendTimeouts {
-                command: Duration::from_mins(1),
-                transaction: Duration::from_secs(30),
-            },
+            test_connection(None),
         );
         assert!(config.get_password().is_none());
+    }
+
+    #[test]
+    fn test_pg_configuration_uses_the_configured_endpoint() {
+        let setup_config = test_setup_configuration();
+        let query_catalog = create_query_catalog();
+
+        let config = pg_configuration(
+            &setup_config,
+            &query_catalog,
+            "user",
+            None,
+            "app",
+            262_144,
+            test_connection(None),
+        );
+
+        assert_eq!(config.get_ports(), &[setup_config.postgres_port()]);
+        assert!(
+            config.get_connect_timeout().is_none(),
+            "an unset connect timeout must not impose one"
+        );
+    }
+
+    #[test]
+    fn test_pg_configuration_applies_the_connect_timeout() {
+        let setup_config = test_setup_configuration();
+        let query_catalog = create_query_catalog();
+
+        let config = pg_configuration(
+            &setup_config,
+            &query_catalog,
+            "user",
+            None,
+            "app",
+            262_144,
+            test_connection(Some(Duration::from_secs(5))),
+        );
+
+        // On the PostgreSQL config, so the failure carries the endpoint that timed out.
+        assert_eq!(config.get_connect_timeout(), Some(&Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn test_pg_configuration_requires_tls_only_when_asked() {
+        let setup_config = test_setup_configuration();
+        let query_catalog = create_query_catalog();
+
+        let default_config = pg_configuration(
+            &setup_config,
+            &query_catalog,
+            "user",
+            None,
+            "app",
+            262_144,
+            test_connection(None),
+        );
+        assert_eq!(
+            default_config.get_ssl_mode(),
+            SslMode::Prefer,
+            "a backend reached over a trusted local socket keeps the driver default"
+        );
+
+        let mut secured = test_connection(None);
+        secured.ssl_mode = SslMode::Require;
+        let secured_config = pg_configuration(
+            &setup_config,
+            &query_catalog,
+            "user",
+            None,
+            "app",
+            262_144,
+            secured,
+        );
+
+        assert_eq!(secured_config.get_ssl_mode(), SslMode::Require);
+    }
+
+    /// A backend that accepts the connection and then goes quiet. The client-side
+    /// connect timeout does not cover the negotiation that follows, so without a
+    /// creation timeout the acquire never returns.
+    #[tokio::test]
+    async fn a_silent_backend_does_not_hang_the_acquire() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let accept_task = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            // Hold the connection open and answer nothing.
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            drop(socket);
+        });
+
+        let setup_config = DocumentDBSetupConfiguration {
+            postgres_host_name: Some("127.0.0.1".to_owned()),
+            postgres_port: Some(port),
+            ..test_setup_configuration()
+        };
+
+        let pool = ConnectionPool::new_with_user(
+            &setup_config,
+            &create_query_catalog(),
+            "user",
+            None,
+            "app",
+            PgPoolSettings::system_pool_settings(1).with_connect_timeout(Duration::from_secs(1)),
+        )
+        .expect("the pool should build");
+
+        let started = Instant::now();
+        pool.acquire_connection()
+            .await
+            .expect_err("a backend that never answers cannot produce a connection");
+
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "the acquire must be bounded by the creation timeout, not left to hang"
+        );
+
+        accept_task.abort();
+    }
+
+    const fn test_connection(connect_timeout: Option<Duration>) -> BackendConnectionConfig {
+        BackendConnectionConfig {
+            command_timeout: Duration::from_mins(1),
+            transaction_timeout: Duration::from_secs(30),
+            connect_timeout,
+            ssl_mode: SslMode::Prefer,
+        }
     }
 }

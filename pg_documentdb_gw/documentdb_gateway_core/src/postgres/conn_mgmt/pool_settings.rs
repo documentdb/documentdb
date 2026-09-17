@@ -28,6 +28,7 @@ pub struct PgPoolSettings {
     connection_lifetime: Duration,
     max_request_timeout: Duration,
     transaction_timeout: Duration,
+    connect_timeout: Option<Duration>,
 }
 
 impl PgPoolSettings {
@@ -53,6 +54,7 @@ impl PgPoolSettings {
             connection_lifetime: Duration::from_secs(CONN_LIFETIME_SECS),
             max_request_timeout: Duration::from_secs(command_timeout_sec),
             transaction_timeout: Duration::from_secs(TRANSACTION_TIMEOUT_DEFAULT_SEC),
+            connect_timeout: None,
         }
     }
 
@@ -67,6 +69,7 @@ impl PgPoolSettings {
         let connection_buffer_size = config.gateway_connection_buffer_size();
         let max_request_timeout = Duration::from_secs(config.max_request_timeout_sec());
         let transaction_timeout = Duration::from_secs(config.transaction_timeout_sec());
+        let connect_timeout = config.connect_timeout();
 
         Self {
             max_connections,
@@ -77,7 +80,20 @@ impl PgPoolSettings {
             connection_lifetime,
             max_request_timeout,
             transaction_timeout,
+            connect_timeout,
         }
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) const fn with_connect_timeout(mut self, connect_timeout: Duration) -> Self {
+        self.connect_timeout = Some(connect_timeout);
+        self
+    }
+
+    #[must_use]
+    pub const fn connect_timeout(&self) -> Option<Duration> {
+        self.connect_timeout
     }
 
     #[must_use]
@@ -146,6 +162,7 @@ mod tests {
             connection_lifetime: Duration::from_secs(CONN_LIFETIME_SECS),
             max_request_timeout: Duration::from_secs(MAX_REQUEST_TIMEOUT_DEFAULT_SEC),
             transaction_timeout: Duration::from_secs(TRANSACTION_TIMEOUT_DEFAULT_SEC),
+            connect_timeout: None,
         }
     }
 

@@ -6,13 +6,17 @@
  *-------------------------------------------------------------------------
  */
 
+use tokio::time::Instant;
+
 use crate::requests::{request_tracker::RequestTracker, RequestType, WireRequest};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct RequestContext<'a> {
     pub activity_id: &'a str,
     request: &'a WireRequest<'a>,
     pub tracker: &'a RequestTracker,
+    /// When this attempt must finish. `None` on a first attempt.
+    deadline: Option<Instant>,
 }
 
 impl<'a> RequestContext<'a> {
@@ -26,7 +30,23 @@ impl<'a> RequestContext<'a> {
             activity_id,
             request,
             tracker,
+            deadline: None,
         }
+    }
+
+    /// Returns a copy bounded by `deadline`, so a reissued attempt does not
+    /// start a fresh budget.
+    #[must_use]
+    pub const fn with_deadline(&self, deadline: Instant) -> Self {
+        Self {
+            deadline: Some(deadline),
+            ..*self
+        }
+    }
+
+    #[must_use]
+    pub const fn deadline(&self) -> Option<Instant> {
+        self.deadline
     }
 
     #[must_use]

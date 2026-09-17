@@ -10,6 +10,11 @@ use std::{hash::Hash, sync::Arc};
 
 use dashmap::{mapref::entry::Entry, DashMap};
 use tokio::time::{interval, Duration};
+use tokio_postgres::{
+    config::SslMode,
+    tls::{MakeTlsConnect, TlsConnect},
+    NoTls, Socket,
+};
 
 use crate::{
     configuration::{DynamicConfiguration, SetupConfiguration},
@@ -41,7 +46,7 @@ async fn acquire_pooled_connection(pool: &ConnectionPool) -> Result<Connection> 
 }
 
 #[derive(Debug)]
-pub struct PoolManager {
+pub struct PoolManager<T = NoTls> {
     query_catalog: QueryCatalog,
     setup_configuration: Box<dyn SetupConfiguration>,
 
@@ -52,9 +57,16 @@ pub struct PoolManager {
     // We need Arc on the ConnectionPool to allow sharing across threads from different connections
     user_data_pools: DashMap<ClientKey, Arc<ConnectionPool>>,
     shared_data_pools: DashMap<PgPoolSettings, Arc<ConnectionPool>>,
+
+    /// Transport security applied to every pool this manager builds. Defaults to
+    /// [`NoTls`], which is what a backend reached over a local socket wants.
+    tls: T,
+
+    /// Whether the backend is made to negotiate `tls`.
+    ssl_mode: SslMode,
 }
 
-impl PoolManager {
+impl PoolManager<NoTls> {
     pub fn new(
         query_catalog: QueryCatalog,
         setup_configuration: Box<dyn SetupConfiguration>,
@@ -68,23 +80,39 @@ impl PoolManager {
             system_auth_pool,
             user_data_pools: DashMap::new(),
             shared_data_pools: DashMap::new(),
+            tls: NoTls,
+            ssl_mode: SslMode::Prefer,
         }
     }
+}
 
-    /// # Errors
-    /// Returns error if the operation fails.
-    pub async fn system_requests_connection(&self) -> Result<Connection> {
-        acquire_pooled_connection(&self.system_requests_pool).await
-    }
-
-    /// # Errors
-    /// Returns error if the operation fails.
-    pub async fn authentication_connection(&self) -> Result<Connection> {
-        acquire_pooled_connection(&self.system_auth_pool).await
-    }
-
-    pub const fn system_auth_pool(&self) -> &ConnectionPool {
-        &self.system_auth_pool
+impl<T> PoolManager<T>
+where
+    T: MakeTlsConnect<Socket> + Clone + Send + Sync + 'static,
+    T::Stream: Send + Sync,
+    T::TlsConnect: Send + Sync,
+    <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
+{
+    /// Builds a manager that requires the backend to negotiate the supplied
+    /// transport security. The system pools are used as given; `tls` applies to
+    /// the data pools this manager builds later.
+    pub fn new_with_tls(
+        query_catalog: QueryCatalog,
+        setup_configuration: Box<dyn SetupConfiguration>,
+        system_requests_pool: ConnectionPool,
+        system_auth_pool: ConnectionPool,
+        tls: T,
+    ) -> Self {
+        Self {
+            query_catalog,
+            setup_configuration,
+            system_requests_pool,
+            system_auth_pool,
+            user_data_pools: DashMap::new(),
+            shared_data_pools: DashMap::new(),
+            tls,
+            ssl_mode: SslMode::Require,
+        }
     }
 
     /// Allocates the data pool for `username`, reusing the existing one when it
@@ -135,13 +163,15 @@ impl PoolManager {
         password: &str,
         settings: PgPoolSettings,
     ) -> Result<Arc<ConnectionPool>> {
-        Ok(Arc::new(ConnectionPool::new_with_user(
+        Ok(Arc::new(ConnectionPool::new_with_user_and_tls(
             self.setup_configuration.as_ref(),
             &self.query_catalog,
             username,
             Some(password),
             &format!("{}-Data", self.setup_configuration.application_name()),
             settings,
+            &self.tls,
+            self.ssl_mode,
         )?))
     }
 
@@ -188,19 +218,44 @@ impl PoolManager {
                 Ok(pool)
             }
             Entry::Vacant(entry) => {
-                let system_shared_pool = Arc::new(ConnectionPool::new_with_user(
+                let system_shared_pool = Arc::new(ConnectionPool::new_with_user_and_tls(
                     self.setup_configuration.as_ref(),
                     &self.query_catalog,
                     self.setup_configuration.postgres_data_user(),
                     self.setup_configuration.postgres_data_user_password(),
                     &format!("{}-Data", self.setup_configuration.application_name()),
                     settings,
+                    &self.tls,
+                    self.ssl_mode,
                 )?);
 
                 entry.insert(Arc::clone(&system_shared_pool));
                 Ok(system_shared_pool)
             }
         }
+    }
+}
+
+/// Accessors and maintenance that never open a connection, so they ask nothing
+/// of the transport beyond being shareable across threads.
+impl<T> PoolManager<T>
+where
+    T: Send + Sync,
+{
+    /// # Errors
+    /// Returns error if the operation fails.
+    pub async fn system_requests_connection(&self) -> Result<Connection> {
+        acquire_pooled_connection(&self.system_requests_pool).await
+    }
+
+    /// # Errors
+    /// Returns error if the operation fails.
+    pub async fn authentication_connection(&self) -> Result<Connection> {
+        acquire_pooled_connection(&self.system_auth_pool).await
+    }
+
+    pub const fn system_auth_pool(&self) -> &ConnectionPool {
+        &self.system_auth_pool
     }
 
     pub fn clean_unused_pools(&self, max_age: Duration) {
@@ -252,7 +307,10 @@ impl PoolManager {
     }
 }
 
-pub fn clean_unused_pools(pool_manager: Arc<PoolManager>) {
+pub fn clean_unused_pools<T>(pool_manager: Arc<PoolManager<T>>)
+where
+    T: Send + Sync + 'static,
+{
     tokio::spawn(async move {
         let mut cleanup_interval =
             interval(Duration::from_secs(POSTGRES_POOL_CLEANUP_INTERVAL_SEC));
@@ -546,6 +604,44 @@ mod tests {
 
     fn test_pool_manager() -> PoolManager {
         test_pool_manager_with_setup(&setup_configuration())
+    }
+
+    #[tokio::test]
+    async fn a_manager_without_a_connector_does_not_make_the_backend_negotiate() {
+        // Every data pool is built through the TLS-capable constructor with
+        // whatever transport the manager holds, so a manager without one must
+        // not ask the backend to negotiate.
+        yield_now().await;
+
+        assert_eq!(test_pool_manager().ssl_mode, SslMode::Prefer);
+    }
+
+    #[tokio::test]
+    async fn a_manager_given_a_connector_makes_the_backend_negotiate() {
+        yield_now().await;
+
+        let setup_config = setup_configuration();
+        let system_pool = |name: &str| {
+            ConnectionPool::new_with_user(
+                &setup_config,
+                &create_query_catalog(),
+                setup_config.postgres_system_user(),
+                None,
+                name,
+                PgPoolSettings::system_pool_settings(SYSTEM_REQUESTS_MAX_CONNECTIONS),
+            )
+            .expect("the pool should build")
+        };
+
+        let manager = PoolManager::new_with_tls(
+            create_query_catalog(),
+            Box::new(setup_config.clone()),
+            system_pool("requests"),
+            system_pool("auth"),
+            NoTls,
+        );
+
+        assert_eq!(manager.ssl_mode, SslMode::Require);
     }
 
     #[tokio::test]

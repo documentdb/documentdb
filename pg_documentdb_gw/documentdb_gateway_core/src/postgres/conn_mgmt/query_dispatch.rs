@@ -10,6 +10,7 @@
 
 use std::{future::Future, io, sync::Arc};
 
+use deadpool_postgres::{PoolError, TimeoutType};
 use tokio::time::{Duration, Instant};
 use tokio_postgres::error::SqlState;
 
@@ -154,6 +155,27 @@ fn retry_policy(
         is_connectivity_error(error),
         is_timeout_error(error),
     )
+}
+
+/// How a failure should be retried, or `None` when it carries nothing to
+/// classify and the request must end.
+fn retry_for(
+    error: &DocumentDBError,
+    query_options: QueryOptions,
+    request_options: RequestOptions,
+) -> Option<Retry> {
+    if let Some(pg_error) = extract_pg_error(error) {
+        return Some(retry_policy(pg_error, query_options, request_options));
+    }
+
+    // Giving up while building a connection carries no backend error, because
+    // the attempt never got far enough to produce one. It is still a transport
+    // timeout, so it takes the policy one would get from the socket.
+    matches!(
+        error.as_pool_error(),
+        Some(PoolError::Timeout(TimeoutType::Create))
+    )
+    .then_some(Retry::Short)
 }
 
 /// Extracts a `tokio_postgres::Error` from a `DocumentDBError`, if present.
@@ -521,9 +543,7 @@ where
                 // - it is a retriable error,
                 // - we haven't exhausted retries
                 // - it is retriable on a transient error, which means that it's not in a transaction.
-                if let Some(pg_error) = extract_pg_error(&error) {
-                    let retry = retry_policy(pg_error, query_options, request_options);
-
+                if let Some(retry) = retry_for(&error, query_options, request_options) {
                     if in_transaction {
                         if !matches!(retry, Retry::None) {
                             tracing::info!(
@@ -535,6 +555,27 @@ where
                         && retry_context.stopwatch.elapsed() < overall_command_timeout
                     {
                         if let Some(interval) = get_retry_interval(&retry, &mut retry_context) {
+                            // The point where a retry is due is also the point
+                            // where it can be sent elsewhere. A caller that has
+                            // somewhere else to send it takes over here rather
+                            // than spending the rest of the deadline on a
+                            // backend that just failed.
+                            if dynamic_configuration.defer_retries_to_caller() {
+                                tracing::warn!(
+                                    attempted = retry_context.retry_count + 1,
+                                    elapsed_ms = u64::try_from(
+                                        retry_context.stopwatch.elapsed().as_millis()
+                                    )
+                                    .unwrap_or(u64::MAX),
+                                    "Not retrying here so the request can be reissued elsewhere: {error}"
+                                );
+                                mark_span_error(&tracing::Span::current());
+                                return Err(DocumentDBError::documentdb_error(
+                                    ErrorCode::ShutdownInProgress,
+                                    "Graceful shutdown requested".to_owned(),
+                                ));
+                            }
+
                             retry_context.retry_count += 1;
                             tracing::Span::current()
                                 .record("retry.count", retry_context.retry_count);
@@ -612,6 +653,23 @@ mod tests {
 
     fn replica_options() -> RequestOptions {
         RequestOptions::new(true, Some(30))
+    }
+
+    #[test]
+    fn giving_up_while_building_a_connection_is_retried_like_a_transport_timeout() {
+        let error = DocumentDBError::from(PoolError::Timeout(TimeoutType::Create));
+
+        assert!(matches!(
+            retry_for(&error, default_query_context(), non_replica_options()),
+            Some(Retry::Short)
+        ));
+    }
+
+    #[test]
+    fn waiting_for_a_free_connection_still_ends_the_request() {
+        let error = DocumentDBError::from(PoolError::Timeout(TimeoutType::Wait));
+
+        assert!(retry_for(&error, default_query_context(), non_replica_options()).is_none());
     }
 
     #[tokio::test]

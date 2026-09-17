@@ -6,7 +6,7 @@
  *-------------------------------------------------------------------------
  */
 
-use std::fmt::Debug;
+use std::{fmt::Debug, time::Duration};
 
 use bson::RawBson;
 
@@ -147,6 +147,13 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
         self.get_bool("SendShutdownResponses", false)
     }
 
+    /// Whether a retriable failure should stop being retried here and be
+    /// returned instead. Only enable this where the caller can genuinely
+    /// reissue the request somewhere else.
+    fn defer_retries_to_caller(&self) -> bool {
+        false
+    }
+
     fn socket_connection_idle_timeout_sec(&self) -> u64 {
         self.get_u64(
             SOCKET_CONNECTION_IDLE_TIMEOUT_KEY,
@@ -184,6 +191,10 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
             self.get_i32("systemConnectionBudget", min_system_connections);
 
         system_connection_budget as usize
+    }
+
+    fn connect_timeout(&self) -> Option<Duration> {
+        None
     }
 
     fn gateway_connection_idle_lifetime_sec(&self) -> u64 {
