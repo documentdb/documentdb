@@ -3252,11 +3252,10 @@ $cmd$);
          indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
-         indexBounds: ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]]
+         indexBounds: ["a": [MinKey, MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=12 loops=1)
                Index Cond: (document @!*= '{ "a" : [ "short_string", "another_short" ], "collation" : "en-u-ks-level1" }'::bson)
-               Rows Removed by Index Recheck: 3
-(14 rows)
+(13 rows)
 
 -- 15.2: $nin "SHORT_STRING" case-insensitive — excludes short_string + Short_String
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$nin": ["SHORT_STRING"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -3389,10 +3388,10 @@ $cmd$);
          indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
-         indexBounds: ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]]
+         indexBounds: ["a": [MinKey, MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=10 loops=1)
                Index Cond: (document @!*= '{ "a" : [ "short_string", "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", { "$numberInt" : "12345" } ], "collation" : "en-u-ks-level1" }'::bson)
-               Rows Removed by Index Recheck: 5
+               Rows Removed by Index Recheck: 2
 (14 rows)
 
 -- 15.6: $nin with mismatched collation — index should NOT be used

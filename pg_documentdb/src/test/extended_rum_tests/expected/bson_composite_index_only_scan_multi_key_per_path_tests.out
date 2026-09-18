@@ -129,8 +129,8 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 -- OR-combined at scan time, so every bound forces a runtime recheck to enforce the
 -- AND-of-not-equals semantics -> Index Scan with recheck (result still correct).
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosmk_db', '{ "aggregate" : "coll", "pipeline" : [{ "$match" : { "region": { "$nin": [ "west", "east" ] } } }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
-                                                        run_explain_and_trim                                                         
--------------------------------------------------------------------------------------------------------------------------------------
+                                               run_explain_and_trim                                               
+------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, documentdb_api_internal.bsoncount(1))
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
@@ -139,20 +139,19 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          indexKey: {"region": 1,"tags": 1}
          isMultiKey: true
          multiKeyPaths: tags
-         indexBounds: ["region": [MinKey, MaxKey], "tags": (MinKey, MaxKey)], ["region": [MinKey, MaxKey], "tags": (MinKey, MaxKey)]
-         innerScanLoops: 7 loops
-         scanType: regular
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5), (isInequality: true, estimatedEntryCount: 6)]
+         indexBounds: ["region": [MinKey, MaxKey], "tags": (MinKey, MaxKey)]
+         innerScanLoops: 8 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
          ->  Index Scan using region_tags_1 on documentdb_data.documents_43601 collection (actual rows=3 loops=1)
                Index Cond: (collection.document @!*= '{ "region" : [ "west", "east" ] }'::bson)
-               Rows Removed by Index Recheck: 4
-(15 rows)
+(14 rows)
 
 -- $nin is never index-only (it always forces a runtime recheck), regardless of
 -- whether it carries a regex -> Index Scan.
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosmk_db', '{ "aggregate" : "coll", "pipeline" : [{ "$match" : { "region": { "$nin": [ "west", { "$regularExpression": { "pattern": "^s", "options": "" } } ] } } }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
-                                                                                                                                             run_explain_and_trim                                                                                                                                              
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                  run_explain_and_trim                                                                   
+---------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, documentdb_api_internal.bsoncount(1))
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
@@ -161,14 +160,13 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          indexKey: {"region": 1,"tags": 1}
          isMultiKey: true
          multiKeyPaths: tags
-         indexBounds: ["region": [MinKey, MaxKey], "tags": (MinKey, MaxKey)], ["region": [MinKey, MaxKey], "tags": (MinKey, MaxKey)], ["region": [{ "$regularExpression" : { "pattern" : "^s", "options" : "" } }, { "$regularExpression" : { "pattern" : "^s", "options" : "" } }], "tags": (MinKey, MaxKey)]
-         innerScanLoops: 7 loops
-         scanType: regular
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5), (isInequality: true, estimatedEntryCount: 7), (isInequality: true, estimatedEntryCount: 0)]
+         indexBounds: ["region": [MinKey, MaxKey], "tags": (MinKey, MaxKey)]
+         innerScanLoops: 8 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4)]
          ->  Index Scan using region_tags_1 on documentdb_data.documents_43601 collection (actual rows=4 loops=1)
                Index Cond: (collection.document @!*= '{ "region" : [ "west", { "$regularExpression" : { "pattern" : "^s", "options" : "" } } ] }'::bson)
-               Rows Removed by Index Recheck: 3
-(15 rows)
+(14 rows)
 
 -- $eq null on region -> Index Only Scan.
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosmk_db', '{ "aggregate" : "coll", "pipeline" : [{ "$match" : { "region": { "$eq": null } } }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);

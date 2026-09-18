@@ -665,7 +665,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dis
                      indexKey: {"a": 1}
                      indexCollation: en-u-ks-level1
                      isMultiKey: false
-                     indexBounds: ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]]
+                     indexBounds: ["a": [MinKey, MaxKey]]
                      ->  Index Scan using idx_a_en_s1 on documents_95211_95210004 collection
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@!*=) '{ "a" : [ "apple", "banana" ], "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
 (15 rows)

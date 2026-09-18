@@ -6802,11 +6802,10 @@ $cmd$);
          indexKey: {"a": 1}
          indexCollation: en-u-ks-level1
          isMultiKey: false
-         indexBounds: ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]]
+         indexBounds: ["a": [MinKey, MaxKey]]
          ->  Index Scan using idx_a_en_s1 on documents_9501 collection (actual rows=2 loops=1)
                Index Cond: (document @!*= '{ "a" : [ "apple", "banana", "cherry", "date" ], "collation" : "en-u-ks-level1" }'::bson)
-               Rows Removed by Index Recheck: 8
-(13 rows)
+(12 rows)
 
 -- 36.9: $nin with null — excludes both null(10) AND any missing-field docs (none in this fixture, all 10 have field "a")
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -6844,10 +6843,10 @@ $cmd$);
          indexKey: {"a": 1}
          indexCollation: en-u-ks-level1
          isMultiKey: false
-         indexBounds: ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]]
+         indexBounds: ["a": [MinKey, MaxKey]]
          ->  Index Scan using idx_a_en_s1 on documents_9501 collection (actual rows=7 loops=1)
                Index Cond: (document @!*= '{ "a" : [ null, "apple" ], "collation" : "en-u-ks-level1" }'::bson)
-               Rows Removed by Index Recheck: 3
+               Rows Removed by Index Recheck: 1
 (13 rows)
 
 -- 36.13: $nin number + string — excludes both
@@ -6865,11 +6864,10 @@ $cmd$);
          indexKey: {"a": 1}
          indexCollation: en-u-ks-level1
          isMultiKey: false
-         indexBounds: ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]]
+         indexBounds: ["a": [MinKey, MaxKey]]
          ->  Index Scan using idx_a_en_s1 on documents_9501 collection (actual rows=7 loops=1)
                Index Cond: (document @!*= '{ "a" : [ { "$numberInt" : "42" }, "apple" ], "collation" : "en-u-ks-level1" }'::bson)
-               Rows Removed by Index Recheck: 3
-(13 rows)
+(12 rows)
 
 -- 36.14: single-element $nin [42] with mismatched collation — index IS used
 --        (single-element $nin decomposes to $ne, non-string element bypasses
@@ -7087,10 +7085,10 @@ $cmd$);
          indexKey: {"tags": 1}
          indexCollation: en-u-ks-level1
          isMultiKey: true
-         indexBounds: ["tags": [MinKey, MaxKey]], ["tags": [MinKey, MaxKey]]
+         indexBounds: ["tags": [MinKey, MaxKey]]
          ->  Index Scan using idx_tags_en_s1 on documents_9508 collection (actual rows=2 loops=1)
                Index Cond: (document @!*= '{ "tags" : [ "abc", "ghi" ], "collation" : "en-u-ks-level1" }'::bson)
-               Rows Removed by Index Recheck: 6
+               Rows Removed by Index Recheck: 3
 (13 rows)
 
 -- 36.31: $nin on insensitive_ops — "HELLO" excludes hello(1), HELLO(2) at s1
@@ -7175,7 +7173,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "single_field", "filter": { "a": { "$nin": ["apple", "banana", "cherry", "date", "elderberry", "fig", "grape"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
                                                                                         run_explain_and_trim                                                                                        
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
    Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
@@ -7185,11 +7183,10 @@ $cmd$);
          indexKey: {"a": 1}
          indexCollation: en-u-ks-level1
          isMultiKey: false
-         indexBounds: ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]]
+         indexBounds: ["a": [MinKey, MaxKey]]
          ->  Index Scan using idx_a_en_s1 on documents_9501 collection (actual rows=2 loops=1)
                Index Cond: (document @!*= '{ "a" : [ "apple", "banana", "cherry", "date", "elderberry", "fig", "grape" ], "collation" : "en-u-ks-level1" }'::bson)
-               Rows Removed by Index Recheck: 8
-(13 rows)
+(12 rows)
 
 -- ======================================================================
 -- Section 37: $in/$nin — feature flag disabled
@@ -7485,15 +7482,14 @@ $cmd$);
                        indexKey: {"a": 1}
                        indexCollation: en-u-ks-level1
                        isMultiKey: false
-                       indexBounds: ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]]
+                       indexBounds: ["a": [MinKey, MaxKey]]
                        ->  Index Scan using idx_a_en_s1 on documents_9511 (actual rows=1 loops=1)
                              Index Cond: (document @!*= '{ "a" : [ "apple", "banana", "cherry", "date" ], "collation" : "en-u-ks-level1" }'::bson)
-                             Rows Removed by Index Recheck: 8
    ->  Nested Loop (actual rows=1 loops=1)
          ->  CTE Scan on s (actual rows=1 loops=1)
          ->  Tid Scan on documents_9511 d (actual rows=1 loops=1)
                TID Cond: (ctid = s.ctid)
-(18 rows)
+(17 rows)
 
 -- 41.2: delete_many with $in (matching collation) — removes BOTH date variants (ids 7,8)
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -7895,11 +7891,10 @@ $cmd$);
          indexKey: {"a": 1}
          indexCollation: en-u-ks-level1
          isMultiKey: false
-         indexBounds: ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]]
+         indexBounds: ["a": [MinKey, MaxKey]]
          ->  Index Scan using idx_a_en_s1 on documents_9501 collection (actual rows=6 loops=1)
                Index Cond: (document @!*= '{ "a" : [ "APPLE", "BANANA" ], "collation" : "en-u-ks-level1" }'::bson)
-               Rows Removed by Index Recheck: 4
-(13 rows)
+(12 rows)
 
 -- 45.4: hint collation index but query collation MISMATCHES — planner must reject the hint or fall back safely
 -- (Behavior probe: documents whatever the planner does today.)

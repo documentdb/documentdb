@@ -5443,23 +5443,22 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$nin": ["apple", "cherry"] } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                  run_explain_and_trim                                                  
-------------------------------------------------------------------------------------------------------------------------
+                                            run_explain_and_trim                                             
+-------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=21 loops=1)
    namespaceName: ord_coll_ordered_db.ord_not_intervals
    indexName: idx_intervals_en_strength1
    indexKey: {"a": 1}
    indexCollation: en-u-ks-level1
    isMultiKey: false
-   indexBounds: ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]]
+   indexBounds: ["a": [MinKey, MaxKey]]
    innerScanLoops: 20 loops
    scanType: ordered
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 27), (isInequality: true, estimatedEntryCount: 0)]
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 21)]
    ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=21 loops=1)
          Index Cond: (document @!*= '{ "a" : [ "apple", "cherry" ], "collation" : "en-u-ks-level1" }'::bson)
-         Rows Removed by Index Recheck: 6
          Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
-(14 rows)
+(13 rows)
 
 -- 28.4: $nin with sort on collated field descending — no ordered scan
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$nin": ["banana"] } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }');

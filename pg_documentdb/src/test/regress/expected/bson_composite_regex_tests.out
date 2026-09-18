@@ -1136,15 +1136,15 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
     SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$nin": [{ "$regularExpression": { "pattern": "^string", "options": "" } }] } } }')
 $cmd$);
-                                                                                                           run_explain_and_trim                                                                                                            
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                         run_explain_and_trim
+--------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=27 loops=1)
    namespaceName: regex_db.regex_coll
    indexName: idx_a_1_b_1
    indexKey: {"a": 1,"b": 1}
    isMultiKey: false
    hasTruncation: true
-   indexBounds: ["a": [MinKey, MaxKey], "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^string", "options" : "" } }, { "$regularExpression" : { "pattern" : "^string", "options" : "" } }], "b": (MinKey, MaxKey)]
+   indexBounds: ["a": [MinKey, MaxKey], "b": (MinKey, MaxKey)]
    ->  Bitmap Heap Scan on documents_1201 collection (actual rows=27 loops=1)
          Recheck Cond: (document @!*= '{ "a" : [ { "$regularExpression" : { "pattern" : "^string", "options" : "" } } ] }'::bson)
          Heap Blocks: exact=1

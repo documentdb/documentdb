@@ -664,20 +664,20 @@ SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "legacy", "filte
 -- empty array (_id 3).
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "legacy", "filter": { "a.b": { "$nin": [ 5, null ] } }, "hint": "ab_ac_1" }') $cmd$);
-                                                 run_explain_and_trim                                                  
------------------------------------------------------------------------------------------------------------------------
+                                   run_explain_and_trim                                   
+------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
    namespaceName: nrg_db.legacy
    indexName: ab_ac_1
    indexKey: {"a.b": 1,"a.c": 1}
    isMultiKey: false
-   indexBounds: ["a.b": [MinKey, MaxKey], "a.c": (MinKey, MaxKey)], ["a.b": [MinKey, MaxKey], "a.c": (MinKey, MaxKey)]
-   innerScanLoops: 4 loops
-   scanType: regular
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3), (isInequality: true, estimatedEntryCount: 4)]
+   indexBounds: ["a.b": [MinKey, MaxKey], "a.c": (MinKey, MaxKey)]
+   innerScanLoops: 3 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
    ->  Index Scan using ab_ac_1 on documents_43504 collection (actual rows=1 loops=1)
          Index Cond: (document @!*= '{ "a.b" : [ { "$numberInt" : "5" }, null ] }'::bson)
-         Rows Removed by Index Recheck: 3
+         Rows Removed by Index Recheck: 2
 (12 rows)
 
 SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "legacy", "filter": { "a.b": { "$nin": [ 5, null ] } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "ab_ac_1" }');

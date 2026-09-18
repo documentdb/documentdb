@@ -2022,15 +2022,15 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
                      indexName: queryoperator_a_c
                      indexKey: {"a": 1,"c": 1}
                      isMultiKey: true
-                     indexBounds: ["a": [MinKey, MaxKey], "c": (MinKey, MaxKey)], ["a": [MinKey, MaxKey], "c": (MinKey, MaxKey)]
-                     innerScanLoops: 27 loops
+                     indexBounds: ["a": [MinKey, MaxKey], "c": (MinKey, MaxKey)]
+                     innerScanLoops: 26 loops
                      scanType: regular
-                     scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 39), (isInequality: true, estimatedEntryCount: 40)]
+                     scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 38)]
                      ->  Bitmap Heap Scan on documents_1200_1200005 collection (actual rows=25 loops=1)
                            Recheck Cond: (document OPERATOR(documentdb_api_catalog.@!*=) '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::documentdb_core.bson)
-                           Rows Removed by Index Recheck: 2
+                           Rows Removed by Index Recheck: 1
                            Heap Blocks: exact=1
-                           ->  Bitmap Index Scan on queryoperator_a_c (actual rows=27 loops=1)
+                           ->  Bitmap Index Scan on queryoperator_a_c (actual rows=26 loops=1)
                                  Index Cond: (document OPERATOR(documentdb_api_catalog.@!*=) '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::documentdb_core.bson)
 (24 rows)
 

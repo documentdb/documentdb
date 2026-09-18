@@ -1,0 +1,1305 @@
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+SET documentdb.next_collection_id TO 2500;
+SET documentdb.next_collection_index_id TO 2500;
+SET documentdb.defaultUseCompositeOpClass TO on;
+SET documentdb.enableCompositeIndexPlanner TO on;
+SET documentdb.enableIndexMetadataGlobalTracking TO on;
+SET documentdb.enable_failure_on_parallel_index_arrays_for_metadata_tracking TO off;
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+CREATE SCHEMA nin_guc_test;
+CREATE FUNCTION nin_guc_test.assert_same_results(
+    label text,
+    database_name text,
+    find_spec documentdb_core.bson)
+RETURNS TABLE(test_case text, disabled_ids int[], enabled_ids int[])
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    guc_disabled_ids int[];
+    guc_enabled_ids int[];
+    disabled_only bigint;
+    enabled_only bigint;
+BEGIN
+    PERFORM set_config('client_min_messages', 'warning', true);
+    DROP TABLE IF EXISTS nin_guc_disabled_results;
+    DROP TABLE IF EXISTS nin_guc_enabled_results;
+    PERFORM set_config('client_min_messages', 'notice', true);
+
+    PERFORM set_config(
+        'documentdb.enable_single_boundary_for_dollar_not_in', 'off', false);
+    CREATE TEMP TABLE nin_guc_disabled_results AS
+    SELECT document FROM bson_aggregation_find(database_name, find_spec);
+
+    PERFORM set_config(
+        'documentdb.enable_single_boundary_for_dollar_not_in', 'on', false);
+    CREATE TEMP TABLE nin_guc_enabled_results AS
+    SELECT document FROM bson_aggregation_find(database_name, find_spec);
+
+    SELECT count(*) INTO disabled_only FROM (
+        SELECT document::text FROM nin_guc_disabled_results
+        EXCEPT ALL
+        SELECT document::text FROM nin_guc_enabled_results
+    ) results;
+
+    SELECT count(*) INTO enabled_only FROM (
+        SELECT document::text FROM nin_guc_enabled_results
+        EXCEPT ALL
+        SELECT document::text FROM nin_guc_disabled_results
+    ) results;
+
+    SELECT array_agg((document ->> '_id')::int ORDER BY (document ->> '_id')::int)
+    INTO guc_disabled_ids
+    FROM nin_guc_disabled_results;
+
+    SELECT array_agg((document ->> '_id')::int ORDER BY (document ->> '_id')::int)
+    INTO guc_enabled_ids
+    FROM nin_guc_enabled_results;
+
+    guc_disabled_ids := COALESCE(guc_disabled_ids, '{}');
+    guc_enabled_ids := COALESCE(guc_enabled_ids, '{}');
+
+    IF disabled_only <> 0 OR enabled_only <> 0 THEN
+        RAISE EXCEPTION
+            '% returned different results: disabled-only=%, enabled-only=%',
+            label, disabled_only, enabled_only;
+    END IF;
+
+    DROP TABLE nin_guc_disabled_results;
+    DROP TABLE nin_guc_enabled_results;
+
+    RETURN QUERY SELECT label, guc_disabled_ids, guc_enabled_ids;
+END;
+$$;
+CREATE FUNCTION nin_guc_test.assert_same_results_with_runtime(
+    label text,
+    database_name text,
+    indexed_find_spec documentdb_core.bson,
+    runtime_find_spec documentdb_core.bson,
+    expected_ids int[])
+RETURNS TABLE(
+    test_case text,
+    disabled_ids int[],
+    enabled_ids int[],
+    runtime_ids int[])
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    guc_disabled_ids int[];
+    guc_enabled_ids int[];
+    runtime_result_ids int[];
+BEGIN
+    PERFORM set_config('client_min_messages', 'warning', true);
+    DROP TABLE IF EXISTS nin_guc_disabled_results;
+    DROP TABLE IF EXISTS nin_guc_enabled_results;
+    DROP TABLE IF EXISTS nin_runtime_results;
+    PERFORM set_config('client_min_messages', 'notice', true);
+
+    PERFORM set_config(
+        'documentdb.enable_single_boundary_for_dollar_not_in', 'off', false);
+    CREATE TEMP TABLE nin_guc_disabled_results AS
+    SELECT document FROM bson_aggregation_find(database_name, indexed_find_spec);
+
+    PERFORM set_config(
+        'documentdb.enable_single_boundary_for_dollar_not_in', 'on', false);
+    CREATE TEMP TABLE nin_guc_enabled_results AS
+    SELECT document FROM bson_aggregation_find(database_name, indexed_find_spec);
+
+    CREATE TEMP TABLE nin_runtime_results AS
+    SELECT document FROM bson_aggregation_find(database_name, runtime_find_spec);
+
+    SELECT array_agg((document ->> '_id')::int ORDER BY (document ->> '_id')::int)
+    INTO guc_disabled_ids
+    FROM nin_guc_disabled_results;
+
+    SELECT array_agg((document ->> '_id')::int ORDER BY (document ->> '_id')::int)
+    INTO guc_enabled_ids
+    FROM nin_guc_enabled_results;
+
+    SELECT array_agg((document ->> '_id')::int ORDER BY (document ->> '_id')::int)
+    INTO runtime_result_ids
+    FROM nin_runtime_results;
+
+    guc_disabled_ids := COALESCE(guc_disabled_ids, '{}');
+    guc_enabled_ids := COALESCE(guc_enabled_ids, '{}');
+    runtime_result_ids := COALESCE(runtime_result_ids, '{}');
+
+    IF EXISTS (
+        SELECT document::text FROM nin_guc_disabled_results
+        EXCEPT ALL
+        SELECT document::text FROM nin_runtime_results
+    ) OR EXISTS (
+        SELECT document::text FROM nin_runtime_results
+        EXCEPT ALL
+        SELECT document::text FROM nin_guc_disabled_results
+    ) OR EXISTS (
+        SELECT document::text FROM nin_guc_enabled_results
+        EXCEPT ALL
+        SELECT document::text FROM nin_runtime_results
+    ) OR EXISTS (
+        SELECT document::text FROM nin_runtime_results
+        EXCEPT ALL
+        SELECT document::text FROM nin_guc_enabled_results
+    ) THEN
+        RAISE EXCEPTION '% returned different indexed and runtime results', label;
+    END IF;
+
+    IF runtime_result_ids IS DISTINCT FROM expected_ids THEN
+        RAISE EXCEPTION
+            '% returned unexpected IDs: expected=%, actual=%',
+            label, expected_ids, runtime_result_ids;
+    END IF;
+
+    DROP TABLE nin_guc_disabled_results;
+    DROP TABLE nin_guc_enabled_results;
+    DROP TABLE nin_runtime_results;
+
+    RETURN QUERY
+    SELECT label, guc_disabled_ids, guc_enabled_ids, runtime_result_ids;
+END;
+$$;
+CREATE FUNCTION nin_guc_test.assert_ordered_results_with_runtime(
+    label text,
+    database_name text,
+    indexed_find_spec documentdb_core.bson,
+    runtime_find_spec documentdb_core.bson)
+RETURNS TABLE(
+    test_case text,
+    disabled_ids int[],
+    enabled_ids int[],
+    runtime_ids int[])
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    guc_disabled_ids int[];
+    guc_enabled_ids int[];
+    runtime_result_ids int[];
+BEGIN
+    PERFORM set_config('client_min_messages', 'warning', true);
+    DROP TABLE IF EXISTS nin_ordered_disabled_results;
+    DROP TABLE IF EXISTS nin_ordered_enabled_results;
+    DROP TABLE IF EXISTS nin_ordered_runtime_results;
+    PERFORM set_config('client_min_messages', 'notice', true);
+
+    PERFORM set_config(
+        'documentdb.enable_single_boundary_for_dollar_not_in', 'off', false);
+    CREATE TEMP TABLE nin_ordered_disabled_results AS
+    SELECT document FROM bson_aggregation_find(database_name, indexed_find_spec);
+    ALTER TABLE nin_ordered_disabled_results ADD COLUMN result_order bigserial;
+
+    PERFORM set_config(
+        'documentdb.enable_single_boundary_for_dollar_not_in', 'on', false);
+    CREATE TEMP TABLE nin_ordered_enabled_results AS
+    SELECT document FROM bson_aggregation_find(database_name, indexed_find_spec);
+    ALTER TABLE nin_ordered_enabled_results ADD COLUMN result_order bigserial;
+
+    CREATE TEMP TABLE nin_ordered_runtime_results AS
+    SELECT document FROM bson_aggregation_find(database_name, runtime_find_spec);
+    ALTER TABLE nin_ordered_runtime_results ADD COLUMN result_order bigserial;
+
+    IF EXISTS (
+        SELECT result_order, document::text FROM nin_ordered_disabled_results
+        EXCEPT ALL
+        SELECT result_order, document::text FROM nin_ordered_runtime_results
+    ) OR EXISTS (
+        SELECT result_order, document::text FROM nin_ordered_runtime_results
+        EXCEPT ALL
+        SELECT result_order, document::text FROM nin_ordered_disabled_results
+    ) OR EXISTS (
+        SELECT result_order, document::text FROM nin_ordered_enabled_results
+        EXCEPT ALL
+        SELECT result_order, document::text FROM nin_ordered_runtime_results
+    ) OR EXISTS (
+        SELECT result_order, document::text FROM nin_ordered_runtime_results
+        EXCEPT ALL
+        SELECT result_order, document::text FROM nin_ordered_enabled_results
+    ) THEN
+        RAISE EXCEPTION '% returned different indexed and runtime ordering', label;
+    END IF;
+
+    SELECT array_agg((document ->> '_id')::int ORDER BY result_order)
+    INTO guc_disabled_ids
+    FROM nin_ordered_disabled_results;
+
+    SELECT array_agg((document ->> '_id')::int ORDER BY result_order)
+    INTO guc_enabled_ids
+    FROM nin_ordered_enabled_results;
+
+    SELECT array_agg((document ->> '_id')::int ORDER BY result_order)
+    INTO runtime_result_ids
+    FROM nin_ordered_runtime_results;
+
+    DROP TABLE nin_ordered_disabled_results;
+    DROP TABLE nin_ordered_enabled_results;
+    DROP TABLE nin_ordered_runtime_results;
+
+    RETURN QUERY
+    SELECT label, guc_disabled_ids, guc_enabled_ids, runtime_result_ids;
+END;
+$$;
+CREATE FUNCTION nin_guc_test.assert_high_key_results_with_runtime(
+    label text,
+    database_name text,
+    indexed_find_spec documentdb_core.bson,
+    runtime_find_spec documentdb_core.bson,
+    expected_count bigint)
+RETURNS TABLE(
+    test_case text,
+    disabled_count bigint,
+    enabled_count bigint,
+    runtime_count bigint)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    high_key_disabled_count bigint;
+    high_key_enabled_count bigint;
+    runtime_result_count bigint;
+BEGIN
+    PERFORM set_config('client_min_messages', 'warning', true);
+    DROP TABLE IF EXISTS nin_high_key_disabled_results;
+    DROP TABLE IF EXISTS nin_high_key_enabled_results;
+    DROP TABLE IF EXISTS nin_high_key_runtime_results;
+    PERFORM set_config('client_min_messages', 'notice', true);
+
+    PERFORM set_config(
+        'documentdb.enable_single_boundary_for_dollar_not_in', 'on', false);
+    PERFORM set_config('documentdb.enable_high_key_optimization', 'off', false);
+    CREATE TEMP TABLE nin_high_key_disabled_results AS
+    SELECT document FROM bson_aggregation_find(database_name, indexed_find_spec);
+    ALTER TABLE nin_high_key_disabled_results ADD COLUMN result_order bigserial;
+
+    PERFORM set_config('documentdb.enable_high_key_optimization', 'on', false);
+    CREATE TEMP TABLE nin_high_key_enabled_results AS
+    SELECT document FROM bson_aggregation_find(database_name, indexed_find_spec);
+    ALTER TABLE nin_high_key_enabled_results ADD COLUMN result_order bigserial;
+
+    CREATE TEMP TABLE nin_high_key_runtime_results AS
+    SELECT document FROM bson_aggregation_find(database_name, runtime_find_spec);
+    ALTER TABLE nin_high_key_runtime_results ADD COLUMN result_order bigserial;
+
+    SELECT count(*) INTO high_key_disabled_count
+    FROM nin_high_key_disabled_results;
+    SELECT count(*) INTO high_key_enabled_count
+    FROM nin_high_key_enabled_results;
+    SELECT count(*) INTO runtime_result_count
+    FROM nin_high_key_runtime_results;
+
+    IF EXISTS (
+        SELECT result_order, document::text FROM nin_high_key_disabled_results
+        EXCEPT ALL
+        SELECT result_order, document::text FROM nin_high_key_runtime_results
+    ) OR EXISTS (
+        SELECT result_order, document::text FROM nin_high_key_runtime_results
+        EXCEPT ALL
+        SELECT result_order, document::text FROM nin_high_key_disabled_results
+    ) OR EXISTS (
+        SELECT result_order, document::text FROM nin_high_key_enabled_results
+        EXCEPT ALL
+        SELECT result_order, document::text FROM nin_high_key_runtime_results
+    ) OR EXISTS (
+        SELECT result_order, document::text FROM nin_high_key_runtime_results
+        EXCEPT ALL
+        SELECT result_order, document::text FROM nin_high_key_enabled_results
+    ) THEN
+        RAISE EXCEPTION '% returned different high-key and runtime results', label;
+    END IF;
+
+    IF runtime_result_count IS DISTINCT FROM expected_count THEN
+        RAISE EXCEPTION
+            '% returned unexpected count: expected=%, actual=%',
+            label, expected_count, runtime_result_count;
+    END IF;
+
+    DROP TABLE nin_high_key_disabled_results;
+    DROP TABLE nin_high_key_enabled_results;
+    DROP TABLE nin_high_key_runtime_results;
+
+    RETURN QUERY
+    SELECT label, high_key_disabled_count, high_key_enabled_count,
+           runtime_result_count;
+END;
+$$;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'nin_guc_db',
+    '{
+        "createIndexes": "mkp",
+        "indexes": [{
+            "key": { "a.b": 1, "a.c": 1 },
+            "name": "ab_ac_1",
+            "enableOrderedIndex": 1
+        }]
+    }');
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('nin_guc_db', 'mkp', document)
+FROM (VALUES
+    ('{ "_id": 1, "a": { "b": [], "c": 1 } }'::documentdb_core.bson),
+    ('{ "_id": 2, "a": { "b": [1, 2], "c": 2 } }'),
+    ('{ "_id": 3, "a": { "b": [null, 3], "c": 3 } }'),
+    ('{ "_id": 4, "a": { "b": 5, "c": 4 } }'),
+    ('{ "_id": 5, "a": { "c": 5 } }'),
+    ('{ "_id": 6, "a": { "b": "South", "c": 6 } }'),
+    ('{ "_id": 7, "a": { "b": "west", "c": 7 } }'),
+    ('{ "_id": 8, "a": { "b": "east", "c": 8 } }'),
+    ('{ "_id": 9, "a": { "b": "north", "c": 9 } }'),
+    ('{ "_id": 10, "a": { "b": [5, 7], "c": 10 } }')
+) documents(document);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(10 rows)
+
+SELECT * FROM nin_guc_test.assert_same_results(
+    'mkp ordinary values',
+    'nin_guc_db',
+    '{ "find": "mkp", "filter": { "a.b": { "$nin": [5, 7] } }, "hint": "ab_ac_1" }');
+      test_case      |   disabled_ids    |    enabled_ids    
+---------------------+-------------------+-------------------
+ mkp ordinary values | {1,2,3,5,6,7,8,9} | {1,2,3,5,6,7,8,9}
+(1 row)
+
+SELECT * FROM nin_guc_test.assert_same_results(
+    'mkp null and empty arrays',
+    'nin_guc_db',
+    '{ "find": "mkp", "filter": { "a.b": { "$nin": [5, null] } }, "hint": "ab_ac_1" }');
+         test_case         | disabled_ids  |  enabled_ids  
+---------------------------+---------------+---------------
+ mkp null and empty arrays | {1,2,6,7,8,9} | {1,2,6,7,8,9}
+(1 row)
+
+SELECT * FROM nin_guc_test.assert_same_results(
+    'mkp regex',
+    'nin_guc_db',
+    '{
+        "find": "mkp",
+        "filter": {
+            "a.b": {
+                "$nin": [
+                    "west",
+                    { "$regularExpression": { "pattern": "^s", "options": "i" } }
+                ]
+            }
+        },
+        "hint": "ab_ac_1"
+    }');
+ test_case |    disabled_ids    |    enabled_ids     
+-----------+--------------------+--------------------
+ mkp regex | {1,2,3,4,5,8,9,10} | {1,2,3,4,5,8,9,10}
+(1 row)
+
+SELECT * FROM nin_guc_test.assert_same_results(
+    'mkp single regex',
+    'nin_guc_db',
+    '{
+        "find": "mkp",
+        "filter": {
+            "a.b": {
+                "$nin": [
+                    { "$regularExpression": { "pattern": "^s", "options": "i" } }
+                ]
+            }
+        },
+        "hint": "ab_ac_1"
+    }');
+    test_case     |     disabled_ids     |     enabled_ids      
+------------------+----------------------+----------------------
+ mkp single regex | {1,2,3,4,5,7,8,9,10} | {1,2,3,4,5,7,8,9,10}
+(1 row)
+
+SET documentdb.enable_single_boundary_for_dollar_not_in TO off;
+CREATE TEMP TABLE nin_guc_empty_disabled_results AS
+SELECT document FROM bson_aggregation_find(
+    'nin_guc_db',
+    '{ "find": "mkp", "filter": { "a.b": { "$nin": [] } }, "hint": "ab_ac_1" }');
+SET documentdb.enable_single_boundary_for_dollar_not_in TO on;
+CREATE TEMP TABLE nin_guc_empty_enabled_results AS
+SELECT document FROM bson_aggregation_find(
+    'nin_guc_db',
+    '{ "find": "mkp", "filter": { "a.b": { "$nin": [] } }, "hint": "ab_ac_1" }');
+CREATE TEMP TABLE nin_guc_empty_runtime_results AS
+SELECT document FROM bson_aggregation_find(
+    'nin_guc_db',
+    '{ "find": "mkp", "filter": { "a.b": { "$nin": [] } }, "hint": { "$natural": 1 } }');
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT document::text FROM nin_guc_empty_disabled_results
+        EXCEPT ALL
+        SELECT document::text FROM nin_guc_empty_runtime_results
+    ) OR EXISTS (
+        SELECT document::text FROM nin_guc_empty_runtime_results
+        EXCEPT ALL
+        SELECT document::text FROM nin_guc_empty_disabled_results
+    ) OR EXISTS (
+        SELECT document::text FROM nin_guc_empty_enabled_results
+        EXCEPT ALL
+        SELECT document::text FROM nin_guc_empty_runtime_results
+    ) OR EXISTS (
+        SELECT document::text FROM nin_guc_empty_runtime_results
+        EXCEPT ALL
+        SELECT document::text FROM nin_guc_empty_enabled_results
+    ) THEN
+        RAISE EXCEPTION '$nin: [] returned different indexed and runtime results';
+    END IF;
+END;
+$$;
+SELECT
+    'mkp empty predicate' AS test_case,
+    (SELECT array_agg((document ->> '_id')::int ORDER BY (document ->> '_id')::int)
+     FROM nin_guc_empty_disabled_results) AS disabled_ids,
+    (SELECT array_agg((document ->> '_id')::int ORDER BY (document ->> '_id')::int)
+     FROM nin_guc_empty_enabled_results) AS enabled_ids,
+    (SELECT array_agg((document ->> '_id')::int ORDER BY (document ->> '_id')::int)
+     FROM nin_guc_empty_runtime_results) AS runtime_ids;
+      test_case      |      disabled_ids      |      enabled_ids       |      runtime_ids       
+---------------------+------------------------+------------------------+------------------------
+ mkp empty predicate | {1,2,3,4,5,6,7,8,9,10} | {1,2,3,4,5,6,7,8,9,10} | {1,2,3,4,5,6,7,8,9,10}
+(1 row)
+
+SELECT * FROM nin_guc_test.assert_same_results(
+    'mkp scalar sibling path',
+    'nin_guc_db',
+    '{ "find": "mkp", "filter": { "a.c": { "$nin": [2, null] } }, "hint": "ab_ac_1" }');
+        test_case        |     disabled_ids     |     enabled_ids      
+-------------------------+----------------------+----------------------
+ mkp scalar sibling path | {1,3,4,5,6,7,8,9,10} | {1,3,4,5,6,7,8,9,10}
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'nin_guc_db',
+    '{
+        "createIndexes": "mixed_arrays",
+        "indexes": [{
+            "key": { "a": 1, "z": 1 },
+            "name": "a_z_1",
+            "enableOrderedIndex": 1
+        }]
+    }');
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('nin_guc_db', 'mixed_arrays', document)
+FROM (VALUES
+    ('{ "_id": 1, "a": [1, 2, 5], "z": 1 }'::documentdb_core.bson),
+    ('{ "_id": 2, "a": [3, 4, 5], "z": 2 }'),
+    ('{ "_id": 3, "a": [1, 2], "z": 3 }'),
+    ('{ "_id": 4, "a": [5], "z": 4 }'),
+    ('{ "_id": 5, "a": [null, 5], "z": 5 }'),
+    ('{ "_id": 6, "a": ["South", "east"], "z": 6 }'),
+    ('{ "_id": 7, "a": 5, "z": 7 }'),
+    ('{ "_id": 8, "z": 8 }')
+) documents(document);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(8 rows)
+
+SET documentdb.enable_single_boundary_for_dollar_not_in TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'nin_guc_db',
+        '{
+            "find": "mixed_arrays",
+            "filter": { "a": { "$nin": [1, 2] } },
+            "hint": "a_z_1"
+        }')
+$cmd$);
+                                           run_explain_and_trim                                           
+----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on documents_2502 collection (actual rows=6 loops=1)
+   Recheck Cond: (document @!*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson)
+   Rows Removed by Index Recheck: 1
+   Heap Blocks: exact=1
+   ->  Bitmap Index Scan on a_z_1 (actual rows=11 loops=1)
+         Index Cond: (document @!*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson)
+(6 rows)
+
+SELECT * FROM nin_guc_test.assert_same_results_with_runtime(
+    'mixed array ordinary values',
+    'nin_guc_db',
+    '{
+        "find": "mixed_arrays",
+        "filter": { "a": { "$nin": [1, 2] } },
+        "hint": "a_z_1"
+    }',
+    '{
+        "find": "mixed_arrays",
+        "filter": { "a": { "$nin": [1, 2] } },
+        "hint": { "$natural": 1 }
+    }',
+    ARRAY[2, 4, 5, 6, 7, 8]);
+          test_case          | disabled_ids  |  enabled_ids  |  runtime_ids  
+-----------------------------+---------------+---------------+---------------
+ mixed array ordinary values | {2,4,5,6,7,8} | {2,4,5,6,7,8} | {2,4,5,6,7,8}
+(1 row)
+
+SELECT * FROM nin_guc_test.assert_same_results_with_runtime(
+    'mixed array null',
+    'nin_guc_db',
+    '{
+        "find": "mixed_arrays",
+        "filter": { "a": { "$nin": [null, 1] } },
+        "hint": "a_z_1"
+    }',
+    '{
+        "find": "mixed_arrays",
+        "filter": { "a": { "$nin": [null, 1] } },
+        "hint": { "$natural": 1 }
+    }',
+    ARRAY[2, 4, 6, 7]);
+    test_case     | disabled_ids | enabled_ids | runtime_ids 
+------------------+--------------+-------------+-------------
+ mixed array null | {2,4,6,7}    | {2,4,6,7}   | {2,4,6,7}
+(1 row)
+
+SELECT * FROM nin_guc_test.assert_same_results_with_runtime(
+    'mixed array regex',
+    'nin_guc_db',
+    '{
+        "find": "mixed_arrays",
+        "filter": {
+            "a": {
+                "$nin": [
+                    { "$regularExpression": { "pattern": "^s", "options": "i" } }
+                ]
+            }
+        },
+        "hint": "a_z_1"
+    }',
+    '{
+        "find": "mixed_arrays",
+        "filter": {
+            "a": {
+                "$nin": [
+                    { "$regularExpression": { "pattern": "^s", "options": "i" } }
+                ]
+            }
+        },
+        "hint": { "$natural": 1 }
+    }',
+    ARRAY[1, 2, 3, 4, 5, 7, 8]);
+     test_case     |  disabled_ids   |   enabled_ids   |   runtime_ids   
+-------------------+-----------------+-----------------+-----------------
+ mixed array regex | {1,2,3,4,5,7,8} | {1,2,3,4,5,7,8} | {1,2,3,4,5,7,8}
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'nin_guc_db',
+    '{
+        "createIndexes": "ancestor",
+        "indexes": [{
+            "key": { "a.b": 1, "a.c": 1 },
+            "name": "ab_ac_1",
+            "enableOrderedIndex": 1
+        }]
+    }');
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('nin_guc_db', 'ancestor', document)
+FROM (VALUES
+    ('{ "_id": 1, "a": { "b": null, "c": 1 } }'::documentdb_core.bson),
+    ('{ "_id": 2, "a": { "c": 1 } }'),
+    ('{ "_id": 3, "x": 1 }'),
+    ('{ "_id": 4, "a": { "b": [], "c": 1 } }'),
+    ('{ "_id": 5, "a": [] }'),
+    ('{ "_id": 6, "a": [{ "b": 1, "c": 1 }, { "b": 2, "c": 2 }] }'),
+    ('{ "_id": 7, "a": [{ "c": 1 }] }'),
+    ('{ "_id": 8, "a": { "b": 5, "c": 5 } }')
+) documents(document);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(8 rows)
+
+SELECT * FROM nin_guc_test.assert_same_results(
+    'mkp ancestor arrays',
+    'nin_guc_db',
+    '{ "find": "ancestor", "filter": { "a.b": { "$nin": [5, null] } }, "hint": "ab_ac_1" }');
+      test_case      | disabled_ids | enabled_ids 
+---------------------+--------------+-------------
+ mkp ancestor arrays | {4,5,6}      | {4,5,6}
+(1 row)
+
+SET documentdb.enableIndexMetadataGlobalTracking TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'nin_guc_db',
+    '{
+        "createIndexes": "legacy",
+        "indexes": [{
+            "key": { "a.b": 1, "a.c": 1 },
+            "name": "ab_ac_1",
+            "enableOrderedIndex": 1
+        }]
+    }');
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SET documentdb.enableIndexMetadataGlobalTracking TO on;
+SELECT documentdb_api.insert_one('nin_guc_db', 'legacy', document)
+FROM (VALUES
+    ('{ "_id": 1, "a": { "b": [], "c": 1 } }'::documentdb_core.bson),
+    ('{ "_id": 2, "a": { "b": [1, 2], "c": 2 } }'),
+    ('{ "_id": 3, "a": { "b": [null, 3], "c": 3 } }'),
+    ('{ "_id": 4, "a": { "b": 5, "c": 4 } }'),
+    ('{ "_id": 5, "a": { "c": 5 } }')
+) documents(document);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(5 rows)
+
+SELECT * FROM nin_guc_test.assert_same_results(
+    'legacy null and arrays',
+    'nin_guc_db',
+    '{ "find": "legacy", "filter": { "a.b": { "$nin": [5, null] } }, "hint": "ab_ac_1" }');
+       test_case        | disabled_ids | enabled_ids 
+------------------------+--------------+-------------
+ legacy null and arrays | {1,2}        | {1,2}
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'nin_guc_db',
+    '{
+        "createIndexes": "collated",
+        "indexes": [{
+            "key": { "a": 1 },
+            "name": "a_en_s1",
+            "collation": { "locale": "en", "strength": 1 }
+        }]
+    }',
+    true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('nin_guc_db', 'collated', document)
+FROM (VALUES
+    ('{ "_id": 1, "a": "apple" }'::documentdb_core.bson),
+    ('{ "_id": 2, "a": "APPLE" }'),
+    ('{ "_id": 3, "a": "cherry" }'),
+    ('{ "_id": 4, "a": "banana" }'),
+    ('{ "_id": 5 }'),
+    ('{ "_id": 6, "a": null }'),
+    ('{ "_id": 7, "a": ["APPLE", "banana"] }')
+) documents(document);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(7 rows)
+
+SET documentdb.enable_single_boundary_for_dollar_not_in TO off;
+CREATE TEMP TABLE nin_guc_collation_disabled_results AS
+SELECT document FROM bson_aggregation_find(
+    'nin_guc_db',
+    '{
+        "find": "collated",
+        "filter": { "a": { "$nin": ["apple", "cherry"] } },
+        "collation": { "locale": "en", "strength": 1 },
+        "hint": "a_en_s1"
+    }');
+SET documentdb.enable_single_boundary_for_dollar_not_in TO on;
+CREATE TEMP TABLE nin_guc_collation_enabled_results AS
+SELECT document FROM bson_aggregation_find(
+    'nin_guc_db',
+    '{
+        "find": "collated",
+        "filter": { "a": { "$nin": ["apple", "cherry"] } },
+        "collation": { "locale": "en", "strength": 1 },
+        "hint": "a_en_s1"
+    }');
+SELECT
+    'collation' AS test_case,
+    (SELECT array_agg((document ->> '_id')::int ORDER BY (document ->> '_id')::int)
+     FROM nin_guc_collation_disabled_results) AS disabled_ids,
+    (SELECT array_agg((document ->> '_id')::int ORDER BY (document ->> '_id')::int)
+     FROM nin_guc_collation_enabled_results) AS enabled_ids,
+    NOT EXISTS (
+        SELECT document::text FROM nin_guc_collation_disabled_results
+        EXCEPT ALL
+        SELECT document::text FROM nin_guc_collation_enabled_results
+    ) AND NOT EXISTS (
+        SELECT document::text FROM nin_guc_collation_enabled_results
+        EXCEPT ALL
+        SELECT document::text FROM nin_guc_collation_disabled_results
+    ) AS results_match;
+ test_case | disabled_ids | enabled_ids | results_match 
+-----------+--------------+-------------+---------------
+ collation | {4,5,6}      | {4,5,6}     | t
+(1 row)
+
+SELECT * FROM nin_guc_test.assert_same_results_with_runtime(
+    'mixed array collation',
+    'nin_guc_db',
+    '{
+        "find": "collated",
+        "filter": { "a": { "$nin": ["apple"] } },
+        "collation": { "locale": "en", "strength": 1 },
+        "hint": "a_en_s1"
+    }',
+    '{
+        "find": "collated",
+        "filter": { "a": { "$nin": ["apple"] } },
+        "collation": { "locale": "en", "strength": 1 },
+        "hint": { "$natural": 1 }
+    }',
+    ARRAY[3, 4, 5, 6]);
+       test_case       | disabled_ids | enabled_ids | runtime_ids 
+-----------------------+--------------+-------------+-------------
+ mixed array collation | {3,4,5,6}    | {3,4,5,6}   | {3,4,5,6}
+(1 row)
+
+-- ============================================================================
+-- Boundary merging with global filters
+-- ============================================================================
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'nin_guc_db',
+    '{
+        "createIndexes": "planner_interactions",
+        "indexes": [{
+            "key": { "a": 1, "b": 1, "c": 1 },
+            "name": "a_b_c_1"
+        }]
+    }',
+    true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one(
+    'nin_guc_db',
+    'planner_interactions',
+    bson_build_document('_id', a * 100 + b * 10 + c, 'a', a, 'b', b, 'c', c)))
+FROM generate_series(1, 4) a,
+     generate_series(1, 5) b,
+     generate_series(1, 6) c;
+ count 
+-------
+   120
+(1 row)
+
+SELECT * FROM nin_guc_test.assert_same_results_with_runtime(
+    'merged range then nin',
+    'nin_guc_db',
+    '{
+        "find": "planner_interactions",
+        "filter": { "b": { "$gt": 1, "$lt": 5, "$nin": [2, 4] } },
+        "hint": "a_b_c_1"
+    }',
+    '{
+        "find": "planner_interactions",
+        "filter": { "b": { "$gt": 1, "$lt": 5, "$nin": [2, 4] } },
+        "hint": { "$natural": 1 }
+    }',
+    ARRAY(
+        SELECT a * 100 + 30 + c
+        FROM generate_series(1, 4) a, generate_series(1, 6) c
+        ORDER BY 1));
+       test_case       |                                           disabled_ids                                            |                                            enabled_ids                                            |                                            runtime_ids                                            
+-----------------------+---------------------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------------
+ merged range then nin | {131,132,133,134,135,136,231,232,233,234,235,236,331,332,333,334,335,336,431,432,433,434,435,436} | {131,132,133,134,135,136,231,232,233,234,235,236,331,332,333,334,335,336,431,432,433,434,435,436} | {131,132,133,134,135,136,231,232,233,234,235,236,331,332,333,334,335,336,431,432,433,434,435,436}
+(1 row)
+
+SELECT * FROM nin_guc_test.assert_same_results_with_runtime(
+    'merged nin then range',
+    'nin_guc_db',
+    '{
+        "find": "planner_interactions",
+        "filter": { "b": { "$nin": [2, 4], "$lt": 5, "$gt": 1 } },
+        "hint": "a_b_c_1"
+    }',
+    '{
+        "find": "planner_interactions",
+        "filter": { "b": { "$nin": [2, 4], "$lt": 5, "$gt": 1 } },
+        "hint": { "$natural": 1 }
+    }',
+    ARRAY(
+        SELECT a * 100 + 30 + c
+        FROM generate_series(1, 4) a, generate_series(1, 6) c
+        ORDER BY 1));
+       test_case       |                                           disabled_ids                                            |                                            enabled_ids                                            |                                            runtime_ids                                            
+-----------------------+---------------------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------------
+ merged nin then range | {131,132,133,134,135,136,231,232,233,234,235,236,331,332,333,334,335,336,431,432,433,434,435,436} | {131,132,133,134,135,136,231,232,233,234,235,236,331,332,333,334,335,336,431,432,433,434,435,436} | {131,132,133,134,135,136,231,232,233,234,235,236,331,332,333,334,335,336,431,432,433,434,435,436}
+(1 row)
+
+SELECT * FROM nin_guc_test.assert_same_results_with_runtime(
+    'merged sibling filters',
+    'nin_guc_db',
+    '{
+        "find": "planner_interactions",
+        "filter": {
+            "a": { "$in": [1, 3] },
+            "b": { "$nin": [2, 4] },
+            "c": { "$gte": 2, "$lte": 5 }
+        },
+        "hint": "a_b_c_1"
+    }',
+    '{
+        "find": "planner_interactions",
+        "filter": {
+            "a": { "$in": [1, 3] },
+            "b": { "$nin": [2, 4] },
+            "c": { "$gte": 2, "$lte": 5 }
+        },
+        "hint": { "$natural": 1 }
+    }',
+    ARRAY(
+        SELECT a * 100 + b * 10 + c
+        FROM unnest(ARRAY[1, 3]) a,
+             unnest(ARRAY[1, 3, 5]) b,
+             generate_series(2, 5) c
+        ORDER BY 1));
+       test_case        |                                           disabled_ids                                            |                                            enabled_ids                                            |                                            runtime_ids                                            
+------------------------+---------------------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------------
+ merged sibling filters | {112,113,114,115,132,133,134,135,152,153,154,155,312,313,314,315,332,333,334,335,352,353,354,355} | {112,113,114,115,132,133,134,135,152,153,154,155,312,313,314,315,332,333,334,335,352,353,354,355} | {112,113,114,115,132,133,134,135,152,153,154,155,312,313,314,315,332,333,334,335,352,353,354,355}
+(1 row)
+
+SELECT * FROM nin_guc_test.assert_same_results_with_runtime(
+    'merged excludes complete range',
+    'nin_guc_db',
+    '{
+        "find": "planner_interactions",
+        "filter": {
+            "b": {
+                "$gt": 0,
+                "$lt": 6,
+                "$nin": [1, 2, 3, 4, 5]
+            }
+        },
+        "hint": "a_b_c_1"
+    }',
+    '{
+        "find": "planner_interactions",
+        "filter": {
+            "b": {
+                "$gt": 0,
+                "$lt": 6,
+                "$nin": [1, 2, 3, 4, 5]
+            }
+        },
+        "hint": { "$natural": 1 }
+    }',
+    ARRAY[]::int[]);
+           test_case            | disabled_ids | enabled_ids | runtime_ids 
+--------------------------------+--------------+-------------+-------------
+ merged excludes complete range | {}           | {}          | {}
+(1 row)
+
+SELECT * FROM nin_guc_test.assert_same_results_with_runtime(
+    'merged unsatisfiable range',
+    'nin_guc_db',
+    '{
+        "find": "planner_interactions",
+        "filter": { "b": { "$gt": 5, "$lt": 2, "$nin": [3] } },
+        "hint": "a_b_c_1"
+    }',
+    '{
+        "find": "planner_interactions",
+        "filter": { "b": { "$gt": 5, "$lt": 2, "$nin": [3] } },
+        "hint": { "$natural": 1 }
+    }',
+    ARRAY[]::int[]);
+         test_case          | disabled_ids | enabled_ids | runtime_ids 
+----------------------------+--------------+-------------+-------------
+ merged unsatisfiable range | {}           | {}          | {}
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'nin_guc_db',
+    '{
+        "createIndexes": "merged_multikey",
+        "indexes": [{
+            "key": { "a": 1, "b": 1 },
+            "name": "a_b_1",
+            "enableOrderedIndex": 1
+        }]
+    }');
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('nin_guc_db', 'merged_multikey', document)
+FROM (VALUES
+    ('{ "_id": 1, "a": [5, 25, 100], "b": 1 }'::documentdb_core.bson),
+    ('{ "_id": 2, "a": [15, 35, 100], "b": 2 }'),
+    ('{ "_id": 3, "a": [25, 35], "b": 3 }'),
+    ('{ "_id": 4, "a": 35, "b": 4 }'),
+    ('{ "_id": 5, "a": [5, 100], "b": 5 }')
+) documents(document);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(5 rows)
+
+SELECT * FROM nin_guc_test.assert_same_results_with_runtime(
+    'merged multikey global filters',
+    'nin_guc_db',
+    '{
+        "find": "merged_multikey",
+        "filter": {
+            "a": { "$gt": 10, "$lt": 90, "$nin": [25, 50] }
+        },
+        "hint": "a_b_1"
+    }',
+    '{
+        "find": "merged_multikey",
+        "filter": {
+            "a": { "$gt": 10, "$lt": 90, "$nin": [25, 50] }
+        },
+        "hint": { "$natural": 1 }
+    }',
+    ARRAY[2, 4, 5]);
+           test_case            | disabled_ids | enabled_ids | runtime_ids 
+--------------------------------+--------------+-------------+-------------
+ merged multikey global filters | {2,4,5}      | {2,4,5}     | {2,4,5}
+(1 row)
+
+-- ============================================================================
+-- Ordered scans and skip scans
+-- ============================================================================
+SET documentdb.enableExtendedExplainPlans TO on;
+SET documentdb.enableExplainScanIndexCosts TO off;
+SET documentdb.forceDisableSeqScan TO on;
+SET documentdb.max_non_ordered_term_scan_threshold TO 1;
+SELECT BOOL_OR(explain_line LIKE '%scanType: ordered%') AS uses_ordered_scan
+FROM documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find(
+        'nin_guc_db',
+        '{
+            "find": "planner_interactions",
+            "filter": {
+                "a": { "$in": [1, 3] },
+                "b": { "$nin": [2, 4] },
+                "c": { "$gte": 2, "$lte": 5 }
+            },
+            "sort": { "a": 1, "b": 1, "c": 1 },
+            "hint": "a_b_c_1"
+        }')
+$cmd$) explain_line;
+ uses_ordered_scan 
+-------------------
+ t
+(1 row)
+
+SELECT * FROM nin_guc_test.assert_ordered_results_with_runtime(
+    'ordered forward',
+    'nin_guc_db',
+    '{
+        "find": "planner_interactions",
+        "filter": {
+            "a": { "$in": [1, 3] },
+            "b": { "$nin": [2, 4] },
+            "c": { "$gte": 2, "$lte": 5 }
+        },
+        "sort": { "a": 1, "b": 1, "c": 1 },
+        "hint": "a_b_c_1"
+    }',
+    '{
+        "find": "planner_interactions",
+        "filter": {
+            "a": { "$in": [1, 3] },
+            "b": { "$nin": [2, 4] },
+            "c": { "$gte": 2, "$lte": 5 }
+        },
+        "sort": { "a": 1, "b": 1, "c": 1 },
+        "hint": { "$natural": 1 }
+    }');
+    test_case    |                                           disabled_ids                                            |                                            enabled_ids                                            |                                            runtime_ids                                            
+-----------------+---------------------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------------
+ ordered forward | {112,113,114,115,132,133,134,135,152,153,154,155,312,313,314,315,332,333,334,335,352,353,354,355} | {112,113,114,115,132,133,134,135,152,153,154,155,312,313,314,315,332,333,334,335,352,353,354,355} | {112,113,114,115,132,133,134,135,152,153,154,155,312,313,314,315,332,333,334,335,352,353,354,355}
+(1 row)
+
+SELECT * FROM nin_guc_test.assert_ordered_results_with_runtime(
+    'ordered backward',
+    'nin_guc_db',
+    '{
+        "find": "planner_interactions",
+        "filter": {
+            "a": { "$in": [1, 3] },
+            "b": { "$nin": [2, 4] },
+            "c": { "$gte": 2, "$lte": 5 }
+        },
+        "sort": { "a": -1, "b": -1, "c": -1 },
+        "hint": "a_b_c_1"
+    }',
+    '{
+        "find": "planner_interactions",
+        "filter": {
+            "a": { "$in": [1, 3] },
+            "b": { "$nin": [2, 4] },
+            "c": { "$gte": 2, "$lte": 5 }
+        },
+        "sort": { "a": -1, "b": -1, "c": -1 },
+        "hint": { "$natural": 1 }
+    }');
+    test_case     |                                           disabled_ids                                            |                                            enabled_ids                                            |                                            runtime_ids                                            
+------------------+---------------------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------------
+ ordered backward | {355,354,353,352,335,334,333,332,315,314,313,312,155,154,153,152,135,134,133,132,115,114,113,112} | {355,354,353,352,335,334,333,332,315,314,313,312,155,154,153,152,135,134,133,132,115,114,113,112} | {355,354,353,352,335,334,333,332,315,314,313,312,155,154,153,152,135,134,133,132,115,114,113,112}
+(1 row)
+
+RESET documentdb.forceDisableSeqScan;
+SET enable_seqscan TO off;
+SET documentdb_rum.forcerumorderedindexscan TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'nin_guc_db',
+    '{
+        "createIndexes": "skip_scan_interactions",
+        "indexes": [{
+            "key": { "a": 1, "b": 1, "c": 1 },
+            "name": "a_b_c_1"
+        }]
+    }',
+    true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one(
+    'nin_guc_db',
+    'skip_scan_interactions',
+    bson_build_document(
+        '_id', a * 1000 + b * 10 + c,
+        'a', a, 'b', b, 'c', c, 'd', c)))
+FROM generate_series(1, 10) a,
+     generate_series(1, 10) b,
+     generate_series(1, 10) c;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT * FROM nin_guc_test.assert_same_results_with_runtime(
+    'skip scan with global nin',
+    'nin_guc_db',
+    '{
+        "find": "skip_scan_interactions",
+        "filter": {
+            "a": { "$in": [2, 9] },
+            "c": { "$gt": 1, "$lt": 6 },
+            "d": { "$nin": [2, 4] }
+        }
+    }',
+    '{
+        "find": "skip_scan_interactions",
+        "filter": {
+            "a": { "$in": [2, 9] },
+            "c": { "$gt": 1, "$lt": 6 },
+            "d": { "$nin": [2, 4] }
+        },
+        "hint": { "$natural": 1 }
+    }',
+    ARRAY(
+        SELECT a * 1000 + b * 10 + c
+        FROM unnest(ARRAY[2, 9]) a,
+             generate_series(1, 10) b,
+             unnest(ARRAY[3, 5]) c
+        ORDER BY 1));
+         test_case         |                                                                                               disabled_ids                                                                                                |                                                                                                enabled_ids                                                                                                |                                                                                                runtime_ids                                                                                                
+---------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ skip scan with global nin | {2013,2015,2023,2025,2033,2035,2043,2045,2053,2055,2063,2065,2073,2075,2083,2085,2093,2095,2103,2105,9013,9015,9023,9025,9033,9035,9043,9045,9053,9055,9063,9065,9073,9075,9083,9085,9093,9095,9103,9105} | {2013,2015,2023,2025,2033,2035,2043,2045,2053,2055,2063,2065,2073,2075,2083,2085,2093,2095,2103,2105,9013,9015,9023,9025,9033,9035,9043,9045,9053,9055,9063,9065,9073,9075,9083,9085,9093,9095,9103,9105} | {2013,2015,2023,2025,2033,2035,2043,2045,2053,2055,2063,2065,2073,2075,2083,2085,2093,2095,2103,2105,9013,9015,9023,9025,9033,9035,9043,9045,9053,9055,9063,9065,9073,9075,9083,9085,9093,9095,9103,9105}
+(1 row)
+
+RESET enable_seqscan;
+RESET documentdb_rum.forcerumorderedindexscan;
+SET documentdb.forceDisableSeqScan TO on;
+-- ============================================================================
+-- High-key optimization
+-- ============================================================================
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'nin_guc_db',
+    '{
+        "createIndexes": "high_key_nin",
+        "indexes": [
+            {
+                "key": { "a": 1, "b": 1 },
+                "name": "a_b_1",
+                "enableOrderedIndex": 1
+            },
+            {
+                "key": { "b": 1, "a": 1 },
+                "name": "b_a_1",
+                "enableOrderedIndex": 1
+            }
+        ]
+    }');
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one(
+    'nin_guc_db',
+    'high_key_nin',
+    bson_build_document('_id', i, 'a', 1, 'b', i)))
+FROM generate_series(1, 4000) i;
+ count 
+-------
+  4000
+(1 row)
+
+SET documentdb.enable_single_boundary_for_dollar_not_in TO on;
+SET documentdb.enable_high_key_optimization TO on;
+SELECT BOOL_OR(explain_line LIKE '%scanType: ordered%') AND
+       NOT BOOL_OR(explain_line ~ 'highKeyEligiblePages: [1-9][0-9]* pages')
+       AS leading_nin_blocks_high_key
+FROM documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find(
+        'nin_guc_db',
+        '{
+            "find": "high_key_nin",
+            "filter": { "b": { "$nin": [100, 200] } },
+            "sort": { "b": 1, "a": 1 },
+            "hint": "b_a_1"
+        }')
+$cmd$) explain_line;
+ leading_nin_blocks_high_key 
+-----------------------------
+ t
+(1 row)
+
+SELECT BOOL_OR(explain_line ~ 'highKeyEligiblePages: [1-9][0-9]* pages')
+       AS equality_prefix_uses_high_key
+FROM documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find(
+        'nin_guc_db',
+        '{
+            "find": "high_key_nin",
+            "filter": {
+                "a": 1,
+                "b": { "$nin": [100, 200] }
+            },
+            "sort": { "a": 1, "b": 1 },
+            "hint": "a_b_1"
+        }')
+$cmd$) explain_line;
+ equality_prefix_uses_high_key 
+-------------------------------
+ t
+(1 row)
+
+SELECT * FROM nin_guc_test.assert_high_key_results_with_runtime(
+    'high key leading nin',
+    'nin_guc_db',
+    '{
+        "find": "high_key_nin",
+        "filter": { "b": { "$nin": [100, 200] } },
+        "sort": { "b": 1, "a": 1 },
+        "hint": "b_a_1"
+    }',
+    '{
+        "find": "high_key_nin",
+        "filter": { "b": { "$nin": [100, 200] } },
+        "sort": { "b": 1, "a": 1 },
+        "hint": { "$natural": 1 }
+    }',
+    3998);
+      test_case       | disabled_count | enabled_count | runtime_count 
+----------------------+----------------+---------------+---------------
+ high key leading nin |           3998 |          3998 |          3998
+(1 row)
+
+SELECT * FROM nin_guc_test.assert_high_key_results_with_runtime(
+    'high key equality prefix',
+    'nin_guc_db',
+    '{
+        "find": "high_key_nin",
+        "filter": {
+            "a": 1,
+            "b": { "$nin": [100, 200] }
+        },
+        "sort": { "a": 1, "b": 1 },
+        "hint": "a_b_1"
+    }',
+    '{
+        "find": "high_key_nin",
+        "filter": {
+            "a": 1,
+            "b": { "$nin": [100, 200] }
+        },
+        "sort": { "a": 1, "b": 1 },
+        "hint": { "$natural": 1 }
+    }',
+    3998);
+        test_case         | disabled_count | enabled_count | runtime_count 
+--------------------------+----------------+---------------+---------------
+ high key equality prefix |           3998 |          3998 |          3998
+(1 row)
+
+RESET documentdb.enable_high_key_optimization;
+RESET documentdb.max_non_ordered_term_scan_threshold;
+RESET documentdb.forceDisableSeqScan;
+RESET documentdb.enableExplainScanIndexCosts;
+RESET documentdb.enableExtendedExplainPlans;
+RESET documentdb.enable_single_boundary_for_dollar_not_in;
+RESET documentdb.defaultUseCompositeOpClass;
+RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
+RESET documentdb_core.enableCollation;
+DROP SCHEMA nin_guc_test CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DETAIL:  drop cascades to function nin_guc_test.assert_same_results(text,text,bson)
+drop cascades to function nin_guc_test.assert_same_results_with_runtime(text,text,bson,bson,integer[])
+drop cascades to function nin_guc_test.assert_ordered_results_with_runtime(text,text,bson,bson)
+drop cascades to function nin_guc_test.assert_high_key_results_with_runtime(text,text,bson,bson,bigint)

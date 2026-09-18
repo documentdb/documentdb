@@ -47,6 +47,7 @@
 
 extern bool EnablePerPathMultiKeySortPushdown;
 extern bool EnableSkipSettingOrderScanDirectionForFullScanExpr;
+extern bool EnableSingleBoundaryForDollarNotIn;
 
 /* --------------------------------------------------------- */
 /* Data-types */
@@ -59,6 +60,18 @@ typedef struct CompositeRegexData
 
 	bool isNegationOperator;
 } CompositeRegexData;
+
+/* Struct tracking the $nin query state in order to recheck the index term. */
+typedef struct NotInRecheckData
+{
+	List *regexDataList;
+
+	HTAB *valuesHash;
+
+	bool hasNulls;
+
+	bool isCollationAware;
+} NotInRecheckData;
 
 
 /* --------------------------------------------------------- */
@@ -120,6 +133,12 @@ static void AddMultiBoundaryForDollarNotIn(int32_t indexAttribute, const
 										   pgbsonelement *queryElement,
 										   VariableIndexBounds *indexBounds,
 										   IndexMultiKeyStatus pathMultiKeyState);
+static void AddSingleBoundaryForDollarNotIn(int32_t indexAttribute, const
+											char *wildcardPath,
+											pgbsonelement *queryElement,
+											VariableIndexBounds *indexBounds,
+											const char *indexCollation,
+											IndexMultiKeyStatus pathMultiKeyState);
 static void AddMultiBoundaryForBitwiseOperator(BsonIndexStrategy strategy,
 											   int32_t indexAttribute, const
 											   char *wildcardPath,
@@ -1506,8 +1525,18 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_IN:
 		{
-			AddMultiBoundaryForDollarNotIn(i, wildcardPath, queryElement, indexBounds,
-										   pathMultiKeyState);
+			if (EnableSingleBoundaryForDollarNotIn)
+			{
+				AddSingleBoundaryForDollarNotIn(i, wildcardPath, queryElement,
+												indexBounds, indexCollation,
+												pathMultiKeyState);
+			}
+			else
+			{
+				AddMultiBoundaryForDollarNotIn(i, wildcardPath, queryElement, indexBounds,
+											   pathMultiKeyState);
+			}
+
 			break;
 		}
 
@@ -1585,6 +1614,27 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 }
 
 
+static inline bool
+RecheckNotEqualsNull(BsonIndexTerm *term, bson_value_t *queryValue, const
+					 char *indexCollation, IndexMultiKeyStatus pathMultiKeyState)
+{
+	if (pathMultiKeyState == IndexMultiKeyStatus_HasNoArrays)
+	{
+		/* No arrays: an undefined term is a missing field and a
+		 * literal-null term equals null; exclude both, keep defined
+		 * non-null. Exact -- no heap recheck. */
+		return !IsIndexTermValueUndefined(term) &&
+			   !BsonValueEqualsWithCollation(
+			&term->element.bsonValue, queryValue,
+			indexCollation);
+	}
+
+	/* Arrays may contain undefined values: include if maybe undefined.
+	 * Not exact, these strategies must do heap recheck. */
+	return !IsIndexTermMaybeUndefined(term);
+}
+
+
 bool
 IsValidRecheckForIndexValue(SerializedCompositeTermPair *termPair,
 							IndexRecheckArgs *recheckArgs,
@@ -1651,25 +1701,76 @@ IsValidRecheckForIndexValue(SerializedCompositeTermPair *termPair,
 			InitializeBsonIndexTermIfNeeded(termPair);
 			if (notEqualQuery->value_type == BSON_TYPE_NULL)
 			{
-				if (recheckArgs->pathMultiKeyState == IndexMultiKeyStatus_HasNoArrays)
-				{
-					/* No arrays: an undefined term is a missing field and a
-					 * literal-null term equals null; exclude both, keep defined
-					 * non-null. Exact -- no heap recheck. */
-					return !IsIndexTermValueUndefined(&termPair->term) &&
-						   !BsonValueEqualsWithCollation(
-						&termPair->term.element.bsonValue, notEqualQuery,
-						indexCollation);
-				}
-
-				/* Multi-key: a maybe-undefined term yields to a defined sibling; a
-				 * definite-undefined term may be an empty array, so let the heap
-				 * recheck disambiguate. */
-				return !IsIndexTermMaybeUndefined(&termPair->term);
+				return RecheckNotEqualsNull(&termPair->term, notEqualQuery,
+											indexCollation,
+											recheckArgs->pathMultiKeyState);
 			}
 
 			return !BsonValueEqualsWithCollation(&termPair->term.element.bsonValue,
 												 notEqualQuery, indexCollation);
+		}
+
+		case BSON_INDEX_STRATEGY_DOLLAR_NOT_IN:
+		{
+			if (IsSerializedIndexTermTruncated(termPair->serializedTerm))
+			{
+				/* don't bother, let the runtime check on this */
+				return true;
+			}
+
+			NotInRecheckData *recheckData = (NotInRecheckData *) recheckArgs->queryDatum;
+			InitializeBsonIndexTermIfNeeded(termPair);
+			bson_value_t *termValue = &termPair->term.element.bsonValue;
+
+			/* NULL needs special handling */
+			if (recheckData->hasNulls)
+			{
+				bson_value_t nullValue = {
+					.value_type = BSON_TYPE_NULL,
+				};
+
+				/* If it is equal, then we early exit, else we check against the htab and regex. */
+				if (!RecheckNotEqualsNull(&termPair->term, &nullValue, indexCollation,
+										  recheckArgs->pathMultiKeyState))
+				{
+					return false;
+				}
+			}
+
+			/* If there was REGEX values in the $nin array we need to evaluate strings against it. */
+			if (list_length(recheckData->regexDataList) > 0 &&
+				termValue->value_type == BSON_TYPE_UTF8)
+			{
+				ListCell *regexDataCell;
+				foreach(regexDataCell, recheckData->regexDataList)
+				{
+					RegexData *regexData = (RegexData *) lfirst(regexDataCell);
+					if (CompareRegexTextMatch(termValue, regexData))
+					{
+						/* If it matches the string, we return false since is a $nin, else we
+						 * continue and check the string against the htab. */
+						return false;
+					}
+				}
+			}
+
+			bool found = false;
+			if (recheckData->isCollationAware)
+			{
+				BsonValueHashEntry entry = {
+					.bsonValue = termPair->term.element.bsonValue,
+					.collationString = indexCollation,
+				};
+				hash_search(recheckData->valuesHash, &entry, HASH_FIND, &found);
+			}
+			else
+			{
+				hash_search(recheckData->valuesHash,
+							&termPair->term.element.bsonValue,
+							HASH_FIND, &found);
+			}
+
+			return !found;
 		}
 
 		case BSON_INDEX_STRATEGY_DOLLAR_BITS_ALL_CLEAR:
@@ -1737,7 +1838,6 @@ IsValidRecheckForIndexValue(SerializedCompositeTermPair *termPair,
 		case BSON_INDEX_STRATEGY_DOLLAR_TYPE:
 		case BSON_INDEX_STRATEGY_DOLLAR_ALL:
 		case BSON_INDEX_STRATEGY_DOLLAR_IN:
-		case BSON_INDEX_STRATEGY_DOLLAR_NOT_IN:
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_GT:
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_GTE:
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_LT:
@@ -2657,6 +2757,159 @@ AddMultiBoundaryForDollarIn(int32_t indexAttribute, const char *wildcardPath,
 		}
 	}
 	indexBounds->variableBoundsList = lappend(indexBounds->variableBoundsList, set);
+}
+
+
+/* For $nin we can do a single boundary [MinKey, MaxKey] and add an index recheck function with the following constraints:
+ *   1. We will store all values except nulls in an HTAB.
+ *   3. We track if the array had nulls.
+ *   2. Regex values will be stored in both the HTAB as the raw value and compiled in a list.
+ *   3. We can skip runtime recheck we are sure it is NON multi-key index or non multi-key at the path when tracked per path.
+ *
+ *  When rechecking in the index:
+ *   1. If the array had nulls, we handle specially for multi-key with maybe undefined. For non multi-key we evaluate against literal null and undefined metadata.
+ *   2. If the null evaluation was false, we fallback to regex check. We evaluate the compiled regex arguments if any ONLY against strings.
+ *   3. If the string didn't match a regex, lastly we check the index term in the HTAB, if it is there, it is not a match.
+ */
+static void
+AddSingleBoundaryForDollarNotIn(int32_t indexAttribute, const char *wildcardPath,
+								pgbsonelement *queryElement,
+								VariableIndexBounds *indexBounds,
+								const char *indexCollation,
+								IndexMultiKeyStatus pathMultiKeyState)
+{
+	if (queryElement->bsonValue.value_type != BSON_TYPE_ARRAY)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
+							"$nin should have an array of values")));
+	}
+
+	bson_iter_t arrayIter;
+	bson_iter_init_from_data(&arrayIter, queryElement->bsonValue.value.v_doc.data,
+							 queryElement->bsonValue.value.v_doc.data_len);
+
+	HTAB *regularValuesHash = NULL;
+	bool isCollationApplicable = IsCollationValid(indexCollation);
+	if (isCollationApplicable)
+	{
+		int extraDataSize = 0;
+		regularValuesHash = CreateBsonValueWithCollationHashSet(extraDataSize);
+	}
+	else
+	{
+		regularValuesHash = CreateBsonValueHashSet();
+	}
+
+	List *regexDataValues = NIL;
+	int numberOfValues = 0;
+	bool hasNull = false;
+	const bson_value_t *lastSeenValue = NULL;
+	while (bson_iter_next(&arrayIter))
+	{
+		lastSeenValue = bson_iter_value(&arrayIter);
+
+		/* if it is bson document and valid one for $in/$nin array. It fails with exact same error for both $in/$nin. */
+		if (!IsValidBsonDocumentForDollarInOrNinOp(lastSeenValue))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
+								"cannot nest $ under $nin")));
+		}
+
+		numberOfValues++;
+
+		if (lastSeenValue->value_type == BSON_TYPE_NULL)
+		{
+			hasNull = true;
+			continue;
+		}
+
+		if (lastSeenValue->value_type == BSON_TYPE_REGEX)
+		{
+			/* Store the compiled regex data for the index check function. */
+			RegexData *regexData = (RegexData *) palloc0(sizeof(RegexData));
+			regexData->regex = lastSeenValue->value.v_regex.regex;
+			regexData->options = lastSeenValue->value.v_regex.options;
+			regexData->pcreData = RegexCompile(regexData->regex,
+											   regexData->options);
+			regexDataValues = lappend(regexDataValues, regexData);
+		}
+
+		if (isCollationApplicable)
+		{
+			BsonValueHashEntry entry =
+			{
+				.bsonValue = *lastSeenValue,
+				.collationString = indexCollation,
+			};
+
+			hash_search(regularValuesHash, &entry, HASH_ENTER, NULL);
+		}
+		else
+		{
+			hash_search(regularValuesHash, lastSeenValue, HASH_ENTER, NULL);
+		}
+	}
+
+	CompositeIndexBoundsSet *set = CreateCompositeIndexBoundsSet(1,
+																 indexAttribute,
+																 wildcardPath);
+
+	CompositeIndexBounds *queryBounds = &set->bounds[0];
+
+	if (numberOfValues == 0)
+	{
+		/* It is essentially the same as exists: true. */
+		hash_destroy(regularValuesHash);
+
+		SetBoundsExistsTrue(queryBounds);
+		indexBounds->variableBoundsList = lappend(indexBounds->variableBoundsList, set);
+		return;
+	}
+
+	/* We have values, we need to walk from [MinKey, MaxKey] and append
+	 * The recheck args for the index to recheck appropiately. */
+	CompositeSingleBound bounds = GetTypeLowerBound(BSON_TYPE_MINKEY);
+	SetLowerBound(&queryBounds->lowerBound, &bounds, indexCollation);
+	bounds = GetTypeUpperBound(BSON_TYPE_MAXKEY);
+	SetUpperBound(&queryBounds->upperBound, &bounds, indexCollation);
+
+	indexBounds->variableBoundsList = lappend(indexBounds->variableBoundsList, set);
+
+	/*
+	 * Multi-key negations need the heap recheck (mixed array elements, or an
+	 * empty-array term that matches $ne null). IndexMultiKeyStatus_HasNoArrays paths are handled
+	 * exactly by the term-level recheck (IsValidRecheckForIndexValue).
+	 */
+	queryBounds->requiresRuntimeRecheck = pathMultiKeyState !=
+										  IndexMultiKeyStatus_HasNoArrays;
+
+	if (numberOfValues == 1 && lastSeenValue->value_type != BSON_TYPE_REGEX)
+	{
+		/* effectively NOT_EQ */
+		hash_destroy(regularValuesHash);
+
+		SetBoundsForNotEqual(lastSeenValue, queryBounds,
+							 pathMultiKeyState);
+	}
+	else
+	{
+		/* Freeze the htab so nothing can write more items to it. */
+		hash_freeze(regularValuesHash);
+
+		/* add the index check function and it's arguments. */
+		NotInRecheckData *recheckData = palloc(sizeof(NotInRecheckData));
+		recheckData->regexDataList = regexDataValues;
+		recheckData->valuesHash = regularValuesHash;
+		recheckData->hasNulls = hasNull;
+		recheckData->isCollationAware = isCollationApplicable;
+
+		IndexRecheckArgs *recheckArgs = palloc(sizeof(IndexRecheckArgs));
+		recheckArgs->queryDatum = (Pointer) recheckData;
+		recheckArgs->pathMultiKeyState = pathMultiKeyState;
+		recheckArgs->queryStrategy = BSON_INDEX_STRATEGY_DOLLAR_NOT_IN;
+		queryBounds->indexRecheckFunctions =
+			lappend(queryBounds->indexRecheckFunctions, recheckArgs);
+	}
 }
 
 

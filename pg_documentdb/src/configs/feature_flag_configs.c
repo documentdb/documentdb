@@ -188,6 +188,11 @@ bool EnableCompositeReducedCorrelatedBoundsPlanning =
 bool EnableCompositeReducedCorrelatedFirstOwnerFallback =
 	DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_FIRST_OWNER_FALLBACK;
 
+/* Added on v1.1, enabled on v1.1, remove after v1.3 */
+#define DEFAULT_ENABLE_SINGLE_BOUNDARY_FOR_DOLLAR_NOT_IN true
+bool EnableSingleBoundaryForDollarNotIn =
+	DEFAULT_ENABLE_SINGLE_BOUNDARY_FOR_DOLLAR_NOT_IN;
+
 /* Added in v0.115, Pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_INDEX_METADATA_GLOBAL_TRACKING false
 bool EnableIndexMetadataGlobalTracking = DEFAULT_ENABLE_INDEX_METADATA_GLOBAL_TRACKING;
@@ -1211,6 +1216,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to select the first eligible $elemMatch owner when multiple owners constrain the leading reduced-correlated index path and none has an equality bound."),
 		NULL, &EnableCompositeReducedCorrelatedFirstOwnerFallback,
 		DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_FIRST_OWNER_FALLBACK,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_single_boundary_for_dollar_not_in", newGucPrefix),
+		gettext_noop(
+			"Whether to use a single full-range composite index bound with term rechecks for $nin."),
+		NULL, &EnableSingleBoundaryForDollarNotIn,
+		DEFAULT_ENABLE_SINGLE_BOUNDARY_FOR_DOLLAR_NOT_IN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
