@@ -289,7 +289,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  Custom Scan (DocumentDBApiReservoirSample)
    Output: document
    Sample Size: 3
-   Sample Reservoir Method: Materialize
+   Sample Reservoir Method: Heap Skip
    ->  Index Scan using _id_ on documentdb_data.documents_25712001 collection
          Output: document
          Index Cond: ((collection.shard_key_value = '25712001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "1" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberInt" : "15" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
@@ -586,7 +586,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  Custom Scan (DocumentDBApiReservoirSample)
    Output: document
    Sample Size: 3
-   Sample Reservoir Method: Materialize
+   Sample Reservoir Method: Heap Skip
    ->  Index Scan using wildcard_all on documentdb_data.documents_25712001 collection
          Output: document
          Index Cond: (collection.document @> '{ "value" : { "$numberInt" : "50" } }'::bson)
@@ -599,7 +599,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  Custom Scan (DocumentDBApiReservoirSample)
    Output: document
    Sample Size: 2
-   Sample Reservoir Method: Materialize
+   Sample Reservoir Method: Heap Skip
    ->  Index Scan using wildcard_all on documentdb_data.documents_25712001 collection
          Output: document
          Index Cond: (collection.document @= '{ "category" : "A" }'::bson)
@@ -660,7 +660,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  Custom Scan (DocumentDBApiReservoirSample)
    Output: document
    Sample Size: 3
-   Sample Reservoir Method: Materialize
+   Sample Reservoir Method: Heap Skip
    ->  Index Scan using value_asc on documentdb_data.documents_25712001 collection
          Output: document
          Index Cond: ((collection.document @>= '{ "value" : { "$numberInt" : "50" } }'::bson) AND (collection.document @<= '{ "value" : { "$numberInt" : "150" } }'::bson))
@@ -702,7 +702,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  Custom Scan (DocumentDBApiReservoirSample)
    Output: document
    Sample Size: 2
-   Sample Reservoir Method: Materialize
+   Sample Reservoir Method: Heap Skip
    ->  Index Scan using category_value_compound on documentdb_data.documents_25712001 collection
          Output: document
          Index Cond: ((collection.document @= '{ "category" : "A" }'::bson) AND (collection.document @> '{ "value" : { "$numberInt" : "50" } }'::bson))
@@ -758,7 +758,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  Custom Scan (DocumentDBApiReservoirSample)
    Output: document
    Sample Size: 2
-   Sample Reservoir Method: Materialize
+   Sample Reservoir Method: Heap Skip
    ->  Index Scan using category_high_value on documentdb_data.documents_25712001 collection
          Output: document
          Index Cond: (collection.document @= '{ "category" : "A" }'::bson)
@@ -791,7 +791,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  Custom Scan (DocumentDBApiReservoirSample)
    Output: document
    Sample Size: 3
-   Sample Reservoir Method: Materialize
+   Sample Reservoir Method: Heap Skip
    ->  Index Scan using category_high_value on documentdb_data.documents_25712001 collection
          Output: document
          Index Cond: (collection.document @= '{ "category" : "C" }'::bson)
@@ -1146,7 +1146,6 @@ SELECT collection_id AS reservoir_col FROM documentdb_api_catalog.collections WH
 SELECT FORMAT('VACUUM (FREEZE ON) documentdb_data.documents_%s', :reservoir_col) \gexec
 VACUUM (FREEZE ON) documentdb_data.documents_25712006
 SET documentdb.enableDollarSampleReservoirScan TO on;
-SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
 SET enable_seqscan TO off;
 SET documentdb.forceUseIndexIfAvailable TO on;
 -- Plan: $match on _id (pushed into the _id btree index) + $sample.

@@ -483,8 +483,8 @@ bool EnableDollarSampleReservoirScan = DEFAULT_ENABLE_DOLLAR_SAMPLE_RESERVOIR_SC
 bool EnableRumIndexOnlyScanProjectionWrapper =
 	DEFAULT_ENABLE_RUM_INDEX_ONLY_SCAN_PROJECTION_WRAPPER;
 
-/* Added in v0.115, Pending stabilization, enable in v1.0 */
-#define DEFAULT_ENABLE_DOLLAR_SAMPLE_HEAP_SKIP_RESERVOIR_SCAN false
+/* Added in v0.115, enabled in v1.1, remove after v1.3 */
+#define DEFAULT_ENABLE_DOLLAR_SAMPLE_HEAP_SKIP_RESERVOIR_SCAN true
 bool EnableDollarSampleHeapSkipReservoirScan =
 	DEFAULT_ENABLE_DOLLAR_SAMPLE_HEAP_SKIP_RESERVOIR_SCAN;
 
