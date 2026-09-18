@@ -11,6 +11,7 @@ use std::{sync::Arc, time::Duration};
 
 use documentdb_gateway_core::{
     configuration::{DocumentDBSetupConfiguration, PgConfiguration, SetupConfiguration},
+    error::Result,
     postgres::{conn_mgmt, create_query_catalog, DocumentDBDataClient},
     run_gateway,
     service::{DefaultRequestRouter, TlsProvider},
@@ -72,7 +73,9 @@ pub extern "C-unwind" fn documentdb_gw_worker_main(_arg: pg_sys::Datum) {
         .unwrap();
 
     tokio_runtime.spawn(async move {
-        run_docdb_gateway(setup_configuration_file.as_str()).await;
+        if let Err(error) = run_docdb_gateway(setup_configuration_file.as_str()).await {
+            tracing::error!("Gateway worker failed to start: {error}");
+        }
         SHUTDOWN_CONTROLLER.shutdown();
     });
 
@@ -88,7 +91,7 @@ pub extern "C-unwind" fn documentdb_gw_worker_main(_arg: pg_sys::Datum) {
     log!("{} stopped", worker_name);
 }
 
-async fn run_docdb_gateway(setup_configuration_file: &str) {
+async fn run_docdb_gateway(setup_configuration_file: &str) -> Result<()> {
     let cfg_file = std::path::PathBuf::from(setup_configuration_file);
 
     let shutdown_token = SHUTDOWN_CONTROLLER.token();
@@ -122,7 +125,7 @@ async fn run_docdb_gateway(setup_configuration_file: &str) {
         },
         &setup_configuration,
     )
-    .await;
+    .await?;
 
     let dynamic_configuration = create_postgres_object(
         || async {
@@ -135,7 +138,7 @@ async fn run_docdb_gateway(setup_configuration_file: &str) {
         },
         &setup_configuration,
     )
-    .await;
+    .await?;
 
     let service_context = get_service_context(
         Box::new(setup_configuration),
@@ -151,5 +154,4 @@ async fn run_docdb_gateway(setup_configuration_file: &str) {
         shutdown_token,
     )
     .await
-    .unwrap();
 }

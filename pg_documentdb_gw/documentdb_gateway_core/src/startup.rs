@@ -37,13 +37,14 @@ pub fn get_service_context(
     )
 }
 
-/// # Panics
+/// # Errors
 ///
-/// Panics if `create_func` keeps failing after the configured startup wait window.
+/// Returns an error if `create_func` keeps failing after the configured startup wait window, or
+/// if shutdown is requested while waiting to retry.
 pub async fn create_postgres_object<T, F, Fut>(
     create_func: F,
     setup_configuration: &dyn SetupConfiguration,
-) -> T
+) -> Result<T>
 where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Result<T>>,
@@ -60,7 +61,7 @@ async fn create_postgres_object_with_retry_interval<T, F, Fut>(
     create_func: F,
     setup_configuration: &dyn SetupConfiguration,
     wait_time: Duration,
-) -> T
+) -> Result<T>
 where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Result<T>>,
@@ -71,29 +72,23 @@ where
 
     loop {
         match create_func().await {
-            Ok(result) => return result,
+            Ok(result) => return Ok(result),
             Err(error) if start.elapsed() < max_time => {
                 tracing::warn!(
                     "Exception when creating postgres object {error:?}. Retrying in \
                      {wait_time:?}."
                 );
                 // Race the retry backoff against the shutdown signal so a
-                // Ctrl+C received while we're stuck retrying triggers an
-                // immediate exit instead of waiting for the next attempt.
+                // Ctrl+C received while we're stuck retrying returns immediately
+                // instead of waiting for the next attempt.
                 tokio::select! {
                     () = tokio::time::sleep(wait_time) => {}
                     () = shutdown_token.cancelled() => {
-                        tracing::info!(
-                            "Shutdown signal received during postgres startup. \
-                             Aborting immediately."
-                        );
-                        std::process::exit(0);
+                        return Err(error);
                     }
                 }
             }
-            Err(error) => {
-                panic!("Failed to create postgres object after {max_time:?}: {error}");
-            }
+            Err(error) => return Err(error),
         }
     }
 }
@@ -131,15 +126,15 @@ mod tests {
             &setup_configuration,
             Duration::from_millis(1),
         )
-        .await;
+        .await
+        .unwrap();
 
         assert_eq!(42, result);
         assert_eq!(3, attempts.load(Ordering::Relaxed));
     }
 
     #[tokio::test]
-    #[should_panic(expected = "Failed to create postgres object after 0ns")]
-    async fn create_postgres_object_panics_after_timeout() {
+    async fn create_postgres_object_returns_error_after_timeout() {
         let setup_configuration = DocumentDBSetupConfiguration {
             postgres_startup_wait_time_seconds: Some(0),
             ..Default::default()
@@ -154,6 +149,7 @@ mod tests {
             &setup_configuration,
             Duration::from_millis(1),
         )
-        .await;
+        .await
+        .unwrap_err();
     }
 }

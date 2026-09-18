@@ -28,6 +28,7 @@ use std::sync::Arc;
 
 use documentdb_gateway_core::{
     configuration::{DocumentDBSetupConfiguration, PgConfiguration, SetupConfiguration},
+    error::DocumentDBError,
     postgres::{conn_mgmt, create_query_catalog, DocumentDBDataClient},
     run_gateway, run_legacy_gateway,
     service::{DefaultRequestRouter, TlsProvider},
@@ -37,6 +38,34 @@ use documentdb_gateway_core::{
 };
 use documentdb_gateway_otel::TelemetryManager;
 use tokio::{signal, time::Instant};
+
+/// Logs the startup failure, flushes telemetry, and exits.
+///
+/// Uses exit code 0 when shutdown was already requested (e.g. Ctrl+C during
+/// retry), since that is an expected, successful stop; otherwise exits with
+/// code 15 to signal a genuine startup failure to the process supervisor.
+fn exit_after_postgres_startup_failure(
+    telemetry_manager: Option<TelemetryManager>,
+    error: &DocumentDBError,
+) -> ! {
+    if SHUTDOWN_CONTROLLER.token().is_cancelled() {
+        eprintln!("Shutdown signal received during postgres startup. Aborting.");
+    } else {
+        eprintln!("Failed to create postgres object: {error}");
+    }
+
+    if let Some(manager) = telemetry_manager {
+        if let Err(err) = manager.shutdown() {
+            eprintln!("Failed to shutdown telemetry manager: {err}");
+        }
+    }
+
+    std::process::exit(if SHUTDOWN_CONTROLLER.token().is_cancelled() {
+        0
+    } else {
+        15
+    });
+}
 
 fn main() {
     STARTUP_INSTANT.get_or_init(Instant::now);
@@ -133,6 +162,10 @@ async fn start_gateway(mut setup_configuration: DocumentDBSetupConfiguration) {
         &setup_configuration,
     )
     .await;
+    let connection_pool_manager = match connection_pool_manager {
+        Ok(manager) => manager,
+        Err(error) => exit_after_postgres_startup_failure(telemetry_manager, &error),
+    };
 
     let dynamic_configuration = create_postgres_object(
         || async {
@@ -146,6 +179,10 @@ async fn start_gateway(mut setup_configuration: DocumentDBSetupConfiguration) {
         &setup_configuration,
     )
     .await;
+    let dynamic_configuration = match dynamic_configuration {
+        Ok(configuration) => configuration,
+        Err(error) => exit_after_postgres_startup_failure(telemetry_manager, &error),
+    };
 
     let service_context = get_service_context(
         Box::new(setup_configuration),
