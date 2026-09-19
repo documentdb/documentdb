@@ -96,10 +96,10 @@ jobs:
         with:
           version: ${{ inputs.version }}
 
-      # Pin every build-generated timestamp to the commit — see the matching
-      # step in build_deb_packages.yml. RPM keeps its changelog in the header
-      # rather than the payload, so this matters less here than for DEB, but
-      # it keeps BUILDTIME deterministic and the two formats symmetric.
+      # Same pin as build_deb_packages.yml, forwarded into the containers for
+      # parity. rpm acts on it only via %clamp_mtime_to_source_date_epoch and
+      # %use_source_date_epoch_as_buildtime; under the current EL9 defaults
+      # forwarding alone does not pin BUILDTIME or clamp payload mtimes.
       - name: Pin SOURCE_DATE_EPOCH to the commit timestamp
         run: |
           echo "DOCUMENTDB_VERSION=${{ steps.version.outputs.version }}" >> "$GITHUB_ENV"

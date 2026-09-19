@@ -2641,6 +2641,21 @@ class ExtraPackagesBuildDepsPreflightTests(unittest.TestCase):
         self.assertIn("date -u -r", common,
                       "changelog date must have a BSD `date -r` fallback for host portability")
 
+    def test_package_builders_forward_source_date_epoch(self):
+        # The workflows pin SOURCE_DATE_EPOCH on the runner. Every package-
+        # producing docker run must forward it, or the gateway deb's changelog
+        # date floats per cell and the bundle identity check fails at random
+        # (microsoft/documentdb run 32409058369). Source text only: this does
+        # not exercise the container, the unset case, or the generated metadata.
+        for name in ("build_packages.sh", "gateway/build_gateway_packages.sh"):
+            text = (OSS_ROOT / "packaging" / name).read_text(encoding="utf-8")
+            producers = [ln for ln in text.splitlines()
+                         if "docker run" in ln and ':/output"' in ln]
+            self.assertEqual(len(producers), 2, f"{name}: expected a deb and an rpm producer")
+            for ln in producers:
+                with self.subTest(script=name, line=ln.strip()[:60]):
+                    self.assertIn("--env SOURCE_DATE_EPOCH ", ln)
+
     def test_check_build_deps_only_deb_succeeds_when_dpkg_deb_present(self):
         # Behavioral happy-path for the new deb preflight; skipped where dpkg-deb
         # is unavailable (e.g. a minimal Python CI image) so the test stays

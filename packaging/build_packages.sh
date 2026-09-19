@@ -185,15 +185,16 @@ if [[ "$PACKAGE_TYPE" == "deb" ]]; then
         --build-arg BASE_IMAGE="$DOCKER_IMAGE" \
         --build-arg POSTGRES_VERSION="$PG" \
         --build-arg DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" "$script_dir"
-    # Run the Docker container to build the packages
-    docker run --rm --env OS="$OS" --env POSTGRES_VERSION="$PG" --env DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" --env DEB_BUILD_OPTIONS="$DEB_BUILD_OPTIONS_VALUE" -v "$abs_output_dir:/output" "$TAG"
+    # Run the Docker container to build the packages. SOURCE_DATE_EPOCH is
+    # forwarded so dpkg-deb clamps mtimes to the workflow pin, not wall clock.
+    docker run --rm --env OS="$OS" --env POSTGRES_VERSION="$PG" --env DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" --env DEB_BUILD_OPTIONS="$DEB_BUILD_OPTIONS_VALUE" --env SOURCE_DATE_EPOCH -v "$abs_output_dir:/output" "$TAG"
 elif [[ "$PACKAGE_TYPE" == "rpm" ]]; then
     docker build -t "$TAG" -f "$DOCKERFILE" \
         --build-arg BASE_IMAGE="$DOCKER_IMAGE" \
         --build-arg POSTGRES_VERSION="$PG" \
         --build-arg DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" "$script_dir"
     # Run the Docker container to build the packages
-    docker run --rm --env OS="$OS" --env POSTGRES_VERSION="$PG" --env DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" -v "$abs_output_dir:/output" "$TAG"
+    docker run --rm --env OS="$OS" --env POSTGRES_VERSION="$PG" --env DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" --env SOURCE_DATE_EPOCH -v "$abs_output_dir:/output" "$TAG"
 fi
 
 echo "Packages built successfully!!"

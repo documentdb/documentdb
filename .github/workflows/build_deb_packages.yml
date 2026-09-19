@@ -109,15 +109,13 @@ jobs:
         with:
           version: ${{ inputs.version }}
 
-      # Pin every build-generated timestamp to the commit. Without this,
-      # deb_install_changelog stamps the current HH:MM:SS into the shipped
-      # /usr/share/doc/<pkg>/changelog.gz, so the SAME noarch package built in
-      # two matrix cells seconds apart differs in payload — which both makes
-      # the release date meaningless ("whenever this cell happened to run")
-      # and trips the aggregate bundle's cross-cell identity check. dpkg-deb
-      # additionally clamps payload mtimes to this value, moving the packages
-      # toward byte-reproducibility. Every cell checks out the same SHA, so
-      # every cell derives the same epoch.
+      # Pin the gateway changelog date and clamp newer payload mtimes to the
+      # commit timestamp. Unpinned, deb_install_changelog stamps each cell's own
+      # HH:MM:SS into changelog.gz, and the gateway deb is built under one name
+      # in every PG cell, so the bundle's cross-cell identity check fails at
+      # random (run 32409058369). The build scripts forward this into the
+      # containers. The extension's debian/changelog date comes from
+      # CHANGELOG.md or wall clock, not from this pin.
       - name: Pin SOURCE_DATE_EPOCH to the commit timestamp
         run: |
           echo "DOCUMENTDB_VERSION=${{ steps.version.outputs.version }}" >> "$GITHUB_ENV"
