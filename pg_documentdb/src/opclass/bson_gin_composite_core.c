@@ -35,6 +35,7 @@
  #include "opclass/bson_gin_index_mgmt.h"
  #include "opclass/bson_gin_index_term.h"
  #include "opclass/bson_gin_index_types_core.h"
+ #include "opclass/bson_gin_composite.h"
  #include "query/bson_compare.h"
  #include "utils/hashset_utils.h"
  #include "utils/documentdb_errors.h"
@@ -1301,6 +1302,173 @@ ParseSortOrderAndSetScanDirection(bson_value_t *queryvalue, int8_t sortOrder,
 }
 
 
+/*
+ * Returns whether an index expression can require a recheck that needs the
+ * reconstructed document rather than the raw projected index tuple.
+ */
+bool
+CompositeIndexExprCanRequireRuntimeRecheck(Expr *expr)
+{
+	if (IsA(expr, BoolExpr))
+	{
+		ListCell *cell;
+		foreach(cell, ((BoolExpr *) expr)->args)
+		{
+			if (CompositeIndexExprCanRequireRuntimeRecheck((Expr *) lfirst(cell)))
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	if (!IsA(expr, OpExpr) && !IsA(expr, FuncExpr))
+	{
+		return false;
+	}
+
+	List *args;
+	const MongoIndexOperatorInfo *operatorInfo;
+	if (IsA(expr, OpExpr))
+	{
+		OpExpr *opExpr = (OpExpr *) expr;
+		args = opExpr->args;
+		operatorInfo = GetMongoIndexOperatorByPostgresOperatorId(opExpr->opno);
+	}
+	else
+	{
+		FuncExpr *funcExpr = (FuncExpr *) expr;
+		args = funcExpr->args;
+		operatorInfo = GetMongoIndexOperatorInfoByPostgresFuncId(funcExpr->funcid);
+	}
+
+	if (operatorInfo == NULL || list_length(args) != 2 ||
+		!IsA(lsecond(args), Const))
+	{
+		return false;
+	}
+
+	Const *queryConst = (Const *) lsecond(args);
+	if (queryConst->constisnull)
+	{
+		return true;
+	}
+
+	pgbsonelement queryElement;
+	PgbsonToSinglePgbsonElement(DatumGetPgBson(queryConst->constvalue), &queryElement);
+
+	if (IsA(expr, OpExpr) &&
+		((OpExpr *) expr)->opno == BsonRangeMatchOperatorOid())
+	{
+		DollarRangeParams rangeParams = { 0 };
+		if (!TryGetRangeParamsForRangeArgs(args, &rangeParams))
+		{
+			return false;
+		}
+
+		/* Keep in sync with the $elemMatch branch in AddMultiBoundaryForDollarRange. */
+		if (rangeParams.isElemMatch)
+		{
+			return true;
+		}
+
+		/* Keep in sync with SetArrayEqualityBound and the array range bounds. */
+		if (rangeParams.minValue.value_type == BSON_TYPE_ARRAY ||
+			rangeParams.maxValue.value_type == BSON_TYPE_ARRAY)
+		{
+			return true;
+		}
+
+		/* Keep in sync with the MinKey case in SetGreaterThanBounds. */
+		if (rangeParams.minValue.value_type == BSON_TYPE_MINKEY &&
+			!rangeParams.isMinInclusive)
+		{
+			return true;
+		}
+
+		/* Keep in sync with the MaxKey case in SetLessThanBounds. */
+		if (rangeParams.maxValue.value_type == BSON_TYPE_MAXKEY &&
+			!rangeParams.isMaxInclusive)
+		{
+			return true;
+		}
+
+		return false;
+	}
+
+	/*
+	 * Keep in sync with the unconditional runtime rechecks in
+	 * ParseOperatorStrategyWithPath.
+	 */
+	switch (operatorInfo->indexStrategy)
+	{
+		case BSON_INDEX_STRATEGY_DOLLAR_ELEMMATCH:
+		case BSON_INDEX_STRATEGY_DOLLAR_SIZE:
+		case BSON_INDEX_STRATEGY_DOLLAR_TYPE:
+		case BSON_INDEX_STRATEGY_DOLLAR_NOT_IN:
+		case BSON_INDEX_STRATEGY_DOLLAR_NOT_GT:
+		case BSON_INDEX_STRATEGY_DOLLAR_NOT_GTE:
+		case BSON_INDEX_STRATEGY_DOLLAR_NOT_LT:
+		case BSON_INDEX_STRATEGY_DOLLAR_NOT_LTE:
+		{
+			return true;
+		}
+
+		default:
+		{
+			break;
+		}
+	}
+
+	if (operatorInfo->indexStrategy == BSON_INDEX_STRATEGY_DOLLAR_IN)
+	{
+		bson_iter_t iter;
+		BsonValueInitIterator(&queryElement.bsonValue, &iter);
+		while (bson_iter_next(&iter))
+		{
+			const bson_value_t *value = bson_iter_value(&iter);
+
+			/* Keep in sync with the array branch in AddMultiBoundaryForDollarIn. */
+			if (value->value_type == BSON_TYPE_ARRAY)
+			{
+				return true;
+			}
+
+			/* Keep in sync with the regex branch in AddMultiBoundaryForDollarIn. */
+			if (value->value_type == BSON_TYPE_REGEX)
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/* Keep in sync with SetArrayEqualityBound. */
+	if (queryElement.bsonValue.value_type == BSON_TYPE_ARRAY)
+	{
+		return true;
+	}
+
+	/* Keep in sync with the MinKey case in SetGreaterThanBounds. */
+	if (operatorInfo->indexStrategy == BSON_INDEX_STRATEGY_DOLLAR_GREATER &&
+		queryElement.bsonValue.value_type == BSON_TYPE_MINKEY)
+	{
+		return true;
+	}
+
+	/* Keep in sync with the MaxKey case in SetLessThanBounds. */
+	if (operatorInfo->indexStrategy == BSON_INDEX_STRATEGY_DOLLAR_LESS &&
+		queryElement.bsonValue.value_type == BSON_TYPE_MAXKEY)
+	{
+		return true;
+	}
+
+	return false;
+}
+
+
 static void
 ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 							  BsonIndexStrategy queryStrategy,
@@ -1412,6 +1580,8 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 			CompositeIndexBoundsSet *set = CreateAndRegisterSingleIndexBoundsSet(
 				indexBounds, i, wildcardPath);
 			SetBoundsExistsTrue(&set->bounds[0]);
+
+			/* Keep in sync with CompositeIndexExprCanRequireRuntimeRecheck. */
 			set->bounds[0].requiresRuntimeRecheck = true;
 			break;
 		}
@@ -1438,6 +1608,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 			}
 
 			/* Needs a runtime recheck since we don't know about arrays */
+			/* Keep in sync with CompositeIndexExprCanRequireRuntimeRecheck. */
 			set->bounds[0].requiresRuntimeRecheck = true;
 			break;
 		}
@@ -1502,6 +1673,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 
 		case BSON_INDEX_STRATEGY_DOLLAR_TYPE:
 		{
+			/* Keep this strategy in sync with CompositeIndexExprCanRequireRuntimeRecheck. */
 			if (queryElement->bsonValue.value_type == BSON_TYPE_ARRAY)
 			{
 				AddMultiBoundaryForDollarType(i, wildcardPath, queryElement, indexBounds);
@@ -1525,6 +1697,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_IN:
 		{
+			/* Keep this strategy in sync with CompositeIndexExprCanRequireRuntimeRecheck. */
 			if (EnableSingleBoundaryForDollarNotIn)
 			{
 				AddSingleBoundaryForDollarNotIn(i, wildcardPath, queryElement,
@@ -1553,6 +1726,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_GT:
 		{
+			/* Keep this strategy in sync with CompositeIndexExprCanRequireRuntimeRecheck. */
 			bool isEquals = false;
 			AddMultiBoundaryForNotGreater(i, wildcardPath, queryElement, indexBounds,
 										  isEquals);
@@ -1561,6 +1735,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_GTE:
 		{
+			/* Keep this strategy in sync with CompositeIndexExprCanRequireRuntimeRecheck. */
 			bool isEquals = true;
 			AddMultiBoundaryForNotGreater(i, wildcardPath, queryElement, indexBounds,
 										  isEquals);
@@ -1569,6 +1744,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_LT:
 		{
+			/* Keep this strategy in sync with CompositeIndexExprCanRequireRuntimeRecheck. */
 			bool isEquals = false;
 			AddMultiBoundaryForNotLess(i, wildcardPath, queryElement, indexBounds,
 									   isEquals);
@@ -1577,6 +1753,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_LTE:
 		{
+			/* Keep this strategy in sync with CompositeIndexExprCanRequireRuntimeRecheck. */
 			bool isEquals = true;
 			AddMultiBoundaryForNotLess(i, wildcardPath, queryElement, indexBounds,
 									   isEquals);
@@ -2006,6 +2183,7 @@ SetArrayEqualityBound(const bson_value_t *queryValue,
 	SetEqualityBound(&firstElement, &bounds[1], pathMultiKeyState);
 
 	/* Add a runtime recheck */
+	/* Keep this case in sync with CompositeIndexExprCanRequireRuntimeRecheck. */
 	bounds[1].requiresRuntimeRecheck = true;
 }
 
@@ -2066,6 +2244,8 @@ SetGreaterThanBounds(const bson_value_t *queryValue,
 		 * a term level or split it into two bounds - equality on MinKey with recheck and
 		 * > Minkey without recheck.
 		 */
+
+		/* Keep this case in sync with CompositeIndexExprCanRequireRuntimeRecheck. */
 		queryBounds->requiresRuntimeRecheck = !isMinBoundInclusive;
 		return;
 	}
@@ -2075,6 +2255,7 @@ SetGreaterThanBounds(const bson_value_t *queryValue,
 	if (compareValue.value_type == BSON_TYPE_ARRAY)
 	{
 		/* Arrays require runtime recheck on the greater than value */
+		/* Keep this case in sync with CompositeIndexExprCanRequireRuntimeRecheck. */
 		queryBounds->requiresRuntimeRecheck = true;
 
 		/* Arrays need to skip typebracketing - it'll be all values until maxKey */
@@ -2167,6 +2348,7 @@ SetLessThanBounds(const bson_value_t *queryValue,
 	if (compareValue.value_type == BSON_TYPE_ARRAY)
 	{
 		/* Arrays require runtime recheck on the greater than value */
+		/* Keep this case in sync with CompositeIndexExprCanRequireRuntimeRecheck. */
 		queryBounds->requiresRuntimeRecheck = true;
 
 		/* Arrays need to skip typebracketing - it'll be all values until maxKey */
@@ -2200,6 +2382,8 @@ SetLessThanBounds(const bson_value_t *queryValue,
 	{
 		/* Special case, maxKey is always inclusive */
 		SetBoundsExistsTrue(queryBounds);
+
+		/* Keep this case in sync with CompositeIndexExprCanRequireRuntimeRecheck. */
 		queryBounds->requiresRuntimeRecheck = true;
 		return;
 	}
@@ -2733,6 +2917,10 @@ AddMultiBoundaryForDollarIn(int32_t indexAttribute, const char *wildcardPath,
 
 		if (element.bsonValue.value_type == BSON_TYPE_REGEX)
 		{
+			/*
+			 * Keep this multi-bound recheck case in sync with
+			 * CompositeIndexExprCanRequireRuntimeRecheck.
+			 */
 			CompositeIndexBoundsSet *regexSet = AddMultiBoundaryForDollarRegex(index,
 																			   wildcardPath,
 																			   &element,
@@ -2745,6 +2933,7 @@ AddMultiBoundaryForDollarIn(int32_t indexAttribute, const char *wildcardPath,
 		else if (element.bsonValue.value_type == BSON_TYPE_ARRAY)
 		{
 			/* Array equality has 2 boundaries */
+			/* Keep this case in sync with CompositeIndexExprCanRequireRuntimeRecheck. */
 			SetArrayEqualityBound(&element.bsonValue, &set->bounds[index],
 								  pathMultiKeyState);
 			index += 2;
@@ -3373,6 +3562,7 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 
 	if (params->isElemMatch)
 	{
+		/* Keep this case in sync with CompositeIndexExprCanRequireRuntimeRecheck. */
 		pgbsonelement innerElemMatchElement = { 0 };
 		innerElemMatchElement.path = queryElement->path;
 		innerElemMatchElement.pathLength = queryElement->pathLength;

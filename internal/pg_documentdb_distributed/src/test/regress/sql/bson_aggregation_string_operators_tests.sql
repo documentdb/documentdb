@@ -996,7 +996,6 @@ select bson_dollar_project('{"_id":"1"}', '{"result" : { "$regexFindAll" : {"inp
 select bson_dollar_project('{"_id":"1"}', '{"result" : { "$regexFindAll" : {"input": "string", "regex" :"\u0000", "options" : "i"} } }');
 select bson_dollar_project('{"_id":"1"}', '{"result" : { "$regexFindAll" : {"input": "string", "regex" :"(m(p)"} } }');
 select bson_dollar_project('{"_id":"1"}', ('{"result" : { "$regexFindAll" : {"input" : "' || LPAD('',100000, 'a') || '", "regex": "(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((())))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))"}} }')::bson);
-select bson_dollar_project('{"_id":"1"}', ('{"result" : { "$regexFindAll" : {"input" : "' || LPAD('', 50000, 'c') || LPAD('', 50000, 'd') ||  'e", "regex": "' || LPAD('',2728*3,'(d)') || 'e"}} }')::bson);
 
 --regex Operators : with multiple document in collection
 

@@ -46,6 +46,7 @@
 #include "metadata/collection.h"
 #include "utils/docdb_make_funcs.h"
 #include "opclass/bson_gin_index_mgmt.h"
+#include "opclass/bson_gin_composite.h"
 #include <parser/parsetree.h>
 
 
@@ -119,6 +120,7 @@ static bool EqualUnsupportedRumIndexOnlyInputNode(const struct ExtensibleNode *a
 static TupleTableSlot * RumIndexOnlyScanNext(CustomScanState *node);
 static bool RumIndexOnlyScanNextRecheck(ScanState *state, TupleTableSlot *slot);
 static List * AddRumIndexOnlyCustomPathCore(List *pathList, Oid relOid);
+static bool IndexPathCanRequireRuntimeRecheck(IndexPath *indexPath);
 
 /* --------------------------------------------------------- */
 /* Top level exports */
@@ -211,12 +213,31 @@ GetWrappableRumIndexOnlyScan(Path *inputPath)
 
 	IndexPath *indexPath = (IndexPath *) inputPath;
 	if (indexPath->indexinfo == NULL ||
-		!IsBsonRegularIndexAm(indexPath->indexinfo->relam))
+		!IsBsonRegularIndexAm(indexPath->indexinfo->relam) ||
+		IndexPathCanRequireRuntimeRecheck(indexPath))
 	{
 		return InvalidOid;
 	}
 
 	return indexPath->indexinfo->indexoid;
+}
+
+
+static bool
+IndexPathCanRequireRuntimeRecheck(IndexPath *indexPath)
+{
+	ListCell *cell;
+	foreach(cell, indexPath->indexclauses)
+	{
+		IndexClause *indexClause = (IndexClause *) lfirst(cell);
+		if (indexClause->lossy ||
+			CompositeIndexExprCanRequireRuntimeRecheck(indexClause->rinfo->clause))
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 

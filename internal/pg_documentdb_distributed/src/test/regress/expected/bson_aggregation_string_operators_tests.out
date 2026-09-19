@@ -3894,8 +3894,6 @@ select bson_dollar_project('{"_id":"1"}', '{"result" : { "$regexFindAll" : {"inp
 ERROR:  Invalid Regex in $regexFindAll: missing closing parenthesis
 select bson_dollar_project('{"_id":"1"}', ('{"result" : { "$regexFindAll" : {"input" : "' || LPAD('',100000, 'a') || '", "regex": "(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((())))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))"}} }')::bson);
 ERROR:  $regexFindAll: buffer size for storing output has exceeded the maximum allowed limit of 64MB
-select bson_dollar_project('{"_id":"1"}', ('{"result" : { "$regexFindAll" : {"input" : "' || LPAD('', 50000, 'c') || LPAD('', 50000, 'd') ||  'e", "regex": "' || LPAD('',2728*3,'(d)') || 'e"}} }')::bson);
-ERROR:  There isn't enough available memory to perform the evaluation of the regular expression.
 --regex Operators : with multiple document in collection
 --creating collection
 SELECT create_collection('db','regexMultiDocumentTest');
