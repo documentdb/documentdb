@@ -36,6 +36,7 @@ permissions:
 env:
   IMAGE_NAME: documentdb-local
   IMAGE_TAG: ${{ github.run_id }}-$(date +'%Y-%m-%d')
+  COSIGN_VERSION: v3.0.6
 
 jobs:
   build-and-push:
@@ -228,21 +229,35 @@ jobs:
           --amend ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}-pg${{ matrix.pg_version }}-arm64
         docker manifest push ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.MANIFEST_TAG }}
     - name: Install cosign
-      uses: sigstore/cosign-installer@main
+      uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      with:
+        cosign-release: ${{ env.COSIGN_VERSION }}
     - name: Sign manifest (keyless)
       run: |
         DIGEST=$(docker buildx imagetools inspect ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.MANIFEST_TAG }} \
           | awk '/^Digest:/ { print $2 }')
         echo "Signing manifest-list@${DIGEST}"
-        cosign sign ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}@${DIGEST} -y
+        cosign sign --new-bundle-format=false --use-signing-config=false \
+          ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}@${DIGEST} -y
     - name: Verify manifest signature (keyless)
       run: |
         DIGEST=$(docker buildx imagetools inspect ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.MANIFEST_TAG }} \
           | awk '/^Digest:/ { print $2 }')
-        cosign verify \
+        cosign verify --new-bundle-format=false \
           --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/build_gateway.yml@${{ github.ref }}" \
           --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
           ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}@${DIGEST}
+    - name: Assert the legacy signature tag is published
+      run: |
+        set -o pipefail
+        DIGEST=$(docker buildx imagetools inspect ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.MANIFEST_TAG }} \
+          | awk '/^Digest:/ { print $2 }')
+        [ -n "${DIGEST}" ] || { echo "::error::could not resolve the digest of ${{ env.MANIFEST_TAG }}" >&2; exit 1; }
+        SIG_TAG="$(printf '%s' "${DIGEST}" | tr ':' '-').sig"
+        docker buildx imagetools inspect \
+          ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${SIG_TAG} >/dev/null \
+          || { echo "::error::legacy signature tag ${SIG_TAG} not found for ${{ env.MANIFEST_TAG }}" >&2; exit 1; }
+        echo "Legacy signature tag present: ${SIG_TAG}"
 
   create-manifest-latest:
     name: Create & push 'latest' manifest
@@ -265,18 +280,32 @@ jobs:
           --amend ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}-pg17-arm64
         docker manifest push ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.MANIFEST_TAG }}
     - name: Install cosign
-      uses: sigstore/cosign-installer@main
+      uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      with:
+        cosign-release: ${{ env.COSIGN_VERSION }}
     - name: Sign manifest (keyless)
       run: |
         DIGEST=$(docker buildx imagetools inspect ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.MANIFEST_TAG }} \
           | awk '/^Digest:/ { print $2 }')
         echo "Signing manifest-list@${DIGEST}"
-        cosign sign ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}@${DIGEST} -y
+        cosign sign --new-bundle-format=false --use-signing-config=false \
+          ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}@${DIGEST} -y
     - name: Verify manifest signature (keyless)
       run: |
         DIGEST=$(docker buildx imagetools inspect ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.MANIFEST_TAG }} \
           | awk '/^Digest:/ { print $2 }')
-        cosign verify \
+        cosign verify --new-bundle-format=false \
           --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/build_gateway.yml@${{ github.ref }}" \
           --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
           ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}@${DIGEST}
+    - name: Assert the legacy signature tag is published
+      run: |
+        set -o pipefail
+        DIGEST=$(docker buildx imagetools inspect ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.MANIFEST_TAG }} \
+          | awk '/^Digest:/ { print $2 }')
+        [ -n "${DIGEST}" ] || { echo "::error::could not resolve the digest of ${{ env.MANIFEST_TAG }}" >&2; exit 1; }
+        SIG_TAG="$(printf '%s' "${DIGEST}" | tr ':' '-').sig"
+        docker buildx imagetools inspect \
+          ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${SIG_TAG} >/dev/null \
+          || { echo "::error::legacy signature tag ${SIG_TAG} not found for ${{ env.MANIFEST_TAG }}" >&2; exit 1; }
+        echo "Legacy signature tag present: ${SIG_TAG}"
