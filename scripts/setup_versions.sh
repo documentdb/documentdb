@@ -26,8 +26,12 @@ POSTGRES_15_REF="REL_15_14"
 
 # This contains the fix for supporting extended stats on expressions.
 CITUS_12_VERSION=cf0e6c359c07a0273e3946fadaed170e77fa5eea
+# Citus v14.2.0.
+CITUS_14_VERSION=58702e722c6efbae45e3cade885b476e4fddc7e1
 # This contains the PostgreSQL 18 orphan-cleanup snapshot fix.
-CITUS_14_VERSION=5c292aaf0eda3c5e1744d6f47390cf11bffb978d
+# ISSUE-TODO-CRITICAL-dmmelnik-2026/09/18: Update CITUS_14_VERSION to the official 14.3 release and drop 18 specific citus line
+# PG18 special version is required until we have a fix for https://github.com/citusdata/citus/pull/8676 (Keep orphan cleanup snapshot active on PostgreSQL 18)
+CITUS_14_PG18_VERSION=5c292aaf0eda3c5e1744d6f47390cf11bffb978d
 
 # This is commit 6a065fd8dfb280680304991aa30d7f72787fdb04
 RUM_VERSION=1.3.14
@@ -73,7 +77,7 @@ function GetCitusVersion()
 {
   local citusVersion=$1
   if [ "$PGVERSION" == "18" ]; then
-    echo $CITUS_14_VERSION
+    echo $CITUS_14_PG18_VERSION
   elif [ "$PGVERSION" == "17" ]; then
     echo $CITUS_14_VERSION
   elif [ "$citusVersion" == "14" ] || [ "$citusVersion" == "v14.0" ] || [ "$citusVersion" == "$CITUS_14_VERSION"  ]; then
