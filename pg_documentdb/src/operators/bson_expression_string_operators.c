@@ -2710,10 +2710,11 @@ WriteDollarTrimResult(const bson_value_t *input, bson_value_t *result, int start
 	if (outputLength > 0)
 	{
 		result->value.v_utf8.len = outputLength;
-		result->value.v_utf8.str = palloc(result->value.v_utf8.len);
+		result->value.v_utf8.str = palloc(result->value.v_utf8.len + 1);
 		memcpy(result->value.v_utf8.str,
 			   input->value.v_utf8.str + startIndex,
 			   result->value.v_utf8.len);
+		result->value.v_utf8.str[result->value.v_utf8.len] = '\0';
 	}
 	else
 	{

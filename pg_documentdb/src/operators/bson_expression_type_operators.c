@@ -1735,7 +1735,7 @@ ProcessDollarToBinData(const bson_value_t *currentValue, const bson_type_t *toTy
 									formatString)));
 			}
 
-			char *currentString = (char *) currentValue->value.v_binary.data;
+			char *currentString = currentValue->value.v_utf8.str;
 
 			if ((toSubtype == BSON_SUBTYPE_UUID) ^ (strcmp(formatString, "uuid") == 0))
 			{
@@ -1745,7 +1745,7 @@ ProcessDollarToBinData(const bson_value_t *currentValue, const bson_type_t *toTy
 
 			/* Check if the input format is correct */
 			char *decodedValue = currentString;
-			int decodedValueLen = strlen(currentString);
+			int decodedValueLen = currentValue->value.v_utf8.len;
 			if (strcmp(formatString, "base64") == 0)
 			{
 				decodedValue = palloc(decodedValueLen);
@@ -1813,7 +1813,8 @@ ProcessDollarToBinData(const bson_value_t *currentValue, const bson_type_t *toTy
 				decodedValueLen = (decodedValueLen / 2) + VARHDRSZ;
 				decodedValue = palloc(decodedValueLen);
 
-				decodedValueLen = hex_decode(currentString, strlen(currentString),
+				decodedValueLen = hex_decode(currentString,
+											 currentValue->value.v_utf8.len,
 											 decodedValue);
 			}
 			else if (strcmp(formatString, "uuid") == 0)
