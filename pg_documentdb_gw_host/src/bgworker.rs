@@ -115,7 +115,7 @@ async fn run_docdb_gateway(setup_configuration_file: &str) -> Result<()> {
     .await
     .expect("Failed to create TLS provider.");
 
-    let connection_pool_manager = create_postgres_object(
+    let connection_pool_manager = match create_postgres_object(
         || async {
             conn_mgmt::create_connection_pool_manager(
                 create_query_catalog(),
@@ -125,9 +125,17 @@ async fn run_docdb_gateway(setup_configuration_file: &str) -> Result<()> {
         },
         &setup_configuration,
     )
-    .await?;
+    .await
+    {
+        Ok(manager) => manager,
+        // A cancelled shutdown token means the worker was asked to stop while
+        // retrying, not a genuine startup failure; returning early here avoids
+        // logging an expected shutdown as a worker failure.
+        Err(_) if shutdown_token.is_cancelled() => return Ok(()),
+        Err(error) => return Err(error),
+    };
 
-    let dynamic_configuration = create_postgres_object(
+    let dynamic_configuration = match create_postgres_object(
         || async {
             PgConfiguration::new(
                 &setup_configuration,
@@ -138,7 +146,12 @@ async fn run_docdb_gateway(setup_configuration_file: &str) -> Result<()> {
         },
         &setup_configuration,
     )
-    .await?;
+    .await
+    {
+        Ok(configuration) => configuration,
+        Err(_) if shutdown_token.is_cancelled() => return Ok(()),
+        Err(error) => return Err(error),
+    };
 
     let service_context = get_service_context(
         Box::new(setup_configuration),
