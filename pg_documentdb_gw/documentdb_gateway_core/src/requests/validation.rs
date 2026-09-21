@@ -118,7 +118,7 @@ pub fn validate_request(
             ErrorCode::CommandNotSupported,
             format!(
                 "'{:?}' read concern is not supported",
-                &ReadConcern::Snapshot
+                ReadConcern::Snapshot
             ),
         ));
     }
