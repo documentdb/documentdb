@@ -124,6 +124,9 @@ static void ParseMergeStage(const bson_value_t *existingValue, const
 							char *currentNameSpace, MergeArgs *args);
 static void ParseOutStage(const bson_value_t *existingValue, const char *currentNameSpace,
 						  OutArgs *args);
+static inline AclMode GetMergeTargetRequiredPermissions(WhenMatchedAction whenMatched,
+														WhenNotMatchedAction
+														whenNotMatched);
 static void VaildateMergeOnFieldValues(const bson_value_t *onArray, uint64
 									   collectionId);
 static void RearrangeTargetListForMerge(Query *query, MongoCollection *targetCollection,
@@ -159,7 +162,8 @@ static void ValidateAndAddObjectIdToWriter(pgbson_writer *writer,
 static inline bool IsSingleUniqueIndexPresent(const char *onValue,
 											  bson_iter_t *indexKeyDocumentIter);
 static inline void AddTargetCollectionRTEDollarMerge(Query *query,
-													 MongoCollection *targetCollection);
+													 MongoCollection *targetCollection,
+													 AclMode requiredPermissions);
 static HTAB * InitHashTableFromStringArray(const bson_value_t *onValues, int
 										   onValuesArraySize);
 static inline void ValidatePreOutputStages(Query *query, char *stageName);
@@ -588,6 +592,48 @@ bson_dollar_merge_fail_when_not_matched(PG_FUNCTION_ARGS)
 }
 
 
+static inline AclMode
+GetMergeTargetRequiredPermissions(WhenMatchedAction whenMatched,
+								  WhenNotMatchedAction whenNotMatched)
+{
+	switch (whenMatched)
+	{
+		case WhenMatched_MERGE:
+		case WhenMatched_REPLACE:
+		{
+			return ACL_UPDATE | (whenNotMatched == WhenNotMatched_INSERT ?
+								 ACL_INSERT : ACL_NO_RIGHTS);
+		}
+
+		case WhenMatched_KEEPEXISTING:
+		{
+			if (whenNotMatched == WhenNotMatched_INSERT)
+			{
+				return ACL_INSERT | ACL_UPDATE;
+			}
+			break;
+		}
+
+		case WhenMatched_FAIL:
+		{
+			if (whenNotMatched == WhenNotMatched_INSERT)
+			{
+				return ACL_INSERT;
+			}
+			break;
+		}
+
+		default:
+		{
+			break;
+		}
+	}
+
+	/* Keep existing permission checks for unsupported mode pairs. */
+	return ACL_SELECT | ACL_INSERT | ACL_UPDATE;
+}
+
+
 /*
  * Mutates the query for the $merge stage
  *
@@ -722,7 +768,9 @@ HandleMerge(const bson_value_t *existingValue, Query *query,
 
 	query = MigrateQueryToFilteredOutputSubQuery(query, context);
 	query->commandType = CMD_MERGE;
-	AddTargetCollectionRTEDollarMerge(query, targetCollection);
+	AclMode requiredPermissions = GetMergeTargetRequiredPermissions(
+		mergeArgs.whenMatched, mergeArgs.whenNotMatched);
+	AddTargetCollectionRTEDollarMerge(query, targetCollection, requiredPermissions);
 
 	Var *sourceDocVar = makeVar(sourceCollectionVarNo, sourceDocAttrNo,
 								BsonTypeId(), -1,
@@ -1367,7 +1415,8 @@ MakeExtractFuncExprForMergeTE(const char *onField, uint32 length, Var *sourceDoc
  * Add target collection to the query for $merge aggregation stage.
  */
 static inline void
-AddTargetCollectionRTEDollarMerge(Query *query, MongoCollection *targetCollection)
+AddTargetCollectionRTEDollarMerge(Query *query, MongoCollection *targetCollection,
+								  AclMode requiredPermissions)
 {
 	RangeTblEntry *rte = makeNode(RangeTblEntry);
 	List *colNames = list_make3(makeString("shard_key_value"), makeString("object_id"),
@@ -1385,9 +1434,9 @@ AddTargetCollectionRTEDollarMerge(Query *query, MongoCollection *targetCollectio
 
 #if PG_VERSION_NUM >= 160000
 	RTEPermissionInfo *permInfo = addRTEPermissionInfo(&query->rteperminfos, rte);
-	permInfo->requiredPerms = ACL_SELECT | ACL_INSERT | ACL_UPDATE;
+	permInfo->requiredPerms = requiredPermissions;
 #else
-	rte->requiredPerms = ACL_SELECT | ACL_INSERT | ACL_UPDATE;
+	rte->requiredPerms = requiredPermissions;
 #endif
 	RangeTblEntry *existingrte = list_nth(query->rtable, 0);
 	query->rtable = list_make2(rte, existingrte);
@@ -2024,7 +2073,8 @@ HandleOut(const bson_value_t *existingValue, Query *query,
 	RearrangeTargetListForMerge(query, targetCollection, false, NULL);
 	query = MigrateQueryToFilteredOutputSubQuery(query, context);
 	query->commandType = CMD_MERGE;
-	AddTargetCollectionRTEDollarMerge(query, targetCollection);
+	AddTargetCollectionRTEDollarMerge(query, targetCollection,
+									  ACL_SELECT | ACL_INSERT);
 
 	/* If targetCollection enables schema validation, apply to target document*/
 	bool bypassDocumentValidation = false;

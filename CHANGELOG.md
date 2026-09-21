@@ -1,4 +1,5 @@
 ### documentdb v1.1-0 (Unreleased) ###
+* Derive `$merge` target permissions from its configured actions instead of unconditionally requiring read, insert, and update, and avoid requiring update permission for `$out`'s insert-only query. *[Bugfix]*
 * Preserve UTF-8 string boundaries in trim expressions and string-to-binData conversions. *[Bugfix]*
 * Allow unfiltered `$sample` queries to be pushed down to a `Sample Scan` when a dynamic cursor marker is present. Guarded by the `enable_sample_scan_pushdown_for_dynamic_cursor` feature flag. *[Bugfix/Perf]*
 * Treat an explicit `simple` collation as no collation, emitting no collation tag so it uses binary comparison on every query and index path. *[Bugfix]*
