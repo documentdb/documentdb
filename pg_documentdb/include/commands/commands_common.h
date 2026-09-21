@@ -18,6 +18,7 @@
 #include <utils/documentdb_errors.h>
 #include <access/xact.h>
 #include <access/xlog.h>
+#include <lib/stringinfo.h>
 
 /*
  * Maximum size of a output bson document is 16MB.
@@ -114,14 +115,36 @@ typedef struct WriteError
 	char *errmsg;
 } WriteError;
 
+/* Shared shard lookup SQL and parameters for runtime and generated plans. */
+typedef struct ShardKeyLookupQueryState
+{
+	StringInfoData query;
+	int argCount;
+	Oid *argTypes;
+	Datum *argValues;
+	char *argNulls;
+} ShardKeyLookupQueryState;
+
+void BuildShardKeyValueForDocumentIdQuery(MongoCollection *collection,
+										  const bson_value_t *queryDoc,
+										  const bson_value_t *objectId,
+										  bool isIdValueCollationAware,
+										  bool queryHasNonIdFilters,
+										  const bson_value_t *sort,
+										  const bson_value_t *variableSpec,
+										  const char *collationString,
+										  ShardKeyLookupQueryState *state);
 bool FindShardKeyValueForDocumentId(MongoCollection *collection, const
 									bson_value_t *queryDoc,
 									bson_value_t *objectId,
 									bool isIdValueCollationAware,
 									bool queryHasNonIdFilters,
+									const bson_value_t *sort,
 									int64 *shardKeyValue,
 									const bson_value_t *variableSpec,
 									const char *collationString);
+pgbson * GetIndexTermOrderbySpec(pgbson *sortDoc);
+pgbson * GetFullScanSortSpec(pgbson *sortDoc, const char *collationString);
 
 bool IsCommonSpecIgnoredField(const char *fieldName);
 void ValidateNamespaceStringForEmbeddedNull(const char *value, uint32_t length);

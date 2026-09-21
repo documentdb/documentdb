@@ -2436,6 +2436,55 @@ SELECT documentdb_api.drop_collection('ord_coll_ordered_db', 'simple_coll');
 
 RESET enable_bitmapscan;
 
+-- ===== Section: update candidate selection order by pushdown ==========
+-- Filler rows make the ordered index scan the cheaper plan.
+RESET documentdb.max_non_ordered_term_scan_threshold;
+RESET documentdb.forceUseIndexIfAvailable;
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ord_coll_upd_db',
+  '{ "createIndexes": "upd_coll", "indexes": [ { "key": { "name": 1 }, "name": "upd_name_en_s1", "collation": { "locale": "en", "strength": 1 } } ] }', TRUE);
+SELECT documentdb_api.insert_one('ord_coll_upd_db', 'upd_coll', '{"_id": 1, "name": "apple"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_upd_db', 'upd_coll', '{"_id": 2, "name": "Banana"}', NULL);
+SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('ord_coll_upd_db', 'upd_coll', FORMAT('{"_id": %s, "name": "filler%s"}', i, i)::documentdb_core.bson, NULL) FROM generate_series(3, 200) i) filler;
+SELECT collection_id AS upd_coll_id, format('ANALYZE documentdb_data.documents_%s;', collection_id) AS upd_analyze FROM documentdb_api_catalog.collections WHERE database_name = 'ord_coll_upd_db' AND collection_name = 'upd_coll' \gset
+:upd_analyze
+
+-- Ascending: Order By on the index scan, no Sort node.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update('ord_coll_upd_db',
+  '{ "update": "upd_coll", "updates": [ { "q": { "name": { "$gte": "a" } }, "u": { "$set": { "picked": true } }, "sort": { "name": 1 }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$);
+
+-- Descending: same, through the reverse index term function.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update('ord_coll_upd_db',
+  '{ "update": "upd_coll", "updates": [ { "q": { "name": { "$gte": "a" } }, "u": { "$set": { "picked": true } }, "sort": { "name": -1 }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$);
+
+-- Control: the prior form, without the index term ordering and the full scan
+-- qual, still sorts at runtime.
+SELECT documentdb_test_helpers.run_explain_and_trim(format($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT ctid, object_id, document, tableoid FROM documentdb_data.documents_%1$s WHERE shard_key_value = %1$s AND documentdb_api_internal.bson_query_match(document, '{ "name": { "$gte": "a" } }'::documentdb_core.bson, '{}'::documentdb_core.bson, 'en-u-ks-level1'::text) ORDER BY documentdb_api_internal.bson_orderby(document, '{ "name": 1 }'::documentdb_core.bson, 'en-u-ks-level1'::text) USING OPERATOR(documentdb_api_internal.<<<) LIMIT 1 FOR UPDATE
+$cmd$, :upd_coll_id));
+
+-- The update command picks the same document the ordering implies.
+BEGIN;
+SELECT documentdb_api.update('ord_coll_upd_db', '{ "update": "upd_coll", "updates": [ { "q": { "name": { "$gte": "a" } }, "u": { "$set": { "picked": true } }, "sort": { "name": 1 }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT document FROM bson_aggregation_find('ord_coll_upd_db', '{ "find": "upd_coll", "filter": { "picked": true } }');
+ROLLBACK;
+
+BEGIN;
+SELECT documentdb_api.update('ord_coll_upd_db', '{ "update": "upd_coll", "updates": [ { "q": { "name": { "$gte": "a" } }, "u": { "$set": { "picked": true } }, "sort": { "name": -1 }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT document FROM bson_aggregation_find('ord_coll_upd_db', '{ "find": "upd_coll", "filter": { "picked": true } }');
+ROLLBACK;
+
+SELECT documentdb_api.drop_collection('ord_coll_upd_db', 'upd_coll');
+RESET enable_bitmapscan;
+
 RESET documentdb.max_non_ordered_term_scan_threshold;
 RESET documentdb.enableOrderByIndexTerm;
 RESET documentdb.forceUseIndexIfAvailable;

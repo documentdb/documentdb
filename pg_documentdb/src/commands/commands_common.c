@@ -22,9 +22,12 @@
 #include "utils/snapmgr.h"
 
 #include "io/bson_core.h"
+#include "io/bsonvalue_utils.h"
 #include "collation/collation.h"
 #include "commands/commands_common.h"
 #include "commands/parse_error.h"
+#include "opclass/bson_text_gin.h"
+#include "query/query_operator.h"
 #include "utils/error_utils.h"
 #include "utils/documentdb_errors.h"
 #include "utils/hsearch.h"
@@ -163,23 +166,60 @@ EnsureCollectionOwner(MongoCollection *collection)
 
 
 /*
- * FindShardKeyValueForDocumentId queries the collection for the shard key value that
- * corresponds to document ID and matches the query. If there are multiple
- * document IDs that match, it uses the smallest one.
+ * Returns the index term sort specification for a regular sort field, or
+ * NULL for a metadata sort that must be evaluated at runtime.
  */
-bool
-FindShardKeyValueForDocumentId(MongoCollection *collection, const bson_value_t *queryDoc,
-							   bson_value_t *objectId, bool isIdValueCollationAware,
-							   bool queryHasNonIdFilters, int64_t *shardKeyValue,
-							   const bson_value_t *variableSpec,
-							   const char *collationString)
+pgbson *
+GetIndexTermOrderbySpec(pgbson *sortDoc)
+{
+	pgbsonelement sortElement;
+	if (!TryGetSinglePgbsonElementFromPgbson(sortDoc, &sortElement) ||
+		TryCheckMetaScoreOrderBy(&sortElement.bsonValue))
+	{
+		return NULL;
+	}
+
+	sortElement.bsonValue.value_type = BSON_TYPE_INT32;
+	sortElement.bsonValue.value.v_int32 = 1;
+	return PgbsonElementToPgbson(&sortElement);
+}
+
+
+/*
+ * Returns the full scan specification matching a collated sort field.
+ */
+pgbson *
+GetFullScanSortSpec(pgbson *sortDoc, const char *collationString)
+{
+	pgbsonelement sortElement;
+	PgbsonToSinglePgbsonElement(sortDoc, &sortElement);
+
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	PgbsonWriterAppendValue(&writer, sortElement.path, sortElement.pathLength,
+							&sortElement.bsonValue);
+	PgbsonWriterAppendUtf8(&writer, "collation", 9, collationString);
+	return PgbsonWriterGetPgbson(&writer);
+}
+
+
+/*
+ * Builds the cross-shard query used to locate the shard key for a document ID.
+ */
+void
+BuildShardKeyValueForDocumentIdQuery(MongoCollection *collection,
+									 const bson_value_t *queryDoc,
+									 const bson_value_t *objectId,
+									 bool isIdValueCollationAware,
+									 bool queryHasNonIdFilters,
+									 const bson_value_t *sort,
+									 const bson_value_t *variableSpec,
+									 const char *collationString,
+									 ShardKeyLookupQueryState *state)
 {
 	StringInfoData selectQuery;
 	int argCount = 0;
 
-	bool foundDocument = false;
-
-	SPI_connect();
 	initStringInfo(&selectQuery);
 
 	appendStringInfo(&selectQuery,
@@ -228,21 +268,105 @@ FindShardKeyValueForDocumentId(MongoCollection *collection, const bson_value_t *
 		argCount++;
 	}
 
-	/* choose document with smallest _id if multiple documents are found */
-	int idOrderByIndex = -1;
-	if (applyCollationToIdValue)
+	/*
+	 * Exact _id values can repeat on different shards, so an explicit sort
+	 * must be applied before choosing the shard.
+	 */
+	List *sortDocuments = sort != NULL ?
+						  BsonValueDocumentDecomposeFields(sort) : NIL;
+	List *indexTermSortDocuments = NIL;
+	List *fullScanSortDocuments = NIL;
+	List *sortArgumentDocuments = NIL;
+	int fullScanArgBaseIndex = argCount;
+	if (sortDocuments != NIL && applyCollation)
 	{
-		idOrderByIndex = argCount;
-		appendStringInfo(&selectQuery,
-						 " ORDER BY %s.bson_orderby(document, $%d::%s, $3::text) USING OPERATOR(%s.<<<) LIMIT 1",
-						 ApiInternalSchemaNameV2, idOrderByIndex + 1, FullBsonTypeName,
-						 ApiInternalSchemaNameV2);
+		ListCell *sortCell;
+		foreach(sortCell, sortDocuments)
+		{
+			pgbson *sortDocument = lfirst(sortCell);
+			pgbson *indexTermSortDocument = GetIndexTermOrderbySpec(sortDocument);
+			indexTermSortDocuments = lappend(indexTermSortDocuments,
+											 indexTermSortDocument);
 
-		argCount++;
+			if (indexTermSortDocument == NULL)
+			{
+				continue;
+			}
+
+			appendStringInfo(
+				&selectQuery,
+				" AND %s.bson_dollar_fullscan(document, $%d::%s.bson)",
+				DocumentDBApiInternalSchemaName, argCount + 1, CoreSchemaName);
+			fullScanSortDocuments = lappend(fullScanSortDocuments,
+											GetFullScanSortSpec(sortDocument,
+																collationString));
+			argCount++;
+		}
 	}
-	else
+
+	int sortArgBaseIndex = argCount;
+	if (sortDocuments != NIL)
 	{
-		appendStringInfo(&selectQuery, " ORDER BY object_id LIMIT 1");
+		appendStringInfoString(&selectQuery, " ORDER BY");
+
+		ListCell *sortCell;
+		int sortIndex = 0;
+		foreach(sortCell, sortDocuments)
+		{
+			pgbson *sortDocument = lfirst(sortCell);
+			bool isAscending =
+				ValidateOrderbyExpressionAndGetIsAscending(sortDocument);
+			int sortArgNumber = sortArgBaseIndex + sortIndex + 1;
+
+			if (!applyCollation)
+			{
+				appendStringInfo(
+					&selectQuery,
+					"%s %s.bson_orderby(document, $%d::%s) %s",
+					sortIndex > 0 ? "," : "", ApiCatalogSchemaName,
+					sortArgNumber, FullBsonTypeName,
+					isAscending ? "ASC" : "DESC");
+				sortArgumentDocuments = lappend(sortArgumentDocuments, sortDocument);
+			}
+			else
+			{
+				pgbson *indexTermSortDocument =
+					list_nth(indexTermSortDocuments, sortIndex);
+
+				if (indexTermSortDocument == NULL)
+				{
+					appendStringInfo(
+						&selectQuery,
+						"%s %s.bson_orderby(document, $%d::%s, $3::text) USING OPERATOR(%s.%s)",
+						sortIndex > 0 ? "," : "", ApiInternalSchemaNameV2,
+						sortArgNumber, FullBsonTypeName, ApiInternalSchemaNameV2,
+						isAscending ? "<<<" : ">>>");
+					sortArgumentDocuments = lappend(sortArgumentDocuments, sortDocument);
+				}
+				else
+				{
+					appendStringInfo(
+						&selectQuery,
+						"%s %s.bson_orderby_index%s(document, $%d::%s, $3::text) %s",
+						sortIndex > 0 ? "," : "", ApiInternalSchemaNameV2,
+						isAscending ? "" : "_reverse",
+						sortArgNumber, FullBsonTypeName,
+						isAscending ? "ASC" : "DESC");
+					sortArgumentDocuments = lappend(sortArgumentDocuments,
+													indexTermSortDocument);
+				}
+			}
+
+			argCount++;
+			sortIndex++;
+		}
+
+		appendStringInfoString(&selectQuery, " LIMIT 1");
+	}
+	else if (sortDocuments == NIL)
+	{
+		/* fall back to the smallest document ID when no sort is requested */
+		appendStringInfoString(&selectQuery, " ORDER BY object_id LIMIT 1");
 	}
 
 	Oid *argTypes = palloc0(argCount * sizeof(Oid));
@@ -283,22 +407,74 @@ FindShardKeyValueForDocumentId(MongoCollection *collection, const bson_value_t *
 																	  &writer)));
 	}
 
-	/* set the orderby _id filter */
-	if (applyCollationToIdValue)
+	for (int fullScanIndex = 0;
+		 fullScanIndex < list_length(fullScanSortDocuments);
+		 fullScanIndex++)
 	{
-		/* the _id filter should be in the form '{ "_id" : { "$numberInt" : "1" } }' */
-		pgbson_writer writer;
-		PgbsonWriterInit(&writer);
-		PgbsonWriterAppendInt32(&writer, "_id", 3, 1);
-
-		argTypes[idOrderByIndex] = bsonTypeId;
-		argValues[idOrderByIndex] = PointerGetDatum(PgbsonWriterGetPgbson(&writer));
+		int argIndex = fullScanArgBaseIndex + fullScanIndex;
+		argTypes[argIndex] = BYTEAOID;
+		argValues[argIndex] = PointerGetDatum(CastPgbsonToBytea(
+												  list_nth(fullScanSortDocuments,
+														   fullScanIndex)));
 	}
+
+	for (int sortIndex = 0; sortIndex < list_length(sortArgumentDocuments);
+		 sortIndex++)
+	{
+		int argIndex = sortArgBaseIndex + sortIndex;
+		if (applyCollation)
+		{
+			argTypes[argIndex] = bsonTypeId;
+			argValues[argIndex] = PointerGetDatum(
+				list_nth(sortArgumentDocuments, sortIndex));
+		}
+		else
+		{
+			argTypes[argIndex] = BYTEAOID;
+			argValues[argIndex] = PointerGetDatum(CastPgbsonToBytea(
+													  list_nth(sortArgumentDocuments,
+															   sortIndex)));
+		}
+	}
+
+	state->query = selectQuery;
+	state->argCount = argCount;
+	state->argTypes = argTypes;
+	state->argValues = argValues;
+	state->argNulls = argNulls;
+}
+
+
+/*
+ * FindShardKeyValueForDocumentId queries the collection for the shard key value that
+ * corresponds to document ID and matches the query. If there are multiple
+ * matching documents, it applies the requested sort before choosing one, and
+ * falls back to the smallest document ID when no sort is requested.
+ */
+bool
+FindShardKeyValueForDocumentId(MongoCollection *collection, const bson_value_t *queryDoc,
+							   bson_value_t *objectId, bool isIdValueCollationAware,
+							   bool queryHasNonIdFilters, const bson_value_t *sort,
+							   int64_t *shardKeyValue,
+							   const bson_value_t *variableSpec,
+							   const char *collationString)
+{
+	bool foundDocument = false;
+
+	SPI_connect();
+
+	ShardKeyLookupQueryState state = { 0 };
+	BuildShardKeyValueForDocumentIdQuery(collection, queryDoc, objectId,
+										 isIdValueCollationAware,
+										 queryHasNonIdFilters, sort,
+										 variableSpec, collationString,
+										 &state);
 
 	bool readOnly = false;
 	long maxTupleCount = 0;
 
-	SPI_execute_with_args(selectQuery.data, argCount, argTypes, argValues, argNulls,
+	SPI_execute_with_args(state.query.data, state.argCount, state.argTypes,
+						  state.argValues, state.argNulls,
 						  readOnly, maxTupleCount);
 
 	if (SPI_processed > 0)

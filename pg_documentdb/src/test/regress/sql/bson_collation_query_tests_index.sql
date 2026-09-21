@@ -121,6 +121,34 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
      "indexes": [{ "key": {"v": 1}, "name": "idx_v_en_s1",
                    "collation": {"locale": "en", "strength": 1} }] }', TRUE);
 
+-- Section 26 coll_update_select: collated update predicates on `_id`, `group`,
+-- `name`, and the positional-match array.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "coll_update_select",
+     "indexes": [
+       { "key": {"_id": 1}, "name": "idx_update_id_en_s1",
+         "collation": {"locale": "en", "strength": 1} },
+       { "key": {"group": 1}, "name": "idx_update_group_en_s1",
+         "collation": {"locale": "en", "strength": 1} },
+       { "key": {"name": 1}, "name": "idx_update_name_en_s1",
+         "collation": {"locale": "en", "strength": 1} },
+       { "key": {"values": 1}, "name": "idx_update_values_en_s1",
+         "collation": {"locale": "en", "strength": 1} }
+     ] }', TRUE);
+
+-- Section 26 coll_update_sort: matching predicate and sort keys.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "coll_update_sort",
+     "indexes": [{ "key": {"group": 1, "name": 1},
+                   "name": "idx_update_group_name_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+
+-- Section 26 coll_update_validator: validator-aware update-many predicate.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "coll_update_validator",
+     "indexes": [{ "key": {"name": 1}, "name": "idx_update_name_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+
 -- ======================================================================
 -- Source the core body so all queries run against indexed collections.
 -- ======================================================================

@@ -1,3 +1,6 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 SET documentdb.next_collection_id TO 8300;
 SET documentdb.next_collection_index_id TO 8300;
@@ -189,6 +192,82 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('collation_basic_
 ERROR:  Error in specification { "key" : { "s" : 1 }, "name" : "idx_enabled_null_collation", "collation" : null }:The BSON field 'collation' has an incorrect type 'null'; it should be of type 'object'.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('collation_basic_db', '{ "createIndexes": "coll_null_empty", "indexes": [ { "key": { "other": 1 }, "name": "idx_enabled_empty_collation", "collation": {} } ] }', TRUE);
 ERROR:  Error in specification { "key" : { "other" : 1 }, "name" : "idx_enabled_empty_collation", "collation" : {  } }:The field 'collation' cannot be an empty object.
+-- Update treats null and empty documents as omission for both write modes.
+BEGIN;
+SELECT documentdb_api.update('collation_basic_db', '{ "update": "coll_null_empty", "updates": [ { "q": { "s": "a" }, "u": { "$set": { "selected": 1 } }, "multi": false, "collation": null } ] }');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('collation_basic_db', '{ "update": "coll_null_empty", "updates": [ { "q": { "s": "a" }, "u": { "$set": { "selected": 2 } }, "multi": true, "collation": null } ] }');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('collation_basic_db', 'coll_null_empty') ORDER BY object_id;
+                                      document                                      
+------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "s" : "A" }
+ { "_id" : { "$numberInt" : "2" }, "s" : "a", "selected" : { "$numberInt" : "2" } }
+(2 rows)
+
+ROLLBACK;
+BEGIN;
+SELECT documentdb_api.update('collation_basic_db', '{ "update": "coll_null_empty", "updates": [ { "q": { "s": "a" }, "u": { "$set": { "selected": 1 } }, "multi": false, "collation": {} } ] }');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('collation_basic_db', '{ "update": "coll_null_empty", "updates": [ { "q": { "s": "a" }, "u": { "$set": { "selected": 2 } }, "multi": true, "collation": {} } ] }');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('collation_basic_db', 'coll_null_empty') ORDER BY object_id;
+                                      document                                      
+------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "s" : "A" }
+ { "_id" : { "$numberInt" : "2" }, "s" : "a", "selected" : { "$numberInt" : "2" } }
+(2 rows)
+
+ROLLBACK;
+-- Nonempty collation still controls matching and retains its validation.
+BEGIN;
+SELECT documentdb_api.update('collation_basic_db', '{ "update": "coll_null_empty", "updates": [ { "q": { "s": "a" }, "u": { "$set": { "selected": 3 } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""2"" }, ""n"" : { ""$numberInt"" : ""2"" } }",t)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('collation_basic_db', 'coll_null_empty') ORDER BY object_id;
+                                      document                                      
+------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "s" : "A", "selected" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "2" }, "s" : "a", "selected" : { "$numberInt" : "3" } }
+(2 rows)
+
+ROLLBACK;
+SELECT documentdb_api.update('collation_basic_db', '{ "update": "coll_null_empty", "updates": [ { "q": { "s": "a" }, "u": { "$set": { "selected": 1 } }, "collation": "en" } ] }');
+ERROR:  The BSON field 'update.updates.collation' has an incorrect type 'string'; it should be of type 'object'.
+SELECT documentdb_api.update('collation_basic_db', '{ "update": "coll_null_empty", "updates": [ { "q": { "s": "a" }, "u": { "$set": { "selected": 1 } }, "collation": [] } ] }');
+ERROR:  The BSON field 'update.updates.collation' has an incorrect type 'array'; it should be of type 'object'.
+SELECT documentdb_api.update('collation_basic_db', '{ "update": "coll_null_empty", "updates": [ { "q": { "s": "a" }, "u": { "$set": { "selected": 1 } }, "collation": { "strength": 1 } } ] }');
+                                                                                                                                                                update                                                                                                                                                                 
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""119537693"" }, ""errmsg"" : ""Collation specification is missing the required 'locale' field."" } ] }",f)
+(1 row)
+
+-- Omitted forms do not bypass the update collation feature gate.
+SET documentdb_core.enableCollation TO off;
+SELECT documentdb_api.update('collation_basic_db', '{ "update": "coll_null_empty", "updates": [ { "q": { "s": "a" }, "u": { "$set": { "selected": 1 } }, "collation": null } ] }');
+ERROR:  BSON field 'update.updates.collation' is not yet supported
+SELECT documentdb_api.update('collation_basic_db', '{ "update": "coll_null_empty", "updates": [ { "q": { "s": "a" }, "u": { "$set": { "selected": 1 } }, "collation": {} } ] }');
+ERROR:  BSON field 'update.updates.collation' is not yet supported
+SET documentdb_core.enableCollation TO on;
 SELECT documentdb_api.drop_collection('collation_basic_db', 'coll_null_empty');
  drop_collection 
 -----------------

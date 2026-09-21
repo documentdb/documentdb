@@ -1451,7 +1451,138 @@ SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "coll_multi_coll
 SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "coll_multi_collation", "query": {"a": "Cat"}, "update": {"$set": {"b": 99}}, "fields": {"a": 1}, "collation": {"locale": "en", "strength": 1}}');
 
 -- update with collation + arrayFilters.
-SELECT documentdb_api.update('update', '{"update":"coll_multi_collation", "updates":[{"q":{"_id": 134111, "b": [ 5, 2, 4 ] },"u":{"$set" : {"b.$[a]":3} },"upsert":true,"collation" : {"locale" : "en", "strength": 1}, "arrayFilters": [ { "a": 2 } ]}]}');
+SELECT documentdb_api.update('coll_q_db', '{"update":"coll_multi_collation", "updates":[{"q":{"_id": 134111, "b": [ 5, 2, 4 ] },"u":{"$set" : {"b.$[a]":3} },"upsert":true,"collation" : {"locale" : "en", "strength": 1}, "arrayFilters": [ { "a": 2 } ]}]}');
+
+-- ==============================================================================
+-- SECTION 26: update document selection with collation
+-- ==============================================================================
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_select', '{"_id": "cat", "name": "cat", "group": "pet", "tags": ["cat"], "values": ["cat"]}');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_select', '{"_id": "CAT", "name": "CAT", "group": "PET", "tags": ["CAT"], "values": ["CAT"]}');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_select', '{"_id": "dog", "name": "dog", "group": "pet", "tags": ["dog"], "values": ["dog"]}');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_select', '{"_id": "DOG", "name": "DOG", "group": "PET", "tags": ["DOG"], "values": ["DOG"]}');
+
+-- The command remains gated by enableCollation.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO off;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "updates": [ { "q": { "_id": "DoG" }, "u": { "$set": { "disabled": true } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }');
+ROLLBACK;
+
+-- Collation applies when selecting documents by string _id and non-_id fields.
+BEGIN;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "updates": [ { "q": { "_id": "DoG" }, "u": { "$set": { "selectedById": true } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "updates": [ { "q": { "group": "PeT" }, "u": { "$set": { "selectedByField": true } }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
+ROLLBACK;
+
+-- A let-only updateOne keeps an explicit empty collation argument when its
+-- candidate-selection query uses a generic plan.
+BEGIN;
+SET LOCAL plan_cache_mode TO force_generic_plan;
+SELECT documentdb_api.update(
+    'coll_q_db',
+    '{ "update": "coll_update_select", "updates": [ { "q": { "$expr": { "$eq": [ "$name", "$$target" ] } }, "u": { "$set": { "letSelected": true } }, "multi": false } ], "let": { "target": "cat" } }');
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
+ROLLBACK;
+
+-- Update expressions retain binary comparison semantics. The command collation
+-- selects both documents, but $addToSet and the pipeline $eq do not receive it.
+BEGIN;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "updates": [ { "q": { "group": "PeT" }, "u": { "$addToSet": { "tags": "cAt" } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "updates": [ { "q": { "name": "CaT" }, "u": [ { "$set": { "binaryEqual": { "$eq": [ "$name", "CAT" ] } } } ], "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
+ROLLBACK;
+
+-- Array filters and positional matching retain binary semantics. The first
+-- update selects both case variants but matches no array-filter elements. The
+-- second selects a document under collation, then fails its binary positional
+-- re-match.
+BEGIN;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "updates": [ { "q": { "_id": "CaT" }, "u": { "$set": { "values.$[item]": "matched" } }, "arrayFilters": [ { "item": "cAt" } ], "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
+
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "updates": [ { "q": { "_id": "CaT", "values": "cAt" }, "u": { "$set": { "values.$": "matched" } }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
+ROLLBACK;
+
+-- Sort uses the command collation when choosing a single update candidate.
+-- Binary ordering puts "Banana" first; English collation puts "apple" first.
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_sort', '{"_id": 1, "name": "apple", "group": "fruit"}');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_sort', '{"_id": 2, "name": "Banana", "group": "FRUIT"}');
+
+BEGIN;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_sort", "updates": [ { "q": { "group": "FrUiT" }, "u": { "$set": { "selected": true } }, "sort": { "name": 1 }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_sort') ORDER BY object_id;
+ROLLBACK;
+
+-- Descending sort selects the other document under the same collation.
+BEGIN;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_sort", "updates": [ { "q": { "group": "FrUiT" }, "u": { "$set": { "selected": true } }, "sort": { "name": -1 }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_sort') ORDER BY object_id;
+ROLLBACK;
+
+-- Validator-aware update-many selection carries the command collation through
+-- both successful validation and a rejected update.
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_validator', '{"_id": 1, "name": "cat", "score": 1}');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_validator', '{"_id": 2, "name": "CAT", "score": 2}');
+SET documentdb.enableSchemaValidation TO on;
+SELECT documentdb_api.coll_mod(
+  'coll_q_db',
+  'coll_update_validator',
+  '{"collMod": "coll_update_validator", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"score": {"bsonType": "int"}}}}, "validationLevel": "strict", "validationAction": "error"}');
+
+BEGIN;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_validator", "updates": [ { "q": { "name": "CaT" }, "u": { "$inc": { "score": 1 } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_validator') ORDER BY object_id;
+ROLLBACK;
+
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_validator", "updates": [ { "q": { "name": "CaT" }, "u": { "$set": { "score": "invalid" } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_validator') ORDER BY object_id;
+RESET documentdb.enableSchemaValidation;
+
+-- Upsert still inserts when no document matches under the specified collation.
+BEGIN;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "updates": [ { "q": { "_id": "fox" }, "u": { "$set": { "name": "fox" } }, "upsert": true, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
+ROLLBACK;
+
+-- Semantic collation errors are write errors. An unordered batch continues
+-- after each invalid operation.
+BEGIN;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": false, "updates": [ { "q": { "_id": "dog" }, "u": { "$set": { "beforeErrors": true } }, "multi": false }, { "q": { "_id": "cat" }, "u": { "$set": { "invalidLocale": true } }, "multi": false, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "_id": "CAT" }, "u": { "$set": { "missingLocale": true } }, "multi": false, "collation": { "strength": 1 } }, { "q": { "_id": "DOG" }, "u": { "$set": { "afterErrors": true } }, "multi": false } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
+ROLLBACK;
+
+-- An ordered batch preserves earlier writes and stops after the first
+-- semantic collation error.
+BEGIN;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": true, "updates": [ { "q": { "_id": "dog" }, "u": { "$set": { "beforeError": true } }, "multi": false }, { "q": { "_id": "cat" }, "u": { "$set": { "invalidLocale": true } }, "multi": false, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "_id": "DOG" }, "u": { "$set": { "afterError": true } }, "multi": false } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
+ROLLBACK;
+
+-- A non-document collation remains a command-level type error, so no write
+-- operation starts.
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": false, "updates": [ { "q": { "_id": "dog" }, "u": { "$set": { "shouldNotRun": true } }, "multi": false }, { "q": { "_id": "cat" }, "u": { "$set": { "invalidType": true } }, "multi": false, "collation": "en" } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
+
+-- Semantic errors remain write errors when the collection does not exist.
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_missing", "ordered": false, "updates": [ { "q": { "_id": "cat" }, "u": { "$set": { "invalidLocale": true } }, "multi": false, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "_id": "dog" }, "u": { "$set": { "validNoop": true } }, "multi": false } ] }');
+
+-- An update's collation is parsed inside the per-update error boundary rather
+-- than when the command is parsed, so update-many also reports an invalid
+-- collation as a write error indexed to that update while the rest of an
+-- unordered batch still applies.
+BEGIN;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": false, "updates": [ { "q": { "group": "PeT" }, "u": { "$set": { "multiBeforeError": true } }, "multi": true, "collation": { "locale": "en", "strength": 1 } }, { "q": { "group": "PeT" }, "u": { "$set": { "multiInvalidLocale": true } }, "multi": true, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "group": "PeT" }, "u": { "$set": { "multiMissingLocale": true } }, "multi": true, "collation": { "strength": 1 } }, { "q": { "group": "pet" }, "u": { "$set": { "multiAfterErrors": true } }, "multi": true } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
+ROLLBACK;
+
+-- An ordered update-many batch stops at the first invalid collation and keeps
+-- the writes that preceded it.
+BEGIN;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": true, "updates": [ { "q": { "group": "PeT" }, "u": { "$set": { "multiBeforeError": true } }, "multi": true, "collation": { "locale": "en", "strength": 1 } }, { "q": { "group": "PeT" }, "u": { "$set": { "multiInvalidLocale": true } }, "multi": true, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "group": "pet" }, "u": { "$set": { "multiAfterError": true } }, "multi": true } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
+ROLLBACK;
 
 -- ==============================================================================
 -- SECTION 26: shard-key targeting under explicit simple
@@ -1500,6 +1631,9 @@ SELECT documentdb_api.drop_collection('coll_q_db', 'coll_phonebook');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_redact');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_string_ids');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_strings');
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_update_select');
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_update_sort');
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_update_validator');
 SELECT documentdb_api.drop_collection('coll_q_db', 'nested_arrays');
 SELECT documentdb_api.drop_collection('coll_q_db', 'nested_arrays_docs');
 SELECT documentdb_api.drop_collection('coll_q_db', 'nested_docs');

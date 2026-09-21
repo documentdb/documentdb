@@ -10,6 +10,7 @@
 * Enable the field-pruning `$project` injection before `$unwind` (the `enableProjectPushUpBeforeUnwindWithGroup` feature flag) by default now that it has stabilized. *[Perf]*
 * Fall back to a logical posting-tree sweep when inline RUM vacuum observes a concurrent root split, ensuring dead TIDs are removed from leaves allocated behind the disk-order cursor. *[Bugfix]*
 * Support collation with `distinct` command *[Feature]*
+* Apply per-update collation when selecting documents to update, including sharded routing and update-worker execution, while retaining binary comparison semantics inside update expressions. *[Feature]*
 * Prevent a backend crash by rejecting `$documents` directly inside a `$facet` sub-pipeline. *[Bugfix]*
 * Enforce `$facet` restrictions on `$collStats`, `$facet`, `$geoNear`, `$indexStats`, and `$planCacheStats` in nested `$lookup` and `$unionWith` pipelines while preserving parent-stage validation and valid collectionless pipelines. *[Bugfix]*
 
@@ -34,6 +35,7 @@
 * Report `compact`'s `bytesFreed` as the measured reduction in on-disk size across the VACUUM instead of a statistics-based bloat estimate, and stop running the expensive bloat estimate query when no `freeSpaceTargetMB` was requested. *[Bugfix/Perf]*
 
 ### documentdb v0.117-0 (Unreleased) ###
+* Keep let-only single-document update selection stable when a cached candidate plan switches to generic execution. *[Bugfix]*
 * Reject embedded null characters in command namespaces when `documentdb.enable_null_collection_validation` is enabled. *[Bugfix]*
 * Reject NaN `$bucketAuto` group values when `granularity` is specified instead of reporting an internal preferred-number-series error. *[Bugfix]*
 * Estimate `_id` btree range and prefix filters as a merged range instead of multiplying the lower/upper bounds as independent clauses, fixing large mid-range selectivity overestimates. Engages when per-collection planner statistics exist for the relation, or when `enableBsonSelectivityFromBtreeStats` is set, and the required operators are available in the installed schema. *[Bugfix/Perf]*

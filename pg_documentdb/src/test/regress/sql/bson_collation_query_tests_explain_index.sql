@@ -1191,6 +1191,172 @@ SET documentdb.enable_distinct_exists_filter_pushdown TO off;
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_distinct_explain');
 
 -- ======================================================================
+-- update: per-operation collation against a matching collated index
+-- ======================================================================
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "coll_update_explain_idx", "indexes": [ { "key": { "a": 1 }, "name": "idx_update_a_en_s1", "collation": { "locale": "en", "strength": 1 } }, { "key": { "simpleA": 1 }, "name": "idx_update_simple_a_binary" } ] }', TRUE);
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_explain_idx', '{ "_id": "cat", "a": "cat", "simpleA": "cat" }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_explain_idx', '{ "_id": "CAT", "a": "CAT", "simpleA": "CAT" }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_explain_idx', '{ "_id": "dog", "a": "dog", "simpleA": "dog" }');
+
+-- multi:true with a matching collation uses the collated index for its bounds.
+-- The collation drives document selection only; the rewrite keeps binary
+-- semantics.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "a": "CaT" }, "u": { "$set": { "b": 1 } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+
+-- multi:false selects its single candidate through the same collated index.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "a": "CaT" }, "u": { "$set": { "b": 1 } }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+
+-- A collated sort orders on the index term rather than the runtime ordering
+-- value, and the selection predicate still resolves through the collated
+-- index.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "a": { "$gte": "CAT" } }, "u": { "$set": { "b": 1 } }, "multi": false, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+
+-- The descending form orders through the reverse index term variant.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "a": { "$gte": "CAT" } }, "u": { "$set": { "b": 1 } }, "multi": false, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+
+-- With no selection predicate the collated sort is the only thing the update
+-- carries, and it still orders on the index term while the scan falls back to
+-- the shard key bound.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { }, "u": { "$set": { "b": 1 } }, "multi": false, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+
+-- The same shape without a collation orders on the plain runtime ordering
+-- value instead of the index term.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { }, "u": { "$set": { "b": 1 } }, "multi": false, "sort": { "a": 1 } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+
+-- Sorting on a field the collated index does not cover leaves the selection
+-- predicate to drive index choice.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "a": "CaT" }, "u": { "$set": { "b": 1 } }, "multi": false, "sort": { "c": 1 }, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+
+-- A range predicate resolves its bounds through the collated index.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "a": { "$gte": "CAT" } }, "u": { "$set": { "b": 1 } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+
+-- The binary simple collation keeps the physical _id equality fast path.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "_id": "cat" }, "u": { "$set": { "b": 1 } }, "multi": false, "collation": { "locale": "simple" } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+
+-- The same physical _id bound is retained for multi-document updates.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "_id": "cat" }, "u": { "$set": { "b": 1 } }, "multi": true, "collation": { "locale": "simple" } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+
+-- Simple collation is binary, so a matching ordinary index remains usable.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "simpleA": "cat" }, "u": { "$set": { "b": 1 } }, "multi": true, "collation": { "locale": "simple" } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+
+-- A different strength does not match the index collation, so the predicate
+-- has to be evaluated at runtime.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "a": "CaT" }, "u": { "$set": { "b": 1 } }, "multi": true, "collation": { "locale": "en", "strength": 2 } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+
+-- An uncollated update cannot use the collated index either.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "a": "CaT" }, "u": { "$set": { "b": 1 } }, "multi": true } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+
+-- Schema validation keeps the matching collated predicate on the same index.
+SET documentdb.enableSchemaValidation TO on;
+SELECT documentdb_api.coll_mod(
+  'coll_q_db',
+  'coll_update_explain_idx',
+  '{ "collMod": "coll_update_explain_idx", "validator": { "$jsonSchema": { "bsonType": "object", "properties": { "b": { "bsonType": "int" } } } }, "validationLevel": "strict", "validationAction": "error" }');
+
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "a": "CaT" }, "u": { "$set": { "b": 1 } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+RESET documentdb.enableSchemaValidation;
+
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_update_explain_idx');
 -- SECTION: binary $expr index pushdown
 -- ======================================================================
 SELECT documentdb_api.insert_one('coll_q_db', 'single_field_binary', '{"_id": 1, "a": "apple", "b": "apple"}');

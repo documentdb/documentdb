@@ -4754,13 +4754,376 @@ psql:sql/bson_collation_query_tests_core.sql:1448: ERROR:  findAndModify.collati
 SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "coll_multi_collation", "query": {"a": "Cat"}, "update": {"$set": {"b": 99}}, "fields": {"a": 1}, "collation": {"locale": "en", "strength": 1}}');
 psql:sql/bson_collation_query_tests_core.sql:1451: ERROR:  findAndModify.collation is not implemented yet
 -- update with collation + arrayFilters.
-SELECT documentdb_api.update('update', '{"update":"coll_multi_collation", "updates":[{"q":{"_id": 134111, "b": [ 5, 2, 4 ] },"u":{"$set" : {"b.$[a]":3} },"upsert":true,"collation" : {"locale" : "en", "strength": 1}, "arrayFilters": [ { "a": 2 } ]}]}');
-psql:sql/bson_collation_query_tests_core.sql:1454: ERROR:  BSON field 'update.updates.collation' is not yet supported
+SELECT documentdb_api.update('coll_q_db', '{"update":"coll_multi_collation", "updates":[{"q":{"_id": 134111, "b": [ 5, 2, 4 ] },"u":{"$set" : {"b.$[a]":3} },"upsert":true,"collation" : {"locale" : "en", "strength": 1}, "arrayFilters": [ { "a": 2 } ]}]}');
+                                                                                                                    update                                                                                                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""1"" }, ""upserted"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""_id"" : { ""$numberInt"" : ""134111"" } } ] }",t)
+(1 row)
+
+-- ==============================================================================
+-- SECTION 26: update document selection with collation
+-- ==============================================================================
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_select', '{"_id": "cat", "name": "cat", "group": "pet", "tags": ["cat"], "values": ["cat"]}');
+psql:sql/bson_collation_query_tests_core.sql:1460: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_select', '{"_id": "CAT", "name": "CAT", "group": "PET", "tags": ["CAT"], "values": ["CAT"]}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_select', '{"_id": "dog", "name": "dog", "group": "pet", "tags": ["dog"], "values": ["dog"]}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_select', '{"_id": "DOG", "name": "DOG", "group": "PET", "tags": ["DOG"], "values": ["DOG"]}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- The command remains gated by enableCollation.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO off;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "updates": [ { "q": { "_id": "DoG" }, "u": { "$set": { "disabled": true } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }');
+psql:sql/bson_collation_query_tests_core.sql:1468: ERROR:  BSON field 'update.updates.collation' is not yet supported
+ROLLBACK;
+-- Collation applies when selecting documents by string _id and non-_id fields.
+BEGIN;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "updates": [ { "q": { "_id": "DoG" }, "u": { "$set": { "selectedById": true } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""2"" }, ""n"" : { ""$numberInt"" : ""2"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "updates": [ { "q": { "group": "PeT" }, "u": { "$set": { "selectedByField": true } }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
+                                                        document                                                        
+------------------------------------------------------------------------------------------------------------------------
+ { "_id" : "CAT", "name" : "CAT", "group" : "PET", "tags" : [ "CAT" ], "values" : [ "CAT" ] }
+ { "_id" : "DOG", "name" : "DOG", "group" : "PET", "tags" : [ "DOG" ], "values" : [ "DOG" ], "selectedById" : true }
+ { "_id" : "cat", "name" : "cat", "group" : "pet", "tags" : [ "cat" ], "values" : [ "cat" ], "selectedByField" : true }
+ { "_id" : "dog", "name" : "dog", "group" : "pet", "tags" : [ "dog" ], "values" : [ "dog" ], "selectedById" : true }
+(4 rows)
+
+ROLLBACK;
+-- A let-only updateOne keeps an explicit empty collation argument when its
+-- candidate-selection query uses a generic plan.
+BEGIN;
+SET LOCAL plan_cache_mode TO force_generic_plan;
+SELECT documentdb_api.update(
+    'coll_q_db',
+    '{ "update": "coll_update_select", "updates": [ { "q": { "$expr": { "$eq": [ "$name", "$$target" ] } }, "u": { "$set": { "letSelected": true } }, "multi": false } ], "let": { "target": "cat" } }');
+psql:sql/bson_collation_query_tests_core.sql:1484: NOTICE:  using bson_query_match implementation
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
+                                                      document                                                      
+--------------------------------------------------------------------------------------------------------------------
+ { "_id" : "CAT", "name" : "CAT", "group" : "PET", "tags" : [ "CAT" ], "values" : [ "CAT" ] }
+ { "_id" : "DOG", "name" : "DOG", "group" : "PET", "tags" : [ "DOG" ], "values" : [ "DOG" ] }
+ { "_id" : "cat", "name" : "cat", "group" : "pet", "tags" : [ "cat" ], "values" : [ "cat" ], "letSelected" : true }
+ { "_id" : "dog", "name" : "dog", "group" : "pet", "tags" : [ "dog" ], "values" : [ "dog" ] }
+(4 rows)
+
+ROLLBACK;
+-- Update expressions retain binary comparison semantics. The command collation
+-- selects both documents, but $addToSet and the pipeline $eq do not receive it.
+BEGIN;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "updates": [ { "q": { "group": "PeT" }, "u": { "$addToSet": { "tags": "cAt" } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""4"" }, ""n"" : { ""$numberInt"" : ""4"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "updates": [ { "q": { "name": "CaT" }, "u": [ { "$set": { "binaryEqual": { "$eq": [ "$name", "CAT" ] } } } ], "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""2"" }, ""n"" : { ""$numberInt"" : ""2"" } }",t)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
+                                                          document                                                          
+----------------------------------------------------------------------------------------------------------------------------
+ { "_id" : "CAT", "name" : "CAT", "group" : "PET", "tags" : [ "CAT", "cAt" ], "values" : [ "CAT" ], "binaryEqual" : true }
+ { "_id" : "DOG", "name" : "DOG", "group" : "PET", "tags" : [ "DOG", "cAt" ], "values" : [ "DOG" ] }
+ { "_id" : "cat", "name" : "cat", "group" : "pet", "tags" : [ "cat", "cAt" ], "values" : [ "cat" ], "binaryEqual" : false }
+ { "_id" : "dog", "name" : "dog", "group" : "pet", "tags" : [ "dog", "cAt" ], "values" : [ "dog" ] }
+(4 rows)
+
+ROLLBACK;
+-- Array filters and positional matching retain binary semantics. The first
+-- update selects both case variants but matches no array-filter elements. The
+-- second selects a document under collation, then fails its binary positional
+-- re-match.
+BEGIN;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "updates": [ { "q": { "_id": "CaT" }, "u": { "$set": { "values.$[item]": "matched" } }, "arrayFilters": [ { "item": "cAt" } ], "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""2"" } }",t)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
+                                           document                                           
+----------------------------------------------------------------------------------------------
+ { "_id" : "CAT", "name" : "CAT", "group" : "PET", "tags" : [ "CAT" ], "values" : [ "CAT" ] }
+ { "_id" : "DOG", "name" : "DOG", "group" : "PET", "tags" : [ "DOG" ], "values" : [ "DOG" ] }
+ { "_id" : "cat", "name" : "cat", "group" : "pet", "tags" : [ "cat" ], "values" : [ "cat" ] }
+ { "_id" : "dog", "name" : "dog", "group" : "pet", "tags" : [ "dog" ], "values" : [ "dog" ] }
+(4 rows)
+
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "updates": [ { "q": { "_id": "CaT", "values": "cAt" }, "u": { "$set": { "values.$": "matched" } }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+                                                                                                                                                                           update                                                                                                                                                                            
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""16777245"" }, ""errmsg"" : ""The positional operator failed to locate the required match within the provided query."" } ] }",f)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
+                                           document                                           
+----------------------------------------------------------------------------------------------
+ { "_id" : "CAT", "name" : "CAT", "group" : "PET", "tags" : [ "CAT" ], "values" : [ "CAT" ] }
+ { "_id" : "DOG", "name" : "DOG", "group" : "PET", "tags" : [ "DOG" ], "values" : [ "DOG" ] }
+ { "_id" : "cat", "name" : "cat", "group" : "pet", "tags" : [ "cat" ], "values" : [ "cat" ] }
+ { "_id" : "dog", "name" : "dog", "group" : "pet", "tags" : [ "dog" ], "values" : [ "dog" ] }
+(4 rows)
+
+ROLLBACK;
+-- Sort uses the command collation when choosing a single update candidate.
+-- Binary ordering puts "Banana" first; English collation puts "apple" first.
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_sort', '{"_id": 1, "name": "apple", "group": "fruit"}');
+psql:sql/bson_collation_query_tests_core.sql:1510: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_sort', '{"_id": 2, "name": "Banana", "group": "FRUIT"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+BEGIN;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_sort", "updates": [ { "q": { "group": "FrUiT" }, "u": { "$set": { "selected": true } }, "sort": { "name": 1 }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_sort') ORDER BY object_id;
+                                          document                                          
+--------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "name" : "apple", "group" : "fruit", "selected" : true }
+ { "_id" : { "$numberInt" : "2" }, "name" : "Banana", "group" : "FRUIT" }
+(2 rows)
+
+ROLLBACK;
+-- Descending sort selects the other document under the same collation.
+BEGIN;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_sort", "updates": [ { "q": { "group": "FrUiT" }, "u": { "$set": { "selected": true } }, "sort": { "name": -1 }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_sort') ORDER BY object_id;
+                                          document                                           
+---------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "name" : "apple", "group" : "fruit" }
+ { "_id" : { "$numberInt" : "2" }, "name" : "Banana", "group" : "FRUIT", "selected" : true }
+(2 rows)
+
+ROLLBACK;
+-- Validator-aware update-many selection carries the command collation through
+-- both successful validation and a rejected update.
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_validator', '{"_id": 1, "name": "cat", "score": 1}');
+psql:sql/bson_collation_query_tests_core.sql:1526: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_validator', '{"_id": 2, "name": "CAT", "score": 2}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SET documentdb.enableSchemaValidation TO on;
+SELECT documentdb_api.coll_mod(
+  'coll_q_db',
+  'coll_update_validator',
+  '{"collMod": "coll_update_validator", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"score": {"bsonType": "int"}}}}, "validationLevel": "strict", "validationAction": "error"}');
+             coll_mod              
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+BEGIN;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_validator", "updates": [ { "q": { "name": "CaT" }, "u": { "$inc": { "score": 1 } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""2"" }, ""n"" : { ""$numberInt"" : ""2"" } }",t)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_validator') ORDER BY object_id;
+                                       document                                       
+--------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "name" : "cat", "score" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "2" }, "name" : "CAT", "score" : { "$numberInt" : "3" } }
+(2 rows)
+
+ROLLBACK;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_validator", "updates": [ { "q": { "name": "CaT" }, "u": { "$set": { "score": "invalid" } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }');
+                                                                                                                                              update                                                                                                                                              
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""525074461"" }, ""errmsg"" : ""Document failed validation"" } ] }",f)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_validator') ORDER BY object_id;
+                                       document                                       
+--------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "name" : "cat", "score" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" }, "name" : "CAT", "score" : { "$numberInt" : "2" } }
+(2 rows)
+
+RESET documentdb.enableSchemaValidation;
+-- Upsert still inserts when no document matches under the specified collation.
+BEGIN;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "updates": [ { "q": { "_id": "fox" }, "u": { "$set": { "name": "fox" } }, "upsert": true, "collation": { "locale": "en", "strength": 1 } } ] }');
+                                                                                                        update                                                                                                        
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""1"" }, ""upserted"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""_id"" : ""fox"" } ] }",t)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
+                                           document                                           
+----------------------------------------------------------------------------------------------
+ { "_id" : "CAT", "name" : "CAT", "group" : "PET", "tags" : [ "CAT" ], "values" : [ "CAT" ] }
+ { "_id" : "DOG", "name" : "DOG", "group" : "PET", "tags" : [ "DOG" ], "values" : [ "DOG" ] }
+ { "_id" : "cat", "name" : "cat", "group" : "pet", "tags" : [ "cat" ], "values" : [ "cat" ] }
+ { "_id" : "dog", "name" : "dog", "group" : "pet", "tags" : [ "dog" ], "values" : [ "dog" ] }
+ { "_id" : "fox", "name" : "fox" }
+(5 rows)
+
+ROLLBACK;
+-- Semantic collation errors are write errors. An unordered batch continues
+-- after each invalid operation.
+BEGIN;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": false, "updates": [ { "q": { "_id": "dog" }, "u": { "$set": { "beforeErrors": true } }, "multi": false }, { "q": { "_id": "cat" }, "u": { "$set": { "invalidLocale": true } }, "multi": false, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "_id": "CAT" }, "u": { "$set": { "missingLocale": true } }, "multi": false, "collation": { "strength": 1 } }, { "q": { "_id": "DOG" }, "u": { "$set": { "afterErrors": true } }, "multi": false } ] }');
+                                                                                                                                                                                                                                                                                     update                                                                                                                                                                                                                                                                                     
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""2"" }, ""n"" : { ""$numberInt"" : ""2"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""1"" }, ""code"" : { ""$numberInt"" : ""16777245"" }, ""errmsg"" : ""unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: \\""invalid_locale_xyz\\"", strength: 1 }."" }, { ""index"" : { ""$numberInt"" : ""2"" }, ""code"" : { ""$numberInt"" : ""119537693"" }, ""errmsg"" : ""Collation specification is missing the required 'locale' field."" } ] }",f)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
+                                                      document                                                       
+---------------------------------------------------------------------------------------------------------------------
+ { "_id" : "CAT", "name" : "CAT", "group" : "PET", "tags" : [ "CAT" ], "values" : [ "CAT" ] }
+ { "_id" : "DOG", "name" : "DOG", "group" : "PET", "tags" : [ "DOG" ], "values" : [ "DOG" ], "afterErrors" : true }
+ { "_id" : "cat", "name" : "cat", "group" : "pet", "tags" : [ "cat" ], "values" : [ "cat" ] }
+ { "_id" : "dog", "name" : "dog", "group" : "pet", "tags" : [ "dog" ], "values" : [ "dog" ], "beforeErrors" : true }
+(4 rows)
+
+ROLLBACK;
+-- An ordered batch preserves earlier writes and stops after the first
+-- semantic collation error.
+BEGIN;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": true, "updates": [ { "q": { "_id": "dog" }, "u": { "$set": { "beforeError": true } }, "multi": false }, { "q": { "_id": "cat" }, "u": { "$set": { "invalidLocale": true } }, "multi": false, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "_id": "DOG" }, "u": { "$set": { "afterError": true } }, "multi": false } ] }');
+                                                                                                                                                                                              update                                                                                                                                                                                               
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""1"" }, ""code"" : { ""$numberInt"" : ""16777245"" }, ""errmsg"" : ""unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: \\""invalid_locale_xyz\\"", strength: 1 }."" } ] }",f)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
+                                                      document                                                      
+--------------------------------------------------------------------------------------------------------------------
+ { "_id" : "CAT", "name" : "CAT", "group" : "PET", "tags" : [ "CAT" ], "values" : [ "CAT" ] }
+ { "_id" : "DOG", "name" : "DOG", "group" : "PET", "tags" : [ "DOG" ], "values" : [ "DOG" ] }
+ { "_id" : "cat", "name" : "cat", "group" : "pet", "tags" : [ "cat" ], "values" : [ "cat" ] }
+ { "_id" : "dog", "name" : "dog", "group" : "pet", "tags" : [ "dog" ], "values" : [ "dog" ], "beforeError" : true }
+(4 rows)
+
+ROLLBACK;
+-- A non-document collation remains a command-level type error, so no write
+-- operation starts.
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": false, "updates": [ { "q": { "_id": "dog" }, "u": { "$set": { "shouldNotRun": true } }, "multi": false }, { "q": { "_id": "cat" }, "u": { "$set": { "invalidType": true } }, "multi": false, "collation": "en" } ] }');
+psql:sql/bson_collation_query_tests_core.sql:1565: ERROR:  The BSON field 'update.updates.collation' has an incorrect type 'string'; it should be of type 'object'.
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
+                                           document                                           
+----------------------------------------------------------------------------------------------
+ { "_id" : "CAT", "name" : "CAT", "group" : "PET", "tags" : [ "CAT" ], "values" : [ "CAT" ] }
+ { "_id" : "DOG", "name" : "DOG", "group" : "PET", "tags" : [ "DOG" ], "values" : [ "DOG" ] }
+ { "_id" : "cat", "name" : "cat", "group" : "pet", "tags" : [ "cat" ], "values" : [ "cat" ] }
+ { "_id" : "dog", "name" : "dog", "group" : "pet", "tags" : [ "dog" ], "values" : [ "dog" ] }
+(4 rows)
+
+-- Semantic errors remain write errors when the collection does not exist.
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_missing", "ordered": false, "updates": [ { "q": { "_id": "cat" }, "u": { "$set": { "invalidLocale": true } }, "multi": false, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "_id": "dog" }, "u": { "$set": { "validNoop": true } }, "multi": false } ] }');
+                                                                                                                                                                                              update                                                                                                                                                                                               
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""16777245"" }, ""errmsg"" : ""unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: \\""invalid_locale_xyz\\"", strength: 1 }."" } ] }",f)
+(1 row)
+
+-- An update's collation is parsed inside the per-update error boundary rather
+-- than when the command is parsed, so update-many also reports an invalid
+-- collation as a write error indexed to that update while the rest of an
+-- unordered batch still applies.
+BEGIN;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": false, "updates": [ { "q": { "group": "PeT" }, "u": { "$set": { "multiBeforeError": true } }, "multi": true, "collation": { "locale": "en", "strength": 1 } }, { "q": { "group": "PeT" }, "u": { "$set": { "multiInvalidLocale": true } }, "multi": true, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "group": "PeT" }, "u": { "$set": { "multiMissingLocale": true } }, "multi": true, "collation": { "strength": 1 } }, { "q": { "group": "pet" }, "u": { "$set": { "multiAfterErrors": true } }, "multi": true } ] }');
+                                                                                                                                                                                                                                                                                     update                                                                                                                                                                                                                                                                                     
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""6"" }, ""n"" : { ""$numberInt"" : ""6"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""1"" }, ""code"" : { ""$numberInt"" : ""16777245"" }, ""errmsg"" : ""unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: \\""invalid_locale_xyz\\"", strength: 1 }."" }, { ""index"" : { ""$numberInt"" : ""2"" }, ""code"" : { ""$numberInt"" : ""119537693"" }, ""errmsg"" : ""Collation specification is missing the required 'locale' field."" } ] }",f)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
+                                                                      document                                                                      
+----------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : "CAT", "name" : "CAT", "group" : "PET", "tags" : [ "CAT" ], "values" : [ "CAT" ], "multiBeforeError" : true }
+ { "_id" : "DOG", "name" : "DOG", "group" : "PET", "tags" : [ "DOG" ], "values" : [ "DOG" ], "multiBeforeError" : true }
+ { "_id" : "cat", "name" : "cat", "group" : "pet", "tags" : [ "cat" ], "values" : [ "cat" ], "multiBeforeError" : true, "multiAfterErrors" : true }
+ { "_id" : "dog", "name" : "dog", "group" : "pet", "tags" : [ "dog" ], "values" : [ "dog" ], "multiBeforeError" : true, "multiAfterErrors" : true }
+(4 rows)
+
+ROLLBACK;
+-- An ordered update-many batch stops at the first invalid collation and keeps
+-- the writes that preceded it.
+BEGIN;
+SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": true, "updates": [ { "q": { "group": "PeT" }, "u": { "$set": { "multiBeforeError": true } }, "multi": true, "collation": { "locale": "en", "strength": 1 } }, { "q": { "group": "PeT" }, "u": { "$set": { "multiInvalidLocale": true } }, "multi": true, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "group": "pet" }, "u": { "$set": { "multiAfterError": true } }, "multi": true } ] }');
+                                                                                                                                                                                              update                                                                                                                                                                                               
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""4"" }, ""n"" : { ""$numberInt"" : ""4"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""1"" }, ""code"" : { ""$numberInt"" : ""16777245"" }, ""errmsg"" : ""unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: \\""invalid_locale_xyz\\"", strength: 1 }."" } ] }",f)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
+                                                        document                                                         
+-------------------------------------------------------------------------------------------------------------------------
+ { "_id" : "CAT", "name" : "CAT", "group" : "PET", "tags" : [ "CAT" ], "values" : [ "CAT" ], "multiBeforeError" : true }
+ { "_id" : "DOG", "name" : "DOG", "group" : "PET", "tags" : [ "DOG" ], "values" : [ "DOG" ], "multiBeforeError" : true }
+ { "_id" : "cat", "name" : "cat", "group" : "pet", "tags" : [ "cat" ], "values" : [ "cat" ], "multiBeforeError" : true }
+ { "_id" : "dog", "name" : "dog", "group" : "pet", "tags" : [ "dog" ], "values" : [ "dog" ], "multiBeforeError" : true }
+(4 rows)
+
+ROLLBACK;
 -- ==============================================================================
 -- SECTION 26: shard-key targeting under explicit simple
 -- ==============================================================================
 SELECT documentdb_api.insert_one('coll_q_db', 'coll_delete_simple', '{"_id": 1, "a": "cat"}');
-psql:sql/bson_collation_query_tests_core.sql:1459: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_core.sql:1590: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -4950,6 +5313,24 @@ SELECT documentdb_api.drop_collection('coll_q_db', 'coll_string_ids');
 (1 row)
 
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_strings');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_update_select');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_update_sort');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_update_validator');
  drop_collection 
 -----------------
  t

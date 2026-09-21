@@ -2290,12 +2290,14 @@ DeleteOneObjectId(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 		}
 	}
 
+	const bson_value_t *sort = NULL;
 	for (int tryNumber = 0; tryNumber < maxTries; tryNumber++)
 	{
 		int64 shardKeyValue = 0;
 
 		if (!FindShardKeyValueForDocumentId(collection, deleteOneParams->query, objectId,
 											isIdValueCollationAware, queryHasNonIdFilters,
+											sort,
 											&shardKeyValue,
 											deleteOneParams->variableSpec,
 											deleteOneParams->collationString))

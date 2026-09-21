@@ -62,6 +62,40 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_dist_db',
      "indexes": [{ "key": {"_id": 1}, "name": "idx_id_en_s1",
                    "collation": {"locale": "en", "strength": 1} }] }', TRUE);
 
+-- coll_update_select_d: collated predicates on `name` and global `_id`
+-- candidate selection followed by `rank` sorting.
+SELECT pg_catalog.set_config(
+  'documentdb.alternate_index_handler_name', 'extended_rum', false), extname
+FROM pg_extension
+WHERE extname = 'documentdb_extended_rum';
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_dist_db',
+  '{ "createIndexes": "coll_update_select_d",
+     "indexes": [
+       { "key": {"name": 1}, "name": "idx_update_name_en_s1",
+         "collation": {"locale": "en", "strength": 1} },
+       { "key": {"_id": 1, "rank": 1}, "name": "idx_update_id_rank_en_s1",
+         "collation": {"locale": "en", "strength": 1} },
+       { "key": {"_id": 1, "bucket": 1, "rank": -1},
+         "name": "idx_update_id_bucket_rank_en_s1",
+         "collation": {"locale": "en", "strength": 1} }
+     ] }', TRUE);
+
+RESET documentdb.alternate_index_handler_name;
+
+-- coll_update_worker_one_d: routed single-document predicate.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_dist_db',
+  '{ "createIndexes": "coll_update_worker_one_d",
+     "indexes": [{ "key": {"shard": 1, "name": 1},
+                   "name": "idx_update_shard_name_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+
+-- coll_update_unsharded_d: unsharded update-many predicate.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_dist_db',
+  '{ "createIndexes": "coll_update_unsharded_d",
+     "indexes": [{ "key": {"name": 1}, "name": "idx_update_name_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+
 -- coll_distinct_d: scalar, dotted, and multikey distinct paths.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_dist_db',
   '{ "createIndexes": "coll_distinct_d",

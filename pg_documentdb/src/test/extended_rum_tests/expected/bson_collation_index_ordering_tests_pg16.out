@@ -8315,13 +8315,173 @@ SELECT documentdb_api.drop_collection('ord_coll_ordered_db', 'simple_coll');
 (1 row)
 
 RESET enable_bitmapscan;
+-- ===== Section: update candidate selection order by pushdown ==========
+-- Filler rows make the ordered index scan the cheaper plan.
+RESET documentdb.max_non_ordered_term_scan_threshold;
+RESET documentdb.forceUseIndexIfAvailable;
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ord_coll_upd_db',
+  '{ "createIndexes": "upd_coll", "indexes": [ { "key": { "name": 1 }, "name": "upd_name_en_s1", "collation": { "locale": "en", "strength": 1 } } ] }', TRUE);
+psql:sql/bson_collation_index_ordering_tests.sql:2447: NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_upd_db', 'upd_coll', '{"_id": 1, "name": "apple"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_upd_db', 'upd_coll', '{"_id": 2, "name": "Banana"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('ord_coll_upd_db', 'upd_coll', FORMAT('{"_id": %s, "name": "filler%s"}', i, i)::documentdb_core.bson, NULL) FROM generate_series(3, 200) i) filler;
+ count 
+-------
+   198
+(1 row)
+
+SELECT collection_id AS upd_coll_id, format('ANALYZE documentdb_data.documents_%s;', collection_id) AS upd_analyze FROM documentdb_api_catalog.collections WHERE database_name = 'ord_coll_upd_db' AND collection_name = 'upd_coll' \gset
+:upd_analyze
+-- Ascending: Order By on the index scan, no Sort node.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update('ord_coll_upd_db',
+  '{ "update": "upd_coll", "updates": [ { "q": { "name": { "$gte": "a" } }, "u": { "$set": { "picked": true } }, "sort": { "name": 1 }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$);
+                                                                                                                                     run_explain_and_trim                                                                                                                                     
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, '0'::bigint, 'ok'::text, '1'::double precision)
+   CTE base
+     ->  Limit
+           Output: documents_8132.ctid, documents_8132.object_id, documents_8132.document, documents_8132.tableoid, (documentdb_api_internal.bson_orderby_index(documents_8132.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)), documents_8132.ctid
+           ->  LockRows
+                 Output: documents_8132.ctid, documents_8132.object_id, documents_8132.document, documents_8132.tableoid, (documentdb_api_internal.bson_orderby_index(documents_8132.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)), documents_8132.ctid
+                 ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                       Output: documents_8132.ctid, documents_8132.object_id, documents_8132.document, documents_8132.tableoid, documentdb_api_internal.bson_orderby_index(documents_8132.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text), documents_8132.ctid
+                       namespaceName: ord_coll_upd_db.upd_coll
+                       indexName: upd_name_en_s1
+                       indexKey: {"name": 1}
+                       indexCollation: en-u-ks-level1
+                       isMultiKey: false
+                       indexBounds: ["name": ["a", { })]
+                       ->  Index Scan using upd_name_en_s1 on documentdb_data.documents_8132
+                             Output: documents_8132.ctid, documents_8132.object_id, documents_8132.document, documents_8132.tableoid
+                             Index Cond: (documents_8132.document @>= '{ "name" : "a", "collation" : "en-u-ks-level1" }'::bson)
+                             Order By: (documents_8132.document OPERATOR(documentdb_api_internal.|<>) '{ "name" : { "$numberInt" : "1" } }'::bson)
+   ->  CTE Scan on base
+         Output: base.ctid, base.object_id, base.document, base.tableoid
+(21 rows)
+
+-- Descending: same, through the reverse index term function.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update('ord_coll_upd_db',
+  '{ "update": "upd_coll", "updates": [ { "q": { "name": { "$gte": "a" } }, "u": { "$set": { "picked": true } }, "sort": { "name": -1 }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$);
+                                                                                                                                         run_explain_and_trim                                                                                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, '0'::bigint, 'ok'::text, '1'::double precision)
+   CTE base
+     ->  Limit
+           Output: documents_8132.ctid, documents_8132.object_id, documents_8132.document, documents_8132.tableoid, (documentdb_api_internal.bson_orderby_index_reverse(documents_8132.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)), documents_8132.ctid
+           ->  LockRows
+                 Output: documents_8132.ctid, documents_8132.object_id, documents_8132.document, documents_8132.tableoid, (documentdb_api_internal.bson_orderby_index_reverse(documents_8132.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)), documents_8132.ctid
+                 ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                       Output: documents_8132.ctid, documents_8132.object_id, documents_8132.document, documents_8132.tableoid, documentdb_api_internal.bson_orderby_index_reverse(documents_8132.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text), documents_8132.ctid
+                       namespaceName: ord_coll_upd_db.upd_coll
+                       indexName: upd_name_en_s1
+                       indexKey: {"name": 1}
+                       indexCollation: en-u-ks-level1
+                       isMultiKey: false
+                       indexBounds: ["name": ["a", { })]
+                       ->  Index Scan using upd_name_en_s1 on documentdb_data.documents_8132
+                             Output: documents_8132.ctid, documents_8132.object_id, documents_8132.document, documents_8132.tableoid
+                             Index Cond: (documents_8132.document @>= '{ "name" : "a", "collation" : "en-u-ks-level1" }'::bson)
+                             Order By: (documents_8132.document OPERATOR(documentdb_api_internal.|<>) '{ "name" : { "$numberInt" : "-1" } }'::bson)
+   ->  CTE Scan on base
+         Output: base.ctid, base.object_id, base.document, base.tableoid
+(21 rows)
+
+-- Control: the prior form, without the index term ordering and the full scan
+-- qual, still sorts at runtime.
+SELECT documentdb_test_helpers.run_explain_and_trim(format($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT ctid, object_id, document, tableoid FROM documentdb_data.documents_%1$s WHERE shard_key_value = %1$s AND documentdb_api_internal.bson_query_match(document, '{ "name": { "$gte": "a" } }'::documentdb_core.bson, '{}'::documentdb_core.bson, 'en-u-ks-level1'::text) ORDER BY documentdb_api_internal.bson_orderby(document, '{ "name": 1 }'::documentdb_core.bson, 'en-u-ks-level1'::text) USING OPERATOR(documentdb_api_internal.<<<) LIMIT 1 FOR UPDATE
+$cmd$, :upd_coll_id));
+                                                                                    run_explain_and_trim                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   Output: ctid, object_id, document, tableoid, (documentdb_api_internal.bson_orderby(document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)), ctid
+   ->  LockRows
+         Output: ctid, object_id, document, tableoid, (documentdb_api_internal.bson_orderby(document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)), ctid
+         ->  Sort
+               Output: ctid, object_id, document, tableoid, (documentdb_api_internal.bson_orderby(document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)), ctid
+               Sort Key: (documentdb_api_internal.bson_orderby(documents_8132.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<<
+               ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                     Output: ctid, object_id, document, tableoid, documentdb_api_internal.bson_orderby(document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text), ctid
+                     namespaceName: ord_coll_upd_db.upd_coll
+                     indexName: upd_name_en_s1
+                     indexKey: {"name": 1}
+                     indexCollation: en-u-ks-level1
+                     isMultiKey: false
+                     indexBounds: ["name": ["a", { })]
+                     ->  Index Scan using upd_name_en_s1 on documentdb_data.documents_8132
+                           Output: ctid, object_id, document, tableoid
+                           Index Cond: (documents_8132.document @>= '{ "name" : "a", "collation" : "en-u-ks-level1" }'::bson)
+                           Filter: (documents_8132.shard_key_value = 8132)
+(19 rows)
+
+-- The update command picks the same document the ordering implies.
+BEGIN;
+SELECT documentdb_api.update('ord_coll_upd_db', '{ "update": "upd_coll", "updates": [ { "q": { "name": { "$gte": "a" } }, "u": { "$set": { "picked": true } }, "sort": { "name": 1 }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT document FROM bson_aggregation_find('ord_coll_upd_db', '{ "find": "upd_coll", "filter": { "picked": true } }');
+                               document                                
+-----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "name" : "apple", "picked" : true }
+(1 row)
+
+ROLLBACK;
+BEGIN;
+SELECT documentdb_api.update('ord_coll_upd_db', '{ "update": "upd_coll", "updates": [ { "q": { "name": { "$gte": "a" } }, "u": { "$set": { "picked": true } }, "sort": { "name": -1 }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT document FROM bson_aggregation_find('ord_coll_upd_db', '{ "find": "upd_coll", "filter": { "picked": true } }');
+                                 document                                  
+---------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "99" }, "name" : "filler99", "picked" : true }
+(1 row)
+
+ROLLBACK;
+SELECT documentdb_api.drop_collection('ord_coll_upd_db', 'upd_coll');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+RESET enable_bitmapscan;
 RESET documentdb.max_non_ordered_term_scan_threshold;
 RESET documentdb.enableOrderByIndexTerm;
 RESET documentdb.forceUseIndexIfAvailable;
 RESET documentdb.enableExtendedExplainPlans;
 RESET enable_seqscan;
 DROP SCHEMA collation_ordered_test_schema CASCADE;
-psql:sql/bson_collation_index_ordering_tests.sql:2446: NOTICE:  drop cascades to function collation_ordered_test_schema.gin_bson_index_term_to_bson(bytea)
+psql:sql/bson_collation_index_ordering_tests.sql:2495: NOTICE:  drop cascades to function collation_ordered_test_schema.gin_bson_index_term_to_bson(bytea)
 RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
 RESET documentdb.defaultUseCompositeOpClass;
 RESET documentdb_core.enableCollation;

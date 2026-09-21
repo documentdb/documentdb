@@ -4496,6 +4496,540 @@ SELECT documentdb_api.drop_collection('coll_q_db', 'coll_distinct_explain');
 (1 row)
 
 -- ======================================================================
+-- update: per-operation collation against a matching collated index
+-- ======================================================================
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "coll_update_explain_idx", "indexes": [ { "key": { "a": 1 }, "name": "idx_update_a_en_s1", "collation": { "locale": "en", "strength": 1 } }, { "key": { "simpleA": 1 }, "name": "idx_update_simple_a_binary" } ] }', TRUE);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_explain_idx', '{ "_id": "cat", "a": "cat", "simpleA": "cat" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_explain_idx', '{ "_id": "CAT", "a": "CAT", "simpleA": "CAT" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_explain_idx', '{ "_id": "dog", "a": "dog", "simpleA": "dog" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- multi:true with a matching collation uses the collated index for its bounds.
+-- The collation drives document selection only; the rewrite keeps binary
+-- semantics.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "a": "CaT" }, "u": { "$set": { "b": 1 } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+                                                                                                                                                            regexp_replace                                                                                                                                                            
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, sum(u.updated), 'ok'::text, '1'::double precision)
+   CTE u
+     ->  Update on documentdb_data.documents_x
+           Output: documentdb_api_internal.bson_update_returned_value(documents_x.shard_key_value)
+           ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                 Output: COALESCE(documentdb_api_internal.update_bson_document(documents_x.document, '{ "" : { "$set" : { "b" : { "$numberInt" : "1" } } } }'::bson, '{ "a" : "CaT" }'::bson, NULL::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), documents_x.document), documents_x.ctid
+                 namespaceName: coll_q_db.coll_update_explain_idx
+                 indexName: idx_update_a_en_s1
+                 indexKey: {"a": 1}
+                 indexCollation: en-u-ks-level1
+                 isMultiKey: false
+                 indexBounds: ["a": ["CaT", "CaT"]]
+                 ->  Bitmap Heap Scan on documentdb_data.documents_x
+                       Output: documents_x.document, documents_x.ctid
+                       Recheck Cond: (documents_x.document @= '{ "a" : "CaT", "collation" : "en-u-ks-level1" }'::bson)
+                       ->  Bitmap Index Scan on idx_update_a_en_s1
+                             Index Cond: (documents_x.document @= '{ "a" : "CaT", "collation" : "en-u-ks-level1" }'::bson)
+   ->  CTE Scan on u
+         Output: u.updated
+(20 rows)
+
+-- multi:false selects its single candidate through the same collated index.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "a": "CaT" }, "u": { "$set": { "b": 1 } }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+                                                           regexp_replace                                                            
+-------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, '0'::bigint, 'ok'::text, '1'::double precision)
+   CTE base
+     ->  Limit
+           Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, documents_x.ctid
+           ->  LockRows
+                 Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, documents_x.ctid
+                 ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                       Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, documents_x.ctid
+                       namespaceName: coll_q_db.coll_update_explain_idx
+                       indexName: idx_update_a_en_s1
+                       indexKey: {"a": 1}
+                       indexCollation: en-u-ks-level1
+                       isMultiKey: false
+                       indexBounds: ["a": ["CaT", "CaT"]]
+                       ->  Bitmap Heap Scan on documentdb_data.documents_x
+                             Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid
+                             Recheck Cond: (documents_x.document @= '{ "a" : "CaT", "collation" : "en-u-ks-level1" }'::bson)
+                             ->  Bitmap Index Scan on idx_update_a_en_s1
+                                   Index Cond: (documents_x.document @= '{ "a" : "CaT", "collation" : "en-u-ks-level1" }'::bson)
+   ->  CTE Scan on base
+         Output: base.ctid, base.object_id, base.document, base.tableoid
+(22 rows)
+
+-- A collated sort orders on the index term rather than the runtime ordering
+-- value, and the selection predicate still resolves through the collated
+-- index.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "a": { "$gte": "CAT" } }, "u": { "$set": { "b": 1 } }, "multi": false, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+                                                                                                                                regexp_replace                                                                                                                                 
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, '0'::bigint, 'ok'::text, '1'::double precision)
+   CTE base
+     ->  Limit
+           Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, (documentdb_api_internal.bson_orderby_index(documents_x.document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)), documents_x.ctid
+           ->  LockRows
+                 Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, (documentdb_api_internal.bson_orderby_index(documents_x.document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)), documents_x.ctid
+                 ->  Sort
+                       Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, (documentdb_api_internal.bson_orderby_index(documents_x.document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)), documents_x.ctid
+                       Sort Key: (documentdb_api_internal.bson_orderby_index(documents_x.document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+                       ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                             Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, documentdb_api_internal.bson_orderby_index(documents_x.document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text), documents_x.ctid
+                             namespaceName: coll_q_db.coll_update_explain_idx
+                             indexName: idx_update_a_en_s1
+                             indexKey: {"a": 1}
+                             indexCollation: en-u-ks-level1
+                             isMultiKey: false
+                             indexBounds: ["a": ["CAT", { })]
+                             ->  Bitmap Heap Scan on documentdb_data.documents_x
+                                   Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid
+                                   Recheck Cond: (documents_x.document @>= '{ "a" : "CAT", "collation" : "en-u-ks-level1" }'::bson)
+                                   ->  Bitmap Index Scan on idx_update_a_en_s1
+                                         Index Cond: (documents_x.document @>= '{ "a" : "CAT", "collation" : "en-u-ks-level1" }'::bson)
+   ->  CTE Scan on base
+         Output: base.ctid, base.object_id, base.document, base.tableoid
+(25 rows)
+
+-- The descending form orders through the reverse index term variant.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "a": { "$gte": "CAT" } }, "u": { "$set": { "b": 1 } }, "multi": false, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+                                                                                                                                    regexp_replace                                                                                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, '0'::bigint, 'ok'::text, '1'::double precision)
+   CTE base
+     ->  Limit
+           Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, (documentdb_api_internal.bson_orderby_index_reverse(documents_x.document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)), documents_x.ctid
+           ->  LockRows
+                 Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, (documentdb_api_internal.bson_orderby_index_reverse(documents_x.document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)), documents_x.ctid
+                 ->  Sort
+                       Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, (documentdb_api_internal.bson_orderby_index_reverse(documents_x.document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)), documents_x.ctid
+                       Sort Key: (documentdb_api_internal.bson_orderby_index_reverse(documents_x.document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) DESC
+                       ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                             Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, documentdb_api_internal.bson_orderby_index_reverse(documents_x.document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text), documents_x.ctid
+                             namespaceName: coll_q_db.coll_update_explain_idx
+                             indexName: idx_update_a_en_s1
+                             indexKey: {"a": 1}
+                             indexCollation: en-u-ks-level1
+                             isMultiKey: false
+                             indexBounds: ["a": ["CAT", { })]
+                             ->  Bitmap Heap Scan on documentdb_data.documents_x
+                                   Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid
+                                   Recheck Cond: (documents_x.document @>= '{ "a" : "CAT", "collation" : "en-u-ks-level1" }'::bson)
+                                   ->  Bitmap Index Scan on idx_update_a_en_s1
+                                         Index Cond: (documents_x.document @>= '{ "a" : "CAT", "collation" : "en-u-ks-level1" }'::bson)
+   ->  CTE Scan on base
+         Output: base.ctid, base.object_id, base.document, base.tableoid
+(25 rows)
+
+-- With no selection predicate the collated sort is the only thing the update
+-- carries, and it still orders on the index term while the scan falls back to
+-- the shard key bound.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { }, "u": { "$set": { "b": 1 } }, "multi": false, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+                                                                                                                                regexp_replace                                                                                                                                 
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, '0'::bigint, 'ok'::text, '1'::double precision)
+   CTE base
+     ->  Limit
+           Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, (documentdb_api_internal.bson_orderby_index(documents_x.document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)), documents_x.ctid
+           ->  LockRows
+                 Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, (documentdb_api_internal.bson_orderby_index(documents_x.document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)), documents_x.ctid
+                 ->  Sort
+                       Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, (documentdb_api_internal.bson_orderby_index(documents_x.document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)), documents_x.ctid
+                       Sort Key: (documentdb_api_internal.bson_orderby_index(documents_x.document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+                       ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                             Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, documentdb_api_internal.bson_orderby_index(documents_x.document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text), documents_x.ctid
+                             namespaceName: coll_q_db.coll_update_explain_idx
+                             indexName: _id_
+                             ->  Bitmap Heap Scan on documentdb_data.documents_x
+                                   Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid
+                                   Recheck Cond: (documents_x.shard_key_value = '8820'::bigint)
+                                   ->  Bitmap Index Scan on _id_
+                                         Index Cond: (documents_x.shard_key_value = '8820'::bigint)
+   ->  CTE Scan on base
+         Output: base.ctid, base.object_id, base.document, base.tableoid
+(21 rows)
+
+-- The same shape without a collation orders on the plain runtime ordering
+-- value instead of the index term.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { }, "u": { "$set": { "b": 1 } }, "multi": false, "sort": { "a": 1 } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+                                                                                                     regexp_replace                                                                                                      
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, '0'::bigint, 'ok'::text, '1'::double precision)
+   CTE base
+     ->  Limit
+           Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, (bson_orderby(documents_x.document, '{ "a" : { "$numberInt" : "1" } }'::bson)), documents_x.ctid
+           ->  LockRows
+                 Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, (bson_orderby(documents_x.document, '{ "a" : { "$numberInt" : "1" } }'::bson)), documents_x.ctid
+                 ->  Sort
+                       Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, (bson_orderby(documents_x.document, '{ "a" : { "$numberInt" : "1" } }'::bson)), documents_x.ctid
+                       Sort Key: (bson_orderby(documents_x.document, '{ "a" : { "$numberInt" : "1" } }'::bson))
+                       ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                             Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, bson_orderby(documents_x.document, '{ "a" : { "$numberInt" : "1" } }'::bson), documents_x.ctid
+                             namespaceName: coll_q_db.coll_update_explain_idx
+                             indexName: _id_
+                             ->  Bitmap Heap Scan on documentdb_data.documents_x
+                                   Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid
+                                   Recheck Cond: (documents_x.shard_key_value = '8820'::bigint)
+                                   ->  Bitmap Index Scan on _id_
+                                         Index Cond: (documents_x.shard_key_value = '8820'::bigint)
+   ->  CTE Scan on base
+         Output: base.ctid, base.object_id, base.document, base.tableoid
+(21 rows)
+
+-- Sorting on a field the collated index does not cover leaves the selection
+-- predicate to drive index choice.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "a": "CaT" }, "u": { "$set": { "b": 1 } }, "multi": false, "sort": { "c": 1 }, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+                                                                                                                                regexp_replace                                                                                                                                 
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, '0'::bigint, 'ok'::text, '1'::double precision)
+   CTE base
+     ->  Limit
+           Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, (documentdb_api_internal.bson_orderby_index(documents_x.document, '{ "c" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)), documents_x.ctid
+           ->  LockRows
+                 Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, (documentdb_api_internal.bson_orderby_index(documents_x.document, '{ "c" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)), documents_x.ctid
+                 ->  Sort
+                       Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, (documentdb_api_internal.bson_orderby_index(documents_x.document, '{ "c" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)), documents_x.ctid
+                       Sort Key: (documentdb_api_internal.bson_orderby_index(documents_x.document, '{ "c" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+                       ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                             Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, documentdb_api_internal.bson_orderby_index(documents_x.document, '{ "c" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text), documents_x.ctid
+                             namespaceName: coll_q_db.coll_update_explain_idx
+                             indexName: idx_update_a_en_s1
+                             indexKey: {"a": 1}
+                             indexCollation: en-u-ks-level1
+                             isMultiKey: false
+                             indexBounds: ["a": ["CaT", "CaT"]]
+                             ->  Bitmap Heap Scan on documentdb_data.documents_x
+                                   Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid
+                                   Recheck Cond: (documents_x.document @= '{ "a" : "CaT", "collation" : "en-u-ks-level1" }'::bson)
+                                   ->  Bitmap Index Scan on idx_update_a_en_s1
+                                         Index Cond: (documents_x.document @= '{ "a" : "CaT", "collation" : "en-u-ks-level1" }'::bson)
+   ->  CTE Scan on base
+         Output: base.ctid, base.object_id, base.document, base.tableoid
+(25 rows)
+
+-- A range predicate resolves its bounds through the collated index.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "a": { "$gte": "CAT" } }, "u": { "$set": { "b": 1 } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+                                                                                                                                                                  regexp_replace                                                                                                                                                                   
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, sum(u.updated), 'ok'::text, '1'::double precision)
+   CTE u
+     ->  Update on documentdb_data.documents_x
+           Output: documentdb_api_internal.bson_update_returned_value(documents_x.shard_key_value)
+           ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                 Output: COALESCE(documentdb_api_internal.update_bson_document(documents_x.document, '{ "" : { "$set" : { "b" : { "$numberInt" : "1" } } } }'::bson, '{ "a" : { "$gte" : "CAT" } }'::bson, NULL::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), documents_x.document), documents_x.ctid
+                 namespaceName: coll_q_db.coll_update_explain_idx
+                 indexName: idx_update_a_en_s1
+                 indexKey: {"a": 1}
+                 indexCollation: en-u-ks-level1
+                 isMultiKey: false
+                 indexBounds: ["a": ["CAT", { })]
+                 ->  Bitmap Heap Scan on documentdb_data.documents_x
+                       Output: documents_x.document, documents_x.ctid
+                       Recheck Cond: (documents_x.document @>= '{ "a" : "CAT", "collation" : "en-u-ks-level1" }'::bson)
+                       ->  Bitmap Index Scan on idx_update_a_en_s1
+                             Index Cond: (documents_x.document @>= '{ "a" : "CAT", "collation" : "en-u-ks-level1" }'::bson)
+   ->  CTE Scan on u
+         Output: u.updated
+(20 rows)
+
+-- The binary simple collation keeps the physical _id equality fast path.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "_id": "cat" }, "u": { "$set": { "b": 1 } }, "multi": false, "collation": { "locale": "simple" } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+                                                                regexp_replace                                                                 
+-----------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, '0'::bigint, 'ok'::text, '1'::double precision)
+   CTE base
+     ->  Limit
+           Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, documents_x.ctid
+           ->  LockRows
+                 Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, documents_x.ctid
+                 ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                       Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid, documents_x.ctid
+                       namespaceName: coll_q_db.coll_update_explain_idx
+                       indexName: _id_
+                       ->  Index Scan using _id_ on documentdb_data.documents_x
+                             Output: documents_x.ctid, documents_x.object_id, documents_x.document, documents_x.tableoid
+                             Index Cond: ((documents_x.shard_key_value = '8820'::bigint) AND (documents_x.object_id = '{ "" : "cat" }'::bson))
+   ->  CTE Scan on base
+         Output: base.ctid, base.object_id, base.document, base.tableoid
+(16 rows)
+
+-- The same physical _id bound is retained for multi-document updates.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "_id": "cat" }, "u": { "$set": { "b": 1 } }, "multi": true, "collation": { "locale": "simple" } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+                                                                                                                               regexp_replace                                                                                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, sum(u.updated), 'ok'::text, '1'::double precision)
+   CTE u
+     ->  Update on documentdb_data.documents_x
+           Output: documentdb_api_internal.bson_update_returned_value(documents_x.shard_key_value)
+           ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                 Output: COALESCE(documentdb_api_internal.update_bson_document(documents_x.document, '{ "" : { "$set" : { "b" : { "$numberInt" : "1" } } } }'::bson, '{ "_id" : "cat" }'::bson, NULL::bson, NULL::bson, NULL::text), documents_x.document), documents_x.ctid
+                 namespaceName: coll_q_db.coll_update_explain_idx
+                 indexName: _id_
+                 ->  Index Scan using _id_ on documentdb_data.documents_x
+                       Output: documents_x.document, documents_x.ctid
+                       Index Cond: ((documents_x.shard_key_value = '8820'::bigint) AND (documents_x.object_id = '{ "" : "cat" }'::bson) AND (documents_x.object_id = '{ "" : "cat" }'::bson))
+   ->  CTE Scan on u
+         Output: u.updated
+(14 rows)
+
+-- Simple collation is binary, so a matching ordinary index remains usable.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "simpleA": "cat" }, "u": { "$set": { "b": 1 } }, "multi": true, "collation": { "locale": "simple" } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+                                                                                                                                                               regexp_replace                                                                                                                                                               
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, sum(u.updated), 'ok'::text, '1'::double precision)
+   CTE u
+     ->  Update on documentdb_data.documents_x
+           Output: documentdb_api_internal.bson_update_returned_value(documents_x.shard_key_value)
+           ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                 Output: COALESCE(documentdb_api_internal.update_bson_document(documents_x.document, '{ "" : { "$set" : { "b" : { "$numberInt" : "1" } } } }'::bson, '{ "simpleA" : "cat" }'::bson, NULL::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), documents_x.document), documents_x.ctid
+                 namespaceName: coll_q_db.coll_update_explain_idx
+                 indexName: idx_update_simple_a_binary
+                 indexKey: {"simpleA": 1}
+                 isMultiKey: false
+                 indexBounds: ["simpleA": ["cat", "cat"]]
+                 ->  Bitmap Heap Scan on documentdb_data.documents_x
+                       Output: documents_x.document, documents_x.ctid
+                       Recheck Cond: (documents_x.document @= '{ "simpleA" : "cat" }'::bson)
+                       ->  Bitmap Index Scan on idx_update_simple_a_binary
+                             Index Cond: (documents_x.document @= '{ "simpleA" : "cat" }'::bson)
+   ->  CTE Scan on u
+         Output: u.updated
+(19 rows)
+
+-- A different strength does not match the index collation, so the predicate
+-- has to be evaluated at runtime.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "a": "CaT" }, "u": { "$set": { "b": 1 } }, "multi": true, "collation": { "locale": "en", "strength": 2 } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+                                                                                                                                                            regexp_replace                                                                                                                                                            
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, sum(u.updated), 'ok'::text, '1'::double precision)
+   CTE u
+     ->  Update on documentdb_data.documents_x
+           Output: documentdb_api_internal.bson_update_returned_value(documents_x.shard_key_value)
+           ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                 Output: COALESCE(documentdb_api_internal.update_bson_document(documents_x.document, '{ "" : { "$set" : { "b" : { "$numberInt" : "1" } } } }'::bson, '{ "a" : "CaT" }'::bson, NULL::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), documents_x.document), documents_x.ctid
+                 namespaceName: coll_q_db.coll_update_explain_idx
+                 indexName: _id_
+                 ->  Bitmap Heap Scan on documentdb_data.documents_x
+                       Output: documents_x.document, documents_x.ctid
+                       Recheck Cond: (documents_x.shard_key_value = '8820'::bigint)
+                       Filter: (documents_x.document @= '{ "a" : "CaT", "collation" : "en-u-ks-level2" }'::bson)
+                       ->  Bitmap Index Scan on _id_
+                             Index Cond: (documents_x.shard_key_value = '8820'::bigint)
+   ->  CTE Scan on u
+         Output: u.updated
+(17 rows)
+
+-- An uncollated update cannot use the collated index either.
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "a": "CaT" }, "u": { "$set": { "b": 1 } }, "multi": true } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+                                                                                                                                                            regexp_replace                                                                                                                                                            
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_build_document('n'::text, count(*), 'nModified'::text, sum(u.updated), 'ok'::text, '1'::double precision)
+   CTE u
+     ->  Update on documentdb_data.documents_x
+           Output: documentdb_api_internal.bson_update_returned_value(documents_x.shard_key_value)
+           ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                 Output: COALESCE(documentdb_api_internal.update_bson_document(documents_x.document, '{ "" : { "$set" : { "b" : { "$numberInt" : "1" } } } }'::bson, '{ "a" : "CaT" }'::bson, NULL::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), documents_x.document), documents_x.ctid
+                 namespaceName: coll_q_db.coll_update_explain_idx
+                 indexName: _id_
+                 ->  Bitmap Heap Scan on documentdb_data.documents_x
+                       Output: documents_x.document, documents_x.ctid
+                       Recheck Cond: (documents_x.shard_key_value = '8820'::bigint)
+                       Filter: (documents_x.document @= '{ "a" : "CaT" }'::bson)
+                       ->  Bitmap Index Scan on _id_
+                             Index Cond: (documents_x.shard_key_value = '8820'::bigint)
+   ->  CTE Scan on u
+         Output: u.updated
+(17 rows)
+
+-- Schema validation keeps the matching collated predicate on the same index.
+SET documentdb.enableSchemaValidation TO on;
+SELECT documentdb_api.coll_mod(
+  'coll_q_db',
+  'coll_update_explain_idx',
+  '{ "collMod": "coll_update_explain_idx", "validator": { "$jsonSchema": { "bsonType": "object", "properties": { "b": { "bsonType": "int" } } } }, "validationLevel": "strict", "validationAction": "error" }');
+             coll_mod              
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT regexp_replace(
+  documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_update(
+  'coll_q_db',
+  '{ "update": "coll_update_explain_idx", "updates": [ { "q": { "a": "CaT" }, "u": { "$set": { "b": 1 } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }')
+$cmd$),
+  'documents_[0-9]+', 'documents_x', 'g');
+                                                                                                                                                                                     regexp_replace                                                                                                                                                                                     
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: $6, sum(u.updated)
+   CTE filtered_documents
+     ->  Custom Scan (DocumentDBApiExplainQueryScan)
+           Output: documents_x.object_id, documents_x.shard_key_value, documents_x.document, COALESCE(documentdb_api_internal.update_bson_document(documents_x.document, '{ "" : { "$set" : { "b" : { "$numberInt" : "1" } } } }'::bson, '{ "a" : "CaT" }'::bson, NULL::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), documents_x.document)
+           namespaceName: coll_q_db.coll_update_explain_idx
+           indexName: idx_update_a_en_s1
+           indexKey: {"a": 1}
+           indexCollation: en-u-ks-level1
+           isMultiKey: false
+           indexBounds: ["a": ["CaT", "CaT"]]
+           ->  Bitmap Heap Scan on documentdb_data.documents_x
+                 Output: documents_x.object_id, documents_x.shard_key_value, documents_x.document
+                 Recheck Cond: (documents_x.document @= '{ "a" : "CaT", "collation" : "en-u-ks-level1" }'::bson)
+                 ->  Bitmap Index Scan on idx_update_a_en_s1
+                       Index Cond: (documents_x.document @= '{ "a" : "CaT", "collation" : "en-u-ks-level1" }'::bson)
+   CTE v
+     ->  CTE Scan on filtered_documents
+           Output: filtered_documents.object_id, filtered_documents.shard_key_value, filtered_documents.newdocument, documentdb_api_internal.schema_validation_against_update('{ "$jsonSchema" : { "bsonType" : "object", "properties" : { "b" : { "bsonType" : "int" } } } }'::bson, filtered_documents.newdocument, filtered_documents.document, false)
+   CTE u
+     ->  Update on documentdb_data.documents_x documents_x_1
+           Output: documentdb_api_internal.bson_update_returned_value(documents_x_1.shard_key_value)
+           ->  Nested Loop
+                 Output: v.newdocument, documents_x_1.ctid, v.*
+                 ->  CTE Scan on v
+                       Output: v.newdocument, v.*, v.object_id, v.shard_key_value
+                 ->  Index Scan using _id_ on documentdb_data.documents_x documents_x_1
+                       Output: documents_x_1.ctid, documents_x_1.object_id, documents_x_1.shard_key_value
+                       Index Cond: ((documents_x_1.shard_key_value = v.shard_key_value) AND (documents_x_1.object_id = v.object_id))
+   InitPlan 4 (returns $6)
+     ->  Aggregate
+           Output: count(*)
+           ->  CTE Scan on filtered_documents filtered_documents_x
+                 Output: filtered_documents_x.object_id, filtered_documents_x.shard_key_value, filtered_documents_x.document, filtered_documents_x.newdocument
+   ->  CTE Scan on u
+         Output: u.updated
+(36 rows)
+
+RESET documentdb.enableSchemaValidation;
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_update_explain_idx');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
 -- SECTION: binary $expr index pushdown
 -- ======================================================================
 SELECT documentdb_api.insert_one('coll_q_db', 'single_field_binary', '{"_id": 1, "a": "apple", "b": "apple"}');
@@ -4534,7 +5068,7 @@ $cmd$);
    indexKey: {"a": 1}
    isMultiKey: false
    indexBounds: ["a": ["apple", "apple"]]
-   ->  Index Scan using idx_a_binary on documentdb_data.documents_8820 collection
+   ->  Index Scan using idx_a_binary on documentdb_data.documents_8821 collection
          Output: document
          Index Cond: (collection.document @= '{ "a" : "apple" }'::bson)
          Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "apple" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -4552,7 +5086,7 @@ $cmd$);
    indexKey: {"a": 1}
    isMultiKey: false
    indexBounds: ["a": ["apple", "apple"]]
-   ->  Index Scan using idx_a_binary on documentdb_data.documents_8820 collection
+   ->  Index Scan using idx_a_binary on documentdb_data.documents_8821 collection
          Output: document
          Index Cond: (collection.document @= '{ "a" : "apple" }'::bson)
          Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "apple" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -4571,7 +5105,7 @@ $cmd$);
    indexKey: {"b": 1}
    isMultiKey: false
    indexBounds: ["b": ["apple", "apple"]]
-   ->  Index Scan using idx_b_binary on documentdb_data.documents_8820 collection
+   ->  Index Scan using idx_b_binary on documentdb_data.documents_8821 collection
          Output: document
          Index Cond: (collection.document @= '{ "b" : "apple" }'::bson)
          Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$b", "apple" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -4593,9 +5127,9 @@ $cmd$);
    Output: document
    namespaceName: coll_q_db.single_field_binary
    indexName: _id_
-   ->  Index Scan using _id_ on documentdb_data.documents_8820 collection
+   ->  Index Scan using _id_ on documentdb_data.documents_8821 collection
          Output: document
-         Index Cond: (collection.shard_key_value = '8820'::bigint)
+         Index Cond: (collection.shard_key_value = '8821'::bigint)
          Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "apple" ] }, "collation" : "en-u-ks-level1" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
 (8 rows)
 
@@ -4618,9 +5152,9 @@ $cmd$);
          Output: collection.document
          namespaceName: coll_q_db.single_field_binary
          indexName: _id_
-         ->  Index Scan using _id_ on documentdb_data.documents_8820 collection
+         ->  Index Scan using _id_ on documentdb_data.documents_8821 collection
                Output: collection.document
-               Index Cond: (collection.shard_key_value = '8820'::bigint)
+               Index Cond: (collection.shard_key_value = '8821'::bigint)
    ->  Aggregate
          Output: COALESCE(bson_array_agg(collection_0_1.document, 'matches'::text), '{ "matches" : [  ] }'::bson)
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
@@ -4629,7 +5163,7 @@ $cmd$);
                indexName: idx_b_binary
                indexKey: {"b": 1}
                isMultiKey: false
-               ->  Index Scan using idx_b_binary on documentdb_data.documents_8820 collection_0_1
+               ->  Index Scan using idx_b_binary on documentdb_data.documents_8821 collection_0_1
                      Output: collection_0_1.document
                      Index Cond: (collection_0_1.document @*= documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "b" : "a" }'::bson))
                      Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "b" : "a" }'::bson), 'b'::text)
@@ -4653,18 +5187,18 @@ $cmd$);
          Output: collection.document
          namespaceName: coll_q_db.single_field_binary
          indexName: _id_
-         ->  Index Scan using _id_ on documentdb_data.documents_8820 collection
+         ->  Index Scan using _id_ on documentdb_data.documents_8821 collection
                Output: collection.document
-               Index Cond: (collection.shard_key_value = '8820'::bigint)
+               Index Cond: (collection.shard_key_value = '8821'::bigint)
    ->  Aggregate
          Output: COALESCE(bson_array_agg(collection_0_1.document, 'matches'::text), '{ "matches" : [  ] }'::bson)
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
                Output: collection_0_1.document
                namespaceName: coll_q_db.single_field_binary
                indexName: _id_
-               ->  Index Scan using _id_ on documentdb_data.documents_8820 collection_0_1
+               ->  Index Scan using _id_ on documentdb_data.documents_8821 collection_0_1
                      Output: collection_0_1.document
-                     Index Cond: (collection_0_1.shard_key_value = '8820'::bigint)
+                     Index Cond: (collection_0_1.shard_key_value = '8821'::bigint)
                      Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "b" : "a", "collation" : "en-u-ks-level1" }'::bson), 'b'::text)
 (19 rows)
 
@@ -4689,7 +5223,7 @@ $cmd$);
    indexKey: {"b": 1}
    isMultiKey: false
    indexBounds: ["b": ["apple", "apple"]]
-   ->  Index Scan using idx_b_binary on documentdb_data.documents_8820 collection
+   ->  Index Scan using idx_b_binary on documentdb_data.documents_8821 collection
          Output: document
          Index Cond: (collection.document @= '{ "b" : "apple" }'::bson)
 (10 rows)
@@ -4706,7 +5240,7 @@ $cmd$);
    indexKey: {"a": 1}
    isMultiKey: false
    indexBounds: ["a": ["apple", "apple"]]
-   ->  Index Scan using idx_a_binary on documentdb_data.documents_8820 collection
+   ->  Index Scan using idx_a_binary on documentdb_data.documents_8821 collection
          Output: document
          Index Cond: (collection.document @= '{ "a" : "apple" }'::bson)
 (10 rows)
@@ -4723,7 +5257,7 @@ $cmd$);
    indexKey: {"b": 1}
    isMultiKey: false
    indexBounds: ["b": ["apple", "apple"]]
-   ->  Index Scan using idx_b_binary on documentdb_data.documents_8820 collection
+   ->  Index Scan using idx_b_binary on documentdb_data.documents_8821 collection
          Output: document
          Index Cond: (collection.document @= '{ "b" : "apple" }'::bson)
          Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$b", "apple" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -4742,7 +5276,7 @@ $cmd$);
    indexKey: {"b": 1}
    isMultiKey: false
    indexBounds: ["b": ["apple", "apple"]]
-   ->  Index Scan using idx_b_binary on documentdb_data.documents_8820 collection
+   ->  Index Scan using idx_b_binary on documentdb_data.documents_8821 collection
          Output: document
          Index Cond: (collection.document @= '{ "b" : "apple" }'::bson)
 (10 rows)
@@ -4768,7 +5302,7 @@ $cmd$);
    indexKey: {"a": 1}
    isMultiKey: false
    indexBounds: ["a": ["apple", "apple"]]
-   ->  Index Scan using idx_a_binary on documentdb_data.documents_8820 collection
+   ->  Index Scan using idx_a_binary on documentdb_data.documents_8821 collection
          Output: document
          Index Cond: (collection.document @= '{ "a" : "apple" }'::bson)
          Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "apple" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -4863,7 +5397,7 @@ $cmd$);
    Output: document
    namespaceName: coll_q_db.simple_gate_single
    indexName: gate_single
-   ->  Index Scan using gate_single on documentdb_data.documents_8821 collection
+   ->  Index Scan using gate_single on documentdb_data.documents_8822 collection
          Output: document
          Index Cond: (collection.document @= '{ "a" : "apple" }'::bson)
 (7 rows)
@@ -4877,7 +5411,7 @@ $cmd$);
    Output: document
    namespaceName: coll_q_db.simple_gate_single
    indexName: gate_single
-   ->  Index Scan using gate_single on documentdb_data.documents_8821 collection
+   ->  Index Scan using gate_single on documentdb_data.documents_8822 collection
          Output: document
          Index Cond: (collection.document @= '{ "a" : "apple" }'::bson)
 (7 rows)
@@ -4891,9 +5425,9 @@ $cmd$);
    Output: document
    namespaceName: coll_q_db.simple_gate_single
    indexName: _id_
-   ->  Index Scan using _id_ on documentdb_data.documents_8821 collection
+   ->  Index Scan using _id_ on documentdb_data.documents_8822 collection
          Output: document
-         Index Cond: (collection.shard_key_value = '8821'::bigint)
+         Index Cond: (collection.shard_key_value = '8822'::bigint)
          Filter: (collection.document @= '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::bson)
 (8 rows)
 
@@ -4906,9 +5440,9 @@ $cmd$);
    Output: document
    namespaceName: coll_q_db.simple_gate_single
    indexName: _id_
-   ->  Index Scan using _id_ on documentdb_data.documents_8821 collection
+   ->  Index Scan using _id_ on documentdb_data.documents_8822 collection
          Output: document
-         Index Cond: (collection.shard_key_value = '8821'::bigint)
+         Index Cond: (collection.shard_key_value = '8822'::bigint)
          Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "apple" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
 (8 rows)
 
@@ -4923,16 +5457,16 @@ $cmd$);
          Output: collection.document
          namespaceName: coll_q_db.simple_gate_single
          indexName: _id_
-         ->  Index Scan using _id_ on documentdb_data.documents_8821 collection
+         ->  Index Scan using _id_ on documentdb_data.documents_8822 collection
                Output: collection.document
-               Index Cond: (collection.shard_key_value = '8821'::bigint)
+               Index Cond: (collection.shard_key_value = '8822'::bigint)
    ->  Aggregate
          Output: COALESCE(bson_array_agg(collection_0_1.document, 'matches'::text), '{ "matches" : [  ] }'::bson)
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
                Output: collection_0_1.document
                namespaceName: coll_q_db.simple_gate_single
                indexName: gate_single
-               ->  Index Scan using gate_single on documentdb_data.documents_8821 collection_0_1
+               ->  Index Scan using gate_single on documentdb_data.documents_8822 collection_0_1
                      Output: collection_0_1.document
                      Index Cond: (collection_0_1.document @*= documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "a" : "a" }'::bson))
                      Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "a" : "a" }'::bson), 'a'::text)
@@ -4947,7 +5481,7 @@ $cmd$);
    Output: document
    namespaceName: coll_q_db.simple_gate_hashed
    indexName: gate_hashed
-   ->  Index Scan using gate_hashed on documentdb_data.documents_8822 collection
+   ->  Index Scan using gate_hashed on documentdb_data.documents_8823 collection
          Output: document
          Index Cond: (collection.document @= '{ "a" : "apple" }'::bson)
 (7 rows)
@@ -4961,7 +5495,7 @@ $cmd$);
    Output: document
    namespaceName: coll_q_db.simple_gate_hashed
    indexName: gate_hashed
-   ->  Index Scan using gate_hashed on documentdb_data.documents_8822 collection
+   ->  Index Scan using gate_hashed on documentdb_data.documents_8823 collection
          Output: document
          Index Cond: (collection.document @= '{ "a" : "apple" }'::bson)
 (7 rows)
@@ -4975,9 +5509,9 @@ $cmd$);
    Output: document
    namespaceName: coll_q_db.simple_gate_hashed
    indexName: _id_
-   ->  Index Scan using _id_ on documentdb_data.documents_8822 collection
+   ->  Index Scan using _id_ on documentdb_data.documents_8823 collection
          Output: document
-         Index Cond: (collection.shard_key_value = '8822'::bigint)
+         Index Cond: (collection.shard_key_value = '8823'::bigint)
          Filter: (collection.document @= '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::bson)
 (8 rows)
 
@@ -4990,7 +5524,7 @@ $cmd$);
    Output: document
    namespaceName: coll_q_db.simple_gate_wildcard
    indexName: gate_wildcard
-   ->  Index Scan using gate_wildcard on documentdb_data.documents_8823 collection
+   ->  Index Scan using gate_wildcard on documentdb_data.documents_8824 collection
          Output: document
          Index Cond: (collection.document @= '{ "a" : "apple" }'::bson)
 (7 rows)
@@ -5004,7 +5538,7 @@ $cmd$);
    Output: document
    namespaceName: coll_q_db.simple_gate_wildcard
    indexName: gate_wildcard
-   ->  Index Scan using gate_wildcard on documentdb_data.documents_8823 collection
+   ->  Index Scan using gate_wildcard on documentdb_data.documents_8824 collection
          Output: document
          Index Cond: (collection.document @= '{ "a" : "apple" }'::bson)
 (7 rows)
@@ -5018,9 +5552,9 @@ $cmd$);
    Output: document
    namespaceName: coll_q_db.simple_gate_wildcard
    indexName: _id_
-   ->  Index Scan using _id_ on documentdb_data.documents_8823 collection
+   ->  Index Scan using _id_ on documentdb_data.documents_8824 collection
          Output: document
-         Index Cond: (collection.shard_key_value = '8823'::bigint)
+         Index Cond: (collection.shard_key_value = '8824'::bigint)
          Filter: (collection.document @= '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::bson)
 (8 rows)
 

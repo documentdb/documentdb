@@ -371,6 +371,210 @@ SELECT documentdb_api.delete('coll_q_dist_db', '{ "delete": "coll_delete_d", "de
 ROLLBACK;
 
 -- ======================================================================
+-- SECTION: update document selection with collation on sharded collections
+-- ======================================================================
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_select_d', '{ "_id": "cat", "name": "cat", "bucket": 1, "rank": 10 }');
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_select_d', '{ "_id": "CAT", "name": "CAT", "bucket": 1, "rank": 1 }');
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_select_d', '{ "_id": "dog", "name": "dog", "bucket": 2, "rank": 5 }');
+SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_update_select_d', '{ "name": "hashed" }', false);
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_worker_one_d', '{ "_id": 1, "shard": 1, "name": "cat" }');
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_worker_one_d', '{ "_id": 2, "shard": 2, "name": "dog" }');
+SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_update_worker_one_d', '{ "shard": "hashed" }', false);
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_unsharded_d', '{ "_id": 1, "name": "cat" }');
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_unsharded_d', '{ "_id": 2, "name": "CAT" }');
+
+-- The non-transactional unsharded batch path serializes the client-shaped
+-- collation document and reparses it on the worker.
+SET documentdb_core.enableCollation TO on;
+SET documentdb.useLocalExecutionShardQueries TO off;
+CALL documentdb_api.update_bulk(
+    'coll_q_dist_db',
+    '{ "update": "coll_update_unsharded_d", "updates": [ { "q": { "name": "CaT" }, "u": { "$set": { "selected": true } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_unsharded_d') ORDER BY object_id;
+
+-- Semantic collation errors from the worker are indexed write errors, and an
+-- unordered batch preserves valid writes before and after them.
+CALL documentdb_api.update_bulk(
+    'coll_q_dist_db',
+    '{ "update": "coll_update_unsharded_d", "ordered": false, "updates": [ { "q": { "_id": 1 }, "u": { "$set": { "beforeError": true } }, "multi": false }, { "q": { "_id": 1 }, "u": { "$set": { "invalidLocale": true } }, "multi": false, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "_id": 2 }, "u": { "$set": { "afterError": true } }, "multi": false } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_unsharded_d') ORDER BY object_id;
+RESET documentdb.useLocalExecutionShardQueries;
+RESET documentdb_core.enableCollation;
+
+-- A collation-sensitive shard-key equality must fan out rather than prune to
+-- the shard selected by the query literal's binary hash.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enable_update_many_worker_pushdown TO off;
+SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_d", "updates": [ { "q": { "name": "CaT" }, "u": { "$set": { "selected": "coordinator" } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d') ORDER BY object_id;
+ROLLBACK;
+
+-- The update-many worker path preserves the collation and has the same fanout.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enable_update_many_worker_pushdown TO on;
+SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_d", "updates": [ { "q": { "name": "CaT" }, "u": { "$set": { "selected": "worker" } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d') ORDER BY object_id;
+ROLLBACK;
+
+-- The update-many worker path pushes down the parsed collation string, which
+-- the coordinator produces inside the per-update error boundary. An invalid
+-- collation therefore stays an indexed write error here as well, instead of
+-- failing the whole command before any update runs.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enable_update_many_worker_pushdown TO on;
+SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_d", "ordered": false, "updates": [ { "q": { "name": "CaT" }, "u": { "$set": { "workerBeforeError": true } }, "multi": true, "collation": { "locale": "en", "strength": 1 } }, { "q": { "name": "CaT" }, "u": { "$set": { "workerInvalidLocale": true } }, "multi": true, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "name": "cat" }, "u": { "$set": { "workerAfterError": true } }, "multi": true } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d') ORDER BY object_id;
+ROLLBACK;
+
+-- The global _id lookup applies the requested sort before choosing a shard.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_d", "updates": [ { "q": { "_id": "CaT" }, "u": { "$set": { "selectedWithoutSort": true } }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT COUNT(*) = 1 AS selected_one_document
+FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d')
+WHERE document OPERATOR(documentdb_api_catalog.@@) '{ "selectedWithoutSort": true }';
+ROLLBACK;
+
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_d", "updates": [ { "q": { "_id": "CaT" }, "u": { "$set": { "selectedBySort": "ascending" } }, "sort": { "rank": 1 }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT COUNT(*) = 1 AS selected_expected_document
+FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d')
+WHERE document OPERATOR(documentdb_api_catalog.@@) '{ "_id": "CAT", "selectedBySort": "ascending" }';
+ROLLBACK;
+
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_d", "updates": [ { "q": { "_id": "CaT" }, "u": { "$set": { "selectedBySort": "descending" } }, "sort": { "rank": -1 }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT COUNT(*) = 1 AS selected_expected_document
+FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d')
+WHERE document OPERATOR(documentdb_api_catalog.@@) '{ "_id": "cat", "selectedBySort": "descending" }';
+ROLLBACK;
+
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_d", "updates": [ { "q": { "_id": "CaT" }, "u": { "$set": { "selectedBySort": "compound" } }, "sort": { "bucket": 1, "rank": -1 }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT COUNT(*) = 1 AS selected_expected_document
+FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d')
+WHERE document OPERATOR(documentdb_api_catalog.@@) '{ "_id": "cat", "selectedBySort": "compound" }';
+ROLLBACK;
+
+-- Global string ordering must use the operation collation, not binary ordering.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_d", "updates": [ { "q": { "_id": "cat" }, "u": { "$set": { "sortName": "apple" } }, "multi": false }, { "q": { "_id": "CAT" }, "u": { "$set": { "sortName": "Zebra" } }, "multi": false } ] }');
+SELECT document FROM bson_aggregation_find('coll_q_dist_db', '{ "find": "coll_update_select_d", "filter": { "_id": { "$in": [ "cat", "CAT" ] } }, "sort": { "sortName": 1 }, "limit": 1 }');
+
+SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_d", "updates": [ { "q": { "_id": "CaT" }, "u": { "$set": { "selectedByStringSort": "ascending" } }, "sort": { "sortName": 1 }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT COUNT(*) = 1 AS selected_expected_document
+FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d')
+WHERE document OPERATOR(documentdb_api_catalog.@@) '{ "_id": "cat", "selectedByStringSort": "ascending" }';
+
+SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_d", "updates": [ { "q": { "_id": "CaT" }, "u": { "$set": { "selectedByStringSort": "descending" } }, "sort": { "sortName": -1 }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT COUNT(*) = 1 AS selected_expected_document
+FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d')
+WHERE document OPERATOR(documentdb_api_catalog.@@) '{ "_id": "CAT", "selectedByStringSort": "descending" }';
+ROLLBACK;
+
+-- Additional predicates and command variables participate in global
+-- candidate selection before the shard is chosen.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_d", "updates": [ { "q": { "_id": "CaT", "rank": { "$gte": 5 } }, "u": { "$set": { "selectedBySort": "filtered" } }, "sort": { "rank": 1 }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT COUNT(*) = 1 AS selected_expected_document
+FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d')
+WHERE document OPERATOR(documentdb_api_catalog.@@) '{ "_id": "cat", "selectedBySort": "filtered" }';
+ROLLBACK;
+
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_d", "updates": [ { "q": { "_id": "CaT", "$expr": { "$eq": [ "$rank", "$$targetRank" ] } }, "u": { "$set": { "selectedBySort": "variable" } }, "sort": { "rank": 1 }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ], "let": { "targetRank": 10 } }');
+SELECT COUNT(*) = 1 AS selected_expected_document
+FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d')
+WHERE document OPERATOR(documentdb_api_catalog.@@) '{ "_id": "cat", "selectedBySort": "variable" }';
+ROLLBACK;
+
+-- A single-document update cannot route only by a collation-sensitive shard key.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_d", "updates": [ { "q": { "name": "CaT" }, "u": { "$set": { "selected": "one" } }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+ROLLBACK;
+
+-- A numeric shard-key equality routes to one worker, which must preserve the
+-- collation while selecting the matching document there.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_worker_one_d", "updates": [ { "q": { "shard": 1, "name": "CAT" }, "u": { "$set": { "selected": true } }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_worker_one_d') ORDER BY object_id;
+ROLLBACK;
+
+-- A non-string _id uses exact routing even when the operation also supplies
+-- a collation and sort.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_worker_one_d", "updates": [ { "q": { "_id": 1 }, "u": { "$set": { "selectedById": true } }, "sort": { "name": -1 }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT COUNT(*) = 1 AS selected_expected_document
+FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_worker_one_d')
+WHERE document OPERATOR(documentdb_api_catalog.@@) '{ "_id": 1, "selectedById": true }';
+ROLLBACK;
+
+-- Simple collation is binary and preserves exact shard-key routing for
+-- single-document updates and upserts.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_d", "updates": [ { "q": { "name": "cat" }, "u": { "$set": { "selected": "simple" } }, "multi": false, "collation": { "locale": "simple" } } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d') ORDER BY object_id;
+ROLLBACK;
+
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_d", "updates": [ { "q": { "_id": "cat" }, "u": { "$set": { "selected": "simple-id-sort" } }, "sort": { "rank": 1 }, "multi": false, "collation": { "locale": "simple" } } ] }');
+SELECT COUNT(*) = 1 AS selected_expected_document
+FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d')
+WHERE document OPERATOR(documentdb_api_catalog.@@) '{ "_id": "cat", "selected": "simple-id-sort" }';
+ROLLBACK;
+
+-- Exact _id values can repeat on different shards, so candidate selection
+-- must apply the requested sort before choosing a shard.
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_duplicate_id_d', '{ "_id": "duplicate", "name": 1, "rank": 10 }');
+SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_update_duplicate_id_d', '{ "name": "hashed" }', false);
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_duplicate_id_d', '{ "_id": "duplicate", "name": 2, "rank": 1 }');
+
+BEGIN;
+SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_duplicate_id_d", "updates": [ { "q": { "_id": "duplicate" }, "u": { "$set": { "selectedByExactIdSort": "ascending" } }, "sort": { "rank": 1 }, "multi": false } ] }');
+SELECT COUNT(*) = 1 AS selected_expected_document
+FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_duplicate_id_d')
+WHERE document OPERATOR(documentdb_api_catalog.@@) '{ "_id": "duplicate", "name": 2, "selectedByExactIdSort": "ascending" }';
+ROLLBACK;
+
+BEGIN;
+SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_duplicate_id_d", "updates": [ { "q": { "_id": "duplicate" }, "u": { "$set": { "selectedByExactIdSort": "descending" } }, "sort": { "rank": -1 }, "multi": false } ] }');
+SELECT COUNT(*) = 1 AS selected_expected_document
+FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_duplicate_id_d')
+WHERE document OPERATOR(documentdb_api_catalog.@@) '{ "_id": "duplicate", "name": 1, "selectedByExactIdSort": "descending" }';
+ROLLBACK;
+
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_duplicate_id_d", "updates": [ { "q": { "_id": "duplicate" }, "u": { "$set": { "selectedByExactIdSort": "simple-descending" } }, "sort": { "rank": -1 }, "multi": false, "collation": { "locale": "simple" } } ] }');
+SELECT COUNT(*) = 1 AS selected_expected_document
+FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_duplicate_id_d')
+WHERE document OPERATOR(documentdb_api_catalog.@@) '{ "_id": "duplicate", "name": 1, "selectedByExactIdSort": "simple-descending" }';
+ROLLBACK;
+
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_d", "updates": [ { "q": { "_id": "simple-upsert", "name": "fox" }, "u": { "$set": { "selected": "simple-upsert" } }, "multi": false, "upsert": true, "collation": { "locale": "simple" } } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d') ORDER BY object_id;
+ROLLBACK;
+
+-- ======================================================================
 -- CLEANUP
 -- ======================================================================
 SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_agg_d');
@@ -383,4 +587,8 @@ SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_graph_src_d');
 SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_lookup_d');
 SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_id_d');
 SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_qm_d');
+SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_update_select_d');
+SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_update_duplicate_id_d');
+SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_update_unsharded_d');
+SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_update_worker_one_d');
 SELECT documentdb_api.drop_collection('coll_q_dist_db', 'single_field_d');
