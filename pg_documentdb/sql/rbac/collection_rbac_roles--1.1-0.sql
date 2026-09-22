@@ -50,6 +50,16 @@ GRANT USAGE ON SCHEMA
 	   documentdb_rbac_baseline_read_role,
 	   documentdb_rbac_baseline_write_role;
 
+-- Virtual administration collections apply their own caller visibility rules,
+-- but PostgreSQL checks relation privileges before evaluating those filters.
+GRANT SELECT ON TABLE __API_CATALOG_SCHEMA__.roles
+	TO documentdb_rbac_api_access_role;
+
+-- system.users checks access through this view and reads only non-sensitive
+-- columns from its backing catalog.
+GRANT SELECT ON TABLE pg_catalog.pg_roles
+	TO documentdb_rbac_api_access_role;
+
 GRANT SELECT ON ALL TABLES IN SCHEMA __API_DATA_SCHEMA__
 	TO documentdb_rbac_baseline_read_role;
 

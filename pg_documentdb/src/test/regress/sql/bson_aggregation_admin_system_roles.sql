@@ -77,6 +77,19 @@ RESET ROLE;
 REVOKE SELECT ON documentdb_api_catalog.roles FROM "documentdb_root_role";
 REVOKE USAGE ON SCHEMA documentdb_api_catalog FROM "documentdb_root_role";
 
+CREATE ROLE "systemRolesAdmin" LOGIN;
+GRANT "documentdb_admin_role" TO "systemRolesAdmin";
+
+SET ROLE "systemRolesAdmin";
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles", "filter": { "role": { "$in": [ "systemRolesParent", "systemRolesChildOne", "systemRolesChildTwo" ] } }, "sort": { "role": 1 } }');
+RESET ROLE;
+
+REVOKE "documentdb_admin_role" FROM "systemRolesAdmin";
+DROP ROLE "systemRolesAdmin";
+
 GRANT SELECT ON documentdb_api_catalog.roles TO "systemRolesChildOne";
 
 SET ROLE "systemRolesChildOne";
@@ -115,6 +128,7 @@ SELECT documentdb_api_catalog.bson_dollar_project(
 SELECT documentdb_api.drop_role('{"dropRole":"systemRolesChildOne", "$db":"admin"}');
 SELECT documentdb_api.drop_role('{"dropRole":"systemRolesChildTwo", "$db":"admin"}');
 SELECT documentdb_api.drop_role('{"dropRole":"systemRolesParent", "$db":"admin"}');
+DELETE FROM documentdb_api_catalog.roles WHERE role_name = 'systemRolesOrphan';
 
 RESET documentdb.enableRoleCrud;
 RESET documentdb.enableRolesAdminDBCheck;

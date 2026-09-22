@@ -74,6 +74,7 @@ static bool SetupCluster(bool isInitialize);
 static void SetPermissionsForReadOnlyRole(void);
 static void SetPermissionsForReadWriteRole(void);
 static void GrantClusterDataReadToRbacApiAccessRole(void);
+static void GrantRolesReadToRbacApiAccessRole(void);
 static void CheckAndReplicateReferenceTable(const char *schema, const char *tableName);
 static void UpdateChangesTableOwnerToAdminRole(void);
 static bool MetadataColumnExists(const char *tableName, const char *columnName);
@@ -410,6 +411,12 @@ RunUpgradeActions(ExtensionVersion installedVersion, ExtensionVersion lastUpgrad
 		ShouldRunSetupForVersion(&versions, DocDB_V1, 0, 1))
 	{
 		GrantClusterDataReadToRbacApiAccessRole();
+	}
+
+	if (ShouldRunSetupForVersion(&versions, DocDB_V0, 117, 4) ||
+		ShouldRunSetupForVersion(&versions, DocDB_V1, 1, 0))
+	{
+		GrantRolesReadToRbacApiAccessRole();
 	}
 
 	/* we call the post setup cluster hook to allow the extension to do any additional setup */
@@ -1047,6 +1054,24 @@ GrantClusterDataReadToRbacApiAccessRole(void)
 			"GRANT SELECT ON TABLE %s.%s_cluster_data TO %s",
 			ApiDistributedSchemaName,
 			ExtensionObjectPrefix,
+			quote_identifier(API_RBAC_API_ACCESS_ROLE)),
+		readOnly, SPI_OK_UTILITY, &isNull);
+}
+
+
+/*
+ * Restore API access after the roles table is replicated as a reference table.
+ */
+static void
+GrantRolesReadToRbacApiAccessRole(void)
+{
+	bool isNull = false;
+	bool readOnly = false;
+
+	ExtensionExecuteQueryViaSPI(
+		FormatSqlQuery(
+			"GRANT SELECT ON TABLE %s.roles TO %s",
+			ApiCatalogSchemaName,
 			quote_identifier(API_RBAC_API_ACCESS_ROLE)),
 		readOnly, SPI_OK_UTILITY, &isNull);
 }

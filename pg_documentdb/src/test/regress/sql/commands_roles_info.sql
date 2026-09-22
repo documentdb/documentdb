@@ -72,6 +72,14 @@ SELECT documentdb_api.roles_info('{"rolesInfo":"pg_signal_backend", "$db":"admin
 SELECT documentdb_api.create_user('{"createUser":"test_user", "pwd":"test_password", "roles":[{"role":"readAnyDatabase","db":"admin"}], "$db":"admin"}');
 SELECT documentdb_api.roles_info('{"rolesInfo":"test_user", "$db":"admin"}');
 
+-- A database-only group role is not a catalog-backed custom role.
+CREATE ROLE test_sql_only_role;
+SELECT documentdb_api.roles_info('{"rolesInfo":"test_sql_only_role", "$db":"admin"}');
+SELECT documentdb_core.bson_to_json_string(
+	documentdb_api.roles_info('{"rolesInfo":1, "$db":"admin"}'))::text LIKE '%test_sql_only_role%'
+	AS lists_sql_only_role;
+DROP ROLE test_sql_only_role;
+
 -- ********* Test rolesInfo with role document *********
 -- Test rolesInfo with basic role document
 SELECT documentdb_api.roles_info('{"rolesInfo": {"role":"readAnyDatabase", "db":"admin"}, "$db":"admin"}');
@@ -141,11 +149,10 @@ ALTER ROLE documentdb_admin_role WITH NOLOGIN;
 DROP ROLE IF EXISTS "test_multi_inherit_role";
 DELETE FROM documentdb_api_catalog.roles WHERE role_name = 'test_multi_inherit_role';
 
--- ********* Test rolesInfo rejects a granted role it cannot report *********
+-- ********* Test rolesInfo ignores out-of-band grants *********
 
--- A role granted directly in SQL may be one the inheritance table does not
--- report, such as a login role. Reporting the holder without it would understate
--- its membership, so the request fails instead.
+-- The stored catalog definition remains authoritative when database
+-- memberships are changed outside role CRUD.
 SELECT documentdb_api.create_role('{"createRole":"test_stray_parent_role", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
 CREATE ROLE test_stray_login_role LOGIN;
 GRANT test_stray_login_role TO "test_stray_parent_role";
@@ -155,11 +162,10 @@ SELECT documentdb_api.roles_info('{"rolesInfo":1, "$db":"admin"}') IS NOT NULL A
 
 REVOKE test_stray_login_role FROM "test_stray_parent_role";
 
--- With the grant removed the role is reportable again.
+-- Removing the grant does not change the reported metadata.
 SELECT documentdb_api.roles_info('{"rolesInfo":"test_stray_parent_role", "$db":"admin"}');
 
--- Only direct parents are reported, so an unreportable role reached
--- transitively through another role does not fail the request.
+-- Transitive out-of-band grants are also ignored.
 SELECT documentdb_api.create_role('{"createRole":"test_stray_child_role", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
 GRANT test_stray_login_role TO "test_stray_parent_role";
 GRANT "test_stray_parent_role" TO "test_stray_child_role";
@@ -171,6 +177,58 @@ DROP ROLE IF EXISTS "test_stray_child_role";
 DROP ROLE IF EXISTS test_stray_login_role;
 DROP ROLE IF EXISTS "test_stray_parent_role";
 DELETE FROM documentdb_api_catalog.roles WHERE role_name IN ('test_stray_parent_role', 'test_stray_child_role');
+
+-- ********* Test rolesInfo custom-role visibility *********
+
+SELECT documentdb_api.create_role('{"createRole":"test_hidden_role", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+CREATE ROLE test_roles_info_reader LOGIN;
+GRANT documentdb_readonly_role TO test_roles_info_reader;
+GRANT test_custom_role TO test_roles_info_reader;
+SELECT documentdb_api.create_role('{"createRole":"test_transitive_role", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+GRANT test_transitive_role TO test_custom_role;
+
+SET ROLE documentdb_root_role;
+SELECT documentdb_api.roles_info('{"rolesInfo":"test_hidden_role", "$db":"admin"}');
+RESET ROLE;
+
+CREATE ROLE test_roles_info_admin LOGIN;
+GRANT documentdb_admin_role TO test_roles_info_admin;
+SET ROLE test_roles_info_admin;
+-- Admin-role membership can list all catalog-backed custom roles.
+SELECT pg_has_role(current_user, 'documentdb_root_role', 'MEMBER')
+	AS is_root_role_member,
+	pg_has_role(current_user, 'documentdb_admin_role', 'MEMBER')
+	AS is_admin_role_member;
+SELECT documentdb_api.roles_info('{"rolesInfo":"test_hidden_role", "$db":"admin"}');
+SELECT documentdb_core.bson_to_json_string(
+	documentdb_api.roles_info('{"rolesInfo":1, "$db":"admin"}'))::text
+		LIKE '%test_hidden_role%'
+	AS admin_lists_all_custom_roles;
+RESET ROLE;
+
+SET ROLE test_roles_info_reader;
+SELECT pg_has_role(current_user, 'documentdb_root_role', 'MEMBER')
+	AS is_root_role_member,
+	pg_has_role(current_user, 'test_custom_role', 'MEMBER')
+	AS is_direct_role_member,
+	pg_has_role(current_user, 'test_transitive_role', 'MEMBER')
+	AS is_transitive_role_member,
+	pg_has_role(current_user, 'test_hidden_role', 'MEMBER')
+	AS is_hidden_role_member;
+SELECT documentdb_api.roles_info('{"rolesInfo":["readAnyDatabase", "test_custom_role", "test_transitive_role"], "$db":"admin"}');
+SELECT documentdb_api.roles_info('{"rolesInfo":"test_hidden_role", "$db":"admin"}');
+SELECT documentdb_api.roles_info('{"rolesInfo":["test_custom_role", "test_hidden_role"], "$db":"admin"}');
+SELECT documentdb_api.roles_info('{"rolesInfo":1, "$db":"admin"}');
+RESET ROLE;
+
+REVOKE test_transitive_role FROM test_custom_role;
+REVOKE test_custom_role FROM test_roles_info_reader;
+REVOKE documentdb_readonly_role FROM test_roles_info_reader;
+DROP ROLE test_roles_info_reader;
+REVOKE documentdb_admin_role FROM test_roles_info_admin;
+DROP ROLE test_roles_info_admin;
+SELECT documentdb_api.drop_role('{"dropRole":"test_transitive_role", "$db":"admin"}');
+SELECT documentdb_api.drop_role('{"dropRole":"test_hidden_role", "$db":"admin"}');
 
 -- Clean up test roles created for rolesInfo testing
 DROP ROLE IF EXISTS "test_custom_role";

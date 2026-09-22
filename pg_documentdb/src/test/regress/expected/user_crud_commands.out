@@ -825,14 +825,69 @@ ERROR:  The specified value for the role is invalid: 'documentdb_readonly_role'.
 -- in, so they may not be granted through createUser.
 SELECT documentdb_api.create_user('{"createUser":"customRoleUser3", "pwd":"test_password", "roles":[{"role":"pg_read_all_data","db":"admin"}], "$db":"admin"}');
 ERROR:  The specified value for the role is invalid: 'pg_read_all_data'.
--- Verify the membership was actually created. usersInfo only reports built-in
--- roles, so the custom role does not appear there.
+-- Verify the membership was actually created and usersInfo reports the
+-- directly assigned custom role.
 SELECT pg_has_role('customRoleUser', 'customUserRole', 'MEMBER');
  pg_has_role 
 -------------
  t
 (1 row)
 
+SELECT documentdb_api.users_info('{"usersInfo":"customRoleUser", "$db":"admin"}');
+                                                                                                           users_info
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "users" : [ { "_id" : "admin.customRoleUser", "userId" : "admin.customRoleUser", "user" : "customRoleUser", "db" : "admin", "roles" : [ { "role" : "customUserRole", "db" : "admin" } ] } ], "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_core.bson_to_json_string(
+        documentdb_api.users_info('{"usersInfo":1, "$db":"admin"}'))::text
+    LIKE '%"role" : "customUserRole"%' AS custom_role_reported;
+ custom_role_reported
+----------------------
+ t
+(1 row)
+
+-- An admin querying another user receives custom roles through system.users.
+CREATE ROLE customRoleAdminReader LOGIN;
+GRANT documentdb_admin_role TO customRoleAdminReader;
+SET ROLE customRoleAdminReader;
+SELECT documentdb_core.bson_to_json_string(
+        documentdb_api.users_info('{"usersInfo":"customRoleUser", "$db":"admin"}'))::text
+    LIKE '%"role" : "customUserRole"%' AS other_user_custom_role_reported \gset
+\echo :other_user_custom_role_reported
+t
+RESET ROLE;
+REVOKE documentdb_admin_role FROM customRoleAdminReader;
+DROP ROLE customRoleAdminReader;
+-- system.users is the authoritative source for non-admin custom-role output.
+SET ROLE "customRoleUser";
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+        'admin', '{"find":"system.users"}');
+                                                                  document
+--------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : "admin.customRoleUser", "user" : "customRoleUser", "db" : "admin", "roles" : [ { "db" : "admin", "role" : "customUserRole" } ] }
+(1 row)
+
+SELECT documentdb_api.users_info(
+        '{"usersInfo":"customRoleUser", "$db":"admin"}') AS custom_users_info \gset
+SELECT :'custom_users_info' LIKE '%"role" : "customUserRole"%'
+    AS custom_role_reported_by_users_info;
+ custom_role_reported_by_users_info
+------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.connection_status(
+        '{"connectionStatus":1, "$db":"admin"}') AS custom_connection_status \gset
+SELECT :'custom_connection_status' LIKE '%"role" : "customUserRole"%'
+    AS custom_role_reported_by_connection_status;
+ custom_role_reported_by_connection_status
+-------------------------------------------
+ t
+(1 row)
+
+RESET ROLE;
 -- Cleanup
 SELECT documentdb_api.drop_user('{"dropUser":"customRoleUser", "$db":"admin"}');
              drop_user             

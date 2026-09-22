@@ -132,6 +132,9 @@ bool IsReadWriteAnyDatabaseRoleAvailable(void);
 /* Function to check whether a name identifies a custom role */
 bool IsCustomRole(const char *roleName);
 
+/* Function to check whether a text value identifies a custom role */
+bool IsCustomRoleCore(text *roleName);
+
 /* Function to build a List of parent role names from an array of Datums */
 List * ConvertUserOrRoleNamesDatumToList(Datum *parentRolesDatums, int parentRolesCount);
 

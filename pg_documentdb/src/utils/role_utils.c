@@ -30,6 +30,7 @@
 #include "utils/version_utils.h"
 #include "api_hooks.h"
 #include "api_hooks_def.h"
+#include "infrastructure/documentdb_plan_cache.h"
 
 #define SCRAM_MAX_SALT_LEN 64
 
@@ -860,9 +861,22 @@ IsReadWriteAnyDatabaseRoleAvailable(void)
 bool
 IsCustomRole(const char *roleName)
 {
-	Oid roleOid = get_role_oid(roleName, true);
+	text *roleNameText = cstring_to_text(roleName);
+	bool isCustomRole = IsCustomRoleCore(roleNameText);
+	pfree(roleNameText);
+
+	return isCustomRole;
+}
+
+
+bool
+IsCustomRoleCore(text *roleName)
+{
+	char *roleNameString = text_to_cstring(roleName);
+	Oid roleOid = get_role_oid(roleNameString, true);
 	if (!OidIsValid(roleOid))
 	{
+		pfree(roleNameString);
 		return false;
 	}
 
@@ -870,16 +884,37 @@ IsCustomRole(const char *roleName)
 		"SELECT 1 FROM %s.roles WHERE role_name = $1",
 		ApiCatalogSchemaName);
 
-	int nargs = 1;
+	const int nargs = 1;
 	Oid argTypes[1] = { TEXTOID };
-	Datum argValues[1] = { CStringGetTextDatum(roleName) };
-
+	Datum argValues[1] = { PointerGetDatum(roleName) };
+	char *argNulls = NULL;
 	bool readOnly = true;
-	bool isNull = false;
-	ExtensionExecuteQueryWithArgsViaSPI(query, nargs, argTypes, argValues, NULL,
-										readOnly, SPI_OK_SELECT, &isNull);
+	long maxTupleCount = 1;
+	uint64 collectionId = 0;
 
-	return !isNull;
+	if (SPI_connect() != SPI_OK_CONNECT)
+	{
+		ereport(ERROR, (errmsg("could not connect to SPI manager")));
+	}
+
+	SPIPlanPtr plan = GetSPIQueryPlan(collectionId, QUERY_ID_IS_CUSTOM_ROLE,
+									  query, argTypes, nargs);
+	int spiStatus = SPI_execute_plan(plan, argValues, argNulls, readOnly,
+									 maxTupleCount);
+	if (spiStatus != SPI_OK_SELECT)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg("could not check the custom role catalog")));
+	}
+
+	bool isCustomRole = SPI_processed > 0;
+	if (SPI_finish() != SPI_OK_FINISH)
+	{
+		ereport(ERROR, (errmsg("could not finish SPI connection")));
+	}
+
+	pfree(roleNameString);
+	return isCustomRole;
 }
 
 

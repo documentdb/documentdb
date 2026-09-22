@@ -784,6 +784,9 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the is_reserved_user function. */
 	Oid IsReservedUserFunctionId;
 
+	/* OID of the is_custom_role function. */
+	Oid IsCustomRoleFunctionId;
+
 	/* OID of the websearch_to_tsquery function with regconfig option. */
 	Oid WebSearchToTsQueryWithRegConfigFunctionId;
 
@@ -7279,6 +7282,29 @@ IsReservedUserFunctionId(void)
 	}
 
 	return Cache.IsReservedUserFunctionId;
+}
+
+
+/*
+ * Returns the OID of the internal is_custom_role function.
+ */
+Oid
+IsCustomRoleFunctionId(void)
+{
+	InitializeDocumentDBApiExtensionCache();
+
+	if (Cache.IsCustomRoleFunctionId == InvalidOid)
+	{
+		List *functionNameList = list_make2(makeString(ApiInternalSchemaName),
+											makeString("is_custom_role"));
+		Oid paramOids[1] = { TEXTOID };
+		bool missingOK = false;
+
+		Cache.IsCustomRoleFunctionId =
+			LookupFuncName(functionNameList, 1, paramOids, missingOK);
+	}
+
+	return Cache.IsCustomRoleFunctionId;
 }
 
 

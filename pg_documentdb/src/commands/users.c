@@ -9,6 +9,7 @@
  */
 #include "postgres.h"
 #include "fmgr.h"
+#include "funcapi.h"
 #include "utils/documentdb_errors.h"
 #include "utils/query_utils.h"
 #include "utils/documentdb_errors.h"
@@ -21,6 +22,7 @@
 #include <common/scram-common.h>
 #include "api_hooks_def.h"
 #include "users.h"
+#include "aggregation/aggregation_commands.h"
 #include "roles.h"
 #include "api_hooks.h"
 #include "utils/hashset_utils.h"
@@ -203,10 +205,20 @@ static Datum GetAllUsersInfo(void);
 static void ParseUsersInfoDocument(const bson_value_t *usersInfoBson, GetUserSpec *spec);
 static void WriteSingleUserDocument(UserRoleHashEntry *userEntry, bool showPrivileges,
 									pgbson_array_writer *userArrayWriter);
-static void WriteMultipleRoles(HTAB *rolesTable, pgbson_array_writer *roleArrayWriter);
-static void WriteRoles(const char *parentRole,
-					   pgbson_array_writer *roleArrayWriter);
-static HTAB * BuildUserRoleEntryTable(Datum *userDatums, int userCount);
+static void WriteMultipleRoles(HTAB *rolesTable,
+							   pgbson_array_writer *roleArrayWriter);
+static void WriteBuiltInRoles(const char *parentRole,
+							  pgbson_array_writer *roleArrayWriter);
+static HTAB * BuildUserRoleEntryTable(Datum *userDatums, int userCount,
+									  bool queryAllUsers);
+static void AddCustomRolesFromUsersTable(HTAB *userRolesTable, bool queryAllUsers);
+static pgbson * UsersTableQuerySpec(HTAB *userRolesTable, bool queryAllUsers);
+static void ParseUserTableResponse(HTAB *userRolesTable, Datum responseDatum);
+static UserRoleHashEntry * FindUserRoleEntry(HTAB *userRolesTable,
+											 const char *userName);
+static UserRoleHashEntry * FindOrCreateUserRoleEntry(HTAB *userRolesTable,
+													 const char *userName);
+static void AddRoleToUserEntry(UserRoleHashEntry *userEntry, const char *roleName);
 static void FreeUserRoleEntryTable(HTAB *userRolesTable);
 static HTAB * CreateUserEntryHashSet(void);
 static uint32 UserHashEntryHashFunc(const void *obj, size_t objsize);
@@ -1078,7 +1090,7 @@ documentdb_extension_get_users(PG_FUNCTION_ARGS)
 					  TYPALIGN_INT, &userDatums, &userIsNullMarker,
 					  &userCount);
 
-	HTAB *userRolesTable = BuildUserRoleEntryTable(userDatums, userCount);
+	HTAB *userRolesTable = BuildUserRoleEntryTable(userDatums, userCount, showAllUsers);
 
 	pgbson_array_writer userArrayWriter;
 	PgbsonWriterStartArray(&finalWriter, "users", 5, &userArrayWriter);
@@ -1285,7 +1297,30 @@ connection_status(pgbson *showPrivilegesSpec)
 	pgbson_array_writer roleArrayWriter;
 	PgbsonWriterStartArray(&authInfoWriter, "authenticatedUserRoles", 22,
 						   &roleArrayWriter);
-	WriteRoles(parentRole, &roleArrayWriter);
+
+	/*
+	 * TODO: Build the complete role set so users with both custom and built-in
+	 * memberships report every role and the matching privileges.
+	 */
+	if (IS_BUILTIN_ROLE(parentRole))
+	{
+		WriteBuiltInRoles(parentRole, &roleArrayWriter);
+	}
+	else
+	{
+		HTAB *userRolesTable = CreateUserEntryHashSet();
+		FindOrCreateUserRoleEntry(userRolesTable, currentUser);
+		bool queryAllUsers = false;
+		AddCustomRolesFromUsersTable(userRolesTable, queryAllUsers);
+
+		UserRoleHashEntry *userEntry = FindUserRoleEntry(userRolesTable, currentUser);
+		if (userEntry != NULL)
+		{
+			WriteMultipleRoles(userEntry->roles, &roleArrayWriter);
+		}
+
+		FreeUserRoleEntryTable(userRolesTable);
+	}
 	PgbsonWriterEndArray(&authInfoWriter, &roleArrayWriter);
 
 	if (showPrivileges)
@@ -1928,17 +1963,29 @@ WriteMultipleRoles(HTAB *rolesTable, pgbson_array_writer *roleArrayWriter)
 	hash_seq_init(&status, rolesTable);
 	while ((roleEntry = hash_seq_search(&status)) != NULL)
 	{
-		WriteRoles(roleEntry->string, roleArrayWriter);
+		if (IS_BUILTIN_ROLE(roleEntry->string))
+		{
+			WriteBuiltInRoles(roleEntry->string, roleArrayWriter);
+		}
+		else
+		{
+			pgbson_writer roleWriter;
+			PgbsonWriterInit(&roleWriter);
+			PgbsonWriterAppendUtf8(&roleWriter, "role", 4, roleEntry->string);
+			PgbsonWriterAppendUtf8(&roleWriter, "db", 2, "admin");
+			PgbsonArrayWriterWriteDocument(
+				roleArrayWriter, PgbsonWriterGetPgbson(&roleWriter));
+		}
 	}
 }
 
 
 /*
- * WriteRoles writes role information to a BSON array writer based on the parent role.
+ * WriteBuiltInRoles writes built-in role information based on the parent role.
  * This consolidates the role mapping logic used by both usersInfo and connectionStatus commands.
  */
 static void
-WriteRoles(const char *parentRole, pgbson_array_writer *roleArrayWriter)
+WriteBuiltInRoles(const char *parentRole, pgbson_array_writer *roleArrayWriter)
 {
 	if (parentRole == NULL)
 	{
@@ -2007,11 +2054,11 @@ WriteRoles(const char *parentRole, pgbson_array_writer *roleArrayWriter)
 
 
 /*
- * BuildUserRoleEntryTable creates and populates a hash table with user role information
- * from the provided user data array.
+ * BuildUserRoleEntryTable creates a hash table keyed by user name. Each value contains
+ * the user's role-name hash set and whether the user has an external identity.
  */
 static HTAB *
-BuildUserRoleEntryTable(Datum *userDatums, int userCount)
+BuildUserRoleEntryTable(Datum *userDatums, int userCount, bool queryAllUsers)
 {
 	HTAB *userRolesTable = CreateUserEntryHashSet();
 
@@ -2022,79 +2069,258 @@ BuildUserRoleEntryTable(Datum *userDatums, int userCount)
 		bson_iter_t getIter;
 		PgbsonInitIterator(bson_doc, &getIter);
 
-		const char *user = NULL;
-
-		/* Initialize iterator */
-		if (bson_iter_find(&getIter, "child_role"))
+		if (!bson_iter_find(&getIter, "child_role"))
 		{
-			if (BSON_ITER_HOLDS_UTF8(&getIter))
-			{
-				user = bson_iter_utf8(&getIter, NULL);
-				bool userFound = false;
-				UserRoleHashEntry searchEntry = {
-					.user = (char *) user,
-				};
-
-				hash_search(userRolesTable,
-							&searchEntry,
-							HASH_FIND,
-							&userFound);
-
-				if (!userFound)
-				{
-					UserRoleHashEntry newEntry = {
-						.user = pstrdup(user),
-						.roles = NULL,
-						.isExternal = IsUserExternal(user)
-					};
-
-					bool entryCreated = false;
-					hash_search(userRolesTable, &newEntry, HASH_ENTER, &entryCreated);
-				}
-			}
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg("User role metadata is missing a child role")));
 		}
-		if (bson_iter_find(&getIter, "parent_role"))
+
+		if (!BSON_ITER_HOLDS_UTF8(&getIter))
 		{
-			if (BSON_ITER_HOLDS_UTF8(&getIter))
-			{
-				const char *parentRole = bson_iter_utf8(&getIter, NULL);
-
-				if (!IS_BUILTIN_ROLE(parentRole))
-				{
-					continue;
-				}
-
-				UserRoleHashEntry userSearchEntry = {
-					.user = (char *) user,
-				};
-
-				bool userFound = false;
-				UserRoleHashEntry *userEntry = hash_search(userRolesTable,
-														   &userSearchEntry,
-														   HASH_FIND,
-														   &userFound);
-
-				if (userFound && userEntry != NULL)
-				{
-					if (userEntry->roles == NULL)
-					{
-						userEntry->roles = CreateStringViewHashSet();
-					}
-
-					StringView roleStringView = {
-						.string = (char *) parentRole,
-						.length = strlen(parentRole)
-					};
-
-					bool roleAdded = false;
-					hash_search(userEntry->roles, &roleStringView, HASH_ENTER,
-								&roleAdded);
-				}
-			}
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg("User role metadata has an invalid child role")));
 		}
+
+		const char *user = bson_iter_utf8(&getIter, NULL);
+		UserRoleHashEntry *userEntry =
+			FindOrCreateUserRoleEntry(userRolesTable, user);
+
+		if (!bson_iter_find(&getIter, "parent_role"))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg("User role metadata is missing a parent role")));
+		}
+
+		if (!BSON_ITER_HOLDS_UTF8(&getIter))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg("User role metadata has an invalid parent role")));
+		}
+
+		const char *parentRole = bson_iter_utf8(&getIter, NULL);
+		if (!IS_BUILTIN_ROLE(parentRole))
+		{
+			/* Custom roles are added from the catalog-backed system.users view. */
+			continue;
+		}
+
+		AddRoleToUserEntry(userEntry, parentRole);
 	}
 
+	AddCustomRolesFromUsersTable(userRolesTable, queryAllUsers);
+
 	return userRolesTable;
+}
+
+
+/*
+ * Adds the caller-visible custom roles returned by admin.system.users.
+ */
+static void
+AddCustomRolesFromUsersTable(HTAB *userRolesTable, bool queryAllUsers)
+{
+	if (!IsClusterVersionAtleast(DocDB_V0, 116, 0))
+	{
+		return;
+	}
+
+	pgbson *usersTableQuerySpec = UsersTableQuerySpec(userRolesTable, queryAllUsers);
+	Datum responseDatum =
+		find_cursor_first_page(cstring_to_text("admin"), usersTableQuerySpec, 0);
+
+	ParseUserTableResponse(userRolesTable, responseDatum);
+}
+
+
+static pgbson *
+UsersTableQuerySpec(HTAB *userRolesTable, bool queryAllUsers)
+{
+	pgbson_writer findSpecWriter;
+	PgbsonWriterInit(&findSpecWriter);
+	PgbsonWriterAppendUtf8(&findSpecWriter, "find", 4, "system.users");
+	PgbsonWriterAppendInt32(&findSpecWriter, "batchSize", 9, INT_MAX);
+
+	if (!queryAllUsers)
+	{
+		pgbson_writer filterWriter;
+		PgbsonWriterStartDocument(&findSpecWriter, "filter", 6, &filterWriter);
+		pgbson_writer userFilterWriter;
+		PgbsonWriterStartDocument(&filterWriter, "user", 4, &userFilterWriter);
+		pgbson_array_writer requestedUsersWriter;
+		PgbsonWriterStartArray(&userFilterWriter, "$in", 3, &requestedUsersWriter);
+
+		HASH_SEQ_STATUS userStatus;
+		UserRoleHashEntry *requestedUser;
+		hash_seq_init(&userStatus, userRolesTable);
+		while ((requestedUser = hash_seq_search(&userStatus)) != NULL)
+		{
+			PgbsonArrayWriterWriteUtf8(&requestedUsersWriter, requestedUser->user);
+		}
+
+		PgbsonWriterEndArray(&userFilterWriter, &requestedUsersWriter);
+		PgbsonWriterEndDocument(&filterWriter, &userFilterWriter);
+		PgbsonWriterEndDocument(&findSpecWriter, &filterWriter);
+	}
+
+	return PgbsonWriterGetPgbson(&findSpecWriter);
+}
+
+
+static void
+ParseUserTableResponse(HTAB *userRolesTable, Datum responseDatum)
+{
+	HeapTupleHeader responseTuple = DatumGetHeapTupleHeader(responseDatum);
+	bool cursorPageIsNull = false;
+	Datum cursorPageDatum = GetAttributeByNum(responseTuple, 1, &cursorPageIsNull);
+	if (cursorPageIsNull)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg("System users query returned a null cursor page")));
+	}
+
+	pgbson *response = DatumGetPgBson(cursorPageDatum);
+	bson_iter_t firstBatchIterator;
+	if (!PgbsonInitIteratorAtPath(response, "cursor.firstBatch", &firstBatchIterator))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg("System users response is missing cursor.firstBatch")));
+	}
+	if (!BSON_ITER_HOLDS_ARRAY(&firstBatchIterator))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg(
+							"System users response has an invalid cursor.firstBatch")));
+	}
+
+	bson_iter_t documentArrayIterator;
+	bson_iter_recurse(&firstBatchIterator, &documentArrayIterator);
+	while (bson_iter_next(&documentArrayIterator))
+	{
+		if (!BSON_ITER_HOLDS_DOCUMENT(&documentArrayIterator))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg(
+								"System users response contains an invalid user entry")));
+		}
+
+		bson_iter_t documentIterator;
+		bson_iter_recurse(&documentArrayIterator, &documentIterator);
+		if (!bson_iter_find(&documentIterator, "user"))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg("System users response is missing a user name")));
+		}
+		if (!BSON_ITER_HOLDS_UTF8(&documentIterator))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg("System users response has an invalid user name")));
+		}
+
+		const char *documentUser = bson_iter_utf8(&documentIterator, NULL);
+		UserRoleHashEntry *userEntry = FindUserRoleEntry(userRolesTable, documentUser);
+		if (userEntry == NULL)
+		{
+			continue;
+		}
+
+		bson_iter_recurse(&documentArrayIterator, &documentIterator);
+		if (!bson_iter_find(&documentIterator, "roles"))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg("System users response is missing a roles array")));
+		}
+		if (!BSON_ITER_HOLDS_ARRAY(&documentIterator))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg("System users response has an invalid roles array")));
+		}
+
+		bson_iter_t roleArrayIterator;
+		bson_iter_recurse(&documentIterator, &roleArrayIterator);
+		while (bson_iter_next(&roleArrayIterator))
+		{
+			if (!BSON_ITER_HOLDS_DOCUMENT(&roleArrayIterator))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+								errmsg(
+									"System users response contains an invalid role entry")));
+			}
+
+			bson_iter_t roleDocumentIterator;
+			bson_iter_recurse(&roleArrayIterator, &roleDocumentIterator);
+			if (!bson_iter_find(&roleDocumentIterator, "role"))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+								errmsg("System users response is missing a role name")));
+			}
+			if (!BSON_ITER_HOLDS_UTF8(&roleDocumentIterator))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+								errmsg(
+									"System users response has an invalid role name")));
+			}
+
+			const char *roleName = bson_iter_utf8(&roleDocumentIterator, NULL);
+			AddRoleToUserEntry(userEntry, roleName);
+		}
+	}
+}
+
+
+static UserRoleHashEntry *
+FindUserRoleEntry(HTAB *userRolesTable, const char *userName)
+{
+	UserRoleHashEntry searchEntry = {
+		.user = (char *) userName,
+	};
+	bool userFound = false;
+	UserRoleHashEntry *userEntry = hash_search(userRolesTable, &searchEntry,
+											   HASH_FIND, &userFound);
+
+	return userFound ? userEntry : NULL;
+}
+
+
+static UserRoleHashEntry *
+FindOrCreateUserRoleEntry(HTAB *userRolesTable, const char *userName)
+{
+	UserRoleHashEntry *userEntry = FindUserRoleEntry(userRolesTable, userName);
+	if (userEntry != NULL)
+	{
+		return userEntry;
+	}
+
+	UserRoleHashEntry newEntry = {
+		.user = pstrdup(userName),
+		.roles = NULL,
+		.isExternal = IsUserExternal(userName)
+	};
+	bool entryCreated = false;
+	userEntry = hash_search(userRolesTable, &newEntry, HASH_ENTER, &entryCreated);
+
+	return userEntry;
+}
+
+
+static void
+AddRoleToUserEntry(UserRoleHashEntry *userEntry, const char *roleName)
+{
+	if (userEntry->roles == NULL)
+	{
+		userEntry->roles = CreateStringViewHashSet();
+	}
+
+	char *roleNameCopy = pstrdup(roleName);
+	StringView roleStringView = {
+		.string = roleNameCopy,
+		.length = strlen(roleNameCopy)
+	};
+	bool roleFound = false;
+	hash_search(userEntry->roles, &roleStringView, HASH_ENTER, &roleFound);
+	if (roleFound)
+	{
+		pfree(roleNameCopy);
+	}
 }
 
 

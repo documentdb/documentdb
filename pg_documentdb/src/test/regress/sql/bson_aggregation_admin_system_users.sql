@@ -19,6 +19,11 @@ SELECT document
 FROM documentdb_api_catalog.bson_aggregation_find(
 	'admin',
 	'{ "find": "system.users" }');
+
+RESET ROLE;
+REVOKE documentdb_admin_role FROM "systemUsersRoleCreator";
+SET ROLE "systemUsersRoleCreator";
+
 -- system.roles must not report the created role either. The creator only holds
 -- the membership PostgreSQL 16 and later records for the role running
 -- CREATE ROLE, which carries ADMIN OPTION but confers neither INHERIT nor SET.
@@ -31,11 +36,25 @@ RESET ROLE;
 SELECT documentdb_api.drop_role(
 	'{"dropRole":"systemUsersCreatorRole", "$db":"admin"}') AS drop_result \gset
 REVOKE SELECT ON documentdb_api_catalog.roles FROM "systemUsersRoleCreator";
-REVOKE documentdb_admin_role FROM "systemUsersRoleCreator";
 REVOKE documentdb_readonly_role FROM "systemUsersRoleCreator";
 DROP ROLE "systemUsersRoleCreator";
 
 SELECT documentdb_api.create_role('{"createRole":"systemUsersCustomRole", "roles":[], "privileges":[], "$db":"admin"}');
+
+SELECT documentdb_api_internal.is_custom_role('systemUsersCustomRole')
+	AS custom_role_is_catalog_backed,
+	NOT documentdb_api_internal.is_custom_role('documentdb_readonly_role')
+	AS built_in_role_is_not_catalog_backed;
+
+SELECT has_table_privilege(
+		   'documentdb_rbac_api_access_role',
+		   'pg_catalog.pg_roles',
+		   'SELECT') AS pg_roles_select_granted,
+	   NOT has_column_privilege(
+		   'documentdb_rbac_api_access_role',
+		   'pg_catalog.pg_authid',
+		   'oid',
+		   'SELECT') AS pg_authid_select_not_granted;
 
 GRANT "systemUsersCustomRole" TO CURRENT_USER;
 GRANT documentdb_admin_role TO CURRENT_USER;
@@ -70,13 +89,25 @@ SELECT documentdb_api.create_role(
 CREATE ROLE "documentdb_api_hidden_user" LOGIN;
 CREATE ROLE "documentdb_rbac_hidden_user" LOGIN;
 
+CREATE ROLE "systemUsersAdminReader" LOGIN;
+GRANT documentdb_admin_role TO "systemUsersAdminReader";
+GRANT documentdb_readonly_role TO "systemUsersAdminReader";
+SET ROLE "systemUsersAdminReader";
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.users", "filter": { "user": "systemUsersOtherReader" } }');
+RESET ROLE;
+REVOKE documentdb_admin_role FROM "systemUsersAdminReader";
+REVOKE documentdb_readonly_role FROM "systemUsersAdminReader";
+DROP ROLE "systemUsersAdminReader";
+
 GRANT "documentdb_root_role" TO "systemUsersRootReader";
 GRANT "systemUsersCustomRole" TO
 	"systemUsersNoLogin",
 	"documentdb_api_hidden_user",
 	"documentdb_rbac_hidden_user";
 GRANT documentdb_readonly_role TO "systemUsersRootReader";
-GRANT SELECT ON documentdb_api_catalog.roles TO "systemUsersRootReader";
 
 SET ROLE "systemUsersRootReader";
 SET plan_cache_mode TO force_generic_plan;
@@ -89,7 +120,6 @@ EXECUTE system_users_query;
 RESET ROLE;
 
 GRANT documentdb_readonly_role TO "systemUsersOtherReader";
-GRANT SELECT ON documentdb_api_catalog.roles TO "systemUsersOtherReader";
 
 REVOKE "documentdb_root_role" FROM "systemUsersRootReader";
 SET ROLE "systemUsersRootReader";
@@ -105,8 +135,6 @@ FROM documentdb_api_catalog.bson_aggregation_find(
 	'{ "find": "system.users" }');
 RESET ROLE;
 
-REVOKE SELECT ON documentdb_api_catalog.roles FROM "systemUsersRootReader";
-REVOKE SELECT ON documentdb_api_catalog.roles FROM "systemUsersOtherReader";
 SELECT documentdb_api.drop_user(
 	'{"dropUser":"systemUsersRootReader", "$db":"admin"}') AS drop_result \gset
 SELECT documentdb_api.drop_user(
@@ -124,9 +152,6 @@ SELECT documentdb_api.create_user(
 
 -- TODO: Grant this through create_user after it supports custom and built-in role combinations.
 GRANT documentdb_readonly_role TO "systemUsersReader";
-
--- TODO: Include this privilege in an OSS API-access baseline role.
-GRANT SELECT ON documentdb_api_catalog.roles TO "systemUsersReader";
 
 SET ROLE "systemUsersReader";
 
@@ -162,7 +187,6 @@ FROM documentdb_api_catalog.bson_aggregation_find(
 
 RESET ROLE;
 
-REVOKE SELECT ON documentdb_api_catalog.roles FROM "systemUsersReader";
 SELECT documentdb_api.drop_user(
 	'{"dropUser":"systemUsersReader", "$db":"admin"}') AS drop_result \gset
 SELECT documentdb_api.drop_role('{"dropRole":"systemUsersCustomRole", "$db":"admin"}');

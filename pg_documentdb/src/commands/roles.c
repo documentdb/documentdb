@@ -29,6 +29,7 @@
 #include "metadata/collection.h"
 #include "utils/version_utils.h"
 #include "rbac_hooks.h"
+#include "infrastructure/documentdb_plan_cache.h"
 
 /*
  * IS_INHERITABLE_ROLE checks if a role is allowed to be inherited by custom roles.
@@ -37,8 +38,6 @@
 	(strcmp(roleName, ApiReadOnlyRole) == 0 || \
 	 strcmp(roleName, API_RBAC_READWRITE_ANYDB_ROLE) == 0 || \
 	 strcmp(roleName, ApiAdminRoleV2) == 0)
-
-#define DOCUMENTDB_DEFAULT_ROOT_ROLE "documentdb_root_role"
 
 /* GUC to enable user crud operations */
 extern bool EnableRoleCrud;
@@ -55,6 +54,7 @@ PG_FUNCTION_INFO_V1(command_grant_privileges_to_role);
 PG_FUNCTION_INFO_V1(command_revoke_roles_from_role);
 PG_FUNCTION_INFO_V1(command_revoke_privileges_from_role);
 PG_FUNCTION_INFO_V1(documentdb_is_reserved_user);
+PG_FUNCTION_INFO_V1(documentdb_is_custom_role);
 
 /*
  * Struct to hold createRole parameters
@@ -103,18 +103,6 @@ typedef struct
 	const char *roleName;
 } DropRoleSpec;
 
-/*
- * Hash table entry for role inheritance. Maps an internal role name
- * to its native name and list of internal parent role names.
- */
-typedef struct RoleParentEntry
-{
-	/* Both views borrow storage that outlives the role inheritance hash table. */
-	StringView internalRoleName;
-	StringView nativeRoleName;
-	List *parentRoles;
-} RoleParentEntry;
-
 static void ParseCreateRoleSpec(pgbson *createRoleBson, CreateRoleSpec *createRoleSpec,
 								bool validateCommandContext);
 static void ParseRoleEntryDocument(bson_iter_t *roleEntryIter, const char **roleName,
@@ -130,21 +118,21 @@ static void ParseRolesInfoSpec(pgbson *rolesInfoBson, RolesInfoSpec *rolesInfoSp
 static void ParseRoleDefinition(bson_iter_t *iter, RolesInfoSpec *rolesInfoSpec);
 static void ParseRoleDocument(bson_iter_t *rolesArrayIter, RolesInfoSpec *rolesInfoSpec);
 static void ProcessAllRolesForRolesInfo(pgbson_array_writer *rolesArrayWriter,
-										RolesInfoSpec
-										rolesInfoSpec, HTAB *roleInheritanceTable);
+										RolesInfoSpec rolesInfoSpec);
 static void ProcessSpecificRolesForRolesInfo(pgbson_array_writer *rolesArrayWriter,
-											 RolesInfoSpec
-											 rolesInfoSpec, HTAB *roleInheritanceTable);
-static void WriteRoleResponse(const RoleParentEntry *entry,
+											 RolesInfoSpec rolesInfoSpec);
+static pgbson * RolesTableQuerySpec(const char *roleName);
+static void ExecuteRolesTableQuery(pgbson *rolesTableQuerySpec,
+								   pgbson_array_writer *rolesArrayWriter,
+								   RolesInfoSpec rolesInfoSpec);
+static void WriteRoles(pgbson_array_writer *rolesArrayWriter,
+					   RolesInfoSpec rolesInfoSpec, const char *roleName);
+static void WriteRoleResponse(const pgbson *roleDocument,
 							  pgbson_array_writer *rolesArrayWriter,
-							  RolesInfoSpec rolesInfoSpec,
-							  HTAB *roleInheritanceTable);
-static HTAB * BuildRoleInheritanceTable(void);
+							  RolesInfoSpec rolesInfoSpec);
+static bool RolesInfoCallerCanViewAllRoles(Oid callerRoleId);
 static const char * GetInternalRoleName(const char *nativeRoleName);
 static const char * GetNativeRoleName(const char *internalRoleName);
-static void ParseRoleInheritanceResult(pgbson *rowBson, const char **childRole,
-									   List **parentRoles);
-static void FreeRoleInheritanceTable(HTAB *roleInheritanceTable);
 static void GrantRoleInheritance(const char *parentRole, const char *targetRole,
 								 bool allowCustomRoles);
 static void ParseGrantRolesToRoleSpec(pgbson *grantRolesBson,
@@ -157,9 +145,6 @@ static void StoreCustomRoleToRoleCatalog(const char *roleName,
 										 pgbson *createRoleBson);
 static void DeleteCustomRoleFromRoleCatalog(const char *roleName);
 static CustomPrivilegeAction GetPrivilegeAction(const char *action);
-static void WriteRoles(List *parentRoles, pgbson_array_writer *rolesArrayWriter,
-					   HTAB *roleInheritanceTable, const char *childRoleName);
-static int RoleParentEntryListCellCompare(const ListCell *a, const ListCell *b);
 static pgbson * NormalizeRoleSpecForStorage(pgbson *createRoleBson, HTAB *rolesHash);
 static void UpdateCustomRoleInRoleCatalog(const char *roleName, HTAB *roles, bool
 										  isGrantRoles);
@@ -192,6 +177,20 @@ documentdb_is_reserved_user(PG_FUNCTION_ARGS)
 		strcmp(roleName, ApiReplicationRole) == 0 ||
 		strncmp(roleName, "documentdb_api", strlen("documentdb_api")) == 0 ||
 		strncmp(roleName, "documentdb_rbac", strlen("documentdb_rbac")) == 0);
+}
+
+
+/*
+ * Returns whether the named role has a custom-role catalog entry.
+ */
+Datum
+documentdb_is_custom_role(PG_FUNCTION_ARGS)
+{
+	text *roleName = PG_GETARG_TEXT_PP(0);
+	bool isCustomRole = IsCustomRoleCore(roleName);
+	PG_FREE_IF_COPY(roleName, 0);
+
+	PG_RETURN_BOOL(isCustomRole);
 }
 
 
@@ -1587,30 +1586,28 @@ roles_info(pgbson *rolesInfoBson)
 	};
 	ParseRolesInfoSpec(rolesInfoBson, &rolesInfoSpec);
 
+	if (rolesInfoSpec.showAllRoles &&
+		!RolesInfoCallerCanViewAllRoles(GetUserId()))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_UNAUTHORIZED),
+						errmsg(
+							"not authorized on admin to execute command { rolesInfo: 1 }")));
+	}
+
 	pgbson_writer finalWriter;
 	PgbsonWriterInit(&finalWriter);
 
 	pgbson_array_writer rolesArrayWriter;
 	PgbsonWriterStartArray(&finalWriter, "roles", 5, &rolesArrayWriter);
 
-	/*
-	 * Build the role inheritance table once with a single query.
-	 * This allows looking up parent/inherited roles in memory.
-	 */
-	HTAB *roleInheritanceTable = BuildRoleInheritanceTable();
-
 	if (rolesInfoSpec.showAllRoles)
 	{
-		ProcessAllRolesForRolesInfo(&rolesArrayWriter, rolesInfoSpec,
-									roleInheritanceTable);
+		ProcessAllRolesForRolesInfo(&rolesArrayWriter, rolesInfoSpec);
 	}
 	else
 	{
-		ProcessSpecificRolesForRolesInfo(&rolesArrayWriter, rolesInfoSpec,
-										 roleInheritanceTable);
+		ProcessSpecificRolesForRolesInfo(&rolesArrayWriter, rolesInfoSpec);
 	}
-
-	FreeRoleInheritanceTable(roleInheritanceTable);
 
 	if (rolesInfoSpec.roleNames != NIL)
 	{
@@ -1839,465 +1836,255 @@ ParseRoleDefinition(bson_iter_t *iter, RolesInfoSpec *rolesInfoSpec)
 
 
 /*
- * ProcessAllRolesForRolesInfo handles the case when showAllRoles is true
- * Iterate over all roles in the pre-built inheritance table.
+ * ProcessAllRolesForRolesInfo writes visible system.roles entries in role order.
  */
 static void
 ProcessAllRolesForRolesInfo(pgbson_array_writer *rolesArrayWriter, RolesInfoSpec
-							rolesInfoSpec,
-							HTAB *roleInheritanceTable)
+							rolesInfoSpec)
 {
-	HASH_SEQ_STATUS status;
-	RoleParentEntry *entry;
-	List *sortedRoleEntries = NIL;
-
-	hash_seq_init(&status, roleInheritanceTable);
-	while ((entry = hash_seq_search(&status)) != NULL)
-	{
-		if (!rolesInfoSpec.showBuiltInRoles &&
-			IS_NATIVE_BUILTIN_ROLE(entry->nativeRoleName.string))
-		{
-			continue;
-		}
-
-		sortedRoleEntries = lappend(sortedRoleEntries, entry);
-	}
-
-	list_sort(sortedRoleEntries, RoleParentEntryListCellCompare);
-
-	ListCell *roleCell;
-	foreach(roleCell, sortedRoleEntries)
-	{
-		entry = lfirst(roleCell);
-		WriteRoleResponse(entry, rolesArrayWriter, rolesInfoSpec, roleInheritanceTable);
-	}
-
-	list_free(sortedRoleEntries);
+	const char *roleName = NULL;
+	WriteRoles(rolesArrayWriter, rolesInfoSpec, roleName);
 }
 
 
 /*
- * ProcessSpecificRolesForRolesInfo handles the case when specific role names are requested
+ * ProcessSpecificRolesForRolesInfo preserves request order and skips role
+ * names that are not reportable.
  */
 static void
 ProcessSpecificRolesForRolesInfo(pgbson_array_writer *rolesArrayWriter, RolesInfoSpec
-								 rolesInfoSpec,
-								 HTAB *roleInheritanceTable)
+								 rolesInfoSpec)
 {
 	ListCell *currentRoleName;
 	foreach(currentRoleName, rolesInfoSpec.roleNames)
 	{
-		const char *nativeRoleName = (const char *) lfirst(currentRoleName);
+		const char *roleName = (const char *) lfirst(currentRoleName);
 
-		if (IsReservedInternalRoleName(nativeRoleName))
+		if (IsReservedInternalRoleName(roleName))
 		{
 			continue;
 		}
 
-		/* Convert native role name to internal for HTAB lookup */
-		const char *internalRoleName = GetInternalRoleName(nativeRoleName);
-		StringView internalRoleNameView = CreateStringViewFromString(internalRoleName);
-
-		/* Check if the role exists in the inheritance table */
-		bool found = false;
-		RoleParentEntry *entry = hash_search(roleInheritanceTable,
-											 &internalRoleNameView, HASH_FIND, &found);
-
-		/* If the role is not found, do not fail the request */
-		if (found)
+		if (IS_NATIVE_BUILTIN_ROLE(roleName))
 		{
-			WriteRoleResponse(entry, rolesArrayWriter, rolesInfoSpec,
-							  roleInheritanceTable);
+			continue;
 		}
+
+		WriteRoles(rolesArrayWriter, rolesInfoSpec, roleName);
 	}
 }
 
 
+static bool
+RolesInfoCallerCanViewAllRoles(Oid callerRoleId)
+{
+	bool missingOk = true;
+	Oid adminRoleId = ApiAdminV2RoleOid();
+	Oid rootRoleId = get_role_oid(ApiRootRole, missingOk);
+	return has_privs_of_role(callerRoleId, adminRoleId) ||
+		   (OidIsValid(rootRoleId) &&
+			is_member_of_role(callerRoleId, rootRoleId));
+}
+
+
+static pgbson *
+RolesTableQuerySpec(const char *roleName)
+{
+	pgbson_writer findSpecWriter;
+	PgbsonWriterInit(&findSpecWriter);
+	PgbsonWriterAppendUtf8(&findSpecWriter, "find", 4, "system.roles");
+
+	pgbson_writer filterWriter;
+	PgbsonWriterStartDocument(&findSpecWriter, "filter", 6, &filterWriter);
+	if (roleName != NULL)
+	{
+		PgbsonWriterAppendUtf8(&filterWriter, "role", 4, roleName);
+	}
+	PgbsonWriterEndDocument(&findSpecWriter, &filterWriter);
+
+	if (roleName == NULL)
+	{
+		pgbson_writer sortWriter;
+		PgbsonWriterStartDocument(&findSpecWriter, "sort", 4, &sortWriter);
+		PgbsonWriterAppendInt32(&sortWriter, "role", 4, 1);
+		PgbsonWriterEndDocument(&findSpecWriter, &sortWriter);
+	}
+
+	return PgbsonWriterGetPgbson(&findSpecWriter);
+}
+
+
 /*
- * WriteRoles writes the parent roles to the roles array.
- * Each internal role name is looked up in the inheritance table to get
- * its native name for output.
+ * WriteRoles queries the virtual system.roles collection and writes each
+ * returned custom role in rolesInfo response format.
  */
 static void
-WriteRoles(List *parentRoles, pgbson_array_writer *rolesArrayWriter,
-		   HTAB *roleInheritanceTable, const char *childRoleName)
+WriteRoles(pgbson_array_writer *rolesArrayWriter, RolesInfoSpec rolesInfoSpec,
+		   const char *roleName)
 {
-	ListCell *roleCell;
-	foreach(roleCell, parentRoles)
-	{
-		const char *internalParentRole = (const char *) lfirst(roleCell);
-		StringView internalParentRoleView = CreateStringViewFromString(
-			internalParentRole);
-
-		/* Look up parent role in HTAB to get its native name */
-		bool parentFound = false;
-		RoleParentEntry *parentEntry = hash_search(roleInheritanceTable,
-												   &internalParentRoleView, HASH_FIND,
-												   &parentFound);
-		const char *nativeParentRole = NULL;
-		if (parentFound)
-		{
-			nativeParentRole = parentEntry->nativeRoleName.string;
-		}
-		else if (strcmp(internalParentRole, API_RBAC_READWRITE_ANYDB_ROLE) == 0)
-		{
-			nativeParentRole = "readWriteAnyDatabase";
-		}
-		else
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-							errmsg("Parent role '%s' of '%s' not found.",
-								   internalParentRole, childRoleName)));
-		}
-
-		pgbson_writer parentRoleWriter;
-		PgbsonArrayWriterStartDocument(rolesArrayWriter, &parentRoleWriter);
-		PgbsonWriterAppendUtf8(&parentRoleWriter, "role", 4,
-							   nativeParentRole);
-		PgbsonWriterAppendUtf8(&parentRoleWriter, "db", 2, "admin");
-		PgbsonArrayWriterEndDocument(rolesArrayWriter, &parentRoleWriter);
-	}
+	pgbson *rolesTableQuerySpec = RolesTableQuerySpec(roleName);
+	ExecuteRolesTableQuery(rolesTableQuerySpec, rolesArrayWriter, rolesInfoSpec);
 }
 
 
-/*
- * Primitive type properties include _id, role, db, isBuiltin.
- * privileges: supported privilege actions of this role if defined.
- * roles: 1st level directly inherited roles if defined.
- */
 static void
-WriteRoleResponse(const RoleParentEntry *entry,
-				  pgbson_array_writer *rolesArrayWriter,
-				  RolesInfoSpec rolesInfoSpec,
-				  HTAB *roleInheritanceTable)
+ExecuteRolesTableQuery(pgbson *rolesTableQuerySpec,
+					   pgbson_array_writer *rolesArrayWriter,
+					   RolesInfoSpec rolesInfoSpec)
 {
-	Assert(entry != NULL);
-
-	pgbson_writer roleDocumentWriter;
-	PgbsonArrayWriterStartDocument(rolesArrayWriter, &roleDocumentWriter);
-
-	const StringView *nativeRoleName = &entry->nativeRoleName;
-	char *roleId = psprintf("admin.%.*s", (int) nativeRoleName->length,
-							nativeRoleName->string);
-	PgbsonWriterAppendUtf8(&roleDocumentWriter, "_id", 3, roleId);
-	pfree(roleId);
-
-	PgbsonWriterAppendUtf8(&roleDocumentWriter, "role", 4, nativeRoleName->string);
-	PgbsonWriterAppendUtf8(&roleDocumentWriter, "db", 2, "admin");
-	PgbsonWriterAppendBool(&roleDocumentWriter, "isBuiltIn", 9,
-						   IS_NATIVE_BUILTIN_ROLE(nativeRoleName->string));
-
-	if (rolesInfoSpec.showPrivileges)
-	{
-		pgbson_array_writer privilegesArrayWriter;
-		PgbsonWriterStartArray(&roleDocumentWriter, "privileges", 10,
-							   &privilegesArrayWriter);
-		WritePrivileges(&entry->internalRoleName, &privilegesArrayWriter);
-		PgbsonWriterEndArray(&roleDocumentWriter, &privilegesArrayWriter);
-	}
-
-	/* Write direct roles - parent roles are stored as internal names, convert to native names */
-	pgbson_array_writer parentRolesArrayWriter;
-	PgbsonWriterStartArray(&roleDocumentWriter, "roles", 5, &parentRolesArrayWriter);
-	WriteRoles(entry->parentRoles, &parentRolesArrayWriter, roleInheritanceTable,
-			   entry->internalRoleName.string);
-	PgbsonWriterEndArray(&roleDocumentWriter, &parentRolesArrayWriter);
-
-	PgbsonArrayWriterEndDocument(rolesArrayWriter, &roleDocumentWriter);
-}
-
-
-/*
- * BuildRoleInheritanceTable fetches all roles and their parent relationships
- * and builds an in-memory hash table for efficient lookups.
- *
- * Role System Overview:
- * - pg_roles contains information about both user roles and groups.
- * - pg_auth_members tracks role membership: which roles are members of which
- *   parent roles. Note that parent roles can themselves have parents
- *
- * Query Logic:
- * This query finds, for each custom role (excluding internal roles
- * which have oid < FirstNormalObjectId), what parent roles it inherits from.
- * We filter both child and parent roles by oid >= FirstNormalObjectId to exclude
- * system roles.
- *
- * Hash Table Structure:
- * - Key: internal role name (StringView)
- * - Value: RoleParentEntry struct containing:
- *   - internalRoleName: the internal role name stored in pg_roles table
- *   - nativeRoleName: the native role name displayed to user
- *   - parentRoles: List of internal parent role names this role inherits from
- */
-static HTAB *
-BuildRoleInheritanceTable(void)
-{
-	HTAB *roleInheritanceTable = CreateStringViewHashMap(sizeof(RoleParentEntry));
-
-	/*
-	 * Query returns all built-in and custom roles with their direct parent roles, all in internal role names.
-	 */
-	const char *inheritanceQuery = FormatSqlQuery(
-		"SELECT ARRAY_AGG(%s.row_get_bson(r)) FROM ("
-		"  SELECT "
-		"    child.rolname::text AS child_role, "
-		"    ARRAY_AGG(parent.rolname::text ORDER BY parent.rolname) "
-		"      FILTER (WHERE parent.rolname IS NOT NULL AND parent.oid >= %d) AS parent_roles "
-		"  FROM pg_roles child "
-		"  LEFT JOIN pg_auth_members am ON am.member = child.oid "
-		"  LEFT JOIN pg_roles parent ON parent.oid = am.roleid "
-		"  WHERE child.oid >= %d "
-		"    AND (NOT child.rolcanlogin OR child.rolname = '%s') "
-		"  GROUP BY child.rolname"
-		") r;",
-		CoreSchemaName,
-		FirstNormalObjectId,
-		FirstNormalObjectId,
-		ApiRootInternalRole);
-
+	const char *query = FormatSqlQuery(
+		"SELECT document FROM %s.bson_aggregation_find($1, $2)",
+		ApiCatalogSchemaName);
+	int nargs = 2;
+	Oid argTypes[2] = { TEXTOID, BsonTypeId() };
+	Datum argValues[2] = {
+		CStringGetTextDatum("admin"),
+		PointerGetDatum(rolesTableQuerySpec)
+	};
 	bool readOnly = true;
-	bool isNull = false;
 
-	Datum resultDatum = ExtensionExecuteQueryViaSPI(inheritanceQuery, readOnly,
-													SPI_OK_SELECT, &isNull);
-
-	/*
-	 * If result is NULL, no roles matched the query, which should never happen.
-	 */
-	if (isNull)
+	if (SPI_connect() != SPI_OK_CONNECT)
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-						errmsg("Role inheritance query returned NULL result.")));
+		ereport(ERROR, (errmsg("could not connect to SPI manager")));
 	}
 
-	ArrayType *resultArray = DatumGetArrayTypeP(resultDatum);
-
-	Datum *rowDatums;
-	bool *rowNulls;
-	int rowCount;
-	deconstruct_array(resultArray, BsonTypeId(), -1, false, TYPALIGN_INT,
-					  &rowDatums, &rowNulls, &rowCount);
-
-	for (int i = 0; i < rowCount; i++)
+	int tupleCountLimit = 0;
+	if (SPI_execute_with_args(query, nargs, argTypes, argValues, NULL, readOnly,
+							  tupleCountLimit) != SPI_OK_SELECT)
 	{
-		/*
-		 * A NULL array element would mean row_get_bson() returned NULL for a valid row, which should never happen.
-		 */
-		if (rowNulls[i])
+		ereport(ERROR, (errmsg("could not query system.roles")));
+	}
+
+	for (uint64 tupleNumber = 0; tupleNumber < SPI_processed; tupleNumber++)
+	{
+		CHECK_FOR_INTERRUPTS();
+		bool isNull = false;
+		Datum roleDocumentDatum = SPI_getbinval(
+			SPI_tuptable->vals[tupleNumber], SPI_tuptable->tupdesc, 1, &isNull);
+		if (isNull)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-							errmsg(
-								"Unexpected NULL element at index %d in role inheritance query result.",
-								i)));
+							errmsg("Unexpected NULL system.roles result.")));
 		}
 
-		pgbson *rowBson = DatumGetPgBson(rowDatums[i]);
-		const char *childRole = NULL;
-		List *parentRoles = NIL;
-
-		ParseRoleInheritanceResult(rowBson, &childRole, &parentRoles);
-
-		if (childRole == NULL)
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-							errmsg(
-								"Missing 'child_role' field in role inheritance query result at index %d.",
-								i)));
-		}
-
-		/*
-		 * Skip roles that should not appear in the role inheritance table:
-		 * - System login roles
-		 * - ApiAdminRoleV2: internal role that maps to both readWriteAnyDatabase
-		 *   and clusterAdmin; we add separate entries for these at the end
-		 * - ApiAdminRole: legacy admin role
-		 * - The default root role when another root role mapping is active
-		 * - Privileged Action System Roles: internal roles for fine-grained access
-		 */
-		if (IS_SYSTEM_LOGIN_ROLE(childRole) ||
-			IS_CUSTOM_RBAC_ROLE(childRole) ||
-			strcmp(childRole, API_RBAC_READWRITE_ANYDB_ROLE) == 0 ||
-			strcmp(childRole, ApiAdminRoleV2) == 0 ||
-			strcmp(childRole, ApiAdminRole) == 0 ||
-			(strcmp(childRole, DOCUMENTDB_DEFAULT_ROOT_ROLE) == 0 &&
-			 strcmp(childRole, ApiRootInternalRole) != 0))
-		{
-			if (parentRoles != NIL)
-			{
-				list_free_deep(parentRoles);
-			}
-			continue;
-		}
-
-		bool found;
-		StringView childRoleView = CreateStringViewFromString(childRole);
-		RoleParentEntry *entry = hash_search(roleInheritanceTable, &childRoleView,
-											 HASH_ENTER, &found);
-
-		if (found)
-		{
-			/*
-			 * Duplicate child_role in the result set should never happen due to GROUP BY in the query.
-			 */
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-							errmsg(
-								"Duplicate 'child_role' '%s' found in role inheritance query result.",
-								childRole)));
-		}
-		else
-		{
-			entry->nativeRoleName = CreateStringViewFromString(
-				GetNativeRoleName(childRole));
-			entry->parentRoles = NIL;
-		}
-
-		if (parentRoles != NIL)
-		{
-			ListCell *cell;
-			foreach(cell, parentRoles)
-			{
-				const char *parentRole = (const char *) lfirst(cell);
-
-				if (IS_CUSTOM_RBAC_ROLE(parentRole))
-				{
-					pfree(lfirst(cell));
-					continue;
-				}
-
-				/*
-				 * ApiAdminRoleV2 represents both readWriteAnyDatabase and clusterAdmin.
-				 * When we encounter it as a parent, add both documented backing
-				 * roles instead to properly represent the inheritance.
-				 */
-				if (strcmp(parentRole, ApiAdminRoleV2) == 0)
-				{
-					entry->parentRoles = lappend(entry->parentRoles,
-												 pstrdup(
-													 API_RBAC_READWRITE_ANYDB_ROLE));
-					entry->parentRoles = lappend(entry->parentRoles,
-												 pstrdup(ApiClusterAdminRole));
-					pfree(lfirst(cell));
-				}
-				else
-				{
-					entry->parentRoles = lappend(entry->parentRoles, lfirst(cell));
-				}
-			}
-			list_free(parentRoles);
-		}
+		WriteRoleResponse(DatumGetPgBson(roleDocumentDatum),
+						  rolesArrayWriter, rolesInfoSpec);
 	}
 
-	bool found;
-	StringView readWriteRoleView = CreateStringViewFromString(
-		API_RBAC_READWRITE_ANYDB_ROLE);
-
-	RoleParentEntry *rwEntry = hash_search(roleInheritanceTable, &readWriteRoleView,
-										   HASH_ENTER, &found);
-	if (!found)
+	if (SPI_finish() != SPI_OK_FINISH)
 	{
-		rwEntry->nativeRoleName = CreateStringViewFromString("readWriteAnyDatabase");
-		rwEntry->parentRoles = NIL;
+		ereport(ERROR, (errmsg("could not finish SPI connection")));
 	}
-
-	StringView clusterAdminRoleView = CreateStringViewFromString(ApiClusterAdminRole);
-	RoleParentEntry *caEntry = hash_search(roleInheritanceTable, &clusterAdminRoleView,
-										   HASH_ENTER, &found);
-	if (!found)
-	{
-		caEntry->nativeRoleName = CreateStringViewFromString("clusterAdmin");
-		caEntry->parentRoles = NIL;
-	}
-
-	return roleInheritanceTable;
 }
 
 
-/*
- * ParseRoleInheritanceResult parses a BSON document from the role inheritance query.
- * Extracts the child_role and parent_roles fields.
- */
 static void
-ParseRoleInheritanceResult(pgbson *rowBson, const char **childRole, List **parentRoles)
+WriteRoleResponse(const pgbson *roleDocument,
+				  pgbson_array_writer *rolesArrayWriter,
+				  RolesInfoSpec rolesInfoSpec)
 {
+	bson_value_t idValue = { 0 };
+	bson_value_t roleValue = { 0 };
+	bson_value_t dbValue = { 0 };
+	bson_value_t privilegesValue = { 0 };
+	bson_value_t rolesValue = { 0 };
+	bool hasId = false;
+	bool hasRole = false;
+	bool hasDb = false;
+	bool hasPrivileges = false;
+	bool hasRoles = false;
 	bson_iter_t iter;
-	PgbsonInitIterator(rowBson, &iter);
-
-	*childRole = NULL;
-	*parentRoles = NIL;
+	PgbsonInitIterator(roleDocument, &iter);
 
 	while (bson_iter_next(&iter))
 	{
 		const char *key = bson_iter_key(&iter);
-
-		if (strcmp(key, "child_role") == 0)
+		const bson_value_t *value = bson_iter_value(&iter);
+		if (strcmp(key, "_id") == 0)
 		{
-			if (bson_iter_type(&iter) != BSON_TYPE_UTF8)
+			if (hasId || value->value_type != BSON_TYPE_UTF8)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+								errmsg("Invalid _id field in system.roles result.")));
+			}
+			idValue = *value;
+			hasId = true;
+		}
+		else if (strcmp(key, "role") == 0)
+		{
+			if (hasRole || value->value_type != BSON_TYPE_UTF8)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+								errmsg("Invalid role field in system.roles result.")));
+			}
+			roleValue = *value;
+			hasRole = true;
+		}
+		else if (strcmp(key, "db") == 0)
+		{
+			if (hasDb || value->value_type != BSON_TYPE_UTF8)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+								errmsg("Invalid db field in system.roles result.")));
+			}
+			dbValue = *value;
+			hasDb = true;
+		}
+		else if (strcmp(key, "privileges") == 0)
+		{
+			if (hasPrivileges || value->value_type != BSON_TYPE_ARRAY)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
 								errmsg(
-									"Invalid type for 'child_role' in role inheritance query result.")));
+									"Invalid privileges field in system.roles result.")));
 			}
-
-			*childRole = bson_iter_utf8(&iter, NULL);
+			privilegesValue = *value;
+			hasPrivileges = true;
 		}
-		else if (strcmp(key, "parent_roles") == 0)
+		else if (strcmp(key, "roles") == 0)
 		{
-			if (bson_iter_type(&iter) != BSON_TYPE_ARRAY)
+			if (hasRoles || value->value_type != BSON_TYPE_ARRAY)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-								errmsg(
-									"Invalid type for 'parent_roles' in role inheritance query result.")));
+								errmsg("Invalid roles field in system.roles result.")));
 			}
-
-			bson_iter_t arrayIter;
-			bson_iter_recurse(&iter, &arrayIter);
-			while (bson_iter_next(&arrayIter))
-			{
-				if (bson_iter_type(&arrayIter) != BSON_TYPE_UTF8)
-				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-									errmsg(
-										"Invalid type for element in 'parent_roles' array in role inheritance query result.")));
-				}
-
-				const char *parentRole = bson_iter_utf8(&arrayIter, NULL);
-				*parentRoles = lappend(*parentRoles, pstrdup(parentRole));
-			}
-		}
-		else
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-							errmsg(
-								"Unknown field '%s' in role inheritance query result.",
-								key)));
+			rolesValue = *value;
+			hasRoles = true;
 		}
 	}
-}
 
-
-/*
- * FreeRoleInheritanceTable releases all memory associated with the table.
- */
-static void
-FreeRoleInheritanceTable(HTAB *roleInheritanceTable)
-{
-	if (roleInheritanceTable == NULL)
+	if (!hasId || !hasRole || !hasDb || !hasPrivileges || !hasRoles)
 	{
-		return;
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg("Incomplete system.roles result.")));
 	}
 
-	HASH_SEQ_STATUS status;
-	RoleParentEntry *entry;
-	hash_seq_init(&status, roleInheritanceTable);
-	while ((entry = hash_seq_search(&status)) != NULL)
+	const char *roleName = roleValue.value.v_utf8.str;
+	if (IsReservedInternalRoleName(roleName) ||
+		IS_NATIVE_BUILTIN_ROLE(roleName))
 	{
-		if (entry->parentRoles != NIL)
-		{
-			list_free_deep(entry->parentRoles);
-		}
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg("Unexpected role \"%s\" in system.roles result.",
+							   roleName)));
 	}
 
-	hash_destroy(roleInheritanceTable);
+	pgbson_writer roleDocumentWriter;
+	PgbsonArrayWriterStartDocument(rolesArrayWriter, &roleDocumentWriter);
+
+	PgbsonWriterAppendValue(&roleDocumentWriter, "_id", 3, &idValue);
+	PgbsonWriterAppendValue(&roleDocumentWriter, "role", 4, &roleValue);
+	PgbsonWriterAppendValue(&roleDocumentWriter, "db", 2, &dbValue);
+	PgbsonWriterAppendBool(&roleDocumentWriter, "isBuiltIn", 9, false);
+
+	if (rolesInfoSpec.showPrivileges)
+	{
+		PgbsonWriterAppendValue(&roleDocumentWriter, "privileges", 10,
+								&privilegesValue);
+	}
+
+	PgbsonWriterAppendValue(&roleDocumentWriter, "roles", 5, &rolesValue);
+
+	PgbsonArrayWriterEndDocument(rolesArrayWriter, &roleDocumentWriter);
 }
 
 
@@ -2757,23 +2544,6 @@ StringViewListCellCompare(const ListCell *a, const ListCell *b)
 	StringView *svB = (StringView *) lfirst(b);
 
 	return CompareStringView(svA, svB);
-}
-
-
-static int
-RoleParentEntryListCellCompare(const ListCell *a, const ListCell *b)
-{
-	RoleParentEntry *entryA = lfirst(a);
-	RoleParentEntry *entryB = lfirst(b);
-	bool entryAIsBuiltIn = IS_NATIVE_BUILTIN_ROLE(entryA->nativeRoleName.string);
-	bool entryBIsBuiltIn = IS_NATIVE_BUILTIN_ROLE(entryB->nativeRoleName.string);
-
-	if (entryAIsBuiltIn != entryBIsBuiltIn)
-	{
-		return entryAIsBuiltIn ? -1 : 1;
-	}
-
-	return CompareStringView(&entryA->nativeRoleName, &entryB->nativeRoleName);
 }
 
 

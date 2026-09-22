@@ -135,6 +135,7 @@ Oid BsonInRangeNumericFunctionId(void);
 Oid BsonInRangeIntervalFunctionId(void);
 Oid BsonQueryMatchWithLetAndCollationFunctionId(void);
 Oid IsReservedUserFunctionId(void);
+Oid IsCustomRoleFunctionId(void);
 
 /* object_id functions */
 Oid BsonRegexObjectIdMatchFunctionId(void);

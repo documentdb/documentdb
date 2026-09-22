@@ -36,9 +36,9 @@ SELECT documentdb_api.roles_info('{"rolesInfo":1, "showPrivileges":1, "$db":"adm
 ERROR:  'showPrivileges' must be a boolean value
 -- Test rolesInfo with showBuiltInRoles
 SELECT documentdb_api.roles_info('{"rolesInfo":1, "showBuiltInRoles":true, "$db":"admin"}');
-                                                                                                                                                                                                                                                                                                                                                                                       roles_info                                                                                                                                                                                                                                                                                                                                                                                        
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "roles" : [ { "_id" : "admin.clusterAdmin", "role" : "clusterAdmin", "db" : "admin", "isBuiltIn" : true, "roles" : [  ] }, { "_id" : "admin.readAnyDatabase", "role" : "readAnyDatabase", "db" : "admin", "isBuiltIn" : true, "roles" : [  ] }, { "_id" : "admin.readWriteAnyDatabase", "role" : "readWriteAnyDatabase", "db" : "admin", "isBuiltIn" : true, "roles" : [  ] }, { "_id" : "admin.root", "role" : "root", "db" : "admin", "isBuiltIn" : true, "roles" : [ { "role" : "readWriteAnyDatabase", "db" : "admin" }, { "role" : "clusterAdmin", "db" : "admin" } ] }, { "_id" : "admin.test_custom_role", "role" : "test_custom_role", "db" : "admin", "isBuiltIn" : false, "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ] } ], "ok" : { "$numberInt" : "1" } }
+                                                                                                      roles_info
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "roles" : [ { "_id" : "admin.test_custom_role", "role" : "test_custom_role", "db" : "admin", "isBuiltIn" : false, "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ] } ], "ok" : { "$numberInt" : "1" } }
 (1 row)
 
 -- Test internal RBAC roles are hidden from rolesInfo.
@@ -50,9 +50,9 @@ SELECT documentdb_api.roles_info('{"rolesInfo":["documentdb_rbac_api_access_role
 
 -- Test rolesInfo with showBuiltInRoles and showPrivileges
 SELECT documentdb_api.roles_info('{"rolesInfo":1, "showBuiltInRoles":true, "showPrivileges":true, "$db":"admin"}');
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              roles_info                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "roles" : [ { "_id" : "admin.clusterAdmin", "role" : "clusterAdmin", "db" : "admin", "isBuiltIn" : true, "privileges" : [ { "resource" : { "cluster" : true }, "actions" : [ "compact", "connPoolStats", "dropConnections", "getChangeStreamState", "getClusterParameter", "getCmdLineOpts", "getDefaultRWConcern", "getLog", "getParameter", "getShardMap", "hostInfo", "killAnyCursor", "killAnySession", "killop", "listDatabases", "listSessions", "listShards", "serverStatus", "setChangeStreamState" ] }, { "resource" : { "db" : "", "collection" : "" }, "actions" : [ "analyzeShardKey", "collStats", "dbStats", "dropDatabase", "enableSharding", "getDatabaseVersion", "getShardVersion", "indexStats", "killCursors", "reshardCollection", "splitVector", "unshardCollection" ] } ], "roles" : [  ] }, { "_id" : "admin.readAnyDatabase", "role" : "readAnyDatabase", "db" : "admin", "isBuiltIn" : true, "privileges" : [ { "resource" : { "db" : "", "collection" : "" }, "actions" : [ "changeStream", "collStats", "dbStats", "find", "killCursors", "listCollections", "listIndexes" ] }, { "resource" : { "cluster" : true }, "actions" : [ "listDatabases" ] } ], "roles" : [  ] }, { "_id" : "admin.readWriteAnyDatabase", "role" : "readWriteAnyDatabase", "db" : "admin", "isBuiltIn" : true, "privileges" : [ { "resource" : { "db" : "", "collection" : "" }, "actions" : [ "changeStream", "collStats", "createCollection", "createIndex", "dbStats", "dropCollection", "dropIndex", "find", "insert", "killCursors", "listCollections", "listIndexes", "remove", "update" ] }, { "resource" : { "cluster" : true }, "actions" : [ "listDatabases" ] } ], "roles" : [  ] }, { "_id" : "admin.root", "role" : "root", "db" : "admin", "isBuiltIn" : true, "privileges" : [ { "resource" : { "db" : "", "collection" : "" }, "actions" : [ "analyzeShardKey", "changeStream", "collStats", "createCollection", "createIndex", "dbStats", "dropCollection", "dropDatabase", "dropIndex", "enableSharding", "find", "getDatabaseVersion", "getShardVersion", "indexStats", "insert", "killCursors", "listCollections", "listIndexes", "remove", "reshardCollection", "splitVector", "unshardCollection", "update" ] }, { "resource" : { "cluster" : true }, "actions" : [ "compact", "connPoolStats", "dropConnections", "getChangeStreamState", "getClusterParameter", "getCmdLineOpts", "getDefaultRWConcern", "getLog", "getParameter", "getShardMap", "hostInfo", "killAnyCursor", "killAnySession", "killop", "listDatabases", "listSessions", "listShards", "serverStatus", "setChangeStreamState" ] }, { "resource" : { "db" : "admin", "collection" : "" }, "actions" : [ "analyze", "bypassDocumentValidation", "collMod", "collStats", "compact", "createCollection", "createIndex", "createRole", "createUser", "dbStats", "dropCollection", "dropDatabase", "dropIndex", "dropRole", "dropUser", "grantRole", "listCollections", "listIndexes", "reIndex", "revokeRole", "validate", "viewRole", "viewUser" ] } ], "roles" : [ { "role" : "readWriteAnyDatabase", "db" : "admin" }, { "role" : "clusterAdmin", "db" : "admin" } ] }, { "_id" : "admin.test_custom_role", "role" : "test_custom_role", "db" : "admin", "isBuiltIn" : false, "privileges" : [  ], "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ] } ], "ok" : { "$numberInt" : "1" } }
+                                                                                                                 roles_info
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "roles" : [ { "_id" : "admin.test_custom_role", "role" : "test_custom_role", "db" : "admin", "isBuiltIn" : false, "privileges" : [  ], "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ] } ], "ok" : { "$numberInt" : "1" } }
 (1 row)
 
 -- Test rolesInfo with invalid showBuiltInRoles type
@@ -78,15 +78,15 @@ ERROR:  'rolesInfo' must be 1, a string, a document, or an array.
 -- Test rolesInfo with string value of built-in role
 -- which also doesn't require showBuiltInRoles since it's only an addon flag for rolesInfo:1
 SELECT documentdb_api.roles_info('{"rolesInfo":"clusterAdmin", "showPrivileges":true, "$db":"admin"}');
-                                                                                                                                                                                                                                                                                                                                                                                                                       roles_info                                                                                                                                                                                                                                                                                                                                                                                                                        
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "roles" : [ { "_id" : "admin.clusterAdmin", "role" : "clusterAdmin", "db" : "admin", "isBuiltIn" : true, "privileges" : [ { "resource" : { "cluster" : true }, "actions" : [ "compact", "connPoolStats", "dropConnections", "getChangeStreamState", "getClusterParameter", "getCmdLineOpts", "getDefaultRWConcern", "getLog", "getParameter", "getShardMap", "hostInfo", "killAnyCursor", "killAnySession", "killop", "listDatabases", "listSessions", "listShards", "serverStatus", "setChangeStreamState" ] }, { "resource" : { "db" : "", "collection" : "" }, "actions" : [ "analyzeShardKey", "collStats", "dbStats", "dropDatabase", "enableSharding", "getDatabaseVersion", "getShardVersion", "indexStats", "killCursors", "reshardCollection", "splitVector", "unshardCollection" ] } ], "roles" : [  ] } ], "ok" : { "$numberInt" : "1" } }
+                    roles_info
+---------------------------------------------------
+ { "roles" : [  ], "ok" : { "$numberInt" : "1" } }
 (1 row)
 
 SELECT documentdb_api.roles_info('{"rolesInfo":"readWriteAnyDatabase", "showPrivileges":true, "$db":"admin"}');
-                                                                                                                                                                                                                                                                  roles_info                                                                                                                                                                                                                                                                   
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "roles" : [ { "_id" : "admin.readWriteAnyDatabase", "role" : "readWriteAnyDatabase", "db" : "admin", "isBuiltIn" : true, "privileges" : [ { "resource" : { "db" : "", "collection" : "" }, "actions" : [ "changeStream", "collStats", "createCollection", "createIndex", "dbStats", "dropCollection", "dropIndex", "find", "insert", "killCursors", "listCollections", "listIndexes", "remove", "update" ] }, { "resource" : { "cluster" : true }, "actions" : [ "listDatabases" ] } ], "roles" : [  ] } ], "ok" : { "$numberInt" : "1" } }
+                    roles_info
+---------------------------------------------------
+ { "roles" : [  ], "ok" : { "$numberInt" : "1" } }
 (1 row)
 
 -- Test rolesInfo with string value of custom role
@@ -130,12 +130,29 @@ SELECT documentdb_api.roles_info('{"rolesInfo":"test_user", "$db":"admin"}');
  { "roles" : [  ], "ok" : { "$numberInt" : "1" } }
 (1 row)
 
+-- A database-only group role is not a catalog-backed custom role.
+CREATE ROLE test_sql_only_role;
+SELECT documentdb_api.roles_info('{"rolesInfo":"test_sql_only_role", "$db":"admin"}');
+                    roles_info
+---------------------------------------------------
+ { "roles" : [  ], "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_core.bson_to_json_string(
+	documentdb_api.roles_info('{"rolesInfo":1, "$db":"admin"}'))::text LIKE '%test_sql_only_role%'
+	AS lists_sql_only_role;
+ lists_sql_only_role
+---------------------
+ f
+(1 row)
+
+DROP ROLE test_sql_only_role;
 -- ********* Test rolesInfo with role document *********
 -- Test rolesInfo with basic role document
 SELECT documentdb_api.roles_info('{"rolesInfo": {"role":"readAnyDatabase", "db":"admin"}, "$db":"admin"}');
-                                                                              roles_info                                                                              
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "roles" : [ { "_id" : "admin.readAnyDatabase", "role" : "readAnyDatabase", "db" : "admin", "isBuiltIn" : true, "roles" : [  ] } ], "ok" : { "$numberInt" : "1" } }
+                    roles_info
+---------------------------------------------------
+ { "roles" : [  ], "ok" : { "$numberInt" : "1" } }
 (1 row)
 
 -- Test rolesInfo with bson document with empty role or db
@@ -172,23 +189,23 @@ SELECT documentdb_api.roles_info('{"rolesInfo":[], "$db":"admin"}');
 
 -- Test rolesInfo with array of role names, including empty string
 SELECT documentdb_api.roles_info('{"rolesInfo":["readAnyDatabase", "test_custom_role", "not_exist_role", ""], "$db":"admin"}');
-                                                                                                                                                                 roles_info                                                                                                                                                                 
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "roles" : [ { "_id" : "admin.readAnyDatabase", "role" : "readAnyDatabase", "db" : "admin", "isBuiltIn" : true, "roles" : [  ] }, { "_id" : "admin.test_custom_role", "role" : "test_custom_role", "db" : "admin", "isBuiltIn" : false, "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ] } ], "ok" : { "$numberInt" : "1" } }
+                                                                                                      roles_info
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "roles" : [ { "_id" : "admin.test_custom_role", "role" : "test_custom_role", "db" : "admin", "isBuiltIn" : false, "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ] } ], "ok" : { "$numberInt" : "1" } }
 (1 row)
 
 -- Test rolesInfo with array of mixed bson document and string
 SELECT documentdb_api.roles_info('{"rolesInfo":[{"role":"readAnyDatabase", "db":"admin"}, "test_custom_role"], "$db":"admin"}');
-                                                                                                                                                                 roles_info                                                                                                                                                                 
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "roles" : [ { "_id" : "admin.readAnyDatabase", "role" : "readAnyDatabase", "db" : "admin", "isBuiltIn" : true, "roles" : [  ] }, { "_id" : "admin.test_custom_role", "role" : "test_custom_role", "db" : "admin", "isBuiltIn" : false, "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ] } ], "ok" : { "$numberInt" : "1" } }
+                                                                                                      roles_info
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "roles" : [ { "_id" : "admin.test_custom_role", "role" : "test_custom_role", "db" : "admin", "isBuiltIn" : false, "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ] } ], "ok" : { "$numberInt" : "1" } }
 (1 row)
 
 -- Test rolesInfo for multiple built-in roles
 SELECT documentdb_api.roles_info('{"rolesInfo":["readAnyDatabase", "clusterAdmin"], "showBuiltInRoles":true, "$db":"admin"}');
-                                                                                                                                     roles_info                                                                                                                                      
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "roles" : [ { "_id" : "admin.readAnyDatabase", "role" : "readAnyDatabase", "db" : "admin", "isBuiltIn" : true, "roles" : [  ] }, { "_id" : "admin.clusterAdmin", "role" : "clusterAdmin", "db" : "admin", "isBuiltIn" : true, "roles" : [  ] } ], "ok" : { "$numberInt" : "1" } }
+                    roles_info
+---------------------------------------------------
+ { "roles" : [  ], "ok" : { "$numberInt" : "1" } }
 (1 row)
 
 -- Test rolesInfo when feature is disabled
@@ -225,23 +242,22 @@ SELECT documentdb_api.create_role('{"createRole":"test_multi_inherit_role", "rol
 SELECT documentdb_api.roles_info('{"rolesInfo":"test_multi_inherit_role", "$db":"admin"}');
                                                                                                                                                               roles_info                                                                                                                                                               
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "roles" : [ { "_id" : "admin.test_multi_inherit_role", "role" : "test_multi_inherit_role", "db" : "admin", "isBuiltIn" : false, "roles" : [ { "role" : "readWriteAnyDatabase", "db" : "admin" }, { "role" : "clusterAdmin", "db" : "admin" }, { "role" : "readAnyDatabase", "db" : "admin" } ] } ], "ok" : { "$numberInt" : "1" } }
+ { "roles" : [ { "_id" : "admin.test_multi_inherit_role", "role" : "test_multi_inherit_role", "db" : "admin", "isBuiltIn" : false, "roles" : [ { "role" : "clusterAdmin", "db" : "admin" }, { "role" : "readAnyDatabase", "db" : "admin" }, { "role" : "readWriteAnyDatabase", "db" : "admin" } ] } ], "ok" : { "$numberInt" : "1" } }
 (1 row)
 
 ALTER ROLE documentdb_admin_role WITH LOGIN;
 SELECT documentdb_api.roles_info('{"rolesInfo":"test_multi_inherit_role", "$db":"admin"}');
                                                                                                                                                               roles_info                                                                                                                                                               
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "roles" : [ { "_id" : "admin.test_multi_inherit_role", "role" : "test_multi_inherit_role", "db" : "admin", "isBuiltIn" : false, "roles" : [ { "role" : "readWriteAnyDatabase", "db" : "admin" }, { "role" : "clusterAdmin", "db" : "admin" }, { "role" : "readAnyDatabase", "db" : "admin" } ] } ], "ok" : { "$numberInt" : "1" } }
+ { "roles" : [ { "_id" : "admin.test_multi_inherit_role", "role" : "test_multi_inherit_role", "db" : "admin", "isBuiltIn" : false, "roles" : [ { "role" : "clusterAdmin", "db" : "admin" }, { "role" : "readAnyDatabase", "db" : "admin" }, { "role" : "readWriteAnyDatabase", "db" : "admin" } ] } ], "ok" : { "$numberInt" : "1" } }
 (1 row)
 
 ALTER ROLE documentdb_admin_role WITH NOLOGIN;
 DROP ROLE IF EXISTS "test_multi_inherit_role";
 DELETE FROM documentdb_api_catalog.roles WHERE role_name = 'test_multi_inherit_role';
--- ********* Test rolesInfo rejects a granted role it cannot report *********
--- A role granted directly in SQL may be one the inheritance table does not
--- report, such as a login role. Reporting the holder without it would understate
--- its membership, so the request fails instead.
+-- ********* Test rolesInfo ignores out-of-band grants *********
+-- The stored catalog definition remains authoritative when database
+-- memberships are changed outside role CRUD.
 SELECT documentdb_api.create_role('{"createRole":"test_stray_parent_role", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
             create_role            
 -----------------------------------
@@ -251,19 +267,26 @@ SELECT documentdb_api.create_role('{"createRole":"test_stray_parent_role", "role
 CREATE ROLE test_stray_login_role LOGIN;
 GRANT test_stray_login_role TO "test_stray_parent_role";
 SELECT documentdb_api.roles_info('{"rolesInfo":"test_stray_parent_role", "$db":"admin"}');
-ERROR:  Parent role 'test_stray_login_role' of 'test_stray_parent_role' not found.
+                                                                                                            roles_info
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "roles" : [ { "_id" : "admin.test_stray_parent_role", "role" : "test_stray_parent_role", "db" : "admin", "isBuiltIn" : false, "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ] } ], "ok" : { "$numberInt" : "1" } }
+(1 row)
+
 SELECT documentdb_api.roles_info('{"rolesInfo":1, "$db":"admin"}') IS NOT NULL AS lists_all_roles;
-ERROR:  Parent role 'test_stray_login_role' of 'test_stray_parent_role' not found.
+ lists_all_roles
+-----------------
+ t
+(1 row)
+
 REVOKE test_stray_login_role FROM "test_stray_parent_role";
--- With the grant removed the role is reportable again.
+-- Removing the grant does not change the reported metadata.
 SELECT documentdb_api.roles_info('{"rolesInfo":"test_stray_parent_role", "$db":"admin"}');
                                                                                                             roles_info                                                                                                             
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "roles" : [ { "_id" : "admin.test_stray_parent_role", "role" : "test_stray_parent_role", "db" : "admin", "isBuiltIn" : false, "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ] } ], "ok" : { "$numberInt" : "1" } }
 (1 row)
 
--- Only direct parents are reported, so an unreportable role reached
--- transitively through another role does not fail the request.
+-- Transitive out-of-band grants are also ignored.
 SELECT documentdb_api.create_role('{"createRole":"test_stray_child_role", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
             create_role            
 -----------------------------------
@@ -273,9 +296,9 @@ SELECT documentdb_api.create_role('{"createRole":"test_stray_child_role", "roles
 GRANT test_stray_login_role TO "test_stray_parent_role";
 GRANT "test_stray_parent_role" TO "test_stray_child_role";
 SELECT documentdb_api.roles_info('{"rolesInfo":"test_stray_child_role", "$db":"admin"}');
-                                                                                                                                       roles_info                                                                                                                                       
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "roles" : [ { "_id" : "admin.test_stray_child_role", "role" : "test_stray_child_role", "db" : "admin", "isBuiltIn" : false, "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" }, { "role" : "test_stray_parent_role", "db" : "admin" } ] } ], "ok" : { "$numberInt" : "1" } }
+                                                                                                           roles_info
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "roles" : [ { "_id" : "admin.test_stray_child_role", "role" : "test_stray_child_role", "db" : "admin", "isBuiltIn" : false, "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ] } ], "ok" : { "$numberInt" : "1" } }
 (1 row)
 
 REVOKE "test_stray_parent_role" FROM "test_stray_child_role";
@@ -284,6 +307,113 @@ DROP ROLE IF EXISTS "test_stray_child_role";
 DROP ROLE IF EXISTS test_stray_login_role;
 DROP ROLE IF EXISTS "test_stray_parent_role";
 DELETE FROM documentdb_api_catalog.roles WHERE role_name IN ('test_stray_parent_role', 'test_stray_child_role');
+-- ********* Test rolesInfo custom-role visibility *********
+SELECT documentdb_api.create_role('{"createRole":"test_hidden_role", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+            create_role
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+CREATE ROLE test_roles_info_reader LOGIN;
+GRANT documentdb_readonly_role TO test_roles_info_reader;
+GRANT test_custom_role TO test_roles_info_reader;
+SELECT documentdb_api.create_role('{"createRole":"test_transitive_role", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+            create_role
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+GRANT test_transitive_role TO test_custom_role;
+SET ROLE documentdb_root_role;
+SELECT documentdb_api.roles_info('{"rolesInfo":"test_hidden_role", "$db":"admin"}');
+                                                                                                      roles_info
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "roles" : [ { "_id" : "admin.test_hidden_role", "role" : "test_hidden_role", "db" : "admin", "isBuiltIn" : false, "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ] } ], "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+RESET ROLE;
+CREATE ROLE test_roles_info_admin LOGIN;
+GRANT documentdb_admin_role TO test_roles_info_admin;
+SET ROLE test_roles_info_admin;
+-- Admin-role membership can list all catalog-backed custom roles.
+SELECT pg_has_role(current_user, 'documentdb_root_role', 'MEMBER')
+	AS is_root_role_member,
+	pg_has_role(current_user, 'documentdb_admin_role', 'MEMBER')
+	AS is_admin_role_member;
+ is_root_role_member | is_admin_role_member
+---------------------+----------------------
+ f                   | t
+(1 row)
+
+SELECT documentdb_api.roles_info('{"rolesInfo":"test_hidden_role", "$db":"admin"}');
+                                                                                                      roles_info
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "roles" : [ { "_id" : "admin.test_hidden_role", "role" : "test_hidden_role", "db" : "admin", "isBuiltIn" : false, "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ] } ], "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_core.bson_to_json_string(
+	documentdb_api.roles_info('{"rolesInfo":1, "$db":"admin"}'))::text
+		LIKE '%test_hidden_role%'
+	AS admin_lists_all_custom_roles;
+ admin_lists_all_custom_roles
+------------------------------
+ t
+(1 row)
+
+RESET ROLE;
+SET ROLE test_roles_info_reader;
+SELECT pg_has_role(current_user, 'documentdb_root_role', 'MEMBER')
+	AS is_root_role_member,
+	pg_has_role(current_user, 'test_custom_role', 'MEMBER')
+	AS is_direct_role_member,
+	pg_has_role(current_user, 'test_transitive_role', 'MEMBER')
+	AS is_transitive_role_member,
+	pg_has_role(current_user, 'test_hidden_role', 'MEMBER')
+	AS is_hidden_role_member;
+ is_root_role_member | is_direct_role_member | is_transitive_role_member | is_hidden_role_member
+---------------------+-----------------------+---------------------------+-----------------------
+ f                   | t                     | t                         | f
+(1 row)
+
+SELECT documentdb_api.roles_info('{"rolesInfo":["readAnyDatabase", "test_custom_role", "test_transitive_role"], "$db":"admin"}');
+                                                                                                                                                                                             roles_info
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "roles" : [ { "_id" : "admin.test_custom_role", "role" : "test_custom_role", "db" : "admin", "isBuiltIn" : false, "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ] }, { "_id" : "admin.test_transitive_role", "role" : "test_transitive_role", "db" : "admin", "isBuiltIn" : false, "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ] } ], "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.roles_info('{"rolesInfo":"test_hidden_role", "$db":"admin"}');
+                    roles_info
+---------------------------------------------------
+ { "roles" : [  ], "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.roles_info('{"rolesInfo":["test_custom_role", "test_hidden_role"], "$db":"admin"}');
+                                                                                                      roles_info
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "roles" : [ { "_id" : "admin.test_custom_role", "role" : "test_custom_role", "db" : "admin", "isBuiltIn" : false, "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ] } ], "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.roles_info('{"rolesInfo":1, "$db":"admin"}');
+ERROR:  not authorized on admin to execute command { rolesInfo: 1 }
+RESET ROLE;
+REVOKE test_transitive_role FROM test_custom_role;
+REVOKE test_custom_role FROM test_roles_info_reader;
+REVOKE documentdb_readonly_role FROM test_roles_info_reader;
+DROP ROLE test_roles_info_reader;
+REVOKE documentdb_admin_role FROM test_roles_info_admin;
+DROP ROLE test_roles_info_admin;
+SELECT documentdb_api.drop_role('{"dropRole":"test_transitive_role", "$db":"admin"}');
+             drop_role
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.drop_role('{"dropRole":"test_hidden_role", "$db":"admin"}');
+             drop_role
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
 -- Clean up test roles created for rolesInfo testing
 DROP ROLE IF EXISTS "test_custom_role";
 DELETE FROM documentdb_api_catalog.roles WHERE role_name IN ('test_custom_role');

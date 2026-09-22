@@ -134,6 +134,23 @@ FROM documentdb_api_catalog.bson_aggregation_find(
 RESET ROLE;
 REVOKE SELECT ON documentdb_api_catalog.roles FROM "documentdb_root_role";
 REVOKE USAGE ON SCHEMA documentdb_api_catalog FROM "documentdb_root_role";
+CREATE ROLE "systemRolesAdmin" LOGIN;
+GRANT "documentdb_admin_role" TO "systemRolesAdmin";
+SET ROLE "systemRolesAdmin";
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.roles", "filter": { "role": { "$in": [ "systemRolesParent", "systemRolesChildOne", "systemRolesChildTwo" ] } }, "sort": { "role": 1 } }');
+                                                                                                           document
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : "admin.systemRolesChildOne", "role" : "systemRolesChildOne", "db" : "admin", "privileges" : [  ], "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ] }
+ { "_id" : "admin.systemRolesChildTwo", "role" : "systemRolesChildTwo", "db" : "admin", "privileges" : [  ], "roles" : [ { "role" : "clusterAdmin", "db" : "admin" }, { "role" : "readWriteAnyDatabase", "db" : "admin" } ] }
+ { "_id" : "admin.systemRolesParent", "role" : "systemRolesParent", "db" : "admin", "privileges" : [  ], "roles" : [  ] }
+(3 rows)
+
+RESET ROLE;
+REVOKE "documentdb_admin_role" FROM "systemRolesAdmin";
+DROP ROLE "systemRolesAdmin";
 GRANT SELECT ON documentdb_api_catalog.roles TO "systemRolesChildOne";
 SET ROLE "systemRolesChildOne";
 SELECT document
@@ -195,6 +212,7 @@ SELECT documentdb_api.drop_role('{"dropRole":"systemRolesParent", "$db":"admin"}
  { "ok" : { "$numberInt" : "1" } }
 (1 row)
 
+DELETE FROM documentdb_api_catalog.roles WHERE role_name = 'systemRolesOrphan';
 RESET documentdb.enableRoleCrud;
 RESET documentdb.enableRolesAdminDBCheck;
 RESET documentdb.enable_admin_database_queries;

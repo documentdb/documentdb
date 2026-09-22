@@ -598,6 +598,11 @@ GenerateRolesQuery(AggregationPipelineBuildContext *context)
 	Expr *roleMembershipQual = MakeCurrentUserHasRolePrivsExpr(
 		(Expr *) roleName);
 
+	Expr *adminMembershipQual = MakeCurrentUserHasRolePrivsExpr(
+		(Expr *) MakeTextConst(ApiAdminRoleV2, strlen(ApiAdminRoleV2)));
+	roleMembershipQual = (Expr *) makeBoolExpr(
+		OR_EXPR, list_make2(adminMembershipQual, roleMembershipQual), -1);
+
 	bool missingOk = true;
 	if (OidIsValid(get_role_oid(ApiRootRole, missingOk)))
 	{
@@ -675,9 +680,9 @@ GenerateUsersQuery(AggregationPipelineBuildContext *context)
 	 * pg_roles RTEs represent the two view references in the original query
 	 * and require the invoking user to have SELECT on that view. The two
 	 * pg_authid RTEs are the corresponding rewritten backing relations, so
-	 * those alone are checked as their relation owner. pg_auth_members and
-	 * the roles catalog are direct relations in the original query and must
-	 * remain caller-checked. Keeping this distinction is important:
+	 * those alone are checked as their relation owner. pg_auth_members is a
+	 * direct relation in the original query and must remain caller-checked.
+	 * Keeping this distinction is important:
 	 * owner-checking every relation would grant more access than the original
 	 * query, while caller-checking pg_authid would make pg_roles unusable by
 	 * otherwise authorized non-owners.
@@ -697,8 +702,12 @@ GenerateUsersQuery(AggregationPipelineBuildContext *context)
 		parseState, "pg_catalog", "pg_auth_members", "members");
 	ParseNamespaceItem *parentItem = AddOwnerCheckedRte(
 		parseState, "pg_catalog", "pg_authid", "parent");
-	ParseNamespaceItem *customRolesItem = AddCallerCheckedRte(
-		parseState, ApiCatalogSchemaName, "roles", "custom_roles");
+	ParseNamespaceItem *customRolesItem = NULL;
+	if (!IsClusterVersionAtleast(DocDB_V0, 117, 4))
+	{
+		customRolesItem = AddCallerCheckedRte(
+			parseState, ApiCatalogSchemaName, "roles", "custom_roles");
+	}
 
 	AttrNumber usersOidAttnum = get_attnum(usersItem->p_rte->relid, "oid");
 	AttrNumber usersNameAttnum = get_attnum(usersItem->p_rte->relid, "rolname");
@@ -707,8 +716,6 @@ GenerateUsersQuery(AggregationPipelineBuildContext *context)
 	AttrNumber roleIdAttnum = get_attnum(membersItem->p_rte->relid, "roleid");
 	AttrNumber parentOidAttnum = get_attnum(parentItem->p_rte->relid, "oid");
 	AttrNumber parentNameAttnum = get_attnum(parentItem->p_rte->relid, "rolname");
-	AttrNumber customRoleNameAttnum = get_attnum(customRolesItem->p_rte->relid,
-												 "role_name");
 
 	Var *usersOid = makeVar(usersItem->p_rtindex, usersOidAttnum, OIDOID, -1,
 							InvalidOid, 0);
@@ -724,8 +731,6 @@ GenerateUsersQuery(AggregationPipelineBuildContext *context)
 							 InvalidOid, 0);
 	Var *parentName = makeVar(parentItem->p_rtindex, parentNameAttnum, NAMEOID, -1,
 							  DEFAULT_COLLATION_OID, 0);
-	Var *customRoleName = makeVar(customRolesItem->p_rtindex, customRoleNameAttnum,
-								  TEXTOID, -1, DEFAULT_COLLATION_OID, 0);
 
 	Oid oidEqualityOperator = OpernameGetOprid(list_make1(makeString("=")), OIDOID,
 											   OIDOID);
@@ -737,10 +742,6 @@ GenerateUsersQuery(AggregationPipelineBuildContext *context)
 											   InvalidOid, InvalidOid);
 
 	CoerceViaIO *parentNameText = CoerceNameToText((Expr *) parentName);
-	Expr *customRoleQual = make_opclause(TextEqualOperatorId(), BOOLOID, false,
-										 (Expr *) parentNameText,
-										 (Expr *) customRoleName,
-										 InvalidOid, DEFAULT_COLLATION_OID);
 
 	RangeTblRef *usersRef = makeNode(RangeTblRef);
 	usersRef->rtindex = usersItem->p_rtindex;
@@ -748,8 +749,6 @@ GenerateUsersQuery(AggregationPipelineBuildContext *context)
 	membersRef->rtindex = membersItem->p_rtindex;
 	RangeTblRef *parentRef = makeNode(RangeTblRef);
 	parentRef->rtindex = parentItem->p_rtindex;
-	RangeTblRef *customRolesRef = makeNode(RangeTblRef);
-	customRolesRef->rtindex = customRolesItem->p_rtindex;
 
 	ParseNamespaceItem *membershipItem;
 	JoinExpr *membershipJoin = MakeUsersJoin(
@@ -760,24 +759,54 @@ GenerateUsersQuery(AggregationPipelineBuildContext *context)
 										 parentItem, (Node *) membershipJoin,
 										 (Node *) parentRef,
 										 parentMembershipQual, &parentJoinItem);
-	JoinExpr *customRolesJoin = MakeUsersJoin(
-		parseState, JOIN_LEFT, parentJoinItem, customRolesItem,
-		(Node *) parentJoin, (Node *) customRolesRef, customRoleQual, NULL);
 
 	Expr *currentUserQual = make_opclause(
 		TextEqualOperatorId(), BOOLOID, false,
 		(Expr *) CoerceNameToText((Expr *) copyObject(usersName)),
 		MakeCurrentUserTextExpr(), InvalidOid, DEFAULT_COLLATION_OID);
 
-	Var *nullableCustomRoleName = copyObject(customRoleName);
+	Expr *adminMembershipQual = MakeCurrentUserHasRolePrivsExpr(
+		(Expr *) MakeTextConst(ApiAdminRoleV2, strlen(ApiAdminRoleV2)));
+	currentUserQual = (Expr *) makeBoolExpr(
+		OR_EXPR, list_make2(adminMembershipQual, currentUserQual), -1);
+
+	Node *usersFromNode = (Node *) parentJoin;
+	Expr *customRoleExists;
+	if (IsClusterVersionAtleast(DocDB_V0, 117, 4))
+	{
+		customRoleExists = (Expr *) makeFuncExpr(
+			IsCustomRoleFunctionId(), BOOLOID,
+			list_make1(copyObject(parentNameText)), InvalidOid, InvalidOid,
+			COERCE_EXPLICIT_CALL);
+	}
+	else
+	{
+		AttrNumber customRoleNameAttnum = get_attnum(customRolesItem->p_rte->relid,
+													 "role_name");
+		Var *customRoleName = makeVar(customRolesItem->p_rtindex, customRoleNameAttnum,
+									  TEXTOID, -1, DEFAULT_COLLATION_OID, 0);
+		Expr *customRoleQual = make_opclause(
+			TextEqualOperatorId(), BOOLOID, false,
+			(Expr *) copyObject(parentNameText), (Expr *) customRoleName,
+			InvalidOid, DEFAULT_COLLATION_OID);
+		RangeTblRef *customRolesRef = makeNode(RangeTblRef);
+		customRolesRef->rtindex = customRolesItem->p_rtindex;
+		JoinExpr *customRolesJoin = MakeUsersJoin(
+			parseState, JOIN_LEFT, parentJoinItem, customRolesItem,
+			(Node *) parentJoin, (Node *) customRolesRef, customRoleQual, NULL);
+
+		Var *nullableCustomRoleName = copyObject(customRoleName);
 #if PG_VERSION_NUM >= 160000
-	nullableCustomRoleName->varnullingrels =
-		bms_make_singleton(customRolesJoin->rtindex);
+		nullableCustomRoleName->varnullingrels =
+			bms_make_singleton(customRolesJoin->rtindex);
 #endif
-	NullTest *customRoleExists = makeNode(NullTest);
-	customRoleExists->arg = (Expr *) nullableCustomRoleName;
-	customRoleExists->nulltesttype = IS_NOT_NULL;
-	customRoleExists->argisrow = false;
+		NullTest *customRoleExistsTest = makeNode(NullTest);
+		customRoleExistsTest->arg = (Expr *) nullableCustomRoleName;
+		customRoleExistsTest->nulltesttype = IS_NOT_NULL;
+		customRoleExistsTest->argisrow = false;
+		customRoleExists = (Expr *) customRoleExistsTest;
+		usersFromNode = (Node *) customRolesJoin;
+	}
 
 	/*
 	 * PostgreSQL 16 and later records a membership for the role that runs
@@ -826,7 +855,7 @@ GenerateUsersQuery(AggregationPipelineBuildContext *context)
 #if PG_VERSION_NUM >= 160000
 	query->rteperminfos = parseState->p_rteperminfos;
 #endif
-	query->jointree = makeFromExpr(list_make1(customRolesJoin),
+	query->jointree = makeFromExpr(list_make1(usersFromNode),
 								   (Node *) make_ands_explicit(usersQuals));
 
 	List *buildDocumentArgs = list_make4(

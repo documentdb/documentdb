@@ -443,9 +443,40 @@ SELECT documentdb_api.create_user('{"createUser":"customRoleUser3", "pwd":"test_
 -- in, so they may not be granted through createUser.
 SELECT documentdb_api.create_user('{"createUser":"customRoleUser3", "pwd":"test_password", "roles":[{"role":"pg_read_all_data","db":"admin"}], "$db":"admin"}');
 
--- Verify the membership was actually created. usersInfo only reports built-in
--- roles, so the custom role does not appear there.
+-- Verify the membership was actually created and usersInfo reports the
+-- directly assigned custom role.
 SELECT pg_has_role('customRoleUser', 'customUserRole', 'MEMBER');
+SELECT documentdb_api.users_info('{"usersInfo":"customRoleUser", "$db":"admin"}');
+SELECT documentdb_core.bson_to_json_string(
+        documentdb_api.users_info('{"usersInfo":1, "$db":"admin"}'))::text
+    LIKE '%"role" : "customUserRole"%' AS custom_role_reported;
+
+-- An admin querying another user receives custom roles through system.users.
+CREATE ROLE customRoleAdminReader LOGIN;
+GRANT documentdb_admin_role TO customRoleAdminReader;
+SET ROLE customRoleAdminReader;
+SELECT documentdb_core.bson_to_json_string(
+        documentdb_api.users_info('{"usersInfo":"customRoleUser", "$db":"admin"}'))::text
+    LIKE '%"role" : "customUserRole"%' AS other_user_custom_role_reported \gset
+\echo :other_user_custom_role_reported
+RESET ROLE;
+REVOKE documentdb_admin_role FROM customRoleAdminReader;
+DROP ROLE customRoleAdminReader;
+
+-- system.users is the authoritative source for non-admin custom-role output.
+SET ROLE "customRoleUser";
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+        'admin', '{"find":"system.users"}');
+SELECT documentdb_api.users_info(
+        '{"usersInfo":"customRoleUser", "$db":"admin"}') AS custom_users_info \gset
+SELECT :'custom_users_info' LIKE '%"role" : "customUserRole"%'
+    AS custom_role_reported_by_users_info;
+SELECT documentdb_api.connection_status(
+        '{"connectionStatus":1, "$db":"admin"}') AS custom_connection_status \gset
+SELECT :'custom_connection_status' LIKE '%"role" : "customUserRole"%'
+    AS custom_role_reported_by_connection_status;
+RESET ROLE;
 
 -- Cleanup
 SELECT documentdb_api.drop_user('{"dropUser":"customRoleUser", "$db":"admin"}');
