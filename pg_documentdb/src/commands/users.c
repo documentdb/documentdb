@@ -130,6 +130,8 @@ typedef struct
 	 */
 	char *pgRole;
 
+	bool hasCustomRole;
+
 	/* principalType */
 	char *principalType;
 
@@ -199,7 +201,8 @@ static bool ParseConnectionStatusSpec(pgbson *connectionStatusSpec);
 
 static bool IsCallingUserExternal(void);
 static char * PrehashPassword(const char *password);
-static char * ValidateAndObtainUserRole(const bson_value_t *rolesDocument);
+static char * ValidateAndObtainUserRole(const bson_value_t *rolesDocument,
+										bool *hasCustomRole);
 static Datum GetSingleUserInfo(const char *userName, bool returnDocuments);
 static Datum GetAllUsersInfo(void);
 static void ParseUsersInfoDocument(const bson_value_t *usersInfoBson, GetUserSpec *spec);
@@ -393,6 +396,11 @@ documentdb_extension_create_user(PG_FUNCTION_ARGS)
 									&isNull);
 	}
 
+	if (createUserSpec.hasCustomRole)
+	{
+		ReportFeatureUsage(FEATURE_USER_CREATE_CUSTOM_ROLE);
+	}
+
 	pgbson_writer finalWriter;
 	PgbsonWriterInit(&finalWriter);
 	PgbsonWriterAppendInt32(&finalWriter, "ok", 2, 1);
@@ -486,7 +494,7 @@ ParseCreateUserSpec(pgbson *createSpec, CreateUserSpec *spec)
 			}
 
 			/* Check if it's in the right format */
-			spec->pgRole = ValidateAndObtainUserRole(&spec->roles);
+			spec->pgRole = ValidateAndObtainUserRole(&spec->roles, &spec->hasCustomRole);
 			rolesFound = true;
 		}
 		else if (strcmp(key, "$db") == 0 && EnableUsersAdminDBCheck)
@@ -1559,7 +1567,7 @@ WriteSingleUserDocument(UserRoleHashEntry *userEntry, bool showPrivileges,
  * with any built-in role.
  */
 static char *
-ValidateAndObtainUserRole(const bson_value_t *rolesDocument)
+ValidateAndObtainUserRole(const bson_value_t *rolesDocument, bool *hasCustomRole)
 {
 	bson_iter_t rolesIterator;
 	BsonValueInitIterator(rolesDocument, &rolesIterator);
@@ -1748,6 +1756,7 @@ ValidateAndObtainUserRole(const bson_value_t *rolesDocument)
 							"No role specified.")));
 	}
 
+	*hasCustomRole = customRoleName != NULL;
 	return customRoleName != NULL ? customRoleName : systemRoleName;
 }
 

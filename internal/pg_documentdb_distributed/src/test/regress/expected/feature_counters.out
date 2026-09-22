@@ -20,6 +20,103 @@ select count(*)*0 as count from documentdb_api_internal.command_feature_counter_
      0
 (1 row)
 
+-- Empty role creation increments only the general createRole counter.
+SET documentdb.enableRoleCrud TO ON;
+SELECT documentdb_api.create_role('{"createRole":"featureCounterEmptyRole", "roles":[], "privileges":[], "$db":"admin"}');
+            create_role            
+---------------------------------------------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+       get_feature_counter_pretty        
+---------------------------------------------------------------------
+ {"Feature_usage":[{"role_create" : 1}]}
+(1 row)
+
+-- Parent-role inheritance increments its dedicated counter.
+SELECT documentdb_api.create_role('{"createRole":"featureCounterParentRole", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+            create_role            
+---------------------------------------------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                           get_feature_counter_pretty                           
+---------------------------------------------------------------------
+ {"Feature_usage":[{"role_create" : 1}, {"role_create_with_parent_roles" : 1}]}
+(1 row)
+
+-- Reusing an existing role name exercises the input-specific counters before
+-- the duplicate-role failure.
+SELECT documentdb_api.create_role('{"createRole":"featureCounterEmptyRole", "roles":[], "privileges":[{"resource":{"db":"featureCounterDb","collection":"featureCounterCollection"},"actions":["find"]}], "$db":"admin"}');
+ERROR:  role "featureCounterEmptyRole" already exists
+CONTEXT:  SQL statement "CREATE ROLE "featureCounterEmptyRole""
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                           get_feature_counter_pretty                           
+---------------------------------------------------------------------
+ {"Feature_usage":[{"role_create" : 1}, {"role_create_custom_privileges" : 1}]}
+(1 row)
+
+SELECT documentdb_api.create_role('{"createRole":"featureCounterParentRole", "roles":["readAnyDatabase"], "privileges":[{"resource":{"db":"featureCounterDb","collection":"featureCounterCollection"},"actions":["find"]}], "$db":"admin"}');
+ERROR:  role "featureCounterParentRole" already exists
+CONTEXT:  SQL statement "CREATE ROLE "featureCounterParentRole""
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                              get_feature_counter_pretty                                               
+---------------------------------------------------------------------
+ {"Feature_usage":[{"role_create" : 1}, {"role_create_custom_privileges" : 1}, {"role_create_with_parent_roles" : 1}]}
+(1 row)
+
+-- User creation with a custom role excludes built-in role assignments.
+SELECT documentdb_api.create_user('{"createUser":"featureCounterCustomUser", "pwd":"Valid$123Pass", "roles":[{"role":"featureCounterParentRole","db":"admin"}], "$db":"admin"}');
+            create_user            
+---------------------------------------------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.create_user('{"createUser":"featureCounterBuiltinUser", "pwd":"Valid$123Pass", "roles":[{"role":"readAnyDatabase","db":"admin"}], "$db":"admin"}');
+            create_user            
+---------------------------------------------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                        get_feature_counter_pretty                        
+---------------------------------------------------------------------
+ {"Feature_usage":[{"user_create" : 2}, {"user_create_custom_role" : 1}]}
+(1 row)
+
+SELECT documentdb_api.drop_user('{"dropUser":"featureCounterCustomUser", "$db":"admin"}');
+             drop_user             
+---------------------------------------------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.drop_user('{"dropUser":"featureCounterBuiltinUser", "$db":"admin"}');
+             drop_user             
+---------------------------------------------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.drop_role('{"dropRole":"featureCounterEmptyRole", "$db":"admin"}');
+             drop_role             
+---------------------------------------------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.drop_role('{"dropRole":"featureCounterParentRole", "$db":"admin"}');
+             drop_role             
+---------------------------------------------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+RESET documentdb.enableRoleCrud;
+SELECT count(*) * 0 AS reset_count FROM documentdb_api_internal.command_feature_counter_stats(true);
+ reset_count 
+---------------------------------------------------------------------
+           0
+(1 row)
+
 -- vector index creation error
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "feature_counter_col", "indexes": [ { "key": { "a": "cosmosSearch"}, "name": "foo_1"  } ] }', true);
 ERROR:  Error in specification { "key" : { "a" : "cosmosSearch" }, "name" : "foo_1" }:Index type 'CosmosSearch' was requested, but the 'cosmosSearch' options were not provided.
@@ -246,7 +343,7 @@ NOTICE:  creating collection
 
 -- Run validate command
 SELECT documentdb_api.validate('db', '{ "validate" : "feature_counter_col2", "repair" : true }' );
-                                                                                                                                 validate
+                                                                                                                                 validate                                                                                                                                  
 ---------------------------------------------------------------------
  { "ns" : "db.feature_counter_col2", "nIndexes" : { "$numberLong" : "2" }, "indexDetails" : { "_id_" : { "valid" : true }, "ttl_index" : { "valid" : true } }, "valid" : true, "repaired" : true, "warnings" : [  ], "errors" : [  ], "ok" : { "$numberDouble" : "1.0" } }
 (1 row)

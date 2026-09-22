@@ -353,6 +353,16 @@ create_role(pgbson *createRoleBson)
 	EnsureRoleMembershipLimits(createRoleSpec.roleName, hash_get_num_entries(
 								   createRoleSpec.parentRoles));
 
+	if (hash_get_num_entries(createRoleSpec.parentRoles) > 0)
+	{
+		ReportFeatureUsage(FEATURE_ROLE_CREATE_WITH_PARENT_ROLES);
+	}
+
+	if (createRoleSpec.collectionPrivileges != NIL)
+	{
+		ReportFeatureUsage(FEATURE_ROLE_CREATE_CUSTOM_PRIVILEGES);
+	}
+
 	/* Create the specified role in the database */
 	StringInfo createRoleInfo = makeStringInfo();
 	appendStringInfo(createRoleInfo, "CREATE ROLE %s", quote_identifier(

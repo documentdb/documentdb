@@ -14,6 +14,34 @@ WITH deleted AS (
 -- Reset the counters by making a call to the counter and discarding the results
 select count(*)*0 as count from documentdb_api_internal.command_feature_counter_stats(true);
 
+-- Empty role creation increments only the general createRole counter.
+SET documentdb.enableRoleCrud TO ON;
+SELECT documentdb_api.create_role('{"createRole":"featureCounterEmptyRole", "roles":[], "privileges":[], "$db":"admin"}');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Parent-role inheritance increments its dedicated counter.
+SELECT documentdb_api.create_role('{"createRole":"featureCounterParentRole", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Reusing an existing role name exercises the input-specific counters before
+-- the duplicate-role failure.
+SELECT documentdb_api.create_role('{"createRole":"featureCounterEmptyRole", "roles":[], "privileges":[{"resource":{"db":"featureCounterDb","collection":"featureCounterCollection"},"actions":["find"]}], "$db":"admin"}');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+SELECT documentdb_api.create_role('{"createRole":"featureCounterParentRole", "roles":["readAnyDatabase"], "privileges":[{"resource":{"db":"featureCounterDb","collection":"featureCounterCollection"},"actions":["find"]}], "$db":"admin"}');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- User creation with a custom role excludes built-in role assignments.
+SELECT documentdb_api.create_user('{"createUser":"featureCounterCustomUser", "pwd":"Valid$123Pass", "roles":[{"role":"featureCounterParentRole","db":"admin"}], "$db":"admin"}');
+SELECT documentdb_api.create_user('{"createUser":"featureCounterBuiltinUser", "pwd":"Valid$123Pass", "roles":[{"role":"readAnyDatabase","db":"admin"}], "$db":"admin"}');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+SELECT documentdb_api.drop_user('{"dropUser":"featureCounterCustomUser", "$db":"admin"}');
+SELECT documentdb_api.drop_user('{"dropUser":"featureCounterBuiltinUser", "$db":"admin"}');
+SELECT documentdb_api.drop_role('{"dropRole":"featureCounterEmptyRole", "$db":"admin"}');
+SELECT documentdb_api.drop_role('{"dropRole":"featureCounterParentRole", "$db":"admin"}');
+RESET documentdb.enableRoleCrud;
+SELECT count(*) * 0 AS reset_count FROM documentdb_api_internal.command_feature_counter_stats(true);
+
 -- vector index creation error
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "feature_counter_col", "indexes": [ { "key": { "a": "cosmosSearch"}, "name": "foo_1"  } ] }', true);
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "feature_counter_col", "indexes": [ { "key": { "a": 1 }, "name": "foo_1", "cosmosSearchOptions": { } } ] }', true);

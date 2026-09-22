@@ -459,6 +459,8 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 
 	/* Feature mapping region - Role CRUD */
 	[FEATURE_ROLE_CREATE] = "role_create",
+	[FEATURE_ROLE_CREATE_CUSTOM_PRIVILEGES] = "role_create_custom_privileges",
+	[FEATURE_ROLE_CREATE_WITH_PARENT_ROLES] = "role_create_with_parent_roles",
 	[FEATURE_ROLE_GRANT_PRIVILEGES_TO_ROLE] = "role_grant_privileges_to_role",
 	[FEATURE_ROLE_GRANT_ROLES_TO_ROLE] = "role_grant_roles_to_role",
 	[FEATURE_ROLE_GRANT_ROLES_TO_USER] = "role_grant_roles_to_user",
@@ -568,6 +570,7 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 
 	/* Feature mapping region - User CRUD*/
 	[FEATURE_USER_CREATE] = "user_create",
+	[FEATURE_USER_CREATE_CUSTOM_ROLE] = "user_create_custom_role",
 	[FEATURE_USER_DROP] = "user_drop",
 	[FEATURE_USER_GET] = "user_get",
 	[FEATURE_USER_UPDATE] = "user_update",
