@@ -510,8 +510,9 @@ To suppress this warning intentionally (for example in evaluation
 scripts), set DOCUMENTDB_ALLOW_DEFAULT_PASSWORD=true. To fix:
 
   docker run ... --env USERNAME=<your-user> --env PASSWORD=<your-pw> ...
-  or
-  documentdb-local --username <your-user> --password <your-pw>
+
+(--password <your-pw> also works, but stays visible in the container's
+process list for its whole lifetime; prefer the environment variable.)
 
 In a future release the emulator will REFUSE to start when --password
 and --username are not provided, so please migrate now.
@@ -905,12 +906,10 @@ if [ "$START_POSTGRESQL" = "true" ]; then
     if [ ${#external_access_args[@]} -gt 0 ]; then
         start_oss_server_args+=("${external_access_args[@]}")
     fi
-    if [ "$CREATE_USER" = "false" ]; then
-        start_oss_server_args+=(-u "")
-    else
-        start_oss_server_args+=(-u "$USERNAME" -a "$PASSWORD")
-    fi
-    start_oss_server_args+=(-d "$DATA_PATH" -p "$POSTGRESQL_PORT")
+    # Always skip the child's own admin-user step (-u ""): its stock helper
+    # puts the password in psql argv. The hardened SetupCustomAdminUser
+    # below creates the user before the gateway starts instead.
+    start_oss_server_args+=(-u "" -d "$DATA_PATH" -p "$POSTGRESQL_PORT")
 
     "$SCRIPT_DIR/start_oss_server.sh" "${start_oss_server_args[@]}" | tee -a "$OSS_SERVER_LOG"
     start_oss_server_rc=${PIPESTATUS[0]}
@@ -1294,8 +1293,16 @@ else
             # so without it a failed create_user would slip past the
             # caller's error guard and the container would report ready
             # with no usable admin login.
-            printf '%s\n' "SELECT documentdb_api.create_user('${doc_sql}');" \
-                | psql -p "$port" -U "$owner" -d postgres -X -v ON_ERROR_STOP=1
+            # log_min_error_statement defaults to logging the failing
+            # statement text, which here carries the password. Keep the
+            # SETs and the SELECT on this one connection. VERBOSITY=terse
+            # stops psql itself echoing a "LINE 1:" excerpt to stderr.
+            printf '%s\n' \
+                "SET log_statement = 'none';" \
+                "SET log_min_duration_statement = -1;" \
+                "SET log_min_error_statement = 'panic';" \
+                "SELECT documentdb_api.create_user('${doc_sql}');" \
+                | psql -p "$port" -U "$owner" -d postgres -X -v ON_ERROR_STOP=1 -v VERBOSITY=terse
         }
     fi
 

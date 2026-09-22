@@ -33,7 +33,7 @@ docker compose ps
 
 # 4. Connect (from the host), using the credentials generated in step 1
 mongosh "mongodb://localhost:10260/?tls=true&tlsAllowInvalidCertificates=true" \
-    --username "$DOCUMENTDB_USERNAME" --password "$DOCUMENTDB_PASSWORD"
+    --username "$DOCUMENTDB_USERNAME"
 ```
 
 On Windows, run the same steps from PowerShell with:

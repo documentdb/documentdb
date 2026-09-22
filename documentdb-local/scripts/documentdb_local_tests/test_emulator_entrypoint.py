@@ -2086,6 +2086,31 @@ exit 1
         self.assertIn("did not become ready", result.stdout + result.stderr)
         self.assertNotIn("stub-user-created", result.stdout)
 
+    def test_password_never_passed_to_start_oss_server(self):
+        # The child's stock helper would put the password in psql argv, so the
+        # entrypoint hands it -u "" and creates the admin user itself.
+        self._configure_postgres_stubs()
+        args_capture = self._configure_start_oss_args_capture()
+        result = self._run_entrypoint(
+            extra_env={"START_POSTGRESQL": "true", "CREATE_USER": "true"}
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        args = args_capture.read_text(encoding="utf-8").splitlines()
+        self.assertNotIn(_TEST_PW, args)
+        self.assertNotIn("-a", args)
+        self.assertEqual(args[args.index("-u") + 1], "")
+        self.assertIn("stub-user-created", result.stdout)
+
+    def test_create_user_false_still_skips_child_user_step(self):
+        self._configure_postgres_stubs()
+        args_capture = self._configure_start_oss_args_capture()
+        result = self._run_entrypoint(extra_env={"START_POSTGRESQL": "true"})
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        args = args_capture.read_text(encoding="utf-8").splitlines()
+        self.assertNotIn(_TEST_PW, args)
+        self.assertEqual(args[args.index("-u") + 1], "")
+        self.assertNotIn("stub-user-created", result.stdout)
+
     def test_admin_user_creation_failure_aborts_startup(self):
         # A SetupCustomAdminUser failure must abort the entrypoint instead of
         # being silently swallowed.
@@ -2961,7 +2986,6 @@ class InitDataAttemptMarkerTests(unittest.TestCase):
     def _run(self, attempt_marker, init_dir=None):
         env = os.environ.copy()
         env["PATH"] = f"{self.bin_dir}{os.pathsep}{env['PATH']}"
-        env["ENTRYPOINT_LOG"] = str(self.root / "entrypoint.log")
         env["ATTEMPT_MARKER_PATH"] = str(attempt_marker)
         # The init script reads the password only from DOCUMENTDB_PASSWORD; the
         # -p/--password flag was removed so the secret never lands on the argv.
@@ -3050,6 +3074,19 @@ class InitDataAttemptMarkerTests(unittest.TestCase):
             2,
             "both scripts should be attempted before the failure",
         )
+
+    def test_script_contents_are_not_echoed(self):
+        # Seed scripts often carry createUser passwords; only the file name
+        # may reach stdout (which the entrypoint tees into its log).
+        secret = "seed-secret-" + secrets.token_hex(8)
+        (self.init_dir / "00-data.js").write_text(
+            f'db.createUser({{user: "u", pwd: "{secret}"}});\n', encoding="utf-8"
+        )
+        marker = self.root / "data" / ".documentdb-local" / "custom_data_attempted"
+        result = self._run(marker)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("00-data.js", result.stdout)
+        self.assertNotIn(secret, result.stdout + result.stderr)
 
     def test_no_js_files_does_not_write_marker(self):
         # No user scripts means no data is mutated, so no marker should be written -- the

@@ -20,16 +20,6 @@ DOCUMENTDB_PORT="$(documentdb_local_setting_default DOCUMENTDB_PORT)"
 # before the first user script runs, so a non-idempotent init that fails partway is not
 # re-run on a restart and cannot loop. Empty for built-in sample data, which is idempotent.
 ATTEMPT_MARKER=""
-LOG_FILE="${ENTRYPOINT_LOG:-/var/log/documentdb/gateway_entrypoint.log}"
-LOG_FILE_AVAILABLE="false"
-
-if [ -n "$LOG_FILE" ]; then
-    if touch "$LOG_FILE" 2>/dev/null; then
-        LOG_FILE_AVAILABLE="true"
-    else
-        echo "Warning: Unable to append to log file: $LOG_FILE"
-    fi
-fi
 
 # Print usage information
 usage() {
@@ -175,23 +165,6 @@ log() {
     fi
 }
 
-print_and_log() {
-    local message="$1"
-    echo "$message"
-    if [ "$LOG_FILE_AVAILABLE" = "true" ]; then
-        printf '%s\n' "$message" >> "$LOG_FILE"
-    fi
-}
-
-print_file_and_log() {
-    local file_path="$1"
-    if [ "$LOG_FILE_AVAILABLE" = "true" ]; then
-        tee -a "$LOG_FILE" < "$file_path"
-    else
-        cat "$file_path"
-    fi
-}
-
 # Record the one-shot custom-init marker right before the first user script mutates data.
 # This must happen BEFORE any data is written: user scripts may be non-idempotent, so if the
 # marker cannot be persisted we refuse to run rather than mutate-then-fail-to-mark, which
@@ -272,9 +245,6 @@ run_init_scripts() {
 
             echo "Executing initialization script: $(basename "$init_file")"
             log "Full path: $init_file"
-            print_and_log "---- Begin init data: $(basename "$init_file") ----"
-            print_file_and_log "$init_file"
-            print_and_log "---- End init data: $(basename "$init_file") ----"
 
             if run_mongosh_script "$init_file"; then
                 log "Successfully executed: $(basename "$init_file")"

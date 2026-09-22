@@ -513,7 +513,7 @@ class EntrypointAdminPasswordHardeningTests(unittest.TestCase):
         # SQL goes to psql over stdin, never argv.
         self.assertRegex(
             text,
-            r"printf '%s\\n' \"SELECT documentdb_api\.create_user\('\$\{doc_sql\}'\);\"\s*\\\n\s*\| psql",
+            r"printf '%s\\n' \\\n(\s*\"SET [^\n]*\" \\\n)*\s*\"SELECT documentdb_api\.create_user\('\$\{doc_sql\}'\);\"\s*\\\n\s*\| psql",
         )
         # The single-quote doubling for the SQL literal.
         self.assertIn("doc_sql=${create_user_doc//\\'/\\'\\'}", text)
@@ -650,10 +650,26 @@ class EntrypointAdminPasswordHardeningTests(unittest.TestCase):
             # The SQL arrives on stdin with the JSON-escaped double quote and
             # the SQL-doubled single quote intact.
             self.assertIn("documentdb_api.create_user", sql)
+            # The capture concatenates every psql call, so check the SETs and
+            # the create_user arrive as one block (same connection), not
+            # merely somewhere in the file.
+            self.assertIn(
+                "SET log_statement = 'none';\n"
+                "SET log_min_duration_statement = -1;\n"
+                "SET log_min_error_statement = 'panic';\n"
+                "SELECT documentdb_api.create_user(",
+                sql,
+            )
             self.assertIn('"createUser":"default_user"', sql)
             self.assertIn('pa\\"ss\'\'wd', sql)
             # Role-existence probe also travels via stdin + psql variable.
             self.assertIn("WHERE rolname = :'u';", sql)
+            # psql prints a "LINE 1:" excerpt of a failing statement unless
+            # VERBOSITY is terse, and stderr is tee'd into the entrypoint log.
+            create_call = [a for a in argv.splitlines() if "ON_ERROR_STOP=1" in a]
+            self.assertEqual(len(create_call), 1, argv)
+            self.assertIn("VERBOSITY=terse", create_call[0])
+            self.assertNotIn(password, r.stdout + r.stderr)
 
     def test_stub_override_from_utils_is_still_honored(self):
         # The shadow must replace ONLY the stock implementation: a custom
