@@ -11,12 +11,15 @@
  */
 
 #include <postgres.h>
+#include <math.h>
 #include <miscadmin.h>
 #include <storage/lwlock.h>
 #include <storage/shmem.h>
 #include <utils/timestamp.h>
 
 #include "background_worker/background_worker_private.h"
+
+#define MICROSECONDS_PER_MILLISECOND 1000
 
 typedef struct BackgroundWorkerJobStatsSharedState
 {
@@ -25,6 +28,8 @@ typedef struct BackgroundWorkerJobStatsSharedState
 	BackgroundWorkerJobStatsSnapshot snapshot;
 } BackgroundWorkerJobStatsSharedState;
 
+static bool TryGetExecutionAttempts(const BackgroundWorkerJobStats *jobStats,
+									uint64 *executionAttempts);
 static BackgroundWorkerJobStatsSharedState *SharedState = NULL;
 static int RegisteredJobIds[MAX_BACKGROUND_WORKER_JOBS];
 static int RegisteredJobCount = 0;
@@ -149,4 +154,301 @@ GetBackgroundWorkerJobStatsSnapshot(BackgroundWorkerJobStatsSnapshot *snapshot)
 
 	Assert(snapshot->jobCount >= 0);
 	Assert(snapshot->jobCount <= MAX_BACKGROUND_WORKER_JOBS);
+}
+
+
+/*
+ * FindBackgroundWorkerJobStatsIndex returns the matching snapshot index, or -1.
+ * Callers are responsible for synchronizing access to a live shared snapshot.
+ */
+int
+FindBackgroundWorkerJobStatsIndex(int jobId,
+								  const BackgroundWorkerJobStatsSnapshot *snapshot)
+{
+	Assert(snapshot != NULL);
+	Assert(snapshot->jobCount >= 0);
+	Assert(snapshot->jobCount <= MAX_BACKGROUND_WORKER_JOBS);
+
+	for (int i = 0; i < snapshot->jobCount; i++)
+	{
+		if (snapshot->jobs[i].jobId == jobId)
+		{
+			return i;
+		}
+	}
+
+	return -1;
+}
+
+
+void
+PublishBackgroundWorkerJobCompletion(int jobId, BackgroundWorkerJobResult result,
+									 TimestampTz attemptStartTimestamp,
+									 instr_time attemptStartTime,
+									 bool hasAttemptObservationInterval,
+									 int64 attemptObservationIntervalMilliseconds)
+{
+	if (result != JOB_RESULT_SUCCEEDED &&
+		result != JOB_RESULT_FAILED &&
+		result != JOB_RESULT_TIMED_OUT &&
+		result != JOB_RESULT_UNOBSERVED)
+	{
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("Background worker statistics result is invalid")));
+	}
+
+	if (hasAttemptObservationInterval && attemptObservationIntervalMilliseconds < 0)
+	{
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg(
+							"Background worker attempt observation interval must be nonnegative")));
+	}
+
+	Assert(SharedState != NULL);
+
+	/*
+	 * Reset and publication linearize on this lock. Capture terminal clocks
+	 * only after publication has entered its reset epoch.
+	 */
+	LWLockAcquire(&SharedState->lock, LW_EXCLUSIVE);
+
+	instr_time observedAttemptDuration;
+	INSTR_TIME_SET_CURRENT(observedAttemptDuration);
+	INSTR_TIME_SUBTRACT(observedAttemptDuration, attemptStartTime);
+	double observedAttemptDurationMilliseconds =
+		INSTR_TIME_GET_MILLISEC(observedAttemptDuration);
+	TimestampTz observedResolutionTimestamp = GetCurrentTimestamp();
+
+	if (!isfinite(observedAttemptDurationMilliseconds) ||
+		observedAttemptDurationMilliseconds < 0)
+	{
+		LWLockRelease(&SharedState->lock);
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg(
+							"Background worker observed attempt duration must be finite and nonnegative")));
+	}
+
+	Assert(SharedState->snapshot.jobCount >= 0);
+	Assert(SharedState->snapshot.jobCount <= MAX_BACKGROUND_WORKER_JOBS);
+
+	int jobStatsIndex = FindBackgroundWorkerJobStatsIndex(jobId, &SharedState->snapshot);
+	if (jobStatsIndex < 0)
+	{
+		LWLockRelease(&SharedState->lock);
+		ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
+						errmsg("Background worker job id %d is not registered", jobId)));
+	}
+
+	BackgroundWorkerJobStats *jobStats = &SharedState->snapshot.jobs[jobStatsIndex];
+	BackgroundWorkerJobStats updatedStats = *jobStats;
+	uint64 executionAttempts = 0;
+	if (!TryGetExecutionAttempts(&updatedStats, &executionAttempts))
+	{
+		LWLockRelease(&SharedState->lock);
+		ereport(ERROR, (errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+						errmsg("Background worker statistics counter exceeds bigint")));
+	}
+
+	if (executionAttempts == PG_INT64_MAX)
+	{
+		LWLockRelease(&SharedState->lock);
+		ereport(ERROR, (errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+						errmsg(
+							"Background worker execution attempt count exceeds bigint")));
+	}
+
+	switch (result)
+	{
+		case JOB_RESULT_SUCCEEDED:
+		{
+			if (updatedStats.successfulExecutions == PG_INT64_MAX)
+			{
+				LWLockRelease(&SharedState->lock);
+				ereport(ERROR, (errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+								errmsg(
+									"Background worker successful execution count exceeds bigint")));
+			}
+
+			updatedStats.successfulExecutions++;
+			updatedStats.consecutiveFailures = 0;
+			updatedStats.lastSuccessTimestamp = observedResolutionTimestamp;
+			break;
+		}
+
+		case JOB_RESULT_FAILED:
+		{
+			if (updatedStats.failedExecutions == PG_INT64_MAX ||
+				updatedStats.consecutiveFailures == PG_INT64_MAX)
+			{
+				LWLockRelease(&SharedState->lock);
+				ereport(ERROR, (errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+								errmsg(
+									"Background worker failure count exceeds bigint")));
+			}
+
+			updatedStats.failedExecutions++;
+			updatedStats.consecutiveFailures++;
+			updatedStats.lastFailureTimestamp = observedResolutionTimestamp;
+			break;
+		}
+
+		case JOB_RESULT_TIMED_OUT:
+		{
+			if (updatedStats.timedOutExecutions == PG_INT64_MAX ||
+				updatedStats.consecutiveFailures == PG_INT64_MAX)
+			{
+				LWLockRelease(&SharedState->lock);
+				ereport(ERROR, (errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+								errmsg(
+									"Background worker timeout count exceeds bigint")));
+			}
+
+			updatedStats.timedOutExecutions++;
+			updatedStats.consecutiveFailures++;
+			updatedStats.lastFailureTimestamp = observedResolutionTimestamp;
+			break;
+		}
+
+		case JOB_RESULT_UNOBSERVED:
+		{
+			if (updatedStats.unobservedExecutions == PG_INT64_MAX)
+			{
+				LWLockRelease(&SharedState->lock);
+				ereport(ERROR, (errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+								errmsg(
+									"Background worker unobserved execution count exceeds bigint")));
+			}
+
+			updatedStats.unobservedExecutions++;
+			break;
+		}
+
+		default:
+		{
+			pg_unreachable();
+		}
+	}
+
+	double totalObservedAttemptDurationMilliseconds =
+		updatedStats.totalObservedAttemptDurationMilliseconds +
+		observedAttemptDurationMilliseconds;
+	if (!isfinite(totalObservedAttemptDurationMilliseconds))
+	{
+		LWLockRelease(&SharedState->lock);
+		ereport(ERROR, (errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+						errmsg(
+							"Background worker total observed attempt duration exceeds double precision")));
+	}
+
+	if (executionAttempts == 0)
+	{
+		updatedStats.firstAttemptTimestamp = attemptStartTimestamp;
+		updatedStats.minObservedAttemptDurationMilliseconds =
+			observedAttemptDurationMilliseconds;
+		updatedStats.maxObservedAttemptDurationMilliseconds =
+			observedAttemptDurationMilliseconds;
+	}
+	else
+	{
+		updatedStats.minObservedAttemptDurationMilliseconds =
+			Min(updatedStats.minObservedAttemptDurationMilliseconds,
+				observedAttemptDurationMilliseconds);
+		updatedStats.maxObservedAttemptDurationMilliseconds =
+			Max(updatedStats.maxObservedAttemptDurationMilliseconds,
+				observedAttemptDurationMilliseconds);
+	}
+
+	updatedStats.lastAttemptTimestamp = attemptStartTimestamp;
+	updatedStats.lastObservedResolutionTimestamp = observedResolutionTimestamp;
+	updatedStats.lastResult = result;
+	updatedStats.lastObservedAttemptDurationMilliseconds =
+		observedAttemptDurationMilliseconds;
+	updatedStats.totalObservedAttemptDurationMilliseconds =
+		totalObservedAttemptDurationMilliseconds;
+	updatedStats.hasAttemptObservationInterval = hasAttemptObservationInterval;
+	updatedStats.attemptObservationIntervalMilliseconds =
+		attemptObservationIntervalMilliseconds;
+
+	*jobStats = updatedStats;
+
+	LWLockRelease(&SharedState->lock);
+}
+
+
+void
+ResetBackgroundWorkerJobStats(void)
+{
+	Assert(SharedState != NULL);
+
+	LWLockAcquire(&SharedState->lock, LW_EXCLUSIVE);
+
+	Assert(SharedState->snapshot.jobCount >= 0);
+	Assert(SharedState->snapshot.jobCount <= MAX_BACKGROUND_WORKER_JOBS);
+
+	TimestampTz resetTimestamp = GetCurrentTimestamp();
+	TimestampTz previousResetTimestamp = SharedState->snapshot.statsResetTimestamp;
+	if (previousResetTimestamp > PG_INT64_MAX - MICROSECONDS_PER_MILLISECOND)
+	{
+		LWLockRelease(&SharedState->lock);
+		ereport(ERROR, (errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
+						errmsg(
+							"Background worker statistics reset timestamp overflow")));
+	}
+
+	TimestampTz minimumResetTimestamp =
+		previousResetTimestamp + MICROSECONDS_PER_MILLISECOND;
+	if (resetTimestamp < minimumResetTimestamp)
+	{
+		/*
+		 * The statistics surface publishes BSON dates at millisecond precision.
+		 * Advance by one visible unit so rapid resets establish distinct epochs.
+		 */
+		resetTimestamp = minimumResetTimestamp;
+	}
+
+	for (int i = 0; i < SharedState->snapshot.jobCount; i++)
+	{
+		int jobId = SharedState->snapshot.jobs[i].jobId;
+		MemSet(&SharedState->snapshot.jobs[i], 0, sizeof(BackgroundWorkerJobStats));
+		SharedState->snapshot.jobs[i].jobId = jobId;
+	}
+	SharedState->snapshot.statsResetTimestamp = resetTimestamp;
+
+	LWLockRelease(&SharedState->lock);
+}
+
+
+static bool
+TryGetExecutionAttempts(const BackgroundWorkerJobStats *jobStats,
+						uint64 *executionAttempts)
+{
+	if (jobStats->successfulExecutions > PG_INT64_MAX ||
+		jobStats->failedExecutions > PG_INT64_MAX ||
+		jobStats->timedOutExecutions > PG_INT64_MAX ||
+		jobStats->unobservedExecutions > PG_INT64_MAX)
+	{
+		return false;
+	}
+
+	uint64 attempts = jobStats->successfulExecutions;
+	if (jobStats->failedExecutions > PG_INT64_MAX - attempts)
+	{
+		return false;
+	}
+	attempts += jobStats->failedExecutions;
+
+	if (jobStats->timedOutExecutions > PG_INT64_MAX - attempts)
+	{
+		return false;
+	}
+	attempts += jobStats->timedOutExecutions;
+
+	if (jobStats->unobservedExecutions > PG_INT64_MAX - attempts)
+	{
+		return false;
+	}
+	attempts += jobStats->unobservedExecutions;
+
+	*executionAttempts = attempts;
+	return true;
 }

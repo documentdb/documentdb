@@ -16,6 +16,7 @@
 #include <tcop/utility.h>
 #include <postmaster/interrupt.h>
 #include <libpq-fe.h>
+#include <portability/instr_time.h>
 #include <storage/latch.h>
 #include <miscadmin.h>
 #include <postmaster/bgworker.h>
@@ -110,6 +111,26 @@ typedef enum BackgroundWorkerBoolOption
 } BackgroundWorkerBoolOption;
 
 /*
+ * Per-job attempt observation state owned by the leader's execution object.
+ * It persists across scheduling passes until the active attempt is resolved.
+ */
+typedef struct
+{
+	/* Wall-clock start of the active attempt for SQL timestamps. */
+	TimestampTz attemptStartTimestamp;
+
+	/* Monotonic start of the active attempt for elapsed duration. */
+	instr_time attemptStartTime;
+
+	/* Whether an attempt has started but has not reached a terminal outcome. */
+	bool attemptInProgress;
+
+	/* Polling metadata for the wait cycle that observed the terminal outcome. */
+	bool hasAttemptObservationInterval;
+	int64 attemptObservationIntervalMilliseconds;
+} BackgroundWorkerJobExecutionStatsState;
+
+/*
  * Background worker job execution object.
  */
 typedef struct
@@ -128,6 +149,9 @@ typedef struct
 
 	/* Job state. */
 	BackgroundWorkerJobState state;
+
+	/* Per-attempt state used to publish execution statistics. */
+	BackgroundWorkerJobExecutionStatsState statsState;
 
 	/* Process-local terminal outcome counters. */
 	uint64 successfulExecutionCount;
@@ -159,6 +183,9 @@ static void ValidateRoleExecutionProfile(const char *jobName,
 										 roleExecutionProfile);
 static void ManageJobsLifeCycle(List *jobExecutions, char *userName, char *databaseName,
 								bool inRecovery);
+static void SetActiveAttemptObservationInterval(List *jobExecutions,
+												int64
+												attemptObservationIntervalMilliseconds);
 static void ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName,
 					   char *databaseName, TimestampTz currentTime);
 static void CheckJobCompletion(BackgroundWorkerJobExecution *jobExec);
@@ -169,6 +196,8 @@ static BackgroundWorkerJobResult ClassifyJobResults(bool receivedResult, bool su
 static inline void BeginJobAttempt(BackgroundWorkerJobExecution *jobExec);
 static void CompleteJobAttempt(BackgroundWorkerJobExecution *jobExec,
 							   BackgroundWorkerJobResult result);
+static void RecordJobAttemptDiagnostics(BackgroundWorkerJobExecution *jobExec,
+										BackgroundWorkerJobResult result);
 static inline bool IsSuccessfulCommandResult(ExecStatusType resultStatus);
 static void FreeJobExecutions(List *jobExecutions);
 static bool CheckIfMetadataCoordinator(void);
@@ -180,8 +209,8 @@ static bool CheckIfRoleExists(const char *roleName);
 static List * GenerateJobExecutions(void);
 static BackgroundWorkerJobExecution * CreateJobExecutionObj(BackgroundWorkerJob job);
 static char * GenerateCommandQuery(BackgroundWorkerJob job, MemoryContext stableContext);
-static void CancelJobIfTimeIsUp(BackgroundWorkerJobExecution *jobExec, TimestampTz
-								currentTime);
+static void CancelJobIfTimeIsUp(BackgroundWorkerJobExecution *jobExec,
+								TimestampTz currentTime);
 static void WaitForBackgroundWorkerDependencies(void);
 static void WaitForInitJobsCompletion(void);
 static bool BackgroundWorkerJobsEnabledForRole(bool inRecovery);
@@ -447,6 +476,8 @@ DocumentDBBackgroundWorkerMain(Datum main_arg)
 				MemoryContextSwitchTo(bgWorkerContext);
 			}
 
+			SetActiveAttemptObservationInterval(jobExecutions,
+												latchTimeOut * ONE_SEC_IN_MS);
 			ManageJobsLifeCycle(jobExecutions, ApiBgWorkerRole, databaseName,
 								inRecovery);
 		}
@@ -583,6 +614,26 @@ ManageJobsLifeCycle(List *jobExecutions, char *userName, char *databaseName,
 		if (CanExecuteJob(jobExec, currentTime, inRecovery))
 		{
 			ExecuteJob(jobExec, userName, databaseName, currentTime);
+		}
+	}
+}
+
+
+static void
+SetActiveAttemptObservationInterval(List *jobExecutions,
+									int64 attemptObservationIntervalMilliseconds)
+{
+	ListCell *jobExecCell = NULL;
+	foreach(jobExecCell, jobExecutions)
+	{
+		BackgroundWorkerJobExecution *jobExec = (BackgroundWorkerJobExecution *) lfirst(
+			jobExecCell);
+		BackgroundWorkerJobExecutionStatsState *statsState = &jobExec->statsState;
+		if (statsState->attemptInProgress)
+		{
+			statsState->hasAttemptObservationInterval = true;
+			statsState->attemptObservationIntervalMilliseconds =
+				attemptObservationIntervalMilliseconds;
 		}
 	}
 }
@@ -801,10 +852,20 @@ ClassifyJobResults(bool receivedResult, bool succeeded,
 static inline void
 BeginJobAttempt(BackgroundWorkerJobExecution *jobExec)
 {
-	/* Attempt-scoped instrumentation attaches at this lifecycle boundary. */
-	ereport(DEBUG1, (errmsg(
-						 "Background worker job %s with id %d started an execution attempt",
-						 jobExec->job.jobName, jobExec->job.jobId)));
+	BackgroundWorkerJobExecutionStatsState *statsState = &jobExec->statsState;
+	if (statsState->attemptInProgress)
+	{
+		ereport(ERROR, (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+						errmsg(
+							"Background worker job %d already has an active attempt",
+							jobExec->job.jobId)));
+	}
+
+	statsState->attemptStartTimestamp = GetCurrentTimestamp();
+	INSTR_TIME_SET_CURRENT(statsState->attemptStartTime);
+	statsState->attemptInProgress = true;
+	statsState->hasAttemptObservationInterval = false;
+	statsState->attemptObservationIntervalMilliseconds = 0;
 }
 
 
@@ -813,15 +874,104 @@ static void
 CompleteJobAttempt(BackgroundWorkerJobExecution *jobExec,
 				   BackgroundWorkerJobResult result)
 {
+	BackgroundWorkerJobExecutionStatsState *statsState = &jobExec->statsState;
+	if (!statsState->attemptInProgress)
+	{
+		ereport(ERROR, (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+						errmsg(
+							"Background worker job %d has no active attempt to complete",
+							jobExec->job.jobId)));
+	}
+
+	MemoryContext savedContext = CurrentMemoryContext;
+	ResourceOwner savedOwner = CurrentResourceOwner;
+	const bool hasAttemptObservationInterval =
+		statsState->hasAttemptObservationInterval;
+	int64 attemptObservationIntervalMilliseconds =
+		statsState->attemptObservationIntervalMilliseconds;
+
+	/*
+	 * Statistics failures must not abort the scheduler transaction or prevent
+	 * the remaining jobs from being processed in this scheduling pass.
+	 */
+	BeginInternalSubTransaction(NULL);
+
+	PG_TRY();
+	{
+		PublishBackgroundWorkerJobCompletion(jobExec->job.jobId,
+											 result,
+											 statsState->attemptStartTimestamp,
+											 statsState->attemptStartTime,
+											 hasAttemptObservationInterval,
+											 attemptObservationIntervalMilliseconds);
+
+		ReleaseCurrentSubTransaction();
+		MemoryContextSwitchTo(savedContext);
+		CurrentResourceOwner = savedOwner;
+	}
+	PG_CATCH();
+	{
+		MemoryContextSwitchTo(savedContext);
+		ErrorData *errorData = CopyErrorData();
+		FlushErrorState();
+
+		RollbackAndReleaseCurrentSubTransaction();
+		MemoryContextSwitchTo(savedContext);
+		CurrentResourceOwner = savedOwner;
+
+		if (IsOperatorInterventionError(errorData))
+		{
+			ReThrowError(errorData);
+		}
+
+		ereport(WARNING, (errcode(errorData->sqlerrcode),
+						  errmsg(
+							  "Failed to publish statistics for background worker job %s with id %d.",
+							  jobExec->job.jobName, jobExec->job.jobId),
+						  errdetail_internal("%s", errorData->message)));
+		FreeErrorData(errorData);
+	}
+	PG_END_TRY();
+
+	statsState->attemptInProgress = false;
 	jobExec->state = JOB_IDLE;
 
-	if (result == JOB_RESULT_SUCCEEDED)
+	RecordJobAttemptDiagnostics(jobExec, result);
+}
+
+
+/* Updates process-local outcome counters and emits diagnostic completion logs. */
+static void
+RecordJobAttemptDiagnostics(BackgroundWorkerJobExecution *jobExec,
+							BackgroundWorkerJobResult result)
+{
+	switch (result)
 	{
-		jobExec->successfulExecutionCount++;
-		if (BgWorkerEnableDiagnosticsLog)
+		case JOB_RESULT_SUCCEEDED:
 		{
+			jobExec->successfulExecutionCount++;
+			if (BgWorkerEnableDiagnosticsLog)
+			{
+				elog_unredacted(
+					"Background worker job with id %d succeeded (successful executions: "
+					UINT64_FORMAT ", failed executions: " UINT64_FORMAT
+					", timed out executions: "
+					UINT64_FORMAT ", unobserved executions: "
+					UINT64_FORMAT ")",
+					jobExec->job.jobId,
+					jobExec->successfulExecutionCount,
+					jobExec->failedExecutionCount,
+					jobExec->timedOutExecutionCount,
+					jobExec->unobservedExecutionCount);
+			}
+			break;
+		}
+
+		case JOB_RESULT_FAILED:
+		{
+			jobExec->failedExecutionCount++;
 			elog_unredacted(
-				"Background worker job with id %d succeeded (successful executions: "
+				"Background worker job with id %d failed (successful executions: "
 				UINT64_FORMAT ", failed executions: " UINT64_FORMAT
 				", timed out executions: "
 				UINT64_FORMAT ", unobserved executions: "
@@ -831,57 +981,50 @@ CompleteJobAttempt(BackgroundWorkerJobExecution *jobExec,
 				jobExec->failedExecutionCount,
 				jobExec->timedOutExecutionCount,
 				jobExec->unobservedExecutionCount);
+			break;
 		}
-	}
-	else if (result == JOB_RESULT_FAILED)
-	{
-		jobExec->failedExecutionCount++;
-		elog_unredacted(
-			"Background worker job with id %d failed (successful executions: "
-			UINT64_FORMAT ", failed executions: " UINT64_FORMAT
-			", timed out executions: "
-			UINT64_FORMAT ", unobserved executions: "
-			UINT64_FORMAT ")",
-			jobExec->job.jobId,
-			jobExec->successfulExecutionCount,
-			jobExec->failedExecutionCount,
-			jobExec->timedOutExecutionCount,
-			jobExec->unobservedExecutionCount);
-	}
-	else if (result == JOB_RESULT_TIMED_OUT)
-	{
-		jobExec->timedOutExecutionCount++;
-		elog_unredacted(
-			"Background worker job with id %d timed out (configured timeout: %d seconds, successful executions: "
-			UINT64_FORMAT ", failed executions: " UINT64_FORMAT
-			", timed out executions: "
-			UINT64_FORMAT ", unobserved executions: "
-			UINT64_FORMAT ")",
-			jobExec->job.jobId,
-			jobExec->job.timeoutInSeconds,
-			jobExec->successfulExecutionCount,
-			jobExec->failedExecutionCount,
-			jobExec->timedOutExecutionCount,
-			jobExec->unobservedExecutionCount);
-	}
-	else if (result == JOB_RESULT_UNOBSERVED)
-	{
-		jobExec->unobservedExecutionCount++;
-		elog_unredacted(
-			"Background worker job with id %d resolved as unobserved (successful executions: "
-			UINT64_FORMAT ", failed executions: " UINT64_FORMAT
-			", timed out executions: "
-			UINT64_FORMAT ", unobserved executions: "
-			UINT64_FORMAT ")",
-			jobExec->job.jobId,
-			jobExec->successfulExecutionCount,
-			jobExec->failedExecutionCount,
-			jobExec->timedOutExecutionCount,
-			jobExec->unobservedExecutionCount);
-	}
-	else
-	{
-		ereport(WARNING, (errmsg("Unknown background worker job result: %d", result)));
+
+		case JOB_RESULT_TIMED_OUT:
+		{
+			jobExec->timedOutExecutionCount++;
+			elog_unredacted(
+				"Background worker job with id %d timed out (configured timeout: %d seconds, successful executions: "
+				UINT64_FORMAT ", failed executions: " UINT64_FORMAT
+				", timed out executions: "
+				UINT64_FORMAT ", unobserved executions: "
+				UINT64_FORMAT ")",
+				jobExec->job.jobId,
+				jobExec->job.timeoutInSeconds,
+				jobExec->successfulExecutionCount,
+				jobExec->failedExecutionCount,
+				jobExec->timedOutExecutionCount,
+				jobExec->unobservedExecutionCount);
+			break;
+		}
+
+		case JOB_RESULT_UNOBSERVED:
+		{
+			jobExec->unobservedExecutionCount++;
+			elog_unredacted(
+				"Background worker job with id %d resolved as unobserved (successful executions: "
+				UINT64_FORMAT ", failed executions: " UINT64_FORMAT
+				", timed out executions: "
+				UINT64_FORMAT ", unobserved executions: "
+				UINT64_FORMAT ")",
+				jobExec->job.jobId,
+				jobExec->successfulExecutionCount,
+				jobExec->failedExecutionCount,
+				jobExec->timedOutExecutionCount,
+				jobExec->unobservedExecutionCount);
+			break;
+		}
+
+		default:
+		{
+			ereport(WARNING,
+					(errmsg("Unknown background worker job result: %d", result)));
+			break;
+		}
 	}
 }
 
@@ -1129,6 +1272,9 @@ ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName, char *database
 		PushActiveSnapshot(GetTransactionSnapshot());
 		MemoryContextSwitchTo(stableContext);
 
+		/* Preserve the configured retry cadence after a dispatch failure. */
+		jobExec->lastStartTime = currentTime;
+
 		ereport(WARNING, (errmsg(
 							  "Failed to execute background worker job id %d. Could not establish connection and send query.",
 							  jobExec->job.jobId)));
@@ -1168,10 +1314,13 @@ CancelJobIfTimeIsUp(BackgroundWorkerJobExecution *jobExec, TimestampTz currentTi
 		{
 			PGConnTryCancel(jobExec->connection);
 		}
-
 		PQfinish(jobExec->connection);
 		jobExec->connection = NULL;
 		CompleteJobAttempt(jobExec, JOB_RESULT_TIMED_OUT);
+
+		ereport(LOG, (errmsg(
+						  "Canceled background worker job %s with id %d because of connection timeout of %d seconds.",
+						  jobExec->job.jobName, jobExec->job.jobId, timeoutInSeconds)));
 	}
 }
 
@@ -1369,6 +1518,11 @@ CreateJobExecutionObj(BackgroundWorkerJob job)
 	jobExec->connection = NULL;
 	jobExec->commandQuery = commandQuery;
 	jobExec->state = JOB_IDLE;
+	jobExec->statsState.attemptStartTimestamp = 0;
+	INSTR_TIME_SET_ZERO(jobExec->statsState.attemptStartTime);
+	jobExec->statsState.attemptInProgress = false;
+	jobExec->statsState.hasAttemptObservationInterval = false;
+	jobExec->statsState.attemptObservationIntervalMilliseconds = 0;
 	jobExec->successfulExecutionCount = 0;
 	jobExec->failedExecutionCount = 0;
 	jobExec->timedOutExecutionCount = 0;

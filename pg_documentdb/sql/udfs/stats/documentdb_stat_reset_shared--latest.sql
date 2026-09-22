@@ -1,9 +1,8 @@
 -- Shared reset entry point for the documentdb_stat_* statistics family,
 -- mirroring the shape of Postgres core pg_stat_reset_shared(text). The only
 -- supported target this iteration is 'bgworker', which resets the node-local
--- cumulative background-worker statistics. Runtime collection for that surface
--- lands separately, so the call remains a no-op against observable state in
--- this iteration. Unsupported targets are rejected.
+-- cumulative background-worker statistics and establishes a new reset epoch.
+-- Unsupported targets are rejected.
 CREATE OR REPLACE FUNCTION __API_SCHEMA_INTERNAL_V2__.documentdb_stat_reset_shared(
 	IN target text)
 RETURNS void

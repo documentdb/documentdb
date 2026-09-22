@@ -36,7 +36,35 @@ sub wait_for_leader
 	return 0;
 }
 
-sub wait_for_job_success
+sub wait_for_job_stats_success
+{
+	my ($node, $job_name) = @_;
+	my $deadline = time() + 30;
+
+	while (time() < $deadline)
+	{
+		my $success_count = eval {
+			$node->safe_psql(
+				'postgres',
+				qq{
+SELECT count(*)
+FROM documentdb_api_internal.documentdb_stat_bgworker_jobs jobs
+JOIN documentdb_api_internal.documentdb_stat_bgworker_job_stats stats
+USING (job_id)
+WHERE jobs.job_name = '$job_name'
+  AND documentdb_core.bson_get_value_text(
+          stats.statistics, 'successfulExecutions')::bigint > 0;
+});
+		};
+		return 1 if defined $success_count && $success_count eq '1';
+		usleep(100_000);
+	}
+
+	diag "Server log:\n" . slurp_file($node->logfile);
+	return 0;
+}
+
+sub wait_for_job_log_success
 {
 	my ($node, $job_id) = @_;
 	my $deadline = time() + 30;
@@ -86,11 +114,20 @@ CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;
 
 cmp_ok(wait_for_leader($primary), '>', 0, 'primary leader is attached');
 ok(
-	wait_for_job_success($primary, 90),
-	'first production index-build job succeeds on the primary');
+	wait_for_job_stats_success(
+		$primary, 'documentdb_index_build_background_job_1'),
+	'first production index-build job records a successful execution');
 ok(
-	wait_for_job_success($primary, 91),
-	'second production index-build job succeeds on the primary');
+	wait_for_job_stats_success(
+		$primary, 'documentdb_index_build_background_job_2'),
+	'second production index-build job records a successful execution');
+
+ok(
+	wait_for_job_log_success($primary, 90),
+	'first production index-build job logs a successful execution');
+ok(
+	wait_for_job_log_success($primary, 91),
+	'second production index-build job logs a successful execution');
 
 is(
 	$primary->safe_psql(

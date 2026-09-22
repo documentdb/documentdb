@@ -3,10 +3,9 @@
  *
  * src/background_worker/background_worker_stats.c
  *
- * Statistics surface for registered background worker jobs. Backs the
- * documentdb_stat_bgworker_jobs view by reading the job registry from the
- * querying backend's own (fork-inherited) copy and resolving the two
- * runtime-derived columns via the jobs' hooks at query time.
+ * Statistics surfaces for registered background worker jobs. The registry
+ * accessor reads the querying backend's fork-inherited copy, while the
+ * cumulative accessor reads one coherent snapshot from shared memory.
  *
  *-------------------------------------------------------------------------
  */
@@ -21,10 +20,11 @@
 #include <utils/tuplestore.h>
 
 #include "background_worker/background_worker_job.h"
+#include "background_worker/background_worker_private.h"
 #include "io/bson_core.h"
 
-
 #define BGWORKER_JOB_REGISTRY_COLUMNS 7
+#define BGWORKER_JOB_STATS_COLUMNS 2
 
 /*
  * Fallback schedule interval reported when a job's schedule hook throws.
@@ -32,10 +32,18 @@
  */
 #define DEFAULT_SCHEDULE_INTERVAL_SECONDS 60
 
-static Tuplestorestate * SetupBgworkerJobRegistryTuplestore(FunctionCallInfo fcinfo,
-															TupleDesc *tupleDescriptor);
+static Tuplestorestate * SetupBgworkerStatsTuplestore(FunctionCallInfo fcinfo,
+													  TupleDesc *tupleDescriptor,
+													  int expectedColumnCount,
+													  const char *resultName);
 static void StoreAllBgworkerJobRegistryRows(Tuplestorestate *tupleStore,
 											TupleDesc tupleDescriptor);
+static void StoreAllBgworkerJobStatsRows(Tuplestorestate *tupleStore,
+										 TupleDesc tupleDescriptor);
+static int64 GetExecutionAttempts(const BackgroundWorkerJobStats *jobStats);
+static const char * JobResultName(BackgroundWorkerJobResult result);
+static pgbson * BuildJobStatistics(const BackgroundWorkerJobStats *jobStats,
+								   TimestampTz statsResetTimestamp);
 static bool ResolveJobEnabled(const BackgroundWorkerJob *job);
 static int ResolveJobScheduleIntervalSeconds(const BackgroundWorkerJob *job);
 static pgbson * BuildJobOptions(const BackgroundWorkerJob *job);
@@ -56,8 +64,9 @@ Datum
 bgworker_job_registry(PG_FUNCTION_ARGS)
 {
 	TupleDesc tupleDescriptor = NULL;
-	Tuplestorestate *tupleStore = SetupBgworkerJobRegistryTuplestore(fcinfo,
-																	 &tupleDescriptor);
+	Tuplestorestate *tupleStore = SetupBgworkerStatsTuplestore(
+		fcinfo, &tupleDescriptor, BGWORKER_JOB_REGISTRY_COLUMNS,
+		"background worker job registry");
 
 	StoreAllBgworkerJobRegistryRows(tupleStore, tupleDescriptor);
 
@@ -66,22 +75,27 @@ bgworker_job_registry(PG_FUNCTION_ARGS)
 
 
 /*
- * The SQL contract lands before runtime collection. Keep the placeholder
- * failure-shaped so an unsupported binary cannot look like a healthy empty set.
+ * bgworker_job_stats returns one row per registered background worker job. All
+ * rows are serialized from one coherent shared-memory snapshot of cumulative
+ * terminal-attempt statistics in the current reset epoch.
  */
 Datum
 bgworker_job_stats(PG_FUNCTION_ARGS)
 {
-	ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					errmsg("background worker job statistics are not available "
-						   "in this binary version")));
+	TupleDesc tupleDescriptor = NULL;
+	Tuplestorestate *tupleStore = SetupBgworkerStatsTuplestore(
+		fcinfo, &tupleDescriptor, BGWORKER_JOB_STATS_COLUMNS,
+		"background worker job statistics");
+
+	StoreAllBgworkerJobStatsRows(tupleStore, tupleDescriptor);
+
+	PG_RETURN_VOID();
 }
 
 
 /*
- * documentdb_stat_reset_shared validates the shared statistics subsystem to
- * reset. Runtime collection is not active yet, so the accepted target remains
- * a no-op until its shared state is implemented.
+ * documentdb_stat_reset_shared validates and resets the requested shared
+ * statistics subsystem.
  */
 Datum
 documentdb_stat_reset_shared(PG_FUNCTION_ARGS)
@@ -96,6 +110,8 @@ documentdb_stat_reset_shared(PG_FUNCTION_ARGS)
 						errmsg("unrecognized reset target: \"%s\"", targetName),
 						errdetail_log("Target must be \"bgworker\".")));
 	}
+
+	ResetBackgroundWorkerJobStats();
 
 	PG_RETURN_VOID();
 }
@@ -134,6 +150,276 @@ StoreAllBgworkerJobRegistryRows(Tuplestorestate *tupleStore, TupleDesc tupleDesc
 
 		tuplestore_putvalues(tupleStore, tupleDescriptor, values, nulls);
 	}
+}
+
+
+/*
+ * StoreAllBgworkerJobStatsRows copies one coherent shared snapshot and appends
+ * one cumulative row per registered job.
+ */
+static void
+StoreAllBgworkerJobStatsRows(Tuplestorestate *tupleStore, TupleDesc tupleDescriptor)
+{
+	BackgroundWorkerJobStatsSnapshot snapshot = { 0 };
+	GetBackgroundWorkerJobStatsSnapshot(&snapshot);
+
+	int jobCount = GetBackgroundWorkerJobCount();
+	if (snapshot.jobCount != jobCount)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
+						errmsg(
+							"Background worker statistics row count does not match the job registry")));
+	}
+
+	for (int i = 0; i < jobCount; i++)
+	{
+		const BackgroundWorkerJob *job = GetBackgroundWorkerJob(i);
+		if (job == NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
+							errmsg("Background worker job registry entry %d is invalid",
+								   i)));
+		}
+
+		int jobStatsIndex = FindBackgroundWorkerJobStatsIndex(job->jobId, &snapshot);
+		if (jobStatsIndex < 0)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
+							errmsg(
+								"Background worker statistics entry for job id %d is missing",
+								job->jobId)));
+		}
+
+		const BackgroundWorkerJobStats *jobStats = &snapshot.jobs[jobStatsIndex];
+		Datum values[BGWORKER_JOB_STATS_COLUMNS] = { 0 };
+		bool nulls[BGWORKER_JOB_STATS_COLUMNS] = { 0 };
+
+		values[0] = Int32GetDatum(jobStats->jobId);
+		values[1] = PointerGetDatum(BuildJobStatistics(jobStats,
+													   snapshot.statsResetTimestamp));
+
+		tuplestore_putvalues(tupleStore, tupleDescriptor, values, nulls);
+	}
+}
+
+
+static int64
+GetExecutionAttempts(const BackgroundWorkerJobStats *jobStats)
+{
+	if (jobStats->successfulExecutions > PG_INT64_MAX ||
+		jobStats->failedExecutions > PG_INT64_MAX ||
+		jobStats->timedOutExecutions > PG_INT64_MAX ||
+		jobStats->unobservedExecutions > PG_INT64_MAX)
+	{
+		ereport(ERROR, (errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+						errmsg("Background worker statistics counter exceeds bigint")));
+	}
+
+	uint64 executionAttempts = jobStats->successfulExecutions;
+	if (jobStats->failedExecutions > PG_INT64_MAX - executionAttempts)
+	{
+		ereport(ERROR, (errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+						errmsg(
+							"Background worker execution attempt count exceeds bigint")));
+	}
+	executionAttempts += jobStats->failedExecutions;
+
+	if (jobStats->timedOutExecutions > PG_INT64_MAX - executionAttempts)
+	{
+		ereport(ERROR, (errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+						errmsg(
+							"Background worker execution attempt count exceeds bigint")));
+	}
+	executionAttempts += jobStats->timedOutExecutions;
+
+	if (jobStats->unobservedExecutions > PG_INT64_MAX - executionAttempts)
+	{
+		ereport(ERROR, (errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+						errmsg(
+							"Background worker execution attempt count exceeds bigint")));
+	}
+	executionAttempts += jobStats->unobservedExecutions;
+
+	return (int64) executionAttempts;
+}
+
+
+static const char *
+JobResultName(BackgroundWorkerJobResult result)
+{
+	switch (result)
+	{
+		case JOB_RESULT_SUCCEEDED:
+		{
+			return "succeeded";
+		}
+
+		case JOB_RESULT_FAILED:
+		{
+			return "failed";
+		}
+
+		case JOB_RESULT_TIMED_OUT:
+		{
+			return "timed_out";
+		}
+
+		case JOB_RESULT_UNOBSERVED:
+		{
+			return "unobserved";
+		}
+
+		default:
+		{
+			ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
+							errmsg("Background worker statistics result is invalid")));
+		}
+	}
+}
+
+
+/*
+ * BuildJobStatistics serializes cumulative completed-attempt statistics for a
+ * registered job. Event-dependent fields remain present as BSON null until the
+ * qualifying event occurs in the current statistics epoch.
+ */
+static pgbson *
+BuildJobStatistics(const BackgroundWorkerJobStats *jobStats,
+				   TimestampTz statsResetTimestamp)
+{
+	int64 executionAttempts = GetExecutionAttempts(jobStats);
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+
+	if (executionAttempts == 0)
+	{
+		PgbsonWriterAppendNull(&writer, "firstAttemptTs", strlen("firstAttemptTs"));
+		PgbsonWriterAppendNull(&writer, "lastAttemptTs", strlen("lastAttemptTs"));
+		PgbsonWriterAppendNull(&writer, "lastObservedResolutionTs",
+							   strlen("lastObservedResolutionTs"));
+		PgbsonWriterAppendNull(&writer, "lastSuccessTs", strlen("lastSuccessTs"));
+		PgbsonWriterAppendNull(&writer, "lastFailureTs", strlen("lastFailureTs"));
+		PgbsonWriterAppendNull(&writer, "lastExecutionResult",
+							   strlen("lastExecutionResult"));
+	}
+	else
+	{
+		PgbsonWriterAppendDateTime(&writer, "firstAttemptTs", strlen("firstAttemptTs"),
+								   jobStats->firstAttemptTimestamp);
+		PgbsonWriterAppendDateTime(&writer, "lastAttemptTs", strlen("lastAttemptTs"),
+								   jobStats->lastAttemptTimestamp);
+		PgbsonWriterAppendDateTime(&writer, "lastObservedResolutionTs",
+								   strlen("lastObservedResolutionTs"),
+								   jobStats->lastObservedResolutionTimestamp);
+
+		if (jobStats->successfulExecutions == 0)
+		{
+			PgbsonWriterAppendNull(&writer, "lastSuccessTs", strlen("lastSuccessTs"));
+		}
+		else
+		{
+			PgbsonWriterAppendDateTime(&writer, "lastSuccessTs", strlen("lastSuccessTs"),
+									   jobStats->lastSuccessTimestamp);
+		}
+
+		if (jobStats->failedExecutions == 0 && jobStats->timedOutExecutions == 0)
+		{
+			PgbsonWriterAppendNull(&writer, "lastFailureTs", strlen("lastFailureTs"));
+		}
+		else
+		{
+			PgbsonWriterAppendDateTime(&writer, "lastFailureTs", strlen("lastFailureTs"),
+									   jobStats->lastFailureTimestamp);
+		}
+
+		PgbsonWriterAppendUtf8(&writer, "lastExecutionResult",
+							   strlen("lastExecutionResult"),
+							   JobResultName(jobStats->lastResult));
+	}
+
+	PgbsonWriterAppendInt64(&writer, "executionAttempts", strlen("executionAttempts"),
+							executionAttempts);
+	PgbsonWriterAppendInt64(&writer, "successfulExecutions",
+							strlen("successfulExecutions"),
+							(int64) jobStats->successfulExecutions);
+	PgbsonWriterAppendInt64(&writer, "failedExecutions", strlen("failedExecutions"),
+							(int64) jobStats->failedExecutions);
+	PgbsonWriterAppendInt64(&writer, "timedOutExecutions",
+							strlen("timedOutExecutions"),
+							(int64) jobStats->timedOutExecutions);
+	PgbsonWriterAppendInt64(&writer, "unobservedExecutions",
+							strlen("unobservedExecutions"),
+							(int64) jobStats->unobservedExecutions);
+	PgbsonWriterAppendInt64(&writer, "consecutiveFailures",
+							strlen("consecutiveFailures"),
+							(int64) jobStats->consecutiveFailures);
+
+	if (executionAttempts == 0)
+	{
+		PgbsonWriterAppendNull(&writer, "lastObservedAttemptDurationMs",
+							   strlen("lastObservedAttemptDurationMs"));
+		PgbsonWriterAppendNull(&writer, "totalObservedAttemptDurationMs",
+							   strlen("totalObservedAttemptDurationMs"));
+		PgbsonWriterAppendNull(&writer, "minObservedAttemptDurationMs",
+							   strlen("minObservedAttemptDurationMs"));
+		PgbsonWriterAppendNull(&writer, "maxObservedAttemptDurationMs",
+							   strlen("maxObservedAttemptDurationMs"));
+		PgbsonWriterAppendNull(&writer, "meanObservedAttemptDurationMs",
+							   strlen("meanObservedAttemptDurationMs"));
+	}
+	else
+	{
+		PgbsonWriterAppendDouble(&writer, "lastObservedAttemptDurationMs",
+								 strlen("lastObservedAttemptDurationMs"),
+								 jobStats->lastObservedAttemptDurationMilliseconds);
+		PgbsonWriterAppendDouble(&writer, "totalObservedAttemptDurationMs",
+								 strlen("totalObservedAttemptDurationMs"),
+								 jobStats->totalObservedAttemptDurationMilliseconds);
+		PgbsonWriterAppendDouble(&writer, "minObservedAttemptDurationMs",
+								 strlen("minObservedAttemptDurationMs"),
+								 jobStats->minObservedAttemptDurationMilliseconds);
+		PgbsonWriterAppendDouble(&writer, "maxObservedAttemptDurationMs",
+								 strlen("maxObservedAttemptDurationMs"),
+								 jobStats->maxObservedAttemptDurationMilliseconds);
+		PgbsonWriterAppendDouble(&writer, "meanObservedAttemptDurationMs",
+								 strlen("meanObservedAttemptDurationMs"),
+								 jobStats->totalObservedAttemptDurationMilliseconds /
+								 executionAttempts);
+	}
+
+	/*
+	 * XXX: Populate these fields when terminal completion is observed through
+	 * connection readiness instead of scheduler polling. Establish a fresh
+	 * statistics epoch, then publish the event-driven measurement under both
+	 * field families without maintaining duplicate shared-memory aggregates.
+	 */
+	PgbsonWriterAppendNull(&writer, "lastAttemptDurationMs",
+						   strlen("lastAttemptDurationMs"));
+	PgbsonWriterAppendNull(&writer, "totalAttemptDurationMs",
+						   strlen("totalAttemptDurationMs"));
+	PgbsonWriterAppendNull(&writer, "minAttemptDurationMs",
+						   strlen("minAttemptDurationMs"));
+	PgbsonWriterAppendNull(&writer, "maxAttemptDurationMs",
+						   strlen("maxAttemptDurationMs"));
+	PgbsonWriterAppendNull(&writer, "meanAttemptDurationMs",
+						   strlen("meanAttemptDurationMs"));
+
+	if (jobStats->hasAttemptObservationInterval)
+	{
+		PgbsonWriterAppendInt64(&writer, "attemptObservationIntervalMs",
+								strlen("attemptObservationIntervalMs"),
+								jobStats->attemptObservationIntervalMilliseconds);
+	}
+	else
+	{
+		PgbsonWriterAppendNull(&writer, "attemptObservationIntervalMs",
+							   strlen("attemptObservationIntervalMs"));
+	}
+
+	PgbsonWriterAppendDateTime(&writer, "statsResetTs", strlen("statsResetTs"),
+							   statsResetTimestamp);
+
+	return PgbsonWriterGetPgbson(&writer);
 }
 
 
@@ -224,11 +510,12 @@ ResolveJobScheduleIntervalSeconds(const BackgroundWorkerJob *job)
 
 
 /*
- * SetupBgworkerJobRegistryTuplestore prepares a materialize-mode tuplestore
- * matching the function's declared result type.
+ * SetupBgworkerStatsTuplestore prepares a materialize-mode tuplestore matching
+ * the function's declared result type.
  */
 static Tuplestorestate *
-SetupBgworkerJobRegistryTuplestore(FunctionCallInfo fcinfo, TupleDesc *tupleDescriptor)
+SetupBgworkerStatsTuplestore(FunctionCallInfo fcinfo, TupleDesc *tupleDescriptor,
+							 int expectedColumnCount, const char *resultName)
 {
 	ReturnSetInfo *resultSet = (ReturnSetInfo *) fcinfo->resultinfo;
 
@@ -281,14 +568,15 @@ SetupBgworkerJobRegistryTuplestore(FunctionCallInfo fcinfo, TupleDesc *tupleDesc
 		}
 	}
 
-	if ((*tupleDescriptor)->natts != BGWORKER_JOB_REGISTRY_COLUMNS)
+	if ((*tupleDescriptor)->natts != expectedColumnCount)
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("background worker job registry return type has %d columns; "
+				 errmsg("%s return type has %d columns; "
 						"expected %d",
+						resultName,
 						(*tupleDescriptor)->natts,
-						BGWORKER_JOB_REGISTRY_COLUMNS)));
+						expectedColumnCount)));
 	}
 
 	MemoryContext perQueryContext = resultSet->econtext->ecxt_per_query_memory;
