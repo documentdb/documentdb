@@ -770,6 +770,8 @@ SELECT remote_drain_and_report(
 SELECT run_command_on_all_nodes(
     $$ALTER SYSTEM SET documentdb.enable_dynamic_cursor_with_skiplimit = 'on'$$);
 SELECT run_command_on_all_nodes($$SELECT pg_reload_conf()$$);
+CALL documentdb_distributed_test_helpers.wait_for_command_result_on_all_nodes(
+    $$SELECT current_setting('documentdb.enable_dynamic_cursor_with_skiplimit')$$, 'on');
 
 SELECT remote_sorted_limit_report(
     '{ "find": "remote_e2e_coll", "sort": { "a": 1 }, "projection": { "_id": 1, "a": 1 }, "hint": "idx_a", "limit": 5, "batchSize": 2 }',
@@ -812,6 +814,8 @@ SELECT remote_sorted_skip_report(
 SELECT run_command_on_all_nodes(
     $$ALTER SYSTEM RESET documentdb.enable_dynamic_cursor_with_skiplimit$$);
 SELECT run_command_on_all_nodes($$SELECT pg_reload_conf()$$);
+CALL documentdb_distributed_test_helpers.wait_for_command_result_on_all_nodes(
+    $$SELECT current_setting('documentdb.enable_dynamic_cursor_with_skiplimit')$$, 'off');
 
 -- ---------------------------------------------------------------------------
 -- Test R-AGG: aggregate pipeline on the same unsharded remote collection.

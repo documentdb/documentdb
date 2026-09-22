@@ -845,6 +845,7 @@ SELECT document FROM bson_aggregation_find('db', '{ "find": "aggregation_pipelin
 (1 row)
 
 -- count
+SELECT documentdb_distributed_test_helpers.refresh_pg_stat_snapshot() AS stats_snapshot \gset
 SELECT document FROM bson_aggregation_count('db', '{ "count": "aggregation_pipeline" }');
                                document                               
 ---------------------------------------------------------------------

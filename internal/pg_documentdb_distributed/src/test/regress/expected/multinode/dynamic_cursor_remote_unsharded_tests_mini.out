@@ -901,6 +901,8 @@ SELECT run_command_on_all_nodes($$SELECT pg_reload_conf()$$);
  (2,t,t)
 (2 rows)
 
+CALL documentdb_distributed_test_helpers.wait_for_command_result_on_all_nodes(
+    $$SELECT current_setting('documentdb.enable_dynamic_cursor_with_skiplimit')$$, 'on');
 SELECT remote_sorted_limit_report(
     '{ "find": "remote_e2e_coll", "sort": { "a": 1 }, "projection": { "_id": 1, "a": 1 }, "hint": "idx_a", "limit": 5, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "543" }, "collection": "remote_e2e_coll", "batchSize": 2 }',
@@ -978,6 +980,8 @@ SELECT run_command_on_all_nodes($$SELECT pg_reload_conf()$$);
  (2,t,t)
 (2 rows)
 
+CALL documentdb_distributed_test_helpers.wait_for_command_result_on_all_nodes(
+    $$SELECT current_setting('documentdb.enable_dynamic_cursor_with_skiplimit')$$, 'off');
 -- ---------------------------------------------------------------------------
 -- Test R-AGG: aggregate pipeline on the same unsharded remote collection.
 -- pipeline: [ { $match: { a: { $gt: 35 } } } ] with hint idx_a, batchSize 10.

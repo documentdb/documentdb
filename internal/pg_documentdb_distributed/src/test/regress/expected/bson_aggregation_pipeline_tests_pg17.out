@@ -846,6 +846,7 @@ SELECT document FROM bson_aggregation_find('db', '{ "find": "aggregation_pipelin
 (1 row)
 
 -- count
+SELECT documentdb_distributed_test_helpers.refresh_pg_stat_snapshot() AS stats_snapshot \gset
 SELECT document FROM bson_aggregation_count('db', '{ "count": "aggregation_pipeline" }');
                                document                               
 ---------------------------------------------------------------------
@@ -878,9 +879,9 @@ SELECT document FROM bson_aggregation_count('db', '{ "count": "aggregation_pipel
 (1 row)
 
 SELECT document FROM bson_aggregation_count('db', '{ "count": "aggregation_pipeline", "query": {}, "skip": -3.14159 }');
-psql:sql/bson_aggregation_pipeline_tests.sql:193: ERROR:  The BSON field 'skip' requires a value greater than or equal to 0, but the given value is '-3'.
+psql:sql/bson_aggregation_pipeline_tests.sql:194: ERROR:  The BSON field 'skip' requires a value greater than or equal to 0, but the given value is '-3'.
 SELECT document FROM bson_aggregation_count('db', '{ "count": "aggregation_pipeline", "query": {}, "skip": -9223372036854775808 }');
-psql:sql/bson_aggregation_pipeline_tests.sql:195: ERROR:  The BSON field 'skip' requires a value greater than or equal to 0, but the given value is '-9223372036854775808'.
+psql:sql/bson_aggregation_pipeline_tests.sql:196: ERROR:  The BSON field 'skip' requires a value greater than or equal to 0, but the given value is '-9223372036854775808'.
 SELECT document FROM bson_aggregation_count('db', '{ "count": "non_existent_coll" }');
                                document                               
 ---------------------------------------------------------------------
@@ -906,9 +907,9 @@ SELECT document FROM documentdb_api.count_query('db', '{ "count": "aggregation_p
 (1 row)
 
 SELECT document FROM documentdb_api.count_query('db', '{ "count": "aggregation_pipeline", "query": {}, "skip": -3.14159 }');
-psql:sql/bson_aggregation_pipeline_tests.sql:205: ERROR:  The BSON field 'skip' requires a value greater than or equal to 0, but the given value is '-3'.
+psql:sql/bson_aggregation_pipeline_tests.sql:206: ERROR:  The BSON field 'skip' requires a value greater than or equal to 0, but the given value is '-3'.
 SELECT document FROM documentdb_api.count_query('db', '{ "count": "aggregation_pipeline", "query": {}, "skip": -9223372036854775808 }');
-psql:sql/bson_aggregation_pipeline_tests.sql:207: ERROR:  The BSON field 'skip' requires a value greater than or equal to 0, but the given value is '-9223372036854775808'.
+psql:sql/bson_aggregation_pipeline_tests.sql:208: ERROR:  The BSON field 'skip' requires a value greater than or equal to 0, but the given value is '-9223372036854775808'.
 -- handling of skip as an aggregation stage; this is different from skip in a count query
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [{ "$match": {}}, { "$skip": 0 }], "cursor": {}}');
                                                                document                                                               
@@ -926,11 +927,11 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 (2 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [{ "$match": {}}, { "$skip": null }], "cursor": {}}');
-psql:sql/bson_aggregation_pipeline_tests.sql:214: ERROR:  Invalid argument to $skip stage: Expected a non-negative integer argument
+psql:sql/bson_aggregation_pipeline_tests.sql:215: ERROR:  Invalid argument to $skip stage: Expected a non-negative integer argument
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [{ "$match": {}}, { "$skip": -3.14159 }], "cursor": {}}');
-psql:sql/bson_aggregation_pipeline_tests.sql:216: ERROR:  Invalid parameter provided to $skip stage: value cannot be expressed as a 64-bit integer $skip: -3.141590
+psql:sql/bson_aggregation_pipeline_tests.sql:217: ERROR:  Invalid parameter provided to $skip stage: value cannot be expressed as a 64-bit integer $skip: -3.141590
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [{ "$match": {}}, { "$skip": -9223372036854775808 }], "cursor": {}}');
-psql:sql/bson_aggregation_pipeline_tests.sql:218: ERROR:  Invalid argument provided to $skip stage: A non-negative numerical value was expected in $skip, but received -9223372036854775808.
+psql:sql/bson_aggregation_pipeline_tests.sql:219: ERROR:  Invalid argument provided to $skip stage: A non-negative numerical value was expected in $skip, but received -9223372036854775808.
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_count('db', '{ "count": "aggregation_pipeline" }');
                      QUERY PLAN                     
 ---------------------------------------------------------------------
@@ -1022,7 +1023,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('db',
 ROLLBACK;
 -- $lookup
 SELECT documentdb_api.insert_one('db','agg_pipeline_movie_screenings',' { "_id" : 1, "movie_title" : "Interstellar", "ticket_price" : 15, "tickets_sold" : 120 }', NULL);
-psql:sql/bson_aggregation_pipeline_tests.sql:249: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests.sql:250: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1065,7 +1066,7 @@ SELECT documentdb_api.insert_one('db','agg_pipeline_movie_screenings',' { "_id" 
 (1 row)
 
 SELECT documentdb_api.insert_one('db','agg_pipeline_movie_catalog',' { "_id" : 11, "title" : "Interstellar", "genre": "Sci-Fi", "available_seats" : 50 }', NULL);
-psql:sql/bson_aggregation_pipeline_tests.sql:257: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests.sql:258: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1482,24 +1483,24 @@ SELECT document FROM bson_aggregation_pipeline('db',
 -- $lookup.pipeline Negative tests
 SELECT document FROM bson_aggregation_pipeline('db', 
     '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "colldne", "pipeline": { "$count": "efe" }, "as": "c" } } ], "cursor": {} }');
-psql:sql/bson_aggregation_pipeline_tests.sql:351: ERROR:  The BSON field '$lookup.pipeline' has an incorrect type 'object'; it should be of type 'array'.
+psql:sql/bson_aggregation_pipeline_tests.sql:352: ERROR:  The BSON field '$lookup.pipeline' has an incorrect type 'object'; it should be of type 'array'.
 SELECT document FROM bson_aggregation_pipeline('db', 
     '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "colldne", "pipeline": [ "$count" ], "as": "c" } } ], "cursor": {} }');
-psql:sql/bson_aggregation_pipeline_tests.sql:354: ERROR:  Pipeline stage for lookup pipeline must be a document
+psql:sql/bson_aggregation_pipeline_tests.sql:355: ERROR:  Pipeline stage for lookup pipeline must be a document
 SELECT document FROM bson_aggregation_pipeline('db', 
     '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "colldne", "pipeline": [ { } ], "as": "c" } } ], "cursor": {} }');
-psql:sql/bson_aggregation_pipeline_tests.sql:357: ERROR:  Pipeline stage must have a single field.
+psql:sql/bson_aggregation_pipeline_tests.sql:358: ERROR:  Pipeline stage must have a single field.
 SELECT document FROM bson_aggregation_pipeline('db', 
     '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "colldne", "pipeline": [ { "$count": "efe", "$match": { "year": 2018 } } ], "as": "c" } } ], "cursor": {} }');
-psql:sql/bson_aggregation_pipeline_tests.sql:360: ERROR:  A pipeline stage specification object is required to have one and only one field.
+psql:sql/bson_aggregation_pipeline_tests.sql:361: ERROR:  A pipeline stage specification object is required to have one and only one field.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": 1, "pipeline": [ { "$addFields": { "newField" : "1", "a.y": ["p", "q"] } } ], "cursor": {} }');
-psql:sql/bson_aggregation_pipeline_tests.sql:363: ERROR:  The value '{aggregate: 1}' is invalid for the '$addFields'; a collection input is necessary.
+psql:sql/bson_aggregation_pipeline_tests.sql:364: ERROR:  The value '{aggregate: 1}' is invalid for the '$addFields'; a collection input is necessary.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": 1, "pipeline": [ { "$match": { "newField" : "1", "a.y": ["p", "q"] } } ], "cursor": {} }');
-psql:sql/bson_aggregation_pipeline_tests.sql:364: ERROR:  The value '{aggregate: 1}' is invalid for the '$match'; a collection input is necessary.
+psql:sql/bson_aggregation_pipeline_tests.sql:365: ERROR:  The value '{aggregate: 1}' is invalid for the '$match'; a collection input is necessary.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": 1, "pipeline": [ { "$project": { "newField" : "1", "a.y": ["p", "q"] } } ], "cursor": {} }');
-psql:sql/bson_aggregation_pipeline_tests.sql:365: ERROR:  The value '{aggregate: 1}' is invalid for the '$project'; a collection input is necessary.
+psql:sql/bson_aggregation_pipeline_tests.sql:366: ERROR:  The value '{aggregate: 1}' is invalid for the '$project'; a collection input is necessary.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": 1, "pipeline": [ { "$skip": 1 } ], "cursor": {} }');
-psql:sql/bson_aggregation_pipeline_tests.sql:366: ERROR:  The value '{aggregate: 1}' is invalid for the '$skip'; a collection input is necessary.
+psql:sql/bson_aggregation_pipeline_tests.sql:367: ERROR:  The value '{aggregate: 1}' is invalid for the '$skip'; a collection input is necessary.
 -- test sort behavior on sharded/unsharded
 SELECT documentdb_distributed_test_helpers.mask_plan_id_from_distributed_subplan($Q$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate" : "agg_pipeline_movie_catalog", "pipeline" : [ { "$match" : { "$or" : [ { "_id" : { "$lt" : 9999.0 }, "some_other_field" : { "$ne" : 3.0 } }, { "this_predicate_matches_nothing" : true } ] } }, { "$sort" : { "_id" : -1.0 } }, { "$limit" : 1.0 }, { "$project" : { "_id" : 1.0, "b" : { "$round" : "$a" } } } ], "cursor" : {  }, "lsid" : { "id" : { "$binary" : { "base64": "VJmzOaS5R46C4aFkQzrFaQ==", "subType" : "04" } } }, "$db" : "db" }');
@@ -1671,11 +1672,11 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 (9 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$unionWith": { } } ], "cursor": {} }');
-psql:sql/bson_aggregation_pipeline_tests.sql:393: ERROR:  A $unionWith stage without specifying a target collection must begin its pipeline with a $documents stage.
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$unionWith": { "pipeline": [ ] } } ], "cursor": {} }');
 psql:sql/bson_aggregation_pipeline_tests.sql:394: ERROR:  A $unionWith stage without specifying a target collection must begin its pipeline with a $documents stage.
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$unionWith": { "pipeline": [ { "$match" : { "$or" : [ { "_id" : { "$lt" : 9999.0 }, "some_other_field" : { "$ne" : 3.0 } } ] } } ] } } ], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$unionWith": { "pipeline": [ ] } } ], "cursor": {} }');
 psql:sql/bson_aggregation_pipeline_tests.sql:395: ERROR:  A $unionWith stage without specifying a target collection must begin its pipeline with a $documents stage.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$unionWith": { "pipeline": [ { "$match" : { "$or" : [ { "_id" : { "$lt" : 9999.0 }, "some_other_field" : { "$ne" : 3.0 } } ] } } ] } } ], "cursor": {} }');
+psql:sql/bson_aggregation_pipeline_tests.sql:396: ERROR:  A $unionWith stage without specifying a target collection must begin its pipeline with a $documents stage.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$unionWith": { "pipeline": [ { "$documents": [ { "a": 1 }, { "a": 2 } ]}] } } ], "cursor": {} }');
                                                                document                                                               
 ---------------------------------------------------------------------
@@ -1708,11 +1709,11 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 
 -- NumberDouble Range+1 and Range-1 Negative test $skip
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$skip": {"$numberDouble" : "-9223372036854776833"} } ], "cursor": {} }');
-psql:sql/bson_aggregation_pipeline_tests.sql:405: ERROR:  Invalid parameter provided to $skip stage: value cannot be expressed as a 64-bit integer $skip: -9223372036854777856.000000
+psql:sql/bson_aggregation_pipeline_tests.sql:406: ERROR:  Invalid parameter provided to $skip stage: value cannot be expressed as a 64-bit integer $skip: -9223372036854777856.000000
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$skip": {"$numberDouble" : "9223372036854775296"} } ], "cursor": {} }');
-psql:sql/bson_aggregation_pipeline_tests.sql:406: ERROR:  Invalid parameter provided to $skip stage: value cannot be expressed as a 64-bit integer $skip: 9223372036854775808.000000
+psql:sql/bson_aggregation_pipeline_tests.sql:407: ERROR:  Invalid parameter provided to $skip stage: value cannot be expressed as a 64-bit integer $skip: 9223372036854775808.000000
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$skip": {"$numberDouble" : "-9223372036854776832"} } ], "cursor": {} }');
-psql:sql/bson_aggregation_pipeline_tests.sql:407: ERROR:  Invalid argument provided to $skip stage: A non-negative numerical value was expected in $skip, but received -9223372036854775808.
+psql:sql/bson_aggregation_pipeline_tests.sql:408: ERROR:  Invalid argument provided to $skip stage: A non-negative numerical value was expected in $skip, but received -9223372036854775808.
 -- samplerate
 /* insert 100 documents */
 /* test unshard case */
@@ -1724,7 +1725,7 @@ PERFORM documentdb_api.insert_one('db', 'agg_pipeline_samplerate', FORMAT('{ "_i
 END LOOP;
 END;
 $$;
-psql:sql/bson_aggregation_pipeline_tests.sql:418: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests.sql:419: NOTICE:  creating collection
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": 1 } }, {"$count": "count"} ], "cursor": {} }');
                 document                
 ---------------------------------------------------------------------
@@ -1849,21 +1850,21 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeli
 
 -- negative samplerate
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": -1.23 } }, { "$limit": 1 }, {"$count": "count"} ], "cursor": {} }');
-psql:sql/bson_aggregation_pipeline_tests.sql:438: ERROR:  numeric argument to $sampleRate must be in [0, 1]
+psql:sql/bson_aggregation_pipeline_tests.sql:439: ERROR:  numeric argument to $sampleRate must be in [0, 1]
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": null } }, { "$limit": 1 }, {"$count": "count"} ], "cursor": {} }');
-psql:sql/bson_aggregation_pipeline_tests.sql:440: ERROR:  The operator $sampleRate requires an argument of numeric data type.
+psql:sql/bson_aggregation_pipeline_tests.sql:441: ERROR:  The operator $sampleRate requires an argument of numeric data type.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": NaN } }, { "$limit": 1 }, {"$count": "count"} ], "cursor": {} }');
-psql:sql/bson_aggregation_pipeline_tests.sql:442: ERROR:  numeric argument to $sampleRate must be in [0, 1]
+psql:sql/bson_aggregation_pipeline_tests.sql:443: ERROR:  numeric argument to $sampleRate must be in [0, 1]
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": Infinity } }, { "$limit": 1 }, {"$count": "count"} ], "cursor": {} }');
-psql:sql/bson_aggregation_pipeline_tests.sql:444: ERROR:  numeric argument to $sampleRate must be in [0, 1]
+psql:sql/bson_aggregation_pipeline_tests.sql:445: ERROR:  numeric argument to $sampleRate must be in [0, 1]
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": -Infinity } }, { "$limit": 1 }, {"$count": "count"} ], "cursor": {} }');
-psql:sql/bson_aggregation_pipeline_tests.sql:446: ERROR:  numeric argument to $sampleRate must be in [0, 1]
+psql:sql/bson_aggregation_pipeline_tests.sql:447: ERROR:  numeric argument to $sampleRate must be in [0, 1]
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": "0.65" } }, { "$limit": 1 }, {"$count": "count"} ], "cursor": {} }');
-psql:sql/bson_aggregation_pipeline_tests.sql:448: ERROR:  The operator $sampleRate requires an argument of numeric data type.
+psql:sql/bson_aggregation_pipeline_tests.sql:449: ERROR:  The operator $sampleRate requires an argument of numeric data type.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": 10 } }, { "$limit": 1 }, {"$count": "count"} ], "cursor": {} }');
-psql:sql/bson_aggregation_pipeline_tests.sql:450: ERROR:  numeric argument to $sampleRate must be in [0, 1]
+psql:sql/bson_aggregation_pipeline_tests.sql:451: ERROR:  numeric argument to $sampleRate must be in [0, 1]
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": false } }, { "$limit": 1 }, {"$count": "count"} ], "cursor": {} }');
-psql:sql/bson_aggregation_pipeline_tests.sql:452: ERROR:  The operator $sampleRate requires an argument of numeric data type.
+psql:sql/bson_aggregation_pipeline_tests.sql:453: ERROR:  The operator $sampleRate requires an argument of numeric data type.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": 1 } }, {"$count": "count"} ], "cursor": {} }');
                 document                
 ---------------------------------------------------------------------
@@ -1908,7 +1909,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 
 -- Pipeline directly push to shards if all stages refer to same collection and that is not sharded and is present on the same node as coordinator.
 SELECT documentdb_api.insert_one('pipelineDB','agg_pipeline_optimizations','{ "_id": 1, "a": "RANDOM_A", "b": {"c": ["SAMPLE1", "SAMPLE2"], "d": [[1,2], [3, 4]]} }', NULL);
-psql:sql/bson_aggregation_pipeline_tests.sql:468: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests.sql:469: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1977,7 +1978,7 @@ EXPLAIN (VERBOSE OFF, COSTS OFF) SELECT document FROM bson_aggregation_pipeline(
 (17 rows)
 
 SELECT documentdb_api.create_collection('pipelineDB', 'agg_pipeline_optimizations_new');
-psql:sql/bson_aggregation_pipeline_tests.sql:479: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests.sql:480: NOTICE:  creating collection
  create_collection 
 ---------------------------------------------------------------------
  t
@@ -2130,7 +2131,7 @@ SELECT check_aggregation_stages_limit(1000);
 (1 row)
 
 SELECT check_aggregation_stages_limit(1001);
-psql:sql/bson_aggregation_pipeline_tests.sql:539: ERROR:  The pipeline length cannot exceed a maximum of 1000 stages.
+psql:sql/bson_aggregation_pipeline_tests.sql:540: ERROR:  The pipeline length cannot exceed a maximum of 1000 stages.
 CONTEXT:  SQL statement "SELECT document FROM bson_aggregation_pipeline('db', aggregate_spec::text::documentdb_core.bson)"
 PL/pgSQL function check_aggregation_stages_limit(integer) line 12 at PERFORM
 SELECT check_lookup_stages_limit(1, 1);
@@ -2158,11 +2159,11 @@ SELECT check_lookup_stages_limit(500, 500);
 (1 row)
 
 SELECT check_lookup_stages_limit(1000, 1);
-psql:sql/bson_aggregation_pipeline_tests.sql:545: ERROR:  The pipeline length cannot exceed a maximum of 1000 stages.
+psql:sql/bson_aggregation_pipeline_tests.sql:546: ERROR:  The pipeline length cannot exceed a maximum of 1000 stages.
 CONTEXT:  SQL statement "SELECT document FROM bson_aggregation_pipeline('db', aggregate_spec::text::documentdb_core.bson)"
 PL/pgSQL function check_lookup_stages_limit(integer,integer) line 18 at PERFORM
 SELECT check_lookup_stages_limit(1, 1000);
-psql:sql/bson_aggregation_pipeline_tests.sql:546: ERROR:  The pipeline length cannot exceed a maximum of 1000 stages.
+psql:sql/bson_aggregation_pipeline_tests.sql:547: ERROR:  The pipeline length cannot exceed a maximum of 1000 stages.
 CONTEXT:  SQL statement "SELECT document FROM bson_aggregation_pipeline('db', aggregate_spec::text::documentdb_core.bson)"
 PL/pgSQL function check_lookup_stages_limit(integer,integer) line 18 at PERFORM
 SET documentdb.aggregation_stages_limit = 1005;
@@ -2187,7 +2188,7 @@ SELECT check_lookup_stages_limit(1, 1000);
 RESET documentdb.aggregation_stages_limit;
 -- $lookup and $unwind stage combined when null results need to be preserved
 SELECT documentdb_api.insert_one('db','lookup_directors','{ "_id": 1, "name": "Alex Veridian" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests.sql:555: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests.sql:556: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2200,7 +2201,7 @@ SELECT documentdb_api.insert_one('db','lookup_directors','{ "_id": 2, "name": "M
 (1 row)
 
 SELECT documentdb_api.insert_one('db','lookup_movies','{ "_id": 1, "title": "Shadow Horizon", "director": "Alex Veridian" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests.sql:557: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests.sql:558: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2254,7 +2255,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 
 -- $in: [] with bson_dollar_project_find
 SELECT documentdb_api.insert_one('db', 'collTestEmptyIn', '{"_id": 1, "name": "sheep", "sound": "baa"}');
-psql:sql/bson_aggregation_pipeline_tests.sql:565: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests.sql:566: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2359,7 +2360,7 @@ SELECT documentdb_api.drop_collection('db', 'collTestEmptyIn');
 
 /* primary Index pushdown test for select*/
 SELECT documentdb_api.insert_one('db','indexPushDownTest','{ "_id": 1, "name": "Alex Veridian" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests.sql:630: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests.sql:631: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }

@@ -49,4 +49,25 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+CREATE OR REPLACE PROCEDURE documentdb_distributed_test_helpers.wait_for_command_result_on_all_nodes(
+		p_command text,
+		p_expected_value text)
+AS $$
+DECLARE
+	expected_result_observed boolean := false;
+BEGIN
+	FOR attempt IN 1..100 LOOP
+		SELECT bool_and(CASE WHEN success THEN result = p_expected_value ELSE false END)
+			INTO expected_result_observed
+			FROM run_command_on_all_nodes(p_command);
 
+		EXIT WHEN expected_result_observed;
+		PERFORM pg_sleep(0.05);
+	END LOOP;
+
+	IF NOT COALESCE(expected_result_observed, false) THEN
+		RAISE EXCEPTION 'Timed out waiting for command result % on all nodes',
+			p_expected_value;
+	END IF;
+END;
+$$ LANGUAGE plpgsql;

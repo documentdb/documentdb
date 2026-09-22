@@ -400,48 +400,71 @@ SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_searc
 (5 rows)
 
 -- now add projection.
-SELECT bson_dollar_project(document, '{ "_id": 1, "titular": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana baya cosechar" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "titular": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana baya cosechar" } }' ORDER BY object_id;
                                                bson_dollar_project                                                
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "21" }, "titular" : "Manzana", "rank" : { "$numberDouble" : "1.0" } }
  { "_id" : { "$numberInt" : "22" }, "titular" : "Comprar Manzana", "rank" : { "$numberDouble" : "1.0" } }
- { "_id" : { "$numberInt" : "28" }, "titular" : "Manzana con pera y baya", "rank" : { "$numberDouble" : "2.0" } }
  { "_id" : { "$numberInt" : "23" }, "titular" : "Cosechando una baya", "rank" : { "$numberDouble" : "2.0" } }
+ { "_id" : { "$numberInt" : "24" }, "titular" : "Cosechar", "rank" : { "$numberDouble" : "1.0" } }
  { "_id" : { "$numberInt" : "25" }, "titular" : "Manzana con baya", "rank" : { "$numberDouble" : "2.0" } }
  { "_id" : { "$numberInt" : "27" }, "titular" : "Manzana con pera", "rank" : { "$numberDouble" : "1.0" } }
- { "_id" : { "$numberInt" : "24" }, "titular" : "Cosechar", "rank" : { "$numberDouble" : "1.0" } }
+ { "_id" : { "$numberInt" : "28" }, "titular" : "Manzana con pera y baya", "rank" : { "$numberDouble" : "2.0" } }
 (7 rows)
 
-SELECT bson_dollar_add_fields(document, '{ "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana baya cosechar" } }';
+SELECT bson_dollar_add_fields(document, '{ "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana baya cosechar" } }' ORDER BY object_id;
                                                                         bson_dollar_add_fields                                                                         
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "21" }, "titular" : "Manzana", "writer" : "xyz", "score" : { "$numberInt" : "50" }, "rank" : { "$numberDouble" : "1.0" } }
  { "_id" : { "$numberInt" : "22" }, "titular" : "Comprar Manzana", "writer" : "efg", "score" : { "$numberInt" : "5" }, "rank" : { "$numberDouble" : "1.0" } }
- { "_id" : { "$numberInt" : "28" }, "titular" : "Manzana con pera y baya", "writer" : "xyz", "score" : { "$numberInt" : "10" }, "rank" : { "$numberDouble" : "2.0" } }
  { "_id" : { "$numberInt" : "23" }, "titular" : "Cosechando una baya", "writer" : "abc", "score" : { "$numberInt" : "90" }, "rank" : { "$numberDouble" : "2.0" } }
+ { "_id" : { "$numberInt" : "24" }, "titular" : "Cosechar", "writer" : "xyz", "score" : { "$numberInt" : "100" }, "rank" : { "$numberDouble" : "1.0" } }
  { "_id" : { "$numberInt" : "25" }, "titular" : "Manzana con baya", "writer" : "abc", "score" : { "$numberInt" : "200" }, "rank" : { "$numberDouble" : "2.0" } }
  { "_id" : { "$numberInt" : "27" }, "titular" : "Manzana con pera", "writer" : "efg", "score" : { "$numberInt" : "10" }, "rank" : { "$numberDouble" : "1.0" } }
- { "_id" : { "$numberInt" : "24" }, "titular" : "Cosechar", "writer" : "xyz", "score" : { "$numberInt" : "100" }, "rank" : { "$numberDouble" : "1.0" } }
+ { "_id" : { "$numberInt" : "28" }, "titular" : "Manzana con pera y baya", "writer" : "xyz", "score" : { "$numberInt" : "10" }, "rank" : { "$numberDouble" : "2.0" } }
 (7 rows)
 
-SELECT bson_dollar_project_find(document, '{ "_id": 1, "titular": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana baya cosechar" } }';
+SELECT bson_dollar_project_find(document, '{ "_id": 1, "titular": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana baya cosechar" } }' ORDER BY object_id;
                                              bson_dollar_project_find                                             
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "21" }, "titular" : "Manzana", "rank" : { "$numberDouble" : "1.0" } }
  { "_id" : { "$numberInt" : "22" }, "titular" : "Comprar Manzana", "rank" : { "$numberDouble" : "1.0" } }
- { "_id" : { "$numberInt" : "28" }, "titular" : "Manzana con pera y baya", "rank" : { "$numberDouble" : "2.0" } }
  { "_id" : { "$numberInt" : "23" }, "titular" : "Cosechando una baya", "rank" : { "$numberDouble" : "2.0" } }
+ { "_id" : { "$numberInt" : "24" }, "titular" : "Cosechar", "rank" : { "$numberDouble" : "1.0" } }
  { "_id" : { "$numberInt" : "25" }, "titular" : "Manzana con baya", "rank" : { "$numberDouble" : "2.0" } }
  { "_id" : { "$numberInt" : "27" }, "titular" : "Manzana con pera", "rank" : { "$numberDouble" : "1.0" } }
- { "_id" : { "$numberInt" : "24" }, "titular" : "Cosechar", "rank" : { "$numberDouble" : "1.0" } }
+ { "_id" : { "$numberInt" : "28" }, "titular" : "Manzana con pera y baya", "rank" : { "$numberDouble" : "2.0" } }
 (7 rows)
 
-SELECT cursorPage, continuation, persistConnection FROM documentdb_api.find_cursor_first_page('db', '{ "find": "bson_dollar_ops_text_search", "filter": { "$text": { "$search": "Manzana baya cosechar" } }, "projection": { "_id": 1, "titular": 1, "rank": { "$meta": "textScore" }} }');
-                                                                                                                                                                                                                                                                                                                                                                                                                                                       cursorpage                                                                                                                                                                                                                                                                                                                                                                                                                                                       | continuation | persistconnection 
+CREATE TEMP TABLE text_search_cursor_result AS
+SELECT cursorPage, continuation, persistConnection
+FROM documentdb_api.find_cursor_first_page('db', '{ "find": "bson_dollar_ops_text_search", "filter": { "$text": { "$search": "Manzana baya cosechar" } }, "projection": { "_id": 1, "titular": 1, "rank": { "$meta": "textScore" }} }');
+SELECT continuation, persistConnection FROM text_search_cursor_result;
+ continuation | persistconnection
 ---------------------------------------------------------------------
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.bson_dollar_ops_text_search", "firstBatch" : [ { "_id" : { "$numberInt" : "21" }, "titular" : "Manzana", "rank" : { "$numberDouble" : "1.0" } }, { "_id" : { "$numberInt" : "22" }, "titular" : "Comprar Manzana", "rank" : { "$numberDouble" : "1.0" } }, { "_id" : { "$numberInt" : "28" }, "titular" : "Manzana con pera y baya", "rank" : { "$numberDouble" : "2.0" } }, { "_id" : { "$numberInt" : "23" }, "titular" : "Cosechando una baya", "rank" : { "$numberDouble" : "2.0" } }, { "_id" : { "$numberInt" : "25" }, "titular" : "Manzana con baya", "rank" : { "$numberDouble" : "2.0" } }, { "_id" : { "$numberInt" : "27" }, "titular" : "Manzana con pera", "rank" : { "$numberDouble" : "1.0" } }, { "_id" : { "$numberInt" : "24" }, "titular" : "Cosechar", "rank" : { "$numberDouble" : "1.0" } } ] }, "ok" : { "$numberDouble" : "1.0" } } |              | f
+              | f
 (1 row)
 
+SELECT * FROM public.execute_and_sort($$
+    SELECT document -> 'cursor.firstBatch._id' AS object_id,
+           (document -> 'cursor.firstBatch')::text AS document
+    FROM (
+        SELECT bson_dollar_unwind(cursorPage, '$cursor.firstBatch') AS document
+        FROM text_search_cursor_result
+    ) cursor_documents
+$$);
+                                                         document
+---------------------------------------------------------------------
+ { "" : { "_id" : { "$numberInt" : "21" }, "titular" : "Manzana", "rank" : { "$numberDouble" : "1.0" } } }
+ { "" : { "_id" : { "$numberInt" : "22" }, "titular" : "Comprar Manzana", "rank" : { "$numberDouble" : "1.0" } } }
+ { "" : { "_id" : { "$numberInt" : "23" }, "titular" : "Cosechando una baya", "rank" : { "$numberDouble" : "2.0" } } }
+ { "" : { "_id" : { "$numberInt" : "24" }, "titular" : "Cosechar", "rank" : { "$numberDouble" : "1.0" } } }
+ { "" : { "_id" : { "$numberInt" : "25" }, "titular" : "Manzana con baya", "rank" : { "$numberDouble" : "2.0" } } }
+ { "" : { "_id" : { "$numberInt" : "27" }, "titular" : "Manzana con pera", "rank" : { "$numberDouble" : "1.0" } } }
+ { "" : { "_id" : { "$numberInt" : "28" }, "titular" : "Manzana con pera y baya", "rank" : { "$numberDouble" : "2.0" } } }
+(7 rows)
+
+DROP TABLE text_search_cursor_result;
 -- pipeline cases
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_dollar_ops_text_search", "cursor": {}, "pipeline": [ { "$project": { "_id": 1 } }, { "$match": { "$text": { "$search": "Manzana baya cosechar" } } } ] }');
 ERROR:  A text index is necessary to perform a $text query.
@@ -499,25 +522,25 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_dolla
 (7 rows)
 
 -- now add sort
-SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana Cosechando" } }' ORDER BY bson_orderby(document, '{ "score": {"$meta": "textScore"} }') DESC;
+SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana Cosechando" } }' ORDER BY bson_orderby(document, '{ "score": {"$meta": "textScore"} }') DESC, object_id;
                                                             document                                                             
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "21" }, "titular" : "Manzana", "writer" : "xyz", "score" : { "$numberInt" : "50" } }
  { "_id" : { "$numberInt" : "22" }, "titular" : "Comprar Manzana", "writer" : "efg", "score" : { "$numberInt" : "5" } }
- { "_id" : { "$numberInt" : "28" }, "titular" : "Manzana con pera y baya", "writer" : "xyz", "score" : { "$numberInt" : "10" } }
  { "_id" : { "$numberInt" : "23" }, "titular" : "Cosechando una baya", "writer" : "abc", "score" : { "$numberInt" : "90" } }
+ { "_id" : { "$numberInt" : "24" }, "titular" : "Cosechar", "writer" : "xyz", "score" : { "$numberInt" : "100" } }
  { "_id" : { "$numberInt" : "25" }, "titular" : "Manzana con baya", "writer" : "abc", "score" : { "$numberInt" : "200" } }
  { "_id" : { "$numberInt" : "27" }, "titular" : "Manzana con pera", "writer" : "efg", "score" : { "$numberInt" : "10" } }
- { "_id" : { "$numberInt" : "24" }, "titular" : "Cosechar", "writer" : "xyz", "score" : { "$numberInt" : "100" } }
+ { "_id" : { "$numberInt" : "28" }, "titular" : "Manzana con pera y baya", "writer" : "xyz", "score" : { "$numberInt" : "10" } }
 (7 rows)
 
 -- now add project & sort 
-SELECT bson_dollar_project(document, '{ "_id": 1, "titular": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana Comprando baya" } }' ORDER BY bson_orderby(document, '{ "score": {"$meta": "textScore"} }') DESC;
+SELECT bson_dollar_project(document, '{ "_id": 1, "titular": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana Comprando baya" } }' ORDER BY bson_orderby(document, '{ "score": {"$meta": "textScore"} }') DESC, object_id;
                                                bson_dollar_project                                                
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "22" }, "titular" : "Comprar Manzana", "rank" : { "$numberDouble" : "2.0" } }
- { "_id" : { "$numberInt" : "28" }, "titular" : "Manzana con pera y baya", "rank" : { "$numberDouble" : "2.0" } }
  { "_id" : { "$numberInt" : "25" }, "titular" : "Manzana con baya", "rank" : { "$numberDouble" : "2.0" } }
+ { "_id" : { "$numberInt" : "28" }, "titular" : "Manzana con pera y baya", "rank" : { "$numberDouble" : "2.0" } }
  { "_id" : { "$numberInt" : "21" }, "titular" : "Manzana", "rank" : { "$numberDouble" : "1.0" } }
  { "_id" : { "$numberInt" : "23" }, "titular" : "Cosechando una baya", "rank" : { "$numberDouble" : "1.0" } }
  { "_id" : { "$numberInt" : "27" }, "titular" : "Manzana con pera", "rank" : { "$numberDouble" : "1.0" } }

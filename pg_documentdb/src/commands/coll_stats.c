@@ -522,9 +522,18 @@ MergeWorkerResults(CollStatsResult *result, MongoCollection *collection,
 	}
 	else if (totalDocCount < CollStatsCountPolicyThreshold)
 	{
-		ereport(DEBUG1, (errmsg(
-							 "[collStats] Small collection %ld, liveCount %ld. count/avgObjSize are evaluate at runtime.",
-							 totalDocCount, totalDocCountFromStats)));
+		if (UsePgStatsLiveTuplesForCount)
+		{
+			ereport(DEBUG1, (errmsg(
+								 "[collStats] Small collection %ld, liveCount %ld. count/avgObjSize are evaluate at runtime.",
+								 totalDocCount, totalDocCountFromStats)));
+		}
+		else
+		{
+			ereport(DEBUG1, (errmsg(
+								 "[collStats] Small collection %ld. count/avgObjSize are evaluate at runtime.",
+								 totalDocCount)));
+		}
 		docCountFromAnalyze = totalDocCount;
 		docCountResult = GetDocumentsCountRunTime(collection);
 		isSmallCollection = true;

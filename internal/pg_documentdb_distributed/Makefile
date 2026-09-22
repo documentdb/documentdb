@@ -73,6 +73,8 @@ installcheck:
 installcheck-minimal:
 	$(MAKE) -C src/test installcheck-minimal $@
 
+dist-install-check-minimal: installcheck-minimal
+
 check-valgrind:
 	$(OSS_SRC_DIR)/scripts/start_oss_server.sh -c -x -v -p 58070 -f $(CURDIR)/src/test/regress/regression_opts.conf
 	@sleep 5

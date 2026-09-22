@@ -1,5 +1,15 @@
 CREATE SCHEMA IF NOT EXISTS documentdb_distributed_test_helpers;
 
+CREATE OR REPLACE FUNCTION documentdb_distributed_test_helpers.refresh_pg_stat_snapshot()
+RETURNS void
+AS $$
+BEGIN
+    PERFORM pg_stat_force_next_flush();
+    PERFORM pg_stat_clear_snapshot();
+END;
+$$
+LANGUAGE plpgsql;
+
 SELECT citus_set_coordinator_host('localhost', current_setting('port')::integer);
 SELECT citus_set_node_property('localhost', current_setting('port')::integer, 'shouldhaveshards', true);
 

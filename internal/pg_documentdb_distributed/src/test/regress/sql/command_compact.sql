@@ -39,14 +39,20 @@ $$;
 -- VALID, first need to analyze the table so that stats are up to date
 ANALYZE VERBOSE documentdb_data.documents_24321;
 SELECT documentdb_api.coll_stats('commands_compact_db','compact_test')->>'storageSize' as before_compact_size \gset
+SELECT documentdb_api.coll_stats('commands_compact_db','compact_test')->>'totalSize' as before_compact_total_size \gset
 
 -- TODO: even after analyze it seems like pg_class stats for toast tables are not updated for test run.
 -- Need to investigate this further for test, for live servers this should be okay because the analyze thereshold is set to 0.
 SELECT documentdb_api.compact('{"compact": "compact_test", "$db": "commands_compact_db", "dryRun": true}');
-SELECT documentdb_api.compact('{"compact": "compact_test", "$db": "commands_compact_db", "dryRun": false, "mode": "full"}');
+SELECT (documentdb_api.compact('{"compact": "compact_test", "$db": "commands_compact_db", "dryRun": false, "mode": "full"}')->>'bytesFreed')::bigint as compact_bytes_freed \gset
 SELECT documentdb_api.coll_stats('commands_compact_db','compact_test')->>'storageSize' as after_compact_size \gset
+SELECT documentdb_api.coll_stats('commands_compact_db','compact_test')->>'totalSize' as after_compact_total_size \gset
 
 SELECT :after_compact_size::bigint < :before_compact_size::bigint as is_compacted;
+SELECT :compact_bytes_freed::bigint > 0 as reported_positive_bytes_freed;
+SELECT :compact_bytes_freed::bigint =
+       :before_compact_total_size::bigint - :after_compact_total_size::bigint
+       as reported_delta_matches_measurement;
 
 SELECT documentdb_api.drop_collection('commands_compact_db','compact_test');
 
@@ -79,14 +85,21 @@ $$;
 -- VALID, first need to analyze the table so that stats are up to date
 ANALYZE VERBOSE documentdb_data.documents_24322;
 SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->>'storageSize' AS sharded_before_compact_size \gset
+SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->>'totalSize' AS sharded_before_compact_total_size \gset
 
 -- TODO: even after analyze it seems like pg_class stats for toast tables are not updated for test run.
 -- Need to investigate this further for test, for live servers this should be okay because the analyze thereshold is set to 0.
 SELECT documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": true}');
-SELECT documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": false, "mode": "full"}');
+SELECT (documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": false, "mode": "full"}')->>'bytesFreed')::bigint as sharded_compact_bytes_freed \gset
 SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->>'storageSize' AS sharded_after_compact_size \gset
+SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->>'totalSize' AS sharded_after_compact_total_size \gset
 
 SELECT :sharded_after_compact_size::bigint < :sharded_before_compact_size::bigint as is_sharded_compacted;
+SELECT :sharded_compact_bytes_freed::bigint > 0 as reported_positive_bytes_freed;
+SELECT :sharded_compact_bytes_freed::bigint =
+       :sharded_before_compact_total_size::bigint -
+       :sharded_after_compact_total_size::bigint
+       as reported_delta_matches_measurement;
 
 SELECT documentdb_api.drop_collection('commands_compact_db','compact_test_sharded');
 

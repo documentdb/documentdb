@@ -107,11 +107,24 @@ SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_searc
 SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Comprando Manzana" } }' ORDER BY object_id;
 
 -- now add projection.
-SELECT bson_dollar_project(document, '{ "_id": 1, "titular": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana baya cosechar" } }';
-SELECT bson_dollar_add_fields(document, '{ "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana baya cosechar" } }';
-SELECT bson_dollar_project_find(document, '{ "_id": 1, "titular": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana baya cosechar" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "titular": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana baya cosechar" } }' ORDER BY object_id;
+SELECT bson_dollar_add_fields(document, '{ "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana baya cosechar" } }' ORDER BY object_id;
+SELECT bson_dollar_project_find(document, '{ "_id": 1, "titular": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana baya cosechar" } }' ORDER BY object_id;
 
-SELECT cursorPage, continuation, persistConnection FROM documentdb_api.find_cursor_first_page('db', '{ "find": "bson_dollar_ops_text_search", "filter": { "$text": { "$search": "Manzana baya cosechar" } }, "projection": { "_id": 1, "titular": 1, "rank": { "$meta": "textScore" }} }');
+CREATE TEMP TABLE text_search_cursor_result AS
+SELECT cursorPage, continuation, persistConnection
+FROM documentdb_api.find_cursor_first_page('db', '{ "find": "bson_dollar_ops_text_search", "filter": { "$text": { "$search": "Manzana baya cosechar" } }, "projection": { "_id": 1, "titular": 1, "rank": { "$meta": "textScore" }} }');
+
+SELECT continuation, persistConnection FROM text_search_cursor_result;
+SELECT * FROM public.execute_and_sort($$
+    SELECT document -> 'cursor.firstBatch._id' AS object_id,
+           (document -> 'cursor.firstBatch')::text AS document
+    FROM (
+        SELECT bson_dollar_unwind(cursorPage, '$cursor.firstBatch') AS document
+        FROM text_search_cursor_result
+    ) cursor_documents
+$$);
+DROP TABLE text_search_cursor_result;
 
 -- pipeline cases
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_dollar_ops_text_search", "cursor": {}, "pipeline": [ { "$project": { "_id": 1 } }, { "$match": { "$text": { "$search": "Manzana baya cosechar" } } } ] }');
@@ -126,10 +139,10 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_dolla
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_dollar_ops_text_search", "cursor": {}, "pipeline": [ { "$match": { "$text": { "$search": "Manzana baya cosechar" } } }, { "$project": { "_id": 1, "titular": 1, "score": { "$meta": "textScore" } } }, { "$sort": { "score": { "$meta": "textScore" }, "_id": 1 } } ] }');
 
 -- now add sort
-SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana Cosechando" } }' ORDER BY bson_orderby(document, '{ "score": {"$meta": "textScore"} }') DESC;
+SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana Cosechando" } }' ORDER BY bson_orderby(document, '{ "score": {"$meta": "textScore"} }') DESC, object_id;
 
 -- now add project & sort 
-SELECT bson_dollar_project(document, '{ "_id": 1, "titular": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana Comprando baya" } }' ORDER BY bson_orderby(document, '{ "score": {"$meta": "textScore"} }') DESC;
+SELECT bson_dollar_project(document, '{ "_id": 1, "titular": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana Comprando baya" } }' ORDER BY bson_orderby(document, '{ "score": {"$meta": "textScore"} }') DESC, object_id;
 
 -- now do group
 WITH r1 AS (SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana" } }' )
