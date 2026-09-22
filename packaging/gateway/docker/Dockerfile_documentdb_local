@@ -165,6 +165,7 @@ COPY documentdb-local/scripts/documentdb_local_settings.sh /home/documentdb/gate
 COPY documentdb-local/scripts/documentdb_validate_username.sh /home/documentdb/gateway/scripts/documentdb_validate_username.sh
 COPY documentdb-local/scripts/documentdb_install_getparameter_stub.sh /home/documentdb/gateway/scripts/documentdb_install_getparameter_stub.sh
 COPY documentdb-local/scripts/documentdb_prepare_data_directory.sh /home/documentdb/gateway/scripts/documentdb_prepare_data_directory.sh
+COPY documentdb-local/scripts/documentdb_report_extended_rum.sh /home/documentdb/gateway/scripts/documentdb_report_extended_rum.sh
 COPY documentdb-local/scripts/healthcheck.sh /home/documentdb/gateway/scripts/healthcheck.sh
 COPY scripts/utils.sh /home/documentdb/gateway/scripts/utils.sh
 COPY scripts/preload_libraries.sh /home/documentdb/gateway/scripts/preload_libraries.sh
@@ -201,8 +202,8 @@ RUN sudo chmod +x /home/documentdb/gateway/scripts/healthcheck.sh && \
 # and latest checkpoint location; the entrypoint recomputes the same three
 # lines from live pg_controldata at boot and only byte-equality proves the
 # template pristine (the cluster never ran, so no user data exists and it is
-# safe to re-initialize when runtime flags require different init-time
-# options). No single field covers every "the cluster ran" case -- a clean
+# safe to re-initialize when the image's PostgreSQL major differs from the
+# template's). No single field covers every "the cluster ran" case -- a clean
 # startup does not advance the checkpoint -- but together they do: a killed
 # cluster reads "in production" (state mismatch) and a cleanly stopped one
 # wrote a shutdown checkpoint (checkpoint mismatch). Known accepted tradeoff:
@@ -212,7 +213,7 @@ RUN sudo chmod +x /home/documentdb/gateway/scripts/healthcheck.sh && \
 # MUST stay above the VOLUME declaration: build steps that touch /data after
 # VOLUME is declared are discarded.
 RUN sudo install -d -o documentdb -g documentdb "$DATA_PATH" && \
-    /home/documentdb/gateway/scripts/start_oss_server.sh -r -u "" -d "$DATA_PATH" -p "$POSTGRESQL_PORT" && \
+    /home/documentdb/gateway/scripts/start_oss_server.sh -u "" -d "$DATA_PATH" -p "$POSTGRESQL_PORT" && \
     bash /home/documentdb/gateway/scripts/documentdb_install_getparameter_stub.sh "$POSTGRESQL_PORT" && \
     pg_ctl stop -D "$DATA_PATH" -m fast && \
     rm -f "$DATA_PATH/pglog.log" && \

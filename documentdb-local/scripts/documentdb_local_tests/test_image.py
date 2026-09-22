@@ -1623,53 +1623,60 @@ print('custom restart marker placed');
 
 
 # ---------------------------------------------------------------------------
-# 11. --disable-extended-rum on a fresh container - the image ships a data
-#     directory template built WITH extended RUM, so the entrypoint must
-#     detect the mismatch on the pristine template and re-initialize with the
-#     requested options instead of silently keeping extended RUM (issue #480).
+# 11. --disable-extended-rum is accepted but changes nothing.
 # ---------------------------------------------------------------------------
 
 @_SKIP_UNLESS_IMAGE
-class DisableExtendedRumReinitTests(_ContainerTestBase):
-    """Catches two regressions at once: the baked-template fast path ignoring
-    --disable-extended-rum, and the flag itself degrading into a no-op (it
-    once relied on *omitting* -r, which stopped disabling extended RUM when
-    the server-side default flipped to enabled)."""
+class DisableExtendedRumCompatibilityTests(_ContainerTestBase):
+    """The retired opt-out stays parse-compatible without changing startup."""
 
     ENTRYPOINT_FLAGS = ["--skip-init-data", "--disable-extended-rum"]
 
-    def test_template_is_reinitialized(self):
+    def test_template_is_adopted_and_deprecation_is_logged(self):
         logs = _docker("logs", self.container)
         combined = _combined_logs(logs)
         self.assertIn(
-            "Re-initializing data directory", combined,
-            "--disable-extended-rum on a pristine baked template must "
-            "trigger re-initialization with the requested options "
-            "(issue #480). Last 40 log lines:\n"
+            "--disable-extended-rum (DISABLE_EXTENDED_RUM) is deprecated and has no effect",
+            combined,
+        )
+        self.assertIn(
+            "Adopting pre-initialized data directory template",
+            combined,
+            "the deprecated option must not discard the baked template. "
+            "Last 40 log lines:\n"
+            + "\n".join(combined.splitlines()[-40:]),
+        )
+        # Only place the probe's real SQL runs; unit tests stub psql.
+        self.assertIn(
+            "documentdb_extended_rum is created on this data volume",
+            combined,
+            "the startup probe must report the extension created. "
+            "Last 40 log lines:\n"
             + "\n".join(combined.splitlines()[-40:]),
         )
 
-    def test_extended_rum_extension_is_absent(self):
+    def test_extended_rum_extension_and_handler_are_active(self):
         port = _container_pg_socket_port(self.container)
         res = _docker(
             "exec", self.container, "psql", "-p", port, "-d", "postgres",
-            "-tAqc",
-            "SELECT count(*) FROM pg_extension "
-            "WHERE extname = 'documentdb_extended_rum'",
+            "-tAq", "-F,", "-c",
+            "SELECT (SELECT count(*) FROM pg_extension "
+            "WHERE extname = 'documentdb_extended_rum'), "
+            "current_setting('documentdb.alternate_index_handler_name')",
             check=False, timeout=30,
         )
         self.assertEqual(res.returncode, 0, msg=res.stderr)
         self.assertEqual(
-            res.stdout.strip(), "0",
-            "documentdb_extended_rum is installed even though the container "
-            "was started with --disable-extended-rum.",
+            res.stdout.strip(), "1,extended_rum",
+            "the deprecated option must not disable documentdb_extended_rum "
+            "or stop the handler GUC from selecting it",
         )
 
-    def test_ping_succeeds_without_extended_rum(self):
+    def test_ping_succeeds(self):
         result = self._mongosh("db.runCommand({ping: 1}).ok")
         self.assertEqual(
             result.returncode, 0,
-            f"mongosh ping failed on a --disable-extended-rum container.\n"
+            "ping failed on a container using the deprecated option.\n"
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
         )
         self.assertEqual(

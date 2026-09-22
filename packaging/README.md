@@ -417,10 +417,11 @@ There are two surfaces, and they share values only through
 `documentdb-local/scripts/documentdb-tools-lib.sh`.
 
 **Container image.** `documentdb_local_settings.sh` declares each setting the
-entrypoint takes as a flag once (flag, env var, default, type); the bare flags
-(`--skip-init-data`, `--disable-extended-rum`) and the operator-only env knobs
-(`DOCUMENTDB_PG_READY_*`, `DOCUMENTDB_FORCE_OWNERSHIP_REPAIR`,
-`DOCUMENTDB_ALLOW_DEFAULT_PASSWORD`) are handled in the entrypoint itself. The Dockerfile `ENV` block mirrors
+entrypoint takes as a flag once (flag, env var, default, type);
+`--skip-init-data`, the deprecated no-op `--disable-extended-rum`, and the
+operator-only env knobs (`DOCUMENTDB_PG_READY_*`,
+`DOCUMENTDB_FORCE_OWNERSHIP_REPAIR`, `DOCUMENTDB_ALLOW_DEFAULT_PASSWORD`) are
+handled in the entrypoint itself. The Dockerfile `ENV` block mirrors
 the defaults. `emulator_entrypoint.sh` parses flags into the same env vars,
 applies defaults and validates from the table, then hands values on: ports and
 credentials to `scripts/start_oss_server.sh` as arguments, the resolved ports to

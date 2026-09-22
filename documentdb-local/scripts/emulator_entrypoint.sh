@@ -144,7 +144,6 @@ Optional arguments:
                         boot runs full initialization and is slower. The
                         cluster's locale/encoding are fixed inside the
                         pre-built directory; only a full re-initialization
-                        (e.g. --disable-extended-rum on a fresh volume)
                         re-reads locale environment variables.
                         If PostgreSQL reports a permission error on files a
                         previously interrupted start left behind, set
@@ -214,16 +213,20 @@ Optional arguments:
                         still loaded once per fresh data volume.
                         Overrides SKIP_INIT_DATA environment variable.
   --disable-extended-rum
-                        Disable the use of extended_rum for indexes.
-                        By default, extended rum is enabled.
-                        The setting is fixed when a data directory is first
-                        initialized and cannot be changed for an existing one.
-                        On a fresh data volume this flag re-initializes the
-                        image's pre-built data directory (destroying only that
-                        untouched template); on a volume with existing data it
-                        has no effect and the volume's original setting stays
-                        active. Start with a fresh data volume to change it.
-                        Overrides DISABLE_EXTENDED_RUM environment variable.
+                        Deprecated and ignored: extended_rum is always enabled
+                        when a data volume is initialized. Accepted for
+                        compatibility through either this flag or the
+                        DISABLE_EXTENDED_RUM environment variable, and will be
+                        removed in the next minor release. To use the plain rum
+                        access method instead, set the PostgreSQL setting
+                        documentdb.alternate_index_handler_name = 'rum' in the
+                        data volume's postgresql.conf and restart the
+                        container. That is the only route that reaches every
+                        gateway connection: the gateway pools PostgreSQL
+                        sessions per authenticated user, so a per-role setting
+                        covers one role and skips already-pooled sessions, and
+                        a mongosh client never holds a PostgreSQL session of
+                        its own.
   --toast-compression [lz4|pglz|default]
                         Compression used for values the container's PostgreSQL
                         stores out of line (TOAST). ${d_toast} (the default)
@@ -288,7 +291,7 @@ while [ $# -gt 0 ]; do
             shift
             continue ;;
         --disable-extended-rum)
-            # Bare flag; there is no positive spelling on the command line.
+            # Deprecated bare flag retained so existing invocations start.
             export DISABLE_EXTENDED_RUM=true
             shift
             continue ;;
@@ -419,9 +422,14 @@ else
     export SKIP_INIT_DATA=true
 fi
 
+# Still accepted so existing invocations start; nothing reads it any more.
+if [ "${DISABLE_EXTENDED_RUM:-}" = "true" ]; then
+    echo "Warning: --disable-extended-rum (DISABLE_EXTENDED_RUM) is deprecated and has no effect; documentdb_extended_rum is always enabled for a data volume this image initializes. To use the plain rum access method instead, set documentdb.alternate_index_handler_name = 'rum' in the data volume's postgresql.conf and restart the container. This option will be removed in the next minor release." >&2
+fi
+unset DISABLE_EXTENDED_RUM
+
 # Image-internal paths and identities. Not operator settings: they describe
 # where this image put things, and only a source-checkout run overrides them.
-export DISABLE_EXTENDED_RUM=${DISABLE_EXTENDED_RUM:-false}
 export GATEWAY_HOME=${GATEWAY_HOME:-/home/documentdb/gateway}
 export DOCUMENTDB_LOG_DIR=${DOCUMENTDB_LOG_DIR:-/var/log/documentdb}
 # The PostgreSQL major this run assumes, resolved once. Inside the image
@@ -607,8 +615,8 @@ if [ "$START_POSTGRESQL" = "true" ]; then
     # so first boot skips initdb + CREATE EXTENSION (issue #480). Extracted to
     # a sibling script to keep this entrypoint lean; see that script for the
     # full rationale (marker lifecycle, pristineness rules, custom --data-path
-    # handling). Exit 10 means the requested options conflict with the baked
-    # template and the server bootstrap must force a clean re-initialization;
+    # handling). Exit 10 means the baked template holds another PostgreSQL
+    # major and the server bootstrap must force a clean re-initialization;
     # any other nonzero status is a real failure.
     force_reinit_args=()
     bash "$(dirname "${BASH_SOURCE[0]}")/documentdb_prepare_data_directory.sh" "$DATA_PATH"
@@ -891,18 +899,11 @@ if [ "$START_POSTGRESQL" = "true" ]; then
     done
 
     echo "Starting OSS server..."
-    # Pass an explicit `-r <bool>`: the server script now defaults to extended
-    # RUM *enabled*, so merely omitting -r no longer disables it -- that
-    # silently turned --disable-extended-rum into a no-op.
-    extended_rum_bool="true"
-    if [ "$DISABLE_EXTENDED_RUM" = "true" ]; then
-        extended_rum_bool="false"
-    fi
+    # No -r: start_oss_server.sh already defaults extended RUM to enabled.
     start_oss_server_args=()
     if [ ${#force_reinit_args[@]} -gt 0 ]; then
         start_oss_server_args+=("${force_reinit_args[@]}")
     fi
-    start_oss_server_args+=(-r "$extended_rum_bool")
     if [ ${#external_access_args[@]} -gt 0 ]; then
         start_oss_server_args+=("${external_access_args[@]}")
     fi
@@ -1015,6 +1016,9 @@ if [ "$START_POSTGRESQL" = "true" ]; then
             toast_ready_wait=$((toast_ready_wait + toast_ready_interval))
         done
     fi
+
+    # Advisory only, so no cleanup on failure; see the script for the wording.
+    bash "$(dirname "${BASH_SOURCE[0]}")/documentdb_report_extended_rum.sh" "$POSTGRESQL_PORT" "$OWNER" "$toast_pg_accepting"
 
     # TOAST fragment registration and the deferred lz4 verdict. The postmaster
     # is running from here on, so failures exit through cleanup(), never a bare

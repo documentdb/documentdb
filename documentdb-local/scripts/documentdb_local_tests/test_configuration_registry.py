@@ -338,6 +338,28 @@ class GatewayJsonStripFieldsTests(unittest.TestCase):
                 self.assertEqual(fields, reference)
 
 
+class SiblingHelperCopyTests(unittest.TestCase):
+    """Every helper the entrypoint runs from its own directory must be COPYed
+    into the image. The entrypoint has no set -e, so a missing helper is one
+    stray error line and the boot continues; only test_image.py would notice,
+    and that lane is not a PR trigger."""
+
+    ENTRYPOINT = SCRIPTS_DIR / "emulator_entrypoint.sh"
+
+    def test_dockerfile_copies_every_helper_the_entrypoint_invokes(self):
+        invoked = set(re.findall(
+            r'\$\(dirname "\$\{BASH_SOURCE\[0\]\}"\)/([A-Za-z0-9_]+\.sh)',
+            self.ENTRYPOINT.read_text(encoding="utf-8"),
+        ))
+        self.assertGreaterEqual(len(invoked), 4, invoked)
+        copied = set(re.findall(
+            r'(?m)^COPY documentdb-local/scripts/([A-Za-z0-9_]+\.sh) ',
+            DOCKERFILE.read_text(encoding="utf-8"),
+        ))
+        self.assertEqual(invoked - copied, set(),
+                         "helpers the entrypoint invokes but the Dockerfile does not COPY")
+
+
 class ImageDefaultPinTests(unittest.TestCase):
     """documentdb_local_settings.sh owns every default of the container image.
     The in-image scripts read it; the only copy is the Dockerfile ENV block,
