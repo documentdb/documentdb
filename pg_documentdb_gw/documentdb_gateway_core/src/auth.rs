@@ -20,6 +20,7 @@ use rand::RngExt;
 use serde_json::Value;
 use tokio::time::{sleep, Duration};
 use tokio_postgres::{error::SqlState, types::Type};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     context::{ConnectionContext, RequestContext},
@@ -68,6 +69,7 @@ pub struct AuthState {
     user_oid: Option<u32>,
     auth_kind: Option<AuthKind>,
     timer_initialized: Arc<AtomicBool>,
+    expiry_cancellation: CancellationToken,
     auth_mechanism: AuthMechanism,
     principal: Option<Principal>,
     data_pool_settings: Option<PgPoolSettings>,
@@ -89,6 +91,7 @@ impl AuthState {
             user_oid: None,
             auth_kind: None,
             timer_initialized: Arc::new(AtomicBool::new(false)),
+            expiry_cancellation: CancellationToken::new(),
             auth_mechanism: AuthMechanism::Unknown,
             principal: None,
             data_pool_settings: None,
@@ -215,31 +218,39 @@ impl AuthState {
         connection_activity_id: &str,
     ) -> Result<()> {
         let timer_initialized = Arc::clone(&self.timer_initialized);
-        if timer_initialized.load(Ordering::Acquire) {
+        if timer_initialized.swap(true, Ordering::AcqRel) {
             return Err(DocumentDBError::internal_error(
                 "Authentication expiry timer is already initialized".to_owned(),
             ));
         }
 
         let authenticated = Arc::clone(&self.authenticated);
+        let expiry_cancellation = self.expiry_cancellation.clone();
         let connection_activity_id_owned = connection_activity_id.to_owned();
 
         // Spawn new expiry task that counts down and sets authenticated to false
         tokio::spawn(async move {
-            timer_initialized.store(true, Ordering::Release);
-
-            sleep(Duration::from_secs(timeout_secs)).await;
-
-            let connection_activity_id_as_str = connection_activity_id_owned.as_str();
-            tracing::info!(
-                activity_id = connection_activity_id_as_str,
-                "Authentication expiry timer elapsed"
-            );
-            authenticated.store(false, Ordering::Release);
+            tokio::select! {
+                () = sleep(Duration::from_secs(timeout_secs)) => {
+                    let connection_activity_id_as_str = connection_activity_id_owned.as_str();
+                    tracing::info!(
+                        activity_id = connection_activity_id_as_str,
+                        "Authentication expiry timer elapsed"
+                    );
+                    authenticated.store(false, Ordering::Release);
+                }
+                () = expiry_cancellation.cancelled() => {}
+            }
             timer_initialized.store(false, Ordering::Release);
         });
 
         Ok(())
+    }
+}
+
+impl Drop for AuthState {
+    fn drop(&mut self) {
+        self.expiry_cancellation.cancel();
     }
 }
 
@@ -939,4 +950,36 @@ pub async fn get_user_oid(
         call_run_request_with_retries(connection_context, request_context, run_func).await?;
 
     user_oid_result.ok_or(DocumentDBError::pg_response_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::{task::yield_now, time::timeout};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn dropping_auth_state_releases_expiry_timer() {
+        let auth_state = AuthState::new();
+        auth_state.set_authenticated(true);
+        auth_state
+            .initialize_expiry_timer(24 * 60 * 60, "test-connection")
+            .expect("expiry timer should initialize");
+
+        let authenticated = Arc::clone(&auth_state.authenticated);
+        let timer_initialized = Arc::clone(&auth_state.timer_initialized);
+        drop(auth_state);
+
+        timeout(Duration::from_secs(1), async {
+            while Arc::strong_count(&authenticated) > 1 || Arc::strong_count(&timer_initialized) > 1
+            {
+                yield_now().await;
+            }
+        })
+        .await
+        .expect("expiry timer should release its connection state after cancellation");
+
+        assert!(authenticated.load(Ordering::Acquire));
+        assert!(!timer_initialized.load(Ordering::Acquire));
+    }
 }
