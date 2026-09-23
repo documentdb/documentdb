@@ -2697,23 +2697,6 @@ json.dump(data, sys.stdout)
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         self.assertNotIn("--force-init-data", result.stdout)
 
-    def test_sample_data_scripts_are_idempotent(self):
-        sample_dir = REPO_ROOT / "documentdb-local" / "sample-data"
-        scripts = sorted(sample_dir.glob("*.js"))
-        self.assertTrue(scripts, "expected bundled sample-data scripts to exist")
-        for js in scripts:
-            text = js.read_text(encoding="utf-8")
-            self.assertNotIn(
-                ".insertMany(",
-                text,
-                msg=f"{js.name} uses insertMany, which is not idempotent on restart (#612)",
-            )
-            self.assertIn(
-                "countDocuments(",
-                text,
-                msg=f"{js.name} should guard inserts with an existence check (#612)",
-            )
-
     def _set_blocked_role_prefixes(self, prefixes):
         config_path = self.gateway_config_dir / "SetupConfiguration.json"
         config = json.loads(config_path.read_text(encoding="utf-8"))

@@ -40,6 +40,7 @@ isolated so one class's failure doesn't cascade.
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import re
@@ -76,6 +77,7 @@ DEFAULT_USERNAME = "docdb_admin"
 
 DEFAULT_READY_TIMEOUT = int(os.environ.get("DOCUMENTDB_READY_TIMEOUT", "240"))
 DEFAULT_MONGOSH_TIMEOUT = 30
+SAMPLE_DATA_COUNTS = {"stores": 41505, "ratings": 2}
 
 # Directory where container logs are persisted before container removal.
 # CI uploads the contents of this directory as an artifact when a job
@@ -1120,26 +1122,49 @@ class BuiltInSampleDataTests(_ContainerTestBase):
 
     ENTRYPOINT_FLAGS = ["--init-data", "true"]
 
-    def test_sampledb_users_collection_has_documents(self):
-        # The readiness marker is emitted after init-data has run, but
-        # keep a small retry loop as defense against any future change
-        # to the entrypoint's init ordering.
-        deadline = time.monotonic() + 30
-        result = None
-        while time.monotonic() < deadline:
-            result = self._mongosh(
-                "db.getSiblingDB('sampledb').users.countDocuments({})",
-            )
-            if result.returncode == 0:
-                last = _last_nonempty_line(result.stdout)
-                if last.isdigit() and int(last) > 0:
-                    return
-            time.sleep(2)
-        self.fail(
-            "sampledb.users is empty or unreadable after 30s; the "
-            "built-in sample-data scripts did not populate it.\n"
-            f"last mongosh stdout:\n{getattr(result, 'stdout', '')}\n"
-            f"last mongosh stderr:\n{getattr(result, 'stderr', '')}"
+    def test_store_data_load_and_rerun(self):
+        result = self._mongosh(
+            f"const expected = {json.dumps(SAMPLE_DATA_COUNTS)};\n"
+            """
+            const sample = db.getSiblingDB('StoreData');
+            function checkSampleCounts() {
+                const counts = {
+                    stores: sample.stores.countDocuments({}),
+                    ratings: sample.ratings.countDocuments({})
+                };
+                printjson(counts);
+                if (counts.stores !== expected.stores ||
+                    counts.ratings !== expected.ratings) {
+                    throw new Error('Unexpected StoreData counts');
+                }
+            }
+            checkSampleCounts();
+
+            const store = sample.stores.findOne({_id: 'binary-test'});
+            const validTypes = store &&
+                store.logo && store.logo._bsontype === 'Binary' &&
+                store.signature && store.signature._bsontype === 'Binary' &&
+                store.storeOpeningDate instanceof Date &&
+                store.lastUpdated && store.lastUpdated._bsontype === 'Timestamp';
+            if (!validTypes) {
+                throw new Error('StoreData Extended JSON types were not preserved');
+            }
+
+            if (sample.ratings.deleteOne({}).deletedCount !== 1) {
+                throw new Error('Could not remove a sample rating before replay');
+            }
+            process.env.DOCUMENTDB_INIT_FILE =
+                '/home/documentdb/gateway/sample-data/01-store-data.js';
+            load(process.env.DOCUMENTDB_INIT_FILE);
+            checkSampleCounts();
+            """,
+            timeout=DEFAULT_READY_TIMEOUT,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"StoreData validation failed\nstdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}",
         )
 
 
@@ -1415,10 +1440,14 @@ class SampleDataRestartIdempotencyTests(unittest.TestCase):
             name=name,
         )
 
-    def _user_count(self, container: str) -> str:
+    def _sample_counts(self, container: str) -> dict[str, int]:
         result = _mongosh_exec(
             container,
-            "db.getSiblingDB('sampledb').users.countDocuments({})",
+            "const database = db.getSiblingDB('StoreData');"
+            "print(JSON.stringify({"
+            "stores: database.stores.countDocuments({}),"
+            "ratings: database.ratings.countDocuments({})"
+            "}));",
             username=DEFAULT_USERNAME,
             password=self.password,
         )
@@ -1427,21 +1456,21 @@ class SampleDataRestartIdempotencyTests(unittest.TestCase):
             f"countDocuments failed\nstdout:\n{result.stdout}\n"
             f"stderr:\n{result.stderr}",
         )
-        return _last_nonempty_line(result.stdout)
+        return json.loads(_last_nonempty_line(result.stdout))
 
     def test_second_boot_skips_seed_and_does_not_crash(self):
         self.volume = f"docdb-image-test-vol-{uuid.uuid4().hex[:8]}"
         first: str | None = None
         second: str | None = None
         try:
-            # First boot: seeds sampledb and writes the one-shot marker.
+            # First boot: seeds StoreData and writes the one-shot marker.
             first = self._start(
                 f"{CONTAINER_PREFIX}-restart-a-{uuid.uuid4().hex[:6]}"
             )
             _wait_for_ready(first)
             self.assertEqual(
-                self._user_count(first), "5",
-                "sampledb.users should have 5 docs after first-boot seeding",
+                self._sample_counts(first), SAMPLE_DATA_COUNTS,
+                "StoreData counts should match the expected sample sizes after first-boot seeding",
             )
             _cleanup_container(first)
             first = None
@@ -1466,8 +1495,8 @@ class SampleDataRestartIdempotencyTests(unittest.TestCase):
                 "second boot must not fail re-running the seed",
             )
             self.assertEqual(
-                self._user_count(second), "5",
-                "sampledb.users must still have exactly 5 docs (no "
+                self._sample_counts(second), SAMPLE_DATA_COUNTS,
+                "StoreData counts must still match the expected sample sizes (no "
                 "duplicate-key crash, no data loss) on second boot",
             )
         finally:

@@ -5,6 +5,7 @@ set -euo pipefail
 IMAGE_NAME="${1:-documentdb-local:test-tls}"
 LOG_DIR="${2:-documentdb-local-logs}"
 CONTAINER_SUFFIX="$$"
+EXPECTED_STORES=41505
 
 DEFAULT_CONTAINER="docdb-default-${CONTAINER_SUFFIX}"
 ENFORCE_CONTAINER="docdb-enforce-${CONTAINER_SUFFIX}"
@@ -62,7 +63,7 @@ wait_for_sample_data() {
         args=(--tls --tlsAllowInvalidCertificates)
     fi
 
-    for attempt in {1..90}; do
+    for attempt in {1..240}; do
         count="$(docker exec "$container" mongosh \
             --host localhost \
             --port 10260 \
@@ -71,9 +72,9 @@ wait_for_sample_data() {
             --authenticationDatabase admin \
             "${args[@]}" \
             --quiet \
-            --eval 'db.getSiblingDB("sampledb").users.countDocuments()' 2>/dev/null || true)"
+            --eval 'db.getSiblingDB("StoreData").stores.countDocuments()' 2>/dev/null || true)"
 
-        if [[ "$count" =~ ^[0-9]+$ ]] && [ "$count" -gt 0 ]; then
+        if [ "$count" = "$EXPECTED_STORES" ]; then
             return 0
         fi
         sleep 2
@@ -126,8 +127,8 @@ count="$(docker exec "$DEFAULT_CONTAINER" mongosh \
     --tls \
     --tlsAllowInvalidCertificates \
     --quiet \
-    --eval 'db.getSiblingDB("sampledb").users.countDocuments()')"
-if [[ "$count" =~ ^[0-9]+$ ]] && [ "$count" -gt 0 ]; then
+    --eval 'db.getSiblingDB("StoreData").stores.countDocuments()')"
+if [ "$count" = "$EXPECTED_STORES" ]; then
     echo "  PASSED (count=$count)"
 else
     echo "  FAILED: Sample data not found."
@@ -181,8 +182,8 @@ count="$(docker exec "$ENFORCE_CONTAINER" mongosh \
     --tls \
     --tlsAllowInvalidCertificates \
     --quiet \
-    --eval 'db.getSiblingDB("sampledb").users.countDocuments()')"
-if [[ "$count" =~ ^[0-9]+$ ]] && [ "$count" -gt 0 ]; then
+    --eval 'db.getSiblingDB("StoreData").stores.countDocuments()')"
+if [ "$count" = "$EXPECTED_STORES" ]; then
     echo "  PASSED (count=$count)"
 else
     echo "  FAILED: Sample data not found."

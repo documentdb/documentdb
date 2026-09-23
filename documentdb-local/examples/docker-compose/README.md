@@ -170,7 +170,7 @@ gone.
 ## Seeding data
 
 - **Built-in sample data:** add `INIT_DATA: "true"` to the `environment:`
-  block to load the sample `sampledb` database on first boot.
+  block to load the sample `StoreData` database on first boot.
 - **Your own scripts:** uncomment the `./init-data:/init_doc_db.d:ro` volume
   in `docker-compose.yml` and put `.js` files (run with mongosh, in
   alphabetical order) in `./init-data/`.
