@@ -541,6 +541,204 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "
  { "_id" : { "$numberInt" : "1" }, "stdDev" : { "$numberDouble" : "499833553944027136.0" } }
 (1 row)
 
+/* int64 multiplication overflow in variance transition */
+SELECT documentdb_api.insert_one('db','large_int64_near_max',' { "num" : {"$numberLong": "9223372036854775806"} }');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','large_int64_near_max',' { "num" : {"$numberLong": "9223372036854775807"} }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "large_int64_near_max", "pipeline": [ { "$group": { "_id": 1, "stdDev": { "$stdDevPop": "$num" } } } ] }');
+                                  document                                  
+----------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "stdDev" : { "$numberDouble" : "0.0" } }
+(1 row)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "large_int64_near_max", "pipeline": [ { "$group": { "_id": 1, "stdDev": { "$stdDevSamp": "$num" } } } ] }');
+                                  document                                  
+----------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "stdDev" : { "$numberDouble" : "0.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','large_int64_spread',' { "num" : {"$numberLong": "0"} }');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','large_int64_spread',' { "num" : {"$numberLong": "4611686018427387903"} }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','large_int64_spread',' { "num" : {"$numberLong": "9223372036854775807"} }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "large_int64_spread", "pipeline": [ { "$group": { "_id": 1, "stdDev": { "$stdDevPop": "$num" } } } ] }');
+                                           document                                           
+----------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "stdDev" : { "$numberDouble" : "3765425866358160384.0" } }
+(1 row)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "large_int64_spread", "pipeline": [ { "$group": { "_id": 1, "stdDev": { "$stdDevSamp": "$num" } } } ] }');
+                                           document                                           
+----------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "stdDev" : { "$numberDouble" : "4611686018427387904.0" } }
+(1 row)
+
+/* int64 multiplication overflow in moving-window inverse transition */
+SELECT documentdb_api.insert_one('db','large_int64_window',' { "_id": 1, "x": {"$numberLong": "5000000000000000000"}, "y": {"$numberLong": "5000000000000000000"} }');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','large_int64_window',' { "_id": 2, "x": {"$numberLong": "6000000000000000000"}, "y": {"$numberLong": "6000000000000000000"} }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','large_int64_window',' { "_id": 3, "x": {"$numberLong": "7000000000000000000"}, "y": {"$numberLong": "7000000000000000000"} }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','large_int64_window',' { "_id": 4, "x": {"$numberLong": "8000000000000000000"}, "y": {"$numberLong": "8000000000000000000"} }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "large_int64_window", "pipeline": [ { "$setWindowFields": { "sortBy": { "_id": 1 }, "output": { "stdDevPop": { "$stdDevPop": "$x", "window": { "documents": [-2, 0] } }, "stdDevSamp": { "$stdDevSamp": "$x", "window": { "documents": [-2, 0] } }, "covariancePop": { "$covariancePop": ["$x", "$y"], "window": { "documents": [-2, 0] } }, "covarianceSamp": { "$covarianceSamp": ["$x", "$y"], "window": { "documents": [-2, 0] } } } } }, { "$project": { "x": 0, "y": 0 } } ] }');
+                                                                                                                                                document                                                                                                                                                 
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "stdDevPop" : { "$numberDouble" : "0.0" }, "stdDevSamp" : null, "covariancePop" : { "$numberDouble" : "0.0" }, "covarianceSamp" : null }
+ { "_id" : { "$numberInt" : "2" }, "stdDevPop" : { "$numberDouble" : "500000000000000000.0" }, "stdDevSamp" : { "$numberDouble" : "707106781186547584.0" }, "covariancePop" : { "$numberDouble" : "2.5000000000000001061e+35" }, "covarianceSamp" : { "$numberDouble" : "5.0000000000000002121e+35" } }
+ { "_id" : { "$numberInt" : "3" }, "stdDevPop" : { "$numberDouble" : "816496580927726080.0" }, "stdDevSamp" : { "$numberDouble" : "1000000000000000000.0" }, "covariancePop" : { "$numberDouble" : "6.6666666666666664576e+35" }, "covarianceSamp" : { "$numberDouble" : "1.0000000000000000424e+36" } }
+ { "_id" : { "$numberInt" : "4" }, "stdDevPop" : { "$numberDouble" : "816496580927726080.0" }, "stdDevSamp" : { "$numberDouble" : "1000000000000000000.0" }, "covariancePop" : { "$numberDouble" : "6.6666666666666664576e+35" }, "covarianceSamp" : { "$numberDouble" : "1.0000000000000000424e+36" } }
+(4 rows)
+
+/* INT64_MIN subtraction while evicting a moving-window value */
+SELECT documentdb_api_catalog.bson_expression_get(
+	'{}',
+	'{ "int64Exact": { "$subtract": [ { "$numberLong": "-9223372036854775808" }, { "$numberLong": "-9223372036854775808" } ] } }');
+            bson_expression_get             
+--------------------------------------------
+ { "int64Exact" : { "$numberLong" : "0" } }
+(1 row)
+
+SELECT documentdb_api_catalog.bson_expression_get(
+	'{}',
+	'{ "int64Promoted": { "$subtract": [ 0, { "$numberLong": "-9223372036854775808" } ] } }');
+                         bson_expression_get                         
+---------------------------------------------------------------------
+ { "int64Promoted" : { "$numberDouble" : "9223372036854775808.0" } }
+(1 row)
+
+SELECT documentdb_api_catalog.bson_expression_get(
+	'{}',
+	'{ "int32Exact": { "$subtract": [ { "$numberInt": "-2147483648" }, { "$numberInt": "-2147483648" } ] } }');
+            bson_expression_get            
+-------------------------------------------
+ { "int32Exact" : { "$numberInt" : "0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','int64_min_window',' { "_id": 1, "x": {"$numberLong": "-9223372036854775808"}, "y": {"$numberLong": "-9223372036854775808"} }');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','int64_min_window',' { "_id": 2, "x": {"$numberLong": "-9223372036854775808"}, "y": {"$numberLong": "-9223372036854775808"} }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','int64_min_window',' { "_id": 3, "x": {"$numberLong": "-9223372036854775808"}, "y": {"$numberLong": "-9223372036854775808"} }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','int64_min_window',' { "_id": 4, "x": {"$numberLong": "-9223372036854775808"}, "y": {"$numberLong": "-9223372036854775808"} }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "int64_min_window", "pipeline": [ { "$setWindowFields": { "sortBy": { "_id": 1 }, "output": { "stdDevPop": { "$stdDevPop": "$x", "window": { "documents": [-2, 0] } }, "stdDevSamp": { "$stdDevSamp": "$x", "window": { "documents": [-2, 0] } }, "covariancePop": { "$covariancePop": ["$x", "$y"], "window": { "documents": [-2, 0] } }, "covarianceSamp": { "$covarianceSamp": ["$x", "$y"], "window": { "documents": [-2, 0] } } } } }, { "$match": { "_id": 4 } }, { "$project": { "x": 0, "y": 0 } } ] }');
+                                                                                                         document                                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "4" }, "stdDevPop" : { "$numberDouble" : "0.0" }, "stdDevSamp" : { "$numberDouble" : "0.0" }, "covariancePop" : { "$numberDouble" : "0.0" }, "covarianceSamp" : { "$numberDouble" : "0.0" } }
+(1 row)
+
+/* int64 multiplication overflow while combining partial aggregate states */
+CREATE OR REPLACE FUNCTION documentdb_test_helpers.test_bson_statistics_combine_count_overflow()
+RETURNS bool
+LANGUAGE C
+AS 'pg_documentdb', $$test_bson_statistics_combine_count_overflow$$;
+SELECT documentdb_test_helpers.test_bson_statistics_combine_count_overflow();
+ test_bson_statistics_combine_count_overflow
+---------------------------------------------
+ t
+(1 row)
+
+DROP FUNCTION documentdb_test_helpers.test_bson_statistics_combine_count_overflow();
+CREATE TABLE statistics_parallel_data (value documentdb_core.bson);
+INSERT INTO statistics_parallel_data
+	SELECT CASE WHEN i % 2 = 0
+		THEN '{ "": { "$numberLong": "8000000000000000000" } }'
+		ELSE '{ "": { "$numberLong": "5000000000000000000" } }'
+		END::documentdb_core.bson
+	FROM generate_series(1, 20000) i;
+ANALYZE statistics_parallel_data;
+SET parallel_setup_cost TO 0;
+SET parallel_tuple_cost TO 0;
+SET min_parallel_table_scan_size TO 0;
+SET max_parallel_workers_per_gather TO 4;
+EXPLAIN (COSTS OFF)
+SELECT documentdb_api_internal.bsonstddevpop(value)
+FROM statistics_parallel_data;
+                           QUERY PLAN                            
+-----------------------------------------------------------------
+ Finalize Aggregate
+   ->  Gather
+         Workers Planned: 4
+         ->  Partial Aggregate
+               ->  Parallel Seq Scan on statistics_parallel_data
+(5 rows)
+
+SELECT documentdb_core.bson_get_value_text(
+	documentdb_api_internal.bsonstddevpop(value), '')::double precision
+	BETWEEN 1.49e18 AND 1.51e18 AS combine_result_ok
+FROM statistics_parallel_data;
+ combine_result_ok 
+-------------------
+ t
+(1 row)
+
+RESET parallel_setup_cost;
+RESET parallel_tuple_cost;
+RESET min_parallel_table_scan_size;
+RESET max_parallel_workers_per_gather;
+DROP TABLE statistics_parallel_data;
 /*array test*/
 SELECT documentdb_api.insert_one('db','num_array',' {  "num" : [4, 7, 13, 16] }');
 NOTICE:  creating collection

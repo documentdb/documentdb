@@ -154,6 +154,15 @@ static void CalculateSqrtForStdDev(const bson_value_t *inputValue,
 static void ArithmeticOperationFunc(ArithmeticOperation op, bson_value_t *state, const
 									bson_value_t *number, ArithmeticOperationErrorSource
 									errSource);
+static void ArithmeticOperationFuncWithInt64Promotion(ArithmeticOperation op,
+													  bson_value_t *state, const
+													  bson_value_t *number,
+													  ArithmeticOperationErrorSource
+													  errSource);
+static void ArithmeticOperationFuncInternal(ArithmeticOperation op, bson_value_t *state,
+											const bson_value_t *number,
+											ArithmeticOperationErrorSource errSource,
+											bool convertInt64OverflowToDouble);
 static void HandleArithmeticOperationError(const char *opName, bson_value_t *state,
 										   const
 										   bson_value_t *number,
@@ -179,6 +188,50 @@ PG_FUNCTION_INFO_V1(bson_integral_derivative_final);
 PG_FUNCTION_INFO_V1(bson_std_dev_pop_samp_winfunc_invtransition);
 PG_FUNCTION_INFO_V1(bson_std_dev_pop_winfunc_final);
 PG_FUNCTION_INFO_V1(bson_std_dev_samp_winfunc_final);
+PG_FUNCTION_INFO_V1(test_bson_statistics_combine_count_overflow);
+
+
+/*
+ * Verifies the combine path with valid partial states whose count product exceeds int64.
+ * The states represent repeated values of 1 and 3, so the combined Sxx is 2 * count.
+ */
+Datum
+test_bson_statistics_combine_count_overflow(PG_FUNCTION_ARGS)
+{
+	const int64 count = INT64CONST(3037000500);
+	BsonCovarianceAndVarianceAggState leftState = { 0 };
+	BsonCovarianceAndVarianceAggState rightState = { 0 };
+	BsonCovarianceAndVarianceAggState combinedState = { 0 };
+
+	leftState.count = count;
+	leftState.sx.value_type = BSON_TYPE_INT64;
+	leftState.sx.value.v_int64 = count;
+	leftState.sy = leftState.sx;
+	leftState.sxy.value_type = BSON_TYPE_INT64;
+	leftState.sxy.value.v_int64 = 0;
+
+	rightState.count = count;
+	rightState.sx.value_type = BSON_TYPE_INT64;
+	rightState.sx.value.v_int64 = 3 * count;
+	rightState.sy = rightState.sx;
+	rightState.sxy.value_type = BSON_TYPE_INT64;
+	rightState.sxy.value.v_int64 = 0;
+
+	combinedState.sx.value_type = BSON_TYPE_DOUBLE;
+	combinedState.sx.value.v_double = 0.0;
+	combinedState.sy.value_type = BSON_TYPE_DOUBLE;
+	combinedState.sy.value.v_double = 0.0;
+	combinedState.sxy.value_type = BSON_TYPE_DOUBLE;
+	combinedState.sxy.value.v_double = 0.0;
+
+	CalculateCombineFuncForCovarianceOrVarianceWithYCAlgr(&leftState, &rightState,
+														  &combinedState);
+
+	PG_RETURN_BOOL(combinedState.count == 2 * count &&
+				   combinedState.sxy.value_type == BSON_TYPE_DOUBLE &&
+				   BsonValueAsDouble(&combinedState.sxy) == (double) (2 * count));
+}
+
 
 /*
  * Transition function for the BSONCOVARIANCEPOP and BSONCOVARIANCESAMP aggregate.
@@ -1401,9 +1454,9 @@ CalculateInvFuncForCovarianceOrVarianceWithYCAlgr(const bson_value_t *newXValue,
 
 	/* bsonXTmp = currentState->sx - bsonCurrentXValue * currentState->count */
 	/* X * N^ */
-	ArithmeticOperationFunc(ArithmeticOperation_Multiply, &bsonXTmp,
-							&bsonNMinusOne,
-							OperationSource_InvYCAlgr);
+	ArithmeticOperationFuncWithInt64Promotion(ArithmeticOperation_Multiply, &bsonXTmp,
+											  &bsonNMinusOne,
+											  OperationSource_InvYCAlgr);
 
 	/* Sx^ - X * N^ */
 	bson_value_t bsonTmp = currentState->sx;
@@ -1413,8 +1466,9 @@ CalculateInvFuncForCovarianceOrVarianceWithYCAlgr(const bson_value_t *newXValue,
 
 	/* bsonYTmp = currentState->sy - bsonCurrentYValue * bsonNMinusOne(currentState->count) */
 	/* Y * N^ */
-	ArithmeticOperationFunc(ArithmeticOperation_Multiply, &bsonYTmp,
-							&bsonNMinusOne, OperationSource_InvYCAlgr);
+	ArithmeticOperationFuncWithInt64Promotion(ArithmeticOperation_Multiply, &bsonYTmp,
+											  &bsonNMinusOne,
+											  OperationSource_InvYCAlgr);
 
 	/* Sy^ - Y * N^ */
 	bsonTmp = currentState->sy;
@@ -1428,16 +1482,16 @@ CalculateInvFuncForCovarianceOrVarianceWithYCAlgr(const bson_value_t *newXValue,
 	/* bsonXYTmp = bsonXTmp * bsonYTmp */
 	/* (Sx^ - X * N^) * (Sy^ - Y * N^) */
 	bsonXYTmp = bsonXTmp;
-	ArithmeticOperationFunc(ArithmeticOperation_Multiply, &bsonXYTmp,
-							&bsonYTmp,
-							OperationSource_InvYCAlgr);
+	ArithmeticOperationFuncWithInt64Promotion(ArithmeticOperation_Multiply, &bsonXYTmp,
+											  &bsonYTmp,
+											  OperationSource_InvYCAlgr);
 
 	bson_value_t bsonTmpNxx = bsonN;
 
 	/* bsonTmpNxx = bsonN * bsonNMinusOne(currentState->count) */
-	ArithmeticOperationFunc(ArithmeticOperation_Multiply, &bsonTmpNxx,
-							&bsonNMinusOne,
-							OperationSource_InvYCAlgr);
+	ArithmeticOperationFuncWithInt64Promotion(ArithmeticOperation_Multiply, &bsonTmpNxx,
+											  &bsonNMinusOne,
+											  OperationSource_InvYCAlgr);
 
 	bsonTmp = bsonXYTmp;
 
@@ -1612,24 +1666,24 @@ CalculateCombineFuncForCovarianceOrVarianceWithYCAlgr(const
 	bson_value_t bsonNxx = leftN;
 
 	/* bsonNxx = leftState->count * rightState->count; */
-	ArithmeticOperationFunc(ArithmeticOperation_Multiply, &bsonNxx,
-							&rightN,
-							OperationSource_CombineYCAlgr);
+	ArithmeticOperationFuncWithInt64Promotion(ArithmeticOperation_Multiply, &bsonNxx,
+											  &rightN,
+											  OperationSource_CombineYCAlgr);
 
 	bson_value_t bsonXYTmp = bsonXTmp;
 
 	/* bsonXYTmp = bsonXTmp * bsonYTmp; */
-	ArithmeticOperationFunc(ArithmeticOperation_Multiply, &bsonXYTmp,
-							&bsonYTmp,
-							OperationSource_CombineYCAlgr);
+	ArithmeticOperationFuncWithInt64Promotion(ArithmeticOperation_Multiply, &bsonXYTmp,
+											  &bsonYTmp,
+											  OperationSource_CombineYCAlgr);
 
 	bson_value_t bsonTmp = bsonNxx;
 
 	/* bsonTmp = bsonNxx * bsonXYTmp; */
 	/* N1 * N2 * (Sx1/N1 - Sx2/N2) * (Sy1/N1 - Sy2/N2) */
-	ArithmeticOperationFunc(ArithmeticOperation_Multiply, &bsonTmp,
-							&bsonXYTmp,
-							OperationSource_CombineYCAlgr);
+	ArithmeticOperationFuncWithInt64Promotion(ArithmeticOperation_Multiply, &bsonTmp,
+											  &bsonXYTmp,
+											  OperationSource_CombineYCAlgr);
 
 	bson_value_t bsonD = bsonTmp;
 
@@ -1782,9 +1836,9 @@ CalculateSFuncForCovarianceOrVarianceWithYCAlgr(const bson_value_t *newXValue,
 	{
 		/* bsonXTmp = bsonCurrentXValue * bsonN - currentState->sx; */
 		bsonXTmp = bsonCurrentXValue;
-		ArithmeticOperationFunc(ArithmeticOperation_Multiply,
-								&bsonXTmp, &bsonN,
-								OperationSource_SFuncYCAlgr);
+		ArithmeticOperationFuncWithInt64Promotion(ArithmeticOperation_Multiply,
+												  &bsonXTmp, &bsonN,
+												  OperationSource_SFuncYCAlgr);
 		ArithmeticOperationFunc(ArithmeticOperation_Subtract,
 								&bsonXTmp,
 								&currentState->sx,
@@ -1792,9 +1846,9 @@ CalculateSFuncForCovarianceOrVarianceWithYCAlgr(const bson_value_t *newXValue,
 
 		/* bsonYTmp = bsonCurrentYValue * bsonN - currentState->sy; */
 		bsonYTmp = bsonCurrentYValue;
-		ArithmeticOperationFunc(ArithmeticOperation_Multiply,
-								&bsonYTmp, &bsonN,
-								OperationSource_SFuncYCAlgr);
+		ArithmeticOperationFuncWithInt64Promotion(ArithmeticOperation_Multiply,
+												  &bsonYTmp, &bsonN,
+												  OperationSource_SFuncYCAlgr);
 		ArithmeticOperationFunc(ArithmeticOperation_Subtract,
 								&bsonYTmp,
 								&currentState->sy,
@@ -1802,14 +1856,14 @@ CalculateSFuncForCovarianceOrVarianceWithYCAlgr(const bson_value_t *newXValue,
 
 		/* currentState->sxy += bsonXTmp * bsonYTmp / (bsonN * currentState->count); */
 		bsonXYTmp = bsonXTmp;
-		ArithmeticOperationFunc(ArithmeticOperation_Multiply,
-								&bsonXYTmp, &bsonYTmp,
-								OperationSource_SFuncYCAlgr);
+		ArithmeticOperationFuncWithInt64Promotion(ArithmeticOperation_Multiply,
+												  &bsonXYTmp, &bsonYTmp,
+												  OperationSource_SFuncYCAlgr);
 
 		bsonNxx = bsonN;
-		ArithmeticOperationFunc(ArithmeticOperation_Multiply, &bsonNxx,
-								&bsonNTmp,
-								OperationSource_SFuncYCAlgr);
+		ArithmeticOperationFuncWithInt64Promotion(ArithmeticOperation_Multiply, &bsonNxx,
+												  &bsonNTmp,
+												  OperationSource_SFuncYCAlgr);
 		ArithmeticOperationFunc(ArithmeticOperation_Divide, &bsonXYTmp,
 								&bsonNxx,
 								OperationSource_SFuncYCAlgr);
@@ -2358,6 +2412,29 @@ static void
 ArithmeticOperationFunc(ArithmeticOperation op, bson_value_t *state, const
 						bson_value_t *number, ArithmeticOperationErrorSource errSource)
 {
+	bool convertInt64OverflowToDouble = false;
+	ArithmeticOperationFuncInternal(op, state, number, errSource,
+									convertInt64OverflowToDouble);
+}
+
+
+static void
+ArithmeticOperationFuncWithInt64Promotion(ArithmeticOperation op, bson_value_t *state,
+										  const bson_value_t *number,
+										  ArithmeticOperationErrorSource errSource)
+{
+	bool convertInt64OverflowToDouble = true;
+	ArithmeticOperationFuncInternal(op, state, number, errSource,
+									convertInt64OverflowToDouble);
+}
+
+
+static void
+ArithmeticOperationFuncInternal(ArithmeticOperation op, bson_value_t *state, const
+								bson_value_t *number,
+								ArithmeticOperationErrorSource errSource,
+								bool convertInt64OverflowToDouble)
+{
 	bool opResult = false;
 	bool overflowedFromInt64 = false;
 	char *opName = "AddNumberToBsonValue";
@@ -2380,7 +2457,6 @@ ArithmeticOperationFunc(ArithmeticOperation op, bson_value_t *state, const
 		case ArithmeticOperation_Multiply:
 		{
 			opName = "MultiplyWithFactorAndUpdate";
-			bool convertInt64OverflowToDouble = false;
 			opResult = MultiplyWithFactorAndUpdate(state, number,
 												   convertInt64OverflowToDouble);
 			break;

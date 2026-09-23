@@ -1,4 +1,6 @@
 \i sql/bson_aggregation_pipeline_tests_sumavg_group.sql
+-- Copyright (c) Microsoft Corporation.
+-- SPDX-License-Identifier: MIT
 SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_core,pg_catalog;
 SET documentdb.next_collection_id TO 25702000;
 SET documentdb.next_collection_index_id TO 25702000;
@@ -6,7 +8,7 @@ SET documentdb.next_collection_index_id TO 25702000;
 -- Test 1: $group + $sum/$avg on integer fields
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_int_test','{ "_id": 1, "category": "A", "value": 10 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:10: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:13: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -86,7 +88,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int
 -- Test 2: $group + $sum/$avg on double fields
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_double_test','{ "_id": 1, "category": "X", "value": 1.5 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:36: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:39: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -127,7 +129,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_dou
 -- Test 3: $group + $sum/$avg on mixed numeric types
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_mixed_test','{ "_id": 1, "category": "M", "value": 10 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:48: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:51: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -161,7 +163,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_mix
 -- Test 4: $sum/$avg with non-numeric values (should be ignored)
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_nonnumeric_test','{ "_id": 1, "category": "A", "value": 10 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:59: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:62: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -201,7 +203,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_non
 -- Test 5: $sum/$avg with null and missing fields
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_null_test','{ "_id": 1, "category": "A", "value": 10 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:71: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:74: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -252,7 +254,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int
 -- Test 8: $sum/$avg with expressions
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_expr_test','{ "_id": 1, "price": 10, "qty": 2 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:94: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:97: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -279,7 +281,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_exp
 
 -- $sum/$avg with nested field paths
 SELECT documentdb_api.insert_one('db','sumavg_nested_test','{ "_id": 1, "info": { "score": 85 } }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:102: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:105: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -307,7 +309,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_nes
 -- Test 9: $sum/$avg with $let variables
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_let_test','{ "_id": 1, "price": 10, "tax": 0.1 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:112: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:115: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -335,7 +337,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_let
 -- Test 10: $setWindowFields with $sum and $avg - document window
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_window_test','{ "_id": 1, "partition": "A", "order": 1, "value": 10 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:122: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:125: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -451,7 +453,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_win
 -- Test 13: $setWindowFields with $sum/$avg on window with null/missing values
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_window_null_test','{ "_id": 1, "order": 1, "value": 10 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:156: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:159: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -523,7 +525,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int
 -- Test 15: $sum/$avg with $group on all same values
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_same_test','{ "_id": 1, "value": 7 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:178: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:181: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -551,7 +553,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_sam
 -- Test 16: Extreme Int64 and Decimal128 values
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_extreme_test','{ "_id": 1, "group": "int64", "val": { "$numberLong": "9223372036854775807" } }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:188: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:191: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -652,15 +654,15 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_ext
 
 -- Mixed numeric types
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_extreme_test", "pipeline": [ { "$match": { "group": "mixednums" } }, { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } } ] }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:215: ERROR:  Conversion would exceed target type limit
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:218: ERROR:  Conversion would exceed target type limit
 -- All groups
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_extreme_test", "pipeline": [ { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:218: ERROR:  Conversion would exceed target type limit
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:221: ERROR:  Conversion would exceed target type limit
 -- =============================================================================
 -- Test 17: Using $$variable in $sum/$avg expression
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_variable_test','{ "_id": 1, "group": "A", "val": 10 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:224: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:227: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -734,7 +736,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_var
 -- Test 18: Expression evaluation within accumulator ($add, $subtract, nested)
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_expr2_test','{ "_id": 1, "group": "A", "a": 10, "b": 5 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:249: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:252: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -807,7 +809,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_exp
 -- Test 19: Conditional logic in accumulator input ($cond, $ifNull)
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_cond_test','{ "_id": 1, "group": "A", "val": 10, "active": true }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:272: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:275: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -955,7 +957,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- respect collation (e.g., "cherry" == "CHERRY" with strength 1).
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_collation_test','{ "_id": 1, "group": "A", "name": "cherry", "val": 10 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:315: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:318: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1142,7 +1144,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
 -- Test 24: Collation with $sum/$avg on mixed types
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_collation_mixed','{ "_id": 1, "group": "G", "val": "banana" }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:377: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:380: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1185,7 +1187,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
 -- With numericOrdering: "item10" > "item2" (numeric), without: "item10" < "item2" (lexical)
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_numeric_order','{ "_id": 1, "cat": "A", "val": "item1" }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:393: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:396: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1284,7 +1286,7 @@ SET documentdb_core.enableCollation TO off;
 --          order-insensitive $group accumulators while preserving results.
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sortgroup_safe_test','{ "_id": 1, "g": "A", "seq": 30, "v": 10, "bonus": 2 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:436: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:439: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1340,10 +1342,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- Test 29: Invalid sort direction with order-insensitive accumulators
 -- Even when the sort could be dropped, an invalid sort spec should still error.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "myFoobar": "InvalidDirection" } }, { "$group": { "_id": null, "c": { "$max": "$v" } } } ] }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:447: ERROR:  Sort direction value "InvalidDirection" is not valid
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:450: ERROR:  Sort direction value "InvalidDirection" is not valid
 -- Test 30: Non-$ prefixed path in accumulator should fail in group validation
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": null, "c": { "notAnOperator": "$v" } } } ] }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:450: ERROR:  Unrecognized group operator notAnOperator
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:453: ERROR:  Unrecognized group operator notAnOperator
 -- Test 31: $push is order-sensitive — sort must be preserved
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "vals": { "$push": "$v" } } }, { "$sort": { "_id": 1 } } ] }');
                                    document                                    
@@ -1459,7 +1461,7 @@ SELECT documentdb_api.drop_collection('db', 'sortgroup_safe_test');
 -- =============================================================================
 -- Case 1: g_home is a document with province field
 SELECT documentdb_api.insert_one('db','group_null_path_test','{ "_id": "001", "name": "Alice", "g_home": { "province": "Shanghai" } }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:473: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:476: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1502,7 +1504,7 @@ SELECT documentdb_api.insert_one('db','group_null_path_test','{ "_id": "006", "n
 
 -- Test 34b: deeply nested path with various intermediate non-document types
 SELECT documentdb_api.insert_one('db','group_deep_null_test','{ "_id": "e01", "val": { "a": { "b": "deep_ok" } } }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:486: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:489: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1634,5 +1636,31 @@ SELECT documentdb_api.drop_collection('db', 'group_deep_null_test');
  drop_collection 
 -----------------
  t
+(1 row)
+
+-- minimum int64 leaving moving $sum and $avg windows
+SELECT documentdb_api.insert_one('db','sumavg_int64_min_window','{ "_id": 1, "value": { "$numberLong": "-9223372036854775808" } }');
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:522: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','sumavg_int64_min_window','{ "_id": 2, "value": 1 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','sumavg_int64_min_window','{ "_id": 3, "value": 2 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int64_min_window", "pipeline": [ { "$setWindowFields": { "sortBy": {"_id": 1}, "output": { "slidingSum": { "$sum": "$value", "window": { "documents": [-1, 0] } }, "slidingAvg": { "$avg": "$value", "window": { "documents": [-1, 0] } } } } }, { "$match": { "_id": 3 } }, { "$project": { "value": 0 } } ] }');
+                                                        document                                                        
+------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "slidingSum" : { "$numberLong" : "3" }, "slidingAvg" : { "$numberDouble" : "1.5" } }
 (1 row)
 

@@ -1,3 +1,5 @@
+-- Copyright (c) Microsoft Corporation.
+-- SPDX-License-Identifier: MIT
 SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_core,pg_catalog;
 SET documentdb.next_collection_id TO 25702000;
 SET documentdb.next_collection_index_id TO 25702000;
@@ -1631,5 +1633,31 @@ SELECT documentdb_api.drop_collection('db', 'group_deep_null_test');
  drop_collection 
 -----------------
  t
+(1 row)
+
+-- minimum int64 leaving moving $sum and $avg windows
+SELECT documentdb_api.insert_one('db','sumavg_int64_min_window','{ "_id": 1, "value": { "$numberLong": "-9223372036854775808" } }');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','sumavg_int64_min_window','{ "_id": 2, "value": 1 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','sumavg_int64_min_window','{ "_id": 3, "value": 2 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int64_min_window", "pipeline": [ { "$setWindowFields": { "sortBy": {"_id": 1}, "output": { "slidingSum": { "$sum": "$value", "window": { "documents": [-1, 0] } }, "slidingAvg": { "$avg": "$value", "window": { "documents": [-1, 0] } } } } }, { "$match": { "_id": 3 } }, { "$project": { "value": 0 } } ] }');
+                                                        document                                                        
+------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "slidingSum" : { "$numberLong" : "3" }, "slidingAvg" : { "$numberDouble" : "1.5" } }
 (1 row)
 

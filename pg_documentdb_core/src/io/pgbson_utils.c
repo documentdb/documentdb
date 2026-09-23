@@ -46,6 +46,10 @@ static void AddInt64ToValue(bson_value_t *current, int64_t value,
 							bool *overflowedFromInt64);
 static void AddInt32ToValue(bson_value_t *current, int32_t value,
 							bool *overflowedFromInt64);
+static void SubtractInt64FromValue(bson_value_t *current, int64_t value,
+								   bool *overflowedFromInt64);
+static void SubtractInt32FromValue(bson_value_t *current, int32_t value,
+								   bool *overflowedFromInt64);
 static void AddDecimal128ToValue(bson_value_t *current, const bson_value_t *value);
 static void SubtractDecimal128FromValue(bson_value_t *current, const bson_value_t *value);
 static bool TraverseBsonCore(bson_iter_t *documentIterator, const StringView *filterPath,
@@ -198,13 +202,15 @@ SubtractNumberFromBsonValue(bson_value_t *state, const bson_value_t *subtrahend,
 	{
 		case BSON_TYPE_INT64:
 		{
-			AddInt64ToValue(state, -subtrahend->value.v_int64, overflowedFromInt64);
+			SubtractInt64FromValue(state, subtrahend->value.v_int64,
+								   overflowedFromInt64);
 			return true;
 		}
 
 		case BSON_TYPE_INT32:
 		{
-			AddInt32ToValue(state, -subtrahend->value.v_int32, overflowedFromInt64);
+			SubtractInt32FromValue(state, subtrahend->value.v_int32,
+								   overflowedFromInt64);
 			return true;
 		}
 
@@ -859,6 +865,64 @@ AddInt64ToValue(bson_value_t *current, int64_t value, bool *overflowedFromInt64)
 
 		current->value.v_int64 = currentSum + value;
 		current->value_type = BSON_TYPE_INT64;
+	}
+}
+
+
+static void
+SubtractInt64FromValue(bson_value_t *current, int64_t value,
+					   bool *overflowedFromInt64)
+{
+	if (current->value_type == BSON_TYPE_DOUBLE)
+	{
+		AddDoubleToValue(current, -(double) value);
+		*overflowedFromInt64 = false;
+		return;
+	}
+	else if (current->value_type == BSON_TYPE_DECIMAL128)
+	{
+		bson_value_t valueToSubtract = {
+			.value_type = BSON_TYPE_DECIMAL128,
+			.value.v_decimal128 = GetDecimal128FromInt64(value)
+		};
+		SubtractDecimal128FromValue(current, &valueToSubtract);
+		*overflowedFromInt64 = false;
+		return;
+	}
+
+	int64_t currentValue = BsonValueAsInt64(current);
+	int64_t difference;
+	if (__builtin_sub_overflow(currentValue, value, &difference))
+	{
+		*overflowedFromInt64 = true;
+		current->value_type = BSON_TYPE_DOUBLE;
+		current->value.v_double = (double) currentValue - (double) value;
+	}
+	else
+	{
+		*overflowedFromInt64 = false;
+		current->value_type = BSON_TYPE_INT64;
+		current->value.v_int64 = difference;
+	}
+}
+
+
+static void
+SubtractInt32FromValue(bson_value_t *current, int32_t value,
+					   bool *overflowedFromInt64)
+{
+	bson_type_t originalType = current->value_type;
+
+	SubtractInt64FromValue(current, (int64_t) value, overflowedFromInt64);
+
+	/* Normalize only values promoted to INT64 by the shared helper. */
+	if (originalType != BSON_TYPE_INT64 &&
+		current->value_type == BSON_TYPE_INT64 &&
+		current->value.v_int64 >= INT32_MIN &&
+		current->value.v_int64 <= INT32_MAX)
+	{
+		current->value.v_int32 = (int32_t) current->value.v_int64;
+		current->value_type = BSON_TYPE_INT32;
 	}
 }
 
