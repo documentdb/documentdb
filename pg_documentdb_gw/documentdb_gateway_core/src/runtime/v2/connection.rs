@@ -168,13 +168,17 @@ fn gateway_tcp_config(service_context: &ServiceContext) -> NacelleTcpConfig {
         .with_response_write_policy(ResponseWritePolicy::Immediate)
 }
 
-fn gateway_limits(service_context: &ServiceContext) -> NacelleLimits {
+fn gateway_limits(_service_context: &ServiceContext) -> NacelleLimits {
     let max_frame_len = gateway_max_frame_len();
-    let max_connections = service_context.dynamic_configuration().max_connections();
+
+    // 1024 * 512 is 1/2 of the maximum file handlers that can be used for inbound connections
+    let max_gateway_connections = 1024 * 512;
+
     NacelleLimits::default()
-        .with_max_connections(max_connections)
-        .with_max_in_flight_requests(max_connections)
+        .with_max_connections(max_gateway_connections)
+        .with_max_in_flight_requests(max_gateway_connections)
         .with_max_request_body_bytes(max_frame_len)
+        .without_handler_timeout()
         .with_max_response_body_bytes(max_frame_len)
 }
 
