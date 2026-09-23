@@ -9,8 +9,35 @@ SET citus.next_shard_id TO 4100000;
 SET documentdb.next_collection_index_id TO 41000;
 
 SET documentdb.enableDynamicCursors TO on;
+SET documentdb.enable_dynamic_cursor_early_index_lock_release TO on;
 SET documentdb.enableIndexOnlyScanForFindProject TO on;
 SET enable_seqscan TO off;
+
+DO $$
+DECLARE
+    dynamic_cursor_nodes int;
+    lock_release_nodes int;
+    reloaded_nodes int;
+BEGIN
+    SELECT count(*) INTO dynamic_cursor_nodes
+    FROM run_command_on_all_nodes(
+        $cmd$ALTER SYSTEM SET documentdb.enableDynamicCursors = 'on'$cmd$)
+    WHERE success;
+
+    SELECT count(*) INTO lock_release_nodes
+    FROM run_command_on_all_nodes(
+        $cmd$ALTER SYSTEM SET documentdb.enable_dynamic_cursor_early_index_lock_release = 'on'$cmd$)
+    WHERE success;
+
+    SELECT count(*) INTO reloaded_nodes
+    FROM run_command_on_all_nodes($cmd$SELECT pg_reload_conf()$cmd$)
+    WHERE success;
+
+    IF dynamic_cursor_nodes <> 2 OR lock_release_nodes <> 2 OR reloaded_nodes <> 2 THEN
+        RAISE EXCEPTION 'failed to configure all nodes';
+    END IF;
+END
+$$;
 
 -- ===========================================================================
 -- Data setup: 20 documents with a secondary index on "val" for ordered scans
@@ -40,6 +67,68 @@ ANALYZE;
 -- Move sp_coll shard to worker node 1 to force remote-unsharded code path
 CALL documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'sp_coll', 1);
 
+-- Execute first-page planning directly on the worker, then inspect the locks
+-- held by that same backend before its transaction ends. sp_coll has four
+-- indexes and the hint uses one, so early release leaves one index lock.
+SELECT bool_and(success AND result = '1') AS only_used_index_lock_held
+FROM run_command_on_workers($worker$
+    WITH feature_enabled AS MATERIALIZED (
+        SELECT set_config(
+            (SELECT name
+             FROM pg_settings
+             WHERE name LIKE '%.enable_dynamic_cursor_early_index_lock_release'),
+            'on',
+            true)
+    ),
+    first_page AS MATERIALIZED (
+        SELECT continuation
+        FROM feature_enabled,
+             LATERAL documentdb_api.find_cursor_first_page(
+                database => 'dyncur_sp_db',
+                commandSpec => '{ "find": "sp_coll", "filter": { "val": { "$gte": 10 } }, "hint": "idx_val_asc", "batchSize": 1 }',
+                cursorId => 537)
+    )
+    SELECT count(*)
+    FROM first_page,
+         pg_locks l
+         JOIN pg_index i ON i.indexrelid = l.relation
+         JOIN pg_class t ON t.oid = i.indrelid
+    WHERE l.pid = pg_backend_pid() AND
+          l.mode = 'AccessShareLock' AND
+          t.relname LIKE 'documents_41000_%';
+$worker$);
+
+-- With the feature disabled in the worker transaction, all four planner index
+-- locks remain held. This proves the enabled result above reflects early
+-- release rather than a plan that acquired only the hinted index lock.
+SELECT bool_and(success AND result = '4') AS all_index_locks_held
+FROM run_command_on_workers($worker$
+    WITH feature_disabled AS MATERIALIZED (
+        SELECT set_config(
+            (SELECT name
+             FROM pg_settings
+             WHERE name LIKE '%.enable_dynamic_cursor_early_index_lock_release'),
+            'off',
+            true)
+    ),
+    first_page AS MATERIALIZED (
+        SELECT continuation
+        FROM feature_disabled,
+             LATERAL documentdb_api.find_cursor_first_page(
+                database => 'dyncur_sp_db',
+                commandSpec => '{ "find": "sp_coll", "filter": { "val": { "$gte": 10 } }, "hint": "idx_val_asc", "batchSize": 1 }',
+                cursorId => 537)
+    )
+    SELECT count(*)
+    FROM first_page,
+         pg_locks l
+         JOIN pg_index i ON i.indexrelid = l.relation
+         JOIN pg_class t ON t.oid = i.indrelid
+    WHERE l.pid = pg_backend_pid() AND
+          l.mode = 'AccessShareLock' AND
+          t.relname LIKE 'documents_41000_%';
+$worker$);
+
 -- ===========================================================================
 -- Helper: drain all pages and report batch sizes + cursor type from continuation
 -- ===========================================================================
@@ -60,15 +149,31 @@ DECLARE
     v_tbl         text;
     v_idx         text;
     v_portal_name text;
+    v_is_aggregate bool;
 BEGIN
+    -- Keep this signature aligned with the mini suite's helper and infer the
+    -- command kind so co-scheduled runs replace rather than overload it.
+    v_is_aggregate := (bson_dollar_project(p_find_spec::documentdb_core.bson,
+        '{ "aggregate": 1 }') ->> 'aggregate') IS NOT NULL;
+
     -- First page
-    SELECT fp.cursorPage, fp.continuation, fp.persistconnection
-    INTO v_page, v_cont, v_persist
-    FROM find_cursor_first_page(
-        database    => 'dyncur_sp_db',
-        commandSpec => p_find_spec::documentdb_core.bson,
-        cursorId    => 538
-    ) fp;
+    IF v_is_aggregate THEN
+        SELECT fp.cursorPage, fp.continuation, fp.persistconnection
+        INTO v_page, v_cont, v_persist
+        FROM aggregate_cursor_first_page(
+            database    => 'dyncur_sp_db',
+            commandSpec => p_find_spec::documentdb_core.bson,
+            cursorId    => 538
+        ) fp;
+    ELSE
+        SELECT fp.cursorPage, fp.continuation, fp.persistconnection
+        INTO v_page, v_cont, v_persist
+        FROM find_cursor_first_page(
+            database    => 'dyncur_sp_db',
+            commandSpec => p_find_spec::documentdb_core.bson,
+            cursorId    => 538
+        ) fp;
+    END IF;
 
     SELECT (bson_dollar_project(v_page,
         '{ "c": { "$size": { "$ifNull": ["$cursor.firstBatch", []] } } }') ->> 'c')::bigint
@@ -1251,11 +1356,129 @@ SELECT * FROM remote_drain_and_report(
 -- | H12  | {b:-1}        | a = 2        | idx_ab_asc   | streaming   | OK        |
 -- ===========================================================================
 
+SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
+
+-- ===========================================================================
+-- SECTION I: Aggregation stages with Citus remote-unsharded execution
+-- These stages introduce joins, append branches, and recursive traversal into
+-- the worker plan. They are not dynamically streamable, so they must fall back
+-- to remote file cursors and must not enter the early lock-release path.
+-- ===========================================================================
+
+SELECT documentdb_api.drop_collection('dyncur_sp_db', 'sp_lookup_coll');
+SELECT documentdb_api.drop_collection('dyncur_sp_db', 'sp_union_coll');
+SELECT documentdb_api.drop_collection('dyncur_sp_db', 'sp_graph_start');
+SELECT documentdb_api.drop_collection('dyncur_sp_db', 'sp_graph_nodes');
+
+SELECT COUNT(documentdb_api.insert_one('dyncur_sp_db', 'sp_lookup_coll',
+    FORMAT('{ "_id": %s, "tag": %s, "label": "tag-%s" }', i, i, i)::documentdb_core.bson))
+FROM generate_series(0, 4) AS i;
+
+SELECT COUNT(documentdb_api.insert_one('dyncur_sp_db', 'sp_union_coll',
+    FORMAT('{ "_id": %s, "source": "union" }', i)::documentdb_core.bson))
+FROM generate_series(101, 104) AS i;
+
+SELECT documentdb_api.insert_one('dyncur_sp_db', 'sp_graph_start',
+    '{ "_id": 1, "start": "A" }');
+SELECT documentdb_api.insert_one('dyncur_sp_db', 'sp_graph_start',
+    '{ "_id": 2, "start": "B" }');
+
+SELECT documentdb_api.insert_one('dyncur_sp_db', 'sp_graph_nodes',
+    '{ "_id": 1, "node": "A", "next": [ "B", "C" ] }');
+SELECT documentdb_api.insert_one('dyncur_sp_db', 'sp_graph_nodes',
+    '{ "_id": 2, "node": "B", "next": [ "D" ] }');
+SELECT documentdb_api.insert_one('dyncur_sp_db', 'sp_graph_nodes',
+    '{ "_id": 3, "node": "C", "next": [ "D" ] }');
+SELECT documentdb_api.insert_one('dyncur_sp_db', 'sp_graph_nodes',
+    '{ "_id": 4, "node": "D", "next": [] }');
+
+ANALYZE;
+
+CALL documentdb_distributed_test_helpers.place_collection_on_node(
+    'dyncur_sp_db', 'sp_lookup_coll', 1);
+CALL documentdb_distributed_test_helpers.place_collection_on_node(
+    'dyncur_sp_db', 'sp_union_coll', 1);
+CALL documentdb_distributed_test_helpers.place_collection_on_node(
+    'dyncur_sp_db', 'sp_graph_start', 1);
+CALL documentdb_distributed_test_helpers.place_collection_on_node(
+    'dyncur_sp_db', 'sp_graph_nodes', 1);
+
+-- $lookup: the outer and foreign collections are remote unsharded collections
+-- on the same worker. All 20 source documents match one foreign document.
+SELECT * FROM remote_drain_and_report(
+    '{ "aggregate": "sp_coll", "pipeline": [
+        { "$lookup": { "from": "sp_lookup_coll", "localField": "tag", "foreignField": "tag", "as": "matches" } },
+        { "$match": { "matches.0": { "$exists": true } } },
+        { "$project": { "_id": 1 } }
+    ], "cursor": { "batchSize": 6 } }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_coll", "batchSize": 6 }',
+    false);
+
+-- $unionWith: four source documents and four remote-unsharded union documents
+-- are sorted and drained across multiple worker cursor pages.
+SELECT * FROM remote_drain_and_report(
+    '{ "aggregate": "sp_coll", "pipeline": [
+        { "$match": { "_id": { "$lte": 4 } } },
+        { "$project": { "_id": 1 } },
+        { "$unionWith": { "coll": "sp_union_coll", "pipeline": [
+            { "$project": { "_id": 1 } }
+        ] } },
+        { "$sort": { "_id": 1 } }
+    ], "cursor": { "batchSize": 3 } }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_coll", "batchSize": 3 }',
+    false);
+
+-- $graphLookup: both the starting collection and recursively traversed
+-- collection are remote unsharded collections on the same worker.
+SELECT * FROM remote_drain_and_report(
+    '{ "aggregate": "sp_graph_start", "pipeline": [
+        { "$graphLookup": {
+            "from": "sp_graph_nodes",
+            "startWith": "$start",
+            "connectFromField": "next",
+            "connectToField": "node",
+            "as": "reachable",
+            "maxDepth": 2
+        } },
+        { "$project": { "_id": 1, "reachable": 1 } }
+    ], "cursor": { "batchSize": 1 } }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_graph_start", "batchSize": 1 }',
+    false);
+
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;
 
 -- ===========================================================================
 -- Cleanup
 -- ===========================================================================
+RESET documentdb.enable_dynamic_cursor_early_index_lock_release;
+
+DO $$
+DECLARE
+    reset_dynamic_cursor_nodes int;
+    reset_lock_release_nodes int;
+    reloaded_nodes int;
+BEGIN
+    SELECT count(*) INTO reset_dynamic_cursor_nodes
+    FROM run_command_on_all_nodes(
+        $cmd$ALTER SYSTEM RESET documentdb.enableDynamicCursors$cmd$)
+    WHERE success;
+
+    SELECT count(*) INTO reset_lock_release_nodes
+    FROM run_command_on_all_nodes(
+        $cmd$ALTER SYSTEM RESET documentdb.enable_dynamic_cursor_early_index_lock_release$cmd$)
+    WHERE success;
+
+    SELECT count(*) INTO reloaded_nodes
+    FROM run_command_on_all_nodes($cmd$SELECT pg_reload_conf()$cmd$)
+    WHERE success;
+
+    IF reset_dynamic_cursor_nodes <> 2 OR reset_lock_release_nodes <> 2 OR
+       reloaded_nodes <> 2 THEN
+        RAISE EXCEPTION 'failed to reset all nodes';
+    END IF;
+END
+$$;
+
 DROP FUNCTION IF EXISTS remote_drain_and_report;
 DROP FUNCTION IF EXISTS sp_drain_ordered;
 DROP FUNCTION IF EXISTS sp_drain_docs;

@@ -17,6 +17,7 @@
 * Apply per-update collation when selecting documents to update, including sharded routing and update-worker execution, while retaining binary comparison semantics inside update expressions. *[Feature]*
 * Prevent a backend crash by rejecting `$documents` directly inside a `$facet` sub-pipeline. *[Bugfix]*
 * Enforce `$facet` restrictions on `$collStats`, `$facet`, `$geoNear`, `$indexStats`, and `$planCacheStats` in nested `$lookup` and `$unionWith` pipelines while preserving parent-stage validation and valid collectionless pipelines. *[Bugfix]*
+* Reduce lock-manager pressure for dynamic cursor queries on heavily indexed collections by releasing planner-acquired `AccessShareLock`s for indexes not referenced by the final streamable plan immediately after planning. Guarded by the default-off `documentdb.enable_dynamic_cursor_early_index_lock_release` setting. *[Perf]*
 
 ### documentdb v1.0-0 (Unreleased) ###
 * Release executable memory allocated for PCRE2 JIT-compiled regular expressions when their memory context resets. *[Bugfix]* (work item 5530914)

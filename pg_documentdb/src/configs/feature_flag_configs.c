@@ -323,6 +323,11 @@ bool EnableDynamicPersistentCursorsWithStats =
 #define DEFAULT_ENABLE_DYNAMIC_CURSOR_FAST_STARTUP_SCAN true
 bool EnableDynamicCursorFastStartupScan = DEFAULT_ENABLE_DYNAMIC_CURSOR_FAST_STARTUP_SCAN;
 
+/* Added in v1.0, pending stabilization, enable in v1.3 */
+#define DEFAULT_ENABLE_DYNAMIC_CURSOR_EARLY_INDEX_LOCK_RELEASE false
+bool EnableDynamicCursorEarlyIndexLockRelease =
+	DEFAULT_ENABLE_DYNAMIC_CURSOR_EARLY_INDEX_LOCK_RELEASE;
+
 /* Added in v0.115, enabled in v0.115, remove after v0.117 */
 #define DEFAULT_ENABLE_DYNAMIC_CURSOR_PARALLEL_PLANS true
 bool EnableDynamicCursorParallelPlans = DEFAULT_ENABLE_DYNAMIC_CURSOR_PARALLEL_PLANS;
@@ -787,6 +792,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether or not to enable fast startup scan for dynamic cursors."),
 		NULL, &EnableDynamicCursorFastStartupScan,
 		DEFAULT_ENABLE_DYNAMIC_CURSOR_FAST_STARTUP_SCAN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_dynamic_cursor_early_index_lock_release", newGucPrefix),
+		gettext_noop(
+			"Whether dynamically streamable cursor plans release locks on unused indexes before execution."),
+		NULL, &EnableDynamicCursorEarlyIndexLockRelease,
+		DEFAULT_ENABLE_DYNAMIC_CURSOR_EARLY_INDEX_LOCK_RELEASE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

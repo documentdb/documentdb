@@ -39,13 +39,22 @@ ANALYZE documentdb_data.documents_93501;
 -- exactly once (the multikey document is not re-emitted).
 ------------------------------------------------------------------------------
 SET documentdb.enableDynamicCursors TO on;
+SET documentdb.enable_dynamic_cursor_early_index_lock_release TO on;
 SET documentdb.enable_dynamic_cursor_multikey_bitmap TO on;
+
+-- Early index-lock release is active on this de-duplicating bitmap plan. mk has
+-- 2 indexes (the _id index plus a_1); the hint forces a plan that uses only
+-- a_1, so the single unused _id index lock is released. DEBUG1 logging surfaces
+-- the released count for this page.
+SET client_min_messages TO DEBUG1;
 
 SELECT bson_dollar_project(continuation, '{ "qp": 1, "dc.type": 1 }') AS continuation_flags
 FROM find_cursor_first_page(
     database => 'mkbitmap_db',
     commandSpec => '{ "find": "mk", "filter": { "a": { "$exists": true } }, "hint": "a_1", "batchSize": 1 }',
     cursorId => 93501);
+
+RESET client_min_messages;
 
 DO $$
 DECLARE
@@ -195,6 +204,25 @@ BEGIN
 END$$;
 
 RESET documentdb.enable_dynamic_cursor_with_skiplimit;
+
+------------------------------------------------------------------------------
+-- Early index-lock release feature off: even though the plan is still a
+-- dynamically streamable cursor, no planner index locks are released, so
+-- nothing is logged.
+------------------------------------------------------------------------------
+SET documentdb.enable_dynamic_cursor_early_index_lock_release TO off;
+
+SET client_min_messages TO DEBUG1;
+
+SELECT continuation IS NOT NULL AS t
+FROM find_cursor_first_page(
+    database => 'mkbitmap_db',
+    commandSpec => '{ "find": "mk", "filter": { "a": { "$exists": true } }, "hint": "a_1", "batchSize": 1 }',
+    cursorId => 93505);
+
+RESET client_min_messages;
+
+RESET documentdb.enable_dynamic_cursor_early_index_lock_release;
 RESET documentdb.enable_dynamic_cursor_multikey_bitmap;
 
 SELECT documentdb_api.drop_collection('mkbitmap_db', 'mk');

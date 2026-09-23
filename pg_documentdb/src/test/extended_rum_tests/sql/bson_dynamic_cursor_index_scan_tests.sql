@@ -13,6 +13,7 @@ SET documentdb.next_collection_id TO 9600;
 SET documentdb.next_collection_index_id TO 9600;
 
 SET documentdb.enableDynamicCursors TO on;
+SET documentdb.enable_dynamic_cursor_early_index_lock_release TO on;
 SET documentdb.enableIndexOnlyScanForFindProject TO on;
 SET enable_seqscan TO off;
 
@@ -57,6 +58,53 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('ios_idx_db',
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently('ios_idx_db',
     '{"createIndexes": "ios_coll", "indexes": [{"key": {"a": 1, "b": -1, "c": -1}, "name": "idx_abc_add"}]}', true);
+
+-- Verify that the feature releases unused index locks on the first page and
+-- again on a subsequent getMore page (each page re-plans the query), and that
+-- it remains inert when the feature is off.
+--
+-- ios_coll has 9 indexes (the _id index plus the 8 created above). The hint
+-- forces a single-index plan (idx_ab_aa), so the other 8 planner-acquired
+-- index locks are released. With DEBUG1 logging on, the per-plan released count
+-- is emitted for the first page and again for the getMore page. The
+-- find/getMore calls are issued as plain selects (no CREATE TABLE AS) so the
+-- DEBUG1 window only contains deterministic documentdb catalog lookups and the
+-- release log, not non-deterministic temp-table toast index build output.
+SET client_min_messages TO DEBUG1;
+
+SELECT continuation AS lr_continuation FROM find_cursor_first_page(
+    database => 'ios_idx_db',
+    commandSpec => '{"find": "ios_coll", "filter": {"a": "v1"}, "batchSize": 1, "hint": "idx_ab_aa"}',
+    cursorId => 535) \gset
+
+RESET client_min_messages;
+
+SELECT :'lr_continuation'::documentdb_core.bson IS NOT NULL AS t;
+
+SET client_min_messages TO DEBUG1;
+
+SELECT cursorPage IS NOT NULL AS t
+FROM cursor_get_more(
+    database => 'ios_idx_db',
+    getMoreSpec => '{"getMore": {"$numberLong": "535"}, "collection": "ios_coll", "batchSize": 1}',
+    continuationSpec => :'lr_continuation'::documentdb_core.bson);
+
+RESET client_min_messages;
+
+-- Feature off: the streamable plan releases no locks, so nothing is logged.
+SET documentdb.enable_dynamic_cursor_early_index_lock_release TO off;
+
+SET client_min_messages TO DEBUG1;
+
+SELECT continuation IS NOT NULL AS t
+FROM find_cursor_first_page(
+    database => 'ios_idx_db',
+    commandSpec => '{"find": "ios_coll", "filter": {"a": "v1"}, "batchSize": 1, "hint": "idx_ab_aa"}',
+    cursorId => 535);
+
+RESET client_min_messages;
+
+SET documentdb.enable_dynamic_cursor_early_index_lock_release TO on;
 
 -- ---------------------------------------------------------------------------
 -- Drain helper: reports only batch sizes for stability.

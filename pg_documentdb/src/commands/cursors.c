@@ -22,7 +22,11 @@
 #include <tcop/tcopprot.h>
 #include <executor/tstoreReceiver.h>
 #include <nodes/makefuncs.h>
+#include <access/table.h>
+#include <storage/lmgr.h>
+#include <storage/lock.h>
 #include <utils/lsyscache.h>
+#include <utils/rel.h>
 #include <utils/ruleutils.h>
 #include <metadata/metadata_cache.h>
 #include <io/bson_core.h>
@@ -54,6 +58,7 @@ extern bool UseFileBasedPersistedCursors;
 extern bool EnableDebugQueryText;
 extern bool EnableDynamicCursorFastStartupScan;
 extern bool EnableDynamicCursorParallelPlans;
+extern bool EnableDynamicCursorEarlyIndexLockRelease;
 extern bool EnableSingleResultQueryParallelPlans;
 
 
@@ -260,6 +265,10 @@ typedef struct PersistentTupleDestReceiver
 } PersistentTupleDestReceiver;
 
 typedef void (*UpdateCustomScanState)(PlanState *, DestReceiver *);
+
+static bool CollectUsedIndexOids(Plan *plan, List **usedIndexOids);
+static bool CollectUsedIndexOidsFromPlans(List *plans, List **usedIndexOids);
+static int ReleaseUnusedDynamicCursorIndexLocks(PlannedStmt *queryPlan);
 
 static void HoldPortal(Portal portal);
 static uint32 CursorHashEntryHashFunc(const void *obj, size_t objsize);
@@ -547,10 +556,25 @@ PlanDynamicQueryAndDetermineCursorType(Query *query,
 		sourceText = pg_get_querydef(query, pretty);
 	}
 
+	/* Plan the query */
 	ParamListInfo paramList = NULL;
 	PlannedStmt *queryPlan = PgPlanQueryCompat(query, NULL, cursorOptions, paramList);
-	*isDynamicStreamable = IsDynamicCustomScanPath(queryPlan->planTree,
-												   allowOffsetLimitNode);
+
+	Plan *outerPlan = queryPlan->planTree;
+	*isDynamicStreamable = IsDynamicCustomScanPath(outerPlan, allowOffsetLimitNode);
+	if (*isDynamicStreamable && EnableDynamicCursorEarlyIndexLockRelease)
+	{
+		int releasedIndexLockCount = ReleaseUnusedDynamicCursorIndexLocks(queryPlan);
+
+		/*
+		 * Log the number of unused planner index locks released for this
+		 * planning call at DEBUG1.
+		 */
+		ereport(DEBUG1,
+				(errmsg(
+					 "dynamic cursor released %d unused planner index lock(s)",
+					 releasedIndexLockCount)));
+	}
 
 	QueryCursorPlanResult *result = palloc0(sizeof(QueryCursorPlanResult));
 	result->queryPlan = queryPlan;
@@ -558,6 +582,275 @@ PlanDynamicQueryAndDetermineCursorType(Query *query,
 	result->cursorOptions = cursorOptions;
 	result->paramList = paramList;
 	return result;
+}
+
+
+static bool
+CollectUsedIndexOids(Plan *plan, List **usedIndexOids)
+{
+	if (plan == NULL)
+	{
+		return true;
+	}
+
+	CHECK_FOR_INTERRUPTS();
+	check_stack_depth();
+
+	/*
+	 * Only IndexScan, IndexOnlyScan and BitmapIndexScan reference an index by
+	 * OID. To be certain we discover every referenced index we must visit every
+	 * node in the plan tree. Every recognized node below either has no children
+	 * or exposes them through lefttree/righttree or one of the dedicated child
+	 * lists handled here. If we encounter a node type we do not recognize we
+	 * cannot prove we visited all of its children, so we fail closed and return
+	 * false; the caller then releases no locks.
+	 */
+	switch (nodeTag(plan))
+	{
+		/* Nodes that reference an index directly. */
+		case T_IndexScan:
+		{
+			*usedIndexOids = list_append_unique_oid(*usedIndexOids,
+													((IndexScan *) plan)->indexid);
+			break;
+		}
+
+		case T_IndexOnlyScan:
+		{
+			*usedIndexOids = list_append_unique_oid(*usedIndexOids,
+													((IndexOnlyScan *) plan)->indexid);
+			break;
+		}
+
+		case T_BitmapIndexScan:
+		{
+			*usedIndexOids = list_append_unique_oid(*usedIndexOids,
+													((BitmapIndexScan *) plan)->indexid);
+			break;
+		}
+
+		/* Container nodes whose children live in dedicated fields. */
+		case T_Append:
+		{
+			if (!CollectUsedIndexOidsFromPlans(((Append *) plan)->appendplans,
+											   usedIndexOids))
+			{
+				return false;
+			}
+			break;
+		}
+
+		case T_MergeAppend:
+		{
+			if (!CollectUsedIndexOidsFromPlans(((MergeAppend *) plan)->mergeplans,
+											   usedIndexOids))
+			{
+				return false;
+			}
+			break;
+		}
+
+		case T_BitmapAnd:
+		{
+			if (!CollectUsedIndexOidsFromPlans(((BitmapAnd *) plan)->bitmapplans,
+											   usedIndexOids))
+			{
+				return false;
+			}
+			break;
+		}
+
+		case T_BitmapOr:
+		{
+			if (!CollectUsedIndexOidsFromPlans(((BitmapOr *) plan)->bitmapplans,
+											   usedIndexOids))
+			{
+				return false;
+			}
+			break;
+		}
+
+		case T_SubqueryScan:
+		{
+			if (!CollectUsedIndexOids(((SubqueryScan *) plan)->subplan, usedIndexOids))
+			{
+				return false;
+			}
+			break;
+		}
+
+		case T_CustomScan:
+		{
+			if (!CollectUsedIndexOidsFromPlans(((CustomScan *) plan)->custom_plans,
+											   usedIndexOids))
+			{
+				return false;
+			}
+			break;
+		}
+
+		/*
+		 * Nodes with no index reference whose children (if any) are reached
+		 * through lefttree/righttree below.
+		 */
+		case T_SeqScan:
+		case T_SampleScan:
+		case T_BitmapHeapScan:
+		case T_TidScan:
+		case T_TidRangeScan:
+		case T_FunctionScan:
+		case T_ValuesScan:
+		case T_TableFuncScan:
+		case T_CteScan:
+		case T_NamedTuplestoreScan:
+		case T_WorkTableScan:
+		case T_Result:
+		case T_ProjectSet:
+		case T_Material:
+		case T_Memoize:
+		case T_Sort:
+		case T_IncrementalSort:
+		case T_Group:
+		case T_Agg:
+		case T_WindowAgg:
+		case T_Unique:
+		case T_Hash:
+		case T_SetOp:
+		case T_LockRows:
+		case T_Limit:
+		case T_Gather:
+		case T_GatherMerge:
+		case T_NestLoop:
+		case T_MergeJoin:
+		case T_HashJoin:
+		case T_RecursiveUnion:
+		{
+			/*
+			 * Gather and GatherMerge expose the plan executed by parallel workers
+			 * through lefttree, so the generic child traversal below covers them.
+			 */
+			break;
+		}
+
+		default:
+		{
+			/* Unrecognized node type: fail closed. */
+			return false;
+		}
+	}
+
+	if (!CollectUsedIndexOids(plan->lefttree, usedIndexOids))
+	{
+		return false;
+	}
+
+	return CollectUsedIndexOids(plan->righttree, usedIndexOids);
+}
+
+
+static bool
+CollectUsedIndexOidsFromPlans(List *plans, List **usedIndexOids)
+{
+	ListCell *cell;
+	foreach(cell, plans)
+	{
+		if (!CollectUsedIndexOids((Plan *) lfirst(cell), usedIndexOids))
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+
+static int
+ReleaseUnusedDynamicCursorIndexLocks(PlannedStmt *queryPlan)
+{
+	List *usedIndexOids = NIL;
+	int releasedIndexLockCount = 0;
+
+	/*
+	 * If the traversal encountered a plan node we could not descend into, a
+	 * used index may have gone undetected. Releasing its lock would let
+	 * execution touch the index without holding a lock, so release nothing in
+	 * that case.
+	 */
+	if (!CollectUsedIndexOids(queryPlan->planTree, &usedIndexOids) ||
+		!CollectUsedIndexOidsFromPlans(queryPlan->subplans, &usedIndexOids))
+	{
+		list_free(usedIndexOids);
+		return 0;
+	}
+
+	/*
+	 * The candidate indexes are exactly those the planner opened while building
+	 * access paths: for every base relation in the finished plan's range table,
+	 * that relation's index list. We recover them from the plan rather than
+	 * capturing them during planning, so there is no planner-global state to
+	 * manage. The relation's AccessShareLock is still held here, so its index
+	 * list is stable and matches what get_relation_info locked. Only documentdb
+	 * data relations are considered, mirroring ExtensionGetRelationInfoHookCore.
+	 */
+	ListCell *rteCell;
+	foreach(rteCell, queryPlan->rtable)
+	{
+		RangeTblEntry *rte = (RangeTblEntry *) lfirst(rteCell);
+		if (rte->rtekind != RTE_RELATION || rte->inh ||
+			rte->rellockmode != AccessShareLock ||
+			get_rel_namespace(rte->relid) != ApiDataNamespaceOid())
+		{
+			continue;
+		}
+
+		Relation relation = table_open(rte->relid, NoLock);
+		List *indexOids = RelationGetIndexList(relation);
+		table_close(relation, NoLock);
+
+		ListCell *indexCell;
+		foreach(indexCell, indexOids)
+		{
+			Oid indexOid = lfirst_oid(indexCell);
+
+			/*
+			 * Release this index lock only when both conditions hold:
+			 *
+			 * 1. !list_member_oid(usedIndexOids, indexOid): the executable plan
+			 *    does not reference this index, so no scan will touch it and its
+			 *    planner-acquired lock is unnecessary.
+			 * 2. CheckRelationOidLockedByMe(indexOid, AccessShareLock, false):
+			 *    this backend actually still holds an AccessShareLock on the
+			 *    index. This keeps the release fail-safe (never unlock something
+			 *    we do not hold, which would underflow the local lock) and
+			 *    naturally matches lock multiplicity when a relation is
+			 *    referenced by more than one range table entry.
+			 *
+			 * The count is incremented only when LockRelease reports that a
+			 * lock was actually removed. UnlockRelationOid returns void and
+			 * would let us count even if nothing was released, so we release
+			 * through LockRelease directly and gate the count on its bool
+			 * result. Index relations under the data schema are never shared
+			 * catalogs, so the lock tag is always scoped to the current
+			 * database, matching what UnlockRelationOid would build.
+			 */
+			if (!list_member_oid(usedIndexOids, indexOid) &&
+				CheckRelationOidLockedByMe(indexOid, AccessShareLock, false))
+			{
+				LOCKTAG unusedIndexLockTag;
+
+				/* MyDatabaseId is PostgreSQL's backend-local current database OID. */
+				SET_LOCKTAG_RELATION(unusedIndexLockTag, MyDatabaseId, indexOid);
+				if (LockRelease(&unusedIndexLockTag, AccessShareLock, false))
+				{
+					releasedIndexLockCount++;
+				}
+			}
+		}
+		list_free(indexOids);
+	}
+
+	list_free(usedIndexOids);
+	return releasedIndexLockCount;
 }
 
 
