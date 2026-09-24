@@ -45,6 +45,18 @@ select bson_dollar_project('{"_id":"1"}', '{"result" : { "$concat" : [{"$numberD
 select bson_dollar_project('{"_id":"1"}', '{"result" : { "$concat" : ["apple", "is", 1, "fruit"]} }');
 select bson_dollar_project('{"_id":"1", "x": ["hello ","this ","is ","test"]}', '{"result" : { "$concat" : "$x"} }');
 
+SELECT bson_dollar_project('{}', ('{"result": {"$strLenBytes": {"$concat": ["' ||
+	repeat('x', 50 * 1024 * 1024) || '", "' || repeat('y', 50 * 1024 * 1024) || '", ""]}}}')::bson);
+SELECT bson_dollar_project('{}', ('{"result": {"$strLenBytes": {"$concat": ["' ||
+	repeat('x', 50 * 1024 * 1024) || '", "' || repeat('y', 50 * 1024 * 1024) || '", "z"]}}}')::bson);
+
+SELECT bson_dollar_project(('{"left": "' || repeat('x', 50 * 1024 * 1024) ||
+	'", "right": "' || repeat('y', 50 * 1024 * 1024) || '"}')::bson,
+	'{"result": {"$strLenBytes": {"$concat": ["$left", "$right", ""]}}}');
+SELECT bson_dollar_project(('{"left": "' || repeat('x', 50 * 1024 * 1024) ||
+	'", "right": "' || repeat('y', 50 * 1024 * 1024) || '"}')::bson,
+	'{"result": {"$strLenBytes": {"$concat": ["$left", "$right", "z"]}}}');
+
 -- $split operator: basic test:
 select bson_dollar_project('{"_id":"1"}', '{"result" : { "$split" : ["hello, this is a test case"," "]} }');
 select bson_dollar_project('{"_id":"1"}', '{"result" : { "$split" : ["mango,banana,lemon,grapes",","]} }');

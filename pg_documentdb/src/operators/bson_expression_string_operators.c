@@ -10,6 +10,7 @@
 
 #include <postgres.h>
 
+#include "commands/commands_common.h"
 #include "io/bson_core.h"
 #include "query/bson_compare.h"
 #include "operators/bson_expression.h"
@@ -40,7 +41,7 @@ typedef struct DollarConcatOperatorState
 	List *stringList;
 
 	/* required allocation size for concatenating all the strings  */
-	int totalSize;
+	uint32_t totalSize;
 } DollarConcatOperatorState;
 
 /* Struct that represents the parsed arguments to a $regexMatch, $regexFind, $regexFindAll expression. */
@@ -1584,6 +1585,14 @@ ProcessDollarConcatElement(const bson_value_t *currentValue, void *state,
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION16702), errmsg(
 							"Expected 'string' type for $concat but found '%s' type",
 							BsonTypeName(currentValue->value_type))));
+	}
+
+	if (currentValue->value.v_utf8.len > BSON_MAX_ALLOWED_SIZE_INTERMEDIATE -
+		context->totalSize)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_EXCEEDEDMEMORYLIMIT),
+						errmsg("$concat result exceeds the memory limit of %d bytes",
+							   BSON_MAX_ALLOWED_SIZE_INTERMEDIATE)));
 	}
 
 	StringView *strView = AllocateStringViewFromBsonValueString(currentValue);

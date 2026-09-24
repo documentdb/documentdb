@@ -160,6 +160,28 @@ select bson_dollar_project('{"_id":"1"}', '{"result" : { "$concat" : ["apple", "
 ERROR:  Expected 'string' type for $concat but found 'int' type
 select bson_dollar_project('{"_id":"1", "x": ["hello ","this ","is ","test"]}', '{"result" : { "$concat" : "$x"} }');
 ERROR:  Expected 'string' type for $concat but found 'array' type
+SELECT bson_dollar_project('{}', ('{"result": {"$strLenBytes": {"$concat": ["' ||
+	repeat('x', 50 * 1024 * 1024) || '", "' || repeat('y', 50 * 1024 * 1024) || '", ""]}}}')::bson);
+              bson_dollar_project              
+---------------------------------------------------------------------
+ { "result" : { "$numberInt" : "104857600" } }
+(1 row)
+
+SELECT bson_dollar_project('{}', ('{"result": {"$strLenBytes": {"$concat": ["' ||
+	repeat('x', 50 * 1024 * 1024) || '", "' || repeat('y', 50 * 1024 * 1024) || '", "z"]}}}')::bson);
+ERROR:  $concat result exceeds the memory limit of 104857600 bytes
+SELECT bson_dollar_project(('{"left": "' || repeat('x', 50 * 1024 * 1024) ||
+	'", "right": "' || repeat('y', 50 * 1024 * 1024) || '"}')::bson,
+	'{"result": {"$strLenBytes": {"$concat": ["$left", "$right", ""]}}}');
+              bson_dollar_project              
+---------------------------------------------------------------------
+ { "result" : { "$numberInt" : "104857600" } }
+(1 row)
+
+SELECT bson_dollar_project(('{"left": "' || repeat('x', 50 * 1024 * 1024) ||
+	'", "right": "' || repeat('y', 50 * 1024 * 1024) || '"}')::bson,
+	'{"result": {"$strLenBytes": {"$concat": ["$left", "$right", "z"]}}}');
+ERROR:  $concat result exceeds the memory limit of 104857600 bytes
 -- $split operator: basic test:
 select bson_dollar_project('{"_id":"1"}', '{"result" : { "$split" : ["hello, this is a test case"," "]} }');
                              bson_dollar_project                             
