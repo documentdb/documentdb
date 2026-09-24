@@ -27,6 +27,10 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    outputs:
+      result_available: ${{ steps.result.outputs.available }}
+      artifact_name: ${{ steps.result.outputs.artifact_name }}
+      run_url: ${{ steps.result.outputs.run_url }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -42,11 +46,15 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           DOCUMENTDB_VERSION: ${{ inputs.documentdb_version }}
-          DEMONSTRATION: ${{ inputs.demonstration }}
+          DEMONSTRATION: >-
+            ${{ inputs.demonstration ||
+                (github.event_name == 'push' &&
+                 github.repository == 'udsmicrosoft/documentdb' &&
+                 vars.COMPATIBILITY_FAILURE_DEMONSTRATION == 'true') }}
         run: |
           args=(
             --output results/result.json
-            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
           )
           if [ -n "$DOCUMENTDB_VERSION" ]; then args+=(--documentdb-version "$DOCUMENTDB_VERSION"); fi
           if [ -n "$VERSION" ]; then args+=(--version "$VERSION"); fi
@@ -62,13 +70,15 @@ jobs:
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
           fi
+          echo "artifact_name=pymongo-compatibility-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+          echo "run_url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
       - name: Render a preview, including failed scenarios
         if: always() && steps.result.outputs.available == 'true'
         run: |
           python -m compatibility.publish --result results/result.json \
             --store preview-data --site preview-site \
-            --issue-repository "$GITHUB_REPOSITORY" \
-            --expected-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            --preview \
+            --expected-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
       - name: Retain results, sanitized diagnostics, and dashboard preview
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
@@ -82,3 +92,89 @@ jobs:
       - name: Preserve the failure status of a non-passing suite
         if: always() && steps.suite.outcome != 'success'
         run: exit 1
+
+  persist:
+    needs: test
+    if: >-
+      always() && !cancelled() &&
+      needs.test.outputs.result_available == 'true' &&
+      github.repository == 'udsmicrosoft/documentdb' &&
+      github.ref == 'refs/heads/users/urismiley/pymongo-compatibility' &&
+      vars.COMPATIBILITY_PUBLISH_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: compatibility-publishing
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: ${{ needs.test.outputs.artifact_name }}
+          path: incoming
+      - name: Install trusted publication dependencies
+        run: python -m pip install -r compatibility/requirements.txt
+      - name: Append the validated result without rewriting history
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_RUN_URL: ${{ needs.test.outputs.run_url }}
+        run: |
+          gh auth setup-git --hostname github.com
+          bash compatibility/persist.sh \
+            "$GITHUB_WORKSPACE/incoming/results/result.json" \
+            "$EXPECTED_RUN_URL"
+
+  deploy:
+    needs: persist
+    if: >-
+      always() && !cancelled() && needs.persist.result == 'success' &&
+      github.repository == 'udsmicrosoft/documentdb' &&
+      github.ref == 'refs/heads/users/urismiley/pymongo-compatibility' &&
+      vars.COMPATIBILITY_PUBLISH_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: compatibility-pages
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Read the current renderer after entering the deployment queue
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.ref }}
+          path: code
+          persist-credentials: false
+      - name: Read all currently persisted results
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: compatibility-data
+          path: data
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Install trusted rendering dependencies
+        run: python -m pip install -r code/compatibility/requirements.txt
+      - name: Render the complete fork preview
+        working-directory: code
+        run: |
+          python -m compatibility.publish --store ../data/results --site ../site --preview
+      - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          path: site
+          name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
+      - uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+        id: deployment
+        with:
+          artifact_name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}

@@ -133,8 +133,8 @@ rendered results.
 ## GitHub Actions workflow
 
 For the pre-merge demo, pushes to `users/urismiley/pymongo-compatibility` run
-**PyMongo compatibility** using the runner's default version pair, without the
-failure demonstration. Results record `push` as their trigger. No other branch
+**PyMongo compatibility** using the runner's default version pair. Results record
+`push` as their trigger and link to the exact workflow attempt. No other branch
 or tag has a push trigger.
 
 Once the workflow exists on the repository's default branch, it can also be run
@@ -143,13 +143,59 @@ supply a PyMongo version, and leave the failure demonstration disabled for real
 results. Manual runs retain the `manual` trigger. Remove the branch-specific
 push trigger and update its guard test when the pre-merge demo is no longer needed.
 
-The workflow has read-only repository permissions. It retains JSON, available
+The test job has read-only repository permissions. It retains JSON, available
 JUnit/logs, and a dashboard preview as a per-attempt artifact for 30 days,
 including when the suite fails. A non-passing suite still fails the workflow.
-It does not commit history, create issues, deploy Pages, or change any existing
-site. Durable cross-run hosted history and public dashboard publication require
-a separate hosting and ownership decision. Downloaded artifacts alone are not
-an indefinitely retained public service.
+
+### Fork-only publication
+
+Publication is disabled unless **all** of these conditions hold:
+
+- The repository is `udsmicrosoft/documentdb`.
+- The run is on `refs/heads/users/urismiley/pymongo-compatibility`.
+- The repository variable `COMPATIBILITY_PUBLISH_ENABLED` is exactly `true`.
+- The controller produced a result envelope, even if the test job failed.
+
+An administrator must configure the fork's Pages build source as **GitHub
+Actions** and restrict the `compatibility-publishing` and `github-pages`
+environments to this feature branch. The workflow never enables Pages or changes
+repository settings itself. These gates deliberately prevent deployment to the
+main product repository or an unrelated fork.
+
+The separately privileged `persist` job downloads only this attempt's artifact,
+checks its run URL, scenario coverage, database artifact, and execution-input
+digest, then appends `results/<id>.json` to `compatibility-data`. It uses ordinary
+non-force Git pushes with bounded conflict retries. Initialization starts an
+orphan branch containing only results, not product source. Identical replays are
+idempotent; conflicting run IDs fail rather than overwrite history. This branch
+is the durable history, independent of artifact expiration, and must be retained.
+The existing `gh-pages` branch is not used or modified.
+
+The `deploy` job has Pages write permission but not repository contents-write
+permission. It enters its own deployment concurrency group, then reads the
+current renderer and complete history. A superseded pending deployment cannot
+discard a result that was already persisted. Tests and persistence are not in
+that concurrency group. A deployment failure leaves history intact and can be
+retried. A cancelled run that never reaches persistence retains only whatever
+diagnostic artifact was uploaded; cancellation is not a compatibility verdict.
+
+The hosted preview is labeled as a review prototype and hides issue-reporting
+links until a supported reporting destination is approved. It does not claim to
+be an official support matrix. Publication creates no issues and sends no
+customer or production data. Permanent product-site hosting and operational
+ownership remain separate review decisions.
+
+To demonstrate failure before manual dispatch is available, an administrator can
+set `COMPATIBILITY_FAILURE_DEMONSTRATION=true` on this fork and re-run the
+workflow. This explicit override applies only to push events on the fork; it
+adds the intentional failure rather than changing real expectations. Set it back
+to `false` after the demonstration. The failed attempt must still persist and
+deploy, while the required-profile verdict remains in its separate row.
+
+For publication recovery, re-run the failed publishing job while its diagnostic
+artifact is available, or re-run all jobs for a fresh attempt. Disable
+`COMPATIBILITY_PUBLISH_ENABLED` to stop subsequent publication. Do not delete
+`compatibility-data` or force-push over it to recover a failed deployment.
 
 ## Maintaining the pilot
 
@@ -164,6 +210,7 @@ python -m isort --check-only --settings-path compatibility/pyproject.toml compat
 python -m flake8 --max-line-length=100 --extend-ignore=E203 compatibility
 python -m mypy --config-file compatibility/pyproject.toml compatibility
 node --test compatibility/unit/test_freshness.cjs
+shellcheck compatibility/persist.sh
 ```
 
 The JavaScript check uses Node's built-in test runner. It is not a client runtime
@@ -173,6 +220,8 @@ For scenario changes, update the explicit registry coverage, keep unique
 non-parameterized test function names, and run the real normal and demonstration
 profiles again. Unit tests protect report classification, declared coverage,
 provenance, cleanup boundaries, immutable history, freshness, and workflow failure
-handling. `suite_files` defines the execution files copied into the client and
+handling. Persistence tests use local disposable Git repositories to exercise
+initialization, replays, conflicting IDs, and concurrent-writer retries without
+GitHub credentials. `suite_files` defines the execution files copied into the client and
 hashed for provenance; include any new execution file type there. Previous
 results do not prove compatibility for a changed suite.

@@ -163,6 +163,19 @@ def test_empty_dashboard_does_not_claim_compatibility(tmp_path, registry):
     assert urlparse(rows[0]["issue_url"]).path == "/documentdb/documentdb/issues/new"
 
 
+def test_preview_is_labeled_and_does_not_offer_unprovisioned_issue_reporting(
+    tmp_path, record, registry
+):
+    append_result(tmp_path / "data", record)
+    rows = render(tmp_path / "data", tmp_path / "site", registry, preview=True)
+    html = (tmp_path / "site" / "index.html").read_text()
+    current = json.loads((tmp_path / "site" / "current.json").read_text())
+    assert "Review prototype." in html and "not an official compatibility support matrix" in html
+    assert "Report a compatibility problem" not in html
+    assert rows[0]["issue_url"] is None and current["integrations"][0]["issue_url"] is None
+    assert rows[0]["state"] == "Working"
+
+
 def test_concurrent_appends_preserve_both_results(tmp_path, record):
     other = deepcopy(record)
     other["id"] = "d" * 32

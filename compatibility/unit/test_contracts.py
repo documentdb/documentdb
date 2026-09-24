@@ -91,6 +91,21 @@ def test_unsafe_or_malformed_fields_rejected(record, field, value):
         validate_result(record)
 
 
+@pytest.mark.parametrize("suffix", ["", "/attempts/1", "/attempts/23"])
+def test_pipeline_links_can_identify_a_specific_attempt(record, suffix):
+    record["run_url"] = "https://github.com/example/project/actions/runs/42" + suffix
+    validate_result(record)
+
+
+@pytest.mark.parametrize(
+    "suffix", ["/attempts/0", "/attempts/01", "/attempts/x", "/attempts/1/extra"]
+)
+def test_malformed_attempt_links_are_rejected(record, suffix):
+    record["run_url"] = "https://github.com/example/project/actions/runs/42" + suffix
+    with pytest.raises(ValueError):
+        validate_result(record)
+
+
 def test_future_result_rejected(record):
     record["finished_at"] = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
     with pytest.raises(ValueError, match="future"):

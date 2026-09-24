@@ -58,6 +58,7 @@ jobs:
           python -m isort --check-only --settings-path compatibility/pyproject.toml compatibility
           python -m flake8 --max-line-length=100 --extend-ignore=E203 compatibility
           python -m mypy --config-file compatibility/pyproject.toml compatibility
+          shellcheck compatibility/persist.sh
       - name: Run compatibility unit tests
         run: python -m pytest -c compatibility/pyproject.toml compatibility/unit
       - name: Check dashboard freshness behavior

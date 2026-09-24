@@ -17,6 +17,11 @@
 </head>
 <body>
   <h1>DocumentDB ecosystem compatibility</h1>
+  {% if preview %}
+  <p class="notice"><strong>Review prototype.</strong> This is a fork-hosted demo,
+     not an official compatibility support matrix. Issue reporting is not enabled
+     for this preview.</p>
+  {% endif %}
   <p>Results cover only the listed version pairs, runtime profiles, and executed scenarios.
      They do not certify every feature, deployment, or client API.</p>
   <p>Generated <time>{{ generated_at }}</time>.
@@ -34,7 +39,7 @@
     <tbody>
     {% for row in rows if row.demonstration == demonstration %}
       <tr>
-        <td><a href="{{ row.repository }}">{{ row.integration }}</a><small>{{ row.owner }}</small></td>
+        <td><a href="{{ row.repository }}">{{ row.integration }}</a><small>Review route: {{ row.owner }}</small></td>
         <td>DocumentDB {{ row.documentdb_version }}<br>
           Upstream {{ row.upstream_version }}<small>{{ row.profile }}</small>
           <p>{{ row.passed }} / {{ row.expected }} scenarios passed in the displayed result.</p>
@@ -56,7 +61,9 @@
         <td>
           {% if row.run_url %}<a href="{{ row.run_url }}">Latest pipeline run</a>
           {% elif row.last_attempt %}Local run (not published){% else %}No run{% endif %}
+          {% if row.issue_url %}
           <p><a href="{{ row.issue_url }}">Report a compatibility problem</a></p>
+          {% endif %}
           <details><summary>History ({{ row.history | length }})</summary><ul>
           {% for record in row.history %}
             <li>{{ record.finished_at }}: {{ record.tests | length }} scenario records

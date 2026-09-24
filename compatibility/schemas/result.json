@@ -63,7 +63,7 @@
     "started_at": {"type": "string", "format": "date-time"},
     "finished_at": {"type": "string", "format": "date-time"},
     "trigger": {"enum": ["manual", "push", "documentdb_release", "upstream_release", "scheduled"]},
-    "run_url": {"type": ["string", "null"], "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/runs/[0-9]+$"},
+    "run_url": {"type": ["string", "null"], "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/runs/[0-9]+(?:/attempts/[1-9][0-9]*)?$"},
     "demonstration": {"type": "boolean"},
     "execution_error": {"type": ["string", "null"], "maxLength": 2000}
   }
