@@ -633,29 +633,12 @@ fn parse_and_validate_jwt_token(token_string: &str) -> Result<(String, u64)> {
         })?
         .to_owned();
 
-    let aud = payload_json
-        .get("aud")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            DocumentDBError::authentication_failed(
-                "Token does not contain audience claim.".to_owned(),
-            )
-        })?
-        .to_owned();
-
     let exp = payload_json
         .get("exp")
         .and_then(serde_json::Value::as_i64)
         .ok_or_else(|| {
             DocumentDBError::authentication_failed("Token does not contain expiry time.".to_owned())
         })?;
-
-    let valid_audiences = ["https://ossrdbms-aad.database.windows.net"];
-    if !valid_audiences.contains(&aud.as_str()) {
-        return Err(DocumentDBError::authentication_failed(
-            "The audience claim provided in the token is not valid.".to_owned(),
-        ));
-    }
 
     let exp_datetime = std::time::UNIX_EPOCH + std::time::Duration::from_secs(exp as u64);
     let now = std::time::SystemTime::now();
