@@ -1,5 +1,7 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
  *
  * src/distribution/node_distribution_operations.c
  *
@@ -14,6 +16,7 @@
 #include <nodes/makefuncs.h>
 #include <catalog/namespace.h>
 #include <utils/lsyscache.h>
+#include <utils/regproc.h>
 
 #include "utils/query_utils.h"
 #include "utils/documentdb_errors.h"
@@ -111,16 +114,19 @@ ExecutePerNodeCommand(Oid nodeFunction, pgbson *nodeFunctionArg, bool readOnly, 
 	StringInfoData s;
 	initStringInfo(&s);
 	appendStringInfo(&s,
-					 "SELECT %s.command_node_worker($1::oid, $2::%s.bson, 0, $3::text[], TRUE, NULL) FROM %s",
+					 "SELECT %s.command_node_worker($1::oid, $2::%s.bson, 0, $3::text[], TRUE, $4::text) FROM %s",
 					 ApiInternalSchemaNameV2, CoreSchemaNameV2, distributedTableName);
-	int nargs = 3;
-	Oid argTypes[3] = { OIDOID, BsonTypeId(), TEXTARRAYOID };
-	Datum argValues[3] = {
+
+	/* Function OIDs are node-local; send a qualified signature for worker lookup. */
+	int nargs = 4;
+	Oid argTypes[4] = { OIDOID, BsonTypeId(), TEXTARRAYOID, TEXTOID };
+	Datum argValues[4] = {
 		ObjectIdGetDatum(nodeFunction),
 		PointerGetDatum(nodeFunctionArg),
-		PointerGetDatum(chosenShards)
+		PointerGetDatum(chosenShards),
+		CStringGetTextDatum(format_procedure_qualified(nodeFunction))
 	};
-	char argNulls[3] = { ' ', ' ', ' ' };
+	char argNulls[4] = { ' ', ' ', ' ', ' ' };
 
 	List *resultList = NIL;
 

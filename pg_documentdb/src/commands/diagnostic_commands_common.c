@@ -1,5 +1,7 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
  *
  * src/commands/diagnostic_commands_common.c
  *
@@ -99,6 +101,15 @@ command_node_worker(PG_FUNCTION_ARGS)
 	ereport(DEBUG1, (errmsg(
 						 "Executing command_node_worker on table %s",
 						 tableNameString)));
+
+	/* Prefer the portable signature; retain the OID for callers without one. */
+	if (!PG_ARGISNULL(5))
+	{
+		char *functionSignature = text_to_cstring(PG_GETARG_TEXT_P(5));
+		localFunctionOid = DatumGetObjectId(DirectFunctionCall1(regprocedurein,
+																CStringGetDatum(
+																	functionSignature)));
+	}
 
 	/* On a designated table */
 	Datum result = OidFunctionCall1(localFunctionOid,
