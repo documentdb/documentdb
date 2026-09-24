@@ -28,6 +28,7 @@ pub(super) async fn handle_request<T, R, W>(
     request_router: &R,
     writer: &mut W,
     handle_message_start: Instant,
+    interop_start: Instant,
 ) -> Result<()>
 where
     T: PgDataClient,
@@ -41,6 +42,9 @@ where
     request_context
         .tracker
         .record_duration(RequestIntervalKind::HandleRequest, handle_request_start);
+    request_context
+        .tracker
+        .record_duration(RequestIntervalKind::Interop, interop_start);
 
     let response = match response_result {
         Ok(response) => response,
@@ -54,13 +58,18 @@ where
         .record_duration(RequestIntervalKind::HandleMessage, handle_message_start);
 
     if connection_context.requires_response {
+        let handle_response_start = Instant::now();
+        let raw_response = response.as_raw_document()?;
         let write_response_start = Instant::now();
-        responses::writer::write(header, &response, writer)
+        responses::writer::write_and_flush(header, raw_response, writer)
             .instrument(tracing::info_span!("gateway.write_response"))
             .await?;
         request_context
             .tracker
             .record_duration(RequestIntervalKind::WriteResponse, write_response_start);
+        request_context
+            .tracker
+            .record_duration(RequestIntervalKind::HandleResponse, handle_response_start);
     }
 
     if connection_context.request_metrics_enabled() {
@@ -126,6 +135,7 @@ mod tests {
             request_context,
             &DefaultRequestRouter {},
             &mut response_writer,
+            handle_message_start,
             handle_message_start,
         )
         .await;
@@ -196,6 +206,14 @@ mod tests {
             "success event should not be marked as an error"
         );
         assert_eq!(events[0].user_agent(), "");
+        assert!(
+            request_tracker.get_interval_elapsed_time(RequestIntervalKind::Interop) > 0,
+            "successful request should record interop time"
+        );
+        assert!(
+            request_tracker.get_interval_elapsed_time(RequestIntervalKind::HandleResponse) > 0,
+            "successful response should record response handling time"
+        );
     }
 
     #[tokio::test]

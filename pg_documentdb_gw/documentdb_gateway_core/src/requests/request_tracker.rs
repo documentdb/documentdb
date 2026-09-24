@@ -24,6 +24,9 @@ pub enum RequestIntervalKind {
     /// Time spent formatting and parsing the incoming request.
     FormatRequest,
 
+    /// Time spent validating, routing, and processing a parsed request.
+    Interop,
+
     /// Time spent handling the request, which includes `ProcessRequest` and, if applicable,
     /// `PostgresBeginTransaction`, `PostgresSetStatementTimeout`, and `PostgresCommitTransaction`.
     HandleRequest,
@@ -42,6 +45,9 @@ pub enum RequestIntervalKind {
 
     /// Time spent acquiring a connection from the Postgres connection pool.
     OpenBackendConnection,
+
+    /// Time spent formatting and writing the response.
+    HandleResponse,
 
     /// Time spent writing the response to the stream.
     WriteResponse,

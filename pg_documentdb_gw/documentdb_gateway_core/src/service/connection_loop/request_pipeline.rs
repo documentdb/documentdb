@@ -315,6 +315,7 @@ async fn process_message<T, W, R>(
     };
     connection_context.requires_response = requires_response;
     request_tracker.record_duration(RequestIntervalKind::FormatRequest, format_request_start);
+    let interop_start = Instant::now();
 
     let span = tracing::Span::current();
     span.record(
@@ -336,6 +337,7 @@ async fn process_message<T, W, R>(
     }
 
     if let Err(error) = validation::validate_request(connection_context, &wire_request) {
+        request_tracker.record_duration(RequestIntervalKind::Interop, interop_start);
         context_propagation::mark_span_error(&span);
         let collection = wire_request.collection().unwrap_or("").to_owned();
         error_reply::reply_with_request_error::<W>(
@@ -366,6 +368,7 @@ async fn process_message<T, W, R>(
         request_router,
         writer,
         handle_message_start,
+        interop_start,
     )
     .await
     {
@@ -422,11 +425,16 @@ mod tests {
     #[derive(Clone, Debug, Default)]
     struct ReadIntervalTelemetryProvider {
         read_request_ns: Arc<AtomicU64>,
+        interop_ns: Arc<AtomicU64>,
     }
 
     impl ReadIntervalTelemetryProvider {
         fn read_request_ns(&self) -> u64 {
             self.read_request_ns.load(Ordering::Relaxed)
+        }
+
+        fn interop_ns(&self) -> u64 {
+            self.interop_ns.load(Ordering::Relaxed)
         }
     }
 
@@ -444,6 +452,10 @@ mod tests {
         ) {
             self.read_request_ns.store(
                 request_tracker.get_interval_elapsed_time(RequestIntervalKind::ReadRequest),
+                Ordering::Relaxed,
+            );
+            self.interop_ns.store(
+                request_tracker.get_interval_elapsed_time(RequestIntervalKind::Interop),
                 Ordering::Relaxed,
             );
         }
@@ -738,8 +750,13 @@ mod tests {
     #[tokio::test]
     async fn handle_message_replies_when_command_parsing_fails() {
         let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
-        let mut connection_context =
-            test_connection_context(false, dynamic_configuration, None).await;
+        let telemetry_provider = ReadIntervalTelemetryProvider::default();
+        let mut connection_context = test_connection_context(
+            false,
+            dynamic_configuration,
+            Some(Box::new(telemetry_provider.clone())),
+        )
+        .await;
         let invalid_document = doc! {
             "unknownCommand": 1_i32,
             "$db": "admin",
@@ -763,6 +780,11 @@ mod tests {
             OpCode::Msg,
         );
         assert_error_response(&response_document, ErrorCode::CommandNotFound);
+        assert_eq!(
+            telemetry_provider.interop_ns(),
+            0,
+            "request parsing failures should not record interop time"
+        );
         assert!(
             next_header_result
                 .expect("next header future should resolve after parse failure")

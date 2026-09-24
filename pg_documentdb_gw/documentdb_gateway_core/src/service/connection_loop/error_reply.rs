@@ -37,6 +37,7 @@ pub(super) async fn log_and_write_error<W>(
 where
     W: AsyncWrite + Unpin,
 {
+    let handle_response_start = Instant::now();
     let response = error_to_raw_document_buf(error, activity_id);
 
     if let Some(start) = handle_message_start {
@@ -49,6 +50,7 @@ where
         let write_response_start = Instant::now();
         responses::writer::write_and_flush(header, &response, writer).await?;
         request_tracker.record_duration(RequestIntervalKind::WriteResponse, write_response_start);
+        request_tracker.record_duration(RequestIntervalKind::HandleResponse, handle_response_start);
 
         response_length
     } else {
@@ -375,6 +377,10 @@ mod tests {
             events[0].sub_status_code(),
             0,
             "DocumentDBError variants do not carry a backend sub-status code",
+        );
+        assert!(
+            request_tracker.get_interval_elapsed_time(RequestIntervalKind::HandleResponse) > 0,
+            "failed response should record response handling time"
         );
     }
 }
