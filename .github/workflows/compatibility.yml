@@ -1,0 +1,76 @@
+name: PyMongo compatibility
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: PyMongo version (blank selects the reviewed registry default)
+        type: string
+        required: false
+      documentdb_version:
+        description: Reviewed DocumentDB release from compatibility/registry.yaml
+        type: string
+        default: "0.117.0"
+        required: true
+      demonstration:
+        description: Add a separately labeled, intentionally failing assertion
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Install trusted orchestration dependencies
+        run: python -m pip install -r compatibility/requirements.txt
+      - name: Run the isolated driver profile
+        id: suite
+        env:
+          VERSION: ${{ inputs.version }}
+          DOCUMENTDB_VERSION: ${{ inputs.documentdb_version }}
+          DEMONSTRATION: ${{ inputs.demonstration }}
+        run: |
+          args=(
+            --output results/result.json
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
+          )
+          if [ -n "$DOCUMENTDB_VERSION" ]; then args+=(--documentdb-version "$DOCUMENTDB_VERSION"); fi
+          if [ -n "$VERSION" ]; then args+=(--version "$VERSION"); fi
+          if [ "$DEMONSTRATION" = "true" ]; then args+=(--demonstration); fi
+          python -m compatibility.runner "${args[@]}"
+      - name: Check for a result envelope
+        id: result
+        if: always()
+        run: |
+          if [ -f results/result.json ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Render a preview, including failed scenarios
+        if: always() && steps.result.outputs.available == 'true'
+        run: |
+          python -m compatibility.publish --result results/result.json \
+            --store preview-data --site preview-site \
+            --preview \
+            --expected-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
+      - name: Retain results, sanitized diagnostics, and dashboard preview
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: pymongo-compatibility-${{ github.run_attempt }}
+          path: |
+            results/
+            preview-site/
+          if-no-files-found: error
+          retention-days: 30

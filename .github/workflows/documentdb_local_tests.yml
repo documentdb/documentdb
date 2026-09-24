@@ -37,3 +37,29 @@ jobs:
 
       - name: Run internal CI trigger contract tests
         run: python3 -m unittest discover -s .github/workflows/tests -p 'test_internal_ci_trigger.py'
+
+  pymongo-compatibility-unit-tests:
+    runs-on: ubuntu-24.04
+    name: PyMongo compatibility infrastructure
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Install compatibility development dependencies
+        run: python -m pip install -r compatibility/requirements-dev.txt
+      - name: Check scoped Python formatting and types
+        run: |
+          python -m black --check --config compatibility/pyproject.toml compatibility
+          python -m isort --check-only --settings-path compatibility/pyproject.toml compatibility
+          python -m flake8 --max-line-length=100 --extend-ignore=E203 compatibility
+          python -m mypy --config-file compatibility/pyproject.toml compatibility
+          shellcheck compatibility/persist.sh
+      - name: Run compatibility unit tests
+        run: python -m pytest -c compatibility/pyproject.toml compatibility/unit
+      - name: Check dashboard freshness behavior
+        run: node --test compatibility/unit/test_freshness.cjs

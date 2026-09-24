@@ -1,0 +1,37 @@
+schema_version: 1
+documentdb:
+  "0.117.0":
+    image: ghcr.io/documentdb/documentdb/documentdb-local@sha256:d972e7145da660ad4892ce6f5c22039086ff5148dce7225f20b76af959cd2ce0
+    postgres_major: 17
+    extension_version: "0.117-0"
+integrations:
+  pymongo:
+    repository: https://github.com/mongodb/mongo-python-driver
+    owner: "@documentdb/documentdb-maintainers"
+    enabled: true
+    package: pymongo
+    default_version: "4.18.0"
+    version_pattern: '^4\.(9|[1-9][0-9]+)\.[0-9]+$'
+    profile: python312-linux-x64-sync
+    test_file: compatibility/integrations/pymongo/test_pymongo.py
+    demonstration_file: compatibility/integrations/pymongo/test_demonstration.py
+    timeout_seconds: 300
+    freshness_days: 7
+    expected_tests:
+      - test_authenticated_ping
+      - test_insert_one
+      - test_insert_many
+      - test_find_one
+      - test_find_filter_projection_sort_limit
+      - test_cursor_batches
+      - test_count_documents
+      - test_update_one
+      - test_find_one_and_update
+      - test_delete_one
+      - test_delete_many
+      - test_aggregate
+      - test_create_indexes
+      - test_list_indexes
+      - test_drop_index
+      - test_duplicate_key_error
+      - test_bson_round_trip

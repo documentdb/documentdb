@@ -1,0 +1,7 @@
+!requirements*.txt
+!integrations/*/requirements.txt
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.venv/
+.test-results/

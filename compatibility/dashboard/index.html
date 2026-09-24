@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DocumentDB ecosystem compatibility</title>
+  <style>
+    body { font: 16px system-ui, sans-serif; margin: 2rem; color: #202124; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: .7rem; border: 1px solid #ccc; text-align: left; vertical-align: top; }
+    .Working { color: #176b2c; } .Failing { color: #a4161a; } .Stale { color: #805600; }
+    .notice { background: #fff4d6; padding: 1rem; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 45rem; }
+    time { white-space: nowrap; } small { display: block; margin-top: .4rem; }
+  </style>
+  <script src="freshness.js" defer></script>
+</head>
+<body>
+  <h1>DocumentDB ecosystem compatibility</h1>
+  {% if preview %}
+  <p class="notice"><strong>Review prototype.</strong> This is a fork-hosted demo,
+     not an official compatibility support matrix. Issue reporting is not enabled
+     for this preview.</p>
+  {% endif %}
+  <p>Results cover only the listed version pairs, runtime profiles, and executed scenarios.
+     They do not certify every feature, deployment, or client API.</p>
+  <p>Generated <time>{{ generated_at }}</time>.
+     Machine-readable <a href="current.json">current results</a> and
+     <a href="history.json">complete history</a>.</p>
+  {% for demonstration in [false, true] %}
+  <h2>{{ "Failure demonstrations" if demonstration else "Compatibility results" }}</h2>
+  {% if demonstration %}
+  <p class="notice">Synthetic assertion failures are diagnostic demonstrations.
+     They never change a real integration's compatibility status.</p>
+  {% endif %}
+  <table>
+    <thead><tr><th>Integration</th><th>Versions and coverage</th><th>Status</th>
+      <th>Last successful / attempted</th><th>Evidence</th></tr></thead>
+    <tbody>
+    {% for row in rows if row.demonstration == demonstration %}
+      <tr>
+        <td><a href="{{ row.repository }}">{{ row.integration }}</a><small>Review route: {{ row.owner }}</small></td>
+        <td>DocumentDB {{ row.documentdb_version }}<br>
+          Upstream {{ row.upstream_version }}<small>{{ row.profile }}</small>
+          <p>{{ row.passed }} / {{ row.expected }} scenarios passed in the displayed result.</p>
+          <details><summary>Coverage</summary><ul>
+            {% for scenario in row.scenarios %}<li>{{ scenario }}</li>{% endfor %}
+          </ul></details>
+        </td>
+        <td>
+          <strong class="{{ row.state }}" data-compatibility-status
+            data-conclusive-at="{{ row.conclusive_at or '' }}"
+            data-freshness-days="{{ row.freshness_days }}"
+            data-previous-state="{{ row.previous_state }}">{{ row.state }}</strong>
+          {% if row.state == "Stale" %}<small>Last known outcome: {{ row.previous_state }}</small>{% endif %}
+          <small>Latest attempt: {{ row.latest_attempt_state }}</small>
+          {% if row.error %}<pre>{{ row.error }}</pre>{% endif %}
+        </td>
+        <td>Success: {{ row.last_success or "Never" }}<br>Attempt: {{ row.last_attempt or "Never" }}
+          <small>Trigger: {{ row.trigger or "None" }}</small></td>
+        <td>
+          {% if row.run_url %}<a href="{{ row.run_url }}">Latest pipeline run</a>
+          {% elif row.last_attempt %}Local run (not published){% else %}No run{% endif %}
+          {% if row.issue_url %}
+          <p><a href="{{ row.issue_url }}">Report a compatibility problem</a></p>
+          {% endif %}
+          <details><summary>History ({{ row.history | length }})</summary><ul>
+          {% for record in row.history %}
+            <li>{{ record.finished_at }}: {{ record.tests | length }} scenario records
+              {% if record.run_url %}<a href="{{ record.run_url }}">run</a>{% endif %}
+              {% if record.execution_error %}<pre>{{ record.execution_error }}</pre>{% endif %}
+              <ul>{% for test in record.tests %}<li>{{ test.id }}: {{ test.outcome }}
+                {% if test.message %}<pre>{{ test.message }}</pre>{% endif %}
+              </li>{% endfor %}</ul>
+            </li>
+          {% endfor %}
+          </ul></details>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endfor %}
+</body>
+</html>

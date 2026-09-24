@@ -53,6 +53,13 @@ git commit -s -m 'Commit message'
 
 Commits of any form require a DCO, including revert commits.
 
+## Ecosystem compatibility automation
+
+For the PyMongo compatibility pilot, see the
+[scoped workflow and contribution guide](compatibility/README.md). Changes to
+that automation need its infrastructure checks and real version-pair runs;
+they do not require rebuilding unchanged database or gateway code.
+
 ## Technical Steering Committee and Maintainers
 
 DocumentDB is governed by the Technical Steering Committee, where all decisions are conducted in the open, documented, and voted upon. All code that is checked in is managed by the Maintainers. The list of TSC members and the project's maintainers are listed in the [MAINTAINERS.md](./MAINTAINERS.md) file. 
