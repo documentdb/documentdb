@@ -132,70 +132,47 @@ rendered results.
 
 ## GitHub Actions workflow
 
-For the pre-merge demo, pushes to `users/urismiley/pymongo-compatibility` run
-**PyMongo compatibility** using the runner's default version pair. Results record
-`push` as their trigger and link to the exact workflow attempt. No other branch
-or tag has a push trigger.
-
-Once the workflow exists on the repository's default branch, it can also be run
-manually from the Actions tab. Select a reviewed database release, optionally
-supply a PyMongo version, and leave the failure demonstration disabled for real
-results. Manual runs retain the `manual` trigger. Remove the branch-specific
-push trigger and update its guard test when the pre-merge demo is no longer needed.
+**PyMongo compatibility** runs only through manual dispatch. Once the workflow
+exists on the repository's default branch, select it in the Actions tab, choose
+a reviewed database release, optionally supply a PyMongo version, and leave the
+failure demonstration disabled for real results. Results record the `manual`
+trigger and link to the exact workflow attempt.
 
 The test job has read-only repository permissions. It retains JSON, available
 JUnit/logs, and a dashboard preview as a per-attempt artifact for 30 days,
 including when the suite fails. A non-passing suite still fails the workflow.
+Result collection, preview rendering, and artifact upload run after a failed
+test step without suppressing its failure. There are no branch-specific push
+triggers, repository-variable failure overrides, or automatic publication jobs.
 
-### Fork-only publication
+### Publishing results
 
-Publication is disabled unless **all** of these conditions hold:
+The workflow produces artifacts and previews only. It does not write repository
+history, deploy Pages, create issues, or change repository settings. A hosted
+dashboard needs a separately approved destination, publisher, operational owner,
+and reporting route; do not overwrite an existing site.
 
-- The repository is `udsmicrosoft/documentdb`.
-- The run is on `refs/heads/users/urismiley/pymongo-compatibility`.
-- The repository variable `COMPATIBILITY_PUBLISH_ENABLED` is exactly `true`.
-- The controller produced a result envelope, even if the test job failed.
+The generic history helper remains available for a trusted publisher:
 
-An administrator must configure the fork's Pages build source as **GitHub
-Actions** and restrict the `compatibility-publishing` and `github-pages`
-environments to this feature branch. The workflow never enables Pages or changes
-repository settings itself. These gates deliberately prevent deployment to the
-main product repository or an unrelated fork.
+```bash
+bash compatibility/persist.sh /path/to/result.json "$EXPECTED_RUN_URL"
+```
 
-The separately privileged `persist` job downloads only this attempt's artifact,
-checks its run URL, scenario coverage, database artifact, and execution-input
-digest, then appends `results/<id>.json` to `compatibility-data`. It uses ordinary
-non-force Git pushes with bounded conflict retries. Initialization starts an
-orphan branch containing only results, not product source. Identical replays are
-idempotent; conflicting run IDs fail rather than overwrite history. This branch
-is the durable history, independent of artifact expiration, and must be retained.
-The existing `gh-pages` branch is not used or modified.
+Run it from the trusted source checkout with write access to the intended
+`origin`. Set `EXPECTED_RUN_URL` to the originating test attempt, not a later
+publication retry. The helper verifies that URL, coverage, database artifact,
+and execution-input digest, then appends `results/<id>.json` to
+`compatibility-data`. It uses non-force pushes with bounded conflict retries and
+initializes an orphan branch containing only result data. Identical replays are
+idempotent; conflicting run IDs fail instead of overwriting history. Retain this
+branch independently of artifact expiration.
 
-The `deploy` job has Pages write permission but not repository contents-write
-permission. It enters its own deployment concurrency group, then reads the
-current renderer and complete history. A superseded pending deployment cannot
-discard a result that was already persisted. Tests and persistence are not in
-that concurrency group. A deployment failure leaves history intact and can be
-retried. A cancelled run that never reaches persistence retains only whatever
-diagnostic artifact was uploaded; cancellation is not a compatibility verdict.
-
-The hosted preview is labeled as a review prototype and hides issue-reporting
-links until a supported reporting destination is approved. It does not claim to
-be an official support matrix. Publication creates no issues and sends no
-customer or production data. Permanent product-site hosting and operational
-ownership remain separate review decisions.
-
-To demonstrate failure before manual dispatch is available, an administrator can
-set `COMPATIBILITY_FAILURE_DEMONSTRATION=true` on this fork and re-run the
-workflow. This explicit override applies only to push events on the fork; it
-adds the intentional failure rather than changing real expectations. Set it back
-to `false` after the demonstration. The failed attempt must still persist and
-deploy, while the required-profile verdict remains in its separate row.
-
-For publication recovery, re-run the failed publishing job while its diagnostic
-artifact is available, or re-run all jobs for a fresh attempt. Disable
-`COMPATIBILITY_PUBLISH_ENABLED` to stop subsequent publication. Do not delete
-`compatibility-data` or force-push over it to recover a failed deployment.
+Keep write credentials separate from integration execution. A publisher must
+retain failed attempts and serialize deployment only after results are durably
+stored. Render the complete history with `compatibility.publish`, using
+`--preview` to label review prototypes and hide unprovisioned issue links.
+Deployment retries must not delete or rewrite history. Cancellation before
+persistence is not a compatibility verdict.
 
 ## Maintaining the pilot
 
