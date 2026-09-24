@@ -235,6 +235,15 @@ typedef struct InPrefixOpInfo
 {
 	/* The index column the $in prefix maps to. */
 	AttrNumber indexcol;
+
+	/*
+	 * The composite-opclass column this $in was expanded from. Distinct from
+	 * indexcol, which on a composite index is the single shared document column
+	 * and therefore identical for every $in. Used to build the exploded-column
+	 * bitmask that decides whether the merge needs heap-TID de-duplication.
+	 */
+	int32_t compositeColumn;
+
 	Expr *leftExpr;
 
 	/* One bson Const per $in value, each of the form { "<path>": <value> }, ready to be the right-hand argument of a point-equality (@=) operator */
@@ -5062,10 +5071,11 @@ CreateMergeSortInPrefixMarkerClause(PlannerInfo *root, Expr *documentExpr)
  * Structural eligibility shared by the marking pass and the rewrite: the index
  * must be an ordered composite index with more than one path.
  *
- * A multi-key index is allowed: ConsiderMergeSortForInPrefix wraps the resulting
- * MergeAppend in a heap-TID de-dup CustomScan, so a document reachable through
- * more than one exploded $in branch (its array holds several matching values) is
- * returned once.
+ * A multi-key index is allowed: when one of the exploded $in columns is
+ * multi-key, ConsiderMergeSortForInPrefix wraps the resulting MergeAppend in a
+ * heap-TID de-dup CustomScan (see MergeSortInPrefixNeedsTidDedup), so a document
+ * reachable through more than one exploded $in branch (its array holds several
+ * matching values) is returned once.
  */
 static bool
 MergeSortInPrefixIndexEligible(IndexOptInfo *indexInfo)
@@ -5210,6 +5220,7 @@ TryBuildMergeSortInPrefixPlan(PlannerInfo *root, IndexOptInfo *indexInfo,
 
 			InPrefixOpInfo *info = palloc0(sizeof(InPrefixOpInfo));
 			info->indexcol = clause->indexcol;
+			info->compositeColumn = inColumn;
 			info->leftExpr = (Expr *) linitial(inExpr->args);
 			info->valueConsts = valueConsts;
 			info->inRinfo = clause->rinfo;
@@ -5256,6 +5267,69 @@ TryBuildMergeSortInPrefixPlan(PlannerInfo *root, IndexOptInfo *indexInfo,
 	}
 
 	return true;
+}
+
+
+/*
+ * Whether a $in-prefix merge-sort needs a heap-TID de-duplication wrap above the
+ * MergeAppend, i.e. whether the same document can be reached through more than
+ * one child.
+ *
+ * Children differ only by the per-value point clause on the exploded $in
+ * columns, so a document reaches two children exactly when it holds two distinct
+ * $in values for one of those columns -- that is, when an *exploded* column is
+ * multi-key. Every child scans a distinct index term (GetInPrefixPointValues
+ * folds values that compare equal, and rejects collations that could fold two
+ * terms together), so no other column can split a document across children:
+ * multi-key on a sort column, on a plain-equality prefix column, or on a
+ * trailing $in carried as an in-scan is harmless. Duplicates *within* one child
+ * are already collapsed by the index AM's own per-scan heap-TID de-duplication.
+ *
+ * The per-path bitmask is only trustworthy when the index reports a per-path
+ * breakdown (a zero mask means the metadata carried no breakdown) and
+ * EnablePerPathMultiKeySortPushdown allows relying on it. Otherwise fall back to
+ * the whole-index answer, matching how GetIndexColumnMultiKeyStatus gates the
+ * same bitmask.
+ */
+static bool
+MergeSortInPrefixNeedsTidDedup(const MergeSortInPrefixPlan *plan,
+							   bool indexIsMultiKey, uint32_t multiKeyBitMask)
+{
+	if (!indexIsMultiKey)
+	{
+		return false;
+	}
+
+	if (!EnablePerPathMultiKeySortPushdown || multiKeyBitMask == 0)
+	{
+		return true;
+	}
+
+	ListCell *infoCell;
+	foreach(infoCell, plan->inInfos)
+	{
+		InPrefixOpInfo *info = (InPrefixOpInfo *) lfirst(infoCell);
+
+		/*
+		 * A column outside the bitmask width has no bit to consult, so it cannot
+		 * be checked safely and indicates an invalid internal plan.
+		 */
+		if (unlikely(info->compositeColumn < 0 ||
+					 info->compositeColumn >= INDEX_MAX_KEYS))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg(
+								"Invalid composite column %d for merge-sort TID de-duplication",
+								info->compositeColumn)));
+		}
+
+		if ((multiKeyBitMask & (UINT32_C(1) << info->compositeColumn)) != 0)
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 
@@ -5645,6 +5719,17 @@ ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 		bool indexIsMultiKey = false;
 
 		/*
+		 * Set when the merge can place the same document under more than one
+		 * child, so the MergeAppend needs a heap-TID de-dup wrap. For the $in
+		 * explosion this is narrower than indexIsMultiKey: only a multi-key
+		 * *exploded* column duplicates across children (see
+		 * MergeSortInPrefixNeedsTidDedup). The BitmapOr rewrite keeps the
+		 * whole-index answer, since its children are $or branches rather than
+		 * per-value point scans and the exploded-column argument does not apply.
+		 */
+		bool mergeNeedsTidDedup = false;
+
+		/*
 		 * Set when a BitmapOr -> MergeAppend rewrite has at least one pair of
 		 * branches that cannot be proven disjoint, so the MergeAppend may emit a
 		 * document once per matching branch and needs a heap-TID de-dup wrap.
@@ -5693,9 +5778,10 @@ ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 
 				/*
 				 * Structural eligibility (ordered composite index with more than one
-				 * path). A multi-key index is permitted: the MergeAppend built below is
-				 * wrapped in a heap-TID de-dup CustomScan so a document reachable through
-				 * more than one exploded $in branch is still returned once.
+				 * path). A multi-key index is permitted: if one of the exploded $in
+				 * columns is multi-key, the MergeAppend built below is wrapped in a
+				 * heap-TID de-dup CustomScan so a document reachable through more than
+				 * one exploded $in branch is still returned once.
 				 */
 				if (!MergeSortInPrefixIndexEligible(indexInfo))
 				{
@@ -5744,21 +5830,30 @@ ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 				}
 
 				/*
-				 * A multi-child MergeAppend over a multi-key index is wrapped in a
-				 * heap-TID de-dup CustomScan (see the wrap site further down). That
-				 * de-dup reads each row's heap ctid, which an index-only scan cannot
-				 * supply, so those children must be heap index scans. A single $in
-				 * combination is returned unwrapped and needs no ctid.
+				 * A multi-child MergeAppend that can surface the same document
+				 * through more than one child is wrapped in a heap-TID de-dup
+				 * CustomScan (see the wrap site further down). That de-dup reads
+				 * each row's heap ctid, which an index-only scan cannot supply, so
+				 * those children must be heap index scans. A single $in combination
+				 * is returned unwrapped and needs no ctid.
+				 *
+				 * Only a multi-key *exploded* column can duplicate across children,
+				 * so consult the per-path bitmask rather than the whole-index flag
+				 * and skip the wrap (and keep index-only scans available) when every
+				 * exploded column is proven scalar.
 				 */
 				indexIsMultiKey = CompositeIndexOptInfoIsMultiKey(indexInfo,
 																  &inPrefixMultiKeyBitMask);
+				mergeNeedsTidDedup = MergeSortInPrefixNeedsTidDedup(
+					&plan, indexIsMultiKey, inPrefixMultiKeyBitMask);
 
 				/*
 				 * Whether the children can be served as index-only scans is a query/index
 				 * level decision, identical for every child. Resolve it lazily on the
 				 * first child (-1 undetermined, 0 no, 1 yes) and reuse it for the rest.
 				 * Index-only is disallowed only when a de-dup wrap will read the heap
-				 * ctid, i.e. a multi-child MergeAppend on a multi-key index (see below).
+				 * ctid, i.e. a multi-child MergeAppend whose exploded $in columns
+				 * include a multi-key one (see below).
 				 */
 				int childrenIndexOnly = -1;
 				for (int combo = 0; combo < numChildren; combo++)
@@ -5794,11 +5889,12 @@ ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 						 * lossy = false claim is sound only because of that sibling point
 						 * clause: every row this child returns has the column fixed to one
 						 * $in value and therefore satisfies $in (the per-value union across
-						 * the MergeAppend supplies completeness). On a multi-key index a
-						 * document can still match more than one branch; the de-dup wrap on
-						 * the MergeAppend (see WrapPathWithTidDedup below) removes those
-						 * repeats. This must run after the point clause is appended and once
-						 * per $in column, since each child fixes all $in columns.
+						 * the MergeAppend supplies completeness). When an exploded $in
+						 * column is multi-key a document can still match more than one
+						 * branch; the de-dup wrap on the MergeAppend (see
+						 * WrapPathWithTidDedup below) removes those repeats. This must run
+						 * after the point clause is appended and once per $in column, since
+						 * each child fixes all $in columns.
 						 */
 						Assert(infoArray[i]->inRinfo != NULL);
 						IndexClause *coverClause = makeNode(IndexClause);
@@ -5860,12 +5956,20 @@ ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 
 					if (childrenIndexOnly < 0)
 					{
-						/* Multi-key indexes require heap children only when we will wrap the
-						 * multi-child MergeAppend in a TID de-dup node (which reads heap ctid). */
-						bool needsTidDedup = (indexIsMultiKey && numChildren > 1);
-
+						/*
+						 * Index-only eligibility is identical for every child because the
+						 * children differ only in their point values. Determine it once
+						 * from the first child and reuse it for the rest.
+						 *
+						 * When TID de-duplication is required, all children must remain
+						 * heap index scans because the de-dup node reads ctid. Per-path
+						 * multi-key tracking allows an index-only scan on a multi-key
+						 * index, so index-only eligibility does not imply that TID
+						 * de-duplication is unnecessary. Keep this condition in sync with
+						 * the de-dup wrap below.
+						 */
 						childrenIndexOnly =
-							(!needsTidDedup &&
+							(!(mergeNeedsTidDedup && numChildren > 1) &&
 							 MergeSortInPrefixChildrenSupportIndexOnly(root, rel,
 																	   childPath,
 																	   context)) ? 1 : 0;
@@ -5949,6 +6053,13 @@ ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 				indexIsMultiKey = CompositeIndexOptInfoIsMultiKey(indexInfo,
 																  &inPrefixMultiKeyBitMask);
 
+				/*
+				 * The BitmapOr children are $or branches, not per-value point scans
+				 * of an exploded $in, so the exploded-column argument does not apply
+				 * here: any multi-key column can put a document under more than one
+				 * branch. Keep the conservative whole-index answer.
+				 */
+				mergeNeedsTidDedup = indexIsMultiKey;
 
 				/*
 				 * Structural eligibility (ordered composite index with more than one
@@ -6351,17 +6462,18 @@ ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 			}
 
 			/*
-			 * A document can be reached through more than one exploded branch --
-			 * on a multi-key index (its array holds several matching values), or
-			 * on any index whose $or branches were not proven pairwise disjoint
-			 * above -- so the MergeAppend, which does not de-duplicate across
-			 * children, would return it once per branch. Wrap it in a heap-TID
-			 * de-dup CustomScan, which drops the repeats while preserving the
-			 * merge order. A single-key index whose branches are all provably
-			 * disjoint needs no de-dup: each document matches exactly one branch.
+			 * A document can be reached through more than one branch -- when a
+			 * multi-key column is one of the exploded $in columns (its array holds
+			 * several matching values), or on any index whose $or branches were not
+			 * proven pairwise disjoint above -- so the MergeAppend, which does not
+			 * de-duplicate across children, would return it once per branch. Wrap it
+			 * in a heap-TID de-dup CustomScan, which drops the repeats while
+			 * preserving the merge order. When every exploded column is scalar and
+			 * the branches are provably disjoint no de-dup is needed: each document
+			 * matches exactly one branch.
 			 */
 			Path *finalMergePath = (Path *) mergePath;
-			if (indexIsMultiKey || bitmapOrNeedsDedup)
+			if (mergeNeedsTidDedup || bitmapOrNeedsDedup)
 			{
 				finalMergePath = WrapPathWithTidDedup(finalMergePath);
 			}

@@ -1870,6 +1870,308 @@ RESET documentdb.forceDisableSeqScan;
 RESET enable_sort;
 RESET documentdb.enable_merge_sort_for_in_prefix;
 
+-- =====================================================================
+-- Per-path multi-key de-dup gating. The heap-TID de-dup above the MergeAppend
+-- is only needed when an EXPLODED $in column is multi-key: children differ only
+-- by the per-value point clause on those columns, so a document reaches two
+-- children exactly when it holds two distinct $in values for one of them. A
+-- multi-key SORT column cannot do that (each per-value ordered scan already
+-- emits a document once), so when the index tracks multi-key state per path the
+-- de-dup node is skipped entirely.
+--
+-- Per-path tracking is only recorded on the index when
+-- enableIndexMetadataGlobalTracking is on at creation time; without it the
+-- planner cannot tell which column is multi-key and conservatively keeps the
+-- de-dup (covered by coll_mk_sort above).
+-- =====================================================================
+SET documentdb.forceDisableSeqScan TO on;
+SET documentdb.enableIndexMetadataGlobalTracking TO on;
+
+-- Multi-key only on the sort column b; the exploded prefix a is always scalar.
+SELECT documentdb_api.create_collection('msdb','coll_mk_pp_sort');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_sort','{ "_id": 1, "a": 1, "b": [2, 8] }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_sort','{ "_id": 2, "a": 4, "b": 5 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_sort','{ "_id": 3, "a": 1, "b": 6 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_sort','{ "_id": 4, "a": 4, "b": [1, 9] }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_sort','{ "_id": 5, "a": 2, "b": 3 }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "coll_mk_pp_sort", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_1_b_1", "enableOrderedIndex": 1 } ] }', true);
+
+-- Multi-key on the exploded prefix a; the de-dup must be retained here.
+SELECT documentdb_api.create_collection('msdb','coll_mk_pp_prefix');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_prefix','{ "_id": 1, "a": [1, 4], "b": 10 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_prefix','{ "_id": 2, "a": [4], "b": 15 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_prefix','{ "_id": 3, "a": [1, 4], "b": 12 }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "coll_mk_pp_prefix", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_1_b_1", "enableOrderedIndex": 1 } ] }', true);
+
+-- Multi-key on a PLAIN-EQUALITY prefix column. Index (a, b, c): a is pinned by a
+-- plain equality and holds arrays, b is the exploded $in, c is the sort. a's
+-- equality is applied identically in every child, so it cannot change which
+-- children a document lands in -- only an exploded column can.
+SELECT documentdb_api.create_collection('msdb','coll_mk_pp_eq');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_eq','{ "_id": 1, "a": [5, 9], "b": 1, "c": 2 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_eq','{ "_id": 2, "a": 5, "b": 2, "c": 1 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_eq','{ "_id": 3, "a": 5, "b": 1, "c": 5 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_eq','{ "_id": 4, "a": [5, 7], "b": 2, "c": 3 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_eq','{ "_id": 5, "a": 6, "b": 1, "c": 0 }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "coll_mk_pp_eq", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1 }, "name": "a_1_b_1_c_1", "enableOrderedIndex": 1 } ] }', true);
+
+-- Multi-key on a TRAILING $in column. Index (a, b, c): a is the exploded $in, b
+-- is the sort, and c carries a $in that sits after the sort key -- so it rides
+-- along inside each child as an ordinary in-scan filter instead of being
+-- exploded. It never enters the exploded-column mask, so a multi-key c cannot
+-- duplicate a document across children.
+SELECT documentdb_api.create_collection('msdb','coll_mk_pp_trailing');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_trailing','{ "_id": 1, "a": 1, "b": 3, "c": [7] }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_trailing','{ "_id": 2, "a": 2, "b": 1, "c": [8] }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_trailing','{ "_id": 3, "a": 1, "b": 2, "c": [7, 9] }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_trailing','{ "_id": 4, "a": 2, "b": 5, "c": [6] }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_trailing','{ "_id": 5, "a": 1, "b": 4, "c": [8] }');
+-- _id 6 matches BOTH trailing $in values, so it is reached twice inside a single
+-- child. Those within-child repeats are collapsed by the index AM's own per-scan
+-- heap-TID de-duplication (reported as numDuplicates), which is the other half of
+-- why the MergeAppend-level de-dup is safe to drop here.
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_trailing','{ "_id": 6, "a": 1, "b": 6, "c": [7, 8] }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "coll_mk_pp_trailing", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1 }, "name": "a_1_b_1_c_1", "enableOrderedIndex": 1 } ] }', true);
+
+-- Two exploded $in columns exercise every outcome of the per-path de-dup check:
+-- multi-key on the first exploded column a, multi-key on the second exploded
+-- column b, and multi-key only on the sort column c. All three collections use
+-- the same index and query shape so only the multi-key position changes.
+SELECT documentdb_api.create_collection('msdb','coll_mk_pp_cart_a');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_cart_a','{ "_id": 1, "a": [1, 4], "b": 5, "c": 30 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_cart_a','{ "_id": 2, "a": 1, "b": 6, "c": 10 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_cart_a','{ "_id": 3, "a": 4, "b": 5, "c": 20 }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "coll_mk_pp_cart_a", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1 }, "name": "a_1_b_1_c_1", "enableOrderedIndex": 1 } ] }', true);
+
+SELECT documentdb_api.create_collection('msdb','coll_mk_pp_cart_b');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_cart_b','{ "_id": 1, "a": 1, "b": [5, 6], "c": 30 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_cart_b','{ "_id": 2, "a": 1, "b": 6, "c": 10 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_cart_b','{ "_id": 3, "a": 4, "b": 5, "c": 20 }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "coll_mk_pp_cart_b", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1 }, "name": "a_1_b_1_c_1", "enableOrderedIndex": 1 } ] }', true);
+
+SELECT documentdb_api.create_collection('msdb','coll_mk_pp_cart_c');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_cart_c','{ "_id": 1, "a": 1, "b": 5, "c": [30, 40] }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_cart_c','{ "_id": 2, "a": 1, "b": 6, "c": [10, 50] }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_cart_c','{ "_id": 3, "a": 4, "b": 5, "c": [20, 60] }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "coll_mk_pp_cart_c", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1 }, "name": "a_1_b_1_c_1", "enableOrderedIndex": 1 } ] }', true);
+
+RESET documentdb.enableIndexMetadataGlobalTracking;
+
+-- Correctness: feature off vs on must agree. Expected _id 4,1,2,3 (b 1,2,5,6).
+SET documentdb.enable_merge_sort_for_in_prefix TO off;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_pp_sort", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }');
+SET documentdb.enable_merge_sort_for_in_prefix TO on;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_pp_sort", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }');
+
+-- Plan: no de-dup CustomScan above the Merge Append, because the only multi-key
+-- column (the sort column b) is not one of the exploded $in columns.
+SET enable_sort TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "coll_mk_pp_sort", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }')
+$cmd$);
+
+-- With the per-path bitmask ignored the planner falls back to the whole-index
+-- answer, so the de-dup node comes back even though it drops nothing.
+SET documentdb.enablePerPathMultiKeySortPushdown TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "coll_mk_pp_sort", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }')
+$cmd$);
+RESET documentdb.enablePerPathMultiKeySortPushdown;
+
+-- A multi-key exploded column still needs the de-dup: _id 1 and 3 each carry
+-- both 1 and 4, so they arrive through both children and one copy is dropped.
+SET documentdb.enable_merge_sort_for_in_prefix TO off;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_pp_prefix", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }');
+SET documentdb.enable_merge_sort_for_in_prefix TO on;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_pp_prefix", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }');
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "coll_mk_pp_prefix", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }')
+$cmd$);
+
+-- Multi-key on a plain-equality prefix column: no de-dup node, and the answer
+-- matches the feature-off baseline. Expected _id 2,1,4,3 (c 1,2,3,5).
+SET documentdb.enable_merge_sort_for_in_prefix TO off;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_pp_eq", "filter": { "a": 5, "b": { "$in": [1, 2] } }, "projection": { "_id": 1 }, "sort": { "c": 1 } }');
+SET documentdb.enable_merge_sort_for_in_prefix TO on;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_pp_eq", "filter": { "a": 5, "b": { "$in": [1, 2] } }, "projection": { "_id": 1 }, "sort": { "c": 1 } }');
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "coll_mk_pp_eq", "filter": { "a": 5, "b": { "$in": [1, 2] } }, "projection": { "_id": 1 }, "sort": { "c": 1 } }')
+$cmd$);
+
+-- Multi-key on a trailing $in column: still no de-dup node, and the answer
+-- matches the feature-off baseline. Expected _id 2,3,1,5,6 (b 1,2,3,4,6), each
+-- exactly once despite _id 6 matching both trailing $in values.
+SET documentdb.enable_merge_sort_for_in_prefix TO off;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_pp_trailing", "filter": { "a": { "$in": [1, 2] }, "c": { "$in": [7, 8] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }');
+SET documentdb.enable_merge_sort_for_in_prefix TO on;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_pp_trailing", "filter": { "a": { "$in": [1, 2] }, "c": { "$in": [7, 8] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }');
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "coll_mk_pp_trailing", "filter": { "a": { "$in": [1, 2] }, "c": { "$in": [7, 8] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }')
+$cmd$);
+
+-- Two exploded columns produce four MergeAppend children. Multi-key a must
+-- short-circuit on the first exploded column and retain cross-child TID de-dup.
+-- The feature-on result must match the blocking-sort baseline: _id 2,3,1.
+SET documentdb.enable_merge_sort_for_in_prefix TO off;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_pp_cart_a", "filter": { "a": { "$in": [1, 4] }, "b": { "$in": [5, 6] } }, "projection": { "_id": 1 }, "sort": { "c": 1 } }');
+SET documentdb.enable_merge_sort_for_in_prefix TO on;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_pp_cart_a", "filter": { "a": { "$in": [1, 4] }, "b": { "$in": [5, 6] } }, "projection": { "_id": 1 }, "sort": { "c": 1 } }');
+
+SELECT bool_or(line ~ 'DocumentDBApiTidDedup') AS has_tid_dedup,
+       bool_or(line ~ 'Merge Append') AS has_merge_append,
+       count(*) FILTER (WHERE line ~ 'Index Scan using') AS child_index_scans,
+       bool_or(line ~ 'Duplicate Rows Removed: 1') AS removed_cross_child_duplicate
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "coll_mk_pp_cart_a", "filter": { "a": { "$in": [1, 4] }, "b": { "$in": [5, 6] } }, "projection": { "_id": 1 }, "sort": { "c": 1 } }')
+$cmd$) AS line;
+
+-- Multi-key b must continue past scalar a, match the second exploded column,
+-- and produce the same de-duplicated four-child plan and result.
+SET documentdb.enable_merge_sort_for_in_prefix TO off;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_pp_cart_b", "filter": { "a": { "$in": [1, 4] }, "b": { "$in": [5, 6] } }, "projection": { "_id": 1 }, "sort": { "c": 1 } }');
+SET documentdb.enable_merge_sort_for_in_prefix TO on;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_pp_cart_b", "filter": { "a": { "$in": [1, 4] }, "b": { "$in": [5, 6] } }, "projection": { "_id": 1 }, "sort": { "c": 1 } }');
+
+SELECT bool_or(line ~ 'DocumentDBApiTidDedup') AS has_tid_dedup,
+       bool_or(line ~ 'Merge Append') AS has_merge_append,
+       count(*) FILTER (WHERE line ~ 'Index Scan using') AS child_index_scans,
+       bool_or(line ~ 'Duplicate Rows Removed: 1') AS removed_cross_child_duplicate
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "coll_mk_pp_cart_b", "filter": { "a": { "$in": [1, 4] }, "b": { "$in": [5, 6] } }, "projection": { "_id": 1 }, "sort": { "c": 1 } }')
+$cmd$) AS line;
+
+-- Multi-key c is not exploded, so the per-path check must examine both
+-- exploded columns and conclude that cross-child TID de-dup is unnecessary.
+-- Repeated c terms are removed within each child by the index AM.
+SET documentdb.enable_merge_sort_for_in_prefix TO off;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_pp_cart_c", "filter": { "a": { "$in": [1, 4] }, "b": { "$in": [5, 6] } }, "projection": { "_id": 1 }, "sort": { "c": 1 } }');
+SET documentdb.enable_merge_sort_for_in_prefix TO on;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_pp_cart_c", "filter": { "a": { "$in": [1, 4] }, "b": { "$in": [5, 6] } }, "projection": { "_id": 1 }, "sort": { "c": 1 } }');
+
+SELECT bool_or(line ~ 'DocumentDBApiTidDedup') AS has_tid_dedup,
+       bool_or(line ~ 'Merge Append') AS has_merge_append,
+       count(*) FILTER (WHERE line ~ 'Index Scan using') AS child_index_scans,
+       bool_or(line ~ 'numDuplicates: 1 entries') AS has_per_scan_dedup
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "coll_mk_pp_cart_c", "filter": { "a": { "$in": [1, 4] }, "b": { "$in": [5, 6] } }, "projection": { "_id": 1 }, "sort": { "c": 1 } }')
+$cmd$) AS line;
+
+-- A range predicate on the multi-key sort column keeps the per-child ordered
+-- scans from producing the required pathkeys, so the rewrite is abandoned
+-- altogether and a blocking Sort is used -- with or without per-path tracking.
+-- Expected _id 4,1,2,3 (b 1,2,5,6).
+SET documentdb.enable_merge_sort_for_in_prefix TO off;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_pp_sort", "filter": { "a": { "$in": [1, 4] }, "b": { "$gt": 0 } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }');
+SET documentdb.enable_merge_sort_for_in_prefix TO on;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_pp_sort", "filter": { "a": { "$in": [1, 4] }, "b": { "$gt": 0 } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }');
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "coll_mk_pp_sort", "filter": { "a": { "$in": [1, 4] }, "b": { "$gt": 0 } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }')
+$cmd$);
+
+RESET documentdb.forceDisableSeqScan;
+RESET enable_sort;
+RESET documentdb.enable_merge_sort_for_in_prefix;
+
+-- =====================================================================
+-- Per-path gating combined with index-only children. Same shape as the
+-- coll_ios_mk case above (index (a, b, c), arrays only on c, query touches only
+-- the scalar a and b), but the index is created with per-path multi-key
+-- tracking so the planner can see that the exploded column a is scalar.
+--
+-- Skipping the de-dup wrap also lifts the heap-ctid requirement, so the children
+-- can now be served as Index Only Scans over the covered {a, b} projection --
+-- a plan shape the rewrite could not previously produce on a multi-key index.
+-- Results must still match the feature-off result.
+-- =====================================================================
+SELECT documentdb_api.create_collection('msdb','coll_ios_mk_pp');
+SELECT documentdb_api.insert_one('msdb','coll_ios_mk_pp','{ "_id": 1, "a": 1, "b": 2, "c": [100, 200] }');
+SELECT documentdb_api.insert_one('msdb','coll_ios_mk_pp','{ "_id": 2, "a": 4, "b": 0, "c": [100] }');
+SELECT documentdb_api.insert_one('msdb','coll_ios_mk_pp','{ "_id": 3, "a": 1, "b": 9, "c": [300] }');
+SELECT documentdb_api.insert_one('msdb','coll_ios_mk_pp','{ "_id": 4, "a": 4, "b": 5, "c": [100, 400] }');
+SELECT documentdb_api.insert_one('msdb','coll_ios_mk_pp','{ "_id": 5, "a": 2, "b": 1, "c": [100] }');
+SELECT documentdb_api.insert_one('msdb','coll_ios_mk_pp','{ "_id": 6, "a": 1, "b": 3, "c": [500] }');
+SET documentdb.enableIndexMetadataGlobalTracking TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "coll_ios_mk_pp", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1 }, "name": "ios_mk_pp_a_1_b_1_c_1", "enableOrderedIndex": 1 } ] }', true);
+RESET documentdb.enableIndexMetadataGlobalTracking;
+
+SET documentdb.forceDisableSeqScan TO on;
+SET enable_indexonlyscan TO on;
+SET documentdb.enableIndexOnlyScanForFindProject TO on;
+
+-- Correctness (covered projection {a,b}): identical rows feature off vs on.
+-- Expected b ascending: 0,2,3,5,9 (a in {1,4}).
+SET documentdb.enable_merge_sort_for_in_prefix TO off;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_ios_mk_pp", "filter": { "a": { "$in": [1, 4] } }, "projection": { "a": 1, "b": 1, "_id": 0 }, "sort": { "b": 1 } }');
+SET documentdb.enable_merge_sort_for_in_prefix TO on;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_ios_mk_pp", "filter": { "a": { "$in": [1, 4] } }, "projection": { "a": 1, "b": 1, "_id": 0 }, "sort": { "b": 1 } }');
+
+-- Plan: Merge Append with NO de-dup CustomScan, and the children are now Index
+-- Only Scans. Contrast with coll_ios_mk, which has the same shape but no
+-- per-path tracking and therefore keeps both the de-dup and the heap children.
+SET enable_sort TO off;
+SELECT bool_or(line ~ 'Merge Append') AS has_merge_append,
+       NOT bool_or(line ~ 'DocumentDBApiTidDedup') AS no_tid_dedup,
+       bool_or(line ~ 'Index Only Scan') AS children_index_only_scan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "coll_ios_mk_pp", "filter": { "a": { "$in": [1, 4] } }, "projection": { "a": 1, "b": 1, "_id": 0 }, "sort": { "b": 1 } }')
+$cmd$) AS line;
+RESET enable_sort;
+
+RESET enable_indexonlyscan;
+RESET documentdb.enableIndexOnlyScanForFindProject;
+RESET documentdb.forceDisableSeqScan;
+RESET documentdb.enable_merge_sort_for_in_prefix;
+
 -- cleanup
 SELECT documentdb_api.drop_collection('msdb','coll');
 SELECT documentdb_api.drop_collection('msdb','coll_mc');
@@ -1902,5 +2204,13 @@ SELECT documentdb_api.drop_collection('msdb','coll_sample');
 SELECT documentdb_api.drop_collection('msdb','coll_ios_mk');
 SELECT documentdb_api.drop_collection('msdb','coll_mk_sort');
 SELECT documentdb_api.drop_collection('msdb','coll_mk_dup');
+SELECT documentdb_api.drop_collection('msdb','coll_mk_pp_sort');
+SELECT documentdb_api.drop_collection('msdb','coll_mk_pp_prefix');
+SELECT documentdb_api.drop_collection('msdb','coll_mk_pp_eq');
+SELECT documentdb_api.drop_collection('msdb','coll_mk_pp_trailing');
+SELECT documentdb_api.drop_collection('msdb','coll_mk_pp_cart_a');
+SELECT documentdb_api.drop_collection('msdb','coll_mk_pp_cart_b');
+SELECT documentdb_api.drop_collection('msdb','coll_mk_pp_cart_c');
+SELECT documentdb_api.drop_collection('msdb','coll_ios_mk_pp');
 DROP SCHEMA mergesort_gm CASCADE;
 DROP SCHEMA mergesort_rt CASCADE;

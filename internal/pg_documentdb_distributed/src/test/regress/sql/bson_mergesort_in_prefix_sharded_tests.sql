@@ -228,7 +228,177 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim(
     p_ignore_distributed_runtime_details => true);
 ROLLBACK;
 
+-- =====================================================================
+-- Per-path multi-key coverage under sharding. Same shape as coll_mk except the
+-- multi-key column is the SORT key b, while the exploded prefix a stays scalar,
+-- and the index is created with per-path multi-key tracking on. A multi-key sort
+-- column cannot route a document to two MergeAppend children (each per-value
+-- ordered scan already emits it once), so the shard-local plan must skip the
+-- heap-TID de-dup entirely.
+--
+-- This also pins the distribution-specific half of that claim: the shard-local
+-- planner can only skip the de-dup if the per-path mask is present on the SHARD
+-- index definitions, not just the coordinator's. Note how it gets there --
+-- shard_collection does NOT copy the coordinator's index definition verbatim for
+-- this access method; it replays the stored index spec through
+-- create_indexes_non_concurrently, which re-derives the per-path marker from the
+-- CURRENT value of enableIndexMetadataGlobalTracking. The GUC is therefore held
+-- on across shard_collection below, and the negative case (resharding with it
+-- off) is pinned separately at the end of this section.
+--
+-- Sort keys are the per-document minimum of b, all distinct, so the order is
+-- deterministic without a tiebreaker. Expected b ascending: 0,1,2,4,5,6,10.
+-- =====================================================================
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp','{ "_id": 1, "a": 1, "b": [2, 8] }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp','{ "_id": 2, "a": 4, "b": 5 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp','{ "_id": 3, "a": 1, "b": 6 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp','{ "_id": 4, "a": 4, "b": [1, 9] }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp','{ "_id": 5, "a": 2, "b": 3 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp','{ "_id": 6, "a": 1, "b": [4, 7] }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp','{ "_id": 7, "a": 4, "b": 0 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp','{ "_id": 8, "a": 1, "b": [10, 12] }');
+
+SET documentdb.enableIndexMetadataGlobalTracking TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "coll_mk_pp", "indexes": [ { "key": { "a": 1, "b": 1 }, "enableCompositeTerm": true, "name": "a_1_b_1" } ] }', true);
+
+SELECT documentdb_api.shard_collection('{ "shardCollection": "msdb.coll_mk_pp", "key": { "_id": "hashed" }, "numInitialChunks": 2 }');
+RESET documentdb.enableIndexMetadataGlobalTracking;
+
+ANALYZE documentdb_data.documents_79004;
+
+-- The per-path multi-key mask must be present on the SHARD index definitions,
+-- not just the coordinator's -- otherwise the shard-local planner cannot tell
+-- that the exploded column is scalar. Scoped to the composite opclass (the PG
+-- index is named documents_rum_index_*, not a_1_b_1) so it cannot be satisfied
+-- by the pk or the _id single-path index. Reported per shard as
+-- <marked>/<in-scope>, so an index that disappeared shows as 0/0 instead of
+-- silently passing. Both shards must report 1/1.
+SELECT bool_and(result = '1/1') AS all_shards_composite_marked
+FROM run_command_on_shards('documentdb_data.documents_79004',
+  'SELECT count(*) FILTER (WHERE strpos(pg_get_indexdef(indexrelid), ''mkp='') > 0)
+          || ''/'' || count(*) FROM pg_index
+     WHERE indrelid = ''%s''::regclass
+       AND strpos(pg_get_indexdef(indexrelid), ''composite_path_ops'') > 0');
+
+-- Correctness (no LIMIT): identical feature off vs on, b ascending.
+SET documentdb.enable_merge_sort_for_in_prefix TO off;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_pp", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }');
+
+SET documentdb.enable_merge_sort_for_in_prefix TO on;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_pp", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }');
+RESET documentdb.enable_merge_sort_for_in_prefix;
+
+-- Correctness (LIMIT 3): identical off vs on (_id 7,4,1).
+SET documentdb.enable_merge_sort_for_in_prefix TO off;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_pp", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": 1 }, "limit": 3 }');
+
+SET documentdb.enable_merge_sort_for_in_prefix TO on;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_pp", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": 1 }, "limit": 3 }');
+RESET documentdb.enable_merge_sort_for_in_prefix;
+
+-- Plan shape with feature ON (LIMIT 3): each shard task produces an ordered
+-- "Limit -> Merge Append" with NO de-dup CustomScan above it, unlike the coll_mk
+-- case above where the exploded column itself is multi-key.
+BEGIN;
+SET LOCAL citus.propagate_set_commands TO 'local';
+SET LOCAL documentdb.enable_merge_sort_for_in_prefix TO on;
+SET LOCAL citus.max_adaptive_executor_pool_size TO 1;
+SET LOCAL citus.enable_local_execution TO off;
+SET LOCAL citus.explain_analyze_sort_method TO taskId;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_sort TO off;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim(
+    $$ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+       SELECT document FROM bson_aggregation_find('msdb',
+         '{ "find": "coll_mk_pp", "filter": { "a": { "$in": [1, 4] } }, "sort": { "b": 1 }, "limit": 3 }') $$,
+    p_ignore_heap_fetches => true,
+    p_ignore_distributed_runtime_details => true);
+ROLLBACK;
+
+-- =====================================================================
+-- Negative counterpart to the probe above: because shard_collection re-derives
+-- the per-path marker from the live GUC rather than carrying it over from the
+-- coordinator's index, resharding while enableIndexMetadataGlobalTracking is OFF
+-- drops per-path tracking from the shard indexes even though the pre-shard index
+-- had it. The shard-local planner then falls back to the conservative
+-- whole-index answer and the de-dup node reappears on every shard.
+--
+-- This is a performance-only, fail-safe-direction difference (results stay
+-- correct either way), but it is silent, so it is pinned here rather than left
+-- to be rediscovered. If the rebuild is ever changed to preserve the marker,
+-- this expectation should flip to true.
+-- =====================================================================
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_off','{ "_id": 1, "a": 1, "b": [2, 8] }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_off','{ "_id": 2, "a": 4, "b": 5 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_off','{ "_id": 3, "a": 1, "b": 6 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_pp_off','{ "_id": 4, "a": 4, "b": [1, 9] }');
+
+SET documentdb.enableIndexMetadataGlobalTracking TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "coll_mk_pp_off", "indexes": [ { "key": { "a": 1, "b": 1 }, "enableCompositeTerm": true, "name": "a_1_b_1" } ] }', true);
+RESET documentdb.enableIndexMetadataGlobalTracking;
+
+-- Pre-shard, the coordinator index carries the marker. Reported as
+-- <marked>/<in-scope> so that the index vanishing shows up as 0/0 rather than
+-- silently satisfying the assertion. Expected 1/1.
+SELECT count(*) FILTER (WHERE strpos(pg_get_indexdef(indexrelid), 'mkp=') > 0)
+       || '/' || count(*) AS marked_over_composite_before_shard
+FROM pg_index WHERE indrelid = 'documentdb_data.documents_79005'::regclass
+  AND strpos(pg_get_indexdef(indexrelid), 'composite_path_ops') > 0;
+
+SELECT documentdb_api.shard_collection('{ "shardCollection": "msdb.coll_mk_pp_off", "key": { "_id": "hashed" }, "numInitialChunks": 2 }');
+
+ANALYZE documentdb_data.documents_79005;
+
+-- After resharding with the GUC off, the shard indexes have lost it: the
+-- composite index is still there (denominator 1) but carries no marker.
+SELECT bool_and(result = '0/1') AS all_shards_composite_present_but_unmarked
+FROM run_command_on_shards('documentdb_data.documents_79005',
+  'SELECT count(*) FILTER (WHERE strpos(pg_get_indexdef(indexrelid), ''mkp='') > 0)
+          || ''/'' || count(*) FROM pg_index
+     WHERE indrelid = ''%s''::regclass
+       AND strpos(pg_get_indexdef(indexrelid), ''composite_path_ops'') > 0');
+
+-- Correctness (LIMIT 3) is unaffected: identical off vs on (_id 4,1,2).
+SET documentdb.enable_merge_sort_for_in_prefix TO off;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_pp_off", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": 1 }, "limit": 3 }');
+
+SET documentdb.enable_merge_sort_for_in_prefix TO on;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_pp_off", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": 1 }, "limit": 3 }');
+RESET documentdb.enable_merge_sort_for_in_prefix;
+
+-- The planner consequence: same query and same data as coll_mk_pp above, but
+-- because resharding dropped the per-path marker the shard-local plan falls back
+-- to the conservative whole-index answer and the de-dup CustomScan is back --
+-- even though the only multi-key column is the sort key and it drops nothing.
+BEGIN;
+SET LOCAL citus.propagate_set_commands TO 'local';
+SET LOCAL documentdb.enable_merge_sort_for_in_prefix TO on;
+SET LOCAL citus.max_adaptive_executor_pool_size TO 1;
+SET LOCAL citus.enable_local_execution TO off;
+SET LOCAL citus.explain_analyze_sort_method TO taskId;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_sort TO off;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim(
+    $$ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+       SELECT document FROM bson_aggregation_find('msdb',
+         '{ "find": "coll_mk_pp_off", "filter": { "a": { "$in": [1, 4] } }, "sort": { "b": 1 }, "limit": 3 }') $$,
+    p_ignore_heap_fetches => true,
+    p_ignore_distributed_runtime_details => true);
+ROLLBACK;
+
 -- cleanup
 SELECT documentdb_api.drop_collection('msdb','coll');
 SELECT documentdb_api.drop_collection('msdb','coll_sk');
 SELECT documentdb_api.drop_collection('msdb','coll_mk');
+SELECT documentdb_api.drop_collection('msdb','coll_mk_pp');
+SELECT documentdb_api.drop_collection('msdb','coll_mk_pp_off');
