@@ -22,7 +22,7 @@ use tokio::{
 };
 
 use crate::{
-    error::{is_connection_closed_error_kind, DocumentDBError, ErrorCode, Result},
+    error::{is_connection_closed_error_kind, DocumentDBError, Result},
     protocol::{
         bson_scanner,
         header::Header,
@@ -92,10 +92,7 @@ fn request_message_size(authenticated: bool, header: &Header) -> Result<usize> {
 
     if !authenticated && header.message_length() > crate::protocol::MAX_PRE_AUTH_MESSAGE_SIZE_BYTES
     {
-        return Err(DocumentDBError::documentdb_error(
-            ErrorCode::InvalidLength,
-            "Message size exceeds the maximum allowed size.".to_owned(),
-        ));
+        return Err(DocumentDBError::message_size_exceeded());
     }
 
     Ok(message_size)

@@ -11,9 +11,7 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 use crate::{
     error::{DocumentDBError, Result},
-    protocol::{
-        header::Header, opcode::OpCode, MAX_MESSAGE_SIZE_BYTES, MESSAGE_SIZE_EXCEEDED_ERROR,
-    },
+    protocol::{header::Header, opcode::OpCode, MAX_MESSAGE_SIZE_BYTES},
     responses::{error_to_raw_document_buf, Response},
 };
 
@@ -22,7 +20,7 @@ const OP_MSG_PREFIX_LENGTH: usize =
 const OP_REPLY_PREFIX_LENGTH: usize = Header::LENGTH + 20;
 
 fn message_size_exceeded_error() -> DocumentDBError {
-    DocumentDBError::internal_error(MESSAGE_SIZE_EXCEEDED_ERROR.to_owned())
+    DocumentDBError::message_size_exceeded()
 }
 
 fn response_message_length(response_len: usize, overhead_len: usize) -> Result<i32> {
@@ -189,7 +187,14 @@ mod tests {
         let response_len = usize::try_from(MAX_MESSAGE_SIZE_BYTES)
             .expect("maximum message size should fit into usize");
 
-        response_message_length(response_len, 1).unwrap_err();
+        let error = response_message_length(response_len, 1)
+            .expect_err("a response above the wire limit must be rejected");
+
+        assert_eq!(error.error_code(), crate::error::ErrorCode::InvalidLength);
+        assert_eq!(
+            error.error_message_user(),
+            crate::protocol::MESSAGE_SIZE_EXCEEDED_ERROR
+        );
     }
 
     #[test]
@@ -206,8 +211,10 @@ mod tests {
     fn response_message_length_rejects_op_msg_over_limit() {
         let response_len = max_response_len_for(OP_MSG_PREFIX_LENGTH) + 1;
 
-        response_message_length(response_len, OP_MSG_PREFIX_LENGTH)
+        let error = response_message_length(response_len, OP_MSG_PREFIX_LENGTH)
             .expect_err("OP_MSG one byte over the limit should be rejected");
+
+        assert_eq!(error.error_code(), crate::error::ErrorCode::InvalidLength);
     }
 
     #[test]
@@ -224,8 +231,10 @@ mod tests {
     fn response_message_length_rejects_op_reply_over_limit() {
         let response_len = max_response_len_for(OP_REPLY_PREFIX_LENGTH) + 1;
 
-        response_message_length(response_len, OP_REPLY_PREFIX_LENGTH)
+        let error = response_message_length(response_len, OP_REPLY_PREFIX_LENGTH)
             .expect_err("OP_REPLY one byte over the limit should be rejected");
+
+        assert_eq!(error.error_code(), crate::error::ErrorCode::InvalidLength);
     }
 
     #[test]

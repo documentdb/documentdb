@@ -10,7 +10,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{
     error::{DocumentDBError, Result},
-    protocol::{opcode::OpCode, MESSAGE_SIZE_EXCEEDED_ERROR},
+    protocol::opcode::OpCode,
 };
 
 /// Represents the message header (first 16 bytes of wire protocol message).
@@ -56,9 +56,7 @@ impl Header {
         }
 
         if message_size > crate::protocol::MAX_MESSAGE_SIZE_BYTES as usize {
-            return Err(DocumentDBError::bad_value(
-                MESSAGE_SIZE_EXCEEDED_ERROR.to_owned(),
-            ));
+            return Err(DocumentDBError::message_size_exceeded());
         }
 
         Ok(Self {
@@ -166,6 +164,20 @@ mod tests {
         assert_eq!(Header::LENGTH, 16);
         assert_eq!(Header::LENGTH_I32, 16);
         assert_eq!(std::mem::size_of::<Header>(), 16);
+    }
+
+    /// An oversized frame is the client's problem, so it gets the documented
+    /// size code rather than an internal error that tells the client nothing.
+    #[test]
+    fn oversized_message_length_reports_invalid_length() {
+        let error = Header::new(i32::MAX, 1, 0, OpCode::Msg)
+            .expect_err("a length past the wire maximum must be rejected");
+
+        assert_eq!(error.error_code(), crate::error::ErrorCode::InvalidLength);
+        assert_eq!(
+            error.error_message_user(),
+            crate::protocol::MESSAGE_SIZE_EXCEEDED_ERROR
+        );
     }
 
     #[tokio::test]

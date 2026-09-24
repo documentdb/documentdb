@@ -72,7 +72,7 @@ pub fn extract_info_from_document(
         extract_common_field(&mut request_info, key, &field, collection_field)
     })?;
 
-    Ok(request_info.build())
+    request_info.build()
 }
 
 /// Extracts the command type and common metadata from a command document in one scan.
@@ -111,7 +111,7 @@ pub fn extract_request_type_and_info_from_document(
     let request_type =
         request_type.ok_or_else(|| DocumentDBError::bad_value("Empty BSON document".to_owned()))?;
 
-    Ok((request_type, request_info.build()))
+    Ok((request_type, request_info.build()?))
 }
 
 #[expect(clippy::too_many_lines, reason = "complex field extraction logic")]
@@ -328,6 +328,29 @@ mod tests {
         request
             .extract_common()
             .expect_err("first lsid.id field controls type validation");
+    }
+
+    #[test]
+    fn extract_common_rejects_transaction_number_without_session_id() {
+        let request = Request::RawBuf(
+            RequestType::Find,
+            rawdoc! {
+                "find": "orders",
+                "$db": "testdb",
+                "txnNumber": 1_i64,
+                "autocommit": false,
+            },
+        );
+
+        let error = request
+            .extract_common()
+            .expect_err("txnNumber without lsid should be rejected");
+
+        assert_eq!(error.error_code(), ErrorCode::InvalidOptions);
+        assert_eq!(
+            error.error_message_user(),
+            "Transaction number requires a session ID to also be specified."
+        );
     }
 
     fn build_raw(doc: &bson::Document) -> RawDocumentBuf {

@@ -27,7 +27,7 @@ use uuid::Uuid;
 
 use crate::{
     context::{ConnectionContext, ServiceContext},
-    error::DocumentDBError,
+    error::{DocumentDBError, ErrorCode},
     protocol::{
         header::Header, opcode::OpCode, MAX_MESSAGE_USIZE_BYTES, MAX_PRE_AUTH_MESSAGE_USIZE_BYTES,
         MESSAGE_SIZE_EXCEEDED_ERROR,
@@ -52,9 +52,7 @@ impl GatewayDecodeError {
     fn documentdb_error(&self) -> DocumentDBError {
         match self {
             Self::BadValue(message) => DocumentDBError::bad_value(message.clone()),
-            Self::MessageSizeExceeded => {
-                DocumentDBError::internal_error(MESSAGE_SIZE_EXCEEDED_ERROR.to_owned())
-            }
+            Self::MessageSizeExceeded => DocumentDBError::message_size_exceeded(),
         }
     }
 }
@@ -142,10 +140,15 @@ impl MessageDecoder for GatewayRequestDecoder {
             Ok(header) => header,
             Err(error) => {
                 self.read_request_start = None;
+                let decode_error = if error.error_code() == ErrorCode::InvalidLength {
+                    GatewayDecodeError::MessageSizeExceeded
+                } else {
+                    GatewayDecodeError::BadValue(error.error_message_user().to_owned())
+                };
                 return Ok(Some(decode_error_request(
                     input,
                     error_header,
-                    GatewayDecodeError::BadValue(error.error_message_user().to_owned()),
+                    decode_error,
                     read_request_start,
                 )));
             }
@@ -397,7 +400,7 @@ impl Protocol for GatewayWireProtocol {
     }
 }
 
-fn documentdb_error_from_runtime_error(error: &NacelleError) -> DocumentDBError {
+pub(super) fn documentdb_error_from_runtime_error(error: &NacelleError) -> DocumentDBError {
     if let NacelleError::Protocol(source) = error {
         if let Some(decode_error) = source.downcast_ref::<GatewayDecodeError>() {
             return decode_error.documentdb_error();
@@ -407,7 +410,7 @@ fn documentdb_error_from_runtime_error(error: &NacelleError) -> DocumentDBError 
         error,
         NacelleError::ResourceLimit(NacelleResourceLimitReason::RequestBodyBytes)
     ) {
-        return DocumentDBError::internal_error(MESSAGE_SIZE_EXCEEDED_ERROR.to_owned());
+        return DocumentDBError::message_size_exceeded();
     }
 
     DocumentDBError::internal_error(format!("Gateway request failed: {error}."))

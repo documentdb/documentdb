@@ -13,7 +13,9 @@
 use bytes::BytesMut;
 use nacelle::{
     codec::MessageDecoder,
-    core::{pipeline::ConnectionInfo, NacelleConnectionMeta, NacelleError},
+    core::{
+        pipeline::ConnectionInfo, NacelleConnectionMeta, NacelleError, NacelleResourceLimitReason,
+    },
     tcp::{DecodedMessage, FrameBuffer, Protocol},
 };
 use tokio_util::sync::CancellationToken;
@@ -188,4 +190,17 @@ fn response_message_length_rejects_over_gateway_limit() {
         wire::response_message_length(max - prefix_length + 1, prefix_length),
         Err(NacelleError::FrameTooLarge { .. })
     ));
+}
+
+#[test]
+fn request_body_limit_maps_to_invalid_length() {
+    let error = protocol::documentdb_error_from_runtime_error(&NacelleError::ResourceLimit(
+        NacelleResourceLimitReason::RequestBodyBytes,
+    ));
+
+    assert_eq!(error.error_code(), crate::error::ErrorCode::InvalidLength);
+    assert_eq!(
+        error.error_message_user(),
+        crate::protocol::MESSAGE_SIZE_EXCEEDED_ERROR
+    );
 }

@@ -240,11 +240,12 @@ impl<'a> RequestInfoBuilder<'a> {
         self
     }
 
-    #[must_use]
-    pub(super) fn build(self) -> RequestInfo<'a> {
-        let transaction_info = self.transaction.build(self.lsid.is_some());
+    /// # Errors
+    /// Returns an error when a transaction number is present without a session ID.
+    pub(super) fn build(self) -> Result<RequestInfo<'a>> {
+        let transaction_info = self.transaction.build(self.lsid.is_some())?;
 
-        RequestInfo {
+        Ok(RequestInfo {
             max_time_ms: self.max_time_ms,
             transaction_info,
             db: self.db,
@@ -253,7 +254,7 @@ impl<'a> RequestInfoBuilder<'a> {
             read_concern: self.read_concern,
             comment: self.comment,
             explain: self.explain,
-        }
+        })
     }
 }
 
@@ -296,17 +297,22 @@ impl RequestTransactionInfoBuilder {
         self
     }
 
-    #[must_use]
-    fn build(self, has_session_id: bool) -> Option<RequestTransactionInfo> {
-        has_session_id
-            .then_some(self.transaction_number)
-            .flatten()
+    fn build(self, has_session_id: bool) -> Result<Option<RequestTransactionInfo>> {
+        if self.transaction_number.is_some() && !has_session_id {
+            return Err(DocumentDBError::documentdb_error(
+                ErrorCode::InvalidOptions,
+                "Transaction number requires a session ID to also be specified.".to_owned(),
+            ));
+        }
+
+        Ok(self
+            .transaction_number
             .map(|transaction_number| RequestTransactionInfo {
                 transaction_number,
                 auto_commit: self.auto_commit,
                 start_transaction: self.start_transaction,
                 is_request_within_transaction: !self.auto_commit,
                 isolation_level: self.isolation_level,
-            })
+            }))
     }
 }

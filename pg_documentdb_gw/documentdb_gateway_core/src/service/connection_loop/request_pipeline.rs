@@ -18,9 +18,7 @@ use crate::{
     context::{ConnectionContext, RequestContext},
     error::{DocumentDBError, ErrorCode, Result},
     postgres::PgDataClient,
-    protocol::{
-        self, header::Header, MAX_PRE_AUTH_MESSAGE_SIZE_BYTES, MESSAGE_SIZE_EXCEEDED_ERROR,
-    },
+    protocol::{self, header::Header, MAX_PRE_AUTH_MESSAGE_SIZE_BYTES},
     requests::{
         request_tracker::RequestTracker, validation, RequestIntervalKind, RequestMessage,
         RequestObservation,
@@ -204,7 +202,7 @@ where
     if !connection_context.auth_state.is_authenticated()
         && message_length > usize::try_from(MAX_PRE_AUTH_MESSAGE_SIZE_BYTES).unwrap_or(250_000)
     {
-        let error = DocumentDBError::internal_error(MESSAGE_SIZE_EXCEEDED_ERROR.to_owned());
+        let error = DocumentDBError::message_size_exceeded();
         error_reply::reply_with_request_error(
             connection_context,
             &header,

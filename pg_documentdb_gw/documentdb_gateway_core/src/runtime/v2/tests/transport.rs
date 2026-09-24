@@ -204,12 +204,12 @@ async fn serial_transport_closes_silently_when_shutdown_response_is_disabled() {
 async fn serial_transport_frames_malformed_head_errors_before_close() {
     let service_context = test_service_context(TestDynamicConfiguration::default()).await;
     let cases = [
-        (-1_i32, 92_i32),
-        (Header::LENGTH_I32, 93_i32),
-        (MAX_MESSAGE_SIZE_BYTES + 1, 94_i32),
+        (-1_i32, 92_i32, ErrorCode::BadValue),
+        (Header::LENGTH_I32, 93_i32, ErrorCode::BadValue),
+        (MAX_MESSAGE_SIZE_BYTES + 1, 94_i32, ErrorCode::InvalidLength),
     ];
 
-    for (message_length, request_id) in cases {
+    for (message_length, request_id, expected_code) in cases {
         let (mut client, server_task) =
             start_serial_test_connection(service_context.clone(), CancellationToken::new());
         let mut request = Vec::with_capacity(Header::LENGTH);
@@ -228,7 +228,7 @@ async fn serial_transport_frames_malformed_head_errors_before_close() {
         assert_eq!(header.op_code(), OpCode::Msg);
         let error_document = bson::Document::from_reader(&response[wire::op_msg_prefix_length()..])
             .expect("error response document should decode");
-        assert_eq!(error_document.get_i32("code"), Ok(2));
+        assert_eq!(error_document.get_i32("code"), Ok(expected_code as i32));
 
         drop(client);
         assert!(matches!(

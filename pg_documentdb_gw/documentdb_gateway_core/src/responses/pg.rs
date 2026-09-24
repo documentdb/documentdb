@@ -553,6 +553,49 @@ fn map_pg_db_error_fallback<'a>(
                 Some(error_message),
             )
         }
+        SqlState::IDLE_IN_TRANSACTION_SESSION_TIMEOUT | SqlState::IDLE_SESSION_TIMEOUT => {
+            PostgresErrorMappedResult::new(
+                ErrorCode::ExceededTimeLimit,
+                "The session was terminated after exceeding the idle timeout.",
+                Some(msg),
+            )
+        }
+        SqlState::INVALID_JSON_TEXT => PostgresErrorMappedResult::new(
+            ErrorCode::FailedToParse,
+            "Failed to parse the supplied JSON value.",
+            Some(msg),
+        ),
+        // Values the client supplied and the backend could not interpret. DIVISION_BY_ZERO
+        // and INVALID_BINARY_REPRESENTATION are not here on purpose: those can only come
+        // from server-side SQL or a parameter the gateway itself encoded, so they must stay
+        // internal errors rather than being blamed on the request.
+        SqlState::INVALID_REGULAR_EXPRESSION => PostgresErrorMappedResult::new(
+            ErrorCode::BadValue,
+            "The supplied regular expression is invalid.",
+            Some(msg),
+        ),
+        SqlState::INVALID_DATETIME_FORMAT | SqlState::DATETIME_FIELD_OVERFLOW => {
+            PostgresErrorMappedResult::new(
+                ErrorCode::BadValue,
+                "The supplied date or time value is invalid.",
+                Some(msg),
+            )
+        }
+        SqlState::INVALID_CURSOR_NAME => PostgresErrorMappedResult::new(
+            ErrorCode::CursorNotFound,
+            "The cursor is no longer available on the server.",
+            Some(msg),
+        ),
+        SqlState::INVALID_CURSOR_STATE => PostgresErrorMappedResult::new(
+            ErrorCode::CursorInUse,
+            "The cursor is not in a valid state for this operation.",
+            Some(msg),
+        ),
+        SqlState::OBJECT_IN_USE => PostgresErrorMappedResult::new(
+            ErrorCode::ConflictingOperationInProgress,
+            "The operation conflicts with another operation in progress.",
+            Some(msg),
+        ),
         _ => PostgresErrorMappedResult {
             error_code: ErrorCode::InternalError,
             error_message: generic_internal_error_message(),
@@ -586,11 +629,24 @@ fn transform_error(
         activity_id,
     );
 
-    if mapped_response.error_code() == ErrorCode::WriteConflict
-        || mapped_response.error_code() == ErrorCode::InternalError
-        || mapped_response.error_code() == ErrorCode::LockTimeout
-        || mapped_response.error_code() == ErrorCode::Unauthorized
-    {
+    // A per-document write error that actually reports an infrastructure failure has to
+    // fail the whole command: emitting it as a writeErrors[] entry on an ok:1 response
+    // would let a client that only checks command status treat a lost backend or a
+    // shutting-down server as a successful batch.
+    if matches!(
+        mapped_response.error_code(),
+        ErrorCode::WriteConflict
+            | ErrorCode::InternalError
+            | ErrorCode::LockTimeout
+            | ErrorCode::Unauthorized
+    ) || matches!(
+        pg_code,
+        SqlState::IDLE_IN_TRANSACTION_SESSION_TIMEOUT
+            | SqlState::IDLE_SESSION_TIMEOUT
+            | SqlState::INVALID_CURSOR_NAME
+            | SqlState::INVALID_CURSOR_STATE
+            | SqlState::OBJECT_IN_USE
+    ) {
         return Err(DocumentDBError::error_with_loggable_message(
             mapped_response.error_code(),
             mapped_response.error_message(),
@@ -792,10 +848,13 @@ impl<'a> PostgresErrorMappedResult<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Once;
+    use std::sync::{Arc, Once};
 
     use super::*;
-    use crate::responses::{register_custom_error_mapper, CustomPostgresErrorMapper};
+    use crate::{
+        responses::{register_custom_error_mapper, CustomPostgresErrorMapper},
+        testing::{test_connection_context, TestDynamicConfiguration},
+    };
 
     static REGISTER_TEST_MAPPER: Once = Once::new();
 
@@ -884,6 +943,160 @@ mod tests {
 
         assert_eq!(error_code, ErrorCode::InternalError);
         assert_eq!(error_message, generic_internal_error_message());
+    }
+
+    #[tokio::test]
+    async fn client_input_sqlstate_remains_a_per_document_write_error() {
+        let context =
+            test_connection_context(false, Arc::new(TestDynamicConfiguration::default()), None)
+                .await;
+        let mut write_error = Bson::Document(bson::doc! {
+            "code": postgres_sqlstate_to_i32(&SqlState::INVALID_JSON_TEXT),
+            "errmsg": "backend detail",
+        });
+
+        transform_error(&context, &mut write_error, "test-activity")
+            .expect("invalid client input should remain a writeErrors entry");
+
+        let document = write_error
+            .as_document()
+            .expect("transformed write error should remain a document");
+        assert_eq!(
+            document.get_i32("code"),
+            Ok(ErrorCode::FailedToParse as i32)
+        );
+        assert_eq!(
+            document.get_str("errmsg"),
+            Ok("Failed to parse the supplied JSON value.")
+        );
+    }
+
+    #[tokio::test]
+    async fn session_sqlstate_escalates_to_command_error() {
+        let context =
+            test_connection_context(false, Arc::new(TestDynamicConfiguration::default()), None)
+                .await;
+        let mut write_error = Bson::Document(bson::doc! {
+            "code": postgres_sqlstate_to_i32(&SqlState::IDLE_SESSION_TIMEOUT),
+            "errmsg": "backend detail",
+        });
+
+        let error = transform_error(&context, &mut write_error, "test-activity")
+            .expect_err("session termination must fail the whole write command");
+
+        assert_eq!(error.error_code(), ErrorCode::ExceededTimeLimit);
+        assert_eq!(
+            error.error_message_user(),
+            "The session was terminated after exceeding the idle timeout."
+        );
+    }
+
+    /// States that used to fall through to the `InternalError` default arm now
+    /// carry a code the client can act on. The expected message is asserted
+    /// alongside the code because whether an arm echoes the raw backend `msg`
+    /// or a fixed string is what decides whether internal schema, role, and
+    /// query detail reaches the client.
+    #[test]
+    fn previously_unmapped_states_map_to_known_error_codes() {
+        for (state, expected_code, expected_message) in [
+            (
+                &SqlState::IDLE_IN_TRANSACTION_SESSION_TIMEOUT,
+                ErrorCode::ExceededTimeLimit,
+                "The session was terminated after exceeding the idle timeout.",
+            ),
+            (
+                &SqlState::IDLE_SESSION_TIMEOUT,
+                ErrorCode::ExceededTimeLimit,
+                "The session was terminated after exceeding the idle timeout.",
+            ),
+            (
+                &SqlState::INVALID_JSON_TEXT,
+                ErrorCode::FailedToParse,
+                "Failed to parse the supplied JSON value.",
+            ),
+            (
+                &SqlState::INVALID_REGULAR_EXPRESSION,
+                ErrorCode::BadValue,
+                "The supplied regular expression is invalid.",
+            ),
+            (
+                &SqlState::INVALID_DATETIME_FORMAT,
+                ErrorCode::BadValue,
+                "The supplied date or time value is invalid.",
+            ),
+            (
+                &SqlState::DATETIME_FIELD_OVERFLOW,
+                ErrorCode::BadValue,
+                "The supplied date or time value is invalid.",
+            ),
+            (
+                &SqlState::INVALID_CURSOR_NAME,
+                ErrorCode::CursorNotFound,
+                "The cursor is no longer available on the server.",
+            ),
+            (
+                &SqlState::INVALID_CURSOR_STATE,
+                ErrorCode::CursorInUse,
+                "The cursor is not in a valid state for this operation.",
+            ),
+            (
+                &SqlState::OBJECT_IN_USE,
+                ErrorCode::ConflictingOperationInProgress,
+                "The operation conflicts with another operation in progress.",
+            ),
+        ] {
+            let result = map_pg_db_error(false, false, state, "backend detail", "test-activity");
+
+            assert_eq!(
+                result.error_code(),
+                expected_code,
+                "unexpected code for {}",
+                state.code()
+            );
+            assert_eq!(
+                result.error_message(),
+                expected_message,
+                "unexpected message for {}",
+                state.code()
+            );
+        }
+    }
+
+    /// States whose outcome the backend cannot vouch for must keep reporting
+    /// `InternalError`. Handing them a code drivers auto-retry on would let a
+    /// non-idempotent write apply twice, and giving a server-side fault a
+    /// client-facing code hides a gateway bug from availability signals.
+    #[test]
+    fn undecidable_and_server_side_states_still_map_to_internal_error() {
+        for state in [
+            &SqlState::SYNTAX_ERROR,
+            // An established connection dropped: the command may already have run.
+            &SqlState::CONNECTION_EXCEPTION,
+            &SqlState::CONNECTION_DOES_NOT_EXIST,
+            &SqlState::CONNECTION_FAILURE,
+            &SqlState::SQLCLIENT_UNABLE_TO_ESTABLISH_SQLCONNECTION,
+            &SqlState::SQLSERVER_REJECTED_ESTABLISHMENT_OF_SQLCONNECTION,
+            &SqlState::ADMIN_SHUTDOWN,
+            &SqlState::CRASH_SHUTDOWN,
+            &SqlState::DATABASE_DROPPED,
+            &SqlState::CONFIGURATION_LIMIT_EXCEEDED,
+            &SqlState::T_R_INTEGRITY_CONSTRAINT_VIOLATION,
+            // The backend explicitly cannot say whether the statement took effect.
+            &SqlState::T_R_STATEMENT_COMPLETION_UNKNOWN,
+            // Raised by server-side SQL or by a parameter the gateway itself encoded.
+            &SqlState::DIVISION_BY_ZERO,
+            &SqlState::INVALID_BINARY_REPRESENTATION,
+        ] {
+            let result = map_pg_db_error(false, false, state, "backend detail", "test-activity");
+
+            assert_eq!(
+                result.error_code(),
+                ErrorCode::InternalError,
+                "{} should stay an internal error",
+                state.code()
+            );
+            assert_eq!(result.error_message(), generic_internal_error_message());
+        }
     }
 
     #[test]

@@ -280,6 +280,17 @@ impl DocumentDBError {
         )
     }
 
+    /// A wire message that is larger than the protocol allows, in either
+    /// direction. The message carries no request content, so it is safe to
+    /// return to the client rather than hiding it behind an internal error.
+    #[must_use]
+    pub fn message_size_exceeded() -> Self {
+        Self::documentdb_error(
+            ErrorCode::InvalidLength,
+            crate::protocol::MESSAGE_SIZE_EXCEEDED_ERROR.to_owned(),
+        )
+    }
+
     #[must_use]
     pub fn internal_error(error_message_internal: String) -> Self {
         Self::new_documentdb_error(
@@ -506,9 +517,20 @@ fn map_pool_db_error_code(
             ErrorCode::TooManyLogicalSessions,
             "There are too many open connections.".to_owned(),
         ),
-        SqlState::CANNOT_CONNECT_NOW => (
+        SqlState::CANNOT_CONNECT_NOW
+        | SqlState::ADMIN_SHUTDOWN
+        | SqlState::CRASH_SHUTDOWN
+        | SqlState::DATABASE_DROPPED => (
             ErrorCode::ShutdownInProgress,
             "Request terminated due to shutdown on the server.".to_owned(),
+        ),
+        SqlState::CONNECTION_EXCEPTION
+        | SqlState::CONNECTION_DOES_NOT_EXIST
+        | SqlState::CONNECTION_FAILURE
+        | SqlState::SQLCLIENT_UNABLE_TO_ESTABLISH_SQLCONNECTION
+        | SqlState::SQLSERVER_REJECTED_ESTABLISHMENT_OF_SQLCONNECTION => (
+            ErrorCode::HostUnreachable,
+            "Could not establish a connection to the server.".to_owned(),
         ),
         SqlState::INVALID_PASSWORD => (ErrorCode::InvalidPassword, "Invalid password.".to_owned()),
         _ => match map_connection_level_sqlstate(state) {
@@ -758,6 +780,46 @@ mod tests {
                 &SqlState::CANNOT_CONNECT_NOW,
                 ErrorCode::ShutdownInProgress,
                 "Request terminated due to shutdown on the server.",
+            ),
+            (
+                &SqlState::ADMIN_SHUTDOWN,
+                ErrorCode::ShutdownInProgress,
+                "Request terminated due to shutdown on the server.",
+            ),
+            (
+                &SqlState::CRASH_SHUTDOWN,
+                ErrorCode::ShutdownInProgress,
+                "Request terminated due to shutdown on the server.",
+            ),
+            (
+                &SqlState::DATABASE_DROPPED,
+                ErrorCode::ShutdownInProgress,
+                "Request terminated due to shutdown on the server.",
+            ),
+            (
+                &SqlState::CONNECTION_EXCEPTION,
+                ErrorCode::HostUnreachable,
+                "Could not establish a connection to the server.",
+            ),
+            (
+                &SqlState::CONNECTION_DOES_NOT_EXIST,
+                ErrorCode::HostUnreachable,
+                "Could not establish a connection to the server.",
+            ),
+            (
+                &SqlState::CONNECTION_FAILURE,
+                ErrorCode::HostUnreachable,
+                "Could not establish a connection to the server.",
+            ),
+            (
+                &SqlState::SQLCLIENT_UNABLE_TO_ESTABLISH_SQLCONNECTION,
+                ErrorCode::HostUnreachable,
+                "Could not establish a connection to the server.",
+            ),
+            (
+                &SqlState::SQLSERVER_REJECTED_ESTABLISHMENT_OF_SQLCONNECTION,
+                ErrorCode::HostUnreachable,
+                "Could not establish a connection to the server.",
             ),
             (
                 &SqlState::INVALID_PASSWORD,

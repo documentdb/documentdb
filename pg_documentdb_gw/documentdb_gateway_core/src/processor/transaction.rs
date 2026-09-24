@@ -35,12 +35,12 @@ pub async fn handle(
 
         let caller = connection_context.auth_state.principal()?;
 
-        let lsid = request
-            .lsid()
-            .cloned()
-            .ok_or(DocumentDBError::internal_error(
-                "Session Id is missing. Transactions must be associated with a session.".to_owned(),
-            ))?;
+        let lsid = request.lsid().cloned().ok_or_else(|| {
+            DocumentDBError::documentdb_error(
+                ErrorCode::InvalidOptions,
+                "Transaction number requires a session ID to also be specified.".to_owned(),
+            )
+        })?;
 
         let store = connection_context.service_context.transaction_store();
         let transaction_result = store
