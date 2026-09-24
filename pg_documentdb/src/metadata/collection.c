@@ -1598,7 +1598,8 @@ validate_collection_cache_entry(PG_FUNCTION_ARGS)
  * pointer whose content stays valid and equal after the cache is invalidated and
  * rebuilt - with copyByRefFields=false they are left NULL, and a missing collection
  * id returns false. The caller passes a collection with a by-ref field set (e.g. a
- * shard key) so these cases are observable.
+ * shard key) so these cases are observable. When a third argument is supplied, it
+ * also validates canonical collation metadata across copy modes and cache rebuilds.
  */
 Datum
 validate_try_copy_collection_by_id(PG_FUNCTION_ARGS)
@@ -1614,6 +1615,12 @@ validate_try_copy_collection_by_id(PG_FUNCTION_ARGS)
 	if (expected == NULL)
 	{
 		ereport(ERROR, (errmsg("collection does not exist")));
+	}
+
+	const char *expectedCollationString = expected->options.collationString;
+	if (PG_NARGS() == 3)
+	{
+		expectedCollationString = TextDatumGetCString(PG_GETARG_DATUM(2));
 	}
 
 	/* Case 1: copyByRefFields = true gives the caller an independently owned deep
@@ -1680,7 +1687,9 @@ validate_try_copy_collection_by_id(PG_FUNCTION_ARGS)
 						 shallowCopy.relationId == expected->relationId &&
 						 shallowCopy.shardKey == NULL &&
 						 shallowCopy.viewDefinition == NULL &&
-						 shallowCopy.schemaValidator.validator == NULL;
+						 shallowCopy.schemaValidator.validator == NULL &&
+						 strcmp(shallowCopy.options.collationString,
+								expectedCollationString) == 0;
 
 	/* Case 3: a non-existent collection id reports false. */
 	MongoCollection missingCopy;
@@ -2698,6 +2707,13 @@ CopyCollectionOptions(const pgbson *options, MongoCollection *collection)
 		{
 			collection->options.statsEnabled =
 				BsonValueAsBool(bson_iter_value(&optionsIter));
+		}
+		else if (strcmp(key, "collation") == 0)
+		{
+			const bson_value_t *collationValue = bson_iter_value(&optionsIter);
+
+			ParseAndGetCollationString(collationValue,
+									   collection->options.collationString);
 		}
 	}
 }

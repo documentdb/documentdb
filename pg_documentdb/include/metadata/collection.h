@@ -16,6 +16,7 @@
 #include <utils/uuid.h>
 #include <utils/array.h>
 
+#include "collation/collation.h"
 #include "io/bson_core.h"
 
 
@@ -93,6 +94,9 @@ typedef struct MongoCollectionOptions
 
 	/* Whether planner statistics are enabled for this collection */
 	bool statsEnabled;
+
+	/* Canonical collation used during execution */
+	char collationString[MAX_ICU_COLLATION_LENGTH];
 } MongoCollectionOptions;
 
 
