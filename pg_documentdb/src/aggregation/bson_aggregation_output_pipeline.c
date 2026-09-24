@@ -120,6 +120,9 @@ typedef struct OutArgs
 /* GUC to enable schema validation */
 extern bool EnableSchemaValidation;
 
+/* GUC to enable single generated-object-id reuse consistency in $merge/$out */
+extern bool EnableMergeGeneratedIdConsistency;
+
 static void ParseMergeStage(const bson_value_t *existingValue, const
 							char *currentNameSpace, MergeArgs *args);
 static void ParseOutStage(const bson_value_t *existingValue, const char *currentNameSpace,
@@ -132,6 +135,11 @@ static void VaildateMergeOnFieldValues(const bson_value_t *onArray, uint64
 static void RearrangeTargetListForMerge(Query *query, MongoCollection *targetCollection,
 										bool isSourceAndTargetAreSame, const
 										bson_value_t *onFields);
+static Query * WrapMergeSourceForOnFieldPushdown(Query *query,
+												 AggregationPipelineBuildContext *
+												 context,
+												 const bson_value_t *onValues,
+												 MongoCollection *targetCollection);
 static void WriteJoinConditionToQueryDollarMerge(Query *query,
 												 Var *sourceDocVar,
 												 Var *targetDocVar,
@@ -643,22 +651,28 @@ GetMergeTargetRequiredPermissions(WhenMatchedAction whenMatched,
  *
  * MERGE INTO ONLY ApiDataSchemaName.documents_2 documents_2
  * USING (
- *          SELECT collection.document AS document,
+ *          SELECT agg_stage_0.document,
  *                 '2'::bigint AS target_shard_key_value,  -- (2 is collection_id of target collection)
- *                  bson_dollar_merge_generate_object_id(collection.document) AS generated_object_id
- *			FROM ApiDataSchemaName.documents_1 collection
- *			WHERE collection.shard_key_value = '1'::bigint
- *		 ) agg_stage_0
- * ON documents_2.shard_key_value OPERATOR(pg_catalog.=) agg_stage_0.target_shard_key_value
- * AND bson_dollar_merge_join(documents_2.document, agg_stage_0.document, '_id'::text)
+ *                 agg_stage_0.generated_object_id,
+ *                 bson_dollar_extract_merge_filter(agg_stage_0.document, '_id'::text) AS extracted_4
+ *          FROM (
+ *                  SELECT collection.document,
+ *                         bson_dollar_merge_generate_object_id(collection.document) AS generated_object_id
+ *                  FROM ApiDataSchemaName.documents_1 collection
+ *                  WHERE collection.shard_key_value = '1'::bigint
+ *                  OFFSET 0  -- forces generated_object_id to be evaluated only once
+ *               ) agg_stage_0
+ *		 ) agg_stage_1
+ * ON documents_2.shard_key_value OPERATOR(pg_catalog.=) agg_stage_1.target_shard_key_value
+ * AND bson_dollar_merge_join(documents_2.document, agg_stage_1.extracted_4, '_id'::text)
  * WHEN MATCHED
  * THEN
- *      UPDATE SET document = bson_dollar_merge_handle_when_matched(agg_stage_0.document, documents_2.document, 1, '{ "a" : { "$type" : "int" } }'::bson, 1)
+ *      UPDATE SET document = bson_dollar_merge_handle_when_matched(agg_stage_1.document, documents_2.document, 1, '{ "a" : { "$type" : "int" } }'::bson, 1)
  * WHEN NOT MATCHED
  * THEN
  *      INSERT (shard_key_value, object_id, document, creation_time)
- *      VALUES (agg_stage_0.target_shard_key_value,
- * COALESCE(bson_get_value(agg_stage_0.document, '_id'::text), agg_stage_0.generated_object_id), bson_dollar_merge_add_object_id(agg_stage_0.document, agg_stage_0.generated_object_id, '{ "a" : { "$type" : "int" } }'::bson), '2024-12-16 10:00:57.196789+00'::timestamp with time zone);
+ *      VALUES (agg_stage_1.target_shard_key_value,
+ * COALESCE(bson_get_value(agg_stage_1.document, '_id'::text), agg_stage_1.generated_object_id), bson_dollar_merge_add_object_id(agg_stage_1.document, agg_stage_1.generated_object_id, '{ "a" : { "$type" : "int" } }'::bson), '2024-12-16 10:00:57.196789+00'::timestamp with time zone);
  *
  */
 Query *
@@ -764,6 +778,11 @@ HandleMerge(const bson_value_t *existingValue, Query *query,
 		RearrangeTargetListForMerge(query, targetCollection,
 									isSourceAndTargetAreSame,
 									&mergeArgs.on);
+		if (EnableMergeGeneratedIdConsistency)
+		{
+			query = WrapMergeSourceForOnFieldPushdown(query, context, &mergeArgs.on,
+													  targetCollection);
+		}
 	}
 
 	query = MigrateQueryToFilteredOutputSubQuery(query, context);
@@ -1281,6 +1300,7 @@ ParseMergeStage(const bson_value_t *existingValue, const char *currentNameSpace,
  *         bson_dollar_merge_generate_object_id(collection.document) AS generated_object_id
  * FROM   ApiDataSchemaName.documents_1 collection
  * WHERE collection.shard_key_value = '1'::bigint
+ * OFFSET 0  -- forces generated_object_id to be evaluated only once
  *
  * TODO : if source and target collection are same we need to add actual shard_key_value column to the query but need to be careful when there are nested stages
  *        this optimization will help when both collection are sharded so we should do when we support target sharded collection.
@@ -1333,11 +1353,12 @@ RearrangeTargetListForMerge(Query *query, MongoCollection *targetCollection,
 
 	newTargetList = lappend(newTargetList, generatedObjectIdTE);
 
-	/* 4. append bson_dollar_extract_merge_filter function so all on fields so that we can use extracted source in join condition.
-	 *    For the $out stage, we will have 'on' values, so this step will be skipped for $out.
+	/*
+	 * The per-'on'-field extraction columns are added by the caller in
+	 * WrapMergeSourceForOnFieldPushdown, outside the OFFSET 0 below, so
+	 * they stay eligible for pushdown into a supporting index on the target.
 	 */
-
-	if (onValues)
+	if (!EnableMergeGeneratedIdConsistency && onValues)
 	{
 		if (onValues->value_type == BSON_TYPE_UTF8)
 		{
@@ -1366,7 +1387,7 @@ RearrangeTargetListForMerge(Query *query, MongoCollection *targetCollection,
 		}
 	}
 
-	/* 5. Move all Remaining entries from the existing target list to the new target list. */
+	/* 4. Move all Remaining entries from the existing target list to the new target list. */
 	int targetEntryIndex = 0;
 	ListCell *cell;
 
@@ -1385,6 +1406,131 @@ RearrangeTargetListForMerge(Query *query, MongoCollection *targetCollection,
 	}
 
 	query->targetList = newTargetList;
+
+	/*
+	 * Citus requires generated_object_id to be IMMUTABLE despite producing a
+	 * new value each call, so Postgres could otherwise pull up this subquery
+	 * and evaluate it twice (once for object_id, once for document._id),
+	 * yielding mismatched IDs. OFFSET 0 is a no-op on the rows but blocks
+	 * that pull-up, forcing a single shared evaluation.
+	 */
+	if (EnableMergeGeneratedIdConsistency &&
+		query->limitOffset == NULL && query->limitCount == NULL)
+	{
+		query->limitOffset = (Node *) makeConst(INT8OID, -1, InvalidOid, sizeof(int64_t),
+												Int64GetDatum(0), false, true);
+	}
+}
+
+
+/*
+ * Wraps the source query (which uses OFFSET 0 to force a single evaluation
+ * of generated_object_id) in a new outer subquery and recomputes, outside
+ * that OFFSET, the columns the merge's ON-condition needs: target_shard_key_value
+ * and the per-'on'-field bson_dollar_extract_merge_filter values. Both are pure
+ * functions with no evaluation-count sensitivity, so computing them here keeps
+ * them pull-up eligible - letting Postgres fold target_shard_key_value into a
+ * plain constant (instead of an opaque reference behind the OFFSET) and use a
+ * supporting index on the target for the 'on' fields (see
+ * bson_dollar_merge_filter_support).
+ *
+ * No-op (returns query unchanged) when there are no 'on' fields, e.g. $out.
+ */
+static Query *
+WrapMergeSourceForOnFieldPushdown(Query *query,
+								  AggregationPipelineBuildContext *context,
+								  const bson_value_t *onValues,
+								  MongoCollection *targetCollection)
+{
+	if (onValues == NULL)
+	{
+		return query;
+	}
+
+	context->expandTargetList = true;
+	Query *wrapperQuery = MigrateQueryToSubQuery(query, context);
+
+	TargetEntry *documentEntry = linitial(wrapperQuery->targetList);
+
+	int resNumber = 0;
+	RangeTblEntry *sourceRte = linitial(wrapperQuery->rtable);
+	ListCell *cell;
+	foreach(cell, sourceRte->subquery->targetList)
+	{
+		TargetEntry *sourceEntry = lfirst(cell);
+		if (sourceEntry->resjunk)
+		{
+			continue;
+		}
+
+		resNumber = Max(resNumber, sourceEntry->resno);
+
+		if (sourceEntry->resno == documentEntry->resno)
+		{
+			continue;
+		}
+
+		if (strcmp(sourceEntry->resname, "target_shard_key_value") == 0)
+		{
+			/*
+			 * Recompute as a fresh constant here instead of passing through a
+			 * Var into the OFFSET-fenced subquery below. A Var reference stays
+			 * opaque to Postgres across that fence, but this same constant
+			 * folds into the target's shard_key_value check constraint,
+			 * letting the merge's ON-condition eliminate that comparison and
+			 * be evaluated with a plain Nested Loop.
+			 */
+			Const *targetShardKeyValueConst = makeConst(INT8OID, -1, InvalidOid,
+														sizeof(int64),
+														Int64GetDatum(
+															targetCollection->
+															collectionId),
+														false, true);
+			wrapperQuery->targetList = lappend(
+				wrapperQuery->targetList,
+				makeTargetEntry((Expr *) targetShardKeyValueConst, sourceEntry->resno,
+								sourceEntry->resname, false));
+			continue;
+		}
+
+		Var *sourceVar = makeVar(1, sourceEntry->resno,
+								 exprType((Node *) sourceEntry->expr),
+								 exprTypmod((Node *) sourceEntry->expr),
+								 exprCollation((Node *) sourceEntry->expr), 0);
+		wrapperQuery->targetList = lappend(
+			wrapperQuery->targetList,
+			makeTargetEntry((Expr *) sourceVar, sourceEntry->resno,
+							sourceEntry->resname, false));
+	}
+
+	Var *documentVar = (Var *) documentEntry->expr;
+	if (onValues->value_type == BSON_TYPE_UTF8)
+	{
+		wrapperQuery->targetList = lappend(wrapperQuery->targetList,
+										   MakeExtractFuncExprForMergeTE(
+											   onValues->value.v_utf8.str,
+											   onValues->value.v_utf8.len,
+											   documentVar,
+											   ++resNumber));
+	}
+	else if (onValues->value_type == BSON_TYPE_ARRAY)
+	{
+		bson_iter_t onValuesIter;
+		BsonValueInitIterator(onValues, &onValuesIter);
+
+		while (bson_iter_next(&onValuesIter))
+		{
+			const bson_value_t *innerValue = bson_iter_value(&onValuesIter);
+			wrapperQuery->targetList = lappend(wrapperQuery->targetList,
+											   MakeExtractFuncExprForMergeTE(
+												   innerValue->value.v_utf8.str,
+												   innerValue->value.v_utf8.len,
+												   documentVar,
+												   ++resNumber));
+		}
+	}
+
+	return wrapperQuery;
 }
 
 
@@ -1998,7 +2144,8 @@ ValidateAndAddObjectIdToWriter(pgbson_writer *writer,
  *            '3'::bigint AS target_shard_key_value,
  *            ApiInternalSchemaName.bson_dollar_merge_generate_object_id(collection.document) AS generated_object_id
  *           FROM ApiDataSchemaName.documents_2 collection
- *          WHERE collection.shard_key_value = '2'::bigint) agg_stage_0
+ *          WHERE collection.shard_key_value = '2'::bigint
+ *          OFFSET 0) agg_stage_0
  *   ON documents_3.shard_key_value OPERATOR(pg_catalog.=) agg_stage_0.target_shard_key_value AND FALSE
  *   WHEN NOT MATCHED
  *    THEN INSERT (shard_key_value, object_id, document, creation_time)

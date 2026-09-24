@@ -532,8 +532,8 @@ SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "indexNegColl", 
 --Negative test when target collection is a view
 SELECT documentdb_api.create_collection('db', 'targetCollForView');
 SELECT documentdb_api.insert('db', '{"insert":"targetCollForView", "documents":[{ "_id" : 1, "a" : 1  }]}');
-SELECT documentdb_api.create_collection_view('db', '{ "create": "targetView", "viewOn": "targetCollForView", "pipeline": [ { "$sort": { "a": 1 } } ] }');
-SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "targetCollForView", "pipeline": [  {"$merge" : { "into" : "targetView" }} ], "cursor": { "batchSize": 1 } }', 4294967294);
+SELECT documentdb_api.create_collection_view('db', '{ "create": "mergeStageTargetView", "viewOn": "targetCollForView", "pipeline": [ { "$sort": { "a": 1 } } ] }');
+SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "targetCollForView", "pipeline": [  {"$merge" : { "into" : "mergeStageTargetView" }} ], "cursor": { "batchSize": 1 } }', 4294967294);
 
 --Negative tests : when on field is missing/array in source document
 SELECT documentdb_api.insert('db', '{"insert":"sourceDataMissing", "documents":[{ "_id" : 3, "b": "c" }]}');
@@ -631,6 +631,7 @@ SELECT COUNT(documentdb_api.insert_one('mrgedb', 'merge_idx_dest', FORMAT('{ "_i
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mrgedb', '{ "createIndexes": "merge_idx_dest", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "enableOrderedIndex": true, "unique": true } ]}', TRUE);
 
 ANALYZE documentdb_data.documents_780079;
+ANALYZE documentdb_data.documents_780080;
 
 -- update seq cost for tiny tables.
 set seq_page_cost to 100;
@@ -639,5 +640,23 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mrgedb', '{ "createIndexes": "merge_idx_dest", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1", "enableOrderedIndex": true, "unique": true } ]}', TRUE);
 
 ANALYZE documentdb_data.documents_780079;
+ANALYZE documentdb_data.documents_780080;
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('mrgedb', '{ "aggregate": "merge_idx_src", "pipeline": [ { "$merge": { "into": "merge_idx_dest" , "on": [ "a", "b" ] } } ] }');
+
+-- consistant _id fix
+SELECT documentdb_api.insert_one('db', 'idconsitant', '{ "_id": 1, "a": 1 }', NULL);
+
+SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "idconsitant", "pipeline": [ {"$project": {"_id": 0}}, {"$merge": {"into": "idconsitant"}} ], "cursor": {} }', 4294967294);
+
+SELECT COUNT(*) AS total_rows,
+       COUNT(*) FILTER (WHERE object_id = bson_get_value(document, '_id')) AS object_id_matches_id FROM documentdb_api.collection('db', 'idconsitant');
+
+SET documentdb.enable_merge_generated_id_consistency = off;
+
+SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "idconsitant", "pipeline": [ {"$project": {"_id": 0}}, {"$merge": {"into": "idconsitant"}} ], "cursor": {} }', 4294967294);
+
+SELECT COUNT(*) AS total_rows,
+       COUNT(*) FILTER (WHERE object_id = bson_get_value(document, '_id')) AS object_id_matches_id FROM documentdb_api.collection('db', 'idconsitant');
+
+reset documentdb.enable_merge_generated_id_consistency;

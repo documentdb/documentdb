@@ -3932,25 +3932,28 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_merge_src", "pipeline": [{"$merge" : { "into": "coll_merge_dst", "on": "k", "whenMatched" : "replace", "whenNotMatched": "insert" }} ], "cursor": {} }')
 $cmd$);
-                                                                                                                              run_explain_and_trim                                                                                                                               
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                               run_explain_and_trim                                                                                                                               
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Merge on documentdb_data.documents_8815
    ->  Nested Loop Left Join
-         Output: documents_8815.ctid, collection.document, collection.ctid
-         ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: collection.document, collection.ctid
-               namespaceName: coll_q_db.coll_merge_src
-               indexName: _id_
-               ->  Bitmap Heap Scan on documentdb_data.documents_8814 collection
-                     Output: collection.document, collection.ctid
-                     Recheck Cond: (collection.shard_key_value = '8814'::bigint)
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection.shard_key_value = '8814'::bigint)
+         Output: documents_8815.ctid, agg_stage_0.document, agg_stage_0.generated_object_id, agg_stage_0.*
+         ->  Subquery Scan on agg_stage_0
+               Output: agg_stage_0.document, agg_stage_0.generated_object_id, agg_stage_0.*
+               Filter: (agg_stage_0.document IS NOT NULL)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                     Output: collection.document, '8815'::bigint, documentdb_api_internal.bson_dollar_merge_generate_object_id(collection.document)
+                     namespaceName: coll_q_db.coll_merge_src
+                     indexName: _id_
+                     ->  Bitmap Heap Scan on documentdb_data.documents_8814 collection
+                           Output: collection.document
+                           Recheck Cond: (collection.shard_key_value = '8814'::bigint)
+                           ->  Bitmap Index Scan on _id_
+                                 Index Cond: (collection.shard_key_value = '8814'::bigint)
          ->  Index Scan using uq_merge_k on documentdb_data.documents_8815
                Output: documents_8815.ctid, documents_8815.document
-               Index Cond: (documents_8815.document @= documentdb_api_internal.bson_dollar_extract_merge_filter(collection.document, 'k'::text))
-               Filter: ((documents_8815.shard_key_value OPERATOR(pg_catalog.=) '8815'::bigint) AND documentdb_api_internal.bson_dollar_merge_join(documents_8815.document, documentdb_api_internal.bson_dollar_extract_merge_filter(collection.document, 'k'::text), 'k'::text))
-(16 rows)
+               Index Cond: (documents_8815.document @= documentdb_api_internal.bson_dollar_extract_merge_filter(agg_stage_0.document, 'k'::text))
+               Filter: ((documents_8815.shard_key_value OPERATOR(pg_catalog.=) '8815'::bigint) AND documentdb_api_internal.bson_dollar_merge_join(documents_8815.document, documentdb_api_internal.bson_dollar_extract_merge_filter(agg_stage_0.document, 'k'::text), 'k'::text))
+(19 rows)
 
 SELECT documentdb_api.drop_collection('coll_q_db','coll_merge_src');
  drop_collection 

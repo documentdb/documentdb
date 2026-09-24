@@ -1924,33 +1924,37 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$merge": { "into": "merge_output" } }], "cursor": {} }');
 NOTICE:  creating collection
-                                                                                      QUERY PLAN                                                                                      
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                      QUERY PLAN                                                                                       
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Merge on documentdb_data.documents_2605
    ->  Nested Loop Left Join
-         Output: documents_2605.ctid, collection.document, collection.ctid
-         ->  Seq Scan on documentdb_data.documents_2601 collection
-               Output: collection.document, collection.ctid
-               Filter: (collection.document IS NOT NULL)
+         Output: documents_2605.ctid, agg_stage_0.document, agg_stage_0.generated_object_id, agg_stage_0.*
+         ->  Subquery Scan on agg_stage_0
+               Output: agg_stage_0.document, agg_stage_0.generated_object_id, agg_stage_0.*
+               Filter: (agg_stage_0.document IS NOT NULL)
+               ->  Seq Scan on documentdb_data.documents_2601 collection
+                     Output: collection.document, '2605'::bigint, documentdb_api_internal.bson_dollar_merge_generate_object_id(collection.document)
          ->  Index Scan using _id_ on documentdb_data.documents_2605
                Output: documents_2605.ctid, documents_2605.object_id
-               Index Cond: ((documents_2605.shard_key_value OPERATOR(pg_catalog.=) '2605'::bigint) AND (documents_2605.object_id = bson_get_value(collection.document, '_id'::text)))
-(9 rows)
+               Index Cond: ((documents_2605.shard_key_value OPERATOR(pg_catalog.=) '2605'::bigint) AND (documents_2605.object_id = bson_get_value(agg_stage_0.document, '_id'::text)))
+(11 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$merge": { "into": "merge_output" } }], "cursor": {} }');
-                                                                                      QUERY PLAN                                                                                      
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                      QUERY PLAN                                                                                       
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Merge on documentdb_data.documents_2605
    ->  Nested Loop Left Join
-         Output: documents_2605.ctid, collection.document, collection.ctid
-         ->  Seq Scan on documentdb_data.documents_2601 collection
-               Output: collection.document, collection.ctid
-               Filter: (collection.document IS NOT NULL)
+         Output: documents_2605.ctid, agg_stage_0.document, agg_stage_0.generated_object_id, agg_stage_0.*
+         ->  Subquery Scan on agg_stage_0
+               Output: agg_stage_0.document, agg_stage_0.generated_object_id, agg_stage_0.*
+               Filter: (agg_stage_0.document IS NOT NULL)
+               ->  Seq Scan on documentdb_data.documents_2601 collection
+                     Output: collection.document, '2605'::bigint, documentdb_api_internal.bson_dollar_merge_generate_object_id(collection.document)
          ->  Index Scan using _id_ on documentdb_data.documents_2605
                Output: documents_2605.ctid, documents_2605.object_id
-               Index Cond: ((documents_2605.shard_key_value OPERATOR(pg_catalog.=) '2605'::bigint) AND (documents_2605.object_id = bson_get_value(collection.document, '_id'::text)))
-(9 rows)
+               Index Cond: ((documents_2605.shard_key_value OPERATOR(pg_catalog.=) '2605'::bigint) AND (documents_2605.object_id = bson_get_value(agg_stage_0.document, '_id'::text)))
+(11 rows)
 
 -- $out — non-streamable (RequiresPersistentCursorTrue)
 -- $out creates the target collection, so we need it to exist first
@@ -1963,37 +1967,39 @@ NOTICE:  creating collection
 
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$out": "out_target" }], "cursor": {} }');
-                                               QUERY PLAN                                               
---------------------------------------------------------------------------------------------------------
+                                                                     QUERY PLAN                                                                     
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Merge on documentdb_data.documents_2606
    ->  Nested Loop Left Join
-         Output: documents_2606.ctid, collection.document, collection.ctid
-         ->  Seq Scan on documentdb_data.documents_2601 collection
-               Output: collection.document, collection.ctid
-               Filter: (collection.document IS NOT NULL)
-         ->  Bitmap Heap Scan on documentdb_data.documents_2606
-               Output: documents_2606.ctid
-               Recheck Cond: (documents_2606.shard_key_value OPERATOR(pg_catalog.=) '2606'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (documents_2606.shard_key_value OPERATOR(pg_catalog.=) '2606'::bigint)
+         Output: documents_2606.ctid, agg_stage_0.target_shard_key_value, agg_stage_0.document, agg_stage_0.generated_object_id, agg_stage_0.*
+         Join Filter: (documents_2606.shard_key_value OPERATOR(pg_catalog.=) agg_stage_0.target_shard_key_value)
+         ->  Subquery Scan on agg_stage_0
+               Output: agg_stage_0.target_shard_key_value, agg_stage_0.document, agg_stage_0.generated_object_id, agg_stage_0.*
+               Filter: (agg_stage_0.document IS NOT NULL)
+               ->  Seq Scan on documentdb_data.documents_2601 collection
+                     Output: collection.document, '2606'::bigint, documentdb_api_internal.bson_dollar_merge_generate_object_id(collection.document)
+         ->  Seq Scan on documentdb_data.documents_2606
+               Output: documents_2606.ctid, documents_2606.shard_key_value
 (11 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$out": "out_target" }], "cursor": {} }');
-                                               QUERY PLAN                                               
---------------------------------------------------------------------------------------------------------
+                                                                     QUERY PLAN                                                                     
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Merge on documentdb_data.documents_2606
    ->  Nested Loop Left Join
-         Output: documents_2606.ctid, collection.document, collection.ctid
-         ->  Seq Scan on documentdb_data.documents_2601 collection
-               Output: collection.document, collection.ctid
-               Filter: (collection.document IS NOT NULL)
+         Output: documents_2606.ctid, agg_stage_0.target_shard_key_value, agg_stage_0.document, agg_stage_0.generated_object_id, agg_stage_0.*
+         ->  Subquery Scan on agg_stage_0
+               Output: agg_stage_0.target_shard_key_value, agg_stage_0.document, agg_stage_0.generated_object_id, agg_stage_0.*
+               Filter: (agg_stage_0.document IS NOT NULL)
+               ->  Seq Scan on documentdb_data.documents_2601 collection
+                     Output: collection.document, '2606'::bigint, documentdb_api_internal.bson_dollar_merge_generate_object_id(collection.document)
          ->  Bitmap Heap Scan on documentdb_data.documents_2606
-               Output: documents_2606.ctid
-               Recheck Cond: (documents_2606.shard_key_value OPERATOR(pg_catalog.=) '2606'::bigint)
+               Output: documents_2606.ctid, documents_2606.shard_key_value
+               Recheck Cond: (documents_2606.shard_key_value OPERATOR(pg_catalog.=) agg_stage_0.target_shard_key_value)
                ->  Bitmap Index Scan on _id_
-                     Index Cond: (documents_2606.shard_key_value OPERATOR(pg_catalog.=) '2606'::bigint)
-(11 rows)
+                     Index Cond: (documents_2606.shard_key_value OPERATOR(pg_catalog.=) agg_stage_0.target_shard_key_value)
+(13 rows)
 
 -- ============================================================================
 -- Section 9: Internal combined stages and admin stages

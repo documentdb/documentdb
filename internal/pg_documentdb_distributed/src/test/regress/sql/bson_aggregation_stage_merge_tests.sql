@@ -534,8 +534,8 @@ SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "indexNegColl", 
 --Negative test when target collection is a view
 SELECT documentdb_api.create_collection('db', 'targetCollForView');
 SELECT documentdb_api.insert('db', '{"insert":"targetCollForView", "documents":[{ "_id" : 1, "a" : 1  }]}');
-SELECT documentdb_api.create_collection_view('db', '{ "create": "targetView", "viewOn": "targetCollForView", "pipeline": [ { "$sort": { "a": 1 } } ] }');
-SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "targetCollForView", "pipeline": [  {"$merge" : { "into" : "targetView" }} ], "cursor": { "batchSize": 1 } }', 4294967294);
+SELECT documentdb_api.create_collection_view('db', '{ "create": "mergeStageTargetView", "viewOn": "targetCollForView", "pipeline": [ { "$sort": { "a": 1 } } ] }');
+SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "targetCollForView", "pipeline": [  {"$merge" : { "into" : "mergeStageTargetView" }} ], "cursor": { "batchSize": 1 } }', 4294967294);
 
 --Negative tests : when on field is missing/array in source document
 SELECT documentdb_api.insert('db', '{"insert":"sourceDataMissing", "documents":[{ "_id" : 3, "b": "c" }]}');

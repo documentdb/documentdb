@@ -501,6 +501,10 @@ bool EnableSkipCommentFieldOnUpsert = DEFAULT_ENABLE_SKIP_COMMENT_FIELD_ON_UPSER
 #define DEFAULT_ENABLE_EXISTENTIAL_NULL_ARRAY_MATCH true
 bool EnableExistentialNullArrayMatch = DEFAULT_ENABLE_EXISTENTIAL_NULL_ARRAY_MATCH;
 
+/* Added on v1.1, enabled on v1.1, remove after v1.3 */
+#define DEFAULT_ENABLE_MERGE_GENERATED_ID_CONSISTENCY true
+bool EnableMergeGeneratedIdConsistency = DEFAULT_ENABLE_MERGE_GENERATED_ID_CONSISTENCY;
+
 /*
  * SECTION: Lookup feature flags
  */
@@ -1622,6 +1626,18 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableExistentialNullArrayMatch,
 		DEFAULT_ENABLE_EXISTENTIAL_NULL_ARRAY_MATCH,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_merge_generated_id_consistency", newGucPrefix),
+		gettext_noop(
+			"Whether $merge/$out reuse a single generated object ID for both "
+			"the physical row's object_id and the document's _id."),
+		NULL,
+		&EnableMergeGeneratedIdConsistency,
+		DEFAULT_ENABLE_MERGE_GENERATED_ID_CONSISTENCY,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

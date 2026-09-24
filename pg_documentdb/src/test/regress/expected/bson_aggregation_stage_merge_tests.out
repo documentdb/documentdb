@@ -1212,35 +1212,37 @@ SELECT documentdb_api.insert('db', '{"insert":"sourceExplain", "documents":[{ "_
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sourceExplain", "pipeline": [{"$merge" : { "into": "explainTarget", "whenMatched" : "replace" }} ] }');
 NOTICE:  creating collection
-                                              QUERY PLAN                                              
-------------------------------------------------------------------------------------------------------
+                                              QUERY PLAN                                               
+-------------------------------------------------------------------------------------------------------
  Merge on documents_780053
    ->  Nested Loop Left Join
-         Join Filter: (documents_780053.object_id = bson_get_value(collection.document, '_id'::text))
-         ->  Bitmap Heap Scan on documents_780052 collection
-               Recheck Cond: (shard_key_value = '780052'::bigint)
-               Filter: (document IS NOT NULL)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (shard_key_value = '780052'::bigint)
+         Join Filter: (documents_780053.object_id = bson_get_value(agg_stage_0.document, '_id'::text))
+         ->  Subquery Scan on agg_stage_0
+               Filter: (agg_stage_0.document IS NOT NULL)
+               ->  Bitmap Heap Scan on documents_780052 collection
+                     Recheck Cond: (shard_key_value = '780052'::bigint)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (shard_key_value = '780052'::bigint)
          ->  Materialize
                ->  Bitmap Heap Scan on documents_780053
                      Recheck Cond: (shard_key_value OPERATOR(pg_catalog.=) '780053'::bigint)
                      ->  Bitmap Index Scan on _id_
                            Index Cond: (shard_key_value OPERATOR(pg_catalog.=) '780053'::bigint)
-(13 rows)
+(14 rows)
 
 --explain when merge is not first stage of pipeline
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sourceExplain", "pipeline": [{ "$match" : {"_id" :1}}, {"$merge" : { "into": "explainTarget", "whenMatched" : "replace" }} ] }');
-                                                                        QUERY PLAN                                                                        
-----------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                        QUERY PLAN                                                                         
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
  Merge on documents_780053
    ->  Nested Loop Left Join
-         ->  Index Scan using _id_ on documents_780052 collection
-               Index Cond: ((shard_key_value = '780052'::bigint) AND (object_id = '{ "" : { "$numberInt" : "1" } }'::bson))
-               Filter: (document IS NOT NULL)
+         ->  Subquery Scan on agg_stage_1
+               Filter: (agg_stage_1.document IS NOT NULL)
+               ->  Index Scan using _id_ on documents_780052 collection
+                     Index Cond: ((shard_key_value = '780052'::bigint) AND (object_id = '{ "" : { "$numberInt" : "1" } }'::bson))
          ->  Index Scan using _id_ on documents_780053
-               Index Cond: ((shard_key_value OPERATOR(pg_catalog.=) '780053'::bigint) AND (object_id = bson_get_value(collection.document, '_id'::text)))
-(7 rows)
+               Index Cond: ((shard_key_value OPERATOR(pg_catalog.=) '780053'::bigint) AND (object_id = bson_get_value(agg_stage_1.document, '_id'::text)))
+(8 rows)
 
 -- Let's look at explain plan for sharded collection
 SELECT documentdb_api.shard_collection('db', 'sourceExplain', '{ "a": "hashed" }', false);
@@ -1250,19 +1252,20 @@ SELECT documentdb_api.shard_collection('db', 'sourceExplain', '{ "a": "hashed" }
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sourceExplain", "pipeline": [{"$merge" : { "into": "explainTarget", "whenMatched" : "replace" }} ] }');
-                                              QUERY PLAN                                              
-------------------------------------------------------------------------------------------------------
+                                              QUERY PLAN                                               
+-------------------------------------------------------------------------------------------------------
  Merge on documents_780053
    ->  Nested Loop Left Join
-         Join Filter: (documents_780053.object_id = bson_get_value(collection.document, '_id'::text))
-         ->  Seq Scan on documents_780052 collection
-               Filter: (document IS NOT NULL)
+         Join Filter: (documents_780053.object_id = bson_get_value(agg_stage_0.document, '_id'::text))
+         ->  Subquery Scan on agg_stage_0
+               Filter: (agg_stage_0.document IS NOT NULL)
+               ->  Seq Scan on documents_780052 collection
          ->  Materialize
                ->  Bitmap Heap Scan on documents_780053
                      Recheck Cond: (shard_key_value OPERATOR(pg_catalog.=) '780053'::bigint)
                      ->  Bitmap Index Scan on _id_
                            Index Cond: (shard_key_value OPERATOR(pg_catalog.=) '780053'::bigint)
-(10 rows)
+(11 rows)
 
 -- Let's look at explain plan for when on field is indexed
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "sourceExplain", "indexes": [{"key": {"a": 1}, "name": "index_1", "unique" : true}]}', true);
@@ -1279,19 +1282,20 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIn
 
 -- citus will wrap our query in a subquery: SELECT document, target_shard_key_value FROM (our query) AS subquery
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sourceExplain", "pipeline": [{"$merge" : { "into": "explainTarget", "on" : "a", "whenMatched" : "replace" }} ] }');
-                                                                     QUERY PLAN                                                                      
------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                      QUERY PLAN                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------
  Merge on documents_780053
    ->  Nested Loop Left Join
-         Join Filter: bson_dollar_merge_join(documents_780053.document, bson_dollar_extract_merge_filter(collection.document, 'a'::text), 'a'::text)
-         ->  Seq Scan on documents_780052 collection
-               Filter: (document IS NOT NULL)
+         Join Filter: bson_dollar_merge_join(documents_780053.document, bson_dollar_extract_merge_filter(agg_stage_0.document, 'a'::text), 'a'::text)
+         ->  Subquery Scan on agg_stage_0
+               Filter: (agg_stage_0.document IS NOT NULL)
+               ->  Seq Scan on documents_780052 collection
          ->  Materialize
                ->  Bitmap Heap Scan on documents_780053
                      Recheck Cond: (shard_key_value OPERATOR(pg_catalog.=) '780053'::bigint)
                      ->  Bitmap Index Scan on _id_
                            Index Cond: (shard_key_value OPERATOR(pg_catalog.=) '780053'::bigint)
-(10 rows)
+(11 rows)
 
 -- source and target are same
 SELECT documentdb_api.create_collection('db', 'AsSourceAsTarget');
@@ -1541,10 +1545,14 @@ SELECT documentdb_api.insert('db', '{"insert":"targetCollForView", "documents":[
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
-SELECT documentdb_api.create_collection_view('db', '{ "create": "targetView", "viewOn": "targetCollForView", "pipeline": [ { "$sort": { "a": 1 } } ] }');
-ERROR:  Namespace db.targetView already exists but with different configuration options: { "viewOn" : "aggregation_pipeline", "pipeline" : [ { "$project" : { "_id" : 1, "a" : 1 } } ] }
-SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "targetCollForView", "pipeline": [  {"$merge" : { "into" : "targetView" }} ], "cursor": { "batchSize": 1 } }', 4294967294);
-ERROR:  The namespace db.targetView refers to a view object rather than a collection
+SELECT documentdb_api.create_collection_view('db', '{ "create": "mergeStageTargetView", "viewOn": "targetCollForView", "pipeline": [ { "$sort": { "a": 1 } } ] }');
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "targetCollForView", "pipeline": [  {"$merge" : { "into" : "mergeStageTargetView" }} ], "cursor": { "batchSize": 1 } }', 4294967294);
+ERROR:  The namespace db.mergeStageTargetView refers to a view object rather than a collection
 --Negative tests : when on field is missing/array in source document
 SELECT documentdb_api.insert('db', '{"insert":"sourceDataMissing", "documents":[{ "_id" : 3, "b": "c" }]}');
 NOTICE:  creating collection
@@ -1801,23 +1809,26 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('mrgedb', '{ "cre
 (1 row)
 
 ANALYZE documentdb_data.documents_780079;
+ANALYZE documentdb_data.documents_780080;
 -- update seq cost for tiny tables.
 set seq_page_cost to 100;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('mrgedb', '{ "aggregate": "merge_idx_src", "pipeline": [ { "$merge": { "into": "merge_idx_dest" , "on": "a" } } ] }');
-                                                                                                              QUERY PLAN                                                                                                               
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Merge on documentdb_data.documents_780079
+                                                                                                               QUERY PLAN                                                                                                               
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Merge on documentdb_data.documents_780080
    ->  Nested Loop Left Join
-         Output: documents_780079.ctid, collection.document, collection.ctid
-         ->  Index Scan using _id_ on documentdb_data.documents_780078 collection
-               Output: collection.document, collection.ctid
-               Index Cond: (collection.shard_key_value = '780078'::bigint)
-               Filter: (collection.document IS NOT NULL)
-         ->  Index Scan using a_1 on documentdb_data.documents_780079
-               Output: documents_780079.ctid, documents_780079.document
-               Index Cond: (documents_780079.document @= bson_dollar_extract_merge_filter(collection.document, 'a'::text))
-               Filter: ((documents_780079.shard_key_value OPERATOR(pg_catalog.=) '780079'::bigint) AND bson_dollar_merge_join(documents_780079.document, bson_dollar_extract_merge_filter(collection.document, 'a'::text), 'a'::text))
-(11 rows)
+         Output: documents_780080.ctid, agg_stage_0.document, agg_stage_0.generated_object_id, agg_stage_0.*
+         ->  Subquery Scan on agg_stage_0
+               Output: agg_stage_0.document, agg_stage_0.generated_object_id, agg_stage_0.*
+               Filter: (agg_stage_0.document IS NOT NULL)
+               ->  Index Scan using _id_ on documentdb_data.documents_780079 collection
+                     Output: collection.document, '780080'::bigint, bson_dollar_merge_generate_object_id(collection.document)
+                     Index Cond: (collection.shard_key_value = '780079'::bigint)
+         ->  Index Scan using a_1 on documentdb_data.documents_780080
+               Output: documents_780080.ctid, documents_780080.document
+               Index Cond: (documents_780080.document @= bson_dollar_extract_merge_filter(agg_stage_0.document, 'a'::text))
+               Filter: ((documents_780080.shard_key_value OPERATOR(pg_catalog.=) '780080'::bigint) AND bson_dollar_merge_join(documents_780080.document, bson_dollar_extract_merge_filter(agg_stage_0.document, 'a'::text), 'a'::text))
+(13 rows)
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mrgedb', '{ "createIndexes": "merge_idx_dest", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1", "enableOrderedIndex": true, "unique": true } ]}', TRUE);
                                                                                                    create_indexes_non_concurrently                                                                                                    
@@ -1826,19 +1837,58 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('mrgedb', '{ "cre
 (1 row)
 
 ANALYZE documentdb_data.documents_780079;
+ANALYZE documentdb_data.documents_780080;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('mrgedb', '{ "aggregate": "merge_idx_src", "pipeline": [ { "$merge": { "into": "merge_idx_dest" , "on": [ "a", "b" ] } } ] }');
-                                                                                                                                                                                QUERY PLAN                                                                                                                                                                                
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Merge on documentdb_data.documents_780079
+                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Merge on documentdb_data.documents_780080
    ->  Nested Loop Left Join
-         Output: documents_780079.ctid, collection.document, collection.ctid
-         ->  Index Scan using _id_ on documentdb_data.documents_780078 collection
-               Output: collection.document, collection.ctid
-               Index Cond: (collection.shard_key_value = '780078'::bigint)
-               Filter: (collection.document IS NOT NULL)
-         ->  Index Scan using a_b_1 on documentdb_data.documents_780079
-               Output: documents_780079.ctid, documents_780079.document
-               Index Cond: ((documents_780079.document @= bson_dollar_extract_merge_filter(collection.document, 'a'::text)) AND (documents_780079.document @= bson_dollar_extract_merge_filter(collection.document, 'b'::text)))
-               Filter: ((documents_780079.shard_key_value OPERATOR(pg_catalog.=) '780079'::bigint) AND bson_dollar_merge_join(documents_780079.document, bson_dollar_extract_merge_filter(collection.document, 'a'::text), 'a'::text) AND bson_dollar_merge_join(documents_780079.document, bson_dollar_extract_merge_filter(collection.document, 'b'::text), 'b'::text))
-(11 rows)
+         Output: documents_780080.ctid, agg_stage_0.document, agg_stage_0.generated_object_id, agg_stage_0.*
+         ->  Subquery Scan on agg_stage_0
+               Output: agg_stage_0.document, agg_stage_0.generated_object_id, agg_stage_0.*
+               Filter: (agg_stage_0.document IS NOT NULL)
+               ->  Index Scan using _id_ on documentdb_data.documents_780079 collection
+                     Output: collection.document, '780080'::bigint, bson_dollar_merge_generate_object_id(collection.document)
+                     Index Cond: (collection.shard_key_value = '780079'::bigint)
+         ->  Index Scan using a_b_1 on documentdb_data.documents_780080
+               Output: documents_780080.ctid, documents_780080.document
+               Index Cond: ((documents_780080.document @= bson_dollar_extract_merge_filter(agg_stage_0.document, 'a'::text)) AND (documents_780080.document @= bson_dollar_extract_merge_filter(agg_stage_0.document, 'b'::text)))
+               Filter: ((documents_780080.shard_key_value OPERATOR(pg_catalog.=) '780080'::bigint) AND bson_dollar_merge_join(documents_780080.document, bson_dollar_extract_merge_filter(agg_stage_0.document, 'a'::text), 'a'::text) AND bson_dollar_merge_join(documents_780080.document, bson_dollar_extract_merge_filter(agg_stage_0.document, 'b'::text), 'b'::text))
+(13 rows)
 
+-- consistant _id fix
+SELECT documentdb_api.insert_one('db', 'idconsitant', '{ "_id": 1, "a": 1 }', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "idconsitant", "pipeline": [ {"$project": {"_id": 0}}, {"$merge": {"into": "idconsitant"}} ], "cursor": {} }', 4294967294);
+                                                             cursorpage                                                              | continuation | persistconnection | cursorid 
+-------------------------------------------------------------------------------------------------------------------------------------+--------------+-------------------+----------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.idconsitant", "firstBatch" : [  ] }, "ok" : { "$numberDouble" : "1.0" } } |              | f                 |        0
+(1 row)
+
+SELECT COUNT(*) AS total_rows,
+       COUNT(*) FILTER (WHERE object_id = bson_get_value(document, '_id')) AS object_id_matches_id FROM documentdb_api.collection('db', 'idconsitant');
+ total_rows | object_id_matches_id 
+------------+----------------------
+          2 |                    2
+(1 row)
+
+SET documentdb.enable_merge_generated_id_consistency = off;
+SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "idconsitant", "pipeline": [ {"$project": {"_id": 0}}, {"$merge": {"into": "idconsitant"}} ], "cursor": {} }', 4294967294);
+                                                             cursorpage                                                              | continuation | persistconnection | cursorid 
+-------------------------------------------------------------------------------------------------------------------------------------+--------------+-------------------+----------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.idconsitant", "firstBatch" : [  ] }, "ok" : { "$numberDouble" : "1.0" } } |              | f                 |        0
+(1 row)
+
+SELECT COUNT(*) AS total_rows,
+       COUNT(*) FILTER (WHERE object_id = bson_get_value(document, '_id')) AS object_id_matches_id FROM documentdb_api.collection('db', 'idconsitant');
+ total_rows | object_id_matches_id 
+------------+----------------------
+          4 |                    2
+(1 row)
+
+reset documentdb.enable_merge_generated_id_consistency;
