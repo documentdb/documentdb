@@ -15,6 +15,7 @@
 #include <nodes/extensible.h>
 #include <nodes/makefuncs.h>
 #include <nodes/nodeFuncs.h>
+#include <nodes/supportnodes.h>
 #include <nodes/tidbitmap.h>
 #include <access/htup_details.h>
 #include <access/heapam.h>
@@ -223,6 +224,7 @@ static bool PathProvidesRequiredStreamingOrder(PlannerInfo *root, Path *path);
 static bool IsFindProjectionWrapper(PlannerInfo *root);
 
 PG_FUNCTION_INFO_V1(command_cursor_tracker);
+PG_FUNCTION_INFO_V1(command_cursor_tracker_support);
 
 extern bool EnableRumCursorDynamicIndexScans;
 extern bool EnableRumDynamicIndexScansSkipToTid;
@@ -270,6 +272,37 @@ Datum
 command_cursor_tracker(PG_FUNCTION_ARGS)
 {
 	ereport(ERROR, (errmsg("command_cursor_tracker() must never be invoked directly")));
+}
+
+
+Datum
+command_cursor_tracker_support(PG_FUNCTION_ARGS)
+{
+	Node *supportRequest = (Node *) PG_GETARG_POINTER(0);
+
+	/*
+	 * The planner removes this marker, so it must not affect cardinality or cost.
+	 */
+	if (IsA(supportRequest, SupportRequestSelectivity))
+	{
+		SupportRequestSelectivity *request =
+			(SupportRequestSelectivity *) supportRequest;
+
+		request->selectivity = 1.0;
+		PG_RETURN_POINTER(request);
+	}
+
+	if (IsA(supportRequest, SupportRequestCost))
+	{
+		SupportRequestCost *request =
+			(SupportRequestCost *) supportRequest;
+
+		request->per_tuple = 1e-9;
+		request->startup = 0;
+		PG_RETURN_POINTER(request);
+	}
+
+	PG_RETURN_POINTER(NULL);
 }
 
 

@@ -156,27 +156,25 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('limt
 -- find with limit 5, streaming disabled: no DocumentDBApiCursorScan.
 SET documentdb.enable_dynamic_cursor_with_skiplimit TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('limtest', '{ "find": "coll", "limit": 5 }');
-                                QUERY PLAN                                 
----------------------------------------------------------------------------
+                          QUERY PLAN                          
+--------------------------------------------------------------
  Limit
    Output: document
-   ->  Index Scan using _id_ on documentdb_data.documents_26101 collection
+   ->  Seq Scan on documentdb_data.documents_26101 collection
          Output: document
-         Index Cond: (collection.shard_key_value = '26101'::bigint)
-(5 rows)
+(4 rows)
 
 -- aggregation $limit 4: streaming of a limit > 1 is find-only, so an
 -- aggregation $limit falls back to a persistent cursor (no DocumentDBApiCursorScan).
 SET documentdb.enable_dynamic_cursor_with_skiplimit TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('limtest', '{ "aggregate": "coll", "pipeline": [ { "$limit": 4 } ], "cursor": {} }');
-                                QUERY PLAN                                 
----------------------------------------------------------------------------
+                          QUERY PLAN                          
+--------------------------------------------------------------
  Limit
    Output: document
-   ->  Index Scan using _id_ on documentdb_data.documents_26101 collection
+   ->  Seq Scan on documentdb_data.documents_26101 collection
          Output: document
-         Index Cond: (collection.shard_key_value = '26101'::bigint)
-(5 rows)
+(4 rows)
 
 -- aggregation $limit 4 followed by $match: also a persistent cursor (find-only
 -- streaming), so no DocumentDBApiCursorScan below the Limit.
@@ -188,10 +186,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Filter: (agg_stage_1.document #>= '{ "a" : { "$numberInt" : "1" } }'::bsonquery)
    ->  Limit
          Output: collection.document
-         ->  Index Scan using _id_ on documentdb_data.documents_26101 collection
+         ->  Seq Scan on documentdb_data.documents_26101 collection
                Output: collection.document
-               Index Cond: (collection.shard_key_value = '26101'::bigint)
-(8 rows)
+(7 rows)
 
 ------------------------------------------------------------
 -- Drain correctness: the limit is enforced across getMore pages. Each page's

@@ -658,3 +658,101 @@ EXECUTE drain_find_query_continuation('{ "find": "dyncursor_coll", "projection":
 
 SET documentdb.enableDynamicCursors TO off;
 SET documentdb.enablePrimaryKeyCursorScan TO off;
+
+-- The dynamic cursor tracker is a planner marker, not a filtering predicate.
+-- Its presence must not reduce the collection scan row estimate.
+DO $$
+DECLARE i int;
+BEGIN
+FOR i IN 1..300 LOOP
+PERFORM documentdb_api.insert_one(
+    'dyncursordb',
+    'selectivity_coll',
+    FORMAT('{ "_id": %s, "defs": [ { "key": %s } ] }', i, mod(i, 8))::documentdb_core.bson);
+END LOOP;
+END;
+$$;
+
+DO $$
+DECLARE
+    collection_id bigint;
+BEGIN
+    SELECT collections.collection_id
+    INTO collection_id
+    FROM documentdb_api_catalog.collections
+    WHERE database_name = 'dyncursordb' AND collection_name = 'selectivity_coll';
+
+    EXECUTE FORMAT('ANALYZE documentdb_data.documents_%s', collection_id);
+END;
+$$;
+
+DO $$
+DECLARE
+    explain_query text := $query$
+        EXPLAIN (FORMAT JSON)
+        SELECT document
+        FROM bson_aggregation_pipeline(
+            'dyncursordb',
+            '{ "aggregate": "selectivity_coll", "pipeline": [
+                { "$unwind": "$defs" },
+                { "$group": { "_id": "$defs.key", "doc": { "$first": "$defs" } } }
+            ], "cursor": {} }')
+    $query$;
+    explain_plan jsonb;
+    relation_name text;
+    rows_without_dynamic_cursor bigint;
+    rows_with_dynamic_cursor bigint;
+BEGIN
+    SELECT FORMAT('documents_%s', collection_id)
+    INTO relation_name
+    FROM documentdb_api_catalog.collections
+    WHERE database_name = 'dyncursordb' AND collection_name = 'selectivity_coll';
+
+    PERFORM set_config('documentdb.enableCursorsOnAggregationQueryRewrite', 'on', true);
+    PERFORM set_config('documentdb.enableDynamicCursors', 'off', true);
+    EXECUTE explain_query INTO explain_plan;
+
+    WITH RECURSIVE plan_nodes(node) AS
+    (
+        SELECT explain_plan->0->'Plan'
+        UNION ALL
+        SELECT child
+        FROM plan_nodes
+        CROSS JOIN LATERAL jsonb_array_elements(
+            COALESCE(plan_nodes.node->'Plans', '[]'::jsonb)) child
+    )
+    SELECT (node->>'Plan Rows')::bigint
+    INTO rows_without_dynamic_cursor
+    FROM plan_nodes
+    WHERE node->>'Relation Name' = relation_name;
+
+    PERFORM set_config('documentdb.enableDynamicCursors', 'on', true);
+    EXECUTE explain_query INTO explain_plan;
+
+    WITH RECURSIVE plan_nodes(node) AS
+    (
+        SELECT explain_plan->0->'Plan'
+        UNION ALL
+        SELECT child
+        FROM plan_nodes
+        CROSS JOIN LATERAL jsonb_array_elements(
+            COALESCE(plan_nodes.node->'Plans', '[]'::jsonb)) child
+    )
+    SELECT (node->>'Plan Rows')::bigint
+    INTO rows_with_dynamic_cursor
+    FROM plan_nodes
+    WHERE node->>'Relation Name' = relation_name;
+
+    IF rows_without_dynamic_cursor IS NULL OR
+       rows_with_dynamic_cursor IS DISTINCT FROM rows_without_dynamic_cursor THEN
+        RAISE EXCEPTION
+            'dynamic cursor changed scan estimate from % to %',
+            rows_without_dynamic_cursor,
+            rows_with_dynamic_cursor;
+    END IF;
+
+    RAISE NOTICE 'dynamic cursor preserves the collection scan estimate';
+END;
+$$;
+
+SELECT documentdb_api.drop_collection('dyncursordb', 'selectivity_coll');
