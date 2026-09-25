@@ -1446,7 +1446,8 @@ ShardCollectionCore(ShardCollectionArgs *args)
 								args->databaseName, args->collectionName)));
 		}
 
-		CreateCollection(databaseDatum, collectionDatum);
+		bool canUseLibPq = false;
+		CreateCollection(databaseDatum, collectionDatum, canUseLibPq);
 		collection = GetMongoCollectionByNameDatum(
 			databaseDatum, collectionDatum, AccessShareLock);
 

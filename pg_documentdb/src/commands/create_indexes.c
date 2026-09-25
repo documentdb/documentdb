@@ -801,9 +801,14 @@ create_indexes_concurrently(Datum dbNameDatum, CreateIndexesArg createIndexesArg
 	}
 	else
 	{
-		/* collection does not exist, create it (or race for creating it) */
+		/*
+		 * collection does not exist, create it (or race for creating it).
+		 * The creation is implicit to this command, so it may be carried
+		 * separately and committed before the index work that follows.
+		 */
+		bool canUseLibPq = true;
 		result.createdCollectionAutomatically =
-			CreateCollection(dbNameDatum, collectionNameDatum);
+			CreateCollection(dbNameDatum, collectionNameDatum, canUseLibPq);
 
 		collection = GetMongoCollectionByNameDatum(dbNameDatum, collectionNameDatum,
 												   AccessShareLock);
@@ -1022,9 +1027,14 @@ create_indexes_non_concurrently(Datum dbNameDatum, CreateIndexesArg createIndexe
 	}
 	else
 	{
-		/* collection does not exist, create it (or race for creating it) */
+		/*
+		 * collection does not exist, create it (or race for creating it).
+		 * The creation is implicit to this command, so it may be carried
+		 * separately and committed before the index work that follows.
+		 */
+		bool canUseLibPq = true;
 		result.createdCollectionAutomatically =
-			CreateCollection(dbNameDatum, collectionNameDatum);
+			CreateCollection(dbNameDatum, collectionNameDatum, canUseLibPq);
 
 		collection = GetMongoCollectionByNameDatum(dbNameDatum, collectionNameDatum,
 												   AccessShareLock);

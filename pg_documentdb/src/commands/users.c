@@ -312,10 +312,12 @@ documentdb_extension_create_user(PG_FUNCTION_ARGS)
 		"JOIN pg_auth_members am ON parent.oid = am.roleid "
 		"JOIN pg_roles child ON am.member = child.oid "
 		"WHERE child.rolcanlogin = true "
-		"  AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s', '%s', '%s');",
+		"  AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s');",
 		ApiAdminRole, ApiAdminRoleV2, ApiAdminRoleV3,
 		ApiBgWorkerRole, ApiBgWorkerRoleV3,
-		ApiReplicationRole, ApiSettingsManagerRole);
+		ApiReplicationRole, ApiSettingsManagerRole,
+		API_RBAC_API_COLLECTION_OWNER_ROLE,
+		API_RBAC_API_COLLECTION_CREATE_ROLE);
 
 	bool readOnly = true;
 	bool isNull = false;
@@ -1854,13 +1856,14 @@ GetAllUsersInfo(void)
 		"  JOIN pg_roles child ON am.member = child.oid "
 		"  WHERE child.rolcanlogin = true "
 		MEMBERSHIP_CONFERS_ROLE_CLAUSE
-		"    AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s') "
+		"    AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s', '%s', '%s') "
 		") "
 		"SELECT ARRAY_AGG(%s.row_get_bson(r) ORDER BY r.child_role, r.parent_role) "
 		"FROM r;",
 		ApiRootInternalRole, ApiRootRole,
 		ApiAdminRole, ApiAdminRoleV2, ApiBgWorkerRole, ApiReplicationRole,
-		ApiSettingsManagerRole,
+		ApiSettingsManagerRole, API_RBAC_API_COLLECTION_OWNER_ROLE,
+		API_RBAC_API_COLLECTION_CREATE_ROLE,
 		CoreSchemaName);
 
 	bool readOnly = true;
@@ -1900,13 +1903,14 @@ GetSingleUserInfo(const char *userName, bool returnDocuments)
 			"  WHERE child.rolcanlogin = true "
 			MEMBERSHIP_CONFERS_ROLE_CLAUSE
 			"    AND child.rolname = $1"
-			"    AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s') "
+			"    AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s', '%s', '%s') "
 			") "
 			"SELECT ARRAY_AGG(%s.row_get_bson(r) ORDER BY r.parent_role) "
 			"FROM r;",
 			ApiRootInternalRole, ApiRootRole,
 			ApiAdminRole, ApiAdminRoleV2, ApiBgWorkerRole, ApiReplicationRole,
-			ApiSettingsManagerRole,
+			ApiSettingsManagerRole, API_RBAC_API_COLLECTION_OWNER_ROLE,
+			API_RBAC_API_COLLECTION_CREATE_ROLE,
 			CoreSchemaName);
 	}
 	else
@@ -1922,12 +1926,13 @@ GetSingleUserInfo(const char *userName, bool returnDocuments)
 			"WHERE child.rolcanlogin = true "
 			MEMBERSHIP_CONFERS_ROLE_CLAUSE
 			"  AND child.rolname = $1 "
-			"  AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s') "
+			"  AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s', '%s', '%s') "
 			"ORDER BY parent.rolname "
 			"LIMIT 1;",
 			ApiRootInternalRole, ApiRootRole,
 			ApiAdminRole, ApiAdminRoleV2, ApiBgWorkerRole, ApiReplicationRole,
-			ApiSettingsManagerRole);
+			ApiSettingsManagerRole, API_RBAC_API_COLLECTION_OWNER_ROLE,
+			API_RBAC_API_COLLECTION_CREATE_ROLE);
 	}
 
 	int argCount = 1;

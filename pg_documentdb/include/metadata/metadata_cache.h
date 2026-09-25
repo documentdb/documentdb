@@ -509,6 +509,9 @@ Oid DeleteWorkerFunctionOid(void);
 Oid CommandNodeWorkerFunctionOid(void);
 Oid CursorGetMoreFunctionOid(void);
 
+/* DDL Functions */
+Oid ApiCreateCollectionFunctionId(void);
+
 /* Compat functions*/
 Oid DocumentDBCoreBsonToBsonFunctionOId(void);
 

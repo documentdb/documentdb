@@ -966,3 +966,40 @@ test_is_reserved_internal_role_name(PG_FUNCTION_ARGS)
 
 	PG_RETURN_BOOL(result);
 }
+
+
+/*
+ * Reports whether the current effective role is the role that owns the
+ * collections the creation path produces.
+ *
+ * Nothing runs as this role. It is named here so that a table can be handed to
+ * it and recognized as already belonging to it.
+ */
+bool
+IsCurrentUserCollectionOwnerRole(void)
+{
+	bool missingOk = true;
+	Oid ownerRoleId = get_role_oid(API_RBAC_API_COLLECTION_OWNER_ROLE, missingOk);
+
+	return OidIsValid(ownerRoleId) && GetUserId() == ownerRoleId;
+}
+
+
+/*
+ * Reports whether the current effective role is the role the creation path
+ * runs as.
+ *
+ * Creating a collection can run either as the caller or, when the caller only
+ * holds the right to write to the namespace, as the create role. The two cases
+ * differ in which rights are available and in what the result is handed to, so
+ * the creation path has to be able to tell them apart. The role is absent in
+ * deployments that do not define it, in which case this is always false.
+ */
+bool
+IsCurrentUserCollectionCreateRole(void)
+{
+	bool missingOk = true;
+	Oid createRoleId = get_role_oid(API_RBAC_API_COLLECTION_CREATE_ROLE, missingOk);
+
+	return OidIsValid(createRoleId) && GetUserId() == createRoleId;
+}

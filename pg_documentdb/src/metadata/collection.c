@@ -40,6 +40,7 @@
 #include "utils/guc_utils.h"
 #include "metadata/metadata_guc.h"
 #include "api_hooks.h"
+#include "rbac_hooks.h"
 #include "commands/parse_error.h"
 #include "utils/feature_counter.h"
 #include "jsonschema/bson_json_schema_tree.h"
@@ -1817,7 +1818,7 @@ GetCollectionOrViewCore(PG_FUNCTION_ARGS, bool allowViews)
  * transaction may have created it).
  */
 bool
-CreateCollection(Datum dbNameDatum, Datum collectionNameDatum)
+CreateCollection(Datum dbNameDatum, Datum collectionNameDatum, bool canUseLibPq)
 {
 	char *collectionNameStr = TextDatumGetCString(collectionNameDatum);
 	if (collectionNameStr != NULL && strlen(collectionNameStr) == 0)
@@ -1825,9 +1826,6 @@ CreateCollection(Datum dbNameDatum, Datum collectionNameDatum)
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
 						errmsg("An invalid and empty namespace has been specified")));
 	}
-
-	const char *cmdStr = FormatSqlQuery("SELECT %s.create_collection($1, $2)",
-										ApiSchemaName);
 
 	Oid argTypes[CREATE_COLLECTION_FUNC_NARGS] = { TEXTOID, TEXTOID };
 	Datum argValues[CREATE_COLLECTION_FUNC_NARGS] = {
@@ -1840,11 +1838,9 @@ CreateCollection(Datum dbNameDatum, Datum collectionNameDatum)
 
 	bool isNull = true;
 	bool readOnly = false;
-	Datum resultDatum = ExtensionExecuteQueryWithArgsViaSPI(cmdStr,
-															CREATE_COLLECTION_FUNC_NARGS,
-															argTypes, argValues, argNulls,
-															readOnly, SPI_OK_SELECT,
-															&isNull);
+	Datum resultDatum = RunCollectionLevelFunctionWithPrivilegeChecks(
+		ApiSchemaName, "create_collection", argValues, argTypes, argNulls,
+		CREATE_COLLECTION_FUNC_NARGS, readOnly, canUseLibPq, &isNull);
 	if (isNull)
 	{
 		ereport(ERROR, (errmsg("create_collection unexpectedly "

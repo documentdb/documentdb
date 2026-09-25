@@ -1315,6 +1315,9 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the ApiInternalSchemaName.command_node_worker function */
 	Oid CommandNodeWorkerFunctionOid;
 
+	/* OID of the ApiSchemaName.create_collection function */
+	Oid ApiCreateCollectionFunctionId;
+
 	/* OID of ApiInternalSchemaName.{ExtensionObjectPrefix}_core_bson_to_bson*/
 	Oid DocumentDBCoreBsonToBsonFunctionOId;
 
@@ -3518,6 +3521,23 @@ CommandNodeWorkerFunctionOid(void)
 	}
 
 	return Cache.CommandNodeWorkerFunctionOid;
+}
+
+
+/*
+ * Returns the OID of ApiSchemaName.create_collection(text, text), which is the
+ * function a namespace creation ultimately runs.
+ */
+Oid
+ApiCreateCollectionFunctionId(void)
+{
+	int nargs = 2;
+	Oid argTypes[2] = { TEXTOID, TEXTOID };
+	bool missingOk = false;
+
+	return GetSchemaFunctionIdWithNargs(&Cache.ApiCreateCollectionFunctionId,
+										ApiSchemaName, "create_collection", nargs,
+										argTypes, missingOk);
 }
 
 

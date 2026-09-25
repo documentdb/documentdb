@@ -266,22 +266,25 @@ CreatePostgresDataTable(uint64_t collectionId, const char *colocateWith, const
 	/* Change the owner to the extension admin */
 	resetStringInfo(createTableStringInfo);
 
-	/* TODO: Remove GUC before migrating ownership of old documents to to documentdb_readwrite_role*/
-	if (EnableRbacCompliantSchemas)
-	{
-		appendStringInfo(createTableStringInfo,
-						 "ALTER TABLE %s OWNER TO %s",
-						 dataTableNameInfo->data, ApiReadWriteRole);
-	}
-	else
-	{
-		appendStringInfo(createTableStringInfo,
-						 "ALTER TABLE %s OWNER TO %s",
-						 dataTableNameInfo->data, ApiAdminRole);
-	}
+	/*
+	 * When the creation is running as the collection create role, the table is
+	 * handed to the collection owner role rather than to the administrator.
+	 * That role holds nothing beyond owning what it is given, so the table
+	 * ends up with an owner that carries none of the rights the creation
+	 * needed. The create role is a member of it, so it keeps the rights of an
+	 * owner for the steps that follow.
+	 */
+	appendStringInfo(createTableStringInfo,
+					 "ALTER TABLE %s OWNER TO %s",
+					 dataTableNameInfo->data,
+					 IsCurrentUserCollectionCreateRole() ?
+					 API_RBAC_API_COLLECTION_OWNER_ROLE :
 
-	ExtensionExecuteQueryViaSPI(createTableStringInfo->data, readOnly, SPI_OK_UTILITY,
-								&isNull);
+	                 /* TODO: Remove GUC before migrating ownership of old documents to to documentdb_readwrite_role*/
+					 (EnableRbacCompliantSchemas ? ApiReadWriteRole : ApiAdminRole));
+
+	ExtensionExecuteQueryViaSPI(createTableStringInfo->data, readOnly,
+								SPI_OK_UTILITY, &isNull);
 
 	/* Create the _id_ index (corresponds to the primary key) */
 	resetStringInfo(createTableStringInfo);
@@ -361,20 +364,14 @@ CreateRetryTable(char *retryTableName, char *colocateWith, const
 								&isNull);
 
 	resetStringInfo(queryStringInfo);
-	if (EnableRbacCompliantSchemas)
-	{
-		/* Change the owner to the ApiReadWriteRole */
-		appendStringInfo(queryStringInfo,
-						 "ALTER TABLE %s OWNER TO %s",
-						 retryTableName, ApiReadWriteRole);
-	}
-	else
-	{
-		/* Change the owner to the extension admin */
-		appendStringInfo(queryStringInfo,
-						 "ALTER TABLE %s OWNER TO %s",
-						 retryTableName, ApiAdminRole);
-	}
+
+	/* as with the data table, ownership goes to the owner role */
+	appendStringInfo(queryStringInfo,
+					 "ALTER TABLE %s OWNER TO %s",
+					 retryTableName,
+					 IsCurrentUserCollectionCreateRole() ?
+					 API_RBAC_API_COLLECTION_OWNER_ROLE :
+					 (EnableRbacCompliantSchemas ? ApiReadWriteRole : ApiAdminRole));
 
 	ExtensionExecuteQueryViaSPI(queryStringInfo->data, readOnly, SPI_OK_UTILITY,
 								&isNull);

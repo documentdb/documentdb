@@ -20,7 +20,16 @@
 /*
  * Baseline RBAC group role names.
  */
+
+/*
+ * Every group role the RBAC surface provisions for its own use carries this
+ * prefix, so the names can be recognized as a family rather than one at a time.
+ */
+#define API_RBAC_API_ROLE_PREFIX "documentdb_rbac_api_"
+
 #define API_RBAC_API_ACCESS_ROLE "documentdb_rbac_api_access_role"
+#define API_RBAC_API_COLLECTION_OWNER_ROLE "documentdb_rbac_api_collection_owner_role"
+#define API_RBAC_API_COLLECTION_CREATE_ROLE "documentdb_rbac_api_collection_create_role"
 #define API_RBAC_BASELINE_READ_ROLE "documentdb_rbac_baseline_read_role"
 #define API_RBAC_BASELINE_WRITE_ROLE "documentdb_rbac_baseline_write_role"
 #define API_RBAC_READWRITE_ANYDB_ROLE "documentdb_rbac_readwrite_anydb_role"
@@ -45,13 +54,20 @@
 	 strcmp((roleName), ApiUserAdminRole) == 0 || \
 	 strcmp((roleName), API_RBAC_READWRITE_ANYDB_ROLE) == 0)
 
-/* Macro to check if a role is an internal custom rbac role */
+/*
+ * Macro to check if a role is an internal custom rbac role.
+ *
+ * Everything under API_RBAC_API_ROLE_PREFIX is matched as a family, so a role
+ * added to that family does not have to be listed here as well. The remaining
+ * names sit outside that prefix and are matched individually.
+ */
 #define IS_CUSTOM_RBAC_ROLE(roleName) \
-	(strcmp((roleName), ApiCollectionFindRole) == 0 || \
+	(strncmp((roleName), API_RBAC_API_ROLE_PREFIX, \
+			 sizeof(API_RBAC_API_ROLE_PREFIX) - 1) == 0 || \
+	 strcmp((roleName), ApiCollectionFindRole) == 0 || \
 	 strcmp((roleName), ApiCollectionInsertRole) == 0 || \
 	 strcmp((roleName), ApiCollectionUpdateRole) == 0 || \
 	 strcmp((roleName), ApiCollectionRemoveRole) == 0 || \
-	 strcmp((roleName), API_RBAC_API_ACCESS_ROLE) == 0 || \
 	 strcmp((roleName), API_RBAC_BASELINE_READ_ROLE) == 0 || \
 	 strcmp((roleName), API_RBAC_BASELINE_WRITE_ROLE) == 0)
 
@@ -142,5 +158,17 @@ void EnsureRoleMembershipLimits(const char *roleName, int64 numRolesToAdd);
 
 void GrantCollectionPrivilegesToBaselineRoles(uint64 collectionId, bool
 											  includeRetryTable);
+
+/*
+ * Reports whether the current effective role is the role that owns the
+ * collections the creation path produces.
+ */
+bool IsCurrentUserCollectionOwnerRole(void);
+
+/*
+ * Reports whether the current effective role is the role the creation path
+ * runs as.
+ */
+bool IsCurrentUserCollectionCreateRole(void);
 
 #endif

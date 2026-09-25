@@ -132,7 +132,8 @@ command_create_collection_view(PG_FUNCTION_ARGS)
 	{
 		/* It's a collection: create it */
 		ReportFeatureUsage(FEATURE_COMMAND_CREATE_COLLECTION);
-		CreateCollection(databaseDatum, createDatum);
+		bool canUseLibPq = false;
+		CreateCollection(databaseDatum, createDatum, canUseLibPq);
 
 		if (hasSchemaValidationSpec)
 		{

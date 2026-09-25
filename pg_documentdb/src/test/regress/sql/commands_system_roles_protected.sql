@@ -34,7 +34,8 @@ INSERT INTO system_roles VALUES
     ('documentdb_rbac_api_access_role'),
     ('documentdb_rbac_baseline_read_role'),
     ('documentdb_rbac_baseline_write_role'),
-    ('documentdb_rbac_readwrite_anydb_role');
+    ('documentdb_rbac_readwrite_anydb_role'),
+    ('documentdb_rbac_api_collection_owner_role');
 
 -- Report which of them exist here. Rejection is by name and does not depend on
 -- the role being provisioned, but recording this makes it clear which checks

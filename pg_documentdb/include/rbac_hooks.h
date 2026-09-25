@@ -98,4 +98,20 @@ void UpdateJoinTreeForCollectionsQuery(struct FromExpr *fromExpr, List *rtes);
 
 const char * GetCollectionsStringFilter(void);
 
+/*
+ * Runs a collection level function after the privilege checks the registered
+ * implementation applies.
+ *
+ * canUseLibPq tells the implementation whether the call is allowed to be
+ * carried on a connection of its own rather than in the caller's transaction.
+ * Only a caller that can tolerate the work committing before it continues may
+ * pass true.
+ */
+Datum RunCollectionLevelFunctionWithPrivilegeChecks(const char *schemaName,
+													const char *functionName,
+													Datum *args, Oid *argTypes,
+													char *argNulls, int nargs,
+													bool readOnly, bool canUseLibPq,
+													bool *isNull);
+
 #endif

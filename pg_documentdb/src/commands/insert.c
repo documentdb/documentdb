@@ -266,7 +266,8 @@ CreateCollectionForInsert(Datum databaseNameDatum, Datum collectionNameDatum)
 	 * calls in an idempotent manner, which means that if a concurrent insert raced
 	 * to create the collection before us, this will be a noop.
 	 */
-	CreateCollection(databaseNameDatum, collectionNameDatum);
+	bool canUseLibPq = true;
+	CreateCollection(databaseNameDatum, collectionNameDatum, canUseLibPq);
 
 	MongoCollection *collection = GetMongoCollectionByNameDatum(databaseNameDatum,
 																collectionNameDatum,
