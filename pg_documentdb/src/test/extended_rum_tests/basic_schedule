@@ -39,3 +39,4 @@ test: bson_aggregation_group_first_distinct_scan_tests!PG16_OR_HIGHER!
 test: bson_mergesort_in_prefix_tests
 test: bson_composite_or_merge_append_tests
 test: documentdb_rum_guc_naming_conventions
+test: rum_vacuum_orphaned_leaf_cleanup_tests

@@ -1,3 +1,6 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
 SET citus.next_shard_id TO 2000000;
 SET documentdb.next_collection_id TO 20000;
 SET documentdb.next_collection_index_id TO 20000;
@@ -261,13 +264,14 @@ ORDER BY shardid ASC; -- added to reduce test flakiness
          20000 |    20003 | { "ttl" : { "$numberInt" : "1" } } |     |      5 | { "ttl" : "hashed" } | 2000023
 (8 rows)
 
--- Delete all other indexes from previous tests to reduce flakiness
+-- Remove leftover TTL metadata without deleting non-TTL indexes used by parallel tests.
 WITH deleted AS (
   DELETE FROM documentdb_api_catalog.collection_indexes
   WHERE collection_id != 20000
-  RETURNING 1
-) SELECT true FROM deleted UNION ALL SELECT true LIMIT 1;
- ?column? 
+    AND (index_spec).index_expire_after_seconds >= 0
+  RETURNING coalesce((index_spec).index_expire_after_seconds >= 0, false) AS is_ttl
+) SELECT coalesce(bool_and(is_ttl), true) AS deleted_only_ttl_indexes FROM deleted;
+ deleted_only_ttl_indexes 
 ---------------------------------------------------------------------
  t
 (1 row)
@@ -1020,6 +1024,9 @@ END;
 BEGIN;
 SET client_min_messages TO LOG;
 SET LOCAL documentdb.useIndexHintsForTTLTask to off;
+-- Keep the later eligibility count independent of pre-existing LP_DEAD hints.
+-- Hint creation is exercised explicitly in the dedicated case below.
+SET LOCAL documentdb.enableDeadIndexEntryMarkingByTTLTask TO off;
 SET LOCAL documentdb.logTTLProgressActivity to on;
 SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(100);
@@ -1055,6 +1062,7 @@ EXPLAIN(costs off) SELECT object_id FROM documentdb_data.documents_20006
 END;
 --  Remove the dead heap tuples while leaving their index entries in place, so the
 --  eligibleDeadItems count in the ordered index scan EXPLAIN below is deterministic.
+CALL documentdb_distributed_test_helpers.wait_for_vacuum_horizon();
 VACUUM (INDEX_CLEANUP OFF) documentdb_data.documents_20006;
 --  Check the query to fetch the eligible TTL indexes uses IndexScan.
 BEGIN;
@@ -1104,6 +1112,7 @@ CALL documentdb_api_internal.delete_expired_rows(100);
 END;
 --  Remove the dead heap tuples while leaving their index entries in place, so the
 --  eligibleDeadItems count in the EXPLAINs below is deterministic.
+CALL documentdb_distributed_test_helpers.wait_for_vacuum_horizon();
 VACUUM (INDEX_CLEANUP OFF) documentdb_data.documents_20006;
 SELECT count(*) from ( SELECT shard_key_value, object_id, document  from documentdb_api.collection('db', 'ttlCompositeOrderedScan') order by object_id) as a;
  count 
@@ -1186,6 +1195,11 @@ SELECT count(*) from ( SELECT shard_key_value, object_id, document  from documen
   8201
 (1 row)
 
+--  Remove the dead heap tuples left by the purge above while leaving their index
+--  entries in place, so the eligibleDeadItems count in the EXPLAIN below is
+--  deterministic even when a concurrent snapshot briefly holds back the horizon.
+CALL documentdb_distributed_test_helpers.wait_for_vacuum_horizon();
+VACUUM (INDEX_CLEANUP OFF) documentdb_data.documents_20006;
 BEGIN;
 set local enable_seqscan to off;
 SET LOCAL enable_bitmapscan to off;
@@ -1451,13 +1465,14 @@ SELECT cron.unschedule(jobid) FROM cron.job WHERE jobname LIKE '%ttl_task%';
 ---------------------------------------------------------------------
 (0 rows)
 
--- Delete all other indexes from previous tests to reduce flakiness
+-- Remove leftover TTL metadata without deleting non-TTL indexes used by parallel tests.
 WITH deleted AS (
   DELETE FROM documentdb_api_catalog.collection_indexes
   WHERE collection_id < 20100
-  RETURNING 1
-) SELECT true FROM deleted UNION ALL SELECT true LIMIT 1;
- ?column? 
+    AND (index_spec).index_expire_after_seconds >= 0
+  RETURNING coalesce((index_spec).index_expire_after_seconds >= 0, false) AS is_ttl
+) SELECT coalesce(bool_and(is_ttl), true) AS deleted_only_ttl_indexes FROM deleted;
+ deleted_only_ttl_indexes 
 ---------------------------------------------------------------------
  t
 (1 row)
@@ -1617,6 +1632,7 @@ SELECT count(*) as rows_after_first_delete FROM documentdb_api.collection('ttl_l
 (1 row)
 
 -- VACUUM removes dead heap tuples but leaves index entries stale (LP_DEAD scenario)
+CALL documentdb_distributed_test_helpers.wait_for_vacuum_horizon();
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_%s', :dead_tup_col) \gexec
 VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_20017
 -- Insert 10 more expired rows (batch 2) with distinct TTL values, so delete_expired_rows has something to scan
@@ -1642,6 +1658,7 @@ SELECT count(*) as rows_after_second_delete FROM documentdb_api.collection('ttl_
 (1 row)
 
 -- VACUUM again for the 10 newly deleted rows
+CALL documentdb_distributed_test_helpers.wait_for_vacuum_horizon();
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_%s', :dead_tup_col) \gexec
 VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_20017
 -- KEY ASSERTION: The very first query with enable_support_dead_index_items=on should

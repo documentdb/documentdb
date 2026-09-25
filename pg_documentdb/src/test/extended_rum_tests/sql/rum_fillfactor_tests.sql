@@ -1,7 +1,16 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 
 SET documentdb.next_collection_id TO 1300;
 SET documentdb.next_collection_index_id TO 1300;
+
+-- PG15 writes each accumulator batch directly to the index, so keep this
+-- fixture in one batch. Newer versions can globally sort with a smaller budget.
+SELECT CASE WHEN current_setting('server_version_num')::integer < 160000
+            THEN '64MB' ELSE '1MB' END AS reindex_work_mem \gset
 
 -- set the rum fillfactor to 100
 set documentdb_rum.rum_default_page_fill_factor to 100;
@@ -29,7 +38,7 @@ r2 AS (SELECT documentdb_api_internal.documentdb_rum_page_get_stats(public.get_r
 SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) BETWEEN 55 AND 65 FROM r2 WHERE page_stats->>'flagsStr' = 'LEAF';
 
 -- reindexing fixes it since serial build will do a sort and insert in order when fill factor is set.
-set maintenance_work_mem to '1024';
+set maintenance_work_mem to :'reindex_work_mem';
 REINDEX INDEX documentdb_data.documents_rum_index_1303;
 WITH r1 AS (
     SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page('documentdb_data.documents_rum_index_1303', 0))->>'totalPages' AS total_pages),
@@ -65,7 +74,7 @@ r2 AS (SELECT documentdb_api_internal.documentdb_rum_page_get_stats(public.get_r
 SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) BETWEEN 55 AND 65 FROM r2 WHERE page_stats->>'flagsStr' = 'LEAF';
 
 -- reindexing recovers fill factor here since serial build will restore the sort.
-set maintenance_work_mem to '1024';
+set maintenance_work_mem to :'reindex_work_mem';
 REINDEX INDEX documentdb_data.documents_rum_index_1303;
 WITH r1 AS (
     SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page('documentdb_data.documents_rum_index_1303', 0))->>'totalPages' AS total_pages),

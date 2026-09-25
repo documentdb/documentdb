@@ -283,7 +283,7 @@ DECLARE
   indexRequest text;
   index_cmd_stored text;
   attempt_count int := 0;
-  max_attempts int := 600;
+  max_attempts int := 1800;
 BEGIN
   SET search_path TO documentdb_core,documentdb_api;
   SELECT * INTO create_index_response FROM documentdb_api.create_indexes_background(p_database_name, p_index_spec);
@@ -313,10 +313,12 @@ BEGIN
           
           COMMIT; -- COMMIT so that CREATE INDEX CONCURRENTLY does not wait for documentdb_distributed_test_helpers.create_indexes_background
 
-          -- Background index builds can take longer on slower CI runners.
-          -- Allow up to 60 seconds before treating the build as hung.
+          -- Background index builds can take longer on slower CI runners, and a
+          -- CREATE INDEX CONCURRENTLY has to wait out every snapshot held by tests
+          -- running in parallel. Allow up to 180 seconds before treating the build
+          -- as hung.
           IF attempt_count >= max_attempts THEN
-            SELECT string_agg(index_cmd || index_cmd_status || comment || attempt || update_time, ',') into index_cmd_stored FROM documentdb_api_catalog.documentdb_index_queue;
+            SELECT string_agg(concat_ws(':', index_cmd, index_cmd_status, comment, attempt, update_time), ',') into index_cmd_stored FROM documentdb_api_catalog.documentdb_index_queue;
             RAISE INFO 'Index Queue Commands: %', index_cmd_stored;
             SELECT string_agg(index_id || ':' || collection_id || ':' || index_is_valid, ',') into index_cmd_stored FROM documentdb_api_catalog.collection_indexes;
             RAISE INFO 'Collection Indexes: %', index_cmd_stored;

@@ -6,3 +6,4 @@ s/bson_composite_index_only_scan_multi_key_leading_tests //
 /bson_aggregation_group_scalar_index_pushdown_tests_pg16/d
 /bson_aggregation_group_distinct_scan_tests_pg16/d
 /bson_aggregation_group_first_distinct_scan_tests_pg16/d
+s/rum_vacuum_orphaned_leaf_cleanup_tests$/rum_vacuum_orphaned_leaf_cleanup_tests_pg19/

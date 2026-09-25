@@ -1,0 +1,1 @@
+/* Copyright (c) Microsoft Corporation. SPDX-License-Identifier: MIT */ \i sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql

@@ -23,6 +23,7 @@
 * Apply per-update collation when selecting documents to update, including sharded routing and update-worker execution, while retaining binary comparison semantics inside update expressions. *[Feature]*
 * Prevent a backend crash by rejecting `$documents` directly inside a `$facet` sub-pipeline. *[Bugfix]*
 * Enforce `$facet` restrictions on `$collStats`, `$facet`, `$geoNear`, `$indexStats`, and `$planCacheStats` in nested `$lookup` and `$unionWith` pipelines while preserving parent-stage validation and valid collectionless pipelines. *[Bugfix]*
+* Reclaim orphaned empty RUM posting-tree leaves during vacuum cleanup when bulk deletion is skipped because the heap has no new dead tuples, and keep planner statistics consistent with entry-page and posting-page pruning. Guarded by the default-off `documentdb_rum.enable_vacuum_cleanup_posting_tree_pruning` setting. *[Bugfix/Perf]*
 * Reduce lock-manager pressure for dynamic cursor queries on heavily indexed collections by releasing planner-acquired `AccessShareLock`s for indexes not referenced by the final streamable plan immediately after planning. Guarded by the default-off `documentdb.enable_dynamic_cursor_early_index_lock_release` setting. *[Perf]*
 
 ### documentdb v1.0-0 (Unreleased) ###

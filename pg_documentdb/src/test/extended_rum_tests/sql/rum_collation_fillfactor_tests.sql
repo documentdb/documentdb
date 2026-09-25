@@ -1,7 +1,16 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 
 SET documentdb.next_collection_id TO 2100;
 SET documentdb.next_collection_index_id TO 2100;
+
+-- PG15 writes each accumulator batch directly to the index, so keep this
+-- fixture in one batch. Newer versions can globally sort with a smaller budget.
+SELECT CASE WHEN current_setting('server_version_num')::integer < 160000
+            THEN '64MB' ELSE '1MB' END AS reindex_work_mem \gset
 
 SET documentdb.defaultUseCompositeOpClass TO on;
 SET documentdb_core.enableCollation TO on;
@@ -64,7 +73,7 @@ FROM r3
 WHERE page_num < (SELECT MAX(page_num) FROM r3);
 
 -- verify reindex also keeps fill factor 100
-SET maintenance_work_mem TO '1024';
+SET maintenance_work_mem TO :'reindex_work_mem';
 REINDEX INDEX documentdb_data.documents_rum_index_2102;
 
 WITH r1 AS (
@@ -134,7 +143,7 @@ FROM r3
 WHERE page_num < (SELECT MAX(page_num) FROM r3);
 
 -- verify by reindexing with fill factor still 100
-SET maintenance_work_mem TO '1024';
+SET maintenance_work_mem TO :'reindex_work_mem';
 REINDEX INDEX documentdb_data.documents_rum_index_2104;
 
 WITH r1 AS (
@@ -234,7 +243,7 @@ FROM r3
 WHERE page_num < (SELECT MAX(page_num) FROM r3);
 
 -- reindex recovers fill factor since serial build sorts entries
-SET maintenance_work_mem TO '1024';
+SET maintenance_work_mem TO :'reindex_work_mem';
 REINDEX INDEX documentdb_data.documents_rum_index_2106;
 
 WITH r1 AS (
@@ -305,7 +314,7 @@ FROM r3
 WHERE page_num < (SELECT MAX(page_num) FROM r3);
 
 -- reindex recovers fill factor since serial build sorts entries
-SET maintenance_work_mem TO '1024';
+SET maintenance_work_mem TO :'reindex_work_mem';
 REINDEX INDEX documentdb_data.documents_rum_index_2108;
 
 WITH r1 AS (
@@ -380,7 +389,7 @@ FROM r3
 WHERE page_num < (SELECT MAX(page_num) FROM r3);
 
 -- verify reindex also keeps fill factor 100
-SET maintenance_work_mem TO '1024';
+SET maintenance_work_mem TO :'reindex_work_mem';
 REINDEX INDEX documentdb_data.documents_rum_index_2110;
 
 WITH r1 AS (

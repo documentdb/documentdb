@@ -1,0 +1,595 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+-- Tests that rumvacuumcleanup prunes orphaned empty posting-tree leaves even
+-- when ambulkdelete is not called (no dead TIDs in the heap).
+--
+-- The scenario: a weak-lock pruning algorithm (single-pass or targeted) skips
+-- an empty leaf because it cannot acquire the target-page cleanup lock.
+-- The workload then becomes read-only, so no further dead tuples are produced
+-- and ambulkdelete is never called again. Without the fix those leaves persist
+-- forever. With the fix rumvacuumcleanup, which always runs, reclaims them.
+--
+-- The contention is simulated deterministically with
+-- vacuum_skip_prune_posting_tree_pages, which suppresses structural pruning in
+-- exactly the same way a failed conditional cleanup lock would.
+--
+-- The later cases cover the gates on that behavior: no weak-lock algorithm
+-- active, the enable_vacuum_cleanup_posting_tree_pruning feature flag off, and
+-- a VACUUM that does call ambulkdelete.
+--
+-- Page-count queries compare counts rather than absolute numbers so the test is
+-- stable across PostgreSQL versions and page layouts. The only absolute value
+-- asserted is the residue of 2: a posting tree's leftmost and rightmost leaves
+-- have an invalid left/right link, so rumDeletePage always refuses to unlink
+-- them and they legitimately remain as empty leaves.
+SET search_path TO documentdb_api_catalog, documentdb_core, public;
+SET documentdb.next_collection_id TO 25000;
+SET documentdb.next_collection_index_id TO 25000;
+SELECT NOT current_setting('documentdb_rum.enable_vacuum_cleanup_posting_tree_pruning')::boolean
+    AS cleanup_retry_disabled_by_default;
+ cleanup_retry_disabled_by_default 
+-----------------------------------
+ t
+(1 row)
+
+-- Use the disk-ordered bulk delete path
+SET documentdb_rum.enable_new_bulk_delete TO on;
+SET documentdb_rum.enable_new_bulk_delete_inline_data_pages TO off;
+SET documentdb_rum.enable_vacuum_cleanup_posting_tree_pruning TO on;
+-- Enable single-pass, the first weak-lock algorithm under test
+SET documentdb_rum.enable_single_pass_posting_tree_vacuum TO on;
+SET documentdb_rum.enable_targeted_posting_tree_pruning TO off;
+-- No other session reads this index. Recycle deleted pages immediately so
+-- unrelated transactions cannot change the logged page-state counts.
+SET documentdb_rum.skip_global_visibility_check_on_prune TO on;
+SELECT documentdb_api.create_collection('pvacuum_orphan_db', 'orphan_test');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT collection_id AS orphan_col FROM documentdb_api_catalog.collections
+WHERE database_name = 'pvacuum_orphan_db' AND collection_name = 'orphan_test' \gset
+-- disable autovacuum to have predictability
+SELECT FORMAT('ALTER TABLE documentdb_data.documents_%s SET (autovacuum_enabled = off, toast.autovacuum_enabled = off, vacuum_index_cleanup = on, toast.vacuum_index_cleanup = on)', :orphan_col) \gexec
+ALTER TABLE documentdb_data.documents_25001 SET (autovacuum_enabled = off, toast.autovacuum_enabled = off, vacuum_index_cleanup = on, toast.vacuum_index_cleanup = on)
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'pvacuum_orphan_db',
+    '{ "createIndexes": "orphan_test", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "enableCompositeTerm": true } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT index_id AS orphan_index_id FROM documentdb_api_catalog.collection_indexes
+WHERE collection_id = :orphan_col AND index_id != :orphan_col \gset
+SELECT FORMAT('documentdb_data.documents_rum_index_%s', :orphan_index_id) AS orphan_index_name \gset
+CREATE FUNCTION pg_temp.index_page_stats(indexName text)
+RETURNS TABLE(flags text, n_entries int, left_link bigint, right_link bigint,
+              block_number int, page_flags int)
+LANGUAGE sql
+AS $$
+    SELECT s->>'flagsStr', (s->>'nEntries')::int,
+           (s->>'leftLink')::bigint, (s->>'rightLink')::bigint,
+           i, (s->>'flags')::int
+    FROM generate_series(1,
+             (pg_relation_size(indexName) / current_setting('block_size')::int)::int - 1) AS i,
+         LATERAL documentdb_api_internal.documentdb_rum_page_get_stats(
+             public.get_raw_page(indexName, i)) AS s;
+$$;
+CREATE FUNCTION pg_temp.data_page_counts(indexName text)
+RETURNS TABLE(recorded_data_pages bigint, live_data_pages bigint)
+LANGUAGE sql
+AS $$
+    SELECT (documentdb_api_internal.documentdb_rum_get_meta_page_info(
+                public.get_raw_page(indexName, 0))->>'dataPages')::bigint,
+           (SELECT count(*) FROM pg_temp.index_page_stats(indexName)
+            WHERE (page_flags & 1) <> 0
+              AND (page_flags & 4) = 0 AND (page_flags & 64) = 0);
+$$;
+-- Counts empty posting-tree leaves that are neither deleted nor half-dead.
+CREATE FUNCTION pg_temp.count_orphaned_empty_leaves(indexName text)
+RETURNS bigint
+LANGUAGE sql
+AS $$
+    SELECT count(*)
+    FROM pg_temp.index_page_stats(indexName)
+    WHERE flags LIKE '%DATA%'
+      AND flags LIKE '%LEAF%'
+      AND flags NOT LIKE '%DELETED%'
+      AND flags NOT LIKE '%HALF_DEAD%'
+      AND n_entries = 0;
+$$;
+-- Builds a posting tree spanning many leaves on a single term, then empties
+-- every leaf via a delete plus a bulk delete that is forbidden from pruning.
+CREATE PROCEDURE pg_temp.build_orphaned_posting_tree(collectionId bigint)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    PERFORM documentdb_api.insert_one('pvacuum_orphan_db', 'orphan_test',
+        FORMAT('{ "_id": %s, "a": 500 }', i)::bson) FROM generate_series(1, 20000) AS i;
+
+    PERFORM documentdb_api.delete('pvacuum_orphan_db',
+        '{ "delete": "orphan_test", "deletes": [ { "q": { "_id": { "$gte": 1 } }, "limit": 0 } ]}');
+END;
+$$;
+-- ============================================================
+-- Case 1: single-pass posting tree vacuum
+-- ============================================================
+-- Keep each posting tree data page small so the tree spans many leaves
+SET documentdb_rum.data_page_posting_tree_size = 3;
+CALL pg_temp.build_orphaned_posting_tree(:orphan_col);
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
+-- ambulkdelete empties every leaf but is forbidden from deleting any of them,
+-- which is the state left behind when the target-page cleanup lock fails.
+SET documentdb_rum.vacuum_skip_prune_posting_tree_pages TO on;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
+SET documentdb_rum.vacuum_skip_prune_posting_tree_pages TO off;
+SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_before_sp \gset
+-- No further deletes happen, so the heap has no dead tuples and ambulkdelete is
+-- not called. Only rumvacuumcleanup runs, and it must reclaim the orphans.
+SET client_min_messages TO LOG;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
+LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=15, emptyPostingPages=2, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=1, cleanupRetryPostingTrees=1, cleanupRetryPostingPagesDeleted=15, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+RESET client_min_messages;
+SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_after_sp \gset
+SELECT :orphans_before_sp > 2 AS had_prunable_orphans_single_pass,
+       :orphans_after_sp < :orphans_before_sp AS cleanup_pruned_orphans_single_pass,
+       :orphans_after_sp AS bound_leaves_remaining_single_pass;
+ had_prunable_orphans_single_pass | cleanup_pruned_orphans_single_pass | bound_leaves_remaining_single_pass 
+----------------------------------+------------------------------------+------------------------------------
+ t                                | t                                  |                                  2
+(1 row)
+
+-- Pages deleted ahead of the physical scan must not be subtracted twice.
+SELECT recorded_data_pages = live_data_pages AS data_pages_match_forward_pruning
+FROM pg_temp.data_page_counts(:'orphan_index_name');
+ data_pages_match_forward_pruning 
+----------------------------------
+ t
+(1 row)
+
+-- A retry that only encounters the two boundary leaves reports one run and
+-- zero removals, rather than looking like the retry path was disabled.
+SET client_min_messages TO LOG;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
+LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=2, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=1, cleanupRetryPostingTrees=1, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+RESET client_min_messages;
+-- ============================================================
+-- Case 2: targeted posting tree pruning
+-- ============================================================
+SET documentdb_rum.enable_single_pass_posting_tree_vacuum TO off;
+SET documentdb_rum.enable_targeted_posting_tree_pruning TO on;
+SELECT FORMAT('TRUNCATE documentdb_data.documents_%s;', :orphan_col) \gexec
+TRUNCATE documentdb_data.documents_25001;
+SET documentdb_rum.data_page_posting_tree_size = 3;
+CALL pg_temp.build_orphaned_posting_tree(:orphan_col);
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
+SET documentdb_rum.vacuum_skip_prune_posting_tree_pages TO on;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
+SET documentdb_rum.vacuum_skip_prune_posting_tree_pages TO off;
+SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_before_tg \gset
+SET client_min_messages TO LOG;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
+LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=15, emptyPostingPages=2, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=1, cleanupRetryPostingTrees=1, cleanupRetryPostingPagesDeleted=15, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+RESET client_min_messages;
+SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_after_tg \gset
+SELECT :orphans_before_tg > 2 AS had_prunable_orphans_targeted,
+       :orphans_after_tg < :orphans_before_tg AS cleanup_pruned_orphans_targeted,
+       :orphans_after_tg AS bound_leaves_remaining_targeted;
+ had_prunable_orphans_targeted | cleanup_pruned_orphans_targeted | bound_leaves_remaining_targeted 
+-------------------------------+---------------------------------+---------------------------------
+ t                             | t                               |                               2
+(1 row)
+
+-- ============================================================
+-- Case 3: kill switch. With structural pruning disabled the cleanup phase must
+-- leave the orphaned leaves untouched.
+-- ============================================================
+SELECT FORMAT('TRUNCATE documentdb_data.documents_%s;', :orphan_col) \gexec
+TRUNCATE documentdb_data.documents_25001;
+SET documentdb_rum.data_page_posting_tree_size = 3;
+CALL pg_temp.build_orphaned_posting_tree(:orphan_col);
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
+SET documentdb_rum.vacuum_skip_prune_posting_tree_pages TO on;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
+SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_before_ks \gset
+-- The cleanup phase runs, but the kill switch must suppress all pruning.
+SET client_min_messages TO LOG;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
+LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=13, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=22, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+RESET client_min_messages;
+SET documentdb_rum.vacuum_skip_prune_posting_tree_pages TO off;
+SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_after_ks \gset
+SELECT :orphans_before_ks > 2 AS had_prunable_orphans_kill_switch,
+       :orphans_after_ks = :orphans_before_ks AS cleanup_retained_orphans_kill_switch;
+ had_prunable_orphans_kill_switch | cleanup_retained_orphans_kill_switch 
+----------------------------------+--------------------------------------
+ t                                | t
+(1 row)
+
+-- ============================================================
+-- Case 4: no weak-lock pruning algorithm is active. Cleanup-phase pruning only
+-- compensates for leaves a weak-lock algorithm skipped, so with both algorithms
+-- off it must not descend the posting trees.
+-- ============================================================
+SET documentdb_rum.enable_single_pass_posting_tree_vacuum TO off;
+SET documentdb_rum.enable_targeted_posting_tree_pruning TO off;
+SELECT FORMAT('TRUNCATE documentdb_data.documents_%s;', :orphan_col) \gexec
+TRUNCATE documentdb_data.documents_25001;
+SET documentdb_rum.data_page_posting_tree_size = 3;
+CALL pg_temp.build_orphaned_posting_tree(:orphan_col);
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
+SET documentdb_rum.vacuum_skip_prune_posting_tree_pages TO on;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
+SET documentdb_rum.vacuum_skip_prune_posting_tree_pages TO off;
+SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_before_nowl \gset
+SET client_min_messages TO LOG;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
+LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=13, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=22, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+RESET client_min_messages;
+SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_after_nowl \gset
+SELECT :orphans_before_nowl > 2 AS had_prunable_orphans_no_weak_lock,
+       :orphans_after_nowl = :orphans_before_nowl AS cleanup_retained_orphans_no_weak_lock;
+ had_prunable_orphans_no_weak_lock | cleanup_retained_orphans_no_weak_lock 
+-----------------------------------+---------------------------------------
+ t                                 | t
+(1 row)
+
+-- ============================================================
+-- Case 5: feature flag off. With a weak-lock algorithm active and bulk delete
+-- skipped, enable_vacuum_cleanup_posting_tree_pruning must still be able to
+-- turn the new cleanup-phase pruning off on its own.
+-- ============================================================
+SET documentdb_rum.enable_targeted_posting_tree_pruning TO on;
+SET documentdb_rum.enable_vacuum_cleanup_posting_tree_pruning TO off;
+SELECT FORMAT('TRUNCATE documentdb_data.documents_%s;', :orphan_col) \gexec
+TRUNCATE documentdb_data.documents_25001;
+SET documentdb_rum.data_page_posting_tree_size = 3;
+CALL pg_temp.build_orphaned_posting_tree(:orphan_col);
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
+SET documentdb_rum.vacuum_skip_prune_posting_tree_pages TO on;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
+SET documentdb_rum.vacuum_skip_prune_posting_tree_pages TO off;
+SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_before_ff \gset
+SET client_min_messages TO LOG;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
+LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=13, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=22, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+RESET client_min_messages;
+SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_after_ff \gset
+SELECT :orphans_before_ff > 2 AS had_prunable_orphans_flag_off,
+       :orphans_after_ff = :orphans_before_ff AS cleanup_retained_orphans_flag_off;
+ had_prunable_orphans_flag_off | cleanup_retained_orphans_flag_off 
+-------------------------------+-----------------------------------
+ t                             | t
+(1 row)
+
+-- ============================================================
+-- Case 6: bulk delete runs. The isBulkDeleteSkipped gate stops the cleanup
+-- phase from repeating a traversal ambulkdelete already did. That is only safe
+-- if ambulkdelete itself re-arms leaves a previous cycle stranded, so with the
+-- cleanup-phase pruning still switched off from case 5 the orphans left above
+-- must be reclaimed by a VACUUM that does have dead tuples to remove.
+-- ============================================================
+-- Produce new dead tuples on the same term so ambulkdelete is called and walks
+-- this posting tree again.
+DO $$
+BEGIN
+    PERFORM documentdb_api.insert_one('pvacuum_orphan_db', 'orphan_test',
+        FORMAT('{ "_id": %s, "a": 500 }', i)::bson) FROM generate_series(1, 200) AS i;
+
+    PERFORM documentdb_api.delete('pvacuum_orphan_db',
+        '{ "delete": "orphan_test", "deletes": [ { "q": { "_id": { "$gte": 1 } }, "limit": 0 } ]}');
+END;
+$$;
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
+SET client_min_messages TO LOG;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
+LOG:  Vacuum[index=xxx,vacuumCleanup=0] emptyEntryPages=1, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=15, emptyPostingPages=12, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=1, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=11, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=2, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+RESET client_min_messages;
+SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_after_bulkdel \gset
+SELECT :orphans_after_bulkdel < :orphans_after_ff AS bulk_delete_reclaimed_stranded_leaves,
+       :orphans_after_bulkdel AS bound_leaves_remaining_bulk_delete;
+ bulk_delete_reclaimed_stranded_leaves | bound_leaves_remaining_bulk_delete 
+---------------------------------------+------------------------------------
+ t                                     |                                  2
+(1 row)
+
+SET documentdb_rum.enable_vacuum_cleanup_posting_tree_pruning TO on;
+-- Case 7: bulk delete with the feature on must not count a cleanup retry.
+SELECT FORMAT('TRUNCATE documentdb_data.documents_%s;', :orphan_col) \gexec
+TRUNCATE documentdb_data.documents_25001;
+CALL pg_temp.build_orphaned_posting_tree(:orphan_col);
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
+SET client_min_messages TO LOG;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
+LOG:  Vacuum[index=xxx,vacuumCleanup=0] emptyEntryPages=1, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=15, emptyPostingPages=13, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=1, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=2, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+RESET client_min_messages;
+SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') = 2 AS bulk_delete_pruned_without_cleanup_retry;
+ bulk_delete_pruned_without_cleanup_retry 
+------------------------------------------
+ t
+(1 row)
+
+-- Case 8: inline-deferred pruning still runs with the feature off, but its
+-- successful deletions do not contribute to cleanup-retry metrics.
+SET documentdb_rum.enable_new_bulk_delete_inline_data_pages TO on;
+SET documentdb_rum.enable_vacuum_cleanup_posting_tree_pruning TO off;
+SELECT FORMAT('TRUNCATE documentdb_data.documents_%s;', :orphan_col) \gexec
+TRUNCATE documentdb_data.documents_25001;
+CALL pg_temp.build_orphaned_posting_tree(:orphan_col);
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
+SET client_min_messages TO LOG;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
+LOG:  Vacuum[index=xxx,vacuumCleanup=0] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=22, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=15, emptyPostingPages=2, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+RESET client_min_messages;
+SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') = 2 AS inline_pruned_with_retry_flag_off;
+ inline_pruned_with_retry_flag_off 
+-----------------------------------
+ t
+(1 row)
+
+-- Inline cleanup is not attributed to the retry feature even when the flag is
+-- on and bulk deletion is skipped.
+SET documentdb_rum.enable_vacuum_cleanup_posting_tree_pruning TO on;
+SET client_min_messages TO LOG;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
+LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=2, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+RESET client_min_messages;
+-- Case 9: empty single-page posting roots allow entry-page pruning. Count
+-- committed leaf-tuple removals and posting-root deletions as well as the
+-- entry pages unlinked, without counting retained high keys as tuple removals.
+SET documentdb_rum.enable_new_bulk_delete_inline_data_pages TO off;
+SET documentdb_rum.enable_vacuum_cleanup_posting_tree_pruning TO on;
+SET documentdb_rum.prune_rum_empty_pages TO off;
+RESET documentdb_rum.data_page_posting_tree_size;
+SELECT FORMAT('TRUNCATE documentdb_data.documents_%s;', :orphan_col) \gexec
+TRUNCATE documentdb_data.documents_25001;
+-- Grow the terms together so entry pages split before posting lists become trees.
+SELECT count(documentdb_api.insert_one('pvacuum_orphan_db', 'orphan_test',
+    FORMAT('{ "_id": %s, "a": "%s" }', (term - 1) * 2000 + i, repeat('k', 1000) || term)::bson))
+FROM (SELECT term, i FROM generate_series(1, 20) AS term, generate_series(1, 2000) AS i
+      ORDER BY i, term) AS input;
+ count 
+-------
+ 40000
+(1 row)
+
+SELECT documentdb_api.delete('pvacuum_orphan_db',
+    '{ "delete": "orphan_test", "deletes": [ { "q": {}, "limit": 0 } ]}');
+                                           delete                                           
+--------------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""40000"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
+SELECT count(*) FILTER (WHERE flags = 'LEAF|DATA' AND n_entries = 0
+                         AND left_link IS NULL AND right_link IS NULL) AS empty_roots_before,
+       count(*) FILTER (WHERE flags = 'LEAF') AS entry_pages_before,
+       coalesce(sum(n_entries) FILTER (WHERE flags = 'LEAF'), 0) AS leaf_entries_before
+FROM pg_temp.index_page_stats(:'orphan_index_name') \gset
+SELECT :empty_roots_before > 2 AS has_empty_single_page_roots,
+       :entry_pages_before > 2 AS has_interior_entry_pages;
+ has_empty_single_page_roots | has_interior_entry_pages 
+-----------------------------+--------------------------
+ t                           | t
+(1 row)
+
+SET documentdb_rum.prune_rum_empty_pages TO on;
+SET client_min_messages TO LOG;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
+LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=9, emptyEntries=0, emptyPostingTrees=20, prunedEntries=8, prunedPages=7,prunedPostingTrees=15, postingPagesDeleted=0, emptyPostingPages=5, numBacktracks=0, isNewBulkDelete=1, numEntryPages=3, numDataPages=5, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=1, cleanupRetryPostingTrees=20, cleanupRetryPostingPagesDeleted=15, cleanupRetryEntryPagesPruned=7, cleanupRetryEntriesPruned=8
+RESET client_min_messages;
+SELECT count(*) FILTER (WHERE flags = 'LEAF|DATA' AND n_entries = 0
+                         AND left_link IS NULL AND right_link IS NULL) AS empty_roots_after,
+       count(*) FILTER (WHERE flags = 'LEAF') AS entry_pages_after,
+       coalesce(sum(n_entries) FILTER (WHERE flags = 'LEAF'), 0) AS leaf_entries_after
+FROM pg_temp.index_page_stats(:'orphan_index_name') \gset
+SELECT :empty_roots_after < :empty_roots_before AS cleanup_deleted_posting_roots,
+       :entry_pages_after < :entry_pages_before AS cleanup_pruned_entry_pages,
+       :leaf_entries_after < :leaf_entries_before AS cleanup_pruned_leaf_entries;
+ cleanup_deleted_posting_roots | cleanup_pruned_entry_pages | cleanup_pruned_leaf_entries 
+-------------------------------+----------------------------+-----------------------------
+ t                             | t                          | t
+(1 row)
+
+-- Metapage estimates must exclude unlinked leaves and their retained high keys.
+WITH live_entries AS (
+    SELECT count(*) FILTER (WHERE flags IN ('', 'LEAF')) AS entry_pages,
+           coalesce(sum(n_entries) FILTER (WHERE flags = 'LEAF'), 0) AS entries
+    FROM pg_temp.index_page_stats(:'orphan_index_name')
+), metadata AS (
+    SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(
+        public.get_raw_page(:'orphan_index_name', 0)) AS info
+)
+SELECT (info->>'entryPages')::bigint = entry_pages AS metapage_entry_pages_match,
+       (info->>'entries')::bigint = entries AS metapage_entries_match
+FROM metadata, live_entries;
+ metapage_entry_pages_match | metapage_entries_match 
+----------------------------+------------------------
+ t                          | t
+(1 row)
+
+SELECT recorded_data_pages = live_data_pages AS data_pages_match_forward_root_pruning
+FROM pg_temp.data_page_counts(:'orphan_index_name');
+ data_pages_match_forward_root_pruning 
+---------------------------------------
+ t
+(1 row)
+
+-- Case 10: create the posting tree before entry-tree splits move its term to
+-- a later block. Cleanup then deletes data pages the physical scan counted.
+SET documentdb_rum.enable_vacuum_cleanup_posting_tree_pruning TO off;
+SET documentdb_rum.prune_rum_empty_pages TO off;
+SET documentdb_rum.data_page_posting_tree_size TO 3;
+SELECT FORMAT('TRUNCATE documentdb_data.documents_%s;', :orphan_col) \gexec
+TRUNCATE documentdb_data.documents_25001;
+SELECT count(documentdb_api.insert_one('pvacuum_orphan_db', 'orphan_test',
+    FORMAT('{ "_id": %s, "a": "%s" }', i, repeat('z', 1000))::bson))
+FROM generate_series(1, 20000) AS i;
+ count 
+-------
+ 20000
+(1 row)
+
+SELECT count(documentdb_api.insert_one('pvacuum_orphan_db', 'orphan_test',
+    FORMAT('{ "_id": %s, "a": "%s" }', 20000 + i,
+        'k' || lpad(i::text, 4, '0') || repeat(md5(i::text), 30))::bson))
+FROM generate_series(1, 1000) AS i;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT min(block_number) FILTER (WHERE (page_flags & 3) = 2) >
+       max(block_number) FILTER (WHERE (page_flags & 1) <> 0)
+       AS posting_pages_precede_entry_leaves
+FROM pg_temp.index_page_stats(:'orphan_index_name');
+ posting_pages_precede_entry_leaves 
+------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.delete('pvacuum_orphan_db',
+    '{ "delete": "orphan_test", "deletes": [ { "q": { "_id": { "$lte": 20000 } }, "limit": 0 } ]}');
+                                           delete                                           
+--------------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""20000"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
+SET documentdb_rum.vacuum_skip_prune_posting_tree_pages TO on;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
+SET documentdb_rum.vacuum_skip_prune_posting_tree_pages TO off;
+-- With cleanup retries disabled, all the empty posting pages remain counted.
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
+SELECT recorded_data_pages = live_data_pages AS data_pages_match_with_retry_off
+FROM pg_temp.data_page_counts(:'orphan_index_name');
+ data_pages_match_with_retry_off 
+---------------------------------
+ t
+(1 row)
+
+SELECT live_data_pages AS data_pages_before_retry
+FROM pg_temp.data_page_counts(:'orphan_index_name') \gset
+SET documentdb_rum.enable_vacuum_cleanup_posting_tree_pruning TO on;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
+SELECT live_data_pages < :data_pages_before_retry AS preceding_data_pages_pruned,
+       recorded_data_pages = live_data_pages AS data_pages_match_backward_pruning
+FROM pg_temp.data_page_counts(:'orphan_index_name');
+ preceding_data_pages_pruned | data_pages_match_backward_pruning 
+-----------------------------+-----------------------------------
+ t                           | t
+(1 row)
+
+SELECT count(*) = 1000 AS retained_documents_match
+FROM documentdb_api.collection('pvacuum_orphan_db', 'orphan_test');
+ retained_documents_match 
+--------------------------
+ t
+(1 row)
+
+-- Case 11: single-page posting roots can also precede the entry leaves that
+-- reference them. Count their deletion even when the whole entry leaf is unlinked.
+SET documentdb_rum.enable_vacuum_cleanup_posting_tree_pruning TO off;
+RESET documentdb_rum.data_page_posting_tree_size;
+SELECT FORMAT('TRUNCATE documentdb_data.documents_%s;', :orphan_col) \gexec
+TRUNCATE documentdb_data.documents_25001;
+-- Finish each posting tree before starting the next term to avoid early entry splits.
+SELECT count(documentdb_api.insert_one('pvacuum_orphan_db', 'orphan_test',
+    FORMAT('{ "_id": %s, "a": "%s" }', (term - 1) * 2000 + i,
+        'm' || lpad(term::text, 4, '0'))::bson))
+FROM (SELECT term, i FROM generate_series(1, 20) AS term, generate_series(1, 2000) AS i
+      ORDER BY term, i) AS input;
+ count 
+-------
+ 40000
+(1 row)
+
+SELECT count(documentdb_api.insert_one('pvacuum_orphan_db', 'orphan_test',
+    FORMAT('{ "_id": %s, "a": "%s" }', 40000 + i,
+        'm' || lpad(((i - 1) % 20 + 1)::text, 4, '0') ||
+        '#' || lpad(i::text, 4, '0') || repeat(md5(i::text), 30))::bson))
+FROM generate_series(1, 1000) AS i;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT min(block_number) FILTER (WHERE (page_flags & 3) = 2) >
+       max(block_number) FILTER (WHERE (page_flags & 1) <> 0)
+       AS posting_roots_precede_entry_leaves
+FROM pg_temp.index_page_stats(:'orphan_index_name');
+ posting_roots_precede_entry_leaves 
+------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.delete('pvacuum_orphan_db',
+    '{ "delete": "orphan_test", "deletes": [ { "q": {}, "limit": 0 } ]}');
+                                           delete                                           
+--------------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""41000"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
+SELECT live_data_pages AS data_pages_before_root_retry
+FROM pg_temp.data_page_counts(:'orphan_index_name') \gset
+SET documentdb_rum.prune_rum_empty_pages TO on;
+SET documentdb_rum.enable_vacuum_cleanup_posting_tree_pruning TO on;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
+SELECT live_data_pages < :data_pages_before_root_retry AS preceding_posting_roots_pruned,
+       recorded_data_pages = live_data_pages AS data_pages_match_backward_root_pruning
+FROM pg_temp.data_page_counts(:'orphan_index_name');
+ preceding_posting_roots_pruned | data_pages_match_backward_root_pruning 
+--------------------------------+----------------------------------------
+ t                              | t
+(1 row)
+
+RESET documentdb_rum.enable_vacuum_cleanup_posting_tree_pruning;
+RESET documentdb_rum.skip_global_visibility_check_on_prune;
+SELECT documentdb_api.drop_collection('pvacuum_orphan_db', 'orphan_test');
+ drop_collection 
+-----------------
+ t
+(1 row)
+

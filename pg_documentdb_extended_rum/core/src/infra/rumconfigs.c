@@ -3,6 +3,8 @@
  * rumconfig.c
  *	  utilities routines for the configuration management for RUM indexes.
  *
+ * SPDX-License-Identifier: MIT
+ *
  * Portions Copyright (c) Microsoft Corporation.  All rights reserved.
  * Portions Copyright (c) 2015-2022, Postgres Professional
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
@@ -166,6 +168,12 @@ PGDLLEXPORT bool RumEnableTargetedPostingTreePruning =
 #define RUM_DEFAULT_ENABLE_SINGLE_PASS_POSTING_TREE_VACUUM false
 PGDLLEXPORT bool RumEnableSinglePassPostingTreeVacuum =
 	RUM_DEFAULT_ENABLE_SINGLE_PASS_POSTING_TREE_VACUUM;
+
+/* FeatureFlag: Added in v1.0, Pending stabilization, enable on v1.2 */
+#define RUM_DEFAULT_ENABLE_VACUUM_CLEANUP_POSTING_TREE_PRUNING_IF_BULK_DELETE_SKIPPED \
+	false
+PGDLLEXPORT bool RumEnableVacuumCleanupPostingTreePruningIfBulkDeleteSkipped =
+	RUM_DEFAULT_ENABLE_VACUUM_CLEANUP_POSTING_TREE_PRUNING_IF_BULK_DELETE_SKIPPED;
 
 /* rumget.c */
 /* FeatureFlag: Added in v0.109, Pending stabilization, enable on v1.3 */
@@ -438,6 +446,19 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		"setting has no effect.",
 		&RumEnableSinglePassPostingTreeVacuum,
 		RUM_DEFAULT_ENABLE_SINGLE_PASS_POSTING_TREE_VACUUM,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_vacuum_cleanup_posting_tree_pruning",
+				 documentDBRumGucPrefix),
+		"Prunes orphaned empty posting tree leaf pages during vacuumcleanup when bulk-delete was skipped",
+		"Applies when a weak-lock pruning algorithm is active and the heap had no "
+		"dead tuples, so ambulkdelete was not called and could not retry leaves a "
+		"previous cycle skipped due to target-page cleanup lock contention. Does not affect the "
+		"pruning that an inline bulk delete defers to vacuumcleanup.",
+		&RumEnableVacuumCleanupPostingTreePruningIfBulkDeleteSkipped,
+		RUM_DEFAULT_ENABLE_VACUUM_CLEANUP_POSTING_TREE_PRUNING_IF_BULK_DELETE_SKIPPED,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 
