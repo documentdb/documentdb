@@ -36,6 +36,9 @@ SELECT document FROM bson_aggregation_find('collmod', '{ "find": "coll_mod_test_
 -- cannot hide the primary key index (since it's unique)
 SELECT documentdb_api.coll_mod('collmod', 'coll_mod_test_hidden', '{ "collMod": "coll_mod_test_hidden", "index": { "name": "_id_", "hidden": true } }');
 
+-- an empty index name is treated as a literal lookup key and fails with IndexNotFound
+SELECT documentdb_api.coll_mod('collmod', 'coll_mod_test_hidden', '{ "collMod": "coll_mod_test_hidden", "index": { "name": "", "hidden": true } }');
+
 -- now inserts done while the index is hidden do get factored into the final results.
 SELECT documentdb_api.insert_one('collmod','coll_mod_test_hidden', '{"_id":"101", "a": 101 }'::documentdb_core.bson);
 SELECT document FROM bson_aggregation_find('collmod', '{ "find": "coll_mod_test_hidden", "filter": { "a": 101 } }');
@@ -192,6 +195,71 @@ SELECT documentdb_api.coll_mod(
     'collmod',
     'coll_mod_convert_ttl',
     '{ "collMod": "coll_mod_convert_ttl", "index": { "name": "wildcard_idx", "expireAfterSeconds": 10 } }');
+
+-- Rename an index only when both its current name and key pattern match.
+SELECT documentdb_api.create_collection('collmod', 'coll_mod_rename_index');
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'collmod',
+    '{ "createIndexes": "coll_mod_rename_index", "indexes": [
+        { "key": { "a": 1 }, "name": "a_1" },
+        { "key": { "b": 1 }, "name": "b_1" }
+    ]}',
+    TRUE);
+SELECT documentdb_api.coll_mod(
+    'collmod',
+    'coll_mod_rename_index',
+    '{ "collMod": "coll_mod_rename_index", "index": { "keyPattern": { "a": 1 }, "name": "a_1", "newName": "a_renamed" } }');
+SELECT (index_spec).index_name, (index_spec).index_key
+FROM documentdb_api_catalog.collection_indexes
+WHERE collection_id = (
+    SELECT collection_id
+    FROM documentdb_api_catalog.collections
+    WHERE database_name = 'collmod' AND collection_name = 'coll_mod_rename_index')
+ORDER BY index_id;
+SELECT documentdb_api.coll_mod(
+    'collmod',
+    'coll_mod_rename_index',
+    '{ "collMod": "coll_mod_rename_index", "index": { "keyPattern": { "a": 1 }, "name": "a_renamed", "newName": "a_renamed" } }');
+SELECT documentdb_api.coll_mod(
+    'collmod',
+    'coll_mod_rename_index',
+    '{ "collMod": "coll_mod_rename_index", "index": { "keyPattern": { "a": 1 }, "name": "a_1", "newName": "a_renamed_again" } }');
+SELECT documentdb_api.coll_mod(
+    'collmod',
+    'coll_mod_rename_index',
+    '{ "collMod": "coll_mod_rename_index", "index": { "keyPattern": { "b": 1 }, "name": "a_renamed", "newName": "a_renamed_again" } }');
+SELECT documentdb_api.coll_mod(
+    'collmod',
+    'coll_mod_rename_index',
+    '{ "collMod": "coll_mod_rename_index", "index": { "name": "a_renamed", "newName": "a_renamed_again" } }');
+SELECT documentdb_api.coll_mod(
+    'collmod',
+    'coll_mod_rename_index',
+    '{ "collMod": "coll_mod_rename_index", "index": { "keyPattern": { "a": 1 }, "newName": "a_renamed_again" } }');
+SELECT documentdb_api.coll_mod(
+    'collmod',
+    'coll_mod_rename_index',
+    '{ "collMod": "coll_mod_rename_index", "index": { "keyPattern": { "a": 1 }, "name": "a_renamed" } }');
+SELECT documentdb_api.coll_mod(
+    'collmod',
+    'coll_mod_rename_index',
+    '{ "collMod": "coll_mod_rename_index", "index": { "keyPattern": { "a": 1 }, "name": "a_renamed", "newName": "b_1" } }');
+SELECT documentdb_api.coll_mod(
+    'collmod',
+    'coll_mod_rename_index',
+    '{ "collMod": "coll_mod_rename_index", "index": { "keyPattern": { "a": 1 }, "name": "a_renamed", "newName": "" } }');
+SELECT documentdb_api.coll_mod(
+    'collmod',
+    'coll_mod_rename_index',
+    '{ "collMod": "coll_mod_rename_index", "index": { "keyPattern": { "a": 1 }, "name": "a_renamed", "newName": 1 } }');
+SELECT documentdb_api.coll_mod(
+    'collmod',
+    'coll_mod_rename_index',
+    '{ "collMod": "coll_mod_rename_index", "index": { "keyPattern": { "a": 1 }, "name": "a_renamed", "newName": "a_renamed_again", "hidden": true } }');
+SELECT documentdb_api.coll_mod(
+    'collmod',
+    'coll_mod_rename_index',
+    '{ "collMod": "coll_mod_rename_index", "index": { "keyPattern": { "_id": 1 }, "name": "_id_", "newName": "renamed_id" } }');
 
 RESET documentdb.enablePerCollectionPlannerStatistics;
 RESET documentdb.enablePlannerStatisticsNewCollections;

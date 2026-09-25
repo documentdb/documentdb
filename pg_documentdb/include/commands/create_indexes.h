@@ -296,6 +296,10 @@ void SendTupleToClient(HeapTuple tup, TupleDesc tupDesc,
 List * CheckForConflictsAndPruneExistingIndexes(uint64 collectionId,
 												List *indexDefList,
 												List **inBuildIndexIds);
+bool CheckIndexSpecConflictWithExistingIndexes(uint64 collectionId,
+											   const IndexSpec *indexSpec,
+											   int *inBuildIndexId,
+											   int excludedIndexId);
 char * CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int
 									  indexId,
 									  bool concurrently, bool isTempCollection,

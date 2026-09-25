@@ -249,9 +249,6 @@ static bool CheckPartFilterExprOperatorsWalker(Node *node, void *context);
 static void ThrowUnsupportedPartFilterExprError(Node *node);
 static char * GetPartFilterExprNodeRepr(Node *node);
 static bool GetPartFilterExprNodeReprWalker(Node *node, void *contextArg);
-static bool CheckIndexSpecConflictWithExistingIndexes(uint64 collectionId,
-													  const IndexSpec *indexSpec,
-													  int *inBuildIndexId);
 static void ThrowIndexNameConflictError(const IndexSpec *existingIndexSpec,
 										const IndexSpec *requestedIndexSpec);
 static void ThrowIndexOptionsConflictError(const char *existingIndexName);
@@ -4390,7 +4387,8 @@ CheckForConflictsAndPruneExistingIndexes(uint64 collectionId, List *indexDefList
 
 		int32_t inBuildIndexId = -1;
 		if (!CheckIndexSpecConflictWithExistingIndexes(collectionId, &indexSpec,
-													   &inBuildIndexId))
+													   &inBuildIndexId,
+													   INVALID_INDEX_ID))
 		{
 			prunedIndexDefList = lappend(prunedIndexDefList, indexDef);
 		}
@@ -4509,18 +4507,59 @@ CheckForConflictsAndPruneExistingIndexes(uint64 collectionId, List *indexDefList
  * Finally, this function throws an error if there is an index that conlicts
  * with given one either by name or by index options.
  */
-static bool
+bool
 CheckIndexSpecConflictWithExistingIndexes(uint64 collectionId, const IndexSpec *indexSpec,
-										  int32_t *inBuildIndexId)
+										  int32_t *inBuildIndexId,
+										  int excludedIndexId)
 {
-	const IndexDetails *nameMatchedIndexDetails =
-		IndexNameGetIndexDetails(collectionId, indexSpec->indexName);
+	const IndexDetails *nameMatchedIndexDetails = NULL;
+	const IndexDetails *optionsMatchedIndexDetails = NULL;
+
+	if (excludedIndexId == INVALID_INDEX_ID)
+	{
+		nameMatchedIndexDetails =
+			IndexNameGetIndexDetails(collectionId, indexSpec->indexName);
+		if (nameMatchedIndexDetails == NULL)
+		{
+			optionsMatchedIndexDetails =
+				FindIndexWithSpecOptions(collectionId, indexSpec);
+		}
+	}
+	else
+	{
+		bool excludeIdIndex = false;
+		bool enableNestedDistribution = false;
+		List *indexDetailsList = CollectionIdGetIndexes(collectionId, excludeIdIndex,
+														enableNestedDistribution);
+
+		ListCell *indexDetailsCell = NULL;
+		foreach(indexDetailsCell, indexDetailsList)
+		{
+			const IndexDetails *existingIndexDetails = lfirst(indexDetailsCell);
+			if (existingIndexDetails->indexId == excludedIndexId)
+			{
+				continue;
+			}
+
+			if (strcmp(existingIndexDetails->indexSpec.indexName,
+					   indexSpec->indexName) == 0)
+			{
+				nameMatchedIndexDetails = existingIndexDetails;
+				break;
+			}
+
+			if (optionsMatchedIndexDetails == NULL &&
+				IndexSpecOptionsAreEquivalent(&existingIndexDetails->indexSpec,
+											  indexSpec) !=
+				IndexOptionsEquivalency_NotEquivalent)
+			{
+				optionsMatchedIndexDetails = existingIndexDetails;
+			}
+		}
+	}
 
 	if (nameMatchedIndexDetails == NULL)
 	{
-		const IndexDetails *optionsMatchedIndexDetails =
-			FindIndexWithSpecOptions(collectionId, indexSpec);
-
 		/* Don't consider indexes not in progress */
 		if (optionsMatchedIndexDetails != NULL)
 		{
