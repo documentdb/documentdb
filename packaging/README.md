@@ -420,9 +420,11 @@ There are two surfaces, and they share values only through
 entrypoint takes as a flag once (flag, env var, default, type);
 `--skip-init-data`, the deprecated no-op `--disable-extended-rum`, and the
 operator-only env knobs (`DOCUMENTDB_PG_READY_*`,
-`DOCUMENTDB_FORCE_OWNERSHIP_REPAIR`, `DOCUMENTDB_ALLOW_DEFAULT_PASSWORD`) are
-handled in the entrypoint itself. The Dockerfile `ENV` block mirrors
-the defaults. `emulator_entrypoint.sh` parses flags into the same env vars,
+`DOCUMENTDB_FORCE_OWNERSHIP_REPAIR`,
+`DOCUMENTDB_FORCE_REMOVE_STALE_POSTMASTER_PID`,
+`DOCUMENTDB_ALLOW_DEFAULT_PASSWORD`) are handled by the entrypoint and its
+data-directory claim helper. The Dockerfile `ENV` block mirrors the defaults.
+`emulator_entrypoint.sh` parses flags into the same env vars,
 applies defaults and validates from the table, then hands values on: ports and
 credentials to `scripts/start_oss_server.sh` as arguments, the resolved ports to
 a state file that `healthcheck.sh` reads, seed-data arguments to
@@ -430,6 +432,12 @@ a state file that `healthcheck.sh` reads, seed-data arguments to
 paths and `EnforceTls` into a jq-edited copy of `SetupConfiguration.json` that
 the gateway binary reads. The image's PostgreSQL settings block is written by
 `scripts/utils.sh` at initdb time, not by the library.
+
+`documentdb_claim_data_directory.sh` takes the directory lock and checks for an
+existing `postmaster.pid` before ownership or permission repair. If the runtime
+user cannot access the directory, a privileged bootstrap performs the claim
+first, repairs access, then returns to the original user while retaining the
+same locked file descriptor.
 
 **Host packages.** `documentdb-setup` owns the wizard defaults and reads the
 shared ones from the library. It persists what it chose to

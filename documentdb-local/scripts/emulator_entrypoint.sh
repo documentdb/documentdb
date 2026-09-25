@@ -17,6 +17,10 @@ configFile=""
     echo "Error: cannot load documentdb_local_settings.sh beside this script." >&2
     exit 1
 }
+. "$(dirname "${BASH_SOURCE[0]}")/documentdb_claim_data_directory.sh" || {
+    echo "Error: cannot load documentdb_claim_data_directory.sh beside this script." >&2
+    exit 1
+}
 
 # Initialized up front so cleanup() — which can now also run from the gateway
 # self-exit path — never dereferences an unset PID var under the `set -u`
@@ -149,6 +153,14 @@ Optional arguments:
                         previously interrupted start left behind, set
                         DOCUMENTDB_FORCE_OWNERSHIP_REPAIR=true to force a
                         full recursive ownership repair on the next start.
+                        A leftover postmaster.pid from an unclean stop
+                        (docker kill, OOM, host crash) refuses to start,
+                        because another container may still be serving the
+                        volume. Once no other container uses it, create or
+                        recreate the container with
+                        DOCUMENTDB_FORCE_REMOVE_STALE_POSTMASTER_PID=true
+                        (docker start cannot add it) to remove the file; it
+                        stays in force on every later start until removed.
   --documentdb-port     The port of the DocumentDB endpoint on the container. 
                         You still need to publish this port (e.g. -p ${d_gw}:${d_gw}).
                         Defaults to ${d_gw}
@@ -568,7 +580,7 @@ fi
 
 if [ "$START_POSTGRESQL" = "true" ]; then
     echo "Starting PostgreSQL server on port $POSTGRESQL_PORT..."
-    exec > >(tee -a "$ENTRYPOINT_LOG") 2> >(tee -a "$ENTRYPOINT_LOG" >&2)
+    exec 6>&2
     
     # Fix permissions on data directory to prevent "Permission denied" errors
     echo "Ensuring proper permissions on data directory: $DATA_PATH"
@@ -576,6 +588,9 @@ if [ "$START_POSTGRESQL" = "true" ]; then
         echo "Creating data directory: $DATA_PATH"
         sudo mkdir -p "$DATA_PATH"
     fi
+
+    claim_data_directory "$DATA_PATH" 2>&6
+    exec > >(tee -a "$ENTRYPOINT_LOG") 2> >(tee -a "$ENTRYPOINT_LOG" >&2)
 
     # Repair ownership only when the data directory (or the PG_VERSION file
     # inside it, which catches e.g. a root-restored backup under a correctly
@@ -606,9 +621,10 @@ if [ "$START_POSTGRESQL" = "true" ]; then
         echo "Setting permissions on $DATA_PATH"
         sudo chmod -R 750 "$DATA_PATH"
     else
-        # PostgreSQL refuses to start when the data directory itself is more
-        # permissive than 0750; keep that guarantee without a recursive walk.
-        chmod 750 "$DATA_PATH" 2>/dev/null || sudo chmod 750 "$DATA_PATH"
+        chmod 750 "$DATA_PATH" 2>/dev/null || sudo chmod 750 "$DATA_PATH" || {
+            echo "Error: cannot set permissions on data directory $DATA_PATH." | tee -a "$ENTRYPOINT_LOG" >&6
+            exit 1
+        }
     fi
 
     # Adopt the image-baked, pre-initialized data directory when one is present

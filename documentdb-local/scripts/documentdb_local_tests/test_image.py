@@ -237,6 +237,16 @@ def _cleanup_container(container: str | None) -> None:
     _docker("rm", "-f", container, check=False)
 
 
+def _stop_then_cleanup_container(container: str | None) -> None:
+    """Graceful stop before removal, for a container whose volume is booted
+    again: `docker rm -f` SIGKILLs and leaves postmaster.pid behind, which
+    the next boot refuses. The SIGTERM trap runs pg_ctl stop, which removes it."""
+    if not container:
+        return
+    _docker("stop", "-t", "60", container, check=False, timeout=120)
+    _cleanup_container(container)
+
+
 def _mongosh_exec(container: str, eval_code: str, *,
                   username: str, password: str,
                   port: int = DEFAULT_PORT,
@@ -1292,107 +1302,104 @@ PERSISTENCE_COLLECTION = "persistence_marker"
 PERSISTENCE_DOC_ID = "persistence-marker-1"
 
 
-@_SKIP_UNLESS_IMAGE
-class PersistenceTests(unittest.TestCase):
-    """Catches regressions where --data-path stops mapping to the
-    PostgreSQL data directory, or where data is wiped on second boot."""
+class _VolumeTestBase(unittest.TestCase):
+    """Per-test fixture for tests that boot several containers, one after
+    another or side by side, on a single named volume."""
 
-    image: str
-    volume: str | None
-    password: str
+    ENTRYPOINT_FLAGS: list[str] = ["--skip-init-data"]
+    EXTRA_RUN_ARGS: list[str] = []
+    NAME_TAG: str = "vol"
 
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls.image = os.environ["DOCUMENTDB_LOCAL_IMAGE"]
-        cls.password = _random_password()
-        cls.volume = None
+    def setUp(self) -> None:
+        self.image = os.environ["DOCUMENTDB_LOCAL_IMAGE"]
+        self.password = _random_password()
+        self.volume = f"docdb-image-test-vol-{uuid.uuid4().hex[:8]}"
+        self.containers: list[str] = []
 
-    @classmethod
-    def tearDownClass(cls) -> None:
-        if cls.volume:
-            _docker("volume", "rm", "-f", cls.volume, check=False)
-            cls.volume = None
+    def tearDown(self) -> None:
+        for container in self.containers:
+            _cleanup_container(container)
+        _docker("volume", "rm", "-f", self.volume, check=False)
 
-    def _start(self, name: str) -> str:
+    def _start(self, tag: str, *, run_args: list[str] | None = None) -> str:
+        name = f"{CONTAINER_PREFIX}-{self.NAME_TAG}-{tag}-{uuid.uuid4().hex[:6]}"
+        self.containers.append(name)
         return _start_container(
             self.image,
-            extra_run_args=[
-                "-v", f"{self.volume}:/data",
-            ],
+            extra_run_args=["-v", f"{self.volume}:/data",
+                            *self.EXTRA_RUN_ARGS, *(run_args or [])],
             entrypoint_flags=[
                 "--username", DEFAULT_USERNAME,
                 "--password", self.password,
                 "--data-path", "/data",
-                "--skip-init-data",
+                *self.ENTRYPOINT_FLAGS,
             ],
             name=name,
         )
 
+    def _stop(self, container: str) -> None:
+        """Clean stop between boots of the same volume; see _stop_then_cleanup_container."""
+        _stop_then_cleanup_container(container)
+        self.containers.remove(container)
+
+    def _count(self, db: str, collection: str, container: str,
+               query: str = "{}") -> str:
+        res = _mongosh_exec(
+            container,
+            f"db.getSiblingDB('{db}').{collection}.countDocuments({query})",
+            username=DEFAULT_USERNAME, password=self.password,
+        )
+        self.assertEqual(
+            res.returncode, 0,
+            f"countDocuments failed\nstdout:\n{res.stdout}\n"
+            f"stderr:\n{res.stderr}",
+        )
+        return _last_nonempty_line(res.stdout)
+
+
+@_SKIP_UNLESS_IMAGE
+class PersistenceTests(_VolumeTestBase):
+    """Catches regressions where --data-path stops mapping to the
+    PostgreSQL data directory, or where data is wiped on second boot."""
+
+    NAME_TAG = "persist"
+
     def test_doc_survives_container_recreate(self):
-        self.volume = f"docdb-image-test-vol-{uuid.uuid4().hex[:8]}"
-        # `docker run` will create the volume on first mount; no need
-        # to `docker volume create` explicitly. But we DO want it to
-        # exist for tearDownClass cleanup even if first boot fails -
-        # cleanup is best-effort via `volume rm -f`, so this is fine.
+        first_container = self._start("a")
+        _wait_for_ready(first_container)
 
-        first_container: str | None = None
-        second_container: str | None = None
-        try:
-            first_container = self._start(
-                f"{CONTAINER_PREFIX}-persist-a-{uuid.uuid4().hex[:6]}"
-            )
-            _wait_for_ready(first_container)
-
-            insert = _mongosh_exec(
-                first_container,
-                f"""const r = db.getSiblingDB('{PERSISTENCE_DB_NAME}')
+        insert = _mongosh_exec(
+            first_container,
+            f"""const r = db.getSiblingDB('{PERSISTENCE_DB_NAME}')
 .{PERSISTENCE_COLLECTION}
 .insertOne({{_id: '{PERSISTENCE_DOC_ID}', placed_at: new Date()}});
 print(r.acknowledged ? 'ack' : 'noack');""",
-                username=DEFAULT_USERNAME,
-                password=self.password,
-            )
-            self.assertEqual(
-                insert.returncode, 0,
-                f"insert on first container failed\n"
-                f"stdout:\n{insert.stdout}\nstderr:\n{insert.stderr}",
-            )
-            self.assertIn(
-                "ack", insert.stdout,
-                f"insert was not acknowledged on first container\n"
-                f"stdout:\n{insert.stdout}",
-            )
+            username=DEFAULT_USERNAME,
+            password=self.password,
+        )
+        self.assertEqual(
+            insert.returncode, 0,
+            f"insert on first container failed\n"
+            f"stdout:\n{insert.stdout}\nstderr:\n{insert.stderr}",
+        )
+        self.assertIn(
+            "ack", insert.stdout,
+            f"insert was not acknowledged on first container\n"
+            f"stdout:\n{insert.stdout}",
+        )
 
-            _cleanup_container(first_container)
-            first_container = None
+        self._stop(first_container)
 
-            second_container = self._start(
-                f"{CONTAINER_PREFIX}-persist-b-{uuid.uuid4().hex[:6]}"
-            )
-            _wait_for_ready(second_container)
+        second_container = self._start("b")
+        _wait_for_ready(second_container)
 
-            find = _mongosh_exec(
-                second_container,
-                f"db.getSiblingDB('{PERSISTENCE_DB_NAME}')"
-                f".{PERSISTENCE_COLLECTION}"
-                f".countDocuments({{_id: '{PERSISTENCE_DOC_ID}'}})",
-                username=DEFAULT_USERNAME,
-                password=self.password,
-            )
-            self.assertEqual(
-                find.returncode, 0,
-                f"countDocuments on second container failed\n"
-                f"stdout:\n{find.stdout}\nstderr:\n{find.stderr}",
-            )
-            self.assertEqual(
-                _last_nonempty_line(find.stdout), "1",
-                f"document with _id={PERSISTENCE_DOC_ID!r} not found on "
-                f"second container; --data-path persistence is broken.\n"
-                f"full stdout:\n{find.stdout}",
-            )
-        finally:
-            _cleanup_container(first_container)
-            _cleanup_container(second_container)
+        self.assertEqual(
+            self._count(PERSISTENCE_DB_NAME, PERSISTENCE_COLLECTION,
+                        second_container, f"{{_id: '{PERSISTENCE_DOC_ID}'}}"),
+            "1",
+            f"document with _id={PERSISTENCE_DOC_ID!r} not found on "
+            f"second container; --data-path persistence is broken.",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1404,41 +1411,15 @@ print(r.acknowledged ? 'ack' : 'noack');""",
 
 
 @_SKIP_UNLESS_IMAGE
-class SampleDataRestartIdempotencyTests(unittest.TestCase):
+class SampleDataRestartIdempotencyTests(_VolumeTestBase):
     """Regression guard for #612: a documentdb-local container with a
     persistent --data-path and --init-data true entered a restart loop on
     its second boot because the bundled sample-data seed re-ran and failed
     with a duplicate _id. The container must instead start cleanly and skip
     the already-loaded sample data."""
 
-    image: str
-    volume: str | None
-    password: str
-
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls.image = os.environ["DOCUMENTDB_LOCAL_IMAGE"]
-        cls.password = _random_password()
-        cls.volume = None
-
-    @classmethod
-    def tearDownClass(cls) -> None:
-        if cls.volume:
-            _docker("volume", "rm", "-f", cls.volume, check=False)
-            cls.volume = None
-
-    def _start(self, name: str) -> str:
-        return _start_container(
-            self.image,
-            extra_run_args=["-v", f"{self.volume}:/data"],
-            entrypoint_flags=[
-                "--username", DEFAULT_USERNAME,
-                "--password", self.password,
-                "--data-path", "/data",
-                "--init-data", "true",
-            ],
-            name=name,
-        )
+    ENTRYPOINT_FLAGS = ["--init-data", "true"]
+    NAME_TAG = "restart"
 
     def _sample_counts(self, container: str) -> dict[str, int]:
         result = _mongosh_exec(
@@ -1459,49 +1440,37 @@ class SampleDataRestartIdempotencyTests(unittest.TestCase):
         return json.loads(_last_nonempty_line(result.stdout))
 
     def test_second_boot_skips_seed_and_does_not_crash(self):
-        self.volume = f"docdb-image-test-vol-{uuid.uuid4().hex[:8]}"
-        first: str | None = None
-        second: str | None = None
-        try:
-            # First boot: seeds StoreData and writes the one-shot marker.
-            first = self._start(
-                f"{CONTAINER_PREFIX}-restart-a-{uuid.uuid4().hex[:6]}"
-            )
-            _wait_for_ready(first)
-            self.assertEqual(
-                self._sample_counts(first), SAMPLE_DATA_COUNTS,
-                "StoreData counts should match the expected sample sizes after first-boot seeding",
-            )
-            _cleanup_container(first)
-            first = None
+        # First boot: seeds StoreData and writes the one-shot marker.
+        first = self._start("a")
+        _wait_for_ready(first)
+        self.assertEqual(
+            self._sample_counts(first), SAMPLE_DATA_COUNTS,
+            "StoreData counts should match the expected sample sizes after first-boot seeding",
+        )
+        self._stop(first)
 
-            # Second boot on the SAME volume. Before the #612 fix this
-            # re-ran the seed, hit a duplicate _id, exited non-zero, and
-            # never emitted the readiness marker -> _wait_for_ready raises.
-            second = self._start(
-                f"{CONTAINER_PREFIX}-restart-b-{uuid.uuid4().hex[:6]}"
-            )
-            _wait_for_ready(second)
+        # Second boot on the SAME volume. Before the #612 fix this
+        # re-ran the seed, hit a duplicate _id, exited non-zero, and
+        # never emitted the readiness marker -> _wait_for_ready raises.
+        second = self._start("b")
+        _wait_for_ready(second)
 
-            logs = _docker("logs", second, check=False)
-            combined = logs.stdout + logs.stderr
-            self.assertIn(
-                "already initialized", combined,
-                "second boot should log that sample data was already "
-                "initialized and skip re-seeding",
-            )
-            self.assertNotIn(
-                "Sample data initialization failed", combined,
-                "second boot must not fail re-running the seed",
-            )
-            self.assertEqual(
-                self._sample_counts(second), SAMPLE_DATA_COUNTS,
-                "StoreData counts must still match the expected sample sizes (no "
-                "duplicate-key crash, no data loss) on second boot",
-            )
-        finally:
-            _cleanup_container(first)
-            _cleanup_container(second)
+        logs = _docker("logs", second, check=False)
+        combined = logs.stdout + logs.stderr
+        self.assertIn(
+            "already initialized", combined,
+            "second boot should log that sample data was already "
+            "initialized and skip re-seeding",
+        )
+        self.assertNotIn(
+            "Sample data initialization failed", combined,
+            "second boot must not fail re-running the seed",
+        )
+        self.assertEqual(
+            self._sample_counts(second), SAMPLE_DATA_COUNTS,
+            "StoreData counts must still match the expected sample sizes (no "
+            "duplicate-key crash, no data loss) on second boot",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1517,7 +1486,7 @@ CUSTOM_RESTART_COLLECTION = "restart_marker"
 
 
 @_SKIP_UNLESS_IMAGE
-class CustomInitDataRestartIdempotencyTests(unittest.TestCase):
+class CustomInitDataRestartIdempotencyTests(_VolumeTestBase):
     """Regression guard for #612 on the custom init-data path: a container
     with a persistent --data-path and a user-mounted --init-data-path whose
     script is NOT idempotent (a fixed-_id insertOne that fails on replay)
@@ -1526,19 +1495,16 @@ class CustomInitDataRestartIdempotencyTests(unittest.TestCase):
     non-zero, and looping under a restart policy. The single-boot
     CustomInitDataTests proves the script runs; this proves it is one-shot."""
 
-    image: str
-    volume: str | None
-    init_dir: str | None
-    password: str
+    # --skip-init-data disables only the bundled sample data; the custom
+    # --init-data-path still runs (it is gated solely on the presence of
+    # *.js files), which keeps this test focused on the custom path.
+    ENTRYPOINT_FLAGS = ["--init-data-path", "/init_doc_db.d", "--skip-init-data"]
+    NAME_TAG = "custom-restart"
 
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls.image = os.environ["DOCUMENTDB_LOCAL_IMAGE"]
-        cls.password = _random_password()
-        cls.volume = None
-        cls.init_dir = None
-
+    def setUp(self) -> None:
+        super().setUp()
         init_dir = tempfile.mkdtemp(prefix="docdb-image-custom-restart-")
+        self.addCleanup(shutil.rmtree, init_dir, ignore_errors=True)
         # Deliberately NON-idempotent: a fixed _id with no countDocuments
         # guard. Replaying this script against the already-seeded volume
         # raises a duplicate-key error -- the exact failure that drove the
@@ -1557,98 +1523,46 @@ print('custom restart marker placed');
         )
         os.chmod(init_dir, 0o755)
         os.chmod(script_path, 0o644)
-        cls.init_dir = init_dir
-
-    @classmethod
-    def tearDownClass(cls) -> None:
-        if cls.volume:
-            _docker("volume", "rm", "-f", cls.volume, check=False)
-            cls.volume = None
-        if cls.init_dir:
-            shutil.rmtree(cls.init_dir, ignore_errors=True)
-            cls.init_dir = None
-
-    def _start(self, name: str) -> str:
-        # --skip-init-data disables only the bundled sample data; the custom
-        # --init-data-path still runs (it is gated solely on the presence of
-        # *.js files), which keeps this test focused on the custom path.
-        return _start_container(
-            self.image,
-            extra_run_args=[
-                "-v", f"{self.volume}:/data",
-                "-v", f"{self.init_dir}:/init_doc_db.d:ro",
-            ],
-            entrypoint_flags=[
-                "--username", DEFAULT_USERNAME,
-                "--password", self.password,
-                "--data-path", "/data",
-                "--init-data-path", "/init_doc_db.d",
-                "--skip-init-data",
-            ],
-            name=name,
-        )
+        self.EXTRA_RUN_ARGS = ["-v", f"{init_dir}:/init_doc_db.d:ro"]
 
     def _marker_count(self, container: str) -> str:
-        result = _mongosh_exec(
-            container,
-            f"db.getSiblingDB('{CUSTOM_RESTART_DB_NAME}')"
-            f".{CUSTOM_RESTART_COLLECTION}.countDocuments({{}})",
-            username=DEFAULT_USERNAME,
-            password=self.password,
-        )
-        self.assertEqual(
-            result.returncode, 0,
-            f"countDocuments failed\nstdout:\n{result.stdout}\n"
-            f"stderr:\n{result.stderr}",
-        )
-        return _last_nonempty_line(result.stdout)
+        return self._count(CUSTOM_RESTART_DB_NAME, CUSTOM_RESTART_COLLECTION,
+                           container)
 
     def test_second_boot_skips_custom_init_and_does_not_crash(self):
-        self.volume = f"docdb-image-test-vol-{uuid.uuid4().hex[:8]}"
-        first: str | None = None
-        second: str | None = None
-        try:
-            # First boot: runs the custom script and writes the one-shot
-            # attempt + success markers under /data.
-            first = self._start(
-                f"{CONTAINER_PREFIX}-custom-restart-a-{uuid.uuid4().hex[:6]}"
-            )
-            _wait_for_ready(first)
-            self.assertEqual(
-                self._marker_count(first), "1",
-                "custom collection should have 1 doc after first-boot init",
-            )
-            _cleanup_container(first)
-            first = None
+        # First boot: runs the custom script and writes the one-shot
+        # attempt + success markers under /data.
+        first = self._start("a")
+        _wait_for_ready(first)
+        self.assertEqual(
+            self._marker_count(first), "1",
+            "custom collection should have 1 doc after first-boot init",
+        )
+        self._stop(first)
 
-            # Second boot on the SAME volume with the SAME non-idempotent
-            # script still mounted. Before the #612 custom-path fix this
-            # re-ran the script, hit a duplicate _id, exited non-zero, and
-            # never emitted the readiness marker -> _wait_for_ready raises.
-            second = self._start(
-                f"{CONTAINER_PREFIX}-custom-restart-b-{uuid.uuid4().hex[:6]}"
-            )
-            _wait_for_ready(second)
+        # Second boot on the SAME volume with the SAME non-idempotent
+        # script still mounted. Before the #612 custom-path fix this
+        # re-ran the script, hit a duplicate _id, exited non-zero, and
+        # never emitted the readiness marker -> _wait_for_ready raises.
+        second = self._start("b")
+        _wait_for_ready(second)
 
-            logs = _docker("logs", second, check=False)
-            combined = logs.stdout + logs.stderr
-            self.assertIn(
-                "already initialized", combined,
-                "second boot should log that custom data was already "
-                "initialized and skip re-running the script",
-            )
-            self.assertNotIn(
-                "Custom data initialization failed", combined,
-                "second boot must not fail re-running the custom script",
-            )
-            self.assertEqual(
-                self._marker_count(second), "1",
-                "custom collection must still have exactly 1 doc (no "
-                "duplicate-key crash, no data loss) on second boot",
-            )
-        finally:
-            _cleanup_container(first)
-            _cleanup_container(second)
+        logs = _docker("logs", second, check=False)
+        combined = logs.stdout + logs.stderr
+        self.assertIn(
+            "already initialized", combined,
+            "second boot should log that custom data was already "
+            "initialized and skip re-running the script",
+        )
+        self.assertNotIn(
+            "Custom data initialization failed", combined,
+            "second boot must not fail re-running the custom script",
+        )
+        self.assertEqual(
+            self._marker_count(second), "1",
+            "custom collection must still have exactly 1 doc (no "
+            "duplicate-key crash, no data loss) on second boot",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1857,6 +1771,219 @@ class BakedFingerprintSeamTests(unittest.TestCase):
         # The identifier never changes; the discriminators are state and/or
         # the checkpoint location (a clean stop advances the checkpoint).
         self.assertEqual(marker_lines[0], live_lines[0], res.stdout)
+
+
+# ---------------------------------------------------------------------------
+# 12. Data directory interlock - the entrypoint holds an flock on the data
+#     directory and refuses to start over a postmaster.pid it cannot vouch
+#     for. Same-namespace unit tests cannot show what a second container
+#     sees, so these run real containers on one volume.
+# ---------------------------------------------------------------------------
+
+INTERLOCK_DB_NAME = "image_smoke_interlock_db"
+INTERLOCK_COLLECTION = "interlock_marker"
+IMAGE_ENTRYPOINT = "/home/documentdb/gateway/scripts/emulator_entrypoint.sh"
+# The exact call line in the image's entrypoint; a holder with it removed
+# behaves like an image that predates the interlock.
+CLAIM_CALL = '    claim_data_directory "$DATA_PATH" 2>&6\n'
+LOCK_HELD_MSG = "already using the data directory"
+PIDFILE_REFUSED_MSG = "DOCUMENTDB_FORCE_REMOVE_STALE_POSTMASTER_PID"
+PIDFILE_REMOVED_MSG = "Warning: removing /data/postmaster.pid"
+
+
+@_SKIP_UNLESS_IMAGE
+class DataDirectoryInterlockTests(_VolumeTestBase):
+
+    NAME_TAG = "lock"
+
+    def _wait_for_exit(self, container: str) -> tuple[int, str]:
+        """Block until the container exits; return its status and logs."""
+        waited = _docker("wait", container, timeout=DEFAULT_READY_TIMEOUT)
+        logs = _docker("logs", container, check=False)
+        return int(waited.stdout.strip()), logs.stdout + logs.stderr
+
+    def _assert_refused(self, container: str, message: str) -> None:
+        status, logs = self._wait_for_exit(container)
+        self.assertNotEqual(status, 0, f"container should have refused to start\n{logs}")
+        self.assertIn(message, logs)
+
+    def _insert(self, container: str, doc_id: str) -> None:
+        res = _mongosh_exec(
+            container,
+            f"const r = db.getSiblingDB('{INTERLOCK_DB_NAME}').{INTERLOCK_COLLECTION}"
+            f".insertOne({{_id: '{doc_id}'}}); print(r.acknowledged ? 'ack' : 'noack');",
+            username=DEFAULT_USERNAME, password=self.password,
+        )
+        self.assertEqual(res.returncode, 0, _combined_logs(res))
+        self.assertIn("ack", res.stdout)
+
+    def _assert_pidfile_intact(self, container: str) -> None:
+        res = _docker("exec", container, "test", "-f", "/data/postmaster.pid", check=False)
+        self.assertEqual(res.returncode, 0, "the holder's postmaster.pid was removed")
+
+    def _data_metadata(self, container: str) -> str:
+        return _docker(
+            "exec", container, "stat", "-c", "%u:%g %a", "/data", "/data/PG_VERSION",
+        ).stdout.strip()
+
+    def _different_uid_run_args(self) -> list[str]:
+        script_dir = pathlib.Path(tempfile.mkdtemp(prefix="docdb-image-different-uid-"))
+        self.addCleanup(shutil.rmtree, script_dir, ignore_errors=True)
+        script = script_dir / "entrypoint.sh"
+        script.write_text(
+            "#!/bin/bash\n"
+            "set -euo pipefail\n"
+            "uid=$(($(id -u documentdb) + 10000))\n"
+            "gid=$(($(id -g documentdb) + 10000))\n"
+            'groupmod -g "$gid" documentdb\n'
+            'usermod -u "$uid" -g "$gid" documentdb\n'
+            "chown documentdb:documentdb /var/run/postgresql\n"
+            "export HOME=/home/documentdb USER=documentdb LOGNAME=documentdb\n"
+            'exec setpriv --reuid="$uid" --regid="$gid" --init-groups '
+            f'bash {IMAGE_ENTRYPOINT} "$@"\n',
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        return [
+            "--user", "root", "--entrypoint", "/different-uid-entrypoint.sh",
+            "-v", f"{script}:/different-uid-entrypoint.sh:ro",
+        ]
+
+    def test_a_root_owned_private_volume_is_claimed_before_repair(self):
+        _docker(
+            "run", "--rm", "--user", "root", "--entrypoint", "sh",
+            "-v", f"{self.volume}:/data", self.image,
+            "-c", "chown root:root /data && chmod 700 /data",
+            timeout=120,
+        )
+
+        container = self._start("root")
+        _wait_for_ready(container)
+
+        self._insert(container, "after-repair")
+        contender = self._start("after-root-repair")
+        self._assert_refused(contender, LOCK_HELD_MSG)
+        self._insert(container, "root-repaired-holder-still-serving")
+
+    def test_a_second_container_on_an_in_use_volume_is_refused(self):
+        holder = self._start("holder")
+        _wait_for_ready(holder)
+
+        contender = self._start("contender")
+        self._assert_refused(contender, LOCK_HELD_MSG)
+
+        self._insert(holder, "holder-still-serving")
+        self._assert_pidfile_intact(holder)
+
+    def test_a_losing_contender_does_not_rewrite_the_served_volume(self):
+        """A forced-repair contender that loses the lock used to chmod -R the
+        live cluster before exiting (PG_VERSION 600 -> 750)."""
+        holder = self._start("holder")
+        _wait_for_ready(holder)
+        _docker("exec", holder, "chmod", "700", "/data")
+        before = self._data_metadata(holder)
+        self.assertEqual(before.splitlines()[0].split()[-1], "700")
+        self.assertEqual(before.splitlines()[1].split()[-1], "600")
+
+        for tag, run_args in (
+            ("same-uid", []),
+            ("different-uid", self._different_uid_run_args()),
+        ):
+            with self.subTest(contender=tag):
+                contender = self._start(
+                    tag, run_args=[*run_args, "-e", "DOCUMENTDB_FORCE_OWNERSHIP_REPAIR=true"],
+                )
+                self._assert_refused(contender, LOCK_HELD_MSG)
+                self.assertEqual(
+                    self._data_metadata(holder), before,
+                    "a losing contender rewrote the holder's directory or files",
+                )
+                self._assert_pidfile_intact(holder)
+                self._insert(holder, f"still-serving-after-{tag}")
+
+    def test_a_holder_that_takes_no_lock_is_not_taken_over(self):
+        """The pidfile of a live container that predates the interlock has no
+        flock behind it. A free flock must not be read as proof of staleness."""
+        shipped = _docker("run", "--rm", "--entrypoint", "cat", self.image,
+                          IMAGE_ENTRYPOINT, timeout=120).stdout
+        self.assertEqual(
+            shipped.count(CLAIM_CALL), 1,
+            "the image's entrypoint does not contain the expected claim call; "
+            "update CLAIM_CALL so this test keeps simulating a non-locking holder",
+        )
+        script_dir = pathlib.Path(tempfile.mkdtemp(prefix="docdb-image-noclaim-"))
+        self.addCleanup(shutil.rmtree, script_dir, ignore_errors=True)
+        script = script_dir / "emulator_entrypoint.sh"
+        script.write_text(shipped.replace(
+            CLAIM_CALL, "    : claim removed to simulate an image without the interlock\n"
+        ), encoding="utf-8")
+        script.chmod(0o755)
+
+        holder = self._start("noclaim", run_args=["-v", f"{script}:{IMAGE_ENTRYPOINT}:ro"])
+        _wait_for_ready(holder)
+        _docker("exec", holder, "chmod", "700", "/data")
+        before = self._data_metadata(holder)
+
+        for tag, run_args in (
+            ("same-uid", []),
+            ("different-uid", self._different_uid_run_args()),
+        ):
+            with self.subTest(contender=tag):
+                contender = self._start(tag, run_args=run_args)
+                self._assert_refused(contender, PIDFILE_REFUSED_MSG)
+                self.assertEqual(self._data_metadata(holder), before)
+                self._insert(holder, f"unlocked-holder-still-serving-after-{tag}")
+                self._assert_pidfile_intact(holder)
+
+    def test_inactive_volume_is_repaired_for_a_different_runtime_uid(self):
+        first = self._start("original-uid")
+        _wait_for_ready(first)
+        self._insert(first, "before-uid-change")
+        before = self._data_metadata(first)
+        self._stop(first)
+
+        replacement = self._start("replacement-uid", run_args=self._different_uid_run_args())
+        _wait_for_ready(replacement)
+        self.assertNotEqual(self._data_metadata(replacement), before)
+        self.assertEqual(
+            self._count(INTERLOCK_DB_NAME, INTERLOCK_COLLECTION, replacement,
+                        "{_id: 'before-uid-change'}"),
+            "1",
+        )
+
+        contender = self._start("original-uid-contender")
+        self._assert_refused(contender, LOCK_HELD_MSG)
+        self._insert(replacement, "replacement-holder-still-serving")
+        self._stop(replacement)
+
+        restarted = self._start("after-uid-repair-stop")
+        _wait_for_ready(restarted)
+        self.assertEqual(
+            self._count(INTERLOCK_DB_NAME, INTERLOCK_COLLECTION, restarted,
+                        "{_id: 'before-uid-change'}"),
+            "1",
+        )
+
+    def test_an_unclean_stop_is_recovered_only_with_the_override(self):
+        first = self._start("first")
+        _wait_for_ready(first)
+        self._insert(first, "before-kill")
+        _docker("kill", first, timeout=60)
+
+        refused = self._start("refused")
+        self._assert_refused(refused, PIDFILE_REFUSED_MSG)
+
+        recovered = self._start(
+            "recovered", run_args=["-e", "DOCUMENTDB_FORCE_REMOVE_STALE_POSTMASTER_PID=true"],
+        )
+        _wait_for_ready(recovered)
+        logs = _docker("logs", recovered, check=False)
+        self.assertIn(PIDFILE_REMOVED_MSG, logs.stdout + logs.stderr)
+        self.assertEqual(
+            self._count(INTERLOCK_DB_NAME, INTERLOCK_COLLECTION, recovered,
+                        "{_id: 'before-kill'}"),
+            "1",
+        )
 
 
 if __name__ == "__main__":

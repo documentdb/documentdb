@@ -1,8 +1,10 @@
+import fcntl
 import getpass
 import json
 import os
 import re
 import secrets
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -21,6 +23,7 @@ _TOAST_IGNORED_MARKER = "is ignored because this container is not starting Postg
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ENTRYPOINT = REPO_ROOT / "documentdb-local" / "scripts" / "emulator_entrypoint.sh"
+CLAIM_HELPER = ENTRYPOINT.with_name("documentdb_claim_data_directory.sh")
 
 # Control-data fingerprint for the baked-template pristineness proof
 # (documentdb_prepare_data_directory.sh): the marker records these normalized
@@ -118,6 +121,9 @@ class EmulatorEntrypointTests(unittest.TestCase):
             """#!/bin/sh
 if [ "$1" = "chown" ]; then
   exit 0
+fi
+if [ "$1" = "-E" ]; then
+  exec /usr/bin/sudo "$@"
 fi
 exec "$@"
 """,
@@ -339,6 +345,9 @@ json.dump(data, sys.stdout)
         if not pg_conf.exists():
             pg_conf.write_text("port = 9712\n", encoding="utf-8")
             pg_conf.chmod(0o600)
+        # The stub server is never stopped, so a previous boot's pidfile would
+        # make the next boot refuse the data directory as possibly in use.
+        (self.data_dir / "postmaster.pid").unlink(missing_ok=True)
         self._write_exec(
             self.gateway_scripts / "start_oss_server.sh",
             f"""#!/bin/sh
@@ -1683,6 +1692,7 @@ echo oss-server-stub-started
         )
 
     def _configure_postgres_stubs(self, psql_exit_code=0):
+        (self.data_dir / "postmaster.pid").unlink(missing_ok=True)
         sql_capture = self.root / "psql-input.sql"
         # Append, never truncate: any earlier psql call the entrypoint makes
         # (e.g. TOAST maintenance) must not wipe the SQL a later call piped
@@ -1899,6 +1909,7 @@ esac
         overlayfs copy-up of the whole cluster) must be skipped."""
         self._configure_postgres_stubs()
         (self.data_dir / "PG_VERSION").write_text("17\n", encoding="utf-8")
+        self.data_dir.chmod(0o700)
         user = getpass.getuser()
 
         result = self._run_entrypoint(
@@ -1915,6 +1926,101 @@ esac
             self.data_dir.stat().st_mode & 0o777, 0o750,
             "the fast path must still pin the data directory itself to 0750",
         )
+
+    def test_refused_start_preserves_data_directory_metadata(self):
+        self._configure_postgres_stubs()
+        pg_version = self.data_dir / "PG_VERSION"
+        pg_version.write_text("17\n", encoding="utf-8")
+        pg_version.chmod(0o600)
+        pidfile = self.data_dir / "postmaster.pid"
+        pidfile.write_text("999999\n", encoding="utf-8")
+        user = getpass.getuser()
+
+        def metadata():
+            return [
+                (s.st_uid, s.st_gid, stat.S_IMODE(s.st_mode))
+                for s in (path.stat() for path in (self.data_dir, pg_version))
+            ]
+
+        for held_lock in (False, True):
+            for force_repair in ("false", "true"):
+                with self.subTest(held_lock=held_lock, force_repair=force_repair):
+                    self.data_dir.chmod(0o700)
+                    before = metadata()
+                    fd = os.open(self.data_dir, os.O_RDONLY)
+                    try:
+                        if held_lock:
+                            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        result = self._run_entrypoint(extra_env={
+                            "START_POSTGRESQL": "true",
+                            "DOCUMENTDB_RUNTIME_USER": user,
+                            "DOCUMENTDB_RUNTIME_GROUP": user,
+                            "DOCUMENTDB_FORCE_OWNERSHIP_REPAIR": force_repair,
+                        })
+                    finally:
+                        os.close(fd)
+
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn(
+                        "already using the data directory" if held_lock
+                        else "DOCUMENTDB_FORCE_REMOVE_STALE_POSTMASTER_PID",
+                        result.stderr,
+                    )
+                    self.assertEqual(metadata(), before)
+                    self.assertEqual(pidfile.read_text(encoding="utf-8"), "999999\n")
+                    self.assertNotIn("oss-server-stub-started", result.stdout)
+
+    def test_missing_owner_access_is_repaired_before_claim(self):
+        self._configure_postgres_stubs()
+        (self.data_dir / "PG_VERSION").write_text("17\n", encoding="utf-8")
+        user = getpass.getuser()
+
+        for mode in (0o000, 0o300, 0o400):
+            with self.subTest(mode=oct(mode)):
+                (self.data_dir / "postmaster.pid").unlink(missing_ok=True)
+                self.data_dir.chmod(mode)
+                try:
+                    result = self._run_entrypoint(extra_env={
+                        "START_POSTGRESQL": "true",
+                        "DOCUMENTDB_RUNTIME_USER": user,
+                        "DOCUMENTDB_RUNTIME_GROUP": user,
+                    })
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(stat.S_IMODE(self.data_dir.stat().st_mode), 0o750)
+                finally:
+                    self.data_dir.chmod(0o700)
+
+    @unittest.skipIf(os.geteuid() == 0, "directory access permissions do not restrict root")
+    def test_directory_permission_repair_failure_aborts_startup(self):
+        self._configure_postgres_stubs()
+        (self.data_dir / "PG_VERSION").write_text("17\n", encoding="utf-8")
+        self._write_exec(
+            self.bin_dir / "chmod",
+            f"""#!/bin/sh
+for arg in "$@"; do
+    if [ "$arg" = "{self.data_dir}" ]; then exit 1; fi
+done
+exec /bin/chmod "$@"
+""",
+        )
+        user = getpass.getuser()
+        for mode, message in (
+            (0o300, "cannot set permissions on data directory"),
+            (0o700, "cannot set permissions on data directory"),
+        ):
+            with self.subTest(mode=oct(mode)):
+                self.data_dir.chmod(mode)
+                try:
+                    result = self._run_entrypoint(extra_env={
+                        "START_POSTGRESQL": "true",
+                        "DOCUMENTDB_RUNTIME_USER": user,
+                        "DOCUMENTDB_RUNTIME_GROUP": user,
+                    })
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn(message, result.stderr)
+                    self.assertNotIn("oss-server-stub-started", result.stdout)
+                finally:
+                    self.data_dir.chmod(0o700)
 
     def test_failed_oss_server_bootstrap_aborts_immediately(self):
         """A failing start_oss_server.sh must abort the entrypoint with its
@@ -3818,6 +3924,300 @@ class PrepareDataDirectoryContractTests(unittest.TestCase):
     def test_entrypoint_aborts_on_unexpected_status(self):
         text = ENTRYPOINT.read_text(encoding="utf-8")
         self.assertIn("preparing the data directory failed", text)
+
+
+@unittest.skipUnless(shutil.which("flock"), "claim_data_directory needs flock(1)")
+class ClaimDataDirectoryTests(unittest.TestCase):
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+        self.data = self.root / "data"
+        self.data.mkdir()
+        self.pidfile = self.data / "postmaster.pid"
+        self._helpers = []
+
+    def tearDown(self):
+        for proc in self._helpers:
+            if proc.poll() is None:
+                proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=10)
+        self.temp_dir.cleanup()
+
+    def _function(self):
+        match = re.search(
+            r"^claim_data_directory\(\) \{\n.*?^\}$",
+            CLAIM_HELPER.read_text(encoding="utf-8"),
+            flags=re.DOTALL | re.MULTILINE,
+        )
+        self.assertIsNotNone(match, "could not locate claim_data_directory()")
+        return match.group(0) + "\n"
+
+    def _claim(self, data_dir=None, prefix=""):
+        target = self.data if data_dir is None else data_dir
+        return subprocess.run(
+            ["bash", "-c", self._function() + prefix + 'claim_data_directory "%s"\necho claimed\n' % target],
+            text=True,
+            capture_output=True,
+            timeout=30,
+            stdin=subprocess.DEVNULL,
+        )
+
+    def _write_pidfile(self, pid):
+        self.pidfile.write_text(
+            "%s\n%s\n1700000000\n9712\n/var/run/postgresql\n" % (pid, self.data),
+            encoding="utf-8",
+        )
+
+    OVERRIDE = "export DOCUMENTDB_FORCE_REMOVE_STALE_POSTMASTER_PID=true\n"
+
+    def _spawn_holder(self):
+        out = self.root / "holder.log"
+        with out.open("w") as sink:
+            proc = subprocess.Popen(
+                ["bash", "-c", self._function() + 'claim_data_directory "%s"\necho held\nexec sleep 300\n' % self.data],
+                stdout=sink,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+            )
+        self._helpers.append(proc)
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            if "held" in out.read_text(errors="replace"):
+                return proc
+            if proc.poll() is not None:
+                break
+            time.sleep(0.05)
+        self.fail("holder never claimed: %s" % out.read_text(errors="replace"))
+
+    def test_a_second_container_on_an_in_use_volume_is_refused(self):
+        holder = self._spawn_holder()
+        self._write_pidfile(999999)
+
+        result = self._claim()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("already using the data directory", result.stderr)
+        self.assertNotIn("claimed", result.stdout)
+        self.assertTrue(
+            self.pidfile.exists(),
+            "the running container's lock file must survive a refused start",
+        )
+        self.assertIsNone(holder.poll(), "the running container must be unaffected")
+
+    def test_a_crashed_holder_releases_the_directory_for_the_next_start(self):
+        holder = self._spawn_holder()
+        holder.kill()
+        holder.wait(timeout=10)
+        self._write_pidfile(999999)
+
+        refused = self._claim()
+        self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+        self.assertIn("DOCUMENTDB_FORCE_REMOVE_STALE_POSTMASTER_PID", refused.stderr)
+        self.assertTrue(self.pidfile.exists(), "a free flock alone must not remove the pidfile")
+
+        forced = self._claim(prefix=self.OVERRIDE)
+        self.assertEqual(forced.returncode, 0, forced.stdout + forced.stderr)
+        self.assertIn("Warning: removing", forced.stderr)
+        self.assertIn("claimed", forced.stdout)
+        self.assertFalse(self.pidfile.exists(), "the override must remove the pidfile")
+
+    def test_claiming_leaves_a_fresh_data_directory_empty(self):
+        result = self._claim()
+
+        self.assertIn("claimed", result.stdout, result.stderr)
+        self.assertEqual(
+            sorted(p.name for p in self.data.iterdir()),
+            [],
+            "claiming must not create anything start_oss_server.sh would trip on",
+        )
+
+    def test_inherited_directory_lock_is_retained(self):
+        result = self._claim(
+            prefix=f'exec 201<"{self.data}"\nflock -n 201\nexec 200<&201\n',
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("claimed", result.stdout)
+
+    def test_inherited_fd_for_another_directory_does_not_bypass_the_lock(self):
+        holder = self._spawn_holder()
+        other = self.root / "other"
+        other.mkdir()
+
+        result = self._claim(prefix=f'exec 200<"{other}"\n')
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("already using the data directory", result.stderr)
+        self.assertIsNone(holder.poll())
+
+    def test_an_unopenable_data_directory_is_refused(self):
+        result = self._claim(data_dir=self.root / "missing")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn("claimed", result.stdout)
+
+    def test_any_existing_pid_file_is_refused_without_the_override(self):
+        """The PID cannot be judged from inside a container: a recycled PID
+        looks alive and another namespace's postmaster looks dead. Only the
+        operator can vouch that no other container is serving the volume."""
+        for pid in (999999, os.getpid()):
+            with self.subTest(pid=pid):
+                self._write_pidfile(pid)
+
+                result = self._claim()
+
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("DOCUMENTDB_FORCE_REMOVE_STALE_POSTMASTER_PID", result.stderr)
+                self.assertIn(str(pid), result.stderr)
+                self.assertNotIn("claimed", result.stdout)
+                self.assertTrue(self.pidfile.exists())
+
+    @unittest.skipIf(os.geteuid() == 0, "directory write permissions do not restrict root")
+    def test_readonly_directory_is_writable_only_after_authorized_recovery(self):
+        holder = self._spawn_holder()
+        self._write_pidfile(999999)
+        self.data.chmod(0o500)
+        try:
+            locked = self._claim(prefix=self.OVERRIDE)
+            self.assertEqual(locked.returncode, 1, locked.stdout + locked.stderr)
+            self.assertIn("already using the data directory", locked.stderr)
+            self.assertEqual(stat.S_IMODE(self.data.stat().st_mode), 0o500)
+            self.assertTrue(self.pidfile.exists())
+
+            holder.terminate()
+            holder.wait(timeout=10)
+            refused = self._claim()
+            self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+            self.assertIn("DOCUMENTDB_FORCE_REMOVE_STALE_POSTMASTER_PID", refused.stderr)
+            self.assertEqual(stat.S_IMODE(self.data.stat().st_mode), 0o500)
+            self.assertTrue(self.pidfile.exists())
+
+            failed_repair = self._claim(
+                prefix=self.OVERRIDE + "chmod() { return 1; }\nsudo() { return 1; }\n",
+            )
+            self.assertEqual(
+                failed_repair.returncode, 1, failed_repair.stdout + failed_repair.stderr,
+            )
+            self.assertIn("writable to remove stale", failed_repair.stderr)
+            self.assertEqual(stat.S_IMODE(self.data.stat().st_mode), 0o500)
+            self.assertTrue(self.pidfile.exists())
+
+            recovered = self._claim(prefix=self.OVERRIDE)
+            self.assertEqual(recovered.returncode, 0, recovered.stdout + recovered.stderr)
+            self.assertIn("Warning: removing", recovered.stderr)
+            self.assertEqual(stat.S_IMODE(self.data.stat().st_mode), 0o700)
+            self.assertFalse(self.pidfile.exists())
+        finally:
+            self.data.chmod(0o700)
+
+    def test_truncated_pid_file_is_refused(self):
+        self.pidfile.write_text("", encoding="utf-8")
+
+        result = self._claim()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertTrue(self.pidfile.exists())
+
+    def test_missing_pid_file_is_a_noop(self):
+        result = self._claim()
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("claimed", result.stdout)
+        self.assertEqual(result.stderr, "")
+
+    def test_the_override_never_overrides_a_held_lock(self):
+        holder = self._spawn_holder()
+        self._write_pidfile(999999)
+
+        result = self._claim(prefix=self.OVERRIDE)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("already using the data directory", result.stderr)
+        self.assertTrue(self.pidfile.exists())
+        self.assertIsNone(holder.poll(), "the running container must be unaffected")
+
+    def test_trailing_slash_data_path_still_refuses_a_pid_file(self):
+        self._write_pidfile(999999)
+
+        result = self._claim(data_dir="%s/" % self.data)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertTrue(self.pidfile.exists())
+
+    def test_unremovable_stale_lock_fails_loudly(self):
+        self._write_pidfile(999999)
+
+        result = self._claim(prefix=self.OVERRIDE + "rm() { return 1; }\n")
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("cannot remove stale", result.stderr)
+        self.assertNotIn("claimed", result.stdout)
+
+    def test_the_claim_precedes_ownership_and_permission_repair(self):
+        text = ENTRYPOINT.read_text(encoding="utf-8")
+        offsets = {
+            "claim_data_directory call": text.find('claim_data_directory "$DATA_PATH"'),
+            "recursive chown of the data directory": text.find(
+                'sudo chown -R "${DOCUMENTDB_RUNTIME_USER}:'
+                '${DOCUMENTDB_RUNTIME_GROUP}" "$DATA_PATH"'
+            ),
+            "start_oss_server.sh invocation": text.find(
+                '"$SCRIPT_DIR/start_oss_server.sh"'
+            ),
+            "readiness loop": text.find('while [ ! -f "$DATA_PATH/postmaster.pid" ]'),
+        }
+        for label, offset in offsets.items():
+            self.assertNotEqual(offset, -1, "%s not found" % label)
+        ordered = list(offsets)
+        self.assertEqual(
+            sorted(ordered, key=offsets.get),
+            ordered,
+            "boot steps are out of order: %s" % offsets,
+        )
+        self.assertNotIn("clear_stale_postmaster_pid", text)
+        self.assertNotIn("PRESERVED_POSTMASTER_PID", text)
+        self.assertNotIn("/proc/$pid/comm", text)
+
+    def test_refusals_bypass_the_stderr_tee(self):
+        """Messages written through `exec 2> >(tee ...)` are lost when PID 1
+        exits right behind them, and a refusal is the operator's only
+        explanation of why the container stopped coming up."""
+        text = ENTRYPOINT.read_text(encoding="utf-8")
+        saved_at = text.find("exec 6>&2\n")
+        tee_at = text.find('exec > >(tee -a "$ENTRYPOINT_LOG")')
+        self.assertNotEqual(saved_at, -1, "original stderr is not saved on fd 6")
+        self.assertLess(saved_at, tee_at, "fd 6 must be saved before the tee redirect")
+        self.assertEqual(text.count('claim_data_directory "$DATA_PATH" 2>&6'), 1)
+
+    def test_the_directory_is_only_claimed_when_this_container_starts_postgresql(self):
+        text = ENTRYPOINT.read_text(encoding="utf-8")
+        block_at = text.find('if [ "$START_POSTGRESQL" = "true" ]; then')
+        self.assertNotEqual(block_at, -1, "START_POSTGRESQL block not found")
+        self.assertLess(block_at, text.find('claim_data_directory "$DATA_PATH"'))
+        self.assertEqual(text.count('claim_data_directory "'), 1)
+
+    def test_the_directory_is_claimed_before_the_data_directory_is_prepared(self):
+        """documentdb_prepare_data_directory.sh can copy a baked template over
+        the volume or wipe it for a clean re-initialization, so the claim has to
+        be held before it runs. The upstream ordering test cannot cover this:
+        that script does not exist upstream, so a future reordering that moved
+        the prepare call above the claim would go uncaught."""
+        text = ENTRYPOINT.read_text(encoding="utf-8")
+        claim_at = text.find('claim_data_directory "$DATA_PATH"')
+        prepare_at = text.find("documentdb_prepare_data_directory.sh")
+        self.assertNotEqual(claim_at, -1, "claim_data_directory call not found")
+        self.assertNotEqual(prepare_at, -1, "prepare-data-directory call not found")
+        self.assertLess(
+            claim_at,
+            prepare_at,
+            "the data directory is prepared before it is claimed: two containers "
+            "could each seed or wipe the same volume before either holds the lock",
+        )
 
 
 if __name__ == "__main__":
