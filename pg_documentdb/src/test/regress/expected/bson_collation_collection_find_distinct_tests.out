@@ -1,0 +1,490 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_core;
+SET documentdb.next_collection_id TO 782200;
+SET documentdb.next_collection_index_id TO 782200;
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_api.create_collection('collation_find_db', 'default_match');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+UPDATE documentdb_api_catalog.collections
+SET options = '{ "collation": { "locale": "fr", "strength": 1 } }'::documentdb_core.bson
+WHERE database_name = 'collation_find_db' AND collection_name = 'default_match';
+SELECT documentdb_api.insert_one(
+    'collation_find_db', 'default_match', '{ "_id": 1, "value": "cafe" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_find_db', 'default_match', '{ "_id": 2, "value": "CAFÉ" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_find_db', 'default_match', '{ "_id": 3, "value": "CAFE" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- An omitted or empty command collation inherits the collection default.
+SELECT document FROM bson_aggregation_find(
+    'collation_find_db',
+    '{ "find": "default_match", "filter": { "value": "cafe" }, "sort": { "_id": 1 } }');
+                       document                       
+------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : "cafe" }
+ { "_id" : { "$numberInt" : "2" }, "value" : "CAFÉ" }
+ { "_id" : { "$numberInt" : "3" }, "value" : "CAFE" }
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_find(
+    'collation_find_db',
+    '{ "find": "default_match", "filter": { "value": "cafe" }, "sort": { "_id": 1 } }')
+$cmd$);
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level1'::text)) NULLS FIRST
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: collation_find_db.default_match
+         indexName: _id_
+         ->  Bitmap Heap Scan on documents_782201 collection
+               Recheck Cond: (shard_key_value = '782201'::bigint)
+               Filter: (document @= '{ "value" : "cafe", "collation" : "fr-u-ks-level1" }'::bson)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (shard_key_value = '782201'::bigint)
+(10 rows)
+
+SELECT document FROM bson_aggregation_find(
+    'collation_find_db',
+    '{ "find": "default_match", "filter": { "value": "cafe" }, "sort": { "_id": 1 }, "collation": {} }');
+                       document                       
+------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : "cafe" }
+ { "_id" : { "$numberInt" : "2" }, "value" : "CAFÉ" }
+ { "_id" : { "$numberInt" : "3" }, "value" : "CAFE" }
+(3 rows)
+
+-- An explicit command collation takes precedence over the collection default.
+SELECT document FROM bson_aggregation_find(
+    'collation_find_db',
+    '{ "find": "default_match", "filter": { "value": "cafe" }, "sort": { "_id": 1 }, "collation": { "locale": "simple" } }');
+                       document                       
+------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : "cafe" }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_find(
+    'collation_find_db',
+    '{ "find": "default_match", "filter": { "value": "cafe" }, "sort": { "_id": 1 }, "collation": { "locale": "simple" } }')
+$cmd$);
+                                     run_explain_and_trim                                     
+----------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: collation_find_db.default_match
+         indexName: _id_
+         ->  Bitmap Heap Scan on documents_782201 collection
+               Recheck Cond: (shard_key_value = '782201'::bigint)
+               Filter: (document @= '{ "value" : "cafe" }'::bson)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (shard_key_value = '782201'::bigint)
+(10 rows)
+
+SELECT document FROM bson_aggregation_find(
+    'collation_find_db',
+    '{ "find": "default_match", "filter": { "value": "cafe" }, "sort": { "_id": 1 }, "collation": { "locale": "fr", "strength": 2 } }');
+                       document                       
+------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : "cafe" }
+ { "_id" : { "$numberInt" : "3" }, "value" : "CAFE" }
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_find(
+    'collation_find_db',
+    '{ "find": "default_match", "filter": { "value": "cafe" }, "sort": { "_id": 1 }, "collation": { "locale": "fr", "strength": 2 } }')
+$cmd$);
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level2'::text)) NULLS FIRST
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: collation_find_db.default_match
+         indexName: _id_
+         ->  Bitmap Heap Scan on documents_782201 collection
+               Recheck Cond: (shard_key_value = '782201'::bigint)
+               Filter: (document @= '{ "value" : "cafe", "collation" : "fr-u-ks-level2" }'::bson)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (shard_key_value = '782201'::bigint)
+(10 rows)
+
+-- Distinct inherits the collection default for both filtering and value comparison.
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+    'collation_find_db',
+    '{ "distinct": "default_match", "key": "value" }');
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+    'collation_find_db',
+    '{ "distinct": "default_match", "key": "value" }')
+$cmd$);
+                                                 run_explain_and_trim                                                 
+----------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'value'::text, 'fr-u-ks-level1'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, 'value'::text, 'fr-u-ks-level1'::text))
+         ->  Sort
+               Output: (bson_distinct_unwind(collection.document, 'value'::text, 'fr-u-ks-level1'::text))
+               Sort Key: (bson_distinct_unwind(collection.document, 'value'::text, 'fr-u-ks-level1'::text)) USING <<<
+               ->  ProjectSet
+                     Output: bson_distinct_unwind(collection.document, 'value'::text, 'fr-u-ks-level1'::text)
+                     ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                           Output: collection.document
+                           namespaceName: collation_find_db.default_match
+                           indexName: _id_
+                           ->  Bitmap Heap Scan on documentdb_data.documents_782201 collection
+                                 Output: collection.document
+                                 Recheck Cond: (collection.shard_key_value = '782201'::bigint)
+                                 ->  Bitmap Index Scan on _id_
+                                       Index Cond: (collection.shard_key_value = '782201'::bigint)
+(18 rows)
+
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+    'collation_find_db',
+    '{ "distinct": "default_match", "key": "_id", "query": { "value": "cafe" } }');
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "3" } }
+(1 row)
+
+-- Empty collation inherits the default, while explicit simple collation overrides it.
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+    'collation_find_db',
+    '{ "distinct": "default_match", "key": "value", "collation": {} }');
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+    'collation_find_db',
+    '{ "distinct": "default_match", "key": "value", "collation": { "locale": "simple" } }');
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "3" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+    'collation_find_db',
+    '{ "distinct": "default_match", "key": "value", "collation": { "locale": "simple" } }')
+$cmd$);
+                                       run_explain_and_trim                                        
+---------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'value'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, 'value'::text))
+         ->  Sort
+               Output: (bson_distinct_unwind(collection.document, 'value'::text))
+               Sort Key: (bson_distinct_unwind(collection.document, 'value'::text))
+               ->  ProjectSet
+                     Output: bson_distinct_unwind(collection.document, 'value'::text)
+                     ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                           Output: collection.document
+                           namespaceName: collation_find_db.default_match
+                           indexName: _id_
+                           ->  Bitmap Heap Scan on documentdb_data.documents_782201 collection
+                                 Output: collection.document
+                                 Recheck Cond: (collection.shard_key_value = '782201'::bigint)
+                                 ->  Bitmap Index Scan on _id_
+                                       Index Cond: (collection.shard_key_value = '782201'::bigint)
+(18 rows)
+
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+    'collation_find_db',
+    '{ "distinct": "default_match", "key": "value", "collation": { "locale": "fr", "strength": 2 } }');
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "2" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_distinct(
+    'collation_find_db',
+    '{ "distinct": "default_match", "key": "value", "collation": { "locale": "fr", "strength": 2 } }')
+$cmd$);
+                                                 run_explain_and_trim                                                 
+----------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'value'::text, 'fr-u-ks-level2'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, 'value'::text, 'fr-u-ks-level2'::text))
+         ->  Sort
+               Output: (bson_distinct_unwind(collection.document, 'value'::text, 'fr-u-ks-level2'::text))
+               Sort Key: (bson_distinct_unwind(collection.document, 'value'::text, 'fr-u-ks-level2'::text)) USING <<<
+               ->  ProjectSet
+                     Output: bson_distinct_unwind(collection.document, 'value'::text, 'fr-u-ks-level2'::text)
+                     ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                           Output: collection.document
+                           namespaceName: collation_find_db.default_match
+                           indexName: _id_
+                           ->  Bitmap Heap Scan on documentdb_data.documents_782201 collection
+                                 Output: collection.document
+                                 Recheck Cond: (collection.shard_key_value = '782201'::bigint)
+                                 ->  Bitmap Index Scan on _id_
+                                       Index Cond: (collection.shard_key_value = '782201'::bigint)
+(18 rows)
+
+SELECT documentdb_api.create_collection('collation_find_db', 'default_turkish');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+UPDATE documentdb_api_catalog.collections
+SET options = '{ "collation": { "locale": "tr", "strength": 2 } }'::documentdb_core.bson
+WHERE database_name = 'collation_find_db' AND collection_name = 'default_turkish';
+SELECT documentdb_api.insert_one(
+    'collation_find_db', 'default_turkish', '{ "_id": 1, "value": "i" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_find_db', 'default_turkish', '{ "_id": 2, "value": "İ" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_find_db', 'default_turkish', '{ "_id": 3, "value": "I" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_find_db', 'default_turkish', '{ "_id": 4, "value": "ı" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Turkish collation keeps dotted and dotless I in separate equivalence classes.
+SELECT document FROM bson_aggregation_find(
+    'collation_find_db',
+    '{ "find": "default_turkish", "filter": { "value": "i" }, "sort": { "_id": 1 } }');
+                     document                      
+---------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : "i" }
+ { "_id" : { "$numberInt" : "2" }, "value" : "İ" }
+(2 rows)
+
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+    'collation_find_db',
+    '{ "distinct": "default_turkish", "key": "value" }');
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "2" } }
+(1 row)
+
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+    'collation_find_db',
+    '{ "distinct": "default_turkish", "key": "value", "collation": { "locale": "simple" } }');
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "4" } }
+(1 row)
+
+SELECT documentdb_api.create_collection('collation_find_db', 'default_sort');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+UPDATE documentdb_api_catalog.collections
+SET options = '{ "collation": { "locale": "de", "numericOrdering": true } }'::documentdb_core.bson
+WHERE database_name = 'collation_find_db' AND collection_name = 'default_sort';
+SELECT documentdb_api.insert_one(
+    'collation_find_db', 'default_sort', '{ "_id": 1, "value": "10" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_find_db', 'default_sort', '{ "_id": 2, "value": "2" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_find_db', 'default_sort', '{ "_id": 3, "value": "1" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- The inherited default applies to sorting as well as matching.
+SELECT document FROM bson_aggregation_find(
+    'collation_find_db',
+    '{ "find": "default_sort", "filter": {}, "sort": { "value": 1 } }');
+                      document                      
+----------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "value" : "1" }
+ { "_id" : { "$numberInt" : "2" }, "value" : "2" }
+ { "_id" : { "$numberInt" : "1" }, "value" : "10" }
+(3 rows)
+
+SELECT document FROM bson_aggregation_find(
+    'collation_find_db',
+    '{ "find": "default_sort", "filter": {}, "sort": { "value": 1 }, "collation": { "locale": "simple" } }');
+                      document                      
+----------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "value" : "1" }
+ { "_id" : { "$numberInt" : "1" }, "value" : "10" }
+ { "_id" : { "$numberInt" : "2" }, "value" : "2" }
+(3 rows)
+
+SELECT documentdb_api.create_collection('collation_find_db', 'no_default');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_find_db', 'no_default', '{ "_id": 1, "value": "cafe" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_find_db', 'no_default', '{ "_id": 2, "value": "CAFE" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Collections without a default retain binary comparison behavior.
+SELECT document FROM bson_aggregation_find(
+    'collation_find_db',
+    '{ "find": "no_default", "filter": { "value": "cafe" }, "sort": { "_id": 1 } }');
+                       document                       
+------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : "cafe" }
+(1 row)
+
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+    'collation_find_db',
+    '{ "distinct": "no_default", "key": "value" }');
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "2" } }
+(1 row)
+
+SELECT documentdb_api.create_collection('collation_find_db', 'explicit_simple');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+UPDATE documentdb_api_catalog.collections
+SET options = '{ "collation": { "locale": "simple" } }'::documentdb_core.bson
+WHERE database_name = 'collation_find_db' AND collection_name = 'explicit_simple';
+SELECT documentdb_api.insert_one(
+    'collation_find_db', 'explicit_simple', '{ "_id": 1, "value": "cafe" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_find_db', 'explicit_simple', '{ "_id": 2, "value": "CAFE" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- A collection created with an explicit simple collation uses binary comparisons.
+SELECT document FROM bson_aggregation_find(
+    'collation_find_db',
+    '{ "find": "explicit_simple", "filter": { "value": "cafe" }, "sort": { "_id": 1 } }');
+                       document                       
+------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : "cafe" }
+(1 row)
+
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+    'collation_find_db',
+    '{ "distinct": "explicit_simple", "key": "value" }');
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "2" } }
+(1 row)
+
+-- Disabling collation also retains binary comparison behavior.
+SET documentdb_core.enableCollation TO off;
+SELECT document FROM bson_aggregation_find(
+    'collation_find_db',
+    '{ "find": "default_match", "filter": { "value": "cafe" }, "sort": { "_id": 1 } }');
+                       document                       
+------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : "cafe" }
+(1 row)
+
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+    'collation_find_db',
+    '{ "distinct": "default_match", "key": "value" }');
+         bson_dollar_project          
+--------------------------------------
+ { "count" : { "$numberInt" : "3" } }
+(1 row)
+
+RESET documentdb_core.enableCollation;
+RESET documentdb.enableExtendedExplainPlans;
+RESET search_path;

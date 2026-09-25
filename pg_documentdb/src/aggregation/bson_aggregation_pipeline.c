@@ -1,6 +1,8 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
  *
+ * SPDX-License-Identifier: MIT
+ *
  * src/aggregation/bson_aggregation_pipeline.c
  *
  * Implementation of the backend query generation for pipelines.
@@ -441,6 +443,8 @@ static Query * ApplyFindSpec(const FindSpec *spec, MongoCollection *collection,
 static Query * ApplyFindSpecCore(const FindSpec *spec, Query *query,
 								 QueryData *queryData, CursorParamKind cursorParamKind,
 								 AggregationPipelineBuildContext *context);
+static void ResolveDefaultCollation(MongoCollection *collection,
+									AggregationPipelineBuildContext *context);
 static void SetStreamingSkipLimitForFind(const FindSpec *spec,
 										 MongoCollection *collection,
 										 QueryData *queryData,
@@ -2189,6 +2193,7 @@ ParseFindQuery(pgbson *findSpec, QueryData *queryData,
 												BSON_TYPE_DOCUMENT);
 						if (!IsBsonValueEmptyDocument(value))
 						{
+							context->resolveDefaultCollation = false;
 							ParseAndGetCollationString(value,
 													   context->collationString);
 						}
@@ -2762,6 +2767,7 @@ ParseFindQueryAndLookupCollection(text *database, pgbson *findSpec,
 	/* For finds, we can generally query the shard directly if available. */
 	plan->context.allowShardBaseTable = true;
 	plan->context.databaseNameDatum = database;
+	plan->context.resolveDefaultCollation = true;
 
 	/* Find queries have no joins */
 	plan->context.joinStatus = JoinStageStatus_NoJoinsOrUnions;
@@ -3148,6 +3154,9 @@ GenerateDistinctQuery(text *databaseDatum, pgbson *distinctSpec, bool setStateme
 	context.databaseNameDatum = databaseDatum;
 	context.joinStatus = JoinStageStatus_Unknown;
 
+	/* Distinct supports collation starting with version 1.1. */
+	context.resolveDefaultCollation = IsClusterVersionAtleast(DocDB_V1, 1, 0);
+
 	bson_iter_t distinctIter;
 	PgbsonInitIterator(distinctSpec, &distinctIter);
 
@@ -3203,6 +3212,7 @@ GenerateDistinctQuery(text *databaseDatum, pgbson *distinctSpec, bool setStateme
 				if (EnsureTopLevelFieldIsDocumentNullOrEmptyOk(
 						"collation", &distinctIter))
 				{
+					context.resolveDefaultCollation = false;
 					ParseAndGetCollationString(value, context.collationString);
 				}
 			}
@@ -9422,6 +9432,26 @@ FillRteForMongoCollection(Query *query, RangeTblEntry *rte,
 }
 
 
+static void
+ResolveDefaultCollation(MongoCollection *collection,
+						AggregationPipelineBuildContext *context)
+{
+	if (!EnableCollation)
+	{
+		return;
+	}
+
+	if (collection == NULL ||
+		!IsCollationApplicable(collection->options.collationString))
+	{
+		return;
+	}
+
+	strlcpy((char *) context->collationString, collection->options.collationString,
+			sizeof(context->collationString));
+}
+
+
 /*
  * Updates the base table
  */
@@ -9470,6 +9500,12 @@ GenerateBaseTableQuery(text *databaseDatum, const StringView *collectionNameView
 								"Namespace %s contains a mismatch in the collectionUUID identifier",
 								context->namespaceName)));
 		}
+	}
+
+	if (context->resolveDefaultCollation)
+	{
+		ResolveDefaultCollation(collection, context);
+		context->resolveDefaultCollation = false;
 	}
 
 	List *pipelineStages = NIL;

@@ -1,6 +1,8 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
  *
+ * SPDX-License-Identifier: MIT
+ *
  * include/planner/bson_aggregation_pipeline_private.h
  *
  * Private helpers for the bson_aggregation_pipeline definition
@@ -241,6 +243,9 @@ typedef struct AggregationPipelineBuildContext
 	 * See: https://www.postgresql.org/docs/current/collation.html
 	 */
 	const char collationString[MAX_ICU_COLLATION_LENGTH];
+
+	/* Whether the first collection lookup should supply its default collation. */
+	bool resolveDefaultCollation;
 
 	/* *********************************************************************
 	 * Feature tracking fields
