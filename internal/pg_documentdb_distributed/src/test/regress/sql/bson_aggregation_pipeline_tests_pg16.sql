@@ -1,3 +1,7 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
 
 SET citus.next_shard_id TO 411000;
@@ -183,6 +187,9 @@ ROLLBACK;
 SELECT document FROM bson_aggregation_find('db', '{ "find": "aggregation_pipeline", "filter": { "_id": { "$gt": "1" } }, "projection": { "a.b": 1 }, "sort": { "_id": 1 }, "skip": 1, "limit": -2 }');
 
 -- count
+-- These assertions require exact small-collection counts, not asynchronous
+-- live-tuple statistics that may still reflect only part of the fixture.
+SET documentdb.use_pg_stats_live_tuples_for_count TO off;
 SELECT documentdb_distributed_test_helpers.refresh_pg_stat_snapshot() AS stats_snapshot \gset
 SELECT document FROM bson_aggregation_count('db', '{ "count": "aggregation_pipeline" }');
 
@@ -210,6 +217,8 @@ SELECT document FROM documentdb_api.count_query('db', '{ "count": "aggregation_p
 SELECT document FROM documentdb_api.count_query('db', '{ "count": "aggregation_pipeline", "query": {}, "skip": -3.14159 }');
 
 SELECT document FROM documentdb_api.count_query('db', '{ "count": "aggregation_pipeline", "query": {}, "skip": -9223372036854775808 }');
+
+RESET documentdb.use_pg_stats_live_tuples_for_count;
 
 -- handling of skip as an aggregation stage; this is different from skip in a count query
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [{ "$match": {}}, { "$skip": 0 }], "cursor": {}}');

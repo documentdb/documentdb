@@ -507,6 +507,114 @@ WITH result AS (
 SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
 ROLLBACK;
 
+-- Test 21: A collated multikey prefix supports a scalar distinct target.
+SET documentdb.enableIndexMetadataGlobalTracking TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'db',
+  '{ "createIndexes": "dist_collation_multikey", "indexes": [ { "key": { "category": 1, "value": 1 }, "name": "idx_category_value_en_s1_mk", "collation": { "locale": "en", "strength": 1 } } ] }',
+  true);
+SELECT documentdb_api.insert_one('db', 'dist_collation_multikey',
+  '{ "_id": 1, "category": [ "group", "other" ], "value": "cafe" }');
+SELECT documentdb_api.insert_one('db', 'dist_collation_multikey',
+  '{ "_id": 2, "category": [ "GROUP", "other" ], "value": "CAF\u00c9" }');
+-- The tea class requires collation-aware prefix matching.
+SELECT documentdb_api.insert_one('db', 'dist_collation_multikey',
+  '{ "_id": 3, "category": [ "GROUP", "GROUP" ], "value": "tea" }');
+SELECT documentdb_api.insert_one('db', 'dist_collation_multikey',
+  '{ "_id": 4, "category": [ "GROUP", "other" ], "value": "TEA" }');
+SELECT documentdb_api.insert_one('db', 'dist_collation_multikey',
+  '{ "_id": 5, "category": [ "other" ], "value": "coffee" }');
+ANALYZE documentdb_data.documents_20209;
+
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enablePerPathMultiKeySortPushdown TO on;
+SET LOCAL documentdb.enable_group_by_multi_key_sort_pushdown TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SET LOCAL documentdb.enable_distinct_multi_key_sort_pushdown TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_multikey", "key": "value", "query": { "category": "group" }, "hint": "idx_category_value_en_s1_mk", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+-- Compare equivalence classes rather than arbitrary stored representatives.
+WITH result AS (
+  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_multikey", "key": "value", "query": { "category": "group" }, "hint": "idx_category_value_en_s1_mk", "collation": { "locale": "en", "strength": 1 } }')
+)
+SELECT documentdb_api_internal.bson_dollar_project_catalog(document,
+  '{ "count": { "$size": "$values" }, "matches": { "$setEquals": [ "$values", [ "cafe", "tea" ] ] } }',
+  '{}', 'en-u-ks-level1')
+FROM result;
+
+SET LOCAL documentdb.enable_distinct_multi_key_sort_pushdown TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_multikey", "key": "value", "query": { "category": "group" }, "hint": "idx_category_value_en_s1_mk", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$, p_ignore_heap_fetches => true);
+WITH result AS (
+  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_multikey", "key": "value", "query": { "category": "group" }, "hint": "idx_category_value_en_s1_mk", "collation": { "locale": "en", "strength": 1 } }')
+)
+SELECT documentdb_api_internal.bson_dollar_project_catalog(document,
+  '{ "count": { "$size": "$values" }, "matches": { "$setEquals": [ "$values", [ "cafe", "tea" ] ] } }',
+  '{}', 'en-u-ks-level1')
+FROM result;
+
+-- Ordered distinct must also work without the skip-scan executor.
+SET LOCAL documentdb.enableDistinctCustomScan TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_multikey", "key": "value", "query": { "category": "group" }, "hint": "idx_category_value_en_s1_mk", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+WITH result AS (
+  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_multikey", "key": "value", "query": { "category": "group" }, "hint": "idx_category_value_en_s1_mk", "collation": { "locale": "en", "strength": 1 } }')
+)
+SELECT documentdb_api_internal.bson_dollar_project_catalog(document,
+  '{ "count": { "$size": "$values" }, "matches": { "$setEquals": [ "$values", [ "cafe", "tea" ] ] } }',
+  '{}', 'en-u-ks-level1')
+FROM result;
+
+-- A strength mismatch cannot use the index's ordering and keeps the accent.
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_multikey", "key": "value", "query": { "category": "group" }, "collation": { "locale": "en", "strength": 2 } }')
+$cmd$);
+WITH result AS (
+  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_multikey", "key": "value", "query": { "category": "group" }, "collation": { "locale": "en", "strength": 2 } }')
+)
+SELECT documentdb_api_internal.bson_dollar_project_catalog(document,
+  '{ "count": { "$size": "$values" }, "matches": { "$setEquals": [ "$values", [ "cafe", "caf\u00e9", "tea" ] ] } }',
+  '{}', 'en-u-ks-level2')
+FROM result;
+ROLLBACK;
+RESET documentdb.enableIndexMetadataGlobalTracking;
+
+-- Test 22: A null equality between collated sort keys cannot pin the suffix.
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'db',
+  '{ "createIndexes": "collation_sort_gap", "indexes": [ { "key": { "category": 1, "middle": 1, "value": 1 }, "name": "idx_category_middle_value_en_s1", "collation": { "locale": "en", "strength": 1 } } ] }',
+  true);
+SELECT documentdb_api.insert_one('db', 'collation_sort_gap',
+  '{ "_id": 1, "category": "GROUP", "middle": null, "value": "alpha" }');
+SELECT documentdb_api.insert_one('db', 'collation_sort_gap',
+  '{ "_id": 2, "category": "group", "value": "Bravo" }');
+SELECT documentdb_api.insert_one('db', 'collation_sort_gap',
+  '{ "_id": 3, "category": "GROUP", "middle": null, "value": "charlie" }');
+SELECT documentdb_api.insert_one('db', 'collation_sort_gap',
+  '{ "_id": 4, "category": "group", "value": "Zulu" }');
+ANALYZE documentdb_data.documents_20210;
+
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_incremental_sort TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('db', '{ "find": "collation_sort_gap", "filter": { "middle": null }, "sort": { "category": 1, "value": 1 }, "hint": "idx_category_middle_value_en_s1", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+WITH result AS (
+  SELECT document FROM bson_aggregation_find('db', '{ "find": "collation_sort_gap", "filter": { "middle": null }, "sort": { "category": 1, "value": 1 }, "hint": "idx_category_middle_value_en_s1", "collation": { "locale": "en", "strength": 1 } }')
+)
+SELECT bson_dollar_project(document, '{ "_id": 0, "value": 1 }') FROM result;
+ROLLBACK;
+
 -- Cleanup.
 SELECT documentdb_api.drop_collection('db', 'dist_collation');
 SELECT documentdb_api.drop_collection('db', 'dist_collation_truncated');
@@ -517,3 +625,5 @@ SELECT documentdb_api.drop_collection('db', 'dist_collation_compound');
 SELECT documentdb_api.drop_collection('db', 'dist_collation_response');
 SELECT documentdb_api.drop_collection('db', 'dist_collation_response_compound');
 SELECT documentdb_api.drop_collection('db', 'dist_collation_id');
+SELECT documentdb_api.drop_collection('db', 'dist_collation_multikey');
+SELECT documentdb_api.drop_collection('db', 'collation_sort_gap');

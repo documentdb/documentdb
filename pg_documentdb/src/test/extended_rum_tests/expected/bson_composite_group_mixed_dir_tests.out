@@ -7,14 +7,12 @@ SET documentdb.next_collection_index_id TO 21400;
 -- ================================================================
 -- $group over a $sort whose trailing key opposes the index direction.
 --
--- The group keys form an ascending prefix of the composite index, so the
--- operator class resolves the index bounds to a forward scan. The trailing
--- descending sort key drives that same physical index scan backward. A single
--- index scan cannot satisfy both, so the operator class and the physical index
--- disagree on the search mode.
+-- Group-key bounds must agree with the physical index scan selected for the
+-- trailing sort key, including when it requires a backward scan.
+-- forceDisableSeqScan keeps these cases on index paths.
 --
--- forceDisableSeqScan pins the index plan: with default page costs the planner
--- prefers a sequential scan plus a sort, which never reaches the conflict.
+-- $group does not guarantee result order. Materialize each grouping pipeline
+-- before sorting its output so normalization cannot change the plan under test.
 -- ================================================================
 SET documentdb.defaultUseCompositeOpClass TO on;
 SET documentdb.forceDisableSeqScan TO on;
@@ -41,55 +39,62 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
 ANALYZE;
 -- ----------------------------------------------------------------
 -- 1. Ascending prefix group keys with a descending trailing sort key.
---    This is the failing shape.
 -- ----------------------------------------------------------------
-SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "grp_mixed_dir", "pipeline": [
-        { "$sort": { "a": 1, "b": 1, "c": -1 } },
-        { "$group": { "_id": { "a": "$a", "b": "$b" }, "latest": { "$first": "$$ROOT" } } }
-    ], "cursor": {} }');
+WITH result AS MATERIALIZED (
+    SELECT document FROM bson_aggregation_pipeline('db',
+        '{ "aggregate": "grp_mixed_dir", "pipeline": [
+            { "$sort": { "a": 1, "b": 1, "c": -1 } },
+            { "$group": { "_id": { "a": "$a", "b": "$b" }, "latest": { "$first": "$$ROOT" } } }
+        ], "cursor": {} }')
+)
+SELECT document FROM result ORDER BY document;
                                                                       document                                                                       
 -----------------------------------------------------------------------------------------------------------------------------------------------------
- { "_id" : { "a" : "a_3", "b" : "b_2" }, "latest" : { "_id" : { "$numberInt" : "395" }, "a" : "a_3", "b" : "b_2", "c" : { "$numberInt" : "395" } } }
- { "_id" : { "a" : "a_3", "b" : "b_1" }, "latest" : { "_id" : { "$numberInt" : "391" }, "a" : "a_3", "b" : "b_1", "c" : { "$numberInt" : "391" } } }
- { "_id" : { "a" : "a_3", "b" : "b_0" }, "latest" : { "_id" : { "$numberInt" : "399" }, "a" : "a_3", "b" : "b_0", "c" : { "$numberInt" : "399" } } }
- { "_id" : { "a" : "a_2", "b" : "b_2" }, "latest" : { "_id" : { "$numberInt" : "398" }, "a" : "a_2", "b" : "b_2", "c" : { "$numberInt" : "398" } } }
- { "_id" : { "a" : "a_2", "b" : "b_1" }, "latest" : { "_id" : { "$numberInt" : "394" }, "a" : "a_2", "b" : "b_1", "c" : { "$numberInt" : "394" } } }
- { "_id" : { "a" : "a_2", "b" : "b_0" }, "latest" : { "_id" : { "$numberInt" : "390" }, "a" : "a_2", "b" : "b_0", "c" : { "$numberInt" : "390" } } }
- { "_id" : { "a" : "a_1", "b" : "b_2" }, "latest" : { "_id" : { "$numberInt" : "389" }, "a" : "a_1", "b" : "b_2", "c" : { "$numberInt" : "389" } } }
- { "_id" : { "a" : "a_1", "b" : "b_1" }, "latest" : { "_id" : { "$numberInt" : "397" }, "a" : "a_1", "b" : "b_1", "c" : { "$numberInt" : "397" } } }
- { "_id" : { "a" : "a_1", "b" : "b_0" }, "latest" : { "_id" : { "$numberInt" : "393" }, "a" : "a_1", "b" : "b_0", "c" : { "$numberInt" : "393" } } }
- { "_id" : { "a" : "a_0", "b" : "b_2" }, "latest" : { "_id" : { "$numberInt" : "392" }, "a" : "a_0", "b" : "b_2", "c" : { "$numberInt" : "392" } } }
- { "_id" : { "a" : "a_0", "b" : "b_1" }, "latest" : { "_id" : { "$numberInt" : "400" }, "a" : "a_0", "b" : "b_1", "c" : { "$numberInt" : "400" } } }
  { "_id" : { "a" : "a_0", "b" : "b_0" }, "latest" : { "_id" : { "$numberInt" : "396" }, "a" : "a_0", "b" : "b_0", "c" : { "$numberInt" : "396" } } }
+ { "_id" : { "a" : "a_0", "b" : "b_1" }, "latest" : { "_id" : { "$numberInt" : "400" }, "a" : "a_0", "b" : "b_1", "c" : { "$numberInt" : "400" } } }
+ { "_id" : { "a" : "a_0", "b" : "b_2" }, "latest" : { "_id" : { "$numberInt" : "392" }, "a" : "a_0", "b" : "b_2", "c" : { "$numberInt" : "392" } } }
+ { "_id" : { "a" : "a_1", "b" : "b_0" }, "latest" : { "_id" : { "$numberInt" : "393" }, "a" : "a_1", "b" : "b_0", "c" : { "$numberInt" : "393" } } }
+ { "_id" : { "a" : "a_1", "b" : "b_1" }, "latest" : { "_id" : { "$numberInt" : "397" }, "a" : "a_1", "b" : "b_1", "c" : { "$numberInt" : "397" } } }
+ { "_id" : { "a" : "a_1", "b" : "b_2" }, "latest" : { "_id" : { "$numberInt" : "389" }, "a" : "a_1", "b" : "b_2", "c" : { "$numberInt" : "389" } } }
+ { "_id" : { "a" : "a_2", "b" : "b_0" }, "latest" : { "_id" : { "$numberInt" : "390" }, "a" : "a_2", "b" : "b_0", "c" : { "$numberInt" : "390" } } }
+ { "_id" : { "a" : "a_2", "b" : "b_1" }, "latest" : { "_id" : { "$numberInt" : "394" }, "a" : "a_2", "b" : "b_1", "c" : { "$numberInt" : "394" } } }
+ { "_id" : { "a" : "a_2", "b" : "b_2" }, "latest" : { "_id" : { "$numberInt" : "398" }, "a" : "a_2", "b" : "b_2", "c" : { "$numberInt" : "398" } } }
+ { "_id" : { "a" : "a_3", "b" : "b_0" }, "latest" : { "_id" : { "$numberInt" : "399" }, "a" : "a_3", "b" : "b_0", "c" : { "$numberInt" : "399" } } }
+ { "_id" : { "a" : "a_3", "b" : "b_1" }, "latest" : { "_id" : { "$numberInt" : "391" }, "a" : "a_3", "b" : "b_1", "c" : { "$numberInt" : "391" } } }
+ { "_id" : { "a" : "a_3", "b" : "b_2" }, "latest" : { "_id" : { "$numberInt" : "395" }, "a" : "a_3", "b" : "b_2", "c" : { "$numberInt" : "395" } } }
 (12 rows)
 
 -- ----------------------------------------------------------------
--- 2. Same shape with a single-field group key. The conflict does not
---    depend on the group key being compound.
+-- 2. Same shape with a single-field group key.
 -- ----------------------------------------------------------------
-SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "grp_mixed_dir", "pipeline": [
-        { "$sort": { "a": 1, "c": -1 } },
-        { "$group": { "_id": { "a": "$a" }, "latest": { "$first": "$$ROOT" } } }
-    ], "cursor": {} }');
+WITH result AS MATERIALIZED (
+    SELECT document FROM bson_aggregation_pipeline('db',
+        '{ "aggregate": "grp_mixed_dir", "pipeline": [
+            { "$sort": { "a": 1, "c": -1 } },
+            { "$group": { "_id": { "a": "$a" }, "latest": { "$first": "$$ROOT" } } }
+        ], "cursor": {} }')
+)
+SELECT document FROM result ORDER BY document;
                                                                 document                                                                
 ----------------------------------------------------------------------------------------------------------------------------------------
- { "_id" : { "a" : "a_3" }, "latest" : { "_id" : { "$numberInt" : "399" }, "a" : "a_3", "b" : "b_0", "c" : { "$numberInt" : "399" } } }
- { "_id" : { "a" : "a_2" }, "latest" : { "_id" : { "$numberInt" : "398" }, "a" : "a_2", "b" : "b_2", "c" : { "$numberInt" : "398" } } }
- { "_id" : { "a" : "a_1" }, "latest" : { "_id" : { "$numberInt" : "397" }, "a" : "a_1", "b" : "b_1", "c" : { "$numberInt" : "397" } } }
  { "_id" : { "a" : "a_0" }, "latest" : { "_id" : { "$numberInt" : "400" }, "a" : "a_0", "b" : "b_1", "c" : { "$numberInt" : "400" } } }
+ { "_id" : { "a" : "a_1" }, "latest" : { "_id" : { "$numberInt" : "397" }, "a" : "a_1", "b" : "b_1", "c" : { "$numberInt" : "397" } } }
+ { "_id" : { "a" : "a_2" }, "latest" : { "_id" : { "$numberInt" : "398" }, "a" : "a_2", "b" : "b_2", "c" : { "$numberInt" : "398" } } }
+ { "_id" : { "a" : "a_3" }, "latest" : { "_id" : { "$numberInt" : "399" }, "a" : "a_3", "b" : "b_0", "c" : { "$numberInt" : "399" } } }
 (4 rows)
 
 -- ----------------------------------------------------------------
 -- 3. Control: the sort direction matches the index throughout, so the
 --    operator class and the physical scan agree.
 -- ----------------------------------------------------------------
-SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "grp_mixed_dir", "pipeline": [
-        { "$sort": { "a": 1, "b": 1, "c": 1 } },
-        { "$group": { "_id": { "a": "$a", "b": "$b" }, "latest": { "$first": "$c" } } }
-    ], "cursor": {} }');
+WITH result AS MATERIALIZED (
+    SELECT document FROM bson_aggregation_pipeline('db',
+        '{ "aggregate": "grp_mixed_dir", "pipeline": [
+            { "$sort": { "a": 1, "b": 1, "c": 1 } },
+            { "$group": { "_id": { "a": "$a", "b": "$b" }, "latest": { "$first": "$c" } } }
+        ], "cursor": {} }')
+)
+SELECT document FROM result ORDER BY document;
                                    document                                   
 ------------------------------------------------------------------------------
  { "_id" : { "a" : "a_0", "b" : "b_0" }, "latest" : { "$numberInt" : "12" } }

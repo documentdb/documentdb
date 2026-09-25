@@ -10,14 +10,12 @@ SET documentdb.next_collection_index_id TO 21400;
 -- ================================================================
 -- $group over a $sort whose trailing key opposes the index direction.
 --
--- The group keys form an ascending prefix of the composite index, so the
--- operator class resolves the index bounds to a forward scan. The trailing
--- descending sort key drives that same physical index scan backward. A single
--- index scan cannot satisfy both, so the operator class and the physical index
--- disagree on the search mode.
+-- Group-key bounds must agree with the physical index scan selected for the
+-- trailing sort key, including when it requires a backward scan.
+-- forceDisableSeqScan keeps these cases on index paths.
 --
--- forceDisableSeqScan pins the index plan: with default page costs the planner
--- prefers a sequential scan plus a sort, which never reaches the conflict.
+-- $group does not guarantee result order. Materialize each grouping pipeline
+-- before sorting its output so normalization cannot change the plan under test.
 -- ================================================================
 
 SET documentdb.defaultUseCompositeOpClass TO on;
@@ -38,33 +36,40 @@ ANALYZE;
 
 -- ----------------------------------------------------------------
 -- 1. Ascending prefix group keys with a descending trailing sort key.
---    This is the failing shape.
 -- ----------------------------------------------------------------
-SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "grp_mixed_dir", "pipeline": [
-        { "$sort": { "a": 1, "b": 1, "c": -1 } },
-        { "$group": { "_id": { "a": "$a", "b": "$b" }, "latest": { "$first": "$$ROOT" } } }
-    ], "cursor": {} }');
+WITH result AS MATERIALIZED (
+    SELECT document FROM bson_aggregation_pipeline('db',
+        '{ "aggregate": "grp_mixed_dir", "pipeline": [
+            { "$sort": { "a": 1, "b": 1, "c": -1 } },
+            { "$group": { "_id": { "a": "$a", "b": "$b" }, "latest": { "$first": "$$ROOT" } } }
+        ], "cursor": {} }')
+)
+SELECT document FROM result ORDER BY document;
 
 -- ----------------------------------------------------------------
--- 2. Same shape with a single-field group key. The conflict does not
---    depend on the group key being compound.
+-- 2. Same shape with a single-field group key.
 -- ----------------------------------------------------------------
-SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "grp_mixed_dir", "pipeline": [
-        { "$sort": { "a": 1, "c": -1 } },
-        { "$group": { "_id": { "a": "$a" }, "latest": { "$first": "$$ROOT" } } }
-    ], "cursor": {} }');
+WITH result AS MATERIALIZED (
+    SELECT document FROM bson_aggregation_pipeline('db',
+        '{ "aggregate": "grp_mixed_dir", "pipeline": [
+            { "$sort": { "a": 1, "c": -1 } },
+            { "$group": { "_id": { "a": "$a" }, "latest": { "$first": "$$ROOT" } } }
+        ], "cursor": {} }')
+)
+SELECT document FROM result ORDER BY document;
 
 -- ----------------------------------------------------------------
 -- 3. Control: the sort direction matches the index throughout, so the
 --    operator class and the physical scan agree.
 -- ----------------------------------------------------------------
-SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "grp_mixed_dir", "pipeline": [
-        { "$sort": { "a": 1, "b": 1, "c": 1 } },
-        { "$group": { "_id": { "a": "$a", "b": "$b" }, "latest": { "$first": "$c" } } }
-    ], "cursor": {} }');
+WITH result AS MATERIALIZED (
+    SELECT document FROM bson_aggregation_pipeline('db',
+        '{ "aggregate": "grp_mixed_dir", "pipeline": [
+            { "$sort": { "a": 1, "b": 1, "c": 1 } },
+            { "$group": { "_id": { "a": "$a", "b": "$b" }, "latest": { "$first": "$c" } } }
+        ], "cursor": {} }')
+)
+SELECT document FROM result ORDER BY document;
 
 -- ----------------------------------------------------------------
 -- 4. Control: the descending trailing key on its own is fine without

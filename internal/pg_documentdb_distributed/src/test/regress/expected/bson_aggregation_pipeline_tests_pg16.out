@@ -1,3 +1,6 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
 SET citus.next_shard_id TO 411000;
 SET documentdb.next_collection_id TO 4110;
@@ -854,6 +857,9 @@ SELECT document FROM bson_aggregation_find('db', '{ "find": "aggregation_pipelin
 (1 row)
 
 -- count
+-- These assertions require exact small-collection counts, not asynchronous
+-- live-tuple statistics that may still reflect only part of the fixture.
+SET documentdb.use_pg_stats_live_tuples_for_count TO off;
 SELECT documentdb_distributed_test_helpers.refresh_pg_stat_snapshot() AS stats_snapshot \gset
 SELECT document FROM bson_aggregation_count('db', '{ "count": "aggregation_pipeline" }');
                                document                               
@@ -918,6 +924,7 @@ SELECT document FROM documentdb_api.count_query('db', '{ "count": "aggregation_p
 ERROR:  The BSON field 'skip' requires a value greater than or equal to 0, but the given value is '-3'.
 SELECT document FROM documentdb_api.count_query('db', '{ "count": "aggregation_pipeline", "query": {}, "skip": -9223372036854775808 }');
 ERROR:  The BSON field 'skip' requires a value greater than or equal to 0, but the given value is '-9223372036854775808'.
+RESET documentdb.use_pg_stats_live_tuples_for_count;
 -- handling of skip as an aggregation stage; this is different from skip in a count query
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [{ "$match": {}}, { "$skip": 0 }], "cursor": {}}');
                                                                document                                                               

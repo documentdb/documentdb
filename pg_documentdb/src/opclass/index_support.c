@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * src/opclass/index_support.c
  *
@@ -355,6 +356,8 @@ extern bool EnableCollationWithNonUniqueOrderedIndexes;
 extern bool EnablePerPathMultiKeySortPushdown;
 extern bool EnableSupportFunctionIdPushdown;
 extern bool EnableGroupByMultiKeySortPushdown;
+extern bool EnableDistinctMultiKeySortPushdown;
+extern bool EnableSkipSortPushdownForNonPointEqualities;
 extern bool EnableCompositeReducedCorrelatedBoundsPlanning;
 extern bool EnableMergeSortForBitmapOr;
 extern bool EnableCrossIndexBitmapOrSortMerge;
@@ -5252,6 +5255,13 @@ TryBuildMergeSortInPrefixPlan(PlannerInfo *root, IndexOptInfo *indexInfo,
 				(Node *) qual->clause, opClassOptions,
 				clauseEqualityPrefixes, clauseNonEqualityPrefixes,
 				&indexStrategyIgnore);
+
+			/*
+			 * Only a single-term equality pins the column for the per-value
+			 * child scans; an equality that spans several terms (such as $eq
+			 * against null or an array) would let each child stream more than
+			 * one run of the sort suffix.
+			 */
 			if (columnNumber >= 0 && clauseEqualityPrefixes[columnNumber])
 			{
 				plan->equalityPrefixes[columnNumber] = true;
@@ -6549,14 +6559,7 @@ ProcessOrderByStatements(PlannerInfo *root,
 		return;
 	}
 
-	if (isMultiKeyIndex && hasDistinct)
-	{
-		/* if it's multi-key and there's a distinct, we can't push down an order by. */
-		list_free(sortDetails);
-		return;
-	}
-
-	if (isMultiKeyIndex && hasGroupby)
+	if (isMultiKeyIndex && (hasDistinct || hasGroupby))
 	{
 		/*
 		 * A group-by can only stream off a multi-key composite ordered index
@@ -6572,9 +6575,15 @@ ProcessOrderByStatements(PlannerInfo *root,
 		 * so we can tell which individual columns are multi-key, and is gated
 		 * behind a dedicated, default-off flag. Without it we conservatively
 		 * refuse the whole pushdown.
+		 *
 		 */
+
+		/* Distinct also sets hasGroupby, so its flag must take precedence. */
+		bool pushdownEnabled = hasDistinct ? EnableDistinctMultiKeySortPushdown :
+							   (hasGroupby && EnableGroupByMultiKeySortPushdown);
+
 		bool rejectGroupByPushdown = true;
-		if (EnableGroupByMultiKeySortPushdown &&
+		if (pushdownEnabled &&
 			EnablePerPathMultiKeySortPushdown &&
 			hasPerPathMetadata)
 		{
@@ -6639,6 +6648,13 @@ ProcessOrderByStatements(PlannerInfo *root,
 	i = 0;
 	for (; i < minOrderByColumn; i++)
 	{
+		/*
+		 * Every column before the order-by must be pinned to a single index
+		 * term, otherwise the scan makes one ordered run per distinct prefix
+		 * term and the order-by column is only sorted within a run. Equality
+		 * alone is not enough: $eq against null or an array is an equality that
+		 * spans several terms. See IsSinglePointEqualityValue.
+		 */
 		if (!equalityPrefixes[i])
 		{
 			/* No orderby on the column */
@@ -6777,9 +6793,12 @@ ProcessOrderByStatements(PlannerInfo *root,
 		}
 		else if (!equalityPrefixes[i])
 		{
-			/* No order by on this column but we're less than the maxOrderBy.
-			 * If we don't have an equality prefix, this is no longer valid
-			 * for orderby
+			/*
+			 * For index (a, b, c) and sort (a, c), b must be pinned to one
+			 * index term. Equality to null also scans missing-field terms;
+			 * array equality can scan the array and its first element. For a
+			 * fixed a, c is ordered only within each b term, not across terms,
+			 * so retain only the already proven sort prefix.
 			 */
 			break;
 		}
@@ -6866,6 +6885,36 @@ PopulateQueryPathAndValueFromOpExpr(OpExpr *opExpr, const char **queryPathString
 }
 
 
+/*
+ * IsSinglePointEqualityValue returns true when an equality against queryValue
+ * is served by exactly one index term, so the column it applies to is pinned to
+ * a single value for the whole scan.
+ *
+ * Two value shapes are equalities that do not resolve to a single term:
+ *
+ *  - null, which is served by the range (MinKey, null] so that undefined terms
+ *    (a missing field or an empty array) match as well. See SetEqualityBound.
+ *  - an array, which is served by two alternative bounds: the array as a whole
+ *    and its first element. See SetArrayEqualityBound.
+ *
+ * A value that is not known at planning time cannot be shown to be a point
+ * either, so it is treated the same way.
+ */
+static bool
+IsMultiValueEqualityClause(const bson_value_t *optionalQueryValue)
+{
+	if (!EnableSkipSortPushdownForNonPointEqualities)
+	{
+		return false;
+	}
+
+	return optionalQueryValue != NULL &&
+		   (optionalQueryValue->value_type == BSON_TYPE_EOD ||
+			optionalQueryValue->value_type == BSON_TYPE_NULL ||
+			optionalQueryValue->value_type == BSON_TYPE_ARRAY);
+}
+
+
 static void
 IndexStrategyClassify(int32_t indexStrategy, bool *equalityPrefixes,
 					  bool *nonEqualityPrefixes,
@@ -6878,7 +6927,15 @@ IndexStrategyClassify(int32_t indexStrategy, bool *equalityPrefixes,
 	{
 		case BSON_INDEX_STRATEGY_DOLLAR_EQUAL:
 		{
-			*equalityPrefixes = true;
+			if (IsMultiValueEqualityClause(optionalQueryValue))
+			{
+				*nonEqualityPrefixes = true;
+			}
+			else
+			{
+				*equalityPrefixes = true;
+			}
+
 			break;
 		}
 
@@ -6928,7 +6985,14 @@ IndexStrategyClassify(int32_t indexStrategy, bool *equalityPrefixes,
 			}
 			else if (isPartialFilterExpr && opNo == BsonEqualMatchRuntimeOperatorId())
 			{
-				*equalityPrefixes = true;
+				if (IsMultiValueEqualityClause(optionalQueryValue))
+				{
+					*nonEqualityPrefixes = true;
+				}
+				else
+				{
+					*equalityPrefixes = true;
+				}
 			}
 			else
 			{
@@ -7879,12 +7943,41 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 
 	if (indexPath->indexinfo->indpred != NIL)
 	{
+		bool partialFilterEqualityPrefixes[INDEX_MAX_KEYS] = { 0 };
 		if (ProcessCompositePartialFilter(
 				indexPath->indexinfo->indpred,
 				indexPath->indexinfo->opclassoptions[0],
-				equalityPrefixes, nonEqualityPrefixes, anySpecifiedPrefixes))
+				partialFilterEqualityPrefixes, nonEqualityPrefixes,
+				anySpecifiedPrefixes))
 		{
 			firstFilterColumnFound = true;
+		}
+
+		/* Partial filter equality prefixes are special since they
+		 * can only count if the path itself is not multi-key. This is because
+		 * the PFE currently is applied at the index level, but the AM term generation
+		 * does not obey the PFE and generates the other array terms that do not match
+		 * the partial filter expression.
+		 */
+		uint32_t multiKeyBitMask = indexMetadata.multiKeyPathBitMask;
+		for (int i = 0; i < INDEX_MAX_KEYS; i++)
+		{
+			if (!EnableSkipSortPushdownForNonPointEqualities)
+			{
+				equalityPrefixes[i] |= partialFilterEqualityPrefixes[i];
+			}
+			else if ((!isMultiKeyIndex) || (hasPerPathMetadata &&
+											(multiKeyBitMask & (UINT32_C(1) << i)) == 0))
+			{
+				equalityPrefixes[i] |= partialFilterEqualityPrefixes[i];
+			}
+			else if (partialFilterEqualityPrefixes[i])
+			{
+				/* Don't count this as unspecified - technically this now counts as
+				 * inequality - this is to ensure we don't now push $sort on this column.
+				 */
+				nonEqualityPrefixes[i] = true;
+			}
 		}
 	}
 

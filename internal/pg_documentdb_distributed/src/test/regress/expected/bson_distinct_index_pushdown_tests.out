@@ -1,3 +1,6 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
 SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_api_internal,documentdb_core;
 SET citus.next_shard_id TO 198460000;
 SET documentdb.next_collection_id TO 1984600;
@@ -574,6 +577,177 @@ $cmd$);
 (35 rows)
 
 ROLLBACK;
+-- Collated multikey distinct must preserve equivalence classes across shards.
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET documentdb.enableIndexMetadataGlobalTracking TO on;
+SELECT documentdb_api.create_collection('dist_idx_db', 'dist_push_collated_mk');
+NOTICE:  creating collection
+ create_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.shard_collection('dist_idx_db', 'dist_push_collated_mk', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('dist_idx_db',
+    '{ "createIndexes": "dist_push_collated_mk", "indexes": [ { "key": { "category": 1, "value": 1 }, "name": "idx_category_value_mk", "collation": { "locale": "en", "strength": 1 } } ] }',
+    true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- The tea class requires collation-aware prefix matching on each shard.
+SELECT COUNT(documentdb_api.insert_one('dist_idx_db', 'dist_push_collated_mk',
+    FORMAT('{ "_id": %s, "category": [ "%s", "other" ], "value": "%s" }',
+        i, CASE WHEN i % 4 = 0 THEN 'group' ELSE 'GROUP' END,
+        CASE i % 4 WHEN 0 THEN 'cafe' WHEN 1 THEN 'CAF\u00c9' WHEN 2 THEN 'tea' ELSE 'TEA' END)::bson))
+FROM generate_series(1, 200) AS i;
+ count 
+---------------------------------------------------------------------
+   200
+(1 row)
+
+SELECT documentdb_api.insert_one('dist_idx_db', 'dist_push_collated_mk',
+    '{ "_id": 999, "category": [ "other" ], "value": "coffee" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT collection_id FROM documentdb_api_catalog.collections
+    WHERE collection_name = 'dist_push_collated_mk' AND database_name = 'dist_idx_db' \gset
+ANALYZE documentdb_data.documents_:collection_id;
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL citus.enable_local_execution TO off;
+SET LOCAL citus.explain_analyze_sort_method TO taskId;
+SET LOCAL documentdb.useLocalExecutionShardQueries TO off;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL documentdb.enableIndexMetadataGlobalTracking TO on;
+SET LOCAL documentdb.enablePerPathMultiKeySortPushdown TO on;
+SET LOCAL documentdb.enable_group_by_multi_key_sort_pushdown TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SET LOCAL documentdb.enable_distinct_multi_key_sort_pushdown TO off;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_collated_mk", "key": "value", "query": { "category": "group" }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                                                                                                                                                                                                                                                              run_explain_and_trim                                                                                                                                                                                                                                                                                                               
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   ->  Distributed Subplan 336_1
+         ->  Unique
+               Output: remote_scan.document
+               ->  Sort
+                     Output: remote_scan.document
+                     Sort Key: remote_scan.document USING <<<
+                     ->  Custom Scan (Citus Adaptive)
+                           Output: remote_scan.document
+                           Task Count: 8
+                           Tasks Shown: One of 8
+                           ->  Task
+                                 Query: SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(document, 'value'::text, 'en-u-ks-level1'::text) AS document FROM documentdb_data.documents_1984604_198460018 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "category" : "group", "collation" : "en-u-ks-level1" }'::documentdb_core.bsonquery) AND documentdb_api_internal.bson_dollar_fullscan(document, '{ "value" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_distinct_exists(document, '{ "value" : true }'::documentdb_core.bson))
+                                 Node: host=localhost port=58070 dbname=regression
+                                 ->  Unique
+                                       Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'value'::text, 'en-u-ks-level1'::text))
+                                       ->  Sort
+                                             Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'value'::text, 'en-u-ks-level1'::text))
+                                             Sort Key: (documentdb_api_catalog.bson_distinct_unwind(collection.document, 'value'::text, 'en-u-ks-level1'::text)) USING <<<
+                                             ->  ProjectSet
+                                                   Output: documentdb_api_catalog.bson_distinct_unwind(document, 'value'::text, 'en-u-ks-level1'::text)
+                                                   ->  Index Scan using idx_category_value_mk on documentdb_data.documents_1984604_198460018 collection
+                                                         Output: shard_key_value, object_id, document
+                                                         Index Cond: ((collection.document OPERATOR(documentdb_api_catalog.@=) '{ "category" : "group", "collation" : "en-u-ks-level1" }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@>=) '{ "value" : { "$minKey" : 1 } }'::documentdb_core.bson))
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('336_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_1
+         Node: host=localhost port=58070 dbname=regression
+         ->  Aggregate
+               Output: documentdb_api_catalog.bson_distinct_agg(intermediate_result.document)
+               ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
+                     Output: intermediate_result.document
+                     Function Call: read_intermediate_result('336_1'::text, 'binary'::citus_copy_format)
+(35 rows)
+
+WITH result AS (
+    SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_collated_mk", "key": "value", "query": { "category": "group" }, "collation": { "locale": "en", "strength": 1 } }')
+)
+SELECT documentdb_api_internal.bson_dollar_project_catalog(document,
+    '{ "count": { "$size": "$values" }, "matches": { "$setEquals": [ "$values", [ "cafe", "tea" ] ] } }',
+    '{}', 'en-u-ks-level1')
+FROM result;
+              bson_dollar_project_catalog               
+---------------------------------------------------------------------
+ { "count" : { "$numberInt" : "2" }, "matches" : true }
+(1 row)
+
+SET LOCAL documentdb.enable_distinct_multi_key_sort_pushdown TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_collated_mk", "key": "value", "query": { "category": "group" }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                                                                                                                                                                                                                                                              run_explain_and_trim                                                                                                                                                                                                                                                                                                               
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   ->  Distributed Subplan 342_1
+         ->  Unique
+               Output: remote_scan.document
+               ->  Sort
+                     Output: remote_scan.document
+                     Sort Key: remote_scan.document USING <<<
+                     ->  Custom Scan (Citus Adaptive)
+                           Output: remote_scan.document
+                           Task Count: 8
+                           Tasks Shown: One of 8
+                           ->  Task
+                                 Query: SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(document, 'value'::text, 'en-u-ks-level1'::text) AS document FROM documentdb_data.documents_1984604_198460018 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "category" : "group", "collation" : "en-u-ks-level1" }'::documentdb_core.bsonquery) AND documentdb_api_internal.bson_dollar_fullscan(document, '{ "value" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_distinct_exists(document, '{ "value" : true }'::documentdb_core.bson))
+                                 Node: host=localhost port=58070 dbname=regression
+                                 ->  Unique
+                                       Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'value'::text, 'en-u-ks-level1'::text))
+                                       ->  ProjectSet
+                                             Output: documentdb_api_catalog.bson_distinct_unwind(document, 'value'::text, 'en-u-ks-level1'::text)
+                                             ->  Custom Scan (DocumentDBApiDistinctQueryScan)
+                                                   Output: document
+                                                   ->  Index Scan using idx_category_value_mk on documentdb_data.documents_1984604_198460018 collection
+                                                         Output: document
+                                                         Index Cond: ((collection.document OPERATOR(documentdb_api_catalog.@=) '{ "category" : "group", "collation" : "en-u-ks-level1" }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@>=) '{ "value" : { "$minKey" : 1 } }'::documentdb_core.bson))
+                                                         Order By: (collection.document OPERATOR(documentdb_api_catalog.|-<>) '{ "value" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('342_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_1
+         Node: host=localhost port=58070 dbname=regression
+         ->  Aggregate
+               Output: documentdb_api_catalog.bson_distinct_agg(intermediate_result.document)
+               ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
+                     Output: intermediate_result.document
+                     Function Call: read_intermediate_result('342_1'::text, 'binary'::citus_copy_format)
+(35 rows)
+
+WITH result AS (
+    SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_collated_mk", "key": "value", "query": { "category": "group" }, "collation": { "locale": "en", "strength": 1 } }')
+)
+SELECT documentdb_api_internal.bson_dollar_project_catalog(document,
+    '{ "count": { "$size": "$values" }, "matches": { "$setEquals": [ "$values", [ "cafe", "tea" ] ] } }',
+    '{}', 'en-u-ks-level1')
+FROM result;
+              bson_dollar_project_catalog               
+---------------------------------------------------------------------
+ { "count" : { "$numberInt" : "2" }, "matches" : true }
+(1 row)
+
+ROLLBACK;
 -- ============================================================
 -- Cleanup
 -- ============================================================
@@ -590,6 +764,12 @@ SELECT documentdb_api.drop_collection('dist_idx_db', 'dist_push_mk');
 (1 row)
 
 SELECT documentdb_api.drop_collection('dist_idx_db', 'dist_push_sharded');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('dist_idx_db', 'dist_push_collated_mk');
  drop_collection 
 ---------------------------------------------------------------------
  t

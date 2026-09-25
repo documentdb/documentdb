@@ -1,3 +1,7 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+
 SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_api_internal,documentdb_core;
 SET citus.next_shard_id TO 198460000;
 SET documentdb.next_collection_id TO 1984600;
@@ -237,9 +241,70 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('
 $cmd$);
 ROLLBACK;
 
+-- Collated multikey distinct must preserve equivalence classes across shards.
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET documentdb.enableIndexMetadataGlobalTracking TO on;
+SELECT documentdb_api.create_collection('dist_idx_db', 'dist_push_collated_mk');
+SELECT documentdb_api.shard_collection('dist_idx_db', 'dist_push_collated_mk', '{ "_id": "hashed" }', false);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('dist_idx_db',
+    '{ "createIndexes": "dist_push_collated_mk", "indexes": [ { "key": { "category": 1, "value": 1 }, "name": "idx_category_value_mk", "collation": { "locale": "en", "strength": 1 } } ] }',
+    true);
+-- The tea class requires collation-aware prefix matching on each shard.
+SELECT COUNT(documentdb_api.insert_one('dist_idx_db', 'dist_push_collated_mk',
+    FORMAT('{ "_id": %s, "category": [ "%s", "other" ], "value": "%s" }',
+        i, CASE WHEN i % 4 = 0 THEN 'group' ELSE 'GROUP' END,
+        CASE i % 4 WHEN 0 THEN 'cafe' WHEN 1 THEN 'CAF\u00c9' WHEN 2 THEN 'tea' ELSE 'TEA' END)::bson))
+FROM generate_series(1, 200) AS i;
+SELECT documentdb_api.insert_one('dist_idx_db', 'dist_push_collated_mk',
+    '{ "_id": 999, "category": [ "other" ], "value": "coffee" }');
+SELECT collection_id FROM documentdb_api_catalog.collections
+    WHERE collection_name = 'dist_push_collated_mk' AND database_name = 'dist_idx_db' \gset
+ANALYZE documentdb_data.documents_:collection_id;
+
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL citus.enable_local_execution TO off;
+SET LOCAL citus.explain_analyze_sort_method TO taskId;
+SET LOCAL documentdb.useLocalExecutionShardQueries TO off;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL documentdb.enableIndexMetadataGlobalTracking TO on;
+SET LOCAL documentdb.enablePerPathMultiKeySortPushdown TO on;
+SET LOCAL documentdb.enable_group_by_multi_key_sort_pushdown TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SET LOCAL documentdb.enable_distinct_multi_key_sort_pushdown TO off;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_collated_mk", "key": "value", "query": { "category": "group" }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+WITH result AS (
+    SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_collated_mk", "key": "value", "query": { "category": "group" }, "collation": { "locale": "en", "strength": 1 } }')
+)
+SELECT documentdb_api_internal.bson_dollar_project_catalog(document,
+    '{ "count": { "$size": "$values" }, "matches": { "$setEquals": [ "$values", [ "cafe", "tea" ] ] } }',
+    '{}', 'en-u-ks-level1')
+FROM result;
+SET LOCAL documentdb.enable_distinct_multi_key_sort_pushdown TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_collated_mk", "key": "value", "query": { "category": "group" }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+WITH result AS (
+    SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_collated_mk", "key": "value", "query": { "category": "group" }, "collation": { "locale": "en", "strength": 1 } }')
+)
+SELECT documentdb_api_internal.bson_dollar_project_catalog(document,
+    '{ "count": { "$size": "$values" }, "matches": { "$setEquals": [ "$values", [ "cafe", "tea" ] ] } }',
+    '{}', 'en-u-ks-level1')
+FROM result;
+ROLLBACK;
+
 -- ============================================================
 -- Cleanup
 -- ============================================================
 SELECT documentdb_api.drop_collection('dist_idx_db', 'dist_push');
 SELECT documentdb_api.drop_collection('dist_idx_db', 'dist_push_mk');
 SELECT documentdb_api.drop_collection('dist_idx_db', 'dist_push_sharded');
+SELECT documentdb_api.drop_collection('dist_idx_db', 'dist_push_collated_mk');

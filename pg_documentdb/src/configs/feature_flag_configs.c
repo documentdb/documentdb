@@ -211,6 +211,16 @@ bool EnablePerPathMultiKeySortPushdown =
 bool EnableGroupByMultiKeySortPushdown =
 	DEFAULT_ENABLE_GROUP_BY_MULTI_KEY_SORT_PUSHDOWN;
 
+/* Added in v0.117, pending stabilization, enable in v1.1 */
+#define DEFAULT_ENABLE_DISTINCT_MULTI_KEY_SORT_PUSHDOWN false
+bool EnableDistinctMultiKeySortPushdown =
+	DEFAULT_ENABLE_DISTINCT_MULTI_KEY_SORT_PUSHDOWN;
+
+/* Added on v1.2, enabled on v1.2, remove after v1.4 */
+#define DEFAULT_ENABLE_SKIP_SORT_PUSHDOWN_FOR_NON_POINT_EQUALITIES true
+bool EnableSkipSortPushdownForNonPointEqualities =
+	DEFAULT_ENABLE_SKIP_SORT_PUSHDOWN_FOR_NON_POINT_EQUALITIES;
+
 /* Added in v0.115, enabled in v0.115, remove after v1.0 */
 #define DEFAULT_ENABLE_INDEX_CORRELATION_FROM_STATISTICS true
 bool EnableIndexCorrelationFromStatistics =
@@ -1273,6 +1283,23 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to allow order-by pushdown for a group-by over a multi-key composite ordered index when the per-path multi-key bitmask proves the grouped/ordered columns are scalar. When off, any group-by on a multi-key index blocks order-by pushdown. De-duplication preserves one row per document when a multi-key equality prefix emits multiple matching index tuples."),
 		NULL, &EnableGroupByMultiKeySortPushdown,
 		DEFAULT_ENABLE_GROUP_BY_MULTI_KEY_SORT_PUSHDOWN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_distinct_multi_key_sort_pushdown", newGucPrefix),
+		gettext_noop(
+			"Whether to allow order-by pushdown for a distinct over a multi-key composite ordered index when the per-path multi-key bitmask proves the distinct column is scalar and every preceding column is pinned by an equality bound. When off, any distinct on a multi-key index blocks order-by pushdown and therefore the distinct skip scan. A multi-key equality prefix can emit one index tuple per matching array element, but those tuples repeat the same distinct value and are collapsed by the distinct itself."),
+		NULL, &EnableDistinctMultiKeySortPushdown,
+		DEFAULT_ENABLE_DISTINCT_MULTI_KEY_SORT_PUSHDOWN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_skip_sort_pushdown_for_non_point_equalities",
+				 newGucPrefix),
+		gettext_noop(
+			"Whether to skip order-by pushdown across equality predicates that span multiple index terms."),
+		NULL, &EnableSkipSortPushdownForNonPointEqualities,
+		DEFAULT_ENABLE_SKIP_SORT_PUSHDOWN_FOR_NON_POINT_EQUALITIES,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
