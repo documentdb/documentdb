@@ -139,6 +139,9 @@ bool ThrowDeadlockOnCrud = DEFAULT_THROW_DEADLOCK_ON_CRUD;
 #define DEFAULT_LOCALHOST_CONN_STR "host=localhost"
 char *LocalhostConnectionString = DEFAULT_LOCALHOST_CONN_STR;
 
+#define DEFAULT_MAX_WIRE_VERSION 21
+int MaxWireVersion = DEFAULT_MAX_WIRE_VERSION;
+
 /* Currently timeout max at 3 hours */
 #define DEFAULT_MAX_CUSTOM_COMMAND_TIMEOUT (3600 * 3 * 1000)
 int MaxCustomCommandTimeout = DEFAULT_MAX_CUSTOM_COMMAND_TIMEOUT;
@@ -236,6 +239,12 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 					 "a libpq connection."),
 		NULL, &LocalhostConnectionString, DEFAULT_LOCALHOST_CONN_STR,
 		PGC_SUSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.max_wire_version", newGucPrefix),
+		gettext_noop("maxWireVersion reported by the gateway in hello / isMaster."),
+		NULL, &MaxWireVersion, DEFAULT_MAX_WIRE_VERSION, 1, INT_MAX,
+		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.enable_create_collection_on_insert", prefix),
