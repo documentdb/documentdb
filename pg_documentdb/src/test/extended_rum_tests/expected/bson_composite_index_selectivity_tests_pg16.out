@@ -1,4 +1,6 @@
 \i sql/bson_composite_index_selectivity_tests.sql
+-- Copyright (c) Microsoft Corporation. All rights reserved.
+-- SPDX-License-Identifier: MIT
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 SET documentdb.next_collection_id TO 200;
 SET documentdb.next_collection_index_id TO 200;
@@ -42,7 +44,7 @@ $$;
 -- create 2 single path indexes
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'comp_idb', '{ "createIndexes": "comp_index_selectivity", "indexes": [ { "name": "comp_index1", "key": { "path1": 1 } } ] }', TRUE);
-psql:sql/bson_composite_index_selectivity_tests.sql:48: NOTICE:  creating collection
+psql:sql/bson_composite_index_selectivity_tests.sql:51: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -149,7 +151,7 @@ set documentdb.enableCompositeIndexPlanner to off;
 -- Create indexes on the two $or branch fields and a compound sort index
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'comp_idb', '{ "createIndexes": "generic_selectiviity_coll", "indexes": [ { "name": "idx_refs_val", "key": { "refs.val": 1 } } ] }', TRUE);
-psql:sql/bson_composite_index_selectivity_tests.sql:91: NOTICE:  creating collection
+psql:sql/bson_composite_index_selectivity_tests.sql:94: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -414,7 +416,7 @@ set documentdb.enableCompositeIndexPlanner to off;
 SET documentdb.enablePerCollectionPlannerStatistics TO on;
 SET documentdb.enablePlannerStatisticsNewCollections TO on;
 SELECT documentdb_api.create_collection('comp_idb', 'btree_selectivity');
-psql:sql/bson_composite_index_selectivity_tests.sql:210: NOTICE:  creating collection
+psql:sql/bson_composite_index_selectivity_tests.sql:213: NOTICE:  creating collection
  create_collection 
 -------------------
  t
@@ -553,7 +555,7 @@ SET documentdb.enablePerCollectionPlannerStatistics = on;
 SET documentdb.enablePlannerStatisticsNewCollections = on;
 -- Create a collection with a sparse field (some docs have "b", some don't)
 SELECT documentdb_api.insert_one('comp_idb', 'exists_sel', '{ "_id": 1, "a": 1 }');
-psql:sql/bson_composite_index_selectivity_tests.sql:273: NOTICE:  creating collection
+psql:sql/bson_composite_index_selectivity_tests.sql:276: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -640,3 +642,167 @@ RESET enable_bitmapscan;
 RESET documentdb.enablePerCollectionPlannerStatistics;
 RESET documentdb.enablePlannerStatisticsNewCollections;
 RESET documentdb.enableCompositeIndexPlanner;
+-- All twelve secondary indexes share the filtered leading path so they are costed.
+SET documentdb.enableCompositeIndexPlanner TO on;
+SET documentdb.enableExtendedExplainPlans TO on;
+SET documentdb.enableExplainScanIndexCosts TO on;
+SET max_parallel_workers_per_gather TO 0;
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+RESET documentdb.max_explain_index_costs;
+DO $$
+BEGIN
+    FOR i IN 1..12 LOOP
+        PERFORM documentdb_api_internal.create_indexes_non_concurrently(
+            'comp_idb',
+            format('{"createIndexes":"explain_cost_limit","indexes":[{"name":"cost_limit_%s","key":{"a":1,"b%s":1}}]}', i, i)::bson,
+            true);
+    END LOOP;
+END;
+$$;
+psql:sql/bson_composite_index_selectivity_tests.sql:327: NOTICE:  creating collection
+SELECT count(documentdb_api.insert_one(
+    'comp_idb', 'explain_cost_limit',
+    bson_build_document('_id'::text, i, 'a'::text, i, 'b1'::text, i % 10)))
+FROM generate_series(1, 1000) i;
+ count 
+-------
+  1000
+(1 row)
+
+DO $$
+BEGIN
+    EXECUTE (
+        SELECT format('ANALYZE documentdb_data.documents_%s', collection_id)
+        FROM documentdb_api_catalog.collections
+        WHERE database_name = 'comp_idb' AND collection_name = 'explain_cost_limit');
+END;
+$$;
+DO $$
+DECLARE
+    query_text constant text := $query$
+        SELECT document FROM bson_aggregation_find(
+            'comp_idb',
+            '{"find":"explain_cost_limit","filter":{"a":5,"b1":5}}')
+    $query$;
+    costs_path constant jsonpath :=
+        'strict $[0].Plan.** ? (exists (@.IndexCosts)).IndexCosts[*]';
+    indexes_path constant jsonpath :=
+        'strict $[0].Plan.** ? (exists (@."Index Name"))."Index Name"';
+    plan_json jsonb;
+    all_costs jsonb;
+    sorted_costs jsonb;
+    reported_costs jsonb;
+    expected_costs jsonb;
+    actual_costs jsonb;
+    winning_indexes jsonb;
+    limit_value integer;
+    expected_count integer;
+    text_count integer;
+    explain_line text;
+    flag_name text;
+BEGIN
+    IF current_setting('documentdb.max_explain_index_costs') <> '8' THEN
+        RAISE EXCEPTION 'Unexpected default candidate index cost limit';
+    END IF;
+
+    EXECUTE 'EXPLAIN (COSTS OFF, FORMAT JSON) ' || query_text INTO plan_json;
+    IF jsonb_array_length(jsonb_path_query_array(plan_json, costs_path)) <> 8 THEN
+        RAISE EXCEPTION 'Default explain must report eight candidate indexes';
+    END IF;
+    winning_indexes := jsonb_path_query_array(plan_json, indexes_path);
+    IF jsonb_array_length(winning_indexes) = 0 THEN
+        RAISE EXCEPTION 'Expected an index scan in the winning plan';
+    END IF;
+
+    PERFORM set_config('documentdb.max_explain_index_costs', '100', false);
+    EXECUTE 'EXPLAIN (COSTS OFF, FORMAT JSON) ' || query_text INTO plan_json;
+    all_costs := jsonb_path_query_array(plan_json, costs_path);
+    IF jsonb_array_length(all_costs) < 12 THEN
+        RAISE EXCEPTION 'Expected at least twelve recorded candidate indexes';
+    END IF;
+    SELECT jsonb_agg(value -> 'totalCost' ORDER BY (value ->> 'totalCost')::numeric)
+    INTO sorted_costs FROM jsonb_array_elements(all_costs);
+
+    FOREACH limit_value IN ARRAY ARRAY[8, 1, 3, 12, 100] LOOP
+        PERFORM set_config('documentdb.max_explain_index_costs', limit_value::text, false);
+        EXECUTE 'EXPLAIN (COSTS OFF, FORMAT JSON) ' || query_text INTO plan_json;
+        reported_costs := jsonb_path_query_array(plan_json, costs_path);
+        expected_count := least(limit_value, jsonb_array_length(all_costs));
+        IF jsonb_array_length(reported_costs) IS DISTINCT FROM expected_count THEN
+            RAISE EXCEPTION 'Incorrect JSON candidate count at limit %', limit_value;
+        END IF;
+
+        SELECT jsonb_agg(value ORDER BY ordinality)
+        INTO expected_costs
+        FROM jsonb_array_elements(sorted_costs) WITH ORDINALITY
+        WHERE ordinality <= limit_value;
+        SELECT jsonb_agg(value -> 'totalCost' ORDER BY ordinality)
+        INTO actual_costs
+        FROM jsonb_array_elements(reported_costs) WITH ORDINALITY;
+        IF actual_costs IS DISTINCT FROM expected_costs THEN
+            RAISE EXCEPTION 'Expected the lowest-cost candidates in ascending order at limit %', limit_value;
+        END IF;
+        IF jsonb_path_query_array(plan_json, indexes_path) IS DISTINCT FROM winning_indexes THEN
+            RAISE EXCEPTION 'Changing the reporting limit changed the winning indexes';
+        END IF;
+
+        text_count := 0;
+        FOR explain_line IN EXECUTE 'EXPLAIN (COSTS OFF) ' || query_text LOOP
+            IF explain_line LIKE '%startup cost=%' THEN
+                text_count := text_count + 1;
+            END IF;
+        END LOOP;
+        IF text_count <> expected_count THEN
+            RAISE EXCEPTION 'Incorrect text candidate count at limit %', limit_value;
+        END IF;
+        RAISE NOTICE 'Limit %: candidate counts, cost ordering and winning indexes verified', limit_value;
+    END LOOP;
+
+    FOREACH flag_name IN ARRAY ARRAY[
+        'documentdb.enableExplainScanIndexCosts',
+        'documentdb.enableExtendedExplainPlans'
+    ] LOOP
+        PERFORM set_config(flag_name, 'off', false);
+        EXECUTE 'EXPLAIN (COSTS OFF, FORMAT JSON) ' || query_text INTO plan_json;
+        IF jsonb_array_length(jsonb_path_query_array(plan_json, costs_path)) <> 0 THEN
+            RAISE EXCEPTION 'Candidate costs reported while % is off', flag_name;
+        END IF;
+        PERFORM set_config(flag_name, 'on', false);
+    END LOOP;
+END;
+$$;
+psql:sql/bson_composite_index_selectivity_tests.sql:436: NOTICE:  Limit 8: candidate counts, cost ordering and winning indexes verified
+psql:sql/bson_composite_index_selectivity_tests.sql:436: NOTICE:  Limit 1: candidate counts, cost ordering and winning indexes verified
+psql:sql/bson_composite_index_selectivity_tests.sql:436: NOTICE:  Limit 3: candidate counts, cost ordering and winning indexes verified
+psql:sql/bson_composite_index_selectivity_tests.sql:436: NOTICE:  Limit 12: candidate counts, cost ordering and winning indexes verified
+psql:sql/bson_composite_index_selectivity_tests.sql:436: NOTICE:  Limit 100: candidate counts, cost ordering and winning indexes verified
+RESET documentdb.max_explain_index_costs;
+SHOW documentdb.max_explain_index_costs;
+ documentdb.max_explain_index_costs 
+------------------------------------
+ 8
+(1 row)
+
+SET documentdb.max_explain_index_costs TO 0;
+psql:sql/bson_composite_index_selectivity_tests.sql:440: ERROR:  0 is outside the valid range for parameter "documentdb.max_explain_index_costs" (1 .. 100)
+SET documentdb.max_explain_index_costs TO 101;
+psql:sql/bson_composite_index_selectivity_tests.sql:441: ERROR:  101 is outside the valid range for parameter "documentdb.max_explain_index_costs" (1 .. 100)
+SHOW documentdb.max_explain_index_costs;
+ documentdb.max_explain_index_costs 
+------------------------------------
+ 8
+(1 row)
+
+SELECT documentdb_api.drop_collection('comp_idb', 'explain_cost_limit');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+RESET max_parallel_workers_per_gather;
+RESET documentdb.enableCompositeIndexPlanner;
+RESET documentdb.enableExplainScanIndexCosts;
+RESET documentdb.enableExtendedExplainPlans;

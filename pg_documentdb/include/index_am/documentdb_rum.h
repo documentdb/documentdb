@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * include/index_am/documentdb_rum.h
  *
@@ -15,6 +16,8 @@
 #include <access/amapi.h>
 #include <nodes/pathnodes.h>
 #include "index_am/index_am_exports.h"
+
+#define MAX_EXPLAIN_COSTS_SIZE 100
 
 
 /* How to load the RUM library into the process */

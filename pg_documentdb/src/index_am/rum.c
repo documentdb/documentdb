@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * src/index_am/rum.c
  *
@@ -54,6 +55,7 @@ extern bool EnableExplainScanIndexCosts;
 extern bool EnableOrderByIndexTerm;
 extern bool EnableMergeSortForInPrefix;
 extern bool EnableDynamicCursorDedupTracking;
+extern int MaxExplainIndexCosts;
 
 bool RumHasMultiKeyPaths = false;
 
@@ -103,8 +105,6 @@ static bool ValidateMatchForOrderbyQuals(IndexPath *path);
 static bool IsTextIndexMatch(IndexPath *path);
 
 
-#define MAX_EXPLAIN_COSTS_SIZE 100
-#define MAX_LOGGED_PLANS 8
 static IndexCostsData IndexExplainCosts[MAX_EXPLAIN_COSTS_SIZE] = { 0 };
 static int IndexExplainCostsIndex = 0;
 
@@ -1771,7 +1771,7 @@ LogReportedIndexCosts(Oid relOid, struct ExplainState *es)
 	initStringInfo(&buf);
 	int numPlansLogged = 0;
 	for (int i = 0; i < IndexExplainCostsIndex && i < MAX_EXPLAIN_COSTS_SIZE &&
-		 numPlansLogged < MAX_LOGGED_PLANS; i++)
+		 numPlansLogged < MaxExplainIndexCosts; i++)
 	{
 		if (IndexExplainCosts[i].indexOid == InvalidOid)
 		{

@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * src/configs/limit_configs.c
  *
@@ -44,6 +45,9 @@ int ShardingMaxChunks = DEFAULT_SHARDING_MAX_CHUNKS;
 
 #define DEFAULT_QUERY_PLAN_CACHE_SIZE_LIMIT 100
 int QueryPlanCacheSizeLimit = DEFAULT_QUERY_PLAN_CACHE_SIZE_LIMIT;
+
+#define DEFAULT_MAX_EXPLAIN_INDEX_COSTS 8
+int MaxExplainIndexCosts = DEFAULT_MAX_EXPLAIN_INDEX_COSTS;
 
 /* Cap on the number of ordered scans merged for an $in prefix. */
 #define DEFAULT_MAX_MERGE_SORT_IN_VALUES 200
@@ -277,6 +281,16 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.max_explain_index_costs", newGucPrefix),
+		gettext_noop(
+			"The maximum number of candidate index cost estimates reported per scan in explain output."),
+		gettext_noop(
+			"Requires enableExtendedExplainPlans and enableExplainScanIndexCosts."),
+		&MaxExplainIndexCosts,
+		DEFAULT_MAX_EXPLAIN_INDEX_COSTS, 1, MAX_EXPLAIN_COSTS_SIZE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomIntVariable(
 		psprintf("%s.max_merge_sort_in_values", newGucPrefix),
