@@ -139,6 +139,7 @@ InitializeDocumentDBRum(void)
 		.skip_tids_on_current_entry = NULL, /* added below */
 		.get_reduced_terms_status = documentdb_rum_get_reduced_terms_status,
 		.is_path_key_summarization_scan = documentdb_rum_is_path_key_summarization_scan,
+		.supports_optional_key = true,
 	};
 	documentDBIndexAmEntry.add_explain_output =
 		core_function_catalog.try_explain_documentdb_rum_index;

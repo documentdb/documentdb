@@ -43,6 +43,8 @@ typedef uint16 RumVacuumCycleId;
  */
 #define RUM_ORDERED_ANY_SCAN 6
 
+#define RUM_SEARCH_MODE_DEFAULT_TRUE 7
+
 
 /* RumConfig declaration */
 #define MAX_STRATEGIES (8)

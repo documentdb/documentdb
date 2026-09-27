@@ -610,6 +610,16 @@ initScanKey(RumScanOpaque so, ScanKey skey, bool *hasPartialMatch,
 		searchMode = RUM_SEARCH_MODE_ORDERED;
 	}
 
+	if (searchMode == RUM_SEARCH_MODE_DEFAULT_TRUE)
+	{
+		if (nQueryValues == 0)
+		{
+			return;
+		}
+
+		searchMode = GIN_SEARCH_MODE_DEFAULT;
+	}
+
 	/*
 	 * If bogus searchMode is returned, treat as RUM_SEARCH_MODE_ALL; note in
 	 * particular we don't allow extractQueryFn to select

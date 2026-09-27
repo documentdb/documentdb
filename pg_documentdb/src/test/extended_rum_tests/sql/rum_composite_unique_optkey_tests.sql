@@ -1,0 +1,390 @@
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+
+SET documentdb.next_collection_id TO 2900;
+SET documentdb.next_collection_index_id TO 2900;
+
+SET documentdb.defaultUseCompositeOpClass TO on;
+SET documentdb.enableCompositeUniqueHash TO on;
+SET documentdb.enable_composite_unique_optional_key TO on;
+
+-- NOTE: The optional-key reloption is emitted as
+-- "cmp='true', optsk='<collId>'" and is consumed during extraction: when a
+-- row's shard_key_value matches the stored optionalCollectionId, the
+-- shard-exclusion terms are eliminated, so a unique index stores only the path
+-- terms (10 entries, shard_entries=0). After sharding, rows whose
+-- shard_key_value no longer matches the collectionId regenerate the
+-- shard-exclusion terms (Section 7).
+
+-- ===== Section 1: Index layout with optkey =====
+-- With optkey, the shard exclusion column produces 0 entries,
+-- so the index only has entries from the composite path column.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
+  '{ "createIndexes": "optkeyColl", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "unique": true } ]}', TRUE);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
+  '{ "createIndexes": "optkeyColl", "indexes": [ { "key": { "b": 1, "c": 1 }, "name": "b_c_1", "unique": true } ]}', TRUE);
+
+-- Collection ID layout:
+--   2900: db metadata
+--   2901: optkeyColl -> pk 2901, rum idx a_1 = 2902, rum idx b_c_1 = 2903
+-- With optkey consumed during extraction, the unique index stores only the
+-- path terms (cmp='true', optsk='2901' on the shard opclass).
+\d documentdb_data.documents_2901
+
+SELECT COUNT(documentdb_api.insert_one('optkeydb', 'optkeyColl',
+    bson_build_document('_id'::text, i, 'a'::text, i, 'b'::text, i, 'c'::text, i)))
+FROM generate_series(1, 10) i;
+
+VACUUM (FREEZE ON, INDEX_CLEANUP ON) documentdb_data.documents_2901;
+
+-- Meta page: with optkey consumed, entries are 10 (path terms only, the shard
+-- exclusion terms are eliminated when shard_key_value matches optsk).
+-- Single-key index {a:1}: 10 entries
+SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(
+    public.get_raw_page('documentdb_data.documents_rum_index_2902', 0));
+-- Compound-key index {b:1, c:1}: 10 entries
+SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(
+    public.get_raw_page('documentdb_data.documents_rum_index_2903', 0));
+
+-- Entry layout: should only have attrNumber=1 path entries, no attrNumber=2 shard terms
+SELECT i, (entry->>'offset')::int8, (entry->>'attrNumber')::int8, (entry->>'firstEntry')
+FROM generate_series(1, 1) i JOIN LATERAL (
+    SELECT entry FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+        public.get_raw_page('documentdb_data.documents_rum_index_2902', i),
+        'documentdb_data.documents_rum_index_2902'::regclass) entry) q ON TRUE
+ORDER BY i, (entry->>'offset')::int8;
+
+SELECT i, (entry->>'offset')::int8, (entry->>'attrNumber')::int8, (entry->>'firstEntry')
+FROM generate_series(1, 1) i JOIN LATERAL (
+    SELECT entry FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+        public.get_raw_page('documentdb_data.documents_rum_index_2903', i),
+        'documentdb_data.documents_rum_index_2903'::regclass) entry) q ON TRUE
+ORDER BY i, (entry->>'offset')::int8;
+
+-- Validate: exactly 10 path entries (attrNumber=1) and 0 shard entries
+-- (attrNumber=2). optkey eliminates the shard-exclusion terms, so this prints
+-- PASS.
+SELECT
+    (SELECT count(*) FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+        public.get_raw_page('documentdb_data.documents_rum_index_2902', 1),
+        'documentdb_data.documents_rum_index_2902'::regclass) e
+     WHERE (e->>'attrNumber')::int = 1) AS path_entries,
+    (SELECT count(*) FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+        public.get_raw_page('documentdb_data.documents_rum_index_2902', 1),
+        'documentdb_data.documents_rum_index_2902'::regclass) e
+     WHERE (e->>'attrNumber')::int = 2) AS shard_entries,
+    CASE
+        WHEN (SELECT count(*) FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+                public.get_raw_page('documentdb_data.documents_rum_index_2902', 1),
+                'documentdb_data.documents_rum_index_2902'::regclass) e
+              WHERE (e->>'attrNumber')::int = 2) = 0
+        THEN 'PASS: shard exclusion entries eliminated by optkey'
+        ELSE 'FAIL: shard exclusion entries still present with optkey'
+    END AS optkey_layout_check;
+
+-- ===== Section 2: Unique constraint enforcement =====
+-- Even with optkey (no shard exclusion entries), unique violations must be caught.
+
+-- 2a: Duplicate on single-key index {a:1}
+SELECT documentdb_api.insert_one('optkeydb', 'optkeyColl',
+    '{ "_id": 100, "a": 1, "b": 100, "c": 100 }');
+
+-- 2b: Duplicate on compound-key index {b:1, c:1}
+SELECT documentdb_api.insert_one('optkeydb', 'optkeyColl',
+    '{ "_id": 101, "a": 101, "b": 1, "c": 1 }');
+
+-- 2c: Same "a" but different "b","c" should succeed
+SELECT documentdb_api.insert_one('optkeydb', 'optkeyColl',
+    '{ "_id": 102, "a": 102, "b": 1, "c": 999 }');
+
+-- 2d: Same "b" but different "c" should succeed (compound key)
+SELECT documentdb_api.insert_one('optkeydb', 'optkeyColl',
+    '{ "_id": 103, "a": 103, "b": 1, "c": 998 }');
+
+-- Verify row count after the above (2 inserts should succeed, 2 should fail)
+SELECT count(*) as total_rows FROM documentdb_data.documents_2901;
+
+-- ===== Section 3: Unique constraint with arrays =====
+-- Array values generate multiple index terms; uniqueness must be checked per element.
+
+-- Insert doc with array in unique field "a"
+SELECT documentdb_api.insert_one('optkeydb', 'optkeyColl',
+    '{ "_id": 200, "a": [20, 21, 22], "b": 200, "c": 200 }');
+
+-- This should fail: "a":20 already exists (from the array above)
+SELECT documentdb_api.insert_one('optkeydb', 'optkeyColl',
+    '{ "_id": 201, "a": 20, "b": 201, "c": 201 }');
+
+-- This should succeed: "a":23 is not in the array
+SELECT documentdb_api.insert_one('optkeydb', 'optkeyColl',
+    '{ "_id": 202, "a": 23, "b": 202, "c": 202 }');
+
+-- ===== Section 4: Unique constraint with missing/null fields =====
+-- Missing fields are indexed as null. In this system, null values are treated
+-- as equal for unique constraint purposes, so only one doc with a missing
+-- unique field is allowed per index.
+
+-- Insert doc without field "a" (indexed as null)
+SELECT documentdb_api.insert_one('optkeydb', 'optkeyColl',
+    '{ "_id": 300, "b": 300, "c": 300 }');
+
+-- Another doc without field "a" should fail (null = null for uniqueness)
+SELECT documentdb_api.insert_one('optkeydb', 'optkeyColl',
+    '{ "_id": 301, "b": 301, "c": 301 }');
+
+-- Explicit null should also fail (same unique value as missing field)
+SELECT documentdb_api.insert_one('optkeydb', 'optkeyColl',
+    '{ "_id": 302, "a": null, "b": 302, "c": 302 }');
+
+-- ===== Section 5: Update that causes unique violation =====
+-- Updating a doc to conflict with an existing unique value should fail.
+SELECT documentdb_api.update('optkeydb',
+    '{ "update": "optkeyColl", "updates": [{ "q": { "_id": 102 }, "u": { "$set": { "a": 1 } } }] }');
+
+-- Verify the update was rejected (a:102 should still be the value)
+SELECT document FROM documentdb_api.collection('optkeydb', 'optkeyColl')
+WHERE document @@ '{ "_id": 102 }';
+
+-- ===== Section 6: Delete and re-insert =====
+-- After deleting a doc, its unique value should be available again.
+SELECT documentdb_api.delete('optkeydb',
+    '{ "delete": "optkeyColl", "deletes": [{ "q": { "_id": 1 }, "limit": 1 }] }');
+
+-- Now a:1 should be available
+SELECT documentdb_api.insert_one('optkeydb', 'optkeyColl',
+    '{ "_id": 400, "a": 1, "b": 400, "c": 400 }');
+
+-- Verify final count
+SELECT count(*) as final_rows FROM documentdb_data.documents_2901;
+
+-- ===== Section 7: After sharding, shard exclusion terms for cross-shard uniqueness =====
+-- When a collection is sharded, documents can have different shard_key_values.
+-- The optkey optimization skips shard terms when shard_key_value matches the
+-- stored collectionId. After sharding, if shard_key_value changes for some docs,
+-- the index will generate shard terms for those docs.
+-- In the OSS non-distributed test, shard_collection doesn't change shard_key_value
+-- so the optimization still applies and shard terms remain 0.
+-- TODO: In a distributed environment, verify that docs with different
+-- shard_key_values produce shard exclusion terms.
+
+SELECT documentdb_api.shard_collection('optkeydb', 'optkeyColl', '{ "b": "hashed" }', false);
+
+-- Show index definitions after sharding
+\d documentdb_data.documents_2901
+
+-- Insert more docs after sharding to populate multiple pages
+SELECT COUNT(documentdb_api.insert_one('optkeydb', 'optkeyColl',
+    bson_build_document('_id'::text, i, 'a'::text, i, 'b'::text, i, 'c'::text, i)))
+FROM generate_series(500, 600) i;
+
+VACUUM (FREEZE ON, INDEX_CLEANUP ON) documentdb_data.documents_2901;
+
+-- Show meta page info for the EXCLUDE index after sharding
+WITH idx AS (
+    SELECT 'documentdb_data.' || indexname AS indexname_full
+    FROM pg_indexes
+    WHERE schemaname = 'documentdb_data' AND tablename = 'documents_2901'
+    AND indexname LIKE '%rum%'
+    AND indexdef LIKE '%generate_unique_shard%'
+    ORDER BY indexname LIMIT 1
+)
+SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(
+    public.get_raw_page(idx.indexname_full, 0))
+FROM idx;
+
+-- After sharding, the indexes are recreated. Find the current rum index for {a:1}.
+-- Check ALL leaf entry pages for shard exclusion terms.
+WITH idx AS (
+    SELECT 'documentdb_data.' || indexname AS indexname_full
+    FROM pg_indexes
+    WHERE schemaname = 'documentdb_data' AND tablename = 'documents_2901'
+    AND indexname LIKE '%rum%'
+    AND indexdef LIKE '%generate_unique_shard%'
+    ORDER BY indexname LIMIT 1
+),
+meta AS (
+    SELECT (documentdb_api_internal.documentdb_rum_get_meta_page_info(
+        public.get_raw_page(idx.indexname_full, 0))->>'totalPages')::int AS total_pages,
+        idx.indexname_full
+    FROM idx
+),
+all_entries AS (
+    SELECT (e->>'attrNumber')::int AS attr_num
+    FROM meta, generate_series(1, meta.total_pages - 1) page_num
+    CROSS JOIN LATERAL documentdb_api_internal.documentdb_rum_page_get_entries(
+        public.get_raw_page(meta.indexname_full, page_num),
+        meta.indexname_full::regclass) e
+)
+SELECT
+    count(*) FILTER (WHERE attr_num = 1) AS path_entries,
+    count(*) FILTER (WHERE attr_num = 2) AS shard_entries,
+    CASE
+        WHEN count(*) FILTER (WHERE attr_num = 2) > 0
+        THEN 'PASS: shard exclusion terms generated after sharding'
+        ELSE 'FAIL (expected in OSS): shard terms still skipped - shard_key_value unchanged in non-distributed mode'
+    END AS sharded_optkey_check
+FROM all_entries;
+
+-- ===== Section 8: Unique constraint is per-shard-key after sharding =====
+-- After sharding, uniqueness is enforced per shard_key_value. Documents with
+-- different shard keys can have the same unique field values.
+
+-- Insert doc with a:1 and different shard key "b" — should succeed since
+-- uniqueness is per-shard-key (the original a:1 doc was deleted in Section 6
+-- and re-inserted with b:400, so a:1 exists with b:400).
+-- This doc has b:9999 which hashes to a different shard key.
+SELECT documentdb_api.insert_one('optkeydb', 'optkeyColl',
+    '{ "_id": 600, "a": 1, "b": 9999, "c": 1 }');
+
+-- Same a:1 with same b:400 (same shard key) should fail
+SELECT documentdb_api.insert_one('optkeydb', 'optkeyColl',
+    '{ "_id": 601, "a": 1, "b": 400, "c": 1 }');
+
+-- Verify both shard-key-scoped uniqueness outcomes
+SELECT count(*) as final_rows FROM documentdb_data.documents_2901;
+
+-- ===== Section 9: String value uniqueness =====
+-- Uniqueness on a string field. Without collation, comparison is exact and
+-- case-sensitive.
+SELECT documentdb_api.create_collection('optkeydb', 'str_uniq');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
+  '{ "createIndexes": "str_uniq", "indexes": [ { "key": { "s": 1 }, "name": "s_1", "unique": true } ]}', TRUE);
+
+SELECT documentdb_api.insert_one('optkeydb', 'str_uniq', '{ "_id": 1, "s": "apple" }');
+-- Exact duplicate: rejected.
+SELECT documentdb_api.insert_one('optkeydb', 'str_uniq', '{ "_id": 2, "s": "apple" }');
+-- Case difference is distinct without collation: succeeds.
+SELECT documentdb_api.insert_one('optkeydb', 'str_uniq', '{ "_id": 3, "s": "APPLE" }');
+-- Leading/trailing whitespace makes a distinct value: succeeds.
+SELECT documentdb_api.insert_one('optkeydb', 'str_uniq', '{ "_id": 4, "s": " apple" }');
+-- Distinct value: succeeds.
+SELECT documentdb_api.insert_one('optkeydb', 'str_uniq', '{ "_id": 5, "s": "banana" }');
+-- Empty string is a real value, distinct from a missing field: succeeds.
+SELECT documentdb_api.insert_one('optkeydb', 'str_uniq', '{ "_id": 6, "s": "" }');
+-- Missing field indexes as null: succeeds (first null).
+SELECT documentdb_api.insert_one('optkeydb', 'str_uniq', '{ "_id": 7 }');
+-- Second missing field conflicts with the null above: rejected.
+SELECT documentdb_api.insert_one('optkeydb', 'str_uniq', '{ "_id": 8 }');
+SELECT count(*) as str_rows FROM documentdb_api.collection('optkeydb', 'str_uniq');
+
+-- ===== Section 10: Numeric cross-type uniqueness =====
+-- Numeric values compare equal across int32/int64/double/decimal128, so the
+-- same magnitude in different numeric types is a duplicate.
+SELECT documentdb_api.create_collection('optkeydb', 'num_uniq');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
+  '{ "createIndexes": "num_uniq", "indexes": [ { "key": { "n": 1 }, "name": "n_1", "unique": true } ]}', TRUE);
+
+-- Seed int32 1.
+SELECT documentdb_api.insert_one('optkeydb', 'num_uniq', '{ "_id": 1, "n": { "$numberInt": "1" } }');
+-- int64 1 equals int32 1: rejected.
+SELECT documentdb_api.insert_one('optkeydb', 'num_uniq', '{ "_id": 2, "n": { "$numberLong": "1" } }');
+-- double 1.0 equals 1: rejected.
+SELECT documentdb_api.insert_one('optkeydb', 'num_uniq', '{ "_id": 3, "n": { "$numberDouble": "1.0" } }');
+-- decimal128 1 equals 1: rejected.
+SELECT documentdb_api.insert_one('optkeydb', 'num_uniq', '{ "_id": 4, "n": { "$numberDecimal": "1" } }');
+-- Distinct integer 2: succeeds.
+SELECT documentdb_api.insert_one('optkeydb', 'num_uniq', '{ "_id": 5, "n": { "$numberInt": "2" } }');
+-- double 2.5: succeeds.
+SELECT documentdb_api.insert_one('optkeydb', 'num_uniq', '{ "_id": 6, "n": { "$numberDouble": "2.5" } }');
+-- decimal 2.5 equals the double 2.5: rejected.
+SELECT documentdb_api.insert_one('optkeydb', 'num_uniq', '{ "_id": 7, "n": { "$numberDecimal": "2.5" } }');
+SELECT count(*) as num_rows FROM documentdb_api.collection('optkeydb', 'num_uniq');
+
+-- ===== Section 11: Embedded-document value uniqueness =====
+-- Embedded documents are compared as whole values, field order included.
+SELECT documentdb_api.create_collection('optkeydb', 'doc_uniq');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
+  '{ "createIndexes": "doc_uniq", "indexes": [ { "key": { "d": 1 }, "name": "d_1", "unique": true } ]}', TRUE);
+
+SELECT documentdb_api.insert_one('optkeydb', 'doc_uniq', '{ "_id": 1, "d": { "x": 1, "y": 2 } }');
+-- Identical document: rejected.
+SELECT documentdb_api.insert_one('optkeydb', 'doc_uniq', '{ "_id": 2, "d": { "x": 1, "y": 2 } }');
+-- Different field order is a distinct document: succeeds.
+SELECT documentdb_api.insert_one('optkeydb', 'doc_uniq', '{ "_id": 3, "d": { "y": 2, "x": 1 } }');
+-- Different value: succeeds.
+SELECT documentdb_api.insert_one('optkeydb', 'doc_uniq', '{ "_id": 4, "d": { "x": 1, "y": 3 } }');
+-- Nested document, seeded once.
+SELECT documentdb_api.insert_one('optkeydb', 'doc_uniq', '{ "_id": 5, "d": { "x": { "z": 9 } } }');
+-- Identical nested document: rejected.
+SELECT documentdb_api.insert_one('optkeydb', 'doc_uniq', '{ "_id": 6, "d": { "x": { "z": 9 } } }');
+SELECT count(*) as doc_rows FROM documentdb_api.collection('optkeydb', 'doc_uniq');
+
+-- ===== Section 12: Array value uniqueness (multi-term) =====
+-- An array indexes one term per element; uniqueness is enforced per element.
+SELECT documentdb_api.create_collection('optkeydb', 'arr_uniq');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
+  '{ "createIndexes": "arr_uniq", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "unique": true } ]}', TRUE);
+
+SELECT documentdb_api.insert_one('optkeydb', 'arr_uniq', '{ "_id": 1, "a": [ 1, 2, 3 ] }');
+-- Scalar 2 collides with element 2 of the array: rejected.
+SELECT documentdb_api.insert_one('optkeydb', 'arr_uniq', '{ "_id": 2, "a": 2 }');
+-- Array sharing element 3: rejected.
+SELECT documentdb_api.insert_one('optkeydb', 'arr_uniq', '{ "_id": 3, "a": [ 3, 4 ] }');
+-- Fully disjoint array: succeeds.
+SELECT documentdb_api.insert_one('optkeydb', 'arr_uniq', '{ "_id": 4, "a": [ 4, 5 ] }');
+-- Wait: element 4 above now exists (from _id 4). A new array reusing 4: rejected.
+SELECT documentdb_api.insert_one('optkeydb', 'arr_uniq', '{ "_id": 5, "a": [ 4, 6 ] }');
+-- String elements are distinct from numeric elements: succeeds.
+SELECT documentdb_api.insert_one('optkeydb', 'arr_uniq', '{ "_id": 6, "a": [ "1", "2" ] }');
+-- Reusing string element "1": rejected.
+SELECT documentdb_api.insert_one('optkeydb', 'arr_uniq', '{ "_id": 7, "a": "1" }');
+SELECT count(*) as arr_rows FROM documentdb_api.collection('optkeydb', 'arr_uniq');
+
+-- ===== Section 13: Truncation with differences beyond the truncation limit =====
+-- With a small index-term truncation limit, values that share a long common
+-- prefix produce identical (truncated) index terms and therefore collide on the
+-- hash. The runtime recheck ("Executing unique index runtime recheck") then
+-- compares the full stored values, so values differing only beyond the limit are
+-- correctly treated as distinct, while truly identical values conflict.
+SET documentdb.indexTermLimitOverride TO 50;
+SELECT documentdb_api.create_collection('optkeydb', 'trunc_uniq');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
+  '{ "createIndexes": "trunc_uniq", "indexes": [ { "key": { "t": 1 }, "name": "t_1", "unique": true } ]}', TRUE);
+
+SET client_min_messages TO DEBUG1;
+-- Seed a 200-char string (well beyond the 50-byte truncation limit).
+SELECT documentdb_api.insert_one('optkeydb', 'trunc_uniq',
+    bson_build_document('_id'::text, 1, 't'::text, repeat('a', 200) || 'AAAA_SUFFIX_X'));
+-- Same 200-char prefix, differing only in the final suffix (beyond the limit):
+-- terms collide, recheck fires, full values differ -> succeeds.
+SELECT documentdb_api.insert_one('optkeydb', 'trunc_uniq',
+    bson_build_document('_id'::text, 2, 't'::text, repeat('a', 200) || 'AAAA_SUFFIX_Y'));
+-- Exact duplicate of _id 1: terms collide, recheck fires, full values equal ->
+-- rejected.
+SELECT documentdb_api.insert_one('optkeydb', 'trunc_uniq',
+    bson_build_document('_id'::text, 3, 't'::text, repeat('a', 200) || 'AAAA_SUFFIX_X'));
+RESET client_min_messages;
+SELECT count(*) as trunc_rows FROM documentdb_api.collection('optkeydb', 'trunc_uniq');
+RESET documentdb.indexTermLimitOverride;
+
+-- ===== Section 14: Nested array-of-arrays, deep difference beyond the limit =====
+-- The unique field holds a single embedded-document value wrapping an
+-- array-of-arrays, so the whole structure is one index term (not element-wise).
+-- The only difference is deep inside: index 5 of the 3rd inner array. The
+-- leading elements are padded so that byte offset pushes that difference beyond
+-- the small truncation limit, forcing a hash collision and a runtime recheck
+-- that must compare the full stored values.
+SET documentdb.indexTermLimitOverride TO 50;
+SELECT documentdb_api.create_collection('optkeydb', 'nested_arr_trunc');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
+  '{ "createIndexes": "nested_arr_trunc", "indexes": [ { "key": { "t": 1 }, "name": "t_1", "unique": true } ]}', TRUE);
+
+SET client_min_messages TO DEBUG1;
+-- Seed: 3rd inner array has "DEEP_A" at index 5.
+SELECT documentdb_api.insert_one('optkeydb', 'nested_arr_trunc',
+    '{ "_id": 1, "t": { "arr": [ ["aa_pad_00","aa_pad_01"], ["bb_pad_00","bb_pad_01"], ["cc_pad_00","cc_pad_01","cc_pad_02","cc_pad_03","cc_pad_04","DEEP_A","cc_tail_06"] ] } }');
+-- Same structure, differing only at index 5 of the 3rd inner array ("DEEP_B"),
+-- which is beyond the truncation limit: terms collide, recheck fires, full
+-- values differ -> succeeds.
+SELECT documentdb_api.insert_one('optkeydb', 'nested_arr_trunc',
+    '{ "_id": 2, "t": { "arr": [ ["aa_pad_00","aa_pad_01"], ["bb_pad_00","bb_pad_01"], ["cc_pad_00","cc_pad_01","cc_pad_02","cc_pad_03","cc_pad_04","DEEP_B","cc_tail_06"] ] } }');
+-- Exact duplicate of _id 1: terms collide, recheck fires, full values equal ->
+-- rejected.
+SELECT documentdb_api.insert_one('optkeydb', 'nested_arr_trunc',
+    '{ "_id": 3, "t": { "arr": [ ["aa_pad_00","aa_pad_01"], ["bb_pad_00","bb_pad_01"], ["cc_pad_00","cc_pad_01","cc_pad_02","cc_pad_03","cc_pad_04","DEEP_A","cc_tail_06"] ] } }');
+RESET client_min_messages;
+SELECT count(*) as nested_arr_rows FROM documentdb_api.collection('optkeydb', 'nested_arr_trunc');
+RESET documentdb.indexTermLimitOverride;
+
+RESET documentdb.enable_composite_unique_optional_key;
+RESET documentdb.enableCompositeUniqueHash;
+RESET documentdb.defaultUseCompositeOpClass;

@@ -520,6 +520,9 @@ typedef enum
 	FEATURE_STAGE_VECTOR_SEARCH_KNN,
 	FEATURE_STAGE_VECTOR_SEARCH_NATIVE,
 
+	/* Feature counter region - Unique shard key path */
+	FEATURE_UNIQUE_SHARD_KEY_MISMATCH_SUPPRESSED_CONFLICT,
+
 
 	/* Feature counter region - Update operators/Options */
 	FEATURE_UPDATE_MANY,

@@ -44,15 +44,12 @@
  #include "opclass/bson_gin_composite_scan.h"
  #include "opclass/bson_gin_composite_private.h"
  #include "opclass/bson_gin_composite.h"
+ #include "index_am/documentdb_rum_opclass.h"
 
 #define BSON_TREE_PRIVATE
 #include "aggregation/bson_tree_private.h"
 #undef BSON_TREE_PRIVATE
 #include "aggregation/bson_tree.h"
-
-/* CodeSync: pg_documentdb_rum.h */
-#define RUM_SEARCH_MODE_ORDERED 4
-#define RUM_SEARCH_MODE_ORDERED_REVERSE 5
 
 /*
  * Ordered-any requests require ordered execution but leave the direction for
@@ -146,24 +143,6 @@ typedef struct IndexProjectionCache
 	 * against the term count in the per-row index term. */
 	int numPaths;
 } IndexProjectionCache;
-
-
-#define MAX_STRATEGIES (8)
-PGDLLIMPORT typedef struct RumConfig
-{
-	Oid addInfoTypeOid;
-
-	struct
-	{
-		StrategyNumber strategy;
-		ScanDirection direction;
-	}       strategyInfo[MAX_STRATEGIES];
-
-	bool skipGenerateEmptyEntries;
-	bool compareFunctionHasRecheck;
-	bool enableOpClassMetadataStorage;
-	bool enableHighKeyOptimization;
-}   RumConfig;
 
 /*
  * Metadata blob reservation for the composite index.

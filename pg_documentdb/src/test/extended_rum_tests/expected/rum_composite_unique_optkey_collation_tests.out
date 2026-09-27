@@ -1,0 +1,379 @@
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+SET documentdb.next_collection_id TO 2800;
+SET documentdb.next_collection_index_id TO 2800;
+SET documentdb.defaultUseCompositeOpClass TO on;
+SET documentdb.enableCompositeUniqueHash TO on;
+SET documentdb.enable_composite_unique_optional_key TO on;
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+-- Collation-focused sibling of rum_composite_unique_optkey_tests. It validates
+-- how collation interacts with unique optional-key indexes, gated by the
+-- enable_collated_unique_indexes feature flag.
+-- ===== Section 1: With the flag OFF, unique + collation is rejected =====
+-- CALLOUT: while enable_collated_unique_indexes is off, a unique index that
+-- requests a collation spec is rejected with
+-- "Collation is not yet supported for unique indexes".
+SET documentdb.enable_collated_unique_indexes TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeycolldb',
+  '{ "createIndexes": "optkeyCollColl", "indexes": [ { "key": { "a": 1 }, "name": "a_coll_off", "unique": true, "collation": { "locale": "en", "strength": 2 } }]}', TRUE);
+ERROR:  Collation is not yet supported for unique indexes
+-- ===== Section 2: With the flag ON, unique + collation is allowed =====
+-- Enabling the flag lets create_indexes build a unique index with a collation
+-- spec. This is the first successful create, so it creates the collection
+-- (id 2801).
+SET documentdb.enable_collated_unique_indexes TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeycolldb',
+  '{ "createIndexes": "optkeyCollColl", "indexes": [ { "key": { "a": 1 }, "name": "a_coll_1", "unique": true, "collation": { "locale": "en", "strength": 2 } }]}', TRUE);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Collection ID layout:
+--   2800: db metadata
+--   2801: optkeyCollColl -> pk 2801, unique a_coll_1
+\d documentdb_data.documents_2801
+          Table "documentdb_data.documents_2801"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_2801" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_2802" EXCLUDE USING documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "a" ]', tl='2691', cl='en-u-ks-level2') WITH =?=, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" } }'::bson, false, true, 'en-u-ks-level2'::text) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops (cmp='true', optsk='2801') WITH OPERATOR(documentdb_api_internal.=#=))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '2801'::bigint)
+
+-- ===== Section 3: Validate collated (case-insensitive) uniqueness =====
+-- The unique index requested collation with strength 2 (case-insensitive), and
+-- create_indexes allows it under the flag (the collation is threaded into the
+-- path term cl='en-u-ks-level2' and generate_unique_shard_document()). The write
+-- path folds each term through the collation, so uniqueness is enforced on the
+-- collated value: "val1" and "VAL1" collide case-insensitively.
+-- Seed the value "val1".
+SELECT documentdb_api.insert_one('optkeycolldb', 'optkeyCollColl',
+    '{ "_id": 1, "a": "val1" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- CALLOUT: "VAL1" is a collated (case-insensitive) duplicate of "val1", so this
+-- insert is rejected with a duplicate key violation on index a_coll_1.
+SELECT documentdb_api.insert_one('optkeycolldb', 'optkeyCollColl',
+    '{ "_id": 2, "a": "VAL1" }');
+                                                                                                                         insert_one                                                                                                                          
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "319029277" }, "errmsg" : "Duplicate key violation on the requested collection: Index 'a_coll_1'" } ] }
+(1 row)
+
+-- CALLOUT: "val2" is distinct under the collation, so this insert succeeds.
+SELECT documentdb_api.insert_one('optkeycolldb', 'optkeyCollColl',
+    '{ "_id": 3, "a": "val2" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- CALLOUT: 2 rows remain ("val1" and "val2"); the collated duplicate "VAL1" was
+-- rejected.
+SELECT count(*) as final_rows FROM documentdb_data.documents_2801;
+ final_rows 
+------------
+          2
+(1 row)
+
+-- ===== Section 4: Collated string coverage (case and accent) =====
+-- Strength 2 is case-insensitive but accent-sensitive. Reuse the a_coll_1 index.
+-- "Val1" folds to the same collated value as "val1"/"VAL1": rejected.
+SELECT documentdb_api.insert_one('optkeycolldb', 'optkeyCollColl',
+    '{ "_id": 4, "a": "Val1" }');
+                                                                                                                         insert_one                                                                                                                          
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "319029277" }, "errmsg" : "Duplicate key violation on the requested collection: Index 'a_coll_1'" } ] }
+(1 row)
+
+-- "café" (accented) is distinct from "cafe" at strength 2: both succeed.
+SELECT documentdb_api.insert_one('optkeycolldb', 'optkeyCollColl',
+    '{ "_id": 5, "a": "cafe" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('optkeycolldb', 'optkeyCollColl',
+    '{ "_id": 6, "a": "café" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- "CAFE" folds to "cafe" (case-insensitive): rejected.
+SELECT documentdb_api.insert_one('optkeycolldb', 'optkeyCollColl',
+    '{ "_id": 7, "a": "CAFE" }');
+                                                                                                                         insert_one                                                                                                                          
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "319029277" }, "errmsg" : "Duplicate key violation on the requested collection: Index 'a_coll_1'" } ] }
+(1 row)
+
+SELECT count(*) as string_rows FROM documentdb_api.collection('optkeycolldb', 'optkeyCollColl');
+ string_rows 
+-------------
+           4
+(1 row)
+
+-- ===== Section 5: Collated numeric values =====
+-- Collation applies to strings only; numeric cross-type equality still holds.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeycolldb',
+  '{ "createIndexes": "coll_numbers", "indexes": [ { "key": { "n": 1 }, "name": "n_coll_1", "unique": true, "collation": { "locale": "en", "strength": 2 } }]}', TRUE);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('optkeycolldb', 'coll_numbers', '{ "_id": 1, "n": { "$numberInt": "5" } }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- double 5.0 equals int 5: rejected.
+SELECT documentdb_api.insert_one('optkeycolldb', 'coll_numbers', '{ "_id": 2, "n": { "$numberDouble": "5.0" } }');
+                                                                                                                         insert_one                                                                                                                          
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "319029277" }, "errmsg" : "Duplicate key violation on the requested collection: Index 'n_coll_1'" } ] }
+(1 row)
+
+-- Distinct number: succeeds.
+SELECT documentdb_api.insert_one('optkeycolldb', 'coll_numbers', '{ "_id": 3, "n": { "$numberInt": "6" } }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT count(*) as number_rows FROM documentdb_api.collection('optkeycolldb', 'coll_numbers');
+ number_rows 
+-------------
+           2
+(1 row)
+
+-- ===== Section 6: Collated array-of-strings values =====
+-- Each array element indexes a term; collated folding applies per element.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeycolldb',
+  '{ "createIndexes": "coll_arrays", "indexes": [ { "key": { "a": 1 }, "name": "a_coll_arr", "unique": true, "collation": { "locale": "en", "strength": 2 } }]}', TRUE);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('optkeycolldb', 'coll_arrays', '{ "_id": 1, "a": [ "Red", "Green" ] }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Scalar "RED" folds to "red", colliding with array element "Red": rejected.
+SELECT documentdb_api.insert_one('optkeycolldb', 'coll_arrays', '{ "_id": 2, "a": "RED" }');
+                                                                                                                          insert_one                                                                                                                           
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "319029277" }, "errmsg" : "Duplicate key violation on the requested collection: Index 'a_coll_arr'" } ] }
+(1 row)
+
+-- Array with "GREEN" collides with existing "Green": rejected.
+SELECT documentdb_api.insert_one('optkeycolldb', 'coll_arrays', '{ "_id": 3, "a": [ "GREEN", "Blue" ] }');
+                                                                                                                          insert_one                                                                                                                           
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "319029277" }, "errmsg" : "Duplicate key violation on the requested collection: Index 'a_coll_arr'" } ] }
+(1 row)
+
+-- Fully distinct array: succeeds.
+SELECT documentdb_api.insert_one('optkeycolldb', 'coll_arrays', '{ "_id": 4, "a": [ "Yellow", "Purple" ] }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT count(*) as array_rows FROM documentdb_api.collection('optkeycolldb', 'coll_arrays');
+ array_rows 
+------------
+          2
+(1 row)
+
+-- ===== Section 7: Collated truncation beyond the truncation limit =====
+-- With a small term limit, long strings sharing a prefix produce identical
+-- truncated terms and collide; the runtime recheck folds the full values through
+-- the collation. Case-only differences beyond the limit are collated duplicates,
+-- while genuinely different letters beyond the limit are distinct.
+SET documentdb.indexTermLimitOverride TO 50;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeycolldb',
+  '{ "createIndexes": "coll_trunc", "indexes": [ { "key": { "t": 1 }, "name": "t_coll_1", "unique": true, "collation": { "locale": "en", "strength": 2 } }]}', TRUE);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SET client_min_messages TO DEBUG1;
+-- Seed a 200-char string ending in lowercase "x".
+SELECT documentdb_api.insert_one('optkeycolldb', 'coll_trunc',
+    bson_build_document('_id'::text, 1, 't'::text, repeat('a', 200) || 'SUFFIX_x'));
+DEBUG:  Using single insert with subtransaction
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Same prefix, final letter differs only in case ("X" vs "x") beyond the limit:
+-- collated duplicate under strength 2 -> rejected.
+SELECT documentdb_api.insert_one('optkeycolldb', 'coll_trunc',
+    bson_build_document('_id'::text, 2, 't'::text, repeat('a', 200) || 'SUFFIX_X'));
+DEBUG:  Using single insert with subtransaction
+DEBUG:  Executing unique index runtime recheck.
+DEBUG:  executing "SELECT (index_spec).index_name FROM documentdb_api_catalog.collection_indexes WHERE index_id = 2808" via connection to "host=localhost port=58060 user=REGRESSION_USER dbname=regression application_name='documentdb-Internal'"
+DEBUG:  Inserting index name into cache: t_coll_1
+                                                                                                                         insert_one                                                                                                                          
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "319029277" }, "errmsg" : "Duplicate key violation on the requested collection: Index 't_coll_1'" } ] }
+(1 row)
+
+-- Same prefix, genuinely different final letter ("y") beyond the limit:
+-- distinct -> succeeds.
+SELECT documentdb_api.insert_one('optkeycolldb', 'coll_trunc',
+    bson_build_document('_id'::text, 3, 't'::text, repeat('a', 200) || 'SUFFIX_y'));
+DEBUG:  Using single insert with subtransaction
+DEBUG:  Executing unique index runtime recheck.
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET client_min_messages;
+SELECT count(*) as trunc_rows FROM documentdb_api.collection('optkeycolldb', 'coll_trunc');
+ trunc_rows 
+------------
+          2
+(1 row)
+
+RESET documentdb.indexTermLimitOverride;
+-- ===== Section 8: Collated nested array-of-arrays, deep difference beyond limit =====
+-- The unique field holds a single embedded-document term wrapping an
+-- array-of-arrays. The only difference is deep (index 5 of the 3rd inner array),
+-- padded to sit beyond the truncation limit, so the terms collide and the
+-- runtime recheck folds the full values through the collation (strength 2).
+-- A case-only deep difference is a collated duplicate; a genuinely different
+-- letter is distinct.
+SET documentdb.indexTermLimitOverride TO 50;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeycolldb',
+  '{ "createIndexes": "coll_nested_trunc", "indexes": [ { "key": { "t": 1 }, "name": "t_coll_nested", "unique": true, "collation": { "locale": "en", "strength": 2 } }]}', TRUE);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SET client_min_messages TO DEBUG1;
+-- Seed: index 5 of the 3rd inner array is lowercase "deep_x".
+SELECT documentdb_api.insert_one('optkeycolldb', 'coll_nested_trunc',
+    '{ "_id": 1, "t": { "arr": [ ["aa_pad_00","aa_pad_01"], ["bb_pad_00","bb_pad_01"], ["cc_pad_00","cc_pad_01","cc_pad_02","cc_pad_03","cc_pad_04","deep_x","cc_tail_06"] ] } }');
+DEBUG:  Using single insert with subtransaction
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Case-only deep difference ("DEEP_X") beyond the limit: collated duplicate
+-- under strength 2 -> rejected.
+SELECT documentdb_api.insert_one('optkeycolldb', 'coll_nested_trunc',
+    '{ "_id": 2, "t": { "arr": [ ["aa_pad_00","aa_pad_01"], ["bb_pad_00","bb_pad_01"], ["cc_pad_00","cc_pad_01","cc_pad_02","cc_pad_03","cc_pad_04","DEEP_X","cc_tail_06"] ] } }');
+DEBUG:  Using single insert with subtransaction
+DEBUG:  Executing unique index runtime recheck.
+DEBUG:  executing "SELECT (index_spec).index_name FROM documentdb_api_catalog.collection_indexes WHERE index_id = 2810" via connection to "host=localhost port=58060 user=REGRESSION_USER dbname=regression application_name='documentdb-Internal'"
+DEBUG:  Inserting index name into cache: t_coll_nested
+                                                                                                                            insert_one                                                                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "319029277" }, "errmsg" : "Duplicate key violation on the requested collection: Index 't_coll_nested'" } ] }
+(1 row)
+
+-- Genuinely different letter deep difference ("deep_y") beyond the limit:
+-- distinct -> succeeds.
+SELECT documentdb_api.insert_one('optkeycolldb', 'coll_nested_trunc',
+    '{ "_id": 3, "t": { "arr": [ ["aa_pad_00","aa_pad_01"], ["bb_pad_00","bb_pad_01"], ["cc_pad_00","cc_pad_01","cc_pad_02","cc_pad_03","cc_pad_04","deep_y","cc_tail_06"] ] } }');
+DEBUG:  Using single insert with subtransaction
+DEBUG:  Executing unique index runtime recheck.
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET client_min_messages;
+SELECT count(*) as nested_trunc_rows FROM documentdb_api.collection('optkeycolldb', 'coll_nested_trunc');
+ nested_trunc_rows 
+-------------------
+                 2
+(1 row)
+
+RESET documentdb.indexTermLimitOverride;
+-- ===== Section 9: Feature-flag matrix for collated unique index creation =====
+-- Creating a collated unique index requires BOTH flags on:
+--   documentdb.enable_collated_unique_indexes    (collation allowed on unique)
+--   documentdb.enable_composite_unique_optional_key (optional-key shard term)
+-- With either flag off, creating a unique index that carries a collation spec
+-- must fail. enableCollation stays on (set at the top of the file). Each attempt
+-- uses a distinct key so the attempts do not collide as duplicate definitions.
+SELECT documentdb_api.create_collection('optkeycolldb', 'flag_matrix');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+-- 9a: both flags OFF -> fails.
+SET documentdb.enable_collated_unique_indexes TO off;
+SET documentdb.enable_composite_unique_optional_key TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeycolldb',
+  '{ "createIndexes": "flag_matrix", "indexes": [ { "key": { "a": 1 }, "name": "fm_both_off", "unique": true, "collation": { "locale": "en", "strength": 2 } }]}', TRUE);
+ERROR:  Collation is not yet supported for unique indexes
+-- 9b: only enable_collated_unique_indexes ON (optional-key OFF) -> fails.
+SET documentdb.enable_collated_unique_indexes TO on;
+SET documentdb.enable_composite_unique_optional_key TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeycolldb',
+  '{ "createIndexes": "flag_matrix", "indexes": [ { "key": { "b": 1 }, "name": "fm_collated_only", "unique": true, "collation": { "locale": "en", "strength": 2 } }]}', TRUE);
+ERROR:  collated unique indexes require a collection ID
+-- 9c: only enable_composite_unique_optional_key ON (collated flag OFF) -> fails.
+SET documentdb.enable_collated_unique_indexes TO off;
+SET documentdb.enable_composite_unique_optional_key TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeycolldb',
+  '{ "createIndexes": "flag_matrix", "indexes": [ { "key": { "c": 1 }, "name": "fm_optkey_only", "unique": true, "collation": { "locale": "en", "strength": 2 } }]}', TRUE);
+ERROR:  Collation is not yet supported for unique indexes
+-- 9d: both flags ON -> succeeds and produces a collated unique index.
+SET documentdb.enable_collated_unique_indexes TO on;
+SET documentdb.enable_composite_unique_optional_key TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeycolldb',
+  '{ "createIndexes": "flag_matrix", "indexes": [ { "key": { "d": 1 }, "name": "fm_both_on", "unique": true, "collation": { "locale": "en", "strength": 2 } }]}', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Only fm_both_on should exist, and it should carry a collation (cl=...).
+SELECT collection_id AS fm_col FROM documentdb_api_catalog.collections WHERE database_name = 'optkeycolldb' AND collection_name = 'flag_matrix' \gset
+SELECT indexname, (indexdef LIKE '%cl=%') AS has_collation
+FROM pg_indexes
+WHERE schemaname = 'documentdb_data' AND tablename = 'documents_' || :'fm_col'
+  AND indexname LIKE '%rum%'
+ORDER BY indexname;
+        indexname         | has_collation 
+--------------------------+---------------
+ documents_rum_index_2813 | t
+(1 row)
+
+RESET documentdb.enable_collated_unique_indexes;
+RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
+RESET documentdb_core.enableCollation;
+RESET documentdb.enable_composite_unique_optional_key;
+RESET documentdb.enableCompositeUniqueHash;
+RESET documentdb.defaultUseCompositeOpClass;

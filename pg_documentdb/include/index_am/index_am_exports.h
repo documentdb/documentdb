@@ -99,6 +99,8 @@ typedef struct
 
 	/* Optional function to skip TIDs on the current entry */
 	PGFunction skip_tids_on_current_entry;
+
+	bool supports_optional_key;
 } BsonIndexAmEntry;
 
 /*

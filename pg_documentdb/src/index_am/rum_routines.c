@@ -179,6 +179,7 @@ BsonIndexAmEntry RumIndexAmEntry = {
 	.query_index_path_support_funcs = NULL,
 	.get_current_index_key = NULL,
 	.skip_tids_on_current_entry = NULL,
+	.supports_optional_key = false,
 };
 
 inline static void

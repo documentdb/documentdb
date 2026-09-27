@@ -150,6 +150,7 @@ typedef struct
 {
 	BsonGinIndexOptionsBase base;
 	bool enableCompositeHashGeneration;
+	int optionalCollectionId;
 } BsonShardPathExclusionOptions;
 
 /*

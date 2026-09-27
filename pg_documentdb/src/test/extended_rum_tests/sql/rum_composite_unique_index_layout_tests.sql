@@ -4,6 +4,7 @@ SET documentdb.next_collection_id TO 700;
 SET documentdb.next_collection_index_id TO 700;
 
 set documentdb.defaultUseCompositeOpClass to on;
+set documentdb.enable_composite_unique_optional_key to off;
 
 -- first create with unique hash off.
 set documentdb.enableCompositeUniqueHash to off;

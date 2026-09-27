@@ -549,6 +549,10 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_STAGE_VECTOR_SEARCH_KNN] = "vector_search_knn",
 	[FEATURE_STAGE_VECTOR_SEARCH_NATIVE] = "vector_search_native",
 
+	/* Feature Mapping region - Unique shard key path */
+	[FEATURE_UNIQUE_SHARD_KEY_MISMATCH_SUPPRESSED_CONFLICT] =
+		"unique_shard_key_mismatch_suppressed_conflict",
+
 	/* Feature Mapping region - Update operators / options */
 	[FEATURE_UPDATE_MANY] = "update_many",
 	[FEATURE_UPDATE_OPERATOR_ADDTOSET] = "update_operator_addtoset",

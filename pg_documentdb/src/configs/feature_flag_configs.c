@@ -150,6 +150,16 @@ bool EnableValueOnlyIndexTerms = DEFAULT_ENABLE_VALUE_ONLY_INDEX_TERMS;
 #define DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS false
 bool EnableFailureOnParallelIndexArrays = DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS;
 
+/* Added in v1.2, Pending stabilization, enable in v1.4 */
+#define DEFAULT_ENABLE_COMPOSITE_UNIQUE_OPTIONAL_KEY false
+bool EnableCompositeUniqueOptionalKey =
+	DEFAULT_ENABLE_COMPOSITE_UNIQUE_OPTIONAL_KEY;
+
+/* Added in v1.2, Pending stabilization, enable in v1.4 */
+#define DEFAULT_ENABLE_COLLATED_UNIQUE_INDEXES false
+bool EnableCollatedUniqueIndexes =
+	DEFAULT_ENABLE_COLLATED_UNIQUE_INDEXES;
+
 /* Added on v0.116, enabled on v0.116, remove after v1.1 */
 #define DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS_FOR_METADATA_TRACKING true
 bool EnableFailureOnParallelIndexArraysForMetadataTracking =
@@ -887,6 +897,22 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"collection table access are enabled."),
 		NULL, &EnableReadWriteAnyDatabaseRoleEnforcement,
 		DEFAULT_ENABLE_READWRITE_ANY_DATABASE_ROLE_ENFORCEMENT,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_composite_unique_optional_key", newGucPrefix),
+		gettext_noop(
+			"Whether to enable optional-key support for composite unique indexes."),
+		NULL, &EnableCompositeUniqueOptionalKey,
+		DEFAULT_ENABLE_COMPOSITE_UNIQUE_OPTIONAL_KEY,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_collated_unique_indexes", newGucPrefix),
+		gettext_noop(
+			"Whether to allow unique indexes to be built with a collation."),
+		NULL, &EnableCollatedUniqueIndexes,
+		DEFAULT_ENABLE_COLLATED_UNIQUE_INDEXES,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
