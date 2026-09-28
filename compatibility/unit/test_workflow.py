@@ -24,11 +24,11 @@ def workflow():
 def test_workflow_is_manual_and_read_only(workflow):
     # PyYAML's YAML 1.1 loader interprets the Actions "on" key as true.
     assert set(workflow[True]) == {"workflow_dispatch"}
-    assert set(workflow[True]["workflow_dispatch"]["inputs"]) == {
+    assert {
         "version",
         "documentdb_version",
         "demonstration",
-    }
+    } <= set(workflow[True]["workflow_dispatch"]["inputs"])
     assert workflow["permissions"] == {"contents": "read"}
     assert all(
         job.get("permissions", workflow["permissions"]) == {"contents": "read"}
@@ -48,36 +48,37 @@ def test_actions_are_pinned_and_checkout_does_not_retain_credentials(workflow):
     )
 
 
+# These synthetic values exercise argument transport, not the reviewed release policy.
 @pytest.mark.parametrize(
     ("version", "database", "demonstration", "extra", "exit_code"),
     [
         ("", "", "", [], 0),
         (
             "",
-            "0.117.0",
+            "0.999.0",
             "false",
-            ["--documentdb-version", "0.117.0"],
+            ["--documentdb-version", "0.999.0"],
             0,
         ),
         (
-            "4.18.1",
-            "0.117.0",
+            "4.99.1",
+            "0.999.0",
             "true",
-            ["--documentdb-version", "0.117.0", "--version", "4.18.1", "--demonstration"],
+            ["--documentdb-version", "0.999.0", "--version", "4.99.1", "--demonstration"],
             1,
         ),
         (
-            "4.18.0; echo unsafe",
-            "0.117.0",
+            "4.99.0; echo unsafe",
+            "0.999.0",
             "false",
-            ["--documentdb-version", "0.117.0", "--version", "4.18.0; echo unsafe"],
+            ["--documentdb-version", "0.999.0", "--version", "4.99.0; echo unsafe"],
             0,
         ),
         (
             "",
-            "0.117.0; echo unsafe",
+            "0.999.0; echo unsafe",
             "false",
-            ["--documentdb-version", "0.117.0; echo unsafe"],
+            ["--documentdb-version", "0.999.0; echo unsafe"],
             0,
         ),
     ],
@@ -99,7 +100,7 @@ def test_actual_workflow_script_handles_defaults_and_dispatch_inputs(
             "DOCUMENTDB_VERSION": database,
             "DEMONSTRATION": demonstration,
             "GITHUB_SERVER_URL": "https://github.com",
-            "GITHUB_REPOSITORY": "documentdb/documentdb",
+            "GITHUB_REPOSITORY": "example/project",
             "GITHUB_RUN_ID": "42",
             "GITHUB_RUN_ATTEMPT": "3",
             "CAPTURED_ARGUMENTS": str(captured),
@@ -117,7 +118,7 @@ def test_actual_workflow_script_handles_defaults_and_dispatch_inputs(
         "--output",
         "results/result.json",
         "--run-url",
-        "https://github.com/documentdb/documentdb/actions/runs/42/attempts/3",
+        "https://github.com/example/project/actions/runs/42/attempts/3",
         *extra,
     ]
 

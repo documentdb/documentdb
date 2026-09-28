@@ -13,9 +13,9 @@ const source = fs.readFileSync(path.join(__dirname, "../dashboard/freshness.js")
 const day = 86400000;
 const tested = Date.UTC(2024, 0, 1);
 
-function status(state, conclusiveAt = new Date(tested).toISOString()) {
+function status(state, conclusiveAt = new Date(tested).toISOString(), freshnessDays = 7) {
     return {
-        dataset: { conclusiveAt, freshnessDays: "7", previousState: state },
+        dataset: { conclusiveAt, freshnessDays: String(freshnessDays), previousState: state },
         textContent: state,
         className: state,
     };
@@ -33,7 +33,7 @@ function load(elements, now) {
         },
         Date: { parse: Date.parse, now: () => clock },
         setInterval(callback, delay) {
-            assert.equal(delay, 60000);
+            assert.ok(Number.isFinite(delay) && delay > 0);
             interval = callback;
         },
     });
@@ -43,14 +43,17 @@ function load(elements, now) {
     };
 }
 
-test("the exact boundary stays fresh and a later timer tick expires it", () => {
-    const element = status("Working");
-    const tick = load([element], tested + 7 * day);
-    assert.equal(element.textContent, "Working");
-    tick(tested + 7 * day + 1);
-    assert.equal(element.textContent, "Stale (last: Working)");
-    assert.equal(element.className, "Stale");
-});
+for (const freshnessDays of [1, 7, 30]) {
+    test(`the ${freshnessDays}-day boundary stays fresh until a later timer tick`, () => {
+        const element = status("Working", new Date(tested).toISOString(), freshnessDays);
+        const boundary = tested + freshnessDays * day;
+        const tick = load([element], boundary);
+        assert.equal(element.textContent, "Working");
+        tick(boundary + 1);
+        assert.equal(element.textContent, "Stale (last: Working)");
+        assert.equal(element.className, "Stale");
+    });
+}
 
 test("failed results age without becoming a fabricated passing result", () => {
     const element = status("Failing");

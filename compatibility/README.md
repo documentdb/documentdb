@@ -193,6 +193,13 @@ shellcheck compatibility/persist.sh
 The JavaScript check uses Node's built-in test runner. It is not a client runtime
 dependency. Python configuration is scoped to this directory.
 
+Infrastructure fixtures read selected versions and artifact metadata from the
+registry rather than duplicating the current release values. Assertions should
+check coverage and outcomes, not the number of registered integrations, scenario
+ordering, or dashboard row position. Fixed synthetic inputs are appropriate for
+isolated argument and error cases. Keep the real image and action digest pins:
+configuration-resilient tests must not weaken reproducibility or validation.
+
 For scenario changes, update the explicit registry coverage, keep unique
 non-parameterized test function names, and run the real normal and demonstration
 profiles again. Unit tests protect report classification, declared coverage,

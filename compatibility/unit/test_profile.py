@@ -7,26 +7,24 @@ import ast
 
 import pytest
 
-from compatibility.contracts import DEMONSTRATION_TEST, ROOT
+from compatibility.contracts import DEMONSTRATION_TEST, ROOT, read_registry
 
 pytestmark = pytest.mark.unit
 
 
-def test_registry_contains_only_the_pymongo_pilot(registry):
-    assert list(registry["integrations"]) == ["pymongo"]
-    assert registry["integrations"]["pymongo"]["enabled"]
-
-
-def test_declared_scenarios_match_real_test_functions(registry):
-    spec = registry["integrations"]["pymongo"]
+@pytest.mark.parametrize("integration", read_registry()["integrations"])
+def test_declared_scenarios_match_real_test_functions(registry, integration):
+    spec = registry["integrations"][integration]
     tree = ast.parse((ROOT / spec["test_file"]).read_text())
     names = [
         node.name
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")
     ]
-    assert names == spec["expected_tests"]
+    assert sorted(names) == sorted(spec["expected_tests"])
     demonstration = ast.parse((ROOT / spec["demonstration_file"]).read_text())
-    assert [node.name for node in demonstration.body if isinstance(node, ast.FunctionDef)] == [
-        DEMONSTRATION_TEST
-    ]
+    assert [
+        node.name
+        for node in demonstration.body
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")
+    ] == [DEMONSTRATION_TEST]

@@ -40,8 +40,8 @@ def test_missing_required_test_cannot_pass(record):
     assert compatibility_state(record) == "Not tested"
 
 
-def test_wrong_installed_version_cannot_pass(record):
-    record["upstream"]["actual_version"] = "4.17.0"
+def test_wrong_installed_version_cannot_pass(record, other_version):
+    record["upstream"]["actual_version"] = other_version
     assert compatibility_state(record) == "Not tested"
 
 
@@ -72,7 +72,7 @@ def test_coverage_cannot_be_reduced_by_a_report(record, registry):
     record["expected_tests"].pop()
     record["tests"].pop()
     with pytest.raises(ValueError, match="coverage"):
-        validate_result(record, registry["integrations"]["pymongo"])
+        validate_result(record, registry["integrations"][record["integration"]])
 
 
 @pytest.mark.parametrize(
@@ -118,16 +118,15 @@ def test_unknown_fields_rejected(record):
         validate_result(record)
 
 
-def test_owner_required(registry):
-    del registry["integrations"]["pymongo"]["owner"]
+def test_owner_required(registry, selection):
+    del registry["integrations"][selection["integration"]]["owner"]
     with pytest.raises(ValueError):
         validate_schema(registry, "registry")
 
 
-def test_mutable_database_image_rejected(registry):
-    registry["documentdb"]["0.117.0"][
-        "image"
-    ] = "ghcr.io/documentdb/documentdb/documentdb-local:latest"
+def test_mutable_database_image_rejected(registry, selection):
+    database = registry["documentdb"][selection["documentdb_version"]]
+    database["image"] = database["image"].split("@", 1)[0] + ":latest"
     with pytest.raises(ValueError):
         validate_schema(registry, "registry")
 
@@ -137,9 +136,10 @@ def test_invalid_client_envelope_rejected():
         validate_client_report({"tests": "passed"})
 
 
-def test_prepared_build_context_preserves_the_reviewed_suite(prepared_context, registry):
-    spec = registry["integrations"]["pymongo"]
-    assert suite_digest("pymongo", spec, prepared_context) == suite_digest("pymongo", spec)
+def test_prepared_build_context_preserves_the_reviewed_suite(prepared_context, registry, selection):
+    integration = selection["integration"]
+    spec = registry["integrations"][integration]
+    assert suite_digest(integration, spec, prepared_context) == suite_digest(integration, spec)
 
 
 @pytest.mark.parametrize(
@@ -153,16 +153,20 @@ def test_prepared_build_context_preserves_the_reviewed_suite(prepared_context, r
         "compatibility/integrations/pymongo/requirements.txt",
     ],
 )
-def test_runtime_or_configuration_changes_invalidate_results(prepared_context, registry, filename):
-    spec = registry["integrations"]["pymongo"]
-    original = suite_digest("pymongo", spec, prepared_context)
+def test_runtime_or_configuration_changes_invalidate_results(
+    prepared_context, registry, selection, filename
+):
+    integration = selection["integration"]
+    spec = registry["integrations"][integration]
+    original = suite_digest(integration, spec, prepared_context)
     path = prepared_context / filename
     path.write_text(path.read_text() + "\n")
-    assert suite_digest("pymongo", spec, prepared_context) != original
+    assert suite_digest(integration, spec, prepared_context) != original
 
 
-def test_adapter_selection_is_part_of_the_suite_identity(registry):
-    spec = registry["integrations"]["pymongo"]
-    original = suite_digest("pymongo", spec)
+def test_adapter_selection_is_part_of_the_suite_identity(registry, selection):
+    integration = selection["integration"]
+    spec = registry["integrations"][integration]
+    original = suite_digest(integration, spec)
     spec["test_file"] = spec["demonstration_file"]
-    assert suite_digest("pymongo", spec) != original
+    assert suite_digest(integration, spec) != original

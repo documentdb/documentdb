@@ -77,6 +77,7 @@ def test_first_publication_creates_only_result_data_and_cleans_its_worktree(
 ):
     source, origin = history_repo
     source_revision = git(source, "rev-parse", "HEAD").stdout
+    worktrees = git(source, "worktree", "list", "--porcelain").stdout
     result = persist(source, write_record(tmp_path, record))
     assert result.returncode == 0, result.stderr
     assert git(origin, "ls-tree", "-r", "--name-only", "compatibility-data").stdout.split() == [
@@ -88,7 +89,7 @@ def test_first_publication_creates_only_result_data_and_cleans_its_worktree(
     )
     assert git(source, "status", "--porcelain").stdout == ""
     assert git(source, "rev-parse", "HEAD").stdout == source_revision
-    assert len(git(source, "worktree", "list", "--porcelain").stdout.split("worktree ")) == 2
+    assert git(source, "worktree", "list", "--porcelain").stdout == worktrees
     assert not list(tmp_path.glob("compat-history.*"))
 
 

@@ -17,6 +17,10 @@ from compatibility.publish import append_result, dashboard_rows, read_result, re
 pytestmark = pytest.mark.unit
 
 
+def row_for(rows, record):
+    return next(row for row in rows if any(r["id"] == record["id"] for r in row["history"]))
+
+
 def test_append_is_idempotent(tmp_path, record):
     path = append_result(tmp_path, record)
     append_result(tmp_path, record)
@@ -47,7 +51,8 @@ def test_result_history_remains_after_later_failure(tmp_path, record, registry):
     failed["tests"][0]["outcome"] = "failed"
     append_result(tmp_path / "data", failed)
     rows = render(tmp_path / "data", tmp_path / "site", registry)
-    assert (rows[0]["state"], len(rows[0]["history"])) == ("Failing", 2)
+    row = row_for(rows, record)
+    assert (row["state"], len(row["history"])) == ("Failing", 2)
 
 
 def test_arrival_order_does_not_overwrite_a_newer_failure(record, registry):
@@ -58,7 +63,7 @@ def test_arrival_order_does_not_overwrite_a_newer_failure(record, registry):
     rows = dashboard_rows(
         [failed, record], registry, timestamp(record["finished_at"]), "documentdb/documentdb"
     )
-    assert rows[0]["state"] == "Failing"
+    assert row_for(rows, record)["state"] == "Failing"
 
 
 def test_infrastructure_failure_keeps_conclusive_result_and_attempt_error(record, registry):
@@ -73,20 +78,25 @@ def test_infrastructure_failure_keeps_conclusive_result_and_attempt_error(record
         timestamp(record["finished_at"]),
         "documentdb/documentdb",
     )
-    assert (rows[0]["state"], rows[0]["latest_attempt_state"], rows[0]["error"]) == (
+    row = row_for(rows, record)
+    assert (row["state"], row["latest_attempt_state"], row["error"]) == (
         "Working",
         "Not tested",
         "Artifact download unavailable",
     )
 
 
-def test_seven_day_freshness_boundary(record, registry):
-    boundary = timestamp(record["finished_at"]) + timedelta(days=7)
+def test_configured_freshness_boundary(record, registry):
+    days = registry["integrations"][record["integration"]]["freshness_days"]
+    boundary = timestamp(record["finished_at"]) + timedelta(days=days)
     fresh = dashboard_rows([record], registry, boundary, "documentdb/documentdb")
     stale = dashboard_rows(
         [record], registry, boundary + timedelta(milliseconds=1), "documentdb/documentdb"
     )
-    assert (fresh[0]["state"], stale[0]["state"]) == ("Working", "Stale")
+    assert (row_for(fresh, record)["state"], row_for(stale, record)["state"]) == (
+        "Working",
+        "Stale",
+    )
 
 
 def test_changed_suite_is_stale(record, registry):
@@ -94,23 +104,21 @@ def test_changed_suite_is_stale(record, registry):
     rows = dashboard_rows(
         [record], registry, timestamp(record["finished_at"]), "documentdb/documentdb"
     )
-    assert rows[0]["state"] == "Stale"
+    assert row_for(rows, record)["state"] == "Stale"
 
 
-def test_new_version_does_not_inherit_an_old_pass(record, registry):
+def test_new_version_does_not_inherit_an_old_pass(record, registry, other_version):
     newer = deepcopy(record)
     newer["id"] = "d" * 32
-    newer["upstream"]["version"] = "4.18.1"
+    newer["upstream"]["version"] = other_version
     newer["upstream"]["actual_version"] = None
     newer["tests"] = []
     newer["execution_error"] = "Not installed"
     rows = dashboard_rows(
         [record, newer], registry, timestamp(record["finished_at"]), "documentdb/documentdb"
     )
-    assert {row["upstream_version"]: row["state"] for row in rows} == {
-        "4.18.0": "Working",
-        "4.18.1": "Not tested",
-    }
+    assert row_for(rows, record)["state"] == "Working"
+    assert row_for(rows, newer)["state"] == "Not tested"
 
 
 def test_synthetic_failure_does_not_poison_real_compatibility(record, registry):
@@ -127,10 +135,8 @@ def test_synthetic_failure_does_not_poison_real_compatibility(record, registry):
         timestamp(record["finished_at"]),
         "documentdb/documentdb",
     )
-    assert {row["demonstration"]: row["state"] for row in rows} == {
-        False: "Working",
-        True: "Failing",
-    }
+    assert row_for(rows, record)["state"] == "Working"
+    assert row_for(rows, demonstration)["state"] == "Failing"
 
 
 def test_html_escapes_failure_text_and_preserves_machine_readable_history(
@@ -148,19 +154,33 @@ def test_issue_form_fields_are_prefilled(record, registry):
     rows = dashboard_rows(
         [record], registry, timestamp(record["finished_at"]), "documentdb/documentdb"
     )
-    fields = parse_qs(urlparse(rows[0]["issue_url"]).query)
+    fields = parse_qs(urlparse(row_for(rows, record)["issue_url"]).query)
     assert (
         fields["integration"],
         fields["documentdb_version"],
         fields["upstream_version"],
         fields["template"],
-    ) == (["pymongo"], ["0.117.0"], ["4.18.0"], ["compatibility-report.yml"])
+    ) == (
+        [record["integration"]],
+        [record["documentdb"]["version"]],
+        [record["upstream"]["version"]],
+        ["compatibility-report.yml"],
+    )
 
 
 def test_empty_dashboard_does_not_claim_compatibility(tmp_path, registry):
     rows = render(tmp_path / "absent", tmp_path / "site", registry)
-    assert (rows[0]["state"], rows[0]["last_attempt"]) == ("Not tested", None)
-    assert urlparse(rows[0]["issue_url"]).path == "/documentdb/documentdb/issues/new"
+    expected_pairs = {
+        (integration, version)
+        for integration, spec in registry["integrations"].items()
+        if spec["enabled"]
+        for version in registry["documentdb"]
+    }
+    assert {(row["integration"], row["documentdb_version"]) for row in rows} == expected_pairs
+    assert all((row["state"], row["last_attempt"]) == ("Not tested", None) for row in rows)
+    assert all(
+        urlparse(row["issue_url"]).path == "/documentdb/documentdb/issues/new" for row in rows
+    )
 
 
 def test_preview_is_labeled_and_does_not_offer_unprovisioned_issue_reporting(
@@ -172,8 +192,9 @@ def test_preview_is_labeled_and_does_not_offer_unprovisioned_issue_reporting(
     current = json.loads((tmp_path / "site" / "current.json").read_text())
     assert "Review prototype." in html and "not an official compatibility support matrix" in html
     assert "Report a compatibility problem" not in html
-    assert rows[0]["issue_url"] is None and current["integrations"][0]["issue_url"] is None
-    assert rows[0]["state"] == "Working"
+    assert all(row["issue_url"] is None for row in rows)
+    assert all(row["issue_url"] is None for row in current["integrations"])
+    assert row_for(rows, record)["state"] == "Working"
 
 
 def test_concurrent_appends_preserve_both_results(tmp_path, record):
@@ -203,6 +224,6 @@ def test_old_failure_details_remain_visible_after_a_success(tmp_path, record, re
     append_result(tmp_path / "data", record)
     rows = render(tmp_path / "data", tmp_path / "site", registry)
     assert (
-        rows[0]["state"] == "Working"
+        row_for(rows, record)["state"] == "Working"
         and "Earlier assertion mismatch" in (tmp_path / "site" / "index.html").read_text()
     )

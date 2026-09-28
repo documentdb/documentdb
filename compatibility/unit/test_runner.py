@@ -18,8 +18,8 @@ from compatibility.contracts import ROOT, compatibility_state, suite_files
 pytestmark = pytest.mark.unit
 
 
-def test_client_context_has_only_declared_execution_inputs(prepared_context):
-    expected = {path.relative_to(ROOT) for path in suite_files("pymongo")}
+def test_client_context_has_only_declared_execution_inputs(prepared_context, selection):
+    expected = {path.relative_to(ROOT) for path in suite_files(selection["integration"])}
     actual = {
         path.relative_to(prepared_context)
         for path in (prepared_context / "compatibility").rglob("*")
@@ -29,19 +29,20 @@ def test_client_context_has_only_declared_execution_inputs(prepared_context):
     assert not (prepared_context / "documentdb_tests").exists()
 
 
-def test_shell_metacharacters_rejected_before_execution(tmp_path, registry, monkeypatch):
+def test_shell_metacharacters_rejected_before_execution(tmp_path, registry, selection, monkeypatch):
     def unexpected(*args, **kwargs):
         pytest.fail("Invalid version must not reach package installation")
 
     monkeypatch.setattr(runner, "prepare_client", unexpected)
+    selection["version"] += ";echo unsafe"
     with pytest.raises(ValueError, match="policy"):
-        runner.execute(
-            registry, "pymongo", "4.18.0;echo unsafe", "0.117.0", tmp_path / "result.json"
-        )
+        runner.execute(registry, **selection, output=tmp_path / "result.json")
 
 
 @pytest.mark.parametrize("trigger", ["manual", "push"])
-def test_setup_failure_produces_not_tested_and_cleans_up(tmp_path, registry, monkeypatch, trigger):
+def test_setup_failure_produces_not_tested_and_cleans_up(
+    tmp_path, registry, selection, monkeypatch, trigger
+):
     cleaned = []
 
     def unavailable(*args, **kwargs):
@@ -49,9 +50,7 @@ def test_setup_failure_produces_not_tested_and_cleans_up(tmp_path, registry, mon
 
     monkeypatch.setattr(runner, "prepare_client", unavailable)
     monkeypatch.setattr(runner, "cleanup", lambda *args: cleaned.append(args) or [])
-    result = runner.execute(
-        registry, "pymongo", "4.18.0", "0.117.0", tmp_path / "result.json", trigger=trigger
-    )
+    result = runner.execute(registry, **selection, output=tmp_path / "result.json", trigger=trigger)
     assert (
         compatibility_state(result) == "Not tested"
         and cleaned
@@ -120,7 +119,9 @@ def test_command_timeout_stops_descendants(tmp_path):
     assert not marker.exists()
 
 
-def test_failure_record_does_not_include_fixture_credentials(tmp_path, registry, monkeypatch):
+def test_failure_record_does_not_include_fixture_credentials(
+    tmp_path, registry, selection, monkeypatch
+):
     monkeypatch.setattr(runner.secrets, "token_urlsafe", lambda size: "synthetic-fixture")
     monkeypatch.setattr(runner, "cleanup", lambda *args: [])
 
@@ -129,7 +130,7 @@ def test_failure_record_does_not_include_fixture_credentials(tmp_path, registry,
 
     monkeypatch.setattr(runner, "prepare_client", unavailable)
     output = tmp_path / "result.json"
-    runner.execute(registry, "pymongo", "4.18.0", "0.117.0", output)
+    runner.execute(registry, **selection, output=output)
     assert (
         "synthetic-fixtureAa1!" not in output.read_text()
         and json.loads(output.read_text())["execution_error"]
@@ -138,28 +139,30 @@ def test_failure_record_does_not_include_fixture_credentials(tmp_path, registry,
 
 
 @pytest.mark.parametrize("suffix", [".json", ".log", ".xml"])
-def test_existing_result_and_diagnostics_are_preserved(tmp_path, registry, suffix):
+def test_existing_result_and_diagnostics_are_preserved(tmp_path, registry, selection, suffix):
     output = tmp_path / "result.json"
     existing = output.with_suffix(suffix)
     existing.write_text("Earlier evidence")
     with pytest.raises(ValueError, match="overwrite"):
-        runner.execute(registry, "pymongo", "4.18.0", "0.117.0", output)
+        runner.execute(registry, **selection, output=output)
     assert existing.read_text() == "Earlier evidence"
 
 
-def test_result_path_cannot_collide_with_its_diagnostics(tmp_path, registry):
+def test_result_path_cannot_collide_with_its_diagnostics(tmp_path, registry, selection):
     with pytest.raises(ValueError, match=".json extension"):
-        runner.execute(registry, "pymongo", "4.18.0", "0.117.0", tmp_path / "result.log")
+        runner.execute(registry, **selection, output=tmp_path / "result.log")
 
 
-def test_long_setup_error_keeps_its_root_cause_and_full_diagnostic(tmp_path, registry, monkeypatch):
+def test_long_setup_error_keeps_its_root_cause_and_full_diagnostic(
+    tmp_path, registry, selection, monkeypatch
+):
     def unavailable(*args, **kwargs):
         raise RuntimeError("Download failed\n" + "traceback frame\n" * 400 + "TLS handshake failed")
 
     monkeypatch.setattr(runner, "prepare_client", unavailable)
     monkeypatch.setattr(runner, "cleanup", lambda *args: [])
     output = tmp_path / "result.json"
-    record = runner.execute(registry, "pymongo", "4.18.0", "0.117.0", output)
+    record = runner.execute(registry, **selection, output=output)
     assert len(record["execution_error"]) == 2000
     assert record["execution_error"].startswith("RuntimeError: Download failed")
     assert record["execution_error"].endswith("TLS handshake failed")
@@ -167,23 +170,26 @@ def test_long_setup_error_keeps_its_root_cause_and_full_diagnostic(tmp_path, reg
     assert compatibility_state(record) == "Not tested"
 
 
-def test_cleanup_errors_are_retained_in_the_controller_log(tmp_path, registry, monkeypatch):
+def test_cleanup_errors_are_retained_in_the_controller_log(
+    tmp_path, registry, selection, monkeypatch
+):
     def unavailable(*args, **kwargs):
         raise RuntimeError("Setup unavailable")
 
     monkeypatch.setattr(runner, "prepare_client", unavailable)
     monkeypatch.setattr(runner, "cleanup", lambda *args: ["Cleanup network: daemon unavailable"])
     output = tmp_path / "result.json"
-    record = runner.execute(registry, "pymongo", "4.18.0", "0.117.0", output)
+    record = runner.execute(registry, **selection, output=output)
     assert "Cleanup network: daemon unavailable" in record["execution_error"]
     assert "Cleanup network: daemon unavailable" in output.with_suffix(".log").read_text()
 
 
 def test_download_uses_the_adapter_requirements_and_target_runtime(
-    prepared_context, tmp_path, registry, monkeypatch
+    prepared_context, tmp_path, registry, selection, client_python, monkeypatch
 ):
     calls = []
-    selected = next((prepared_context / "wheels").glob("pymongo-*.whl"))
+    spec = registry["integrations"][selection["integration"]]
+    selected = next((prepared_context / "wheels").glob("*.whl"))
 
     def download(arguments, **kwargs):
         calls.append(arguments)
@@ -193,22 +199,23 @@ def test_download_uses_the_adapter_requirements_and_target_runtime(
     monkeypatch.setattr(runner, "command", download)
     context = tmp_path / "download-context"
     context.mkdir()
-    runner.prepare_client(context, registry["integrations"]["pymongo"], "4.18.0", None)
+    runner.prepare_client(context, spec, selection["version"], None)
     arguments = calls[0]
     assert arguments[:4] == [sys.executable, "-m", "pip", "download"]
-    assert arguments[arguments.index("--python-version") + 1] == "312"
+    assert arguments[arguments.index("--python-version") + 1] == client_python.replace(".", "")
+    assert arguments[arguments.index("--abi") + 1] == "cp" + client_python.replace(".", "")
     assert arguments[arguments.index("-r") + 1] == str(
-        ROOT / "compatibility/integrations/pymongo/requirements.txt"
+        ROOT / spec["test_file"].rsplit("/", 1)[0] / "requirements.txt"
     )
     assert "--only-binary=:all:" in arguments
-    assert "pymongo==4.18.0" in arguments
+    assert f"{spec['package']}=={selection['version']}" in arguments
 
 
 @pytest.mark.parametrize("reason", ["yanked", "hash", "filename"])
 def test_unverified_or_withdrawn_wheel_is_rejected(
-    prepared_context, tmp_path, registry, monkeypatch, reason
+    prepared_context, tmp_path, registry, selection, monkeypatch, reason
 ):
-    selected = next((prepared_context / "wheels").glob("pymongo-*.whl"))
+    selected = next((prepared_context / "wheels").glob("*.whl"))
     asset = {
         "filename": selected.name,
         "yanked": False,
@@ -229,5 +236,8 @@ def test_unverified_or_withdrawn_wheel_is_rejected(
     context.mkdir()
     with pytest.raises(ValueError, match="eligible published artifact"):
         runner.prepare_client(
-            context, registry["integrations"]["pymongo"], "4.18.0", prepared_context / "wheels"
+            context,
+            registry["integrations"][selection["integration"]],
+            selection["version"],
+            prepared_context / "wheels",
         )

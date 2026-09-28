@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 from copy import deepcopy
@@ -15,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from compatibility import runner
-from compatibility.contracts import read_registry, suite_digest
+from compatibility.contracts import ROOT, read_registry, suite_digest
 
 
 @pytest.fixture
@@ -60,13 +61,38 @@ def registry():
 
 
 @pytest.fixture
-def prepared_context(tmp_path, registry, monkeypatch):
+def selection(registry):
+    return {
+        "integration": "pymongo",
+        "version": registry["integrations"]["pymongo"]["default_version"],
+        "documentdb_version": next(iter(registry["documentdb"])),
+    }
+
+
+@pytest.fixture
+def other_version(selection):
+    major, minor, patch = selection["version"].split(".")
+    return f"{major}.{minor}.{int(patch) + 1}"
+
+
+@pytest.fixture
+def client_python(registry, selection):
+    adapter = (ROOT / registry["integrations"][selection["integration"]]["test_file"]).parent
+    version = re.search(r"^FROM python:(\d+\.\d+)", (adapter / "Dockerfile").read_text(), re.M)
+    assert version is not None, "The client image must declare its Python version"
+    return version.group(1)
+
+
+@pytest.fixture
+def prepared_context(tmp_path, registry, selection, monkeypatch):
     """Prepare the real build context while replacing only external wheel metadata."""
+    spec = registry["integrations"][selection["integration"]]
+    version = selection["version"]
     context = tmp_path / "context"
     context.mkdir()
     wheelhouse = tmp_path / "wheelhouse"
     wheelhouse.mkdir()
-    wheel = wheelhouse / "pymongo-4.18.0-cp312-cp312-manylinux2014_x86_64.whl"
+    wheel = wheelhouse / f"{spec['package'].replace('-', '_')}-{version}-py3-none-any.whl"
     wheel.write_bytes(b"unit fixture; not an executable wheel")
     metadata = json.dumps(
         {
@@ -82,35 +108,40 @@ def prepared_context(tmp_path, registry, monkeypatch):
     monkeypatch.setattr(
         runner.urllib.request, "urlopen", lambda *args, **kwargs: io.BytesIO(metadata)
     )
-    runner.prepare_client(context, registry["integrations"]["pymongo"], "4.18.0", wheelhouse)
+    runner.prepare_client(context, spec, version, wheelhouse)
     return context
 
 
 @pytest.fixture
-def record(registry):
-    spec = registry["integrations"]["pymongo"]
+def record(registry, selection, client_python):
+    """Use reviewed identities with synthetic runtime details, not live release snapshots."""
+    integration = selection["integration"]
+    spec = registry["integrations"][integration]
+    database_version = selection["documentdb_version"]
+    database = registry["documentdb"][database_version]
+    version = selection["version"]
     now = datetime.now(timezone.utc) - timedelta(minutes=1)
     return {
         "schema_version": 1,
         "id": "a" * 32,
-        "integration": "pymongo",
+        "integration": integration,
         "repository": spec["repository"],
         "owner": spec["owner"],
         "profile": spec["profile"],
-        "suite_digest": suite_digest("pymongo", spec),
+        "suite_digest": suite_digest(integration, spec),
         "documentdb": {
-            "version": "0.117.0",
-            "image": registry["documentdb"]["0.117.0"]["image"],
-            "actual_extension_version": "0.117-0",
-            "actual_postgres_version": "17.11",
+            "version": database_version,
+            "image": database["image"],
+            "actual_extension_version": database["extension_version"],
+            "actual_postgres_version": f"{database['postgres_major']}.0",
         },
         "upstream": {
-            "version": "4.18.0",
-            "actual_version": "4.18.0",
+            "version": version,
+            "actual_version": version,
             "wheel_sha256": "b" * 64,
             "client_image": "sha256:" + "c" * 64,
-            "python_version": "3.12.14",
-            "dependencies": [{"name": "pymongo", "version": "4.18.0", "sha256": "b" * 64}],
+            "python_version": f"{client_python}.0",
+            "dependencies": [{"name": spec["package"], "version": version, "sha256": "b" * 64}],
         },
         "expected_tests": deepcopy(spec["expected_tests"]),
         "tests": [
