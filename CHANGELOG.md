@@ -40,7 +40,7 @@
 * Persist and manage custom roles through the data plane: `createRole`/`dropRole`/`rolesInfo` are backed by the roles catalog (keyed by role name). Guarded by `documentdb.enableRoleCrud` feature flag, disabled by default. *[Feature]*
 * Report `compact`'s `bytesFreed` as the measured reduction in on-disk size across the VACUUM instead of a statistics-based bloat estimate, and stop running the expensive bloat estimate query when no `freeSpaceTargetMB` was requested. *[Bugfix/Perf]*
 
-### documentdb v0.117-0 (Unreleased) ###
+### documentdb v0.117-0 (September 10, 2026) ###
 * Keep let-only single-document update selection stable when a cached candidate plan switches to generic execution. *[Bugfix]*
 * Reject embedded null characters in command namespaces when `documentdb.enable_null_collection_validation` is enabled. *[Bugfix]*
 * Reject NaN `$bucketAuto` group values when `granularity` is specified instead of reporting an internal preferred-number-series error. *[Bugfix]*
