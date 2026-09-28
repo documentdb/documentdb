@@ -24,8 +24,10 @@ PyPI release metadata, then checks the installed driver version and wheel hash.
 Dependency versions and hashes, the actual Python version, the client image ID,
 and a digest of the execution inputs are retained in each result.
 
-Stable PyMongo 4.9 and later 4.x versions can be selected explicitly. A version
-without an eligible Python 3.12 Linux x64 wheel is **Not tested**, not Working.
+Stable PyMongo 4.9 and later 4.x versions can be selected explicitly. Specify three
+numeric components, for example `--version 4.9.0`; equivalent published versions
+such as `4.9` are matched using package-version semantics. A version without an
+eligible Python 3.12 Linux x64 wheel is **Not tested**, not Working.
 Other database releases must first be added to the reviewed registry with an
 immutable image reference and expected installed versions.
 

@@ -14,6 +14,7 @@ from typing import Any
 
 import yaml
 from jsonschema import Draft202012Validator, FormatChecker
+from packaging.version import Version
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMONSTRATION_TEST = "test_failure_demonstration"
@@ -85,7 +86,7 @@ def validate_client_report(value: Any) -> None:
     """Validate the untrusted container's envelope before reading or retaining its fields."""
     result_schema = json.loads((ROOT / "compatibility" / "schemas" / "result.json").read_text())
     properties = {
-        "version": {"type": "string", "pattern": r"^[0-9]+\.[0-9]+\.[0-9]+$"},
+        "version": {"type": "string", "pattern": r"^[0-9]+\.[0-9]+(?:\.[0-9]+)?$"},
         "python": {"type": "string", "pattern": r"^3\.12\.[0-9]+$"},
         "wheel_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
         "exit_code": {"type": "integer", "minimum": 0, "maximum": 5},
@@ -113,7 +114,8 @@ def compatibility_state(result: dict[str, Any]) -> str:
         result["execution_error"]
         or not result["documentdb"]["actual_extension_version"]
         or not result["documentdb"]["actual_postgres_version"]
-        or result["upstream"]["actual_version"] != result["upstream"]["version"]
+        or result["upstream"]["actual_version"] is None
+        or Version(result["upstream"]["actual_version"]) != Version(result["upstream"]["version"])
         or not result["upstream"]["wheel_sha256"]
         or not result["upstream"]["client_image"]
         or not result["upstream"]["python_version"]

@@ -211,6 +211,38 @@ def test_download_uses_the_adapter_requirements_and_target_runtime(
     assert f"{spec['package']}=={selection['version']}" in arguments
 
 
+@pytest.mark.parametrize(
+    ("requested", "published", "matches"),
+    [("4.9.0", "4.9", True), ("4.11.0", "4.11", True), ("4.9.0", "4.9.1", False)],
+)
+def test_wheel_selection_compares_release_versions(
+    prepared_context, tmp_path, registry, selection, monkeypatch, requested, published, matches
+):
+    spec = registry["integrations"][selection["integration"]]
+    wheel = next((prepared_context / "wheels").glob("*.whl"))
+    wheel = wheel.rename(
+        wheel.with_name(f"{spec['package'].replace('-', '_')}-{published}-py3-none-any.whl")
+    )
+    digest = runner.hashlib.sha256(wheel.read_bytes()).hexdigest()
+    metadata = {
+        "urls": [
+            {"filename": wheel.name, "yanked": False, "digests": {"sha256": digest}},
+        ]
+    }
+    monkeypatch.setattr(
+        runner.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: io.BytesIO(json.dumps(metadata).encode()),
+    )
+    context = tmp_path / "version-context"
+    context.mkdir()
+    if matches:
+        assert runner.prepare_client(context, spec, requested, wheel.parent) == digest
+    else:
+        with pytest.raises(ValueError, match="exactly one wheel"):
+            runner.prepare_client(context, spec, requested, wheel.parent)
+
+
 @pytest.mark.parametrize("reason", ["yanked", "hash", "filename"])
 def test_unverified_or_withdrawn_wheel_is_rejected(
     prepared_context, tmp_path, registry, selection, monkeypatch, reason

@@ -24,6 +24,35 @@ def test_complete_execution_is_working(record):
     assert compatibility_state(record) == "Working"
 
 
+@pytest.mark.parametrize(
+    ("requested", "installed"),
+    [("4.9.0", "4.9"), ("4.11.0", "4.11"), ("4.9.1", "4.9.1")],
+)
+def test_equivalent_installed_versions_are_working(record, requested, installed):
+    upstream = record["upstream"]
+    upstream["version"] = requested
+    upstream["actual_version"] = installed
+    upstream["dependencies"][0]["version"] = installed
+    validate_client_report(
+        {
+            "version": installed,
+            "python": upstream["python_version"],
+            "wheel_sha256": upstream["wheel_sha256"],
+            "exit_code": 0,
+            "tests": record["tests"],
+            "junit": "",
+            "dependencies": upstream["dependencies"],
+        }
+    )
+    validate_result(record)
+    assert compatibility_state(record) == "Working"
+
+
+def test_missing_installed_version_cannot_pass(record):
+    record["upstream"]["actual_version"] = None
+    assert compatibility_state(record) == "Not tested"
+
+
 @pytest.mark.parametrize("outcome", ["skipped", "error"])
 def test_incomplete_execution_is_not_tested(record, outcome):
     record["tests"][0]["outcome"] = outcome

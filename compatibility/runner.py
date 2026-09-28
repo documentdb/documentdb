@@ -24,6 +24,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from packaging.utils import parse_wheel_filename
+from packaging.version import Version
+
 from compatibility.contracts import (
     ROOT,
     compatibility_state,
@@ -137,7 +140,12 @@ def prepare_client(
             ],
             timeout=600,
         )
-    candidates = list(wheels.glob(f"{spec['package'].replace('-', '_')}-{version}-*.whl"))
+    requested_version = Version(version)
+    candidates = [
+        wheel
+        for wheel in wheels.glob(f"{spec['package'].replace('-', '_')}-*.whl")
+        if parse_wheel_filename(wheel.name)[1] == requested_version
+    ]
     if len(candidates) != 1:
         raise ValueError("Expected exactly one wheel for the requested integration version")
     selected = candidates[0]
@@ -388,12 +396,12 @@ def execute(
             payload = json.loads(process.stdout)
             validate_client_report(payload)
             if (
-                payload["version"] != version
+                Version(payload["version"]) != Version(version)
                 or payload["wheel_sha256"] != result["upstream"]["wheel_sha256"]
                 or not payload["python"].startswith("3.12.")
                 or not any(
                     entry["name"].lower().replace("-", "_") == spec["package"].replace("-", "_")
-                    and entry["version"] == version
+                    and Version(entry["version"]) == Version(version)
                     and entry["sha256"] == result["upstream"]["wheel_sha256"]
                     for entry in payload["dependencies"]
                 )

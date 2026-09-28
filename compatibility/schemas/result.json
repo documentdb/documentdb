@@ -26,7 +26,7 @@
       "required": ["version", "actual_version", "wheel_sha256", "client_image", "python_version", "dependencies"],
       "properties": {
         "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
-        "actual_version": {"type": ["string", "null"], "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "actual_version": {"type": ["string", "null"], "pattern": "^[0-9]+\\.[0-9]+(?:\\.[0-9]+)?$"},
         "wheel_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
         "client_image": {"type": ["string", "null"], "pattern": "^sha256:[a-f0-9]{64}$"},
         "python_version": {"type": ["string", "null"], "pattern": "^3\\.12\\.[0-9]+$"},
