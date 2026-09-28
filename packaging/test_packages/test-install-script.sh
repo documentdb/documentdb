@@ -195,6 +195,15 @@ CELLS
     expect_success "entitled RHEL" run_installer "${root}"
     assert_has "entitled RHEL uses subscription-manager" \
         "subscription-manager repos --enable codeready-builder-for-rhel-9-x86_64-rpms"
+
+    # PGDG drops per-minor paths for older EL9 minors; Stream has no minor.
+    root="$(new_root rocky 9.3)"
+    expect_success "rocky 9.3" run_installer "${root}"
+    assert_has "rocky 9.3 plans the PGDG major-path fallback" \
+        "Would switch PGDG to its rhel-9 repository path if rhel-9.3 is not published."
+    root="$(new_root centos 9)"
+    expect_success "centos stream 9" run_installer "${root}"
+    assert_lacks "stream skips the PGDG major-path fallback" "Would switch PGDG"
 }
 
 # --------------------------------------------------------------------------
@@ -537,6 +546,8 @@ REPOS
         "Reusing the existing PGDG DNF repository configuration"
     assert_has "exact DocumentDB repository file is reused" \
         "Reusing the existing DocumentDB DNF repository configuration"
+    assert_has "reused PGDG repository is fixed before the first dnf call" \
+        "rhel-9.4 is not published."$'\n'"  + sudo dnf install -y ca-certificates"
 
     root="$(new_root rocky 9.4)"
     printf '[pgdg-common]\nbaseurl=https://download.postgresql.org/pub/repos/yum/common/redhat/rhel-9-x86_64\n' \

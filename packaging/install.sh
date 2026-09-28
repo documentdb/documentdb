@@ -1129,6 +1129,29 @@ rpm_package_installed() {
     rpm -q "$1" >/dev/null 2>&1
 }
 
+# PGDG publishes per-minor repositories only for current EL9 minors, so a host
+# held on an older minor (such as RHEL EUS) falls back to the EL-major path.
+use_pgdg_major_path_if_minor_unpublished() {
+    [ "${DISTRO_KIND}" != "centos-stream" ] || return 0
+    case "${OS_VERSION_ID}" in
+        9.*) ;;
+        *) return 0 ;;
+    esac
+    if [ "${DRY_RUN}" = "true" ]; then
+        log "Would switch PGDG to its rhel-9 repository path if rhel-${OS_VERSION_ID} is not published."
+        return 0
+    fi
+    # Only a definite 404 switches paths; network errors are left for dnf to report.
+    pgdg_minor_status="$(curl --disable --proto '=https' --tlsv1.2 \
+        --connect-timeout 15 --max-time 60 -sS -o /dev/null -w '%{http_code}' -I \
+        "https://download.postgresql.org/pub/repos/yum/${PG_MAJOR}/redhat/rhel-${OS_VERSION_ID}-${RPM_ARCH}/repodata/repomd.xml")" ||
+        pgdg_minor_status=""
+    [ "${pgdg_minor_status}" = "404" ] || return 0
+    log "PGDG does not publish rhel-${OS_VERSION_ID}; using its rhel-9 repository path."
+    run_root sed -i 's/rhel-\$releasever_major\.\$releasever_minor-/rhel-$releasever_major-/g' \
+        "$(system_path /etc/yum.repos.d/pgdg-redhat-all.repo)"
+}
+
 install_rhel_family() {
     if [ "${RPM_ARCH}" = "aarch64" ]; then
         pgdg_key="$(system_path /etc/pki/rpm-gpg/PGDG-RPM-GPG-KEY-AARCH64-RHEL)"
@@ -1140,6 +1163,10 @@ install_rhel_family() {
         pgdg_key_fingerprint="${PGDG_RPM_X86_64_KEY_FINGERPRINT}"
     fi
 
+    # A reused repo with an unpublished minor would break the first dnf call.
+    if [ "${PGDG_REPO_PRESENT}" = "true" ]; then
+        use_pgdg_major_path_if_minor_unpublished
+    fi
     run_root_no_stdin dnf install -y ca-certificates gnupg2 dnf-plugins-core
 
     if [ "${DISTRO_KIND}" = "rhel" ]; then
@@ -1172,6 +1199,7 @@ install_rhel_family() {
             "https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-${RPM_ARCH}/pgdg-redhat-repo-latest.noarch.rpm" \
             "pgdg-redhat-repo-latest.noarch.rpm" "${pgdg_key}" \
             "${pgdg_key_url}" "${pgdg_key_fingerprint}" "PGDG RPM"
+        use_pgdg_major_path_if_minor_unpublished
     fi
 
     run_root_no_stdin dnf -qy module disable postgresql
