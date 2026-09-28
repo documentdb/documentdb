@@ -374,12 +374,12 @@ ROLLBACK;
 -- SECTION: update document selection with collation on sharded collections
 -- ======================================================================
 
-SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_select_d', '{ "_id": "cat", "name": "cat", "bucket": 1, "rank": 10 }');
-SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_select_d', '{ "_id": "CAT", "name": "CAT", "bucket": 1, "rank": 1 }');
-SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_select_d', '{ "_id": "dog", "name": "dog", "bucket": 2, "rank": 5 }');
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_select_d', '{ "_id": "cat", "name": "cat", "bucket": 1, "rank": 10, "tags": [ "cat" ], "pipelineValue": "cat" }');
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_select_d', '{ "_id": "CAT", "name": "CAT", "bucket": 1, "rank": 1, "tags": [ "CAT" ], "pipelineValue": "CAT" }');
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_select_d', '{ "_id": "dog", "name": "dog", "bucket": 2, "rank": 5, "tags": [ "dog" ], "pipelineValue": "dog" }');
 SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_update_select_d', '{ "name": "hashed" }', false);
 
-SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_worker_one_d', '{ "_id": 1, "shard": 1, "name": "cat" }');
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_worker_one_d', '{ "_id": 1, "shard": 1, "name": "cat", "values": [ "cat", "CAT", "dog" ] }');
 SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_worker_one_d', '{ "_id": 2, "shard": 2, "name": "dog" }');
 SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_update_worker_one_d', '{ "shard": "hashed" }', false);
 
@@ -418,6 +418,25 @@ BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
 SET LOCAL documentdb.enable_update_many_worker_pushdown TO on;
 SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_d", "updates": [ { "q": { "name": "CaT" }, "u": { "$set": { "selected": "worker" } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d') ORDER BY object_id;
+ROLLBACK;
+
+-- Both update-many execution paths propagate collation into update effects.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enable_update_many_worker_pushdown TO off;
+SELECT documentdb_api.update(
+  'coll_q_dist_db',
+  '{ "update": "coll_update_select_d", "updates": [ { "q": { "name": "CaT" }, "u": [ { "$set": { "pipelineEqual": { "$eq": [ "$pipelineValue", "CAT" ] } } } ], "multi": true, "collation": { "locale": "en", "strength": 2 } } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d') ORDER BY object_id;
+ROLLBACK;
+
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enable_update_many_worker_pushdown TO on;
+SELECT documentdb_api.update(
+  'coll_q_dist_db',
+  '{ "update": "coll_update_select_d", "updates": [ { "q": { "name": "CaT" }, "u": { "$addToSet": { "tags": "cAt" } }, "multi": true, "collation": { "locale": "en", "strength": 2 } } ] }');
 SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d') ORDER BY object_id;
 ROLLBACK;
 
@@ -511,6 +530,23 @@ ROLLBACK;
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
 SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_worker_one_d", "updates": [ { "q": { "shard": 1, "name": "CAT" }, "u": { "$set": { "selected": true } }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_worker_one_d') ORDER BY object_id;
+ROLLBACK;
+
+-- Single-worker updates and upserts propagate collation into update effects.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.update(
+  'coll_q_dist_db',
+  '{ "update": "coll_update_worker_one_d", "updates": [ { "q": { "shard": 1, "name": "CAT" }, "u": { "$pull": { "values": "cAt" } }, "multi": false, "collation": { "locale": "en", "strength": 2 } } ] }');
+SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_worker_one_d') ORDER BY object_id;
+ROLLBACK;
+
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.update(
+  'coll_q_dist_db',
+  '{ "update": "coll_update_worker_one_d", "updates": [ { "q": { "_id": 3, "shard": 3, "seed": "cat" }, "u": [ { "$set": { "pipelineEqual": { "$eq": [ "$seed", "CAT" ] } } } ], "multi": false, "upsert": true, "collation": { "locale": "en", "strength": 2 } } ] }');
 SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_worker_one_d') ORDER BY object_id;
 ROLLBACK;
 

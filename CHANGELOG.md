@@ -20,7 +20,7 @@
 * Enable the field-pruning `$project` injection before `$unwind` (the `enableProjectPushUpBeforeUnwindWithGroup` feature flag) by default now that it has stabilized. *[Perf]*
 * Fall back to a logical posting-tree sweep when inline RUM vacuum observes a concurrent root split, ensuring dead TIDs are removed from leaves allocated behind the disk-order cursor. *[Bugfix]*
 * Support collation with `distinct` command *[Feature]*
-* Apply per-update collation when selecting documents to update, including sharded routing and update-worker execution, while retaining binary comparison semantics inside update expressions. *[Feature]*
+* Apply per-update collation when selecting documents and evaluating comparison-sensitive update effects, including single-document, multi-document, and upsert paths. *[Feature]*
 * Prevent a backend crash by rejecting `$documents` directly inside a `$facet` sub-pipeline. *[Bugfix]*
 * Enforce `$facet` restrictions on `$collStats`, `$facet`, `$geoNear`, `$indexStats`, and `$planCacheStats` in nested `$lookup` and `$unionWith` pipelines while preserving parent-stage validation and valid collectionless pipelines. *[Bugfix]*
 * Reclaim orphaned empty RUM posting-tree leaves during vacuum cleanup when bulk deletion is skipped because the heap has no new dead tuples, and keep planner statistics consistent with entry-page and posting-page pruning. Guarded by the default-off `documentdb_rum.enable_vacuum_cleanup_posting_tree_pruning` setting. *[Bugfix/Perf]*

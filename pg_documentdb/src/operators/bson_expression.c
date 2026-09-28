@@ -988,11 +988,13 @@ CreateProjectionTreeStateForPartitionByFields(
 	bool forceProjectId = false;
 	bool allowInclusionExclusion = true;
 	pgbson *variableSpec = NULL;
+	const char *collationString = NULL;
 	state->projectionTreeState =
 		(BsonProjectionQueryState *) GetProjectionStateForBsonProject(&iter,
 																	  forceProjectId,
 																	  allowInclusionExclusion,
-																	  variableSpec);
+																	  variableSpec,
+																	  collationString);
 }
 
 

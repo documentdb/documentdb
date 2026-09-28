@@ -94,9 +94,8 @@ SELECT documentdb_api.insert_one('coll_q_runtime_explain_db', 'coll_update_expla
 SELECT documentdb_api.insert_one('coll_q_runtime_explain_db', 'coll_update_explain', '{ "_id": "CAT", "a": "CAT" }');
 SELECT documentdb_api.insert_one('coll_q_runtime_explain_db', 'coll_update_explain', '{ "_id": "dog", "a": "dog" }');
 
--- multi:true carries the normalized collation into the selection filter that
--- picks the matched documents. The update expression itself keeps binary
--- semantics, so update_bson_document receives no collation argument.
+-- multi:true carries the normalized collation into both the selection filter
+-- and update expression.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON)
 SELECT document FROM bson_aggregation_update(
@@ -104,9 +103,8 @@ SELECT document FROM bson_aggregation_update(
   '{ "update": "coll_update_explain", "updates": [ { "q": { "a": "CaT" }, "u": { "$set": { "b": 1 } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }')
 $cmd$);
 
--- The same update without a collation drops the collation from the selection
--- filter. The update_bson_document call is unchanged, confirming the collation
--- only ever affects document selection.
+-- The same update without a collation uses binary semantics for both document
+-- selection and update effects.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON)
 SELECT document FROM bson_aggregation_update(

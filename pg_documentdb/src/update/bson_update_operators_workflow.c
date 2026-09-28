@@ -346,7 +346,8 @@ static bool HandleUnresolvedArrayFields(const BsonUpdateIntermediatePathNode *tr
 										BsonUpdateTracker *tracker);
 
 /* Operator specific writer state functions */
-static void * HandlePullWriterGetState(const bson_value_t *tree);
+static void * HandlePullWriterGetState(const bson_value_t *tree,
+									   const char *collationString);
 
 /* Operator writer functions */
 
@@ -766,7 +767,8 @@ RegisterUpdateOperatorExtension(const MongoUpdateOperatorSpec *extensibleDefinit
  */
 const BsonIntermediatePathNode *
 GetOperatorUpdateState(const bson_value_t *updateSpec, const bson_value_t *querySpec,
-					   const bson_value_t *arrayFilters, bool isUpsert)
+					   const bson_value_t *arrayFilters, const char *collationString,
+					   bool isUpsert)
 {
 	if (updateSpec->value_type != BSON_TYPE_DOCUMENT)
 	{
@@ -781,7 +783,8 @@ GetOperatorUpdateState(const bson_value_t *updateSpec, const bson_value_t *query
 	{
 		.querySpec = querySpec,
 		.arrayFilters = arrayFilterHash,
-		.processedQuerySpec = NULL
+		.processedQuerySpec = NULL,
+		.collationString = collationString
 	};
 
 	BsonUpdateIntermediatePathNode *root = palloc0(
@@ -808,6 +811,7 @@ pgbson *
 ProcessUpdateOperatorWithState(pgbson *sourceDoc,
 							   const BsonIntermediatePathNode *
 							   updateState,
+							   const char *collationString,
 							   bool isUpsert,
 							   BsonUpdateTracker *updateTracker)
 {
@@ -823,7 +827,8 @@ ProcessUpdateOperatorWithState(pgbson *sourceDoc,
 		.documentId = documentId,
 		.isUpsert = isUpsert,
 		.sourceDocument = sourceDoc,
-		.indexOfPositionalTypeQueryFilter = -1
+		.indexOfPositionalTypeQueryFilter = -1,
+		.collationString = collationString
 	};
 
 	PgbsonInitIterator(sourceDoc, &docIterator);
@@ -1177,7 +1182,8 @@ HandleBasicUpdateTree(BsonIntermediatePathNode *tree, bson_iter_t *updateSpec,
 
 		if (stateFunc != NULL)
 		{
-			updateTreeState.updateFuncState = stateFunc(value);
+			updateTreeState.updateFuncState = stateFunc(value,
+														positionalSpec->collationString);
 		}
 
 		/* add a leaf field node into the bson tree. */
@@ -1557,9 +1563,8 @@ GetNodePositionalDataFromPath(const StringView *path,
 		if (state->positionalSpec->processedQuerySpec == NULL)
 		{
 			PositionalUpdateSpec *spec = (PositionalUpdateSpec *) state->positionalSpec;
-			const char *collationString = NULL;
 			spec->processedQuerySpec = GetPositionalQueryData(spec->querySpec,
-															  collationString);
+															  spec->collationString);
 		}
 
 		return (PositionalData) {
@@ -1602,7 +1607,9 @@ GetNodePositionalDataFromPath(const StringView *path,
 		ExprEvalState *expr;
 
 		expr = GetExpressionEvalStateForArrayFilter(&hashEntry->queryValue,
-													CurrentMemoryContext);
+													CurrentMemoryContext,
+													state->positionalSpec->
+													collationString);
 		return (PositionalData) {
 				   .expression = expr,
 				   .type = PositionalType_ArrayFilter
@@ -2467,7 +2474,8 @@ HandleUnresolvedArrayFields(const BsonUpdateIntermediatePathNode *tree,
  * RETURNS: BsonUpdateDollarPullState
  */
 static void *
-HandlePullWriterGetState(const bson_value_t *updateValue)
+HandlePullWriterGetState(const bson_value_t *updateValue,
+						 const char *collationString)
 {
 	MemoryContext memCtxt = CurrentMemoryContext;
 
@@ -2486,7 +2494,9 @@ HandlePullWriterGetState(const bson_value_t *updateValue)
 		const bson_value_t finalUpdateValue = ConvertPgbsonToBsonValue(
 			PgbsonWriterGetPgbson(&docWriter));
 		pullState->isValue = true;
-		pullState->evalState = GetExpressionEvalState(&finalUpdateValue, memCtxt);
+		pullState->evalState = GetExpressionEvalStateWithCollation(&finalUpdateValue,
+																   memCtxt,
+																   collationString);
 	}
 	else
 	{
@@ -2523,7 +2533,8 @@ HandlePullWriterGetState(const bson_value_t *updateValue)
 
 		/* At this point we know that the update spec is not a mixed type spec containing operators and plain field */
 		pullState->isValue = hasPlainField;
-		pullState->evalState = GetExpressionEvalState(updateValue, memCtxt);
+		pullState->evalState = GetExpressionEvalStateWithCollation(updateValue, memCtxt,
+																   collationString);
 	}
 	return pullState;
 }

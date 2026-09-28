@@ -1,3 +1,7 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+
 -- Tests for updateMany worker pushdown in a true multi-node environment.
 -- Validates that update_worker calls are correctly routed to remote
 -- worker nodes and results are aggregated back on the coordinator.
@@ -22,6 +26,17 @@ SELECT 1 FROM documentdb_api.insert_one('umw_mn', 'coll1', '{"_id":5, "a":5, "b"
 SELECT 1 FROM documentdb_api.insert_one('umw_mn', 'coll1', '{"_id":6, "a":6, "b":60, "tag":"z"}');
 
 SELECT documentdb_api.shard_collection('umw_mn', 'coll1', '{"a":"hashed"}', false);
+
+SELECT 1 FROM documentdb_api.insert_one(
+    'umw_mn',
+    'collation_effects',
+    '{"_id":101,"a":101,"setValues":["Python"],"pullDirect":["Python","PYTHON","Java"],"pullAllValues":["Java","JAVA","Rust"],"minValue":"Go","maxValue":"Go","sortedValues":["10","2"],"items":[{"label":"Java","status":"old"},{"label":"Rust","status":"old"}],"pipelineValue":"Python"}');
+SELECT 1 FROM documentdb_api.insert_one(
+    'umw_mn',
+    'collation_effects',
+    '{"_id":102,"a":102,"setValues":["PYTHON"],"pullDirect":["PYTHON","Python","Rust"],"pullAllValues":["JAVA","Java","Go"],"minValue":"GO","maxValue":"GO","sortedValues":["20","4"],"items":[{"label":"JAVA","status":"old"},{"label":"Rust","status":"old"}],"pipelineValue":"PYTHON"}');
+SELECT documentdb_api.shard_collection(
+    'umw_mn', 'collation_effects', '{"a":"hashed"}', false);
 
 -- ================================================================
 -- 1. updateMany via worker pushdown on remote nodes: $set all docs
@@ -77,12 +92,52 @@ SELECT count(*) FROM documentdb_api.collection('umw_mn', 'coll1') WHERE document
 ROLLBACK;
 
 -- ================================================================
--- 7. Permanent update and read-back to verify data integrity
+-- 7. Collation-sensitive modifiers execute on remote workers
+-- ================================================================
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO ON;
+SELECT documentdb_api.update(
+    'umw_mn',
+    '{"update":"collation_effects","updates":[{"q":{},"u":{"$addToSet":{"setValues":"python"},"$pull":{"pullDirect":"python"},"$pullAll":{"pullAllValues":["java"]},"$min":{"minValue":"go"},"$max":{"maxValue":"go"},"$push":{"sortedValues":{"$each":["3"],"$sort":1}}},"multi":true,"collation":{"locale":"en","strength":2,"numericOrdering":true}}]}');
+SELECT document
+FROM documentdb_api.collection('umw_mn', 'collation_effects')
+ORDER BY object_id;
+ROLLBACK;
+
+-- ================================================================
+-- 8. Array filters preserve collation on remote workers
+-- ================================================================
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO ON;
+SELECT documentdb_api.update(
+    'umw_mn',
+    '{"update":"collation_effects","updates":[{"q":{},"u":{"$set":{"items.$[elem].status":"matched"}},"multi":true,"arrayFilters":[{"elem.label":"java"}],"collation":{"locale":"de","strength":2}}]}');
+SELECT document
+FROM documentdb_api.collection('umw_mn', 'collation_effects')
+ORDER BY object_id;
+ROLLBACK;
+
+-- ================================================================
+-- 9. Update pipelines preserve collation on remote workers
+-- ================================================================
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO ON;
+SELECT documentdb_api.update(
+    'umw_mn',
+    '{"update":"collation_effects","updates":[{"q":{},"u":[{"$set":{"pipelineEqual":{"$eq":["$pipelineValue","python"]}}}],"multi":true,"collation":{"locale":"fr","strength":2}}]}');
+SELECT document
+FROM documentdb_api.collection('umw_mn', 'collation_effects')
+ORDER BY object_id;
+ROLLBACK;
+
+-- ================================================================
+-- 10. Permanent update and read-back to verify data integrity
 -- ================================================================
 SELECT documentdb_api.update('umw_mn', '{"update":"coll1", "updates":[{"q":{},"u":{"$set":{"mn_verified":true}},"multi":true}]}');
 SELECT count(*) FROM documentdb_api.collection('umw_mn', 'coll1') WHERE document @@ '{"mn_verified":true}';
 
 -- Cleanup
 SELECT documentdb_api.drop_collection('umw_mn', 'coll1');
+SELECT documentdb_api.drop_collection('umw_mn', 'collation_effects');
 
 RESET documentdb.enable_update_many_worker_pushdown;

@@ -1041,7 +1041,7 @@ SELECT document FROM bson_aggregation_update(
   'coll_q_idx_dist_explain_db',
   '{ "update": "coll_update_route_d", "updates": [ { "q": { "name": "CaT" }, "u": { "$set": { "selected": "many" } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }')
 $cmd$);
-                                                                                                                                                                                                                                                                                                                                                      run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                       
+                                                                                                                                                                                                                                                                                                                                                            run_explain_and_trim
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
@@ -1051,12 +1051,12 @@ $cmd$);
                Task Count: 8
                Tasks Shown: One of 8
                ->  Task
-                     Query: UPDATE documentdb_data.documents_95810_95800094 documents_95810 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, ('\x2a000000030023000000032473657400180000000273656c656374656400050000006d616e7900000000'::bytea)::documentdb_core.bson, '{ "name" : "CaT" }'::documentdb_core.bson, (NULL::bytea)::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text), document) WHERE (document OPERATOR(documentdb_api_catalog.#=) '{ "name" : "CaT", "collation" : "en-u-ks-level1" }'::documentdb_core.bsonquery) RETURNING documentdb_api_internal.bson_update_returned_value(shard_key_value) AS updated
+                     Query: UPDATE documentdb_data.documents_95810_95800094 documents_95810 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, ('\x2a000000030023000000032473657400180000000273656c656374656400050000006d616e7900000000'::bytea)::documentdb_core.bson, '{ "name" : "CaT" }'::documentdb_core.bson, (NULL::bytea)::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text), document) WHERE (document OPERATOR(documentdb_api_catalog.#=) '{ "name" : "CaT", "collation" : "en-u-ks-level1" }'::documentdb_core.bsonquery) RETURNING documentdb_api_internal.bson_update_returned_value(shard_key_value) AS updated
                      Node: host=localhost port=58070 dbname=regression
                      ->  Update on documentdb_data.documents_95810_95800094 documents_95810
                            Output: documentdb_api_internal.bson_update_returned_value(shard_key_value)
                            ->  Custom Scan (DocumentDBApiExplainQueryScan)
-                                 Output: COALESCE(documentdb_api_internal.update_bson_document(document, '{ "" : { "$set" : { "selected" : "many" } } }'::documentdb_core.bson, '{ "name" : "CaT" }'::documentdb_core.bson, NULL::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text), document), ctid
+                                 Output: COALESCE(documentdb_api_internal.update_bson_document(document, '{ "" : { "$set" : { "selected" : "many" } } }'::documentdb_core.bson, '{ "name" : "CaT" }'::documentdb_core.bson, NULL::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text), document), ctid
                                  indexName: idx_update_route_name_en_s1
                                  indexKey: {"name": 1}
                                  indexCollation: en-u-ks-level1
@@ -1286,14 +1286,14 @@ SELECT document FROM bson_aggregation_update(
   'coll_q_idx_dist_explain_db',
   '{ "update": "coll_update_route_d", "updates": [ { "q": { "name": "cat" }, "u": { "$set": { "selected": "simple-many" } }, "multi": true, "collation": { "locale": "simple" } } ] }')
 $cmd$);
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          run_explain_and_trim
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: WITH u AS (UPDATE documentdb_data.documents_95810_95800096 documents_95810 SET document = COALESCE(documentdb_api_internal.update_bson_document(documents_95810.document, ('\x3100000003002a0000000324736574001f0000000273656c6563746564000c00000073696d706c652d6d616e7900000000'::bytea)::documentdb_core.bson, '{ "name" : "cat" }'::documentdb_core.bson, (NULL::bytea)::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text), documents_95810.document) WHERE (((documents_95810.document OPERATOR(documentdb_api_catalog.#=) '{ "name" : "cat" }'::documentdb_core.bsonquery) AND (documents_95810.shard_key_value OPERATOR(pg_catalog.=) '6072023973012017567'::bigint)) AND (documents_95810.shard_key_value OPERATOR(pg_catalog.=) '6072023973012017567'::bigint)) RETURNING documentdb_api_internal.bson_update_returned_value(documents_95810.shard_key_value) AS updated) SELECT documentdb_core.bson_build_document('n'::text, count(*), 'nModified'::text, sum(updated), 'ok'::text, (1)::double precision) AS document FROM u WHERE true
+         Query: WITH u AS (UPDATE documentdb_data.documents_95810_95800096 documents_95810 SET document = COALESCE(documentdb_api_internal.update_bson_document(documents_95810.document, ('\x3100000003002a0000000324736574001f0000000273656c6563746564000c00000073696d706c652d6d616e7900000000'::bytea)::documentdb_core.bson, '{ "name" : "cat" }'::documentdb_core.bson, (NULL::bytea)::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, ''::text), documents_95810.document) WHERE (((documents_95810.document OPERATOR(documentdb_api_catalog.#=) '{ "name" : "cat" }'::documentdb_core.bsonquery) AND (documents_95810.shard_key_value OPERATOR(pg_catalog.=) '6072023973012017567'::bigint)) AND (documents_95810.shard_key_value OPERATOR(pg_catalog.=) '6072023973012017567'::bigint)) RETURNING documentdb_api_internal.bson_update_returned_value(documents_95810.shard_key_value) AS updated) SELECT documentdb_core.bson_build_document('n'::text, count(*), 'nModified'::text, sum(updated), 'ok'::text, (1)::double precision) AS document FROM u WHERE true
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate
                Output: documentdb_core.bson_build_document('n'::text, count(*), 'nModified'::text, sum(u.updated), 'ok'::text, '1'::double precision)
@@ -1301,7 +1301,7 @@ $cmd$);
                  ->  Update on documentdb_data.documents_95810_95800096 documents_95810
                        Output: documentdb_api_internal.bson_update_returned_value(documents_95810.shard_key_value)
                        ->  Custom Scan (DocumentDBApiExplainQueryScan)
-                             Output: COALESCE(documentdb_api_internal.update_bson_document(documents_95810.document, '{ "" : { "$set" : { "selected" : "simple-many" } } }'::documentdb_core.bson, '{ "name" : "cat" }'::documentdb_core.bson, NULL::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text), documents_95810.document), documents_95810.ctid
+                             Output: COALESCE(documentdb_api_internal.update_bson_document(documents_95810.document, '{ "" : { "$set" : { "selected" : "simple-many" } } }'::documentdb_core.bson, '{ "name" : "cat" }'::documentdb_core.bson, NULL::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, ''::text), documents_95810.document), documents_95810.ctid
                              indexName: idx_update_route_name_binary
                              indexKey: {"name": 1}
                              isMultiKey: false

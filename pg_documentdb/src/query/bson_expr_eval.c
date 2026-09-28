@@ -359,10 +359,11 @@ GetExpressionEvalStateWithCollation(const bson_value_t *expression, MemoryContex
  */
 ExprEvalState *
 GetExpressionEvalStateForArrayFilter(const bson_value_t *expression,
-									 MemoryContext memoryContext)
+									 MemoryContext memoryContext,
+									 const char *collationString)
 {
 	MemoryContext originalMemoryContext = MemoryContextSwitchTo(memoryContext);
-	Expr *expr = CreateQualForBsonValueExpression(expression, NULL, true);
+	Expr *expr = CreateQualForBsonValueExpression(expression, collationString, true);
 	ExprEvalState *evalState = CreateEvalStateFromExpr(expr, INTERNALOID);
 	MemoryContextSwitchTo(originalMemoryContext);
 	return evalState;

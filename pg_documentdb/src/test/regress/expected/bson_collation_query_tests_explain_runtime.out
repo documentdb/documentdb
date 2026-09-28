@@ -341,24 +341,23 @@ SELECT documentdb_api.insert_one('coll_q_runtime_explain_db', 'coll_update_expla
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
--- multi:true carries the normalized collation into the selection filter that
--- picks the matched documents. The update expression itself keeps binary
--- semantics, so update_bson_document receives no collation argument.
+-- multi:true carries the normalized collation into both the selection filter
+-- and update expression.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON)
 SELECT document FROM bson_aggregation_update(
   'coll_q_runtime_explain_db',
   '{ "update": "coll_update_explain", "updates": [ { "q": { "a": "CaT" }, "u": { "$set": { "b": 1 } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }')
 $cmd$);
-                                                                                                                                                             run_explain_and_trim                                                                                                                                                              
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                   run_explain_and_trim
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_build_document('n'::text, count(*), 'nModified'::text, sum(u.updated), 'ok'::text, '1'::double precision)
    CTE u
      ->  Update on documentdb_data.documents_8904
            Output: documentdb_api_internal.bson_update_returned_value(documents_8904.shard_key_value)
            ->  Custom Scan (DocumentDBApiExplainQueryScan)
-                 Output: COALESCE(documentdb_api_internal.update_bson_document(documents_8904.document, '{ "" : { "$set" : { "b" : { "$numberInt" : "1" } } } }'::bson, '{ "a" : "CaT" }'::bson, NULL::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), documents_8904.document), documents_8904.ctid
+                 Output: COALESCE(documentdb_api_internal.update_bson_document(documents_8904.document, '{ "" : { "$set" : { "b" : { "$numberInt" : "1" } } } }'::bson, '{ "a" : "CaT" }'::bson, NULL::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), documents_8904.document), documents_8904.ctid
                  namespaceName: coll_q_runtime_explain_db.coll_update_explain
                  indexName: _id_
                  ->  Bitmap Heap Scan on documentdb_data.documents_8904
@@ -371,24 +370,23 @@ $cmd$);
          Output: u.updated
 (17 rows)
 
--- The same update without a collation drops the collation from the selection
--- filter. The update_bson_document call is unchanged, confirming the collation
--- only ever affects document selection.
+-- The same update without a collation uses binary semantics for both document
+-- selection and update effects.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON)
 SELECT document FROM bson_aggregation_update(
   'coll_q_runtime_explain_db',
   '{ "update": "coll_update_explain", "updates": [ { "q": { "a": "CaT" }, "u": { "$set": { "b": 1 } }, "multi": true } ] }')
 $cmd$);
-                                                                                                                                                             run_explain_and_trim                                                                                                                                                              
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                            run_explain_and_trim
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_build_document('n'::text, count(*), 'nModified'::text, sum(u.updated), 'ok'::text, '1'::double precision)
    CTE u
      ->  Update on documentdb_data.documents_8904
            Output: documentdb_api_internal.bson_update_returned_value(documents_8904.shard_key_value)
            ->  Custom Scan (DocumentDBApiExplainQueryScan)
-                 Output: COALESCE(documentdb_api_internal.update_bson_document(documents_8904.document, '{ "" : { "$set" : { "b" : { "$numberInt" : "1" } } } }'::bson, '{ "a" : "CaT" }'::bson, NULL::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), documents_8904.document), documents_8904.ctid
+                 Output: COALESCE(documentdb_api_internal.update_bson_document(documents_8904.document, '{ "" : { "$set" : { "b" : { "$numberInt" : "1" } } } }'::bson, '{ "a" : "CaT" }'::bson, NULL::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, ''::text), documents_8904.document), documents_8904.ctid
                  namespaceName: coll_q_runtime_explain_db.coll_update_explain
                  indexName: _id_
                  ->  Bitmap Heap Scan on documentdb_data.documents_8904
@@ -681,15 +679,15 @@ SELECT document FROM bson_aggregation_update(
   'coll_q_runtime_explain_db',
   '{ "update": "coll_update_explain", "updates": [ { "q": { "$expr": { "$eq": [ "$a", "$$target" ] } }, "u": { "$set": { "b": 1 } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ], "let": { "target": "CAT" } }')
 $cmd$);
-                                                                                                                                                                                                    run_explain_and_trim                                                                                                                                                                                                     
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                          run_explain_and_trim
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_build_document('n'::text, count(*), 'nModified'::text, sum(u.updated), 'ok'::text, '1'::double precision)
    CTE u
      ->  Update on documentdb_data.documents_8904
            Output: documentdb_api_internal.bson_update_returned_value(documents_8904.shard_key_value)
            ->  Custom Scan (DocumentDBApiExplainQueryScan)
-                 Output: COALESCE(documentdb_api_internal.update_bson_document(documents_8904.document, '{ "" : { "$set" : { "b" : { "$numberInt" : "1" } } } }'::bson, '{ "$expr" : { "$eq" : [ "$a", "$$target" ] } }'::bson, NULL::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "target" : { "$literal" : "CAT" } } }'::bson, NULL::text), documents_8904.document), documents_8904.ctid
+                 Output: COALESCE(documentdb_api_internal.update_bson_document(documents_8904.document, '{ "" : { "$set" : { "b" : { "$numberInt" : "1" } } } }'::bson, '{ "$expr" : { "$eq" : [ "$a", "$$target" ] } }'::bson, NULL::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "target" : { "$literal" : "CAT" } } }'::bson, 'en-u-ks-level1'::text), documents_8904.document), documents_8904.ctid
                  namespaceName: coll_q_runtime_explain_db.coll_update_explain
                  indexName: _id_
                  ->  Bitmap Heap Scan on documentdb_data.documents_8904

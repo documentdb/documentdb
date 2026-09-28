@@ -525,7 +525,8 @@ const BsonProjectionQueryState *
 GetProjectionStateForBsonProject(bson_iter_t *projectionSpecIter,
 								 bool forceProjectId,
 								 bool allowInclusionExclusion,
-								 const pgbson *variableSpec)
+								 const pgbson *variableSpec,
+								 const char *collationString)
 {
 	BsonProjectionQueryState *projectionState = palloc0(sizeof(BsonProjectionQueryState));
 	BsonProjectionContext context = {
@@ -534,6 +535,7 @@ GetProjectionStateForBsonProject(bson_iter_t *projectionSpecIter,
 		.allowInclusionExclusion = allowInclusionExclusion,
 		.querySpec = NULL,
 		.variableSpec = variableSpec,
+		.collationString = collationString,
 	};
 
 	BuildBsonPathTreeForDollarProject(projectionState, &context);
@@ -758,12 +760,10 @@ bson_dollar_merge_documents_at_path(PG_FUNCTION_ARGS)
  */
 const BsonProjectionQueryState *
 GetProjectionStateForBsonAddFields(bson_iter_t *projectionSpecIter,
-								   const bson_value_t *variableSpec)
+								   const bson_value_t *variableSpec,
+								   const char *collationString)
 {
 	bool skipParseAggregationExpressions = false;
-
-	/* TODO: pass in correct values after support collation with update command. */
-	const char *collationString = NULL;
 
 	pgbson *variableSpecBson = variableSpec &&
 							   variableSpec->value_type == BSON_TYPE_DOCUMENT ?

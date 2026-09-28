@@ -92,6 +92,9 @@ typedef struct UpdateAggregationSpec
 
 	/* variable spec */
 	const bson_value_t *variableSpec;
+
+	/* collation used to evaluate aggregation expressions */
+	const char *collationString;
 } UpdateAggregationSpec;
 
 
@@ -169,6 +172,7 @@ static MongoUpdateAggregationOperator AggregationOperators[] =
 struct AggregationPipelineUpdateState *
 GetAggregationPipelineUpdateState(const bson_value_t *updateSpec,
 								  const bson_value_t *variableSpec,
+								  const char *collationString,
 								  bool *isReplaceStagePresent)
 {
 	if (updateSpec->value_type != BSON_TYPE_ARRAY)
@@ -226,6 +230,7 @@ GetAggregationPipelineUpdateState(const bson_value_t *updateSpec,
 				sizeof(UpdateAggregationStageData));
 			stageData->updateFunc = AggregationOperators[i].updateFunc;
 			stageData->state.variableSpec = variableSpec;
+			stageData->state.collationString = collationString;
 
 			AggregationOperators[i].populateFunc(&aggregationElement.bsonValue,
 												 &stageData->state);
@@ -414,7 +419,9 @@ PopulateDollarProjectState(const bson_value_t *projectionValue,
 	aggregationSpec->queryState = GetProjectionStateForBsonProject(&projectionSpec,
 																   forceProjectId,
 																   allowInclusionExclusion,
-																   variableSpecBson);
+																   variableSpecBson,
+																   aggregationSpec->
+																   collationString);
 	aggregationSpec->isReplaceStage = false;
 }
 
@@ -455,7 +462,9 @@ PopulateDollarAddFieldsState(const bson_value_t *addFieldsValue,
 
 	aggregationSpec->queryState = GetProjectionStateForBsonAddFields(&addFieldsSpec,
 																	 aggregationSpec->
-																	 variableSpec);
+																	 variableSpec,
+																	 aggregationSpec->
+																	 collationString);
 	aggregationSpec->isReplaceStage = false;
 }
 
@@ -478,13 +487,11 @@ PopulateDollarReplaceRootState(const bson_value_t *replaceRootValue,
 	pgbson *variableSpecBson = variableSpec != NULL &&
 							   variableSpec->value_type == BSON_TYPE_DOCUMENT ?
 							   PgbsonInitFromDocumentBsonValue(variableSpec) : NULL;
-	const char *collationString = NULL;
-
 	aggregationSpec->replaceRootState =
 		palloc0(sizeof(BsonReplaceRootRedactState));
 	PopulateReplaceRootExpressionDataFromSpec(aggregationSpec->replaceRootState,
 											  replaceRootValue, variableSpecBson,
-											  collationString);
+											  aggregationSpec->collationString);
 
 	aggregationSpec->isReplaceStage = true;
 }
@@ -510,14 +517,12 @@ PopulateDollarReplaceWithState(const bson_value_t *replaceWithValue,
 	pgbson *variableSpecBson = variableSpec != NULL &&
 							   variableSpec->value_type == BSON_TYPE_DOCUMENT ?
 							   PgbsonInitFromDocumentBsonValue(variableSpec) : NULL;
-	const char *collationString = NULL;
-
 	aggregationSpec->replaceRootState =
 		palloc0(sizeof(BsonReplaceRootRedactState));
 
 	PopulateReplaceRootExpressionDataFromSpec(aggregationSpec->replaceRootState,
 											  &currentValue, variableSpecBson,
-											  collationString);
+											  aggregationSpec->collationString);
 
 	aggregationSpec->isReplaceStage = true;
 }

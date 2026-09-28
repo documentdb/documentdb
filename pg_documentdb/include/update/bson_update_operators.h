@@ -68,6 +68,9 @@ typedef struct CurrentDocumentState
 
 	/* For the '$' positional operator, the matching index from the last array in the query filter is found and stored here for reuse in all '$' positional updates */
 	int indexOfPositionalTypeQueryFilter;
+
+	/* Collation used by comparison and set update operators */
+	const char *collationString;
 } CurrentDocumentState;
 
 

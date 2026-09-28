@@ -801,20 +801,20 @@ ROLLBACK;
 -- ======================================================================
 -- SECTION: update document selection with collation on sharded collections
 -- ======================================================================
-SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_select_d', '{ "_id": "cat", "name": "cat", "bucket": 1, "rank": 10 }');
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_select_d', '{ "_id": "cat", "name": "cat", "bucket": 1, "rank": 10, "tags": [ "cat" ], "pipelineValue": "cat" }');
 psql:sql/bson_collation_query_tests_dist_core.sql:377: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
-SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_select_d', '{ "_id": "CAT", "name": "CAT", "bucket": 1, "rank": 1 }');
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_select_d', '{ "_id": "CAT", "name": "CAT", "bucket": 1, "rank": 1, "tags": [ "CAT" ], "pipelineValue": "CAT" }');
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
-SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_select_d', '{ "_id": "dog", "name": "dog", "bucket": 2, "rank": 5 }');
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_select_d', '{ "_id": "dog", "name": "dog", "bucket": 2, "rank": 5, "tags": [ "dog" ], "pipelineValue": "dog" }');
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -826,7 +826,7 @@ SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_update_select_d',
  
 (1 row)
 
-SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_worker_one_d', '{ "_id": 1, "shard": 1, "name": "cat" }');
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_worker_one_d', '{ "_id": 1, "shard": 1, "name": "cat", "values": [ "cat", "CAT", "dog" ] }');
 psql:sql/bson_collation_query_tests_dist_core.sql:382: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
@@ -908,11 +908,11 @@ SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_
 (1 row)
 
 SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d') ORDER BY object_id;
-                                                              document                                                              
+                                                                                    document
 ---------------------------------------------------------------------
- { "_id" : "CAT", "name" : "CAT", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" }, "selected" : "coordinator" }
- { "_id" : "cat", "name" : "cat", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "10" }, "selected" : "coordinator" }
- { "_id" : "dog", "name" : "dog", "bucket" : { "$numberInt" : "2" }, "rank" : { "$numberInt" : "5" } }
+ { "_id" : "CAT", "name" : "CAT", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" }, "tags" : [ "CAT" ], "pipelineValue" : "CAT", "selected" : "coordinator" }
+ { "_id" : "cat", "name" : "cat", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "10" }, "tags" : [ "cat" ], "pipelineValue" : "cat", "selected" : "coordinator" }
+ { "_id" : "dog", "name" : "dog", "bucket" : { "$numberInt" : "2" }, "rank" : { "$numberInt" : "5" }, "tags" : [ "dog" ], "pipelineValue" : "dog" }
 (3 rows)
 
 ROLLBACK;
@@ -927,11 +927,52 @@ SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_
 (1 row)
 
 SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d') ORDER BY object_id;
-                                                           document                                                            
+                                                                                  document
 ---------------------------------------------------------------------
- { "_id" : "CAT", "name" : "CAT", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" }, "selected" : "worker" }
- { "_id" : "cat", "name" : "cat", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "10" }, "selected" : "worker" }
- { "_id" : "dog", "name" : "dog", "bucket" : { "$numberInt" : "2" }, "rank" : { "$numberInt" : "5" } }
+ { "_id" : "CAT", "name" : "CAT", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" }, "tags" : [ "CAT" ], "pipelineValue" : "CAT", "selected" : "worker" }
+ { "_id" : "cat", "name" : "cat", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "10" }, "tags" : [ "cat" ], "pipelineValue" : "cat", "selected" : "worker" }
+ { "_id" : "dog", "name" : "dog", "bucket" : { "$numberInt" : "2" }, "rank" : { "$numberInt" : "5" }, "tags" : [ "dog" ], "pipelineValue" : "dog" }
+(3 rows)
+
+ROLLBACK;
+-- Both update-many execution paths propagate collation into update effects.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enable_update_many_worker_pushdown TO off;
+SELECT documentdb_api.update(
+  'coll_q_dist_db',
+  '{ "update": "coll_update_select_d", "updates": [ { "q": { "name": "CaT" }, "u": [ { "$set": { "pipelineEqual": { "$eq": [ "$pipelineValue", "CAT" ] } } } ], "multi": true, "collation": { "locale": "en", "strength": 2 } } ] }');
+                                                               update
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""2"" }, ""n"" : { ""$numberInt"" : ""2"" } }",t)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d') ORDER BY object_id;
+                                                                                  document
+---------------------------------------------------------------------
+ { "_id" : "CAT", "name" : "CAT", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" }, "tags" : [ "CAT" ], "pipelineValue" : "CAT", "pipelineEqual" : true }
+ { "_id" : "cat", "name" : "cat", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "10" }, "tags" : [ "cat" ], "pipelineValue" : "cat", "pipelineEqual" : true }
+ { "_id" : "dog", "name" : "dog", "bucket" : { "$numberInt" : "2" }, "rank" : { "$numberInt" : "5" }, "tags" : [ "dog" ], "pipelineValue" : "dog" }
+(3 rows)
+
+ROLLBACK;
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enable_update_many_worker_pushdown TO on;
+SELECT documentdb_api.update(
+  'coll_q_dist_db',
+  '{ "update": "coll_update_select_d", "updates": [ { "q": { "name": "CaT" }, "u": { "$addToSet": { "tags": "cAt" } }, "multi": true, "collation": { "locale": "en", "strength": 2 } } ] }');
+                                                               update
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""2"" } }",t)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d') ORDER BY object_id;
+                                                                      document
+---------------------------------------------------------------------
+ { "_id" : "CAT", "name" : "CAT", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" }, "tags" : [ "CAT" ], "pipelineValue" : "CAT" }
+ { "_id" : "cat", "name" : "cat", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "10" }, "tags" : [ "cat" ], "pipelineValue" : "cat" }
+ { "_id" : "dog", "name" : "dog", "bucket" : { "$numberInt" : "2" }, "rank" : { "$numberInt" : "5" }, "tags" : [ "dog" ], "pipelineValue" : "dog" }
 (3 rows)
 
 ROLLBACK;
@@ -949,11 +990,11 @@ SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_
 (1 row)
 
 SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d') ORDER BY object_id;
-                                                                           document                                                                            
+                                                                                                  document
 ---------------------------------------------------------------------
- { "_id" : "CAT", "name" : "CAT", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" }, "workerBeforeError" : true }
- { "_id" : "cat", "name" : "cat", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "10" }, "workerBeforeError" : true, "workerAfterError" : true }
- { "_id" : "dog", "name" : "dog", "bucket" : { "$numberInt" : "2" }, "rank" : { "$numberInt" : "5" } }
+ { "_id" : "CAT", "name" : "CAT", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" }, "tags" : [ "CAT" ], "pipelineValue" : "CAT", "workerBeforeError" : true }
+ { "_id" : "cat", "name" : "cat", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "10" }, "tags" : [ "cat" ], "pipelineValue" : "cat", "workerBeforeError" : true, "workerAfterError" : true }
+ { "_id" : "dog", "name" : "dog", "bucket" : { "$numberInt" : "2" }, "rank" : { "$numberInt" : "5" }, "tags" : [ "dog" ], "pipelineValue" : "dog" }
 (3 rows)
 
 ROLLBACK;
@@ -1036,9 +1077,9 @@ SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_
 (1 row)
 
 SELECT document FROM bson_aggregation_find('coll_q_dist_db', '{ "find": "coll_update_select_d", "filter": { "_id": { "$in": [ "cat", "CAT" ] } }, "sort": { "sortName": 1 }, "limit": 1 }');
-                                                          document                                                           
+                                                                                 document
 ---------------------------------------------------------------------
- { "_id" : "CAT", "name" : "CAT", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" }, "sortName" : "Zebra" }
+ { "_id" : "CAT", "name" : "CAT", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" }, "tags" : [ "CAT" ], "pipelineValue" : "CAT", "sortName" : "Zebra" }
 (1 row)
 
 SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_d", "updates": [ { "q": { "_id": "CaT" }, "u": { "$set": { "selectedByStringSort": "ascending" } }, "sort": { "sortName": 1 }, "multi": false, "collation": { "locale": "en", "strength": 1 } } ] }');
@@ -1127,11 +1168,49 @@ SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_worker_
 (1 row)
 
 SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_worker_one_d') ORDER BY object_id;
-                                                document                                                 
+                                                                  document
 ---------------------------------------------------------------------
- { "_id" : { "$numberInt" : "1" }, "shard" : { "$numberInt" : "1" }, "name" : "cat", "selected" : true }
+ { "_id" : { "$numberInt" : "1" }, "shard" : { "$numberInt" : "1" }, "name" : "cat", "values" : [ "cat", "CAT", "dog" ], "selected" : true }
  { "_id" : { "$numberInt" : "2" }, "shard" : { "$numberInt" : "2" }, "name" : "dog" }
 (2 rows)
+
+ROLLBACK;
+-- Single-worker updates and upserts propagate collation into update effects.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.update(
+  'coll_q_dist_db',
+  '{ "update": "coll_update_worker_one_d", "updates": [ { "q": { "shard": 1, "name": "CAT" }, "u": { "$pull": { "values": "cAt" } }, "multi": false, "collation": { "locale": "en", "strength": 2 } } ] }');
+                                                               update
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_worker_one_d') ORDER BY object_id;
+                                                  document
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "shard" : { "$numberInt" : "1" }, "name" : "cat", "values" : [ "dog" ] }
+ { "_id" : { "$numberInt" : "2" }, "shard" : { "$numberInt" : "2" }, "name" : "dog" }
+(2 rows)
+
+ROLLBACK;
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.update(
+  'coll_q_dist_db',
+  '{ "update": "coll_update_worker_one_d", "updates": [ { "q": { "_id": 3, "shard": 3, "seed": "cat" }, "u": [ { "$set": { "pipelineEqual": { "$eq": [ "$seed", "CAT" ] } } } ], "multi": false, "upsert": true, "collation": { "locale": "en", "strength": 2 } } ] }');
+                                                                                                                 update
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""1"" }, ""upserted"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""_id"" : { ""$numberInt"" : ""3"" } } ] }",t)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_worker_one_d') ORDER BY object_id;
+                                                         document
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "shard" : { "$numberInt" : "1" }, "name" : "cat", "values" : [ "cat", "CAT", "dog" ] }
+ { "_id" : { "$numberInt" : "2" }, "shard" : { "$numberInt" : "2" }, "name" : "dog" }
+ { "_id" : { "$numberInt" : "3" }, "shard" : { "$numberInt" : "3" }, "seed" : "cat", "pipelineEqual" : true }
+(3 rows)
 
 ROLLBACK;
 -- A non-string _id uses exact routing even when the operation also supplies
@@ -1164,11 +1243,11 @@ SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_
 (1 row)
 
 SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d') ORDER BY object_id;
-                                                           document                                                            
+                                                                                  document
 ---------------------------------------------------------------------
- { "_id" : "CAT", "name" : "CAT", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" } }
- { "_id" : "cat", "name" : "cat", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "10" }, "selected" : "simple" }
- { "_id" : "dog", "name" : "dog", "bucket" : { "$numberInt" : "2" }, "rank" : { "$numberInt" : "5" } }
+ { "_id" : "CAT", "name" : "CAT", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" }, "tags" : [ "CAT" ], "pipelineValue" : "CAT" }
+ { "_id" : "cat", "name" : "cat", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "10" }, "tags" : [ "cat" ], "pipelineValue" : "cat", "selected" : "simple" }
+ { "_id" : "dog", "name" : "dog", "bucket" : { "$numberInt" : "2" }, "rank" : { "$numberInt" : "5" }, "tags" : [ "dog" ], "pipelineValue" : "dog" }
 (3 rows)
 
 ROLLBACK;
@@ -1192,7 +1271,7 @@ ROLLBACK;
 -- Exact _id values can repeat on different shards, so candidate selection
 -- must apply the requested sort before choosing a shard.
 SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_duplicate_id_d', '{ "_id": "duplicate", "name": 1, "rank": 10 }');
-psql:sql/bson_collation_query_tests_dist_core.sql:545: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_dist_core.sql:581: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1268,11 +1347,11 @@ SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_
 (1 row)
 
 SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d') ORDER BY object_id;
-                                                document                                                
+                                                                      document
 ---------------------------------------------------------------------
- { "_id" : "CAT", "name" : "CAT", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" } }
- { "_id" : "cat", "name" : "cat", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "10" } }
- { "_id" : "dog", "name" : "dog", "bucket" : { "$numberInt" : "2" }, "rank" : { "$numberInt" : "5" } }
+ { "_id" : "CAT", "name" : "CAT", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" }, "tags" : [ "CAT" ], "pipelineValue" : "CAT" }
+ { "_id" : "cat", "name" : "cat", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "10" }, "tags" : [ "cat" ], "pipelineValue" : "cat" }
+ { "_id" : "dog", "name" : "dog", "bucket" : { "$numberInt" : "2" }, "rank" : { "$numberInt" : "5" }, "tags" : [ "dog" ], "pipelineValue" : "dog" }
  { "_id" : "simple-upsert", "name" : "fox", "selected" : "simple-upsert" }
 (4 rows)
 

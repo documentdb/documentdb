@@ -705,10 +705,11 @@ BsonUnwindEmptyArray(pgbson *document, char *path, char *indexFieldName)
 	bool allowInclusionExclusion = true;
 
 	pgbson *variableSpec = NULL;
+	const char *collationString = NULL;
 	const BsonProjectionQueryState *projectionState =
 		GetProjectionStateForBsonProject(&projectSpec,
 										 forceProjectId, allowInclusionExclusion,
-										 variableSpec);
+										 variableSpec, collationString);
 	return ProjectDocumentWithState(document, projectionState);
 }
 

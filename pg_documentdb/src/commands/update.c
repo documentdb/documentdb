@@ -397,7 +397,8 @@ static pgbson * UpsertDocument(MongoCollection *collection, const bson_value_t *
 							   bson_value_t *arrayFilters,
 							   ExprEvalState *stateForSchemaValidation,
 							   bool hasOnlyObjectIdFilter,
-							   const bson_value_t *variableSpec);
+							   const bson_value_t *variableSpec,
+							   const char *collationString);
 static List * ValidateQueryAndUpdateDocuments(BatchUpdateSpec *batchSpec,
 											  MemoryContext requestContext,
 											  HTAB **indexNameCache);
@@ -1906,7 +1907,9 @@ ProcessUpdate(MongoCollection *collection, UpdateSpec *updateSpec,
 													  stateForSchemaValidation,
 													  hasOnlyObjectIdFilter,
 													  updateSpec->updateOneParams.
-													  variableSpec);
+													  variableSpec,
+													  updateSpec->updateOneParams.
+													  collationString);
 		}
 
 		return;
@@ -2040,6 +2043,7 @@ BuildUpdateAllMatchingDocumentQuery(MongoCollection *collection,
 
 	bool applyVariableSpec = variableSpecBson != NULL;
 	bool applyCollation = IsCollationApplicable(currentUpdate->collationString);
+	bool useVariableSpecOrCollationArgs = applyVariableSpec || applyCollation;
 	bool applyObjectIdFilter = objectIdFilter != NULL &&
 							   !(applyCollation && isIdFilterCollationAware);
 
@@ -2107,7 +2111,7 @@ BuildUpdateAllMatchingDocumentQuery(MongoCollection *collection,
 		 *      $2::bson,
 		 *      $3::bson,
 		 *      $4::bson,
-		 *      NULL::TEXT
+		 *      $5::TEXT
 		 * ), document) AS newDocument
 		 * FROM documents_
 		 * WHERE document OPERATOR(@@) $1::bson
@@ -2138,16 +2142,17 @@ BuildUpdateAllMatchingDocumentQuery(MongoCollection *collection,
 						 "WITH filtered_documents AS ("
 						 "SELECT object_id, shard_key_value, document,"
 						 " COALESCE(%s.update_bson_document(document, $1::%s, "
-						 "$2::%s, $3::%s, %s::%s, NULL::TEXT%s), document) as newDocument FROM %s.%s ",
+						 "$2::%s, $3::%s, %s::%s, %s::TEXT%s), document) as newDocument FROM %s.%s ",
 						 ApiInternalSchemaNameV2, FullBsonTypeName,
 						 FullBsonTypeName, FullBsonTypeName,
-						 (applyVariableSpec || applyCollation) ? "$4" : "NULL",
+						 useVariableSpecOrCollationArgs ? "$4" : "NULL",
 						 FullBsonTypeName,
+						 useVariableSpecOrCollationArgs ? "$5" : "NULL",
 						 additionalArgs,
 						 ApiDataSchemaName, updateState->tableName
 						 );
 
-		if (applyVariableSpec || applyCollation)
+		if (useVariableSpecOrCollationArgs)
 		{
 			appendStringInfo(&updateState->updateQuery,
 							 " WHERE %s.bson_query_match(document, $2::%s, $4::%s, $5::text) ",
@@ -2244,16 +2249,17 @@ BuildUpdateAllMatchingDocumentQuery(MongoCollection *collection,
 		appendStringInfo(&updateState->updateQuery,
 						 "UPDATE %s.%s"
 						 " SET document = COALESCE(%s.update_bson_document(document, $1::%s,"
-						 " $2::%s, $3::%s, %s::%s, NULL::TEXT%s), document) ",
+						 " $2::%s, $3::%s, %s::%s, %s::TEXT%s), document) ",
 						 ApiDataSchemaName, updateState->tableName,
 						 ApiInternalSchemaNameV2,
 						 FullBsonTypeName, FullBsonTypeName, FullBsonTypeName,
-						 (applyVariableSpec || applyCollation) ? "$4" : "NULL",
+						 useVariableSpecOrCollationArgs ? "$4" : "NULL",
 						 FullBsonTypeName,
+						 useVariableSpecOrCollationArgs ? "$5" : "NULL",
 						 additionalArgs);
 
 
-		if (applyVariableSpec || applyCollation)
+		if (useVariableSpecOrCollationArgs)
 		{
 			updateState->preparedQueryKey = QUERY_UPDATE_MANY_WITH_QUERY_FILTER_FUNCTION;
 			appendStringInfo(&updateState->updateQuery,
@@ -2364,7 +2370,7 @@ BuildUpdateAllMatchingDocumentQuery(MongoCollection *collection,
 		updateState->argValues[2] = PointerGetDatum(CastPgbsonToBytea(arrayFilters));
 	}
 
-	if (applyVariableSpec || applyCollation)
+	if (useVariableSpecOrCollationArgs)
 	{
 		updateState->argTypes[3] = BsonTypeId();
 		updateState->argValues[3] = applyVariableSpec ?
@@ -3618,7 +3624,8 @@ ExecuteLocalUpdateOne(MongoCollection *collection, UpdateOneParams *updateOnePar
 			pgbson *newDoc = BsonUpdateDocument(emptyDocument, updateOneParams->update,
 												updateOneParams->query,
 												updateOneParams->arrayFilters,
-												updateOneParams->variableSpec);
+												updateOneParams->variableSpec,
+												updateOneParams->collationString);
 
 			pgbson *objectId = PgbsonGetDocumentId(newDoc);
 
@@ -3663,7 +3670,8 @@ ExecuteLocalUpdateOne(MongoCollection *collection, UpdateOneParams *updateOnePar
 			ValidateUpdateDocument(updateOneParams->update,
 								   updateOneParams->query,
 								   updateOneParams->arrayFilters,
-								   updateOneParams->variableSpec);
+								   updateOneParams->variableSpec,
+								   updateOneParams->collationString);
 		}
 	}
 	else
@@ -3831,9 +3839,10 @@ BuildSelectUpdateCandidateQuery(MongoCollection *collection, int64 shardKeyHash,
 
 	bool applyVariableSpec = variableSpecBson != NULL;
 	bool applyCollation = IsCollationApplicable(updateOneParams->collationString);
+	bool useVariableSpecOrCollationArgs = applyVariableSpec || applyCollation;
 	bool hasFilter = false;
 	int collationArgIndex = -1;
-	if (applyCollation || applyVariableSpec)
+	if (useVariableSpecOrCollationArgs)
 	{
 		state->preparedQueryKey =
 			QUERY_UPDATE_SELECT_UPDATE_CANDIDATE_NON_OBJECT_ID_LET_AND_COLLATION;
@@ -3872,7 +3881,7 @@ BuildSelectUpdateCandidateQuery(MongoCollection *collection, int64 shardKeyHash,
 							   !(applyCollation && isIdFilterCollationAware);
 	if (applyObjectIdFilter)
 	{
-		state->preparedQueryKey = (applyVariableSpec || applyCollation) ?
+		state->preparedQueryKey = useVariableSpecOrCollationArgs ?
 								  QUERY_UPDATE_SELECT_UPDATE_CANDIDATE_BOTH_FILTER_LET_AND_COLLATION
 								  :
 								  queryHasNonIdFilters ?
@@ -3965,7 +3974,7 @@ BuildSelectUpdateCandidateQuery(MongoCollection *collection, int64 shardKeyHash,
 	state->argNulls[0] = ' ';
 
 	/* set variableSpec and collationString, if applicable */
-	if (applyCollation || applyVariableSpec)
+	if (useVariableSpecOrCollationArgs)
 	{
 		state->argTypes[1] = bsonTypeId;
 		state->argValues[1] = applyVariableSpec ? PointerGetDatum(variableSpecBson) :
@@ -4192,6 +4201,7 @@ ExtractUpdateCandidateFromSPI(UpdateOneParams *updateOneParams,
 										 updateOneParams->query,
 										 updateOneParams->arrayFilters,
 										 updateOneParams->variableSpec,
+										 updateOneParams->collationString,
 										 updateCandidate->tid,
 										 updateCandidate->tableOid);
 	}
@@ -4201,7 +4211,8 @@ ExtractUpdateCandidateFromSPI(UpdateOneParams *updateOneParams,
 			BsonUpdateDocument(originalDoc, updateOneParams->update,
 							   updateOneParams->query,
 							   updateOneParams->arrayFilters,
-							   updateOneParams->variableSpec);
+							   updateOneParams->variableSpec,
+							   updateOneParams->collationString);
 	}
 
 	if (updatedDocument != NULL)
@@ -4431,7 +4442,8 @@ static pgbson *
 UpsertDocument(MongoCollection *collection, const bson_value_t *update,
 			   const bson_value_t *query, const bson_value_t *arrayFilters,
 			   ExprEvalState *stateForSchemaValidation,
-			   bool hasOnlyObjectIdFilter, const bson_value_t *variableSpec)
+			   bool hasOnlyObjectIdFilter, const bson_value_t *variableSpec,
+			   const char *collationString)
 {
 	pgbson *emptyDocument = PgbsonInitEmpty();
 
@@ -4440,7 +4452,7 @@ UpsertDocument(MongoCollection *collection, const bson_value_t *update,
 	 * update change tracking
 	 */
 	pgbson *newDoc = BsonUpdateDocument(emptyDocument, update, query, arrayFilters,
-										variableSpec);
+										variableSpec, collationString);
 
 	int64 newShardKeyHash =
 		ComputeShardKeyHashForDocument(collection->shardKey, collection->collectionId,
@@ -4507,7 +4519,8 @@ ValidateQueryAndUpdateDocuments(BatchUpdateSpec *batchSpec,
 			ValidateUpdateDocument(updateSpec->updateOneParams.update,
 								   updateSpec->updateOneParams.query,
 								   updateSpec->updateOneParams.arrayFilters,
-								   updateSpec->updateOneParams.variableSpec);
+								   updateSpec->updateOneParams.variableSpec,
+								   updateSpec->updateOneParams.collationString);
 			isSuccess = true;
 		}
 		PG_CATCH();
@@ -5021,7 +5034,8 @@ GenerateUpdateQuery(text *database, pgbson *updateSpec, bool setStatementTimeout
 	ValidateUpdateDocument(updateSingleSpec->updateOneParams.update,
 						   updateSingleSpec->updateOneParams.query,
 						   updateSingleSpec->updateOneParams.arrayFilters,
-						   updateSingleSpec->updateOneParams.variableSpec);
+						   updateSingleSpec->updateOneParams.variableSpec,
+						   updateSingleSpec->updateOneParams.collationString);
 
 	Datum collectionNameDatum = CStringGetTextDatum(batchSpec->collectionName);
 	MongoCollection *collection =

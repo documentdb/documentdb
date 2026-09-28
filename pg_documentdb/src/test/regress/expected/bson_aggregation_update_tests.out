@@ -143,15 +143,15 @@ SELECT document
 FROM bson_aggregation_update(
 	'db',
 	'{ "update": "aggregation_update", "updates": [ { "q": { "a": 1 }, "u": { "$set": { "b": 1 } }, "multi": true } ] }');
-                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                 
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                QUERY PLAN
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_build_document('n'::text, count(*), 'nModified'::text, sum(u.updated), 'ok'::text, '1'::double precision)
    CTE u
      ->  Update on documentdb_data.documents_25800000
            Output: documentdb_api_internal.bson_update_returned_value(documents_25800000.shard_key_value)
            ->  Bitmap Heap Scan on documentdb_data.documents_25800000
-                 Output: COALESCE(documentdb_api_internal.update_bson_document(documents_25800000.document, '{ "" : { "$set" : { "b" : { "$numberInt" : "1" } } } }'::bson, '{ "a" : { "$numberInt" : "1" } }'::bson, NULL::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), documents_25800000.document), documents_25800000.ctid
+                 Output: COALESCE(documentdb_api_internal.update_bson_document(documents_25800000.document, '{ "" : { "$set" : { "b" : { "$numberInt" : "1" } } } }'::bson, '{ "a" : { "$numberInt" : "1" } }'::bson, NULL::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, ''::text), documents_25800000.document), documents_25800000.ctid
                  Recheck Cond: (documents_25800000.shard_key_value = '25800000'::bigint)
                  Filter: (documents_25800000.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
                  ->  Bitmap Index Scan on _id_
@@ -165,15 +165,15 @@ SELECT document
 FROM bson_aggregation_update(
 	'db',
 	'{ "update": "aggregation_update", "updates": [ { "q": { "a": 1 }, "u": [ { "$set": { "b": 1 } } ], "multi": true } ] }');
-                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                   
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                  QUERY PLAN
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_build_document('n'::text, count(*), 'nModified'::text, sum(u.updated), 'ok'::text, '1'::double precision)
    CTE u
      ->  Update on documentdb_data.documents_25800000
            Output: documentdb_api_internal.bson_update_returned_value(documents_25800000.shard_key_value)
            ->  Bitmap Heap Scan on documentdb_data.documents_25800000
-                 Output: COALESCE(documentdb_api_internal.update_bson_document(documents_25800000.document, '{ "" : [ { "$set" : { "b" : { "$numberInt" : "1" } } } ] }'::bson, '{ "a" : { "$numberInt" : "1" } }'::bson, NULL::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), documents_25800000.document), documents_25800000.ctid
+                 Output: COALESCE(documentdb_api_internal.update_bson_document(documents_25800000.document, '{ "" : [ { "$set" : { "b" : { "$numberInt" : "1" } } } ] }'::bson, '{ "a" : { "$numberInt" : "1" } }'::bson, NULL::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, ''::text), documents_25800000.document), documents_25800000.ctid
                  Recheck Cond: (documents_25800000.shard_key_value = '25800000'::bigint)
                  Filter: (documents_25800000.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
                  ->  Bitmap Index Scan on _id_
@@ -217,15 +217,15 @@ SELECT document
 FROM bson_aggregation_update(
 	'db',
 	'{ "update": "aggregation_update", "updates": [ { "q": { "a": 1 }, "u": { "$set": { "b": 2 } }, "multi": true } ] }');
-                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                 
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                QUERY PLAN
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_build_document('n'::text, count(*), 'nModified'::text, sum(u.updated), 'ok'::text, '1'::double precision)
    CTE u
      ->  Update on documentdb_data.documents_25800000
            Output: documentdb_api_internal.bson_update_returned_value(documents_25800000.shard_key_value)
            ->  Bitmap Heap Scan on documentdb_data.documents_25800000
-                 Output: COALESCE(documentdb_api_internal.update_bson_document(documents_25800000.document, '{ "" : { "$set" : { "b" : { "$numberInt" : "2" } } } }'::bson, '{ "a" : { "$numberInt" : "1" } }'::bson, NULL::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), documents_25800000.document), documents_25800000.ctid
+                 Output: COALESCE(documentdb_api_internal.update_bson_document(documents_25800000.document, '{ "" : { "$set" : { "b" : { "$numberInt" : "2" } } } }'::bson, '{ "a" : { "$numberInt" : "1" } }'::bson, NULL::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, ''::text), documents_25800000.document), documents_25800000.ctid
                  Recheck Cond: (documents_25800000.shard_key_value = '25800000'::bigint)
                  Filter: (documents_25800000.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
                  ->  Bitmap Index Scan on _id_

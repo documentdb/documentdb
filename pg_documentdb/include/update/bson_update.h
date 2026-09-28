@@ -23,15 +23,17 @@ typedef enum
 UpdateType DetermineUpdateType(const bson_value_t *updateSpec);
 void ValidateUpdateDocument(const bson_value_t *updateSpec, const bson_value_t *querySpec,
 							const bson_value_t *arrayFilters, const
-							bson_value_t *variableSpec);
+							bson_value_t *variableSpec, const char *collationString);
 pgbson * BsonUpdateDocument(pgbson *sourceDocument, const bson_value_t *updateSpec,
 							const bson_value_t *querySpec, const
-							bson_value_t *arrayFilters, const bson_value_t *variableSpec);
+							bson_value_t *arrayFilters, const bson_value_t *variableSpec,
+							const char *collationString);
 pgbson * BsonUpdateDocumentWithSource(pgbson *sourceDocument, const
 									  bson_value_t *updateSpec,
 									  const bson_value_t *querySpec, const
 									  bson_value_t *arrayFilters, const
 									  bson_value_t *variableSpec,
+									  const char *collationString,
 									  ItemPointer ctid, Oid tableOid);
 
 #endif

@@ -1201,8 +1201,7 @@ SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_explain_idx', '{ "_id
 SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_explain_idx', '{ "_id": "dog", "a": "dog", "simpleA": "dog" }');
 
 -- multi:true with a matching collation uses the collated index for its bounds.
--- The collation drives document selection only; the rewrite keeps binary
--- semantics.
+-- The rewrite passes the same collation to the update expression.
 SELECT regexp_replace(
   documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON)

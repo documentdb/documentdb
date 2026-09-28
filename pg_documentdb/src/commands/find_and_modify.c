@@ -210,8 +210,9 @@ command_find_and_modify(PG_FUNCTION_ARGS)
 			if (!spec.remove)
 			{
 				const bson_value_t *variableSpec = NULL;
+				const char *collationString = NULL;
 				ValidateUpdateDocument(spec.update, spec.query, spec.arrayFilters,
-									   variableSpec);
+									   variableSpec, collationString);
 			}
 
 			FindAndModifyResult result = {

@@ -1562,11 +1562,13 @@ CreateProjectionTreeStateForPartitionBy(DensifyWindowState *state, pgbson *parti
 	bool forceProjectId = false;
 	bool allowInclusionExclusion = true;
 	pgbson *variableSpec = NULL;
+	const char *collationString = NULL;
 	state->partitionByTreeState =
 		(BsonProjectionQueryState *) GetProjectionStateForBsonProject(&iter,
 																	  forceProjectId,
 																	  allowInclusionExclusion,
-																	  variableSpec);
+																	  variableSpec,
+																	  collationString);
 }
 
 

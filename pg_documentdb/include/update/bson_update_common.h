@@ -45,6 +45,9 @@ typedef struct PositionalUpdateSpec
 
 	/* The processed positional query data from the original querySpec */
 	BsonPositionalQueryData *processedQuerySpec;
+
+	/* Collation used by positional and array-filter expressions */
+	const char *collationString;
 } PositionalUpdateSpec;
 
 
@@ -104,7 +107,8 @@ typedef void (*WriteUpdatedValuesFunc)(const bson_value_t *existingValue,
  * An optional function to retrieve operator specific state given a specific
  * updateSpec value.
  */
-typedef void *(*UpdateOperatorGetFuncState)(const bson_value_t *tree);
+typedef void *(*UpdateOperatorGetFuncState)(const bson_value_t *tree,
+											const char *collationString);
 
 /*
  * HandleUpdateOperatorUpdateBsonTree takes a specific update operator document
@@ -154,6 +158,8 @@ struct AggregationPipelineUpdateState * GetAggregationPipelineUpdateState(const
 																		  const
 																		  bson_value_t *
 																		  variableSpec,
+																		  const char *
+																		  collationString,
 																		  bool *
 																		  isReplaceStagePresent);
 
@@ -173,10 +179,13 @@ const struct BsonIntermediatePathNode * GetOperatorUpdateState(const
 															   querySpec,
 															   const bson_value_t *
 															   arrayFilters,
+															   const char *
+															   collationString,
 															   bool isUpsert);
 pgbson * ProcessUpdateOperatorWithState(pgbson *sourceDoc,
 										const struct BsonIntermediatePathNode *
 										updateState,
+										const char *collationString,
 										bool isUpsert,
 										BsonUpdateTracker *updateDescription);
 

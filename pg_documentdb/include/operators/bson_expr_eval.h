@@ -71,7 +71,8 @@ ExprEvalState * GetExpressionEvalStateForBsonInput(const bson_value_t *expressio
 												   hasOperatorRestrictions);
 
 ExprEvalState * GetExpressionEvalStateForArrayFilter(const bson_value_t *expression,
-													 MemoryContext memoryContext);
+													 MemoryContext memoryContext,
+													 const char *collationString);
 
 void FreeExprEvalState(ExprEvalState *exprEvalState, MemoryContext memoryContext);
 
