@@ -164,9 +164,10 @@ for eachDocument in results:
 
 ## Ecosystem compatibility
 
-The [driver compatibility pilot](compatibility/README.md) tests real Python and Node.js driver APIs
-against a version-pinned released DocumentDB image. It includes a manual GitHub
-Actions workflow, per-scenario results, and a local dashboard preview.
+The [ecosystem compatibility pilot](compatibility/README.md) currently tests real
+Python and Node.js driver APIs against a version-pinned released DocumentDB image.
+Its manual GitHub Actions workflow can run all enabled integrations and combines
+their per-scenario results into a summary and dashboard preview.
 
 ### Helpful Links
 

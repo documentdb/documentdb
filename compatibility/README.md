@@ -1,6 +1,8 @@
-# Driver compatibility pilot
+# Ecosystem compatibility pilot
 
-This directory tests a released DocumentDB image with PyMongo and the Node.js driver.
+This configuration-driven pilot tests ecosystem integrations against a released
+DocumentDB image. Its initial integrations are PyMongo and the Node.js driver;
+the workflow and reporting are shared rather than specific to a driver.
 It exercises real driver methods and return objects, rather than
 substituting raw commands for driver APIs. It is self-contained: it does not
 import the separate functional-test framework or build the database from this
@@ -165,18 +167,58 @@ rendered results.
 
 ## GitHub Actions workflow
 
-**Driver compatibility** runs only through manual dispatch. Once the workflow
-exists on the repository's default branch, select it in the Actions tab, choose
-an integration and reviewed database release, optionally supply a driver version, and leave the
-failure demonstration disabled for real results. Results record the `manual`
-trigger and link to the exact workflow attempt.
+**Ecosystem compatibility** runs only through manual dispatch. Once the workflow
+exists on the repository's default branch, select it in the Actions tab and
+choose the branch and reviewed database release to exercise. The integration
+defaults to `all`: a planning job expands every enabled registry entry using its
+own reviewed default version. Select one integration for a focused run or a
+version override. A version override with `all`, a disabled integration, a
+version outside its registry policy, or an unknown database release is rejected
+before test jobs start. Keep the failure demonstration disabled for real results.
 
-The test job has read-only repository permissions. It retains JSON, available
-JUnit/logs, and a dashboard preview as a per-attempt artifact for 30 days,
-including when the suite fails. A non-passing suite still fails the workflow.
-Result collection, preview rendering, and artifact upload run after a failed
-test step without suppressing its failure. There are no branch-specific push
-triggers, repository-variable failure overrides, or automatic publication jobs.
+Each matrix job runs its complete scenario suite against its own disposable
+database. Matrix fail-fast is disabled, so a failure does not cancel the other
+integrations. JSON and available JUnit/logs are retained in
+`compatibility-results-<integration>-<attempt>` artifacts even when the job fails.
+Results record the `manual` trigger and link to the exact workflow attempt.
+
+After the matrix finishes, the reporting job validates each selected result's
+identity, coverage, artifacts, suite digest, and workflow-attempt URL before
+combining it. The workflow summary includes a row for every selected integration.
+Missing or rejected results are **Not tested**, with a diagnostic; they do not
+create fabricated result envelopes or inherit an earlier attempt's pass.
+Compatibility failures remain **Failing**, and failed or incomplete reports exit
+nonzero without suppressing the matrix jobs' failures.
+
+The `compatibility-report-<attempt>` artifact contains `summary.md`, a
+machine-readable `summary.json`, accepted envelopes in `results/`, and a combined
+dashboard preview in `site/`. Only the selected profiles and versions appear in
+that preview, including explicit version overrides and labeled demonstrations.
+All artifacts have 30-day retention.
+
+Use **Re-run all jobs** for a complete matrix rerun. The report deliberately
+collects only the current attempt's artifacts, so rerunning only failed jobs can
+leave other integrations without current-attempt evidence. Re-running an older
+workflow also retains its original commit; dispatch a fresh run to test new code.
+
+All jobs have read-only repository permissions. There are no branch-specific
+push triggers, repository-variable failure overrides, or automatic publication
+jobs.
+
+To inspect the selection or combine locally produced records, run:
+
+```bash
+python -m compatibility.workflow matrix --integration all
+python -m compatibility.workflow report --integration all \
+  --input compatibility/.test-results/incoming \
+  --output compatibility/.test-results/combined-001
+```
+
+Place each record under `incoming/<integration>/result.json`. Use the same
+integration, version, database, and demonstration selection as the producing
+runs, and a fresh output directory. `--expected-run-url` binds a combined report
+to one workflow attempt; omit it for local results. `--summary` can append the
+Markdown report to a GitHub step-summary file.
 
 ### Publishing results
 
@@ -233,6 +275,10 @@ check coverage and outcomes, not the number of registered integrations, scenario
 ordering, or dashboard row position. Fixed synthetic inputs are appropriate for
 isolated argument and error cases. Keep the real image and action digest pins:
 configuration-resilient tests must not weaken reproducibility or validation.
+
+New integrations join `all` through their enabled registry entry, not a
+hard-coded matrix. Add their key to the workflow's input choices as well to make
+individual selection available in the Actions UI.
 
 For scenario changes, update the explicit registry coverage, keep unique
 non-parameterized test function names, and run the real normal and demonstration

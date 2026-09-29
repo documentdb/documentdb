@@ -40,7 +40,7 @@ jobs:
 
   compatibility-unit-tests:
     runs-on: ubuntu-24.04
-    name: Driver compatibility infrastructure
+    name: Ecosystem compatibility infrastructure
     permissions:
       contents: read
     steps:
