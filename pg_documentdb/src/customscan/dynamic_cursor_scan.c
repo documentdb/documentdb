@@ -211,7 +211,7 @@ static Path * GeneratePathFromContinuation(ParsedContinuationState *tempState,
 										   RangeTblEntry *rte,
 										   PathTarget *baseRelPathTarget,
 										   ReplaceExtensionFunctionContext *indexContext);
-static void WriteContinuationBasedOnScanTypeAndState(ScanState *ps, pgbson_writer *writer,
+static bool WriteContinuationBasedOnScanTypeAndState(ScanState *ps, pgbson_writer *writer,
 													 QueryScanType scanType);
 static void AddOrderByRequiredClausesIfNecessary(IndexPath *indexPath, PlannerInfo *root,
 												 RelOptInfo *rel);
@@ -343,6 +343,20 @@ IsStreamableGroupingPlan(Plan *plan)
 
 
 bool
+IsDynamicCursorCustomPath(CustomPath *path)
+{
+	if (strcmp(path->methods->CustomName,
+			   DynamicExtensionCursorScanMethods.CustomName) == 0 &&
+		path->methods == &DynamicExtensionCursorScanMethods)
+	{
+		return true;
+	}
+
+	return false;
+}
+
+
+bool
 IsDynamicCustomScanPath(Plan *plan, bool allowOffsetLimitNode)
 {
 	CHECK_FOR_INTERRUPTS();
@@ -350,9 +364,22 @@ IsDynamicCustomScanPath(Plan *plan, bool allowOffsetLimitNode)
 	if (IsA(plan, CustomScan))
 	{
 		CustomScan *scan = (CustomScan *) plan;
-		return strcmp(scan->methods->CustomName,
-					  DynamicExtensionCursorScanMethods.CustomName) == 0 &&
-			   scan->methods == &ExtensionCursorScanMethods;
+		if (strcmp(scan->methods->CustomName,
+				   DynamicExtensionCursorScanMethods.CustomName) == 0 &&
+			scan->methods == &ExtensionCursorScanMethods)
+		{
+			return true;
+		}
+
+		/* We support custom distinct scan as a parent */
+		if (IsCustomDistinctScanPath(scan))
+		{
+			Plan *childPlan = GetCustomDistinctScanChildPlan(scan);
+			return childPlan != NULL &&
+				   IsDynamicCustomScanPath(childPlan, allowOffsetLimitNode);
+		}
+
+		return false;
 	}
 
 	if (IsA(plan, SubqueryScan))
@@ -423,6 +450,18 @@ GetDynamicStreamingCustomScanState(PlanState *planState, bool *isGroupReadAhead)
 				   DynamicExtensionCursorScanMethods.CustomName) == 0)
 		{
 			return scanState;
+		}
+
+		/*
+		 * Descend through a distinct custom scan (see IsDynamicCustomScanPath).
+		 * Its child is registered in custom_ps rather than as an outer plan
+		 * state.
+		 */
+		PlanState *distinctChild = GetCustomDistinctScanChildState(scanState);
+		if (distinctChild != NULL)
+		{
+			return GetDynamicStreamingCustomScanState(distinctChild,
+													  isGroupReadAhead);
 		}
 
 		return NULL;
@@ -502,7 +541,14 @@ GetContinuationFromCustomScan(CustomScanState *scan)
 	const char *tableName = get_rel_name(cursorScanState->tableOid);
 	PgbsonWriterAppendUtf8(&writer, "tbl", 3, tableName);
 
-	WriteContinuationBasedOnScanTypeAndState(ps, &writer, cursorScanState->scanType);
+	bool hasValidContinuation =
+		WriteContinuationBasedOnScanTypeAndState(ps, &writer, cursorScanState->scanType);
+	if (!hasValidContinuation)
+	{
+		PgbsonWriterFree(&writer);
+		return NULL;
+	}
+
 	return PgbsonWriterGetPgbson(&writer);
 }
 
@@ -2153,7 +2199,7 @@ RecurseAndWriteBitmapContinuation(pgbson_array_writer *arrayWriter,
 }
 
 
-static void
+static bool
 WriteContinuationBasedOnScanTypeAndState(ScanState *ps, pgbson_writer *writer,
 										 QueryScanType scanType)
 {
@@ -2244,6 +2290,11 @@ WriteContinuationBasedOnScanTypeAndState(ScanState *ps, pgbson_writer *writer,
 
 			bytea *dedupState = NULL;
 			Datum currentKey = DocumentDBRumGetCurrentIndexKey(scanDesc, &dedupState);
+			if (currentKey == (Datum) 0)
+			{
+				return false;
+			}
+
 			bytea *buffer = DatumGetByteaP(currentKey);
 			bson_value_t bufferBinary = { 0 };
 			bufferBinary.value_type = BSON_TYPE_BINARY;
@@ -2292,6 +2343,8 @@ WriteContinuationBasedOnScanTypeAndState(ScanState *ps, pgbson_writer *writer,
 			break;
 		}
 	}
+
+	return true;
 }
 
 

@@ -24,7 +24,6 @@
 #include <optimizer/paths.h>
 #include <access/relscan.h>
 #include <optimizer/tlist.h>
-#include <customscan/bson_custom_scan_private.h>
 
 #include "io/bson_core.h"
 #include "planner/documentdb_planner.h"
@@ -42,6 +41,8 @@
 #include "utils/query_utils.h"
 #include "commands/commands_common.h"
 #include "api_hooks_def.h"
+#include <customscan/bson_custom_scan_private.h>
+#include <customscan/bson_custom_scan.h>
 
 
 /* --------------------------------------------------------- */
@@ -84,6 +85,16 @@ typedef struct DistinctQueryScanState
 	IndexScanDesc scanDesc;
 
 	IndexSkipScanOnEntryStatus skipScanOnEntryStatus;
+
+	/*
+	 * Set once a tuple has been handed upstream and the remaining entries for
+	 * its key still have to be skipped. The skip is deferred to the next fetch
+	 * so that the index scan stays positioned on the tuple that was just
+	 * returned: a dynamic cursor underneath this node derives its continuation
+	 * from the live scan descriptor, and skipping eagerly would move that
+	 * descriptor a group past the tuple the continuation is paired with.
+	 */
+	bool hasPendingSkip;
 } DistinctQueryScanState;
 
 /* --------------------------------------------------------- */
@@ -145,6 +156,52 @@ static const struct CustomExecMethods DistinctQueryScanExecuteMethods = {
 	.ReScanCustomScan = DistinctQueryScanReScanCustomScan,
 	.ExplainCustomScan = DistinctQueryScanExplainCustomScan,
 };
+
+
+bool
+IsCustomDistinctScanPath(CustomScan *plan)
+{
+	return plan != NULL && plan->methods != NULL &&
+		   strcmp(plan->methods->CustomName,
+				  DistinctQueryScanPathMethods.CustomName) == 0;
+}
+
+
+/*
+ * Returns the child plan of a distinct custom scan. The distinct scan keeps its
+ * single child in custom_plans (not in outerPlan), so callers walking the plan
+ * tree have to go through here.
+ */
+Plan *
+GetCustomDistinctScanChildPlan(CustomScan *plan)
+{
+	if (plan->custom_plans == NIL)
+	{
+		return NULL;
+	}
+
+	return (Plan *) linitial(plan->custom_plans);
+}
+
+
+/*
+ * Returns the child plan state of a distinct custom scan state, or NULL when the
+ * node is not a distinct custom scan. The child is registered in custom_ps by
+ * DistinctQueryScanBeginCustomScan.
+ */
+PlanState *
+GetCustomDistinctScanChildState(CustomScanState *scanState)
+{
+	if (scanState->methods == NULL ||
+		strcmp(scanState->methods->CustomName,
+			   DistinctQueryScanExecuteMethods.CustomName) != 0 ||
+		scanState->custom_ps == NIL)
+	{
+		return NULL;
+	}
+
+	return (PlanState *) linitial(scanState->custom_ps);
+}
 
 
 /*
@@ -224,8 +281,20 @@ AddDistinctCustomPathCore(PlannerInfo *root, List *pathList,
 	foreach(cell, pathList)
 	{
 		Path *inputPath = lfirst(cell);
-		if (inputPath->pathtype != T_IndexScan &&
-			inputPath->pathtype != T_IndexOnlyScan)
+
+		Path *inputCandidatePath = inputPath;
+		if (IsA(inputCandidatePath, CustomPath))
+		{
+			CustomPath *customPath = (CustomPath *) inputCandidatePath;
+			if (IsDynamicCursorCustomPath(customPath) &&
+				list_length(customPath->custom_paths) == 1)
+			{
+				inputCandidatePath = linitial(customPath->custom_paths);
+			}
+		}
+
+		if (inputCandidatePath->pathtype != T_IndexScan &&
+			inputCandidatePath->pathtype != T_IndexOnlyScan)
 		{
 			/*
 			 * TODO: Support MergeAppend and custom wrapper paths after distinct
@@ -235,7 +304,7 @@ AddDistinctCustomPathCore(PlannerInfo *root, List *pathList,
 			continue;
 		}
 
-		IndexPath *indexPath = (IndexPath *) inputPath;
+		IndexPath *indexPath = (IndexPath *) inputCandidatePath;
 
 		/*
 		 * The number of index ORDER BYs must match the number of pathkeys we
@@ -789,6 +858,17 @@ DistinctQueryScanNext(CustomScanState *node)
 {
 	DistinctQueryScanState *extensionScanState = (DistinctQueryScanState *) node;
 
+	/*
+	 * Skip the remaining entries for the key of the previously returned tuple.
+	 * This is deferred from the previous call so that the continuation captured
+	 * for that tuple matches the scan descriptor position.
+	 */
+	if (extensionScanState->hasPendingSkip)
+	{
+		extensionScanState->hasPendingSkip = false;
+		TrySkipDistinctScanKey(extensionScanState);
+	}
+
 	/* Fetch a tuple from the underlying scan */
 	TupleTableSlot *slot = extensionScanState->innerScanState->ps.ExecProcNode(
 		(PlanState *) extensionScanState->innerScanState);
@@ -802,16 +882,22 @@ DistinctQueryScanNext(CustomScanState *node)
 	/* we got a valid alive TID - skip all the other entries on this index entry */
 	if (extensionScanState->scanDesc == NULL)
 	{
-		if (IsA(extensionScanState->innerScanState, IndexScanState))
+		ScanState *nestedState = extensionScanState->innerScanState;
+		if (IsA(extensionScanState->innerScanState, CustomScanState))
 		{
-			IndexScanState *indexScanState =
-				(IndexScanState *) extensionScanState->innerScanState;
+			CustomScanState *customScanState =
+				(CustomScanState *) extensionScanState->innerScanState;
+			nestedState = (ScanState *) linitial(customScanState->custom_ps);
+		}
+
+		if (IsA(nestedState, IndexScanState))
+		{
+			IndexScanState *indexScanState = (IndexScanState *) nestedState;
 			extensionScanState->scanDesc = indexScanState->iss_ScanDesc;
 		}
-		else if (IsA(extensionScanState->innerScanState, IndexOnlyScanState))
+		else if (IsA(nestedState, IndexOnlyScanState))
 		{
-			IndexOnlyScanState *indexOnlyScanState =
-				(IndexOnlyScanState *) extensionScanState->innerScanState;
+			IndexOnlyScanState *indexOnlyScanState = (IndexOnlyScanState *) nestedState;
 			extensionScanState->scanDesc = indexOnlyScanState->ioss_ScanDesc;
 		}
 
@@ -820,7 +906,11 @@ DistinctQueryScanNext(CustomScanState *node)
 			indexRel->rd_rel->relam, indexRel->rd_opfamily[0]);
 	}
 
-	TrySkipDistinctScanKey(extensionScanState);
+	/*
+	 * Record that this tuple's key still needs skipping; the skip runs on the
+	 * next fetch so the scan descriptor stays on the tuple returned here.
+	 */
+	extensionScanState->hasPendingSkip = true;
 
 	/* Copy the slot onto our own query state for projection */
 	TupleTableSlot *ourSlot = node->ss.ss_ScanTupleSlot;
@@ -850,6 +940,7 @@ DistinctQueryScanReScanCustomScan(CustomScanState *node)
 	DistinctQueryScanState *queryScanState = (DistinctQueryScanState *) node;
 
 	/* reset any scanstate state here */
+	queryScanState->hasPendingSkip = false;
 	ExecReScan((PlanState *) queryScanState->innerScanState);
 }
 

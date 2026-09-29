@@ -1,0 +1,1 @@
+\i sql/bson_dynamic_cursor_group_first_distinct_scan_tests.sql

@@ -5501,6 +5501,11 @@ RMGR_PG_FUNCTION_DEF(documentdb_rum_get_current_index_key)
 
 	Page page = so->orderByScanData->orderByEntryPageCopy;
 
+	if (so->orderByScanData->orderStack == NULL)
+	{
+		PG_RETURN_DATUM((Datum) 0);
+	}
+
 	OffsetNumber off = so->orderByScanData->orderStack->off;
 
 	/* Off would already be pointing to the next item */
@@ -5702,6 +5707,10 @@ TrySkipScanToNextDistinctKey(IndexScanDesc scan, RumScanOpaque so,
 	/* Re-seek the ordered scan to the new skip bound. */
 	rumFlushKilledEntries(so);
 	startScanEntryOrderedCore(so, entry, scan->xs_snapshot);
-	entry->isFinished = false;
+	if (so->orderByScanData->orderStack != NULL)
+	{
+		entry->isFinished = false;
+	}
+
 	return true;
 }

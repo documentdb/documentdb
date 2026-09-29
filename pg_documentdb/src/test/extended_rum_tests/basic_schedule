@@ -36,6 +36,7 @@ test: bson_dynamic_cursor_dedup_tests
 test: bson_group_by_dynamic_streaming_tests!PG16_OR_HIGHER!
 test: bson_aggregation_group_distinct_scan_tests!PG16_OR_HIGHER!
 test: bson_aggregation_group_first_distinct_scan_tests!PG16_OR_HIGHER!
+test: bson_dynamic_cursor_group_first_distinct_scan_tests!PG16_OR_HIGHER!
 test: bson_mergesort_in_prefix_tests
 test: bson_composite_or_merge_append_tests
 test: documentdb_rum_guc_naming_conventions

@@ -31,7 +31,11 @@ void ValidateCursorCustomScanPlan(Plan *plan);
 PathTarget * BuildBaseRelPathTarget(Relation tableRel, Index relIdIndex);
 
 /* Dynamic scan methods */
+bool IsDynamicCursorCustomPath(CustomPath *path);
 bool IsDynamicCustomScanPath(Plan *plan, bool allowOffsetLimitNode);
+bool IsCustomDistinctScanPath(CustomScan *plan);
+Plan * GetCustomDistinctScanChildPlan(CustomScan *plan);
+PlanState * GetCustomDistinctScanChildState(CustomScanState *scanState);
 CustomScanState * GetDynamicStreamingCustomScanState(PlanState *planState,
 													 bool *isGroupReadAhead);
 pgbson * GetContinuationFromCustomScan(CustomScanState *scan);
