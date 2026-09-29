@@ -803,6 +803,7 @@ cmd_check() {
         log "DocumentDB extension: loaded"
     else
         log "DocumentDB extension: NOT loaded (run CREATE EXTENSION documentdb CASCADE;)"
+        return 1
     fi
 }
 

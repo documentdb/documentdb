@@ -4735,6 +4735,30 @@ class GatewayAdminUsageSurfaceTests(unittest.TestCase):
     """The packaged admin helper is a standalone CLI; the help output
     should teach that name and advertise the target-db override."""
 
+    def test_gateway_admin_check_exit_status(self):
+        script = GATEWAY_ADMIN_SCRIPT.read_text(encoding="utf-8")
+        check = re.search(r"^cmd_check\(\) \{.*?^\}", script, re.MULTILINE | re.DOTALL)
+        self.assertIsNotNone(check)
+        harness = (
+            "set -euo pipefail\n"
+            "PG_OWNER=postgres; SOCKET_DIR=/tmp; PG_PORT=5432; TARGET_DB=postgres\n"
+            "find_psql() { echo psql; }\n"
+            'run_as_user() { printf "%s" "${EXTENSION_PRESENT}"; }\n'
+            'log() { echo "$*"; }\n'
+            'die() { echo "$*" >&2; exit 1; }\n'
+            + check.group(0) + "\ncmd_check\n"
+        )
+        for present, expected in (("1", 0), ("", 1)):
+            with self.subTest(present=present):
+                result = subprocess.run(
+                    ["bash", "-c", harness],
+                    env=dict(os.environ, EXTENSION_PRESENT=present),
+                    stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
+                )
+                self.assertEqual(result.returncode, expected, result.stderr)
+                self.assertIn("DocumentDB extension: " + ("loaded" if present else "NOT loaded"),
+                              result.stdout)
+
     def test_gateway_admin_help_uses_packaged_cli_name(self):
         result = subprocess.run(
             ["bash", str(GATEWAY_ADMIN_SCRIPT), "--help"],
