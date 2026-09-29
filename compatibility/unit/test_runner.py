@@ -89,6 +89,52 @@ def test_cleanup_uses_only_the_invocation_label(monkeypatch):
     assert all(f"label={runner.LABEL}=" + "a" * 32 in call for call in calls)
 
 
+def test_node_setup_failure_retains_a_runtime_neutral_envelope(tmp_path, registry, monkeypatch):
+    def unavailable(*args):
+        raise RuntimeError("npm archive unavailable")
+
+    monkeypatch.setattr(runner, "prepare_node_client", unavailable)
+    monkeypatch.setattr(runner, "cleanup", lambda *args: [])
+    result = runner.execute(
+        registry,
+        "nodejs",
+        registry["integrations"]["nodejs"]["default_version"],
+        next(iter(registry["documentdb"])),
+        tmp_path / "result.json",
+    )
+    assert compatibility_state(result) == "Not tested"
+    assert result["schema_version"] == 2
+    assert result["upstream"]["runtime"] == {"name": "nodejs", "version": None}
+    assert "npm archive unavailable" in result["execution_error"]
+
+
+def test_cli_selects_the_node_registry_default(tmp_path, record, registry, monkeypatch):
+    captured = []
+    monkeypatch.setattr(runner, "execute", lambda *args, **kwargs: captured.append(args) or record)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["runner", "--integration", "nodejs", "--output", str(tmp_path / "result.json")],
+    )
+    assert runner.main() == 0
+    assert captured[0][1:3] == ("nodejs", registry["integrations"]["nodejs"]["default_version"])
+
+
+@pytest.mark.parametrize(
+    ("integration", "option"), [("pymongo", "package_cache"), ("nodejs", "wheelhouse")]
+)
+def test_cache_options_cannot_cross_runtimes(tmp_path, registry, integration, option):
+    with pytest.raises(ValueError, match="only supported"):
+        runner.execute(
+            registry,
+            integration,
+            registry["integrations"][integration]["default_version"],
+            next(iter(registry["documentdb"])),
+            tmp_path / "result.json",
+            **{option: tmp_path / "cache"},
+        )
+
+
 def test_plain_and_encoded_credentials_are_redacted():
     secret = "synthetic-fixture!"
     value = f"{secret} synthetic-fixture%21 protocol://user:another-fixture@host"

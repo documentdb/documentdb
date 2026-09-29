@@ -27,17 +27,18 @@
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["repository", "owner", "enabled", "package", "default_version", "version_pattern", "profile", "test_file", "demonstration_file", "timeout_seconds", "freshness_days", "expected_tests"],
+        "required": ["repository", "owner", "enabled", "runtime", "package", "default_version", "version_pattern", "profile", "test_file", "demonstration_file", "timeout_seconds", "freshness_days", "expected_tests"],
         "properties": {
           "repository": {"type": "string", "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
           "owner": {"type": "string", "pattern": "^@[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
           "enabled": {"type": "boolean"},
+          "runtime": {"enum": ["python", "nodejs"]},
           "package": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,39}$"},
           "default_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
           "version_pattern": {"type": "string", "minLength": 1, "maxLength": 100},
           "profile": {"type": "string", "pattern": "^[a-z0-9_-]{1,80}$"},
-          "test_file": {"type": "string", "pattern": "^compatibility/integrations/[a-z0-9_]+/test_[a-z0-9_]+\\.py$"},
-          "demonstration_file": {"type": "string", "pattern": "^compatibility/integrations/[a-z0-9_]+/test_[a-z0-9_]+\\.py$"},
+          "test_file": {"type": "string", "pattern": "^compatibility/integrations/[a-z0-9_]+/test_[a-z0-9_]+\\.(?:py|cjs)$"},
+          "demonstration_file": {"type": "string", "pattern": "^compatibility/integrations/[a-z0-9_]+/test_[a-z0-9_]+\\.(?:py|cjs)$"},
           "timeout_seconds": {"type": "integer", "minimum": 30, "maximum": 1800},
           "freshness_days": {"type": "integer", "minimum": 1, "maximum": 90},
           "expected_tests": {

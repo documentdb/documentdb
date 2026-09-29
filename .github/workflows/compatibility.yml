@@ -1,10 +1,18 @@
-name: PyMongo compatibility
+name: Driver compatibility
 
 on:
   workflow_dispatch:
     inputs:
+      integration:
+        description: Driver integration
+        type: choice
+        options:
+          - pymongo
+          - nodejs
+        default: pymongo
+        required: true
       version:
-        description: PyMongo version (blank selects the reviewed registry default)
+        description: Driver version (blank selects the reviewed registry default)
         type: string
         required: false
       documentdb_version:
@@ -36,6 +44,7 @@ jobs:
       - name: Run the isolated driver profile
         id: suite
         env:
+          INTEGRATION: ${{ inputs.integration }}
           VERSION: ${{ inputs.version }}
           DOCUMENTDB_VERSION: ${{ inputs.documentdb_version }}
           DEMONSTRATION: ${{ inputs.demonstration }}
@@ -44,6 +53,7 @@ jobs:
             --output results/result.json
             --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
           )
+          if [ -n "$INTEGRATION" ]; then args+=(--integration "$INTEGRATION"); fi
           if [ -n "$DOCUMENTDB_VERSION" ]; then args+=(--documentdb-version "$DOCUMENTDB_VERSION"); fi
           if [ -n "$VERSION" ]; then args+=(--version "$VERSION"); fi
           if [ "$DEMONSTRATION" = "true" ]; then args+=(--demonstration); fi
@@ -68,7 +78,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: pymongo-compatibility-${{ github.run_attempt }}
+          name: driver-compatibility-${{ inputs.integration || 'pymongo' }}-${{ github.run_attempt }}
           path: |
             results/
             preview-site/

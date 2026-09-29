@@ -5,3 +5,4 @@ __pycache__/
 .mypy_cache/
 .venv/
 .test-results/
+node_modules/

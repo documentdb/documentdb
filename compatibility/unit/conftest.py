@@ -122,7 +122,7 @@ def record(registry, selection, client_python):
     version = selection["version"]
     now = datetime.now(timezone.utc) - timedelta(minutes=1)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "id": "a" * 32,
         "integration": integration,
         "repository": spec["repository"],
@@ -138,9 +138,9 @@ def record(registry, selection, client_python):
         "upstream": {
             "version": version,
             "actual_version": version,
-            "wheel_sha256": "b" * 64,
+            "artifact_sha256": "b" * 64,
             "client_image": "sha256:" + "c" * 64,
-            "python_version": f"{client_python}.0",
+            "runtime": {"name": "python", "version": f"{client_python}.0"},
             "dependencies": [{"name": spec["package"], "version": version, "sha256": "b" * 64}],
         },
         "expected_tests": deepcopy(spec["expected_tests"]),

@@ -1,39 +1,52 @@
-# PyMongo compatibility pilot
+# Driver compatibility pilot
 
-This directory tests a released DocumentDB image with a selected PyMongo wheel.
-It exercises real synchronous driver methods and return objects, rather than
+This directory tests a released DocumentDB image with PyMongo and the Node.js driver.
+It exercises real driver methods and return objects, rather than
 substituting raw commands for driver APIs. It is self-contained: it does not
 import the separate functional-test framework or build the database from this
 checkout.
 
-The initial integration is **PyMongo only**. A result covers only its exact
+The profiles cover synchronous Python and asynchronous Node.js APIs. A result covers only its exact
 version pair, runtime profile, and listed scenarios, not every driver API or
-database feature. Async APIs, vector search, other integrations, scheduled
+database feature. Python async APIs, optional native driver modules, vector search, scheduled
 discovery, and automatic release watching are outside this pilot.
 
 ## Reviewed baseline
 
-[`registry.yaml`](registry.yaml) selects DocumentDB **0.117.0**, PostgreSQL **17**,
-PyMongo **4.18.0**, and the `python312-linux-x64-sync` profile. These are a
-reproducible baseline, not a claim about the newest releases.
+[`registry.yaml`](registry.yaml) selects DocumentDB **0.117.0** and PostgreSQL **17**:
 
-The database image and Python 3.12 base image are pinned by digest. Before running
+| Integration | Driver | Runtime | Profile |
+| --- | --- | --- | --- |
+| `pymongo` | 4.18.0 | Python 3.12 | `python312-linux-x64-sync` |
+| `nodejs` | 7.7.0 | Node.js 24 | `node24-linux-x64-async` |
+
+These are reviewed reproducible baselines, not a claim about the newest releases.
+The database and client base images are pinned by digest. Before running
 tests, the controller verifies the installed extension and PostgreSQL major
 version. It verifies the selected wheel's filename and SHA-256 against non-yanked
-PyPI release metadata, then checks the installed driver version and wheel hash.
-Dependency versions and hashes, the actual Python version, the client image ID,
+PyPI release metadata. For Node.js, every npm archive must match the SHA-512
+integrity in the reviewed `package-lock.json`; installation runs offline with
+lifecycle scripts and optional packages disabled. Both clients verify their
+installed driver version and retain the selected artifact's SHA-256.
+Dependency versions and hashes, the actual runtime version, the client image ID,
 and a digest of the execution inputs are retained in each result.
 
 Stable PyMongo 4.9 and later 4.x versions can be selected explicitly. Specify three
 numeric components, for example `--version 4.9.0`; equivalent published versions
 such as `4.9` are matched using package-version semantics. A version without an
 eligible Python 3.12 Linux x64 wheel is **Not tested**, not Working.
+The Node.js profile accepts the version pinned in its manifest and lockfile.
+To select another Node.js driver version, update the manifest in
+`compatibility/integrations/nodejs`, regenerate its lockfile there using Node 24
+and `npm install --package-lock-only --ignore-scripts --engine-strict --omit=optional`,
+and update the registry default and version policy.
+Review the dependency changes and rerun the normal and demonstration profiles.
 Other database releases must first be added to the reviewed registry with an
 immutable image reference and expected installed versions.
 
 ## Coverage
 
-The 17 required scenarios are individually named in the registry:
+Each integration declares the same 17 required scenarios in the registry:
 
 | Area | Driver behavior checked |
 | --- | --- |
@@ -45,8 +58,13 @@ The 17 required scenarios are individually named in the registry:
 | Deletion | `delete_one` and `delete_many` counts plus remaining documents |
 | Aggregation | Exact `$unwind` / `$group` counts and sorted output |
 | Indexes | Scalar/compound definitions, uniqueness, listing, dropping |
-| Errors | Unique-index rejection as `DuplicateKeyError`, code 11000, no unintended insert |
+| Errors | Driver-specific duplicate-key exception, code 11000, no unintended insert |
 | BSON | Object identifiers, integers, int64, doubles, decimals, UTC dates, bytes, arrays, booleans |
+
+The Node.js profile uses the corresponding camel-case APIs (`insertOne`, `findOne`,
+`findOneAndUpdate`, and others), promises, and `for await` cursor iteration.
+It checks Node-specific return shapes and BSON representations rather than
+replaying raw commands through a different client.
 
 The scenarios follow the kinds of driver operations demonstrated by the
 [`documentdb-playground` PyMongo example](https://github.com/documentdb/documentdb-playground/blob/1a36d28aea9f78a7ca833903e400a7cc4e842e55/playgrounds/pymongo/app/pymongo_crud_test.py).
@@ -66,14 +84,22 @@ python -m pip install -r compatibility/requirements.txt
 python -m compatibility.runner \
   --version 4.18.0 --documentdb-version 0.117.0 \
   --output compatibility/.test-results/run-001/result.json
+python -m compatibility.runner --integration nodejs \
+  --output compatibility/.test-results/node-001/result.json
 ```
 
-The runner downloads wheels, builds the client without build-time network access,
+The runner downloads verified package archives, builds the client without build-time network access,
 creates an isolated database, runs the selected profile, and removes its own
 containers, network, anonymous volumes, and client image. Use a fresh output path
 for each invocation. `--wheelhouse /path/to/wheels` can reuse downloaded wheels;
 PyPI metadata verification still requires network access. Never disable TLS
 verification for package downloads.
+
+For Node.js, `--package-cache /path/to/cache` stores and reuses archives named
+`<sha256-of-the-lockfile-integrity-string>.tgz`. Cached bytes are verified against
+the reviewed lockfile on every run; a complete cache needs no registry access.
+`--wheelhouse` is Python-only and `--package-cache` is Node-only. Node.js itself
+is needed only inside the pinned client container, not on the controller host.
 
 The client has no Docker socket, checkout mount, publishing token, or
 host-published port. It connects only to this run's internal Docker network. Its
@@ -93,6 +119,8 @@ To exercise the failure-reporting path deliberately:
 ```bash
 python -m compatibility.runner --demonstration \
   --output compatibility/.test-results/demo-001/result.json
+python -m compatibility.runner --integration nodejs --demonstration \
+  --output compatibility/.test-results/node-demo-001/result.json
 ```
 
 This executes the normal profile and one intentionally incorrect driver
@@ -117,6 +145,9 @@ produces HTML, `current.json`, and `history.json`. Appends are immutable,
 conflicting run IDs are rejected, and identical replays are idempotent.
 Demonstrations are displayed separately. Local runs have no fabricated pipeline
 URL; issue links point to the product repository's compatibility report form.
+New schema-version-2 records use `upstream.artifact_sha256` and
+`upstream.runtime` (`name` and `version`). Schema-version-1 Python history
+remains readable without rewriting the original records.
 
 | State | Meaning |
 | --- | --- |
@@ -134,9 +165,9 @@ rendered results.
 
 ## GitHub Actions workflow
 
-**PyMongo compatibility** runs only through manual dispatch. Once the workflow
+**Driver compatibility** runs only through manual dispatch. Once the workflow
 exists on the repository's default branch, select it in the Actions tab, choose
-a reviewed database release, optionally supply a PyMongo version, and leave the
+an integration and reviewed database release, optionally supply a driver version, and leave the
 failure demonstration disabled for real results. Results record the `manual`
 trigger and link to the exact workflow attempt.
 
@@ -188,12 +219,13 @@ python -m black --check --config compatibility/pyproject.toml compatibility
 python -m isort --check-only --settings-path compatibility/pyproject.toml compatibility
 python -m flake8 --max-line-length=100 --extend-ignore=E203 compatibility
 python -m mypy --config-file compatibility/pyproject.toml compatibility
-node --test compatibility/unit/test_freshness.cjs
+node --test compatibility/unit/test_freshness.cjs compatibility/unit/test_nodejs.cjs
 shellcheck compatibility/persist.sh
 ```
 
-The JavaScript check uses Node's built-in test runner. It is not a client runtime
-dependency. Python configuration is scoped to this directory.
+Run the JavaScript checks with Node 24 in a tooling container. They use Node's
+built-in test runner and need neither a database nor installed driver packages.
+Python configuration is scoped to this directory.
 
 Infrastructure fixtures read selected versions and artifact metadata from the
 registry rather than duplicating the current release values. Assertions should

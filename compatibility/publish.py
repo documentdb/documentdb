@@ -20,6 +20,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from compatibility.contracts import (
     ROOT,
+    artifact_sha256,
     compatibility_state,
     read_registry,
     suite_digest,
@@ -124,8 +125,8 @@ def dashboard_rows(
             or (active_database and current["documentdb"]["image"] != active_database["image"])
             or (
                 latest is not None
-                and latest["upstream"]["wheel_sha256"]
-                and latest["upstream"]["wheel_sha256"] != current["upstream"]["wheel_sha256"]
+                and artifact_sha256(latest)
+                and artifact_sha256(latest) != artifact_sha256(current)
             )
         ):
             state = "Stale"

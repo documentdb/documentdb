@@ -87,8 +87,8 @@ def main() -> int:
         )
     payload = {
         "version": importlib.metadata.version(package),
-        "python": platform.python_version(),
-        "wheel_sha256": installed["download_info"]["archive_info"]["hashes"]["sha256"],
+        "runtime": {"name": "python", "version": platform.python_version()},
+        "artifact_sha256": installed["download_info"]["archive_info"]["hashes"]["sha256"],
         "dependencies": [
             {
                 "name": entry["metadata"]["name"],

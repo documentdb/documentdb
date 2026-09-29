@@ -3,8 +3,35 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "id", "integration", "repository", "owner", "profile", "suite_digest", "documentdb", "upstream", "expected_tests", "tests", "started_at", "finished_at", "trigger", "run_url", "demonstration", "execution_error"],
+  "$defs": {
+    "runtime": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"enum": ["python", "nodejs"]},
+        "version": {"type": ["string", "null"], "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"}
+      }
+    }
+  },
+  "if": {"properties": {"schema_version": {"const": 1}}},
+  "then": {
+    "properties": {
+      "upstream": {
+        "required": ["wheel_sha256", "python_version"],
+        "properties": {"artifact_sha256": false, "runtime": false}
+      }
+    }
+  },
+  "else": {
+    "properties": {
+      "upstream": {
+        "required": ["artifact_sha256", "runtime"],
+        "properties": {"wheel_sha256": false, "python_version": false}
+      }
+    }
+  },
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"enum": [1, 2]},
     "id": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
     "integration": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,39}$"},
     "repository": {"type": "string", "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
@@ -23,11 +50,13 @@
     },
     "upstream": {
       "type": "object", "additionalProperties": false,
-      "required": ["version", "actual_version", "wheel_sha256", "client_image", "python_version", "dependencies"],
+      "required": ["version", "actual_version", "client_image", "dependencies"],
       "properties": {
         "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
         "actual_version": {"type": ["string", "null"], "pattern": "^[0-9]+\\.[0-9]+(?:\\.[0-9]+)?$"},
         "wheel_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+        "artifact_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+        "runtime": {"$ref": "#/$defs/runtime"},
         "client_image": {"type": ["string", "null"], "pattern": "^sha256:[a-f0-9]{64}$"},
         "python_version": {"type": ["string", "null"], "pattern": "^3\\.12\\.[0-9]+$"},
         "dependencies": {
@@ -36,7 +65,7 @@
             "type": "object", "additionalProperties": false,
             "required": ["name", "version", "sha256"],
             "properties": {
-              "name": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,100}$"},
+              "name": {"type": "string", "maxLength": 100, "pattern": "^(?:@[a-z0-9_.-]+/)?[A-Za-z0-9_.-]+$"},
               "version": {"type": "string", "pattern": "^[A-Za-z0-9_.+-]{1,100}$"},
               "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
             }

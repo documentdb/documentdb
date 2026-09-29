@@ -37,6 +37,7 @@ from compatibility.contracts import (
     validate_client_report,
     validate_result,
 )
+from compatibility.npm import prepare_node_client
 
 LABEL = "org.documentdb.compatibility.run"
 MAX_COMMAND_OUTPUT = 4 * 1024 * 1024
@@ -203,6 +204,7 @@ def execute(
     output: Path,
     *,
     wheelhouse: Path | None = None,
+    package_cache: Path | None = None,
     demonstration: bool = False,
     run_url: str | None = None,
     trigger: str = "manual",
@@ -216,6 +218,10 @@ def execute(
         or not re.fullmatch(spec["version_pattern"], version)
     ):
         raise ValueError("Integration is disabled or the requested version is outside its policy")
+    if wheelhouse is not None and spec["runtime"] != "python":
+        raise ValueError("--wheelhouse is only supported by Python integrations")
+    if package_cache is not None and spec["runtime"] != "nodejs":
+        raise ValueError("--package-cache is only supported by Node integrations")
     if output.suffix != ".json":
         raise ValueError("Result output must use a .json extension")
     if any(
@@ -226,7 +232,7 @@ def execute(
     run_id = uuid.uuid4().hex
     started = datetime.now(timezone.utc).isoformat()
     result: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "id": run_id,
         "integration": integration,
         "repository": spec["repository"],
@@ -242,9 +248,9 @@ def execute(
         "upstream": {
             "version": version,
             "actual_version": None,
-            "wheel_sha256": None,
+            "artifact_sha256": None,
             "client_image": None,
-            "python_version": None,
+            "runtime": {"name": spec["runtime"], "version": None},
             "dependencies": [],
         },
         "expected_tests": expected_tests(spec, demonstration),
@@ -264,7 +270,11 @@ def execute(
         with tempfile.TemporaryDirectory(prefix="docdb-compat-") as directory:
             context = Path(directory) / "context"
             context.mkdir()
-            result["upstream"]["wheel_sha256"] = prepare_client(context, spec, version, wheelhouse)
+            if spec["runtime"] == "python":
+                digest = prepare_client(context, spec, version, wheelhouse)
+            else:
+                digest = prepare_node_client(context, spec, version, package_cache)
+            result["upstream"]["artifact_sha256"] = digest
             result["suite_digest"] = suite_digest(integration, spec, root=context)
             candidate_image = f"docdb-compat-{run_id}"
             command(
@@ -394,15 +404,14 @@ def execute(
             )
             output.with_suffix(".log").write_text(redact(process.stderr, password))
             payload = json.loads(process.stdout)
-            validate_client_report(payload)
+            validate_client_report(payload, spec["runtime"])
             if (
                 Version(payload["version"]) != Version(version)
-                or payload["wheel_sha256"] != result["upstream"]["wheel_sha256"]
-                or not payload["python"].startswith("3.12.")
+                or payload["artifact_sha256"] != result["upstream"]["artifact_sha256"]
                 or not any(
                     entry["name"].lower().replace("-", "_") == spec["package"].replace("-", "_")
                     and Version(entry["version"]) == Version(version)
-                    and entry["sha256"] == result["upstream"]["wheel_sha256"]
+                    and entry["sha256"] == result["upstream"]["artifact_sha256"]
                     for entry in payload["dependencies"]
                 )
             ):
@@ -410,7 +419,7 @@ def execute(
                     "Installed integration artifact or runtime does not match the request"
                 )
             result["upstream"]["actual_version"] = payload["version"]
-            result["upstream"]["python_version"] = payload["python"]
+            result["upstream"]["runtime"] = payload["runtime"]
             result["upstream"]["dependencies"] = payload["dependencies"]
             result["tests"] = payload["tests"]
             for test in result["tests"]:
@@ -449,6 +458,7 @@ def main() -> int:
     parser.add_argument("--documentdb-version", default="0.117.0")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--wheelhouse", type=Path)
+    parser.add_argument("--package-cache", type=Path, help="Reuse integrity-checked npm archives")
     parser.add_argument("--run-url")
     parser.add_argument("--trigger", choices=("manual", "push"), default="manual")
     parser.add_argument("--demonstration", action="store_true")
@@ -463,6 +473,7 @@ def main() -> int:
             args.documentdb_version,
             args.output,
             wheelhouse=args.wheelhouse,
+            package_cache=args.package_cache,
             demonstration=args.demonstration,
             run_url=args.run_url,
             trigger=args.trigger,

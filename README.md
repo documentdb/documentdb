@@ -164,7 +164,7 @@ for eachDocument in results:
 
 ## Ecosystem compatibility
 
-The [PyMongo compatibility pilot](compatibility/README.md) tests real driver APIs
+The [driver compatibility pilot](compatibility/README.md) tests real Python and Node.js driver APIs
 against a version-pinned released DocumentDB image. It includes a manual GitHub
 Actions workflow, per-scenario results, and a local dashboard preview.
 

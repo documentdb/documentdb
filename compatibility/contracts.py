@@ -18,6 +18,7 @@ from packaging.version import Version
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMONSTRATION_TEST = "test_failure_demonstration"
+RUNTIME_PREFIXES = {"python": "3.12.", "nodejs": "24."}
 
 
 def validate_schema(value: Any, name: str) -> None:
@@ -44,6 +45,7 @@ def read_registry(path: Path = ROOT / "compatibility" / "registry.yaml") -> dict
                 not allowed.is_relative_to(ROOT)
                 or test_file.parent != allowed
                 or not test_file.is_file()
+                or test_file.suffix != (".py" if integration["runtime"] == "python" else ".cjs")
             ):
                 raise ValueError(f"Invalid adapter location for {name}")
     return dict(registry)
@@ -74,7 +76,14 @@ def validate_result(result: dict[str, Any], spec: dict[str, Any] | None = None) 
         raise ValueError("Duplicate test outcomes")
     if not set(identifiers).issubset(result["expected_tests"]):
         raise ValueError("Result contains an undeclared scenario")
+    runtime = result_runtime(result)
+    if runtime["version"] is not None and not runtime["version"].startswith(
+        RUNTIME_PREFIXES[runtime["name"]]
+    ):
+        raise ValueError("Result has an unsupported runtime version")
     if spec is not None:
+        if runtime["name"] != spec["runtime"]:
+            raise ValueError("Result runtime does not match the reviewed registry")
         if result["expected_tests"] != expected_tests(spec, result["demonstration"]):
             raise ValueError("Result coverage does not match the reviewed registry")
         for key in ("repository", "owner", "profile"):
@@ -82,13 +91,13 @@ def validate_result(result: dict[str, Any], spec: dict[str, Any] | None = None) 
                 raise ValueError(f"Result {key} does not match the reviewed registry")
 
 
-def validate_client_report(value: Any) -> None:
+def validate_client_report(value: Any, runtime_name: str = "python") -> None:
     """Validate the untrusted container's envelope before reading or retaining its fields."""
     result_schema = json.loads((ROOT / "compatibility" / "schemas" / "result.json").read_text())
     properties = {
         "version": {"type": "string", "pattern": r"^[0-9]+\.[0-9]+(?:\.[0-9]+)?$"},
-        "python": {"type": "string", "pattern": r"^3\.12\.[0-9]+$"},
-        "wheel_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "runtime": result_schema["$defs"]["runtime"],
+        "artifact_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
         "exit_code": {"type": "integer", "minimum": 0, "maximum": 5},
         "tests": result_schema["properties"]["tests"],
         "junit": {"type": "string", "maxLength": 1024 * 1024},
@@ -104,6 +113,27 @@ def validate_client_report(value: Any) -> None:
     )
     if next(validator.iter_errors(value), None) is not None:
         raise ValueError("Invalid isolated-client report")
+    runtime = value["runtime"]
+    if (
+        runtime["name"] != runtime_name
+        or runtime["version"] is None
+        or not runtime["version"].startswith(RUNTIME_PREFIXES[runtime_name])
+    ):
+        raise ValueError("Isolated-client runtime does not match the selected profile")
+
+
+def artifact_sha256(result: dict[str, Any]) -> str | None:
+    """Read either historical wheel provenance or the runtime-neutral artifact hash."""
+    key = "wheel_sha256" if result["schema_version"] == 1 else "artifact_sha256"
+    value: str | None = result["upstream"][key]
+    return value
+
+
+def result_runtime(result: dict[str, Any]) -> dict[str, Any]:
+    """Keep version-one history readable without rewriting immutable records."""
+    if result["schema_version"] == 1:
+        return {"name": "python", "version": result["upstream"]["python_version"]}
+    return dict(result["upstream"]["runtime"])
 
 
 def compatibility_state(result: dict[str, Any]) -> str:
@@ -116,9 +146,9 @@ def compatibility_state(result: dict[str, Any]) -> str:
         or not result["documentdb"]["actual_postgres_version"]
         or result["upstream"]["actual_version"] is None
         or Version(result["upstream"]["actual_version"]) != Version(result["upstream"]["version"])
-        or not result["upstream"]["wheel_sha256"]
+        or not artifact_sha256(result)
         or not result["upstream"]["client_image"]
-        or not result["upstream"]["python_version"]
+        or not result_runtime(result)["version"]
         or not result["upstream"]["dependencies"]
     ):
         return "Not tested"
@@ -138,12 +168,13 @@ def suite_files(integration: str, root: Path = ROOT) -> list[Path]:
         root / "compatibility" / "client.py",
         root / "compatibility" / "contracts.py",
         root / "compatibility" / "runner.py",
+        root / "compatibility" / "npm.py",
         root / "compatibility" / "schemas" / "registry.json",
         root / "compatibility" / "schemas" / "result.json",
         adapter / "Dockerfile",
-        adapter / "requirements.txt",
     ]
-    files.extend(adapter.rglob("*.py"))
+    for pattern in ("*.py", "*.cjs", "package*.json", "requirements.txt"):
+        files.extend(adapter.glob(pattern))
     for path in files:
         if path.is_symlink():
             raise ValueError("Suite files must not be symbolic links")
@@ -157,6 +188,7 @@ def suite_digest(integration: str, spec: dict[str, Any], root: Path = ROOT) -> s
         key: spec[key]
         for key in (
             "package",
+            "runtime",
             "profile",
             "test_file",
             "demonstration_file",

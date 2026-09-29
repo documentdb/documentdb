@@ -25,6 +25,7 @@ def test_workflow_is_manual_and_read_only(workflow):
     # PyYAML's YAML 1.1 loader interprets the Actions "on" key as true.
     assert set(workflow[True]) == {"workflow_dispatch"}
     assert {
+        "integration",
         "version",
         "documentdb_version",
         "demonstration",
@@ -83,8 +84,9 @@ def test_actions_are_pinned_and_checkout_does_not_retain_credentials(workflow):
         ),
     ],
 )
+@pytest.mark.parametrize("integration", ["", "pymongo", "nodejs", "nodejs; echo unsafe"])
 def test_actual_workflow_script_handles_defaults_and_dispatch_inputs(
-    workflow, tmp_path, version, database, demonstration, extra, exit_code
+    workflow, tmp_path, version, database, demonstration, extra, exit_code, integration
 ):
     suite = next(step for step in workflow["jobs"]["test"]["steps"] if step.get("id") == "suite")
     capture = (
@@ -97,6 +99,7 @@ def test_actual_workflow_script_handles_defaults_and_dispatch_inputs(
         env={
             **os.environ,
             "VERSION": version,
+            "INTEGRATION": integration,
             "DOCUMENTDB_VERSION": database,
             "DEMONSTRATION": demonstration,
             "GITHUB_SERVER_URL": "https://github.com",
@@ -119,6 +122,7 @@ def test_actual_workflow_script_handles_defaults_and_dispatch_inputs(
         "results/result.json",
         "--run-url",
         "https://github.com/example/project/actions/runs/42/attempts/3",
+        *(["--integration", integration] if integration else []),
         *extra,
     ]
 
@@ -172,9 +176,10 @@ def test_result_presence_is_reported(workflow, tmp_path, available):
 
 def test_infrastructure_is_checked_without_starting_an_integration():
     workflow = yaml.safe_load((ROOT / ".github/workflows/documentdb_local_tests.yml").read_text())
-    job = workflow["jobs"]["pymongo-compatibility-unit-tests"]
+    job = workflow["jobs"]["compatibility-unit-tests"]
     commands = "\n".join(step.get("run", "") for step in job["steps"])
     assert "compatibility/requirements-dev.txt" in commands
     assert "compatibility/unit" in commands
     assert "test_freshness.cjs" in commands
+    assert "test_nodejs.cjs" in commands
     assert "compatibility.runner" not in commands
