@@ -1248,14 +1248,3 @@ ANALYZE;
 
 SELECT runtime_sort_report('{ "find": "runtime_sort_coll", "filter": { }, "sort": { "val": 1 }, "projection": { "_id": 0, "val": 1 }, "batchSize": 100 }')
     AS with_statistics;
-
--- Case 2: per-collection statistics disabled → the dynamic-cursor planner has no
--- reliable estimates, prunes every candidate but the index-order path, and
--- forces the streaming plan for the same query.
-SET documentdb.enableDynamicPersistentCursorsWithStats TO off;
-SELECT documentdb_api.coll_mod('dyncur_sp_db', 'runtime_sort_coll',
-    '{ "collMod": "runtime_sort_coll", "enableStats": false }');
-ANALYZE;
-
-SELECT runtime_sort_report('{ "find": "runtime_sort_coll", "filter": { }, "sort": { "val": 1 }, "projection": { "_id": 0, "val": 1 }, "batchSize": 100 }')
-    AS without_statistics;

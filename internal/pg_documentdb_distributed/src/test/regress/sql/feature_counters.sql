@@ -103,7 +103,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_co
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
 
--- $group with $count with non-empty arg (tracks group_count_with_arg feature counter)
+-- $group with $count with non-empty arg errors (requires 0 arguments)
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": null, "e": { "$count": 1 } } }], "cursor": {} }');
 
 -- $group scalar aggregate: constant _id with a simple $field accumulator (tracks group_scalar_agg_index_pushdown feature counter)

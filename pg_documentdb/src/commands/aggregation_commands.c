@@ -40,7 +40,6 @@ extern bool UseFileBasedPersistedCursors;
 extern bool EnableDynamicCursors;
 extern bool EnableTailableCursorMaxAwaitTime;
 extern int DefaultTailableCursorMaxAwaitTimeMs;
-extern bool EnablePGPrngCursorId;
 extern bool ReportParallelPlanInCursorContinuation;
 
 /* --------------------------------------------------------- */
@@ -2179,24 +2178,7 @@ GenerateCursorId(int64_t inputValue)
 	 * fast non-cryptographic PRNG is sufficient instead of expensive
 	 * pg_strong_random() which provides cryptographic unpredictability
 	 * guarantees.	 */
-	int64_t cursorId;
-	if (EnablePGPrngCursorId)
-	{
-		cursorId = (int64_t) pg_prng_uint64(&pg_global_prng_state);
-	}
-	else
-	{
-		char cursorBuffer[8];
-
-		/* This is the same logic UUID generation uses */
-		if (!pg_strong_random(cursorBuffer, 8))
-		{
-			ereport(ERROR, (errmsg(
-								"Failed to create a unique identifier for the cursor")));
-		}
-
-		cursorId = *(int64_t *) cursorBuffer;
-	}
+	int64_t cursorId = (int64_t) pg_prng_uint64(&pg_global_prng_state);
 
 	return (cursorId & CursorAcceptableBitsMask);
 }

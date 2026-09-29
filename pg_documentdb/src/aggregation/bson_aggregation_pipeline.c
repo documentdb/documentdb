@@ -90,7 +90,6 @@ extern bool SkipFailOnCollation;
 extern bool DefaultInlineWriteOperations;
 extern int MaxAggregationStagesAllowed;
 
-extern bool FailOnNonEmptyGroupCountArg;
 extern bool ForceGroupSubqueryElimination;
 extern bool EnableTailableCursorMaxAwaitTime;
 extern bool RemoveMatchNamespaceFilters;
@@ -100,11 +99,9 @@ extern bool EnableScalarAggregateIndexPushdown;
 extern bool EnableScalarAggregateAccumulatorPathCollection;
 extern bool EnableProjectPushUpBeforeUnwindWithGroup;
 extern bool EnableSortPushToAccumulatorWithPrefix;
-extern bool EnableSampleScanFixOnSharded;
 extern bool EnableSampleScanPushdownForDynamicCursor;
 extern bool EnableDistinctIndexPushdown;
 extern bool EnableDistinctExistsFilterPushdown;
-extern bool EnableSubqueryPushdownForMatch;
 extern bool EnableDollarSampleReservoirScan;
 extern bool EnableSupportFunctionIdPushdown;
 
@@ -4762,7 +4759,6 @@ HandleMatchWithIndexFilter(const bson_value_t *existingValue, Query *query,
 	TargetEntry *entry = linitial(query->targetList);
 
 	if (context->joinStatus == JoinStageStatus_NoJoinsOrUnions &&
-		EnableSubqueryPushdownForMatch &&
 		EnableDynamicCursors &&
 		IsA(entry->expr, FuncExpr))
 	{
@@ -8291,14 +8287,9 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 
 			if (!IsBsonValueEmptyDocument(&accumulatorElement.bsonValue))
 			{
-				ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_COUNT_WITH_ARG);
-
-				if (FailOnNonEmptyGroupCountArg)
-				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
-									errmsg(
-										"$count:{} accumulator requires 0 arguments")));
-				}
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
+								errmsg(
+									"$count:{} accumulator requires 0 arguments")));
 			}
 
 			/* Use the new BSONCOUNT aggregate. */
@@ -10171,7 +10162,7 @@ IsSampleScanEligibleJoinTree(Node *node)
 	 * so HandleSample would conclude there was a user filter and skip
 	 * the TABLESAMPLE optimization.
 	 */
-	if (EnableSampleScanFixOnSharded && IsBooleanTrueConst(node))
+	if (IsBooleanTrueConst(node))
 	{
 		return true;
 	}

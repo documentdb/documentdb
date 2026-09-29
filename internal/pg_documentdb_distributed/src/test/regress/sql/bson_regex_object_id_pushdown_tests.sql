@@ -184,25 +184,3 @@ $cmd$);
 
 COMMIT;
 
--- =============================================
--- Section 8: Feature flag toggle through Citus
--- =============================================
-
-BEGIN;
-SET LOCAL citus.enable_local_execution TO OFF;
-SET LOCAL documentdb.useLocalExecutionShardQueries TO OFF;
-SET LOCAL enable_seqscan TO OFF;
-
--- With feature flag off, verify regex still works but no object_id pushdown
-SET LOCAL documentdb.enableObjectIdFuncExprConversion TO off;
-SET LOCAL documentdb.forceDisableSeqScan TO off;
-
-SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexDistDb',
-    '{ "find": "regex_id_dist", "filter": { "_id": { "$regex": "^abc" } }, "sort": { "_id": 1 } }');
-
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexDistDb',
-    '{ "find": "regex_id_dist", "filter": { "_id": { "$regex": "^abc" } } }')
-$cmd$);
-
-COMMIT;

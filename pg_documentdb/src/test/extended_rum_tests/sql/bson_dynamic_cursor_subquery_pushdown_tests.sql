@@ -9,7 +9,6 @@ SET documentdb.next_collection_index_id TO 90100;
 
 SET documentdb.enablePrimaryKeyCursorScan TO on;
 SET documentdb.enableDynamicCursors TO on;
-SET documentdb.enableSubqueryPushdownForMatch TO on;
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
 SET enable_seqscan TO off;
 
@@ -104,8 +103,8 @@ $$ LANGUAGE plpgsql;
 -- ===========================================================================
 -- SECTION A: $project + $match on computed fields (subquery pushdown)
 -- Pipeline: $match → $project (compute legCount, totalDist) → $match on computed
--- With enableSubqueryPushdownForMatch=on, the second $match should trigger a
--- subquery boundary so projection runs before filter evaluation.
+-- The second $match should trigger a subquery boundary so projection runs
+-- before filter evaluation.
 -- ===========================================================================
 
 -- ---------------------------------------------------------------------------
@@ -141,25 +140,8 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
 
 -- ---------------------------------------------------------------------------
--- Test A3: Same pipeline with GUC off — no SubqueryScan in plan
+-- Test A3: Same pipeline reads back correct results
 -- ---------------------------------------------------------------------------
-SET documentdb.enableSubqueryPushdownForMatch TO off;
-
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('dcsub_pushdown_db',
-    '{ "aggregate": "flights", "pipeline": [
-        { "$match": { "routeId": 1 } },
-        { "$project": {
-            "_id": 1,
-            "routeId": 1,
-            "legCount": { "$size": "$legs" },
-            "totalDist": { "$sum": { "$map": { "input": "$legs", "as": "it", "in": "$$it.dist" } } }
-        }},
-        { "$match": { "legCount": { "$gt": 0 } } }
-    ], "cursor": {} }');
-$cmd$);
-
--- Results should still be correct with GUC off
 SELECT document FROM bson_aggregation_pipeline('dcsub_pushdown_db',
     '{ "aggregate": "flights", "pipeline": [
         { "$match": { "routeId": 1 } },
@@ -171,8 +153,6 @@ SELECT document FROM bson_aggregation_pipeline('dcsub_pushdown_db',
         }},
         { "$match": { "legCount": { "$gt": 0 } } }
     ], "cursor": {} }');
-
-SET documentdb.enableSubqueryPushdownForMatch TO on;
 
 
 -- ===========================================================================
@@ -354,26 +334,9 @@ SELECT * FROM dcsub_drain_agg(
         { "$match": { "isLongHaul": true } }
     ], "cursor": { "batchSize": 3 } }');
 
--- ---------------------------------------------------------------------------
--- Test D4: Drain with GUC off — should still return correct results
--- ---------------------------------------------------------------------------
-SET documentdb.enableSubqueryPushdownForMatch TO off;
-
-SELECT * FROM dcsub_drain_agg(
-    '{ "aggregate": "flights", "pipeline": [
-        { "$project": {
-            "_id": 1,
-            "legCount": { "$size": "$legs" }
-        }},
-        { "$match": { "legCount": { "$gt": 0 } } }
-    ], "cursor": { "batchSize": 5 } }');
-
-SET documentdb.enableSubqueryPushdownForMatch TO on;
-
-
 -- ===========================================================================
 -- SECTION E: EXPLAIN ANALYZE with cursor first page and getMore
--- Validates the plan shape changes between subquery pushdown on/off
+-- Validates the plan shape with subquery pushdown
 -- ===========================================================================
 
 -- ---------------------------------------------------------------------------
@@ -391,26 +354,6 @@ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
             { "$match": { "legCount": { "$gt": 0 } } }
         ], "cursor": { "batchSize": 5 } }');
 $cmd$, true);
-
--- ---------------------------------------------------------------------------
--- Test E2: Same EXPLAIN ANALYZE with GUC off
--- ---------------------------------------------------------------------------
-SET documentdb.enableSubqueryPushdownForMatch TO off;
-
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
-    SELECT document FROM bson_aggregation_pipeline('dcsub_pushdown_db',
-        '{ "aggregate": "flights", "pipeline": [
-            { "$match": { "routeId": 1 } },
-            { "$project": {
-                "_id": 1,
-                "legCount": { "$size": "$legs" }
-            }},
-            { "$match": { "legCount": { "$gt": 0 } } }
-        ], "cursor": { "batchSize": 5 } }');
-$cmd$, true);
-
-SET documentdb.enableSubqueryPushdownForMatch TO on;
 
 
 -- ===========================================================================
@@ -593,32 +536,6 @@ SELECT document FROM bson_aggregation_pipeline('dcsub_pushdown_db',
     ], "cursor": {} }');
 
 -- ---------------------------------------------------------------------------
--- Test I2: Same pipeline with GUC OFF — verify identical results
--- ---------------------------------------------------------------------------
-SET documentdb.enableSubqueryPushdownForMatch TO off;
-
-SELECT document FROM bson_aggregation_pipeline('dcsub_pushdown_db',
-    '{ "aggregate": "aircraft", "pipeline": [
-        { "$match": { "class": "A" } },
-        { "$project": {
-            "_id": 1,
-            "range": 1,
-            "tagCount": { "$size": "$features" },
-            "normalizedScore": { "$divide": ["$range", 100] }
-        }},
-        { "$project": {
-            "_id": 1,
-            "range": 1,
-            "tagCount": 1,
-            "normalizedScore": 1,
-            "hasData": { "$cond": [{ "$gt": ["$tagCount", 0] }, true, false] }
-        }},
-        { "$match": { "hasData": true, "normalizedScore": { "$gte": 0.5 } } }
-    ], "cursor": {} }');
-
-SET documentdb.enableSubqueryPushdownForMatch TO on;
-
--- ---------------------------------------------------------------------------
 -- Test I3: EXPLAIN to confirm first $match uses index, subquery boundary exists
 -- ---------------------------------------------------------------------------
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -686,30 +603,6 @@ SELECT * FROM dcsub_drain_agg(
         }},
         { "$match": { "hasData": true, "normalizedScore": { "$gte": 0.5 } } }
     ], "cursor": { "batchSize": 2 } }');
-
--- ---------------------------------------------------------------------------
--- Test I6: Cursor drain with GUC off — same pipeline, verify same total
--- ---------------------------------------------------------------------------
-SET documentdb.enableSubqueryPushdownForMatch TO off;
-
-SELECT * FROM dcsub_drain_agg(
-    '{ "aggregate": "aircraft", "pipeline": [
-        { "$match": { "class": "A" } },
-        { "$project": {
-            "_id": 1,
-            "tagCount": { "$size": "$features" },
-            "normalizedScore": { "$divide": ["$range", 100] }
-        }},
-        { "$project": {
-            "_id": 1,
-            "tagCount": 1,
-            "normalizedScore": 1,
-            "hasData": { "$cond": [{ "$gt": ["$tagCount", 0] }, true, false] }
-        }},
-        { "$match": { "hasData": true, "normalizedScore": { "$gte": 0.5 } } }
-    ], "cursor": { "batchSize": 2 } }');
-
-SET documentdb.enableSubqueryPushdownForMatch TO on;
 
 -- ---------------------------------------------------------------------------
 -- Test I7: Edge case — top $match excludes ALL rows (tagCount > 100)

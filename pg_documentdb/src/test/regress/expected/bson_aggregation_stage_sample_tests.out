@@ -364,47 +364,6 @@ SELECT count(*) AS reservoir_k FROM (SELECT document FROM bson_aggregation_pipel
 (1 row)
 
 RESET work_mem;
--- SHARDED COLLECTION TESTS WITH FIX DISABLED (regression)
-SET documentdb.enableSampleScanFixOnSharded TO off;
-SET documentdb.enableDollarSampleReservoirScan TO off;
--- Empty $match + $sample on sharded collection (no TABLESAMPLE without fix)
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 3 } } ] }');
-                      QUERY PLAN                       
--------------------------------------------------------
- Limit
-   ->  Sort
-         Sort Key: (random())
-         ->  Seq Scan on documents_25711001 collection
-(4 rows)
-
--- Empty $match + $sample + $project + $sort on sharded collection (no TABLESAMPLE without fix)
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 3 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
-                                                                                                                    QUERY PLAN                                                                                                                    
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort
-   Sort Key: (bson_orderby(bson_dollar_project(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   ->  Subquery Scan on agg_stage_2
-         ->  Limit
-               ->  Sort
-                     Sort Key: (random())
-                     ->  Seq Scan on documents_25711001 collection
-(7 rows)
-
--- Multiple empty $match + $sample + $project + $sort on sharded collection (no TABLESAMPLE without fix)
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$match": {} }, { "$match": {} }, { "$sample": { "size": 3 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
-                                                                                                                    QUERY PLAN                                                                                                                    
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort
-   Sort Key: (bson_orderby(bson_dollar_project(agg_stage_3.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   ->  Subquery Scan on agg_stage_3
-         ->  Limit
-               ->  Sort
-                     Sort Key: (random())
-                     ->  Seq Scan on documents_25711001 collection
-(7 rows)
-
-RESET documentdb.enableSampleScanFixOnSharded;
-RESET documentdb.enableDollarSampleReservoirScan;
 -- SIZE VALIDATION TESTS
 -- size 0 must be a positive integer and is rejected (error 28747)
 SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": 0 } } ] }');

@@ -20,13 +20,6 @@
 #include "planner/mongo_query_operator.h"
 
 
-/*
- * Feature flag gating whether the $comment query metadata field is skipped when
- * building the document for an upsert. Default off to preserve the historical
- * behavior for existing customers that may depend on $comment being persisted.
- */
-extern bool EnableSkipCommentFieldOnUpsert;
-
 typedef struct
 {
 	/* found at least one _id */
@@ -193,25 +186,9 @@ TraverseQueryDocumentAndProcess(bson_iter_t *queryDocument, void *context,
 			case QUERY_OPERATOR_COMMENT:
 			{
 				/*
-				 * $comment is request-only metadata; when the feature flag is enabled, never
-				 * consider the $comment field for query predicate processing. Gated for backward compatibility.
+				 * $comment is request-only metadata; never consider the
+				 * $comment field for query predicate processing.
 				 */
-				if (EnableSkipCommentFieldOnUpsert)
-				{
-					continue;
-				}
-				else if (!BSON_ITER_HOLDS_REGEX(queryDocument))
-				{
-					/* it's the form of "field": <value>   e.g. { _id: 10 } */
-					/* however note that, "field" : /regex/ is not equality */
-					processValueFunc(context, key, bson_iter_value(queryDocument));
-				}
-				else if (processFilterFunc)
-				{
-					/* { "_id" : { "$regularExpression" : { "pattern" : "abc", "options" : "i" } } } */
-					processFilterFunc(context);
-				}
-
 				continue;
 			}
 
@@ -243,17 +220,12 @@ TraverseQueryDocumentAndProcess(bson_iter_t *queryDocument, void *context,
 				 * These are filter-only query operators that never contribute equality
 				 * predicates to an upsert document. Skip them entirely.
 				 */
-				if (EnableSkipCommentFieldOnUpsert)
+				if (processFilterFunc)
 				{
-					if (processFilterFunc)
-					{
-						processFilterFunc(context);
-					}
-
-					continue;
+					processFilterFunc(context);
 				}
 
-				/* Fall through to default */
+				continue;
 			}
 
 			default:
@@ -262,8 +234,7 @@ TraverseQueryDocumentAndProcess(bson_iter_t *queryDocument, void *context,
 				 * $where is not a registered query operator but is a filter-only
 				 * construct that should never be persisted in an upsert document.
 				 */
-				if (EnableSkipCommentFieldOnUpsert &&
-					strcmp(key, "$where") == 0)
+				if (strcmp(key, "$where") == 0)
 				{
 					if (processFilterFunc)
 					{

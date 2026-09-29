@@ -95,7 +95,6 @@ FROM aggregate_cursor_first_page(
 -- non-streamable blocking sort is allowed to use a parallel scan.
 -- ===========================================================================
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
-SET documentdb.enableDynamicCursorFastStartupScan TO on;
 
 -- Streaming (order-by pushed to the ordered index): non-parallel dynamic cursor scan.
 EXPLAIN (VERBOSE OFF, COSTS OFF) SELECT document FROM bson_aggregation_pipeline(

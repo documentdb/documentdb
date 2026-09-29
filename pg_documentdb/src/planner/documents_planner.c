@@ -161,7 +161,6 @@ extern bool EnableGroupByDistinctScan;
 extern bool EnableDistinctScanForGroupFirst;
 extern bool EnableDollarSampleReservoirScan;
 extern bool EnableMergeSortForInPrefix;
-extern bool EnableDynamicCursorFastStartupScan;
 extern bool EnablePartialFilterEvalOnPlanner;
 extern bool EnableRumIndexOnlyScanProjectionWrapper;
 
@@ -2231,11 +2230,9 @@ ExpandAggregationFunction(Query *query, ParamListInfo boundParams, PlannedStmt *
 		if (EnableDynamicCursors)
 		{
 			cursorParams = CursorParamKind_Dynamic;
-			if (EnableDynamicCursorFastStartupScan)
-			{
-				/* ensure that in this path, the plan follows what cursors do */
-				*cursorOptions = GetDynamicCursorCursorOptions();
-			}
+
+			/* ensure that in this path, the plan follows what cursors do */
+			*cursorOptions = GetDynamicCursorCursorOptions();
 		}
 	}
 

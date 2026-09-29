@@ -54,15 +54,15 @@ bool EnableSkipUseQueryTextData = DEFAULT_ENABLE_SKIP_USE_QUERY_TEXT_DATA;
 #define DEFAULT_ENABLE_USERNAME_PASSWORD_CONSTRAINTS true
 bool EnableUsernamePasswordConstraints = DEFAULT_ENABLE_USERNAME_PASSWORD_CONSTRAINTS;
 
-/* Added in v0.108, enabled in v0.108, Unknown stabilization time */
+/* Added in v0.108, enabled in v0.108, remove after v1.6 */
 #define DEFAULT_ENABLE_USERS_INFO_PRIVILEGES true
 bool EnableUsersInfoPrivileges = DEFAULT_ENABLE_USERS_INFO_PRIVILEGES;
 
-/* Added in v0.108, Pending stabilization */
+/* Added in v0.108, pending stabilization, enable in v1.5 */
 #define DEFAULT_ENABLE_ROLE_CRUD false
 bool EnableRoleCrud = DEFAULT_ENABLE_ROLE_CRUD;
 
-/* Added in v0.109, Pending stabilization */
+/* Added in v0.109, pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_USERS_ADMIN_DB_CHECK false
 bool EnableUsersAdminDBCheck = DEFAULT_ENABLE_USERS_ADMIN_DB_CHECK;
 
@@ -221,7 +221,7 @@ bool EnablePerPathMultiKeySortPushdown =
 bool EnableGroupByMultiKeySortPushdown =
 	DEFAULT_ENABLE_GROUP_BY_MULTI_KEY_SORT_PUSHDOWN;
 
-/* Added in v0.117, pending stabilization, enable in v1.1 */
+/* Added in v0.117, pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_DISTINCT_MULTI_KEY_SORT_PUSHDOWN false
 bool EnableDistinctMultiKeySortPushdown =
 	DEFAULT_ENABLE_DISTINCT_MULTI_KEY_SORT_PUSHDOWN;
@@ -325,7 +325,7 @@ bool EnableParallelSafeWithExprAccumulators =
 #define DEFAULT_ENABLE_MIN_MAX_SKIP_NULL_VALUES true
 bool EnableMinMaxSkipNullValues = DEFAULT_ENABLE_MIN_MAX_SKIP_NULL_VALUES;
 
-/* Added in v0.113, pending stabilization, enable in v1.1 */
+/* Added in v0.113, pending stabilization, enable in v1.5 */
 #define DEFAULT_ENABLE_DYNAMIC_CURSORS false
 bool EnableDynamicCursors = DEFAULT_ENABLE_DYNAMIC_CURSORS;
 
@@ -334,21 +334,12 @@ bool EnableDynamicCursors = DEFAULT_ENABLE_DYNAMIC_CURSORS;
 bool EnableDynamicCursorWithSkipLimit =
 	DEFAULT_ENABLE_DYNAMIC_CURSOR_WITH_SKIPLIMIT;
 
-/* Added in v0.115, enabled in v0.115, remove after v0.117 */
-#define DEFAULT_ENABLE_DYNAMIC_PERSISTENT_CURSORS_WITH_STATS true
-bool EnableDynamicPersistentCursorsWithStats =
-	DEFAULT_ENABLE_DYNAMIC_PERSISTENT_CURSORS_WITH_STATS;
-
-/* Added in v0.115, enabled in v0.115, remove after v0.117 */
-#define DEFAULT_ENABLE_DYNAMIC_CURSOR_FAST_STARTUP_SCAN true
-bool EnableDynamicCursorFastStartupScan = DEFAULT_ENABLE_DYNAMIC_CURSOR_FAST_STARTUP_SCAN;
-
 /* Added in v1.0, pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_DYNAMIC_CURSOR_EARLY_INDEX_LOCK_RELEASE false
 bool EnableDynamicCursorEarlyIndexLockRelease =
 	DEFAULT_ENABLE_DYNAMIC_CURSOR_EARLY_INDEX_LOCK_RELEASE;
 
-/* Added in v0.115, enabled in v0.115, remove after v0.117 */
+/* Added in v0.115, enabled in v0.115, remove after v1.4 */
 #define DEFAULT_ENABLE_DYNAMIC_CURSOR_PARALLEL_PLANS true
 bool EnableDynamicCursorParallelPlans = DEFAULT_ENABLE_DYNAMIC_CURSOR_PARALLEL_PLANS;
 
@@ -360,18 +351,9 @@ bool EnableDynamicCursorParallelPlans = DEFAULT_ENABLE_DYNAMIC_CURSOR_PARALLEL_P
 #define DEFAULT_ENABLE_DYNAMIC_CURSOR_DEDUP_TRACKING true
 bool EnableDynamicCursorDedupTracking = DEFAULT_ENABLE_DYNAMIC_CURSOR_DEDUP_TRACKING;
 
-/* Added in v0.115, enabled in v0.115, remove after v0.117 */
-#define DEFAULT_ENABLE_SINGLE_RESULT_QUERY_PARALLEL_PLANS true
-bool EnableSingleResultQueryParallelPlans =
-	DEFAULT_ENABLE_SINGLE_RESULT_QUERY_PARALLEL_PLANS;
-
 /* Added in v0.116, enabled in v0.116, remove after v1.0 */
 #define DEFAULT_ENABLE_GROUP_BY_DYNAMIC_STREAMING true
 bool EnableGroupByDynamicStreaming = DEFAULT_ENABLE_GROUP_BY_DYNAMIC_STREAMING;
-
-/* Added in v0.115, enabled in v0.115, remove after v0.117 */
-#define DEFAULT_ENABLE_PG_PRNG_CURSOR_ID true
-bool EnablePGPrngCursorId = DEFAULT_ENABLE_PG_PRNG_CURSOR_ID;
 
 /* Added in v0.114, enabled in v0.114, remove after v1.2 */
 #define DEFAULT_ENABLE_INDEX_PATH_KEY_SUMMARIZATION true
@@ -406,7 +388,7 @@ bool EnableSupportFunctionIdPushdown = DEFAULT_ENABLE_SUPPORT_FUNCTION_ID_PUSHDO
 #define DEFAULT_ENABLE_ADMIN_DATABASE_QUERIES true
 bool EnableAdminDatabaseQueries = DEFAULT_ENABLE_ADMIN_DATABASE_QUERIES;
 
-/* Added in v0.109, enabled in v0.115, remove after v0.117 */
+/* Added in v0.109, enabled in v0.115, remove after v1.4 */
 #define DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN true
 bool EnablePrimaryKeyCursorScan = DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN;
 
@@ -414,7 +396,7 @@ bool EnablePrimaryKeyCursorScan = DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN;
 #define DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS false
 bool UseFileBasedPersistedCursors = DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS;
 
-/* Added in v0.114, Enabled in v0.114, remove after v0.117 */
+/* Added in v0.114, Enabled in v0.114, remove after v1.4 */
 #define DEFAULT_CLEANUP_CURSOR_FILES true
 bool CleanupCursorFiles = DEFAULT_CLEANUP_CURSOR_FILES;
 
@@ -434,10 +416,6 @@ bool EnableRumDynamicIndexScansSkipToTid =
 /* Added in v0.115, enabled in v0.115, remove after v0.117 */
 #define DEFAULT_ENABLE_TAILABLE_CURSOR_MAX_AWAIT_TIME true
 bool EnableTailableCursorMaxAwaitTime = DEFAULT_ENABLE_TAILABLE_CURSOR_MAX_AWAIT_TIME;
-
-/* Added in v0.111, enabled in v0.115, remove after v0.117 */
-#define DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG true
-bool FailOnNonEmptyGroupCountArg = DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG;
 
 /* Added in v0.115, enabled in v1.1, remove after v1.3 */
 #define DEFAULT_ENABLE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP true
@@ -477,33 +455,21 @@ bool EnableOrderedSaopMultiRangeSkipAdvance =
 bool EnableStrictAddToSetModifierValidation =
 	DEFAULT_ENABLE_STRICT_ADDTOSET_MODIFIER_VALIDATION;
 
-/* Added in v0.114, enabled in v0.114, remove after v0.117 */
-#define DEFAULT_ENABLE_OBJECTID_FUNC_EXPR_CONVERSION true
-bool EnableObjectIdFuncExprConversion = DEFAULT_ENABLE_OBJECTID_FUNC_EXPR_CONVERSION;
-
-/* Added in v0.114, enabled in v0.114, remove after v0.117 */
-#define DEFAULT_ENABLE_SAMPLE_SCAN_FIX_ON_SHARDED true
-bool EnableSampleScanFixOnSharded = DEFAULT_ENABLE_SAMPLE_SCAN_FIX_ON_SHARDED;
-
 /* Added on v1.1, enabled on v1.1, remove after v1.3 */
 #define DEFAULT_ENABLE_SAMPLE_SCAN_PUSHDOWN_FOR_DYNAMIC_CURSOR true
 bool EnableSampleScanPushdownForDynamicCursor =
 	DEFAULT_ENABLE_SAMPLE_SCAN_PUSHDOWN_FOR_DYNAMIC_CURSOR;
 
-/* Added in v0.115, Pending stabilization, enable in v1.1 */
+/* Added in v0.115, Pending stabilization, enable in v1.4 */
 #define DEFAULT_ENABLE_ADD_SHARD_KEY_ONLY_ON_PRIMARY_KEY_FILTERS false
 bool EnableAddShardKeyOnlyOnPrimaryKeyFilters =
 	DEFAULT_ENABLE_ADD_SHARD_KEY_ONLY_ON_PRIMARY_KEY_FILTERS;
-
-/* Added in v0.115, enabled in v0.115, remove after v0.117 */
-#define DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_MATCH true
-bool EnableSubqueryPushdownForMatch = DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_MATCH;
 
 /* Added in v0.114, enabled in v0.114, remove after v0.117 */
 #define DEFAULT_ENABLE_DOLLAR_SAMPLE_RESERVOIR_SCAN true
 bool EnableDollarSampleReservoirScan = DEFAULT_ENABLE_DOLLAR_SAMPLE_RESERVOIR_SCAN;
 
-/* Added in v0.117, Pending stabilization, enable in v1.1 */
+/* Added in v0.117, Pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_RUM_INDEX_ONLY_SCAN_PROJECTION_WRAPPER false
 bool EnableRumIndexOnlyScanProjectionWrapper =
 	DEFAULT_ENABLE_RUM_INDEX_ONLY_SCAN_PROJECTION_WRAPPER;
@@ -512,10 +478,6 @@ bool EnableRumIndexOnlyScanProjectionWrapper =
 #define DEFAULT_ENABLE_DOLLAR_SAMPLE_HEAP_SKIP_RESERVOIR_SCAN true
 bool EnableDollarSampleHeapSkipReservoirScan =
 	DEFAULT_ENABLE_DOLLAR_SAMPLE_HEAP_SKIP_RESERVOIR_SCAN;
-
-/* Added in v0.114, enabled in v0.114, remove after v0.117 */
-#define DEFAULT_ENABLE_SKIP_COMMENT_FIELD_ON_UPSERT true
-bool EnableSkipCommentFieldOnUpsert = DEFAULT_ENABLE_SKIP_COMMENT_FIELD_ON_UPSERT;
 
 /* Added in v0.116, enabled in v0.116, remove after v1.1 */
 #define DEFAULT_ENABLE_EXISTENTIAL_NULL_ARRAY_MATCH true
@@ -791,14 +753,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enableDynamicPersistentCursorsWithStats", newGucPrefix),
-		gettext_noop(
-			"Whether or not to enable dynamic persistent cursors with statistics."),
-		NULL, &EnableDynamicPersistentCursorsWithStats,
-		DEFAULT_ENABLE_DYNAMIC_PERSISTENT_CURSORS_WITH_STATS,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enable_dynamic_cursor_with_skiplimit", newGucPrefix),
 		gettext_noop(
 			"Whether or not to allow a query with a positive skip or a positive "
@@ -808,14 +762,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"it."),
 		NULL, &EnableDynamicCursorWithSkipLimit,
 		DEFAULT_ENABLE_DYNAMIC_CURSOR_WITH_SKIPLIMIT,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableDynamicCursorFastStartupScan", newGucPrefix),
-		gettext_noop(
-			"Whether or not to enable fast startup scan for dynamic cursors."),
-		NULL, &EnableDynamicCursorFastStartupScan,
-		DEFAULT_ENABLE_DYNAMIC_CURSOR_FAST_STARTUP_SCAN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -847,15 +793,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enable_single_result_query_parallel_plans", newGucPrefix),
-		gettext_noop(
-			"Whether or not to allow parallel plans for single-result queries "
-			"(e.g. count/distinct)."),
-		NULL, &EnableSingleResultQueryParallelPlans,
-		DEFAULT_ENABLE_SINGLE_RESULT_QUERY_PARALLEL_PLANS,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enable_group_by_dynamic_streaming", newGucPrefix),
 		gettext_noop(
 			"Whether or not to allow a fully pushable $group (with or without "
@@ -863,15 +800,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"to use a dynamic streaming cursor instead of a persisted cursor."),
 		NULL, &EnableGroupByDynamicStreaming,
 		DEFAULT_ENABLE_GROUP_BY_DYNAMIC_STREAMING,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enablePGPrngCursorId", newGucPrefix),
-		gettext_noop(
-			"Whether cursor ids use the fast non-cryptographic PRNG (true) or "
-			"the strong CSPRNG (false)."),
-		NULL, &EnablePGPrngCursorId,
-		DEFAULT_ENABLE_PG_PRNG_CURSOR_ID,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -1142,15 +1070,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable non-blocking background builds of unique indexes."),
 		NULL, &EnableNonBlockingUniqueIndexBuild,
 		DEFAULT_ENABLE_NON_BLOCKING_UNIQUE_INDEX_BUILD,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-
-	DefineCustomBoolVariable(
-		psprintf("%s.failOnNonEmptyGroupCountArg", newGucPrefix),
-		gettext_noop(
-			"Whether to fail when $count accumulator in $group has non-empty arguments."),
-		NULL, &FailOnNonEmptyGroupCountArg,
-		DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -1504,25 +1423,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enableObjectIdFuncExprConversion", newGucPrefix),
-		gettext_noop(
-			"Whether to enable conversion of ObjectId function expressions."),
-		NULL, &EnableObjectIdFuncExprConversion,
-		DEFAULT_ENABLE_OBJECTID_FUNC_EXPR_CONVERSION,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableSampleScanFixOnSharded", newGucPrefix),
-		gettext_noop(
-			"Enables fix for $sample TABLESAMPLE on sharded collections."),
-		NULL,
-		&EnableSampleScanFixOnSharded,
-		DEFAULT_ENABLE_SAMPLE_SCAN_FIX_ON_SHARDED,
-		PGC_USERSET,
-		0,
-		NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enable_sample_scan_pushdown_for_dynamic_cursor", newGucPrefix),
 		gettext_noop(
 			"Recognize that a dynamic cursor marker qualification is not a filter, "
@@ -1541,29 +1441,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableAddShardKeyOnlyOnPrimaryKeyFilters,
 		DEFAULT_ENABLE_ADD_SHARD_KEY_ONLY_ON_PRIMARY_KEY_FILTERS,
-		PGC_USERSET,
-		0,
-		NULL, NULL, NULL);
-
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableSubqueryPushdownForMatch", newGucPrefix),
-		gettext_noop(
-			"Whether to enable pushdown of subqueries for match operations."),
-		NULL,
-		&EnableSubqueryPushdownForMatch,
-		DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_MATCH,
-		PGC_USERSET,
-		0,
-		NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableSkipCommentFieldOnUpsert", newGucPrefix),
-		gettext_noop(
-			"Whether to skip persisting the $comment query metadata field onto the document generated during an upsert."),
-		NULL,
-		&EnableSkipCommentFieldOnUpsert,
-		DEFAULT_ENABLE_SKIP_COMMENT_FIELD_ON_UPSERT,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

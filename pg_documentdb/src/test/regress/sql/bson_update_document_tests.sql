@@ -33,19 +33,12 @@ SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "b": 2 } }', 
 SELECT bson_get_value(documentdb_api_internal.update_bson_document('{}', '{ "": { "b": 2 } }', '{"$or": [ { "a": 1, "_id": 2.0 } ]}', NULL, NULL, NULL), '_id') @=  '{ "" : 2.0 }';
 SELECT bson_get_value(documentdb_api_internal.update_bson_document('{}', '{ "": { "b": 2 } }', '{"$or": [ { "a": 1 }, { "_id": 3 } ] }', NULL, NULL, NULL), '_id') @!= '{ "" : 3 }';
 
--- upsert case: $comment in the query predicate is request-only metadata. By default the
--- enableSkipCommentFieldOnUpsert flag is on, so $comment is skipped and never persisted
--- onto the generated document.
+-- upsert case: $comment in the query predicate is request-only metadata. It is
+-- skipped and never persisted onto the generated document.
 SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "dropbox-users" } } }', '{ "id": "g1", "appId": 11627, "$comment": "ctx=trace", "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
 
--- By default $comment nested within $and is likewise not persisted, while sibling fields are.
+-- $comment nested within $and is likewise not persisted, while sibling fields are.
 SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "dropbox-users" } } }', '{ "$and": [ { "id": "g1", "appId": 11627, "_id": 5 }, { "$comment": "ctx=trace" } ] }', NULL, NULL, NULL) as update_bson_document;
-
--- With the flag disabled, $comment is materialized into the generated document,
--- preserving the historical behavior for existing customers that rely on it.
-SET documentdb.enableSkipCommentFieldOnUpsert TO off;
-SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "dropbox-users" } } }', '{ "id": "g1", "appId": 11627, "$comment": "ctx=trace", "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
-RESET documentdb.enableSkipCommentFieldOnUpsert;
 
 -- upsert case: filter-only query operators are never persisted onto the generated document.
 -- $alwaysTrue at top level is skipped.

@@ -97,23 +97,6 @@ SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samp
 SELECT count(*) AS reservoir_k FROM (SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "sampleOversizeUnsharded", "pipeline": [ { "$sample": { "size": 3 } } ] }')) t;
 RESET work_mem;
 
--- SHARDED COLLECTION TESTS WITH FIX DISABLED (regression)
-
-SET documentdb.enableSampleScanFixOnSharded TO off;
-SET documentdb.enableDollarSampleReservoirScan TO off;
-
--- Empty $match + $sample on sharded collection (no TABLESAMPLE without fix)
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 3 } } ] }');
-
--- Empty $match + $sample + $project + $sort on sharded collection (no TABLESAMPLE without fix)
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 3 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
-
--- Multiple empty $match + $sample + $project + $sort on sharded collection (no TABLESAMPLE without fix)
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$match": {} }, { "$match": {} }, { "$sample": { "size": 3 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
-
-RESET documentdb.enableSampleScanFixOnSharded;
-RESET documentdb.enableDollarSampleReservoirScan;
-
 -- SIZE VALIDATION TESTS
 
 -- size 0 must be a positive integer and is rejected (error 28747)

@@ -84,32 +84,21 @@ SELECT bson_get_value(documentdb_api_internal.update_bson_document('{}', '{ "": 
  t
 (1 row)
 
--- upsert case: $comment in the query predicate is request-only metadata. By default the
--- enableSkipCommentFieldOnUpsert flag is on, so $comment is skipped and never persisted
--- onto the generated document.
+-- upsert case: $comment in the query predicate is request-only metadata. It is
+-- skipped and never persisted onto the generated document.
 SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "dropbox-users" } } }', '{ "id": "g1", "appId": 11627, "$comment": "ctx=trace", "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
                                               update_bson_document                                               
 -----------------------------------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "5" }, "id" : "g1", "appId" : { "$numberInt" : "11627" }, "name" : "dropbox-users" }
 (1 row)
 
--- By default $comment nested within $and is likewise not persisted, while sibling fields are.
+-- $comment nested within $and is likewise not persisted, while sibling fields are.
 SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "dropbox-users" } } }', '{ "$and": [ { "id": "g1", "appId": 11627, "_id": 5 }, { "$comment": "ctx=trace" } ] }', NULL, NULL, NULL) as update_bson_document;
                                               update_bson_document                                               
 -----------------------------------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "5" }, "id" : "g1", "appId" : { "$numberInt" : "11627" }, "name" : "dropbox-users" }
 (1 row)
 
--- With the flag disabled, $comment is materialized into the generated document,
--- preserving the historical behavior for existing customers that rely on it.
-SET documentdb.enableSkipCommentFieldOnUpsert TO off;
-SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "dropbox-users" } } }', '{ "id": "g1", "appId": 11627, "$comment": "ctx=trace", "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
-                                                           update_bson_document                                                            
--------------------------------------------------------------------------------------------------------------------------------------------
- { "_id" : { "$numberInt" : "5" }, "id" : "g1", "appId" : { "$numberInt" : "11627" }, "$comment" : "ctx=trace", "name" : "dropbox-users" }
-(1 row)
-
-RESET documentdb.enableSkipCommentFieldOnUpsert;
 -- upsert case: filter-only query operators are never persisted onto the generated document.
 -- $alwaysTrue at top level is skipped.
 SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "$alwaysTrue": 1, "_id": 5 }', NULL, NULL, NULL) as update_bson_document;

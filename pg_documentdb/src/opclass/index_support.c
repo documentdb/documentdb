@@ -348,7 +348,6 @@ extern bool EnableOrderByIndexTerm;
 extern bool EnableIndexOnlyScanForFindProject;
 extern bool EnableMultiKeyFilterIndexOnlyScan;
 extern bool TrackIndexOnlyScanFindCandidate;
-extern bool EnableObjectIdFuncExprConversion;
 extern bool EnableExtendedIndexes;
 extern bool EnableDynamicCursors;
 extern bool EnableDistinctIndexPushdown;
@@ -8906,8 +8905,7 @@ TryRewriteObjectIndexRestrictionInfoFuncExpr(FuncExpr *funcExpr)
 													NULL);
 		}
 	}
-	else if (EnableObjectIdFuncExprConversion &&
-			 funcExpr->funcid == BsonRegexObjectIdMatchFunctionId())
+	else if (funcExpr->funcid == BsonRegexObjectIdMatchFunctionId())
 	{
 		const MongoIndexOperatorInfo *operator =
 			GetMongoIndexOperatorInfoByPostgresFuncId(

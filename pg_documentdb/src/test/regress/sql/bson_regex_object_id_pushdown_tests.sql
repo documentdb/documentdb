@@ -408,36 +408,12 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
     '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^nonexistent" } } }');
 
--- =============================================
--- Section 11: Feature flag toggle
--- =============================================
-
--- Disable the feature flag and verify regex still works (just no pushdown optimization)
-BEGIN;
-SET LOCAL documentdb.enableObjectIdFuncExprConversion TO off;
-SET LOCAL documentdb.forceDisableSeqScan TO off;
-SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
-    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^abc" } }, "sort": { "_id": 1 } }');
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
-    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^abc" } } }');
-
--- EXPLAIN with feature flag off should show different plan (no object_id pushdown)
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
-    SELECT document FROM bson_aggregation_find('regexIdDb',
-        '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^abc" } } }')
-$cmd$);
-ROLLBACK;
-
 
 -- =============================================
 -- Section 12: Selectivity-driven plan choice
 -- With 10,000 string-_id rows and one matching row, the planner should
 -- pick an Index Scan on the _id_ btree when the $regex predicate is
 -- rewritten to bson_regex_object_id_match (selectivity ~= DEFAULT_INEQ_SEL).
--- With enableObjectIdFuncExprConversion off, the rewrite doesn't happen,
--- the predicate defaults to ~1.0 selectivity, and the planner picks
--- a Seq Scan instead.
 -- =============================================
 SELECT COUNT(*) FROM (
     SELECT documentdb_api.insert_one('regexIdDb', 'regex_id_big',
@@ -455,15 +431,6 @@ BEGIN;
 SET LOCAL documentdb.forceDisableSeqScan TO off;
 
 -- With the rewrite + selectivity fix: planner picks Index Scan on _id_
-SET LOCAL documentdb.enableObjectIdFuncExprConversion TO on;
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
-    SELECT document FROM bson_aggregation_find('regexIdDb',
-        '{ "find": "regex_id_big", "filter": { "_id": { "$regex": "^abc" } } }')
-$cmd$);
-
--- Without the rewrite: predicate looks unselective, planner falls back to Seq Scan
-SET LOCAL documentdb.enableObjectIdFuncExprConversion TO off;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
     SELECT document FROM bson_aggregation_find('regexIdDb',

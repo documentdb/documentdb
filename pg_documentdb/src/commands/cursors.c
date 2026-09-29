@@ -56,10 +56,8 @@ extern int32_t MaxWorkerCursorSize;
 extern bool EnablePrimaryKeyCursorScan;
 extern bool UseFileBasedPersistedCursors;
 extern bool EnableDebugQueryText;
-extern bool EnableDynamicCursorFastStartupScan;
 extern bool EnableDynamicCursorParallelPlans;
 extern bool EnableDynamicCursorEarlyIndexLockRelease;
-extern bool EnableSingleResultQueryParallelPlans;
 
 
 /*
@@ -362,11 +360,9 @@ pgbson *
 DrainSingleResultQuery(Query *query)
 {
 	int cursorOptions = CURSOR_OPT_NO_SCROLL | CURSOR_OPT_BINARY;
-	if (EnableSingleResultQueryParallelPlans)
-	{
-		/* Allow the planner to consider parallel plans for the query. */
-		cursorOptions |= CURSOR_OPT_PARALLEL_OK;
-	}
+
+	/* Allow the planner to consider parallel plans for the query. */
+	cursorOptions |= CURSOR_OPT_PARALLEL_OK;
 	MemoryContext currentContext = CurrentMemoryContext;
 
 	/* Deparse query text before planning since the planner may modify the query tree */
@@ -523,13 +519,11 @@ int
 GetDynamicCursorCursorOptions(void)
 {
 	int cursorOptions = CURSOR_OPT_BINARY;
-	if (EnableDynamicCursorFastStartupScan)
-	{
-		/* Turn on fast plan to consider statistics tupleFraction
-		 * for startup path.
-		 */
-		cursorOptions |= CURSOR_OPT_FAST_PLAN;
-	}
+
+	/* Turn on fast plan to consider statistics tupleFraction
+	 * for startup path.
+	 */
+	cursorOptions |= CURSOR_OPT_FAST_PLAN;
 
 	if (EnableDynamicCursorParallelPlans)
 	{

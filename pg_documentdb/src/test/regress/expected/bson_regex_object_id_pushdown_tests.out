@@ -1116,56 +1116,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('rege
 (8 rows)
 
 -- =============================================
--- Section 11: Feature flag toggle
--- =============================================
--- Disable the feature flag and verify regex still works (just no pushdown optimization)
-BEGIN;
-SET LOCAL documentdb.enableObjectIdFuncExprConversion TO off;
-SET LOCAL documentdb.forceDisableSeqScan TO off;
-SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
-    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^abc" } }, "sort": { "_id": 1 } }');
-                       document                       
-------------------------------------------------------
- { "_id" : "abc_one", "a" : { "$numberInt" : "21" } }
- { "_id" : "abc_two", "a" : { "$numberInt" : "22" } }
-(2 rows)
-
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
-    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^abc" } } }');
-                                                           QUERY PLAN                                                           
---------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (DocumentDBApiExplainQueryScan)
-   Output: document
-   namespaceName: regexIdDb.regex_id_coll
-   ->  Seq Scan on documentdb_data.documents_86101 collection
-         Output: document
-         Filter: (collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
-(6 rows)
-
--- EXPLAIN with feature flag off should show different plan (no object_id pushdown)
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
-    SELECT document FROM bson_aggregation_find('regexIdDb',
-        '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^abc" } } }')
-$cmd$);
-                                                run_explain_and_trim                                                 
----------------------------------------------------------------------------------------------------------------------
- Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
-   namespaceName: regexIdDb.regex_id_coll
-   ->  Seq Scan on documents_86101 collection (actual rows=2 loops=1)
-         Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
-         Rows Removed by Filter: 24
-(5 rows)
-
-ROLLBACK;
--- =============================================
 -- Section 12: Selectivity-driven plan choice
 -- With 10,000 string-_id rows and one matching row, the planner should
 -- pick an Index Scan on the _id_ btree when the $regex predicate is
 -- rewritten to bson_regex_object_id_match (selectivity ~= DEFAULT_INEQ_SEL).
--- With enableObjectIdFuncExprConversion off, the rewrite doesn't happen,
--- the predicate defaults to ~1.0 selectivity, and the planner picks
--- a Seq Scan instead.
 -- =============================================
 SELECT COUNT(*) FROM (
     SELECT documentdb_api.insert_one('regexIdDb', 'regex_id_big',
@@ -1192,7 +1146,6 @@ ANALYZE documentdb_data.documents_:regex_id_big_id;
 BEGIN;
 SET LOCAL documentdb.forceDisableSeqScan TO off;
 -- With the rewrite + selectivity fix: planner picks Index Scan on _id_
-SET LOCAL documentdb.enableObjectIdFuncExprConversion TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
     SELECT document FROM bson_aggregation_find('regexIdDb',
@@ -1207,22 +1160,6 @@ $cmd$);
          Index Cond: ((shard_key_value = '86103'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))
          Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
 (6 rows)
-
--- Without the rewrite: predicate looks unselective, planner falls back to Seq Scan
-SET LOCAL documentdb.enableObjectIdFuncExprConversion TO off;
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
-    SELECT document FROM bson_aggregation_find('regexIdDb',
-        '{ "find": "regex_id_big", "filter": { "_id": { "$regex": "^abc" } } }')
-$cmd$);
-                                                run_explain_and_trim                                                 
----------------------------------------------------------------------------------------------------------------------
- Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
-   namespaceName: regexIdDb.regex_id_big
-   ->  Seq Scan on documents_86103 collection (actual rows=1 loops=1)
-         Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
-         Rows Removed by Filter: 10000
-(5 rows)
 
 ROLLBACK;
 RESET documentdb.enableExtendedExplainPlans;

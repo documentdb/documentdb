@@ -230,7 +230,6 @@ extern bool EnableRumCursorDynamicIndexScans;
 extern bool EnableRumDynamicIndexScansSkipToTid;
 extern bool EnableOrderByIdOnCostFunction;
 extern bool EnableMergeSortForInPrefix;
-extern bool EnableDynamicPersistentCursorsWithStats;
 extern bool EnableGroupByDynamicStreaming;
 extern bool EnableDynamicCursorMultiKeyBitmap;
 
@@ -981,7 +980,7 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 		customPlanPaths = lappend(customPlanPaths, customPath);
 	}
 
-	if (list_length(customPlanPaths) > 0 && EnableDynamicPersistentCursorsWithStats)
+	if (list_length(customPlanPaths) > 0)
 	{
 		/* If we created at least 1 streaming path and we have alternative paths to consider
 		 * add them to the global paths (see comment above about operator selectivity).
