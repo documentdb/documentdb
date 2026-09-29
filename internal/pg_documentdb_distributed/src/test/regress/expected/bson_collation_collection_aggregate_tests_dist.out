@@ -1,0 +1,231 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,pg_catalog;
+SET citus.next_shard_id TO 782300000;
+SET documentdb.next_collection_id TO 78230000;
+SET documentdb.next_collection_index_id TO 78230000;
+SET documentdb_core.enableCollation TO on;
+SET documentdb.useLocalExecutionShardQueries TO off;
+SET citus.propagate_set_commands TO 'local';
+SELECT documentdb_api.create_collection('collation_aggregate_dist_db', 'source');
+NOTICE:  creating collection
+ create_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+UPDATE documentdb_api_catalog.collections
+SET options = '{ "collation": { "locale": "en", "strength": 1, "numericOrdering": true } }'::documentdb_core.bson
+WHERE database_name = 'collation_aggregate_dist_db' AND collection_name = 'source';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+ invalidate_collection_cache 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_aggregate_dist_db', 'source',
+    '{ "_id": 1, "category": "cafe", "rank": "10" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_aggregate_dist_db', 'source',
+    '{ "_id": 2, "category": "café", "rank": "2" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_aggregate_dist_db', 'source',
+    '{ "_id": 3, "category": "CAFE", "rank": "1" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_aggregate_dist_db', 'source',
+    '{ "_id": 4, "category": "tea", "rank": "20" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection(
+    'collation_aggregate_dist_db', 'source', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+BEGIN;
+SET LOCAL citus.enable_local_execution TO off;
+SET LOCAL documentdb_core.enableCollation TO on;
+-- The collection default reaches the distributed runtime and plan.
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_dist_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$match": { "category": "cafe" } },
+        { "$sort": { "rank": 1 } },
+        { "$project": { "_id": 1, "category": 1, "rank": 1 } }
+    ] }');
+                                document                                
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "category" : "CAFE", "rank" : "1" }
+ { "_id" : { "$numberInt" : "2" }, "category" : "café", "rank" : "2" }
+ { "_id" : { "$numberInt" : "1" }, "category" : "cafe", "rank" : "10" }
+(3 rows)
+
+SELECT query_plan
+FROM documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_dist_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$match": { "category": "cafe" } },
+        { "$sort": { "rank": 1 } },
+        { "$project": { "_id": 1, "category": 1, "rank": 1 } }
+    ] }')
+$cmd$, p_ignore_distributed_subplan_ids => true) AS plan(query_plan);
+                                                                                                                                                                                                                                                                                                                                                                                                                                               query_plan                                                                                                                                                                                                                                                                                                                                                                                                                                               
+---------------------------------------------------------------------
+ Sort
+   Output: remote_scan.document, remote_scan."?sort?"
+   Sort Key: remote_scan."?sort?" NULLS FIRST
+   ->  Custom Scan (Citus Adaptive)
+         Output: remote_scan.document, remote_scan."?sort?"
+         Task Count: 8
+         Tasks Shown: One of 8
+         ->  Task
+               Query: SELECT documentdb_api_internal.bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "category" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1-kn-true'::text) AS document, documentdb_api_internal.bson_orderby_index(document, '{ "rank" : { "$numberInt" : "1" } }'::documentdb_core.bson, 'en-u-ks-level1-kn-true'::text) AS "?sort?" FROM documentdb_data.documents_78230001_782300004 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "category" : "cafe", "collation" : "en-u-ks-level1-kn-true" }'::documentdb_core.bsonquery) AND documentdb_api_internal.bson_dollar_fullscan(document, '{ "rank" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1-kn-true" }'::documentdb_core.bson))
+               Node: host=localhost port=58070 dbname=regression
+               ->  Seq Scan on documentdb_data.documents_78230001_782300004 collection
+                     Output: documentdb_api_internal.bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "category" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1-kn-true'::text), documentdb_api_internal.bson_orderby_index(document, '{ "rank" : { "$numberInt" : "1" } }'::documentdb_core.bson, 'en-u-ks-level1-kn-true'::text)
+                     Filter: (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "category" : "cafe", "collation" : "en-u-ks-level1-kn-true" }'::documentdb_core.bson)
+(13 rows)
+
+-- Expression predicates use the inherited collection default.
+SELECT count(*) AS inherited_expression_matches
+FROM (
+    SELECT document FROM bson_aggregation_pipeline(
+        'collation_aggregate_dist_db',
+        '{ "aggregate": "source", "pipeline": [
+            { "$match": { "$expr": { "$eq": ["$category", "CAFE"] } } }
+        ] }')
+) matches;
+ inherited_expression_matches 
+---------------------------------------------------------------------
+                            3
+(1 row)
+
+-- The inherited collection default survives worker partial-state transport
+-- and coordinator combine for a non-shard grouping key.
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_dist_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$group": {
+            "_id": "$category",
+            "firstId": { "$min": "$_id" },
+            "minimumRank": { "$min": "$rank" },
+            "maximumRank": { "$max": "$rank" },
+            "count": { "$sum": 1 }
+        } },
+        { "$project": {
+            "_id": 0,
+            "firstId": 1,
+            "minimumRank": 1,
+            "maximumRank": 1,
+            "count": 1
+        } },
+        { "$sort": { "firstId": 1 } }
+    ] }');
+                                                       document                                                       
+---------------------------------------------------------------------
+ { "firstId" : { "$numberInt" : "1" }, "minimumRank" : "1", "maximumRank" : "10", "count" : { "$numberInt" : "3" } }
+ { "firstId" : { "$numberInt" : "4" }, "minimumRank" : "20", "maximumRank" : "20", "count" : { "$numberInt" : "1" } }
+(2 rows)
+
+SELECT
+    count(*) FILTER (WHERE query_plan ~ '^\s*Task Count: 8$') > 0
+        AS has_eight_tasks,
+    count(*) FILTER (
+        WHERE query_plan ~ 'worker(_binary)?_partial_agg') > 0
+        AS has_worker_partial,
+    count(*) FILTER (
+        WHERE query_plan ~ 'coord(_binary)?_combine_agg') > 0
+        AS has_coord_combine,
+    count(*) FILTER (
+        WHERE query_plan LIKE '%en-u-ks-level1-kn-true%') > 0
+        AS has_default_collation
+FROM documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_dist_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$group": {
+            "_id": "$category",
+            "firstId": { "$min": "$_id" },
+            "minimumRank": { "$min": "$rank" },
+            "maximumRank": { "$max": "$rank" },
+            "count": { "$sum": 1 }
+        } },
+        { "$project": {
+            "_id": 0,
+            "firstId": 1,
+            "minimumRank": 1,
+            "maximumRank": 1,
+            "count": 1
+        } },
+        { "$sort": { "firstId": 1 } }
+    ] }')
+$cmd$, p_ignore_distributed_subplan_ids => true) AS plan(query_plan);
+ has_eight_tasks | has_worker_partial | has_coord_combine | has_default_collation 
+---------------------------------------------------------------------
+ t               | t                  | t                 | t
+(1 row)
+
+-- An explicit simple collation overrides the collection default.
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_dist_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$match": { "category": "cafe" } },
+        { "$sort": { "rank": 1 } },
+        { "$project": { "_id": 1, "category": 1, "rank": 1 } }
+    ], "collation": { "locale": "simple" } }');
+                                document                                
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "category" : "cafe", "rank" : "10" }
+(1 row)
+
+ROLLBACK;
+-- Disabling collation prevents collection-default inheritance.
+BEGIN;
+SET LOCAL citus.enable_local_execution TO off;
+SET LOCAL documentdb_core.enableCollation TO off;
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_dist_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$match": { "category": "cafe" } },
+        { "$sort": { "rank": 1 } },
+        { "$project": { "_id": 1, "category": 1, "rank": 1 } }
+    ] }');
+                                document                                
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "category" : "cafe", "rank" : "10" }
+(1 row)
+
+ROLLBACK;
+SELECT documentdb_api.drop_collection('collation_aggregate_dist_db', 'source');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+RESET citus.propagate_set_commands;
+RESET documentdb.useLocalExecutionShardQueries;
+RESET documentdb_core.enableCollation;

@@ -1,0 +1,443 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_core,pg_catalog;
+SET documentdb.next_collection_id TO 782300;
+SET documentdb.next_collection_index_id TO 782300;
+SET documentdb_core.enableCollation TO on;
+SELECT documentdb_api.create_collection('collation_aggregate_db', 'source');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+UPDATE documentdb_api_catalog.collections
+SET options = '{ "collation": { "locale": "en", "strength": 1, "numericOrdering": true } }'::documentdb_core.bson
+WHERE database_name = 'collation_aggregate_db' AND collection_name = 'source';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+ invalidate_collection_cache 
+-----------------------------
+ 
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_aggregate_db', 'source',
+    '{ "_id": 1, "category": "cafe", "rank": "10", "tags": ["CAFE"], "vals": ["apple", "Banana"] }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_aggregate_db', 'source',
+    '{ "_id": 2, "category": "café", "rank": "2", "tags": ["CAFÉ"] }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_aggregate_db', 'source',
+    '{ "_id": 3, "category": "CAFE", "rank": "1", "tags": ["other"] }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_aggregate_db', 'source',
+    '{ "_id": 4, "category": "tea", "rank": "20", "tags": ["tea"] }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Missing, null, and empty command collations inherit the collection default.
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$match": { "category": "cafe" } },
+        { "$sort": { "_id": 1 } },
+        { "$project": { "_id": 1, "category": 1 } }
+    ] }');
+                        document                         
+---------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "category" : "cafe" }
+ { "_id" : { "$numberInt" : "2" }, "category" : "café" }
+ { "_id" : { "$numberInt" : "3" }, "category" : "CAFE" }
+(3 rows)
+
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$match": { "category": "cafe" } },
+        { "$sort": { "_id": 1 } },
+        { "$project": { "_id": 1, "category": 1 } }
+    ], "collation": null }');
+                        document                         
+---------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "category" : "cafe" }
+ { "_id" : { "$numberInt" : "2" }, "category" : "café" }
+ { "_id" : { "$numberInt" : "3" }, "category" : "CAFE" }
+(3 rows)
+
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$match": { "category": "cafe" } },
+        { "$sort": { "_id": 1 } },
+        { "$project": { "_id": 1, "category": 1 } }
+    ], "collation": {} }');
+                        document                         
+---------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "category" : "cafe" }
+ { "_id" : { "$numberInt" : "2" }, "category" : "café" }
+ { "_id" : { "$numberInt" : "3" }, "category" : "CAFE" }
+(3 rows)
+
+-- Explicit non-simple and simple collations override the collection default.
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$match": { "category": "cafe" } },
+        { "$sort": { "_id": 1 } },
+        { "$project": { "_id": 1, "category": 1 } }
+    ], "collation": { "locale": "en", "strength": 3 } }');
+                        document                         
+---------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "category" : "cafe" }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$match": { "category": "cafe" } },
+        { "$sort": { "_id": 1 } },
+        { "$project": { "_id": 1, "category": 1 } }
+    ], "collation": { "locale": "simple" } }');
+                        document                         
+---------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "category" : "cafe" }
+(1 row)
+
+-- $expr predicates inside $match use the inherited collation.
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$match": { "$expr": { "$eq": ["$category", "CAFE"] } } },
+        { "$sort": { "_id": 1 } },
+        { "$project": { "_id": 1, "category": 1 } }
+    ] }');
+                        document                         
+---------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "category" : "cafe" }
+ { "_id" : { "$numberInt" : "2" }, "category" : "café" }
+ { "_id" : { "$numberInt" : "3" }, "category" : "CAFE" }
+(3 rows)
+
+-- The inherited numeric ordering is used by $sort.
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$sort": { "rank": 1 } },
+        { "$project": { "_id": 1, "rank": 1 } }
+    ] }');
+                     document                      
+---------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "rank" : "1" }
+ { "_id" : { "$numberInt" : "2" }, "rank" : "2" }
+ { "_id" : { "$numberInt" : "1" }, "rank" : "10" }
+ { "_id" : { "$numberInt" : "4" }, "rank" : "20" }
+(4 rows)
+
+-- Group key equality uses the inherited collation.
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$group": {
+            "_id": "$category",
+            "firstId": { "$min": "$_id" },
+            "count": { "$sum": 1 }
+        } },
+        { "$project": {
+            "_id": 0,
+            "firstId": 1,
+            "count": 1
+        } },
+        { "$sort": { "firstId": 1 } }
+    ] }');
+                                 document                                 
+--------------------------------------------------------------------------
+ { "firstId" : { "$numberInt" : "1" }, "count" : { "$numberInt" : "3" } }
+ { "firstId" : { "$numberInt" : "4" }, "count" : { "$numberInt" : "1" } }
+(2 rows)
+
+-- String group accumulators use the inherited numeric ordering.
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$sort": { "_id": 1 } },
+        { "$group": {
+            "_id": null,
+            "minimum": { "$min": "$rank" },
+            "maximum": { "$max": "$rank" }
+        } }
+    ] }');
+                      document                       
+-----------------------------------------------------
+ { "_id" : null, "minimum" : "1", "maximum" : "20" }
+(1 row)
+
+-- Expression comparisons, array search, set equality, ordering, and min/max
+-- share the inherited effective collation.
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$match": { "_id": 1 } },
+        { "$project": {
+            "_id": 0,
+            "eq": { "$eq": ["$category", "CAFE"] },
+            "cmp": { "$cmp": ["$category", "CAFE"] },
+            "index": { "$indexOfArray": ["$tags", "cafe"] },
+            "setEquals": { "$setEquals": ["$tags", ["cafe"]] },
+            "sorted": { "$sortArray": { "input": ["10", "2", "1"], "sortBy": 1 } },
+            "minimum": { "$min": "$vals" },
+            "maximum": { "$max": "$vals" }
+        } }
+    ] }');
+                                                                                    document                                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "eq" : true, "cmp" : { "$numberInt" : "0" }, "index" : { "$numberInt" : "0" }, "setEquals" : true, "sorted" : [ "1", "2", "10" ], "minimum" : "apple", "maximum" : "Banana" }
+(1 row)
+
+-- Projection-family stages use the inherited collation in expressions.
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$match": { "_id": 1 } },
+        { "$addFields": {
+            "addFieldsEqual": { "$eq": ["$category", "CAFE"] }
+        } },
+        { "$set": {
+            "setEqual": { "$eq": ["$category", "CAFÉ"] }
+        } },
+        { "$project": {
+            "_id": 1,
+            "addFieldsEqual": 1,
+            "setEqual": 1
+        } }
+    ] }');
+                                    document                                    
+--------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "addFieldsEqual" : true, "setEqual" : true }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$match": { "_id": 1 } },
+        { "$replaceRoot": {
+            "newRoot": {
+                "sourceId": "$_id",
+                "equal": { "$eq": ["$category", "CAFE"] }
+            }
+        } }
+    ] }');
+                        document                         
+---------------------------------------------------------
+ { "sourceId" : { "$numberInt" : "1" }, "equal" : true }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$match": { "_id": 1 } },
+        { "$replaceWith": {
+            "sourceId": "$_id",
+            "equal": { "$eq": ["$category", "CAFÉ"] }
+        } }
+    ] }');
+                        document                         
+---------------------------------------------------------
+ { "sourceId" : { "$numberInt" : "1" }, "equal" : true }
+(1 row)
+
+-- $redact decisions use the inherited collation.
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$match": { "category": "cafe" } },
+        { "$redact": {
+            "$cond": {
+                "if": { "$eq": ["$category", "CAFE"] },
+                "then": "$$KEEP",
+                "else": "$$PRUNE"
+            }
+        } },
+        { "$sort": { "_id": 1 } },
+        { "$project": { "_id": 1, "category": 1 } }
+    ] }');
+                        document                         
+---------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "category" : "cafe" }
+ { "_id" : { "$numberInt" : "2" }, "category" : "café" }
+ { "_id" : { "$numberInt" : "3" }, "category" : "CAFE" }
+(3 rows)
+
+-- Collation remains effective across $unwind and into the following $match.
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$unwind": "$tags" },
+        { "$match": { "tags": "cafe" } },
+        { "$sort": { "_id": 1 } },
+        { "$project": { "_id": 1, "tags": 1 } }
+    ] }');
+                      document                       
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "tags" : "CAFE" }
+ { "_id" : { "$numberInt" : "2" }, "tags" : "CAFÉ" }
+(2 rows)
+
+-- A terminal $count observes the inherited match result.
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$match": { "category": "cafe" } },
+        { "$count": "matchingCategories" }
+    ] }');
+                     document                      
+---------------------------------------------------
+ { "matchingCategories" : { "$numberInt" : "3" } }
+(1 row)
+
+-- Accumulators that cannot honor a collation retain their existing rejection.
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$group": { "_id": null, "categories": { "$addToSet": "$category" } } }
+    ] }');
+ERROR:  collation is not supported with the $addToSet accumulator in $group yet.
+-- A collection with no default collation keeps binary behavior.
+SELECT documentdb_api.create_collection('collation_aggregate_db', 'no_default');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_aggregate_db', 'no_default', '{ "_id": 1, "value": "cafe" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_aggregate_db', 'no_default', '{ "_id": 2, "value": "CAFE" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_db',
+    '{ "aggregate": "no_default", "pipeline": [
+        { "$match": { "value": "cafe" } },
+        { "$project": { "_id": 1, "value": 1 } }
+    ] }');
+                       document                       
+------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : "cafe" }
+(1 row)
+
+-- A simple collection default also keeps binary behavior.
+SELECT documentdb_api.create_collection('collation_aggregate_db', 'simple_default');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+UPDATE documentdb_api_catalog.collections
+SET options = '{ "collation": { "locale": "simple" } }'::documentdb_core.bson
+WHERE database_name = 'collation_aggregate_db'
+  AND collection_name = 'simple_default';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+ invalidate_collection_cache 
+-----------------------------
+ 
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_aggregate_db', 'simple_default', '{ "_id": 1, "value": "cafe" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_aggregate_db', 'simple_default', '{ "_id": 2, "value": "CAFE" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_db',
+    '{ "aggregate": "simple_default", "pipeline": [
+        { "$match": { "value": "cafe" } },
+        { "$project": { "_id": 1, "value": 1 } }
+    ] }');
+                       document                       
+------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : "cafe" }
+(1 row)
+
+-- A missing collection has no metadata to inherit.
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_db',
+    '{ "aggregate": "missing", "pipeline": [
+        { "$match": { "value": "cafe" } }
+    ] }');
+ document 
+----------
+(0 rows)
+
+-- Collectionless aggregate commands do not inherit collection metadata.
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_db',
+    '{ "aggregate": 1, "pipeline": [
+        { "$documents": [
+            { "_id": 1, "value": "cafe" },
+            { "_id": 2, "value": "CAFE" }
+        ] },
+        { "$match": { "value": "cafe" } }
+    ] }');
+                 documents_aggregate                  
+------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : "cafe" }
+(1 row)
+
+-- Disabling collation disables collection-default inheritance.
+SET documentdb_core.enableCollation TO off;
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_aggregate_db',
+    '{ "aggregate": "source", "pipeline": [
+        { "$match": { "category": "cafe" } },
+        { "$project": { "_id": 1, "category": 1 } }
+    ] }');
+                        document                         
+---------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "category" : "cafe" }
+(1 row)
+
+SET documentdb_core.enableCollation TO on;
+SELECT documentdb_api.drop_database('collation_aggregate_db');
+ drop_database 
+---------------
+ 
+(1 row)
+
+RESET documentdb_core.enableCollation;

@@ -1740,6 +1740,7 @@ ParseAggregationQueryAndLookupCollection(text *database, pgbson *aggregationSpec
 	context->databaseNameDatum = database;
 	context->optimizePipelineStages = true;
 	context->joinStatus = JoinStageStatus_Unknown;
+	context->resolveDefaultCollation = true;
 	queryData->cursorKind = QueryCursorType_Unspecified;
 	queryData->streamingLimit = 0;
 	queryData->streamingSkip = 0;
@@ -1838,6 +1839,7 @@ ParseAggregationQueryAndLookupCollection(text *database, pgbson *aggregationSpec
 				if (EnsureTopLevelFieldIsDocumentNullOrEmptyOk(
 						"collation", &aggregationIterator))
 				{
+					context->resolveDefaultCollation = false;
 					ParseAndGetCollationString(value, context->collationString);
 				}
 			}
@@ -1898,6 +1900,7 @@ ParseAggregationQueryAndLookupCollection(text *database, pgbson *aggregationSpec
 	if (context->requiresTailableCursor)
 	{
 		queryData->cursorKind = QueryCursorType_Tailable;
+		context->resolveDefaultCollation = false;
 	}
 
 	/*
@@ -1914,6 +1917,12 @@ ParseAggregationQueryAndLookupCollection(text *database, pgbson *aggregationSpec
 			PointerGetDatum(context->databaseNameDatum), collectionNameDatum,
 			AccessShareLock);
 
+		if (context->resolveDefaultCollation)
+		{
+			ResolveDefaultCollation(collection, context);
+			context->resolveDefaultCollation = false;
+		}
+
 		/*
 		 * Set the namespace name now so the remote-dispatch path (which skips the
 		 * apply phase) still has it for the cursor response preamble. For the
@@ -1921,6 +1930,10 @@ ParseAggregationQueryAndLookupCollection(text *database, pgbson *aggregationSpec
 		 */
 		queryData->namespaceName = CreateNamespaceName(context->databaseNameDatum,
 													   &collectionName);
+	}
+	else
+	{
+		context->resolveDefaultCollation = false;
 	}
 
 	/*
