@@ -89,6 +89,11 @@ RUN apt-get update && \
     echo "%sudo ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/no-pass-ask && \
     apt-get purge -y wget gnupg2 lsb-release && \
     apt-get autoremove -y && \
+    # Date operators accept EST, MST, ...; Debian 13 / Ubuntu 26.04 moved them to tzdata-legacy.
+    if [ ! -e /usr/share/zoneinfo/EST ]; then \
+        apt-get install -y --no-install-recommends tzdata-legacy; \
+    fi && \
+    test -e /usr/share/zoneinfo/EST && \
     rm -rf \
     /etc/apt/keyrings/pgdg.asc \
     /etc/apt/sources.list.d/pgdg.list \
