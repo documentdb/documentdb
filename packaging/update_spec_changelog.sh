@@ -61,17 +61,6 @@ mv "$spec_tmp_ver" "$SPEC"
 # We'll search for the header that contains the target version and then
 # extract from that header through EOF (so target + older entries).
 
-# First, check for and fix typos in CHANGELOG.md (e.g., v1.107-0 should be v0.107-0)
-echo "Checking for version typos in $CHANGELOG..."
-if grep -q "^### .*v1\.[0-9]\+-[0-9]\+" "$CHANGELOG"; then
-    echo "Found typo(s) with v1.XXX-X versions. Fixing to v0.XXX-X..."
-    # Create a backup
-    cp "$CHANGELOG" "$CHANGELOG.backup"
-    # Fix the typo: replace v1.XXX-X with v0.XXX-X in headers
-    sed -i -E 's/(^### .*v)1\.([0-9]+-[0-9]+)/\10.\2/g' "$CHANGELOG"
-    echo "Fixed typos in $CHANGELOG (backup saved as $CHANGELOG.backup)"
-fi
-
 target_header_line=""
 # Find the first header line that documents this exact version. Use a fixed-string
 # match so the version's '.' and '-' are not treated as regex metacharacters.
