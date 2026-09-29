@@ -3807,6 +3807,15 @@ print_completion_message() {
         fi
     fi
 
+    if [[ -z "${TARGET_CLUSTER}" && -f "${DATA_DIR}/current_logfiles" ]]; then
+        local log_destination log_file collector_logs=""
+        while IFS=' ' read -r log_destination log_file; do
+            [[ "${log_file}" == /* ]] || log_file="${DATA_DIR}/${log_file}"
+            collector_logs+="${collector_logs:+, }${log_file}"
+        done < "${DATA_DIR}/current_logfiles"
+        [[ -z "${collector_logs}" ]] || pg_log_hint="${collector_logs}"
+    fi
+
     local gw_log_hint="journalctl -u ${gw_unit}"
     [[ "${gw_systemd_managed}" == "true" ]] || gw_log_hint="/var/lib/documentdb-gateway/gateway.log"
 
