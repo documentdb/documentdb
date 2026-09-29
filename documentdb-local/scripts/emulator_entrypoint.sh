@@ -1488,7 +1488,7 @@ elif [ -d "$INIT_DATA_PATH" ] && [ "$(ls -A "$INIT_DATA_PATH"/*.js 2>/dev/null)"
         else
             echo "Error: Custom data initialization failed; it will not be retried on restart if it had begun applying data."
             echo "Fix your initialization scripts and start with a fresh data volume to re-run."
-            exit 1
+            cleanup 1
         fi
     else
         echo "Warning: Initialization script not found at $init_script"
@@ -1515,7 +1515,7 @@ elif [ "$INIT_DATA" = "true" ]; then
             write_init_marker "$sample_init_marker"
         else
             echo "Error: Sample data initialization failed"
-            exit 1
+            cleanup 1
         fi
         echo ""
         echo "Sample data has been loaded into the 'StoreData' database with the following collections:"

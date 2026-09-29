@@ -124,13 +124,14 @@ run_mongosh_script() {
     local init_file="${1:-}"
     local init_mode="${2:-load}"
 
+    # File mode propagates JavaScript errors; interactive stdin exits zero at EOF.
     DOCUMENTDB_HOST="$DOCUMENTDB_HOST" \
     DOCUMENTDB_PORT="$DOCUMENTDB_PORT" \
     DOCUMENTDB_USERNAME="$USERNAME" \
     DOCUMENTDB_PASSWORD="$PASSWORD" \
     DOCUMENTDB_INIT_FILE="$init_file" \
     DOCUMENTDB_INIT_MODE="$init_mode" \
-        mongosh --quiet --nodb <<'EOF'
+        mongosh --quiet --nodb --file /dev/stdin <<'EOF'
 const host = process.env.DOCUMENTDB_HOST || 'localhost';
 const port = process.env.DOCUMENTDB_PORT;
 const username = process.env.DOCUMENTDB_USERNAME;
