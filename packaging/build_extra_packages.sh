@@ -292,6 +292,7 @@ elif [[ "${PACKAGE_TYPE}" == "rpm" ]]; then
         cp "${SCRIPTS_SRC}/documentdb-local-reset.sh" "${RPM_TOPDIR}/SOURCES/"
         cp "${SCRIPTS_SRC}/documentdb_postgresql_service.sh" "${RPM_TOPDIR}/SOURCES/"
         cp "${SCRIPTS_SRC}/init_documentdb_data.sh" "${RPM_TOPDIR}/SOURCES/"
+        cp "${SCRIPTS_SRC}/documentdb_install_getparameter_stub.sh" "${RPM_TOPDIR}/SOURCES/"
         cp "${SCRIPTS_SRC}/documentdb_local_settings.sh" "${RPM_TOPDIR}/SOURCES/"
         cp "${APPLIANCE_SRC}/systemd/documentdb-local@.target" "${RPM_TOPDIR}/SOURCES/"
         cp "${APPLIANCE_SRC}/systemd/documentdb-postgresql@.service" "${RPM_TOPDIR}/SOURCES/"

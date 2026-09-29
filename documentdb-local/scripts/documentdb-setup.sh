@@ -3114,6 +3114,9 @@ create_required_extensions_and_users() {
             _create_extended_rum_extension_inline
     fi
 
+    confirm_or_apply "Install temporary getParameter rejection stub if the backend function is missing" \
+        _install_getparameter_stub
+
     if run_as_user "${PG_OWNER}" "${PSQL}" -h "${PG_SOCKET_DIR}" -p "${PG_PORT}" -d postgres -X -tA -v ON_ERROR_STOP=1 -v role_name="${USERNAME}" <<'SQL' | grep -q '^1$'; then
 SELECT 1 FROM pg_roles WHERE rolname = :'role_name';
 SQL
@@ -3234,6 +3237,18 @@ CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;
 -- path"). Every release must ship the matching upgrade script.
 ALTER EXTENSION documentdb UPDATE;
 SQL
+}
+
+_install_getparameter_stub() {
+    local stub_script="/usr/share/documentdb/scripts/documentdb_install_getparameter_stub.sh"
+    if [[ ! -f "${stub_script}" ]]; then
+        stub_script="${SCRIPT_DIR}/documentdb_install_getparameter_stub.sh"
+    fi
+    [[ -f "${stub_script}" ]] || die "Cannot find the getParameter rejection helper; reinstall documentdb-common."
+
+    run_as_user "${PG_OWNER}" env "PGHOST=${PG_SOCKET_DIR}" "PGUSER=${PG_OWNER}" \
+        bash "${stub_script}" "${PG_PORT}" "${PSQL}" \
+        || die "Failed to install the getParameter rejection stub."
 }
 
 _create_extended_rum_extension_inline() {
@@ -5041,6 +5056,7 @@ main() {
             log_info "[dry-run]     - Print 'systemctl reload postgresql@${preview_pg_version}-${preview_cluster_name}' for the operator to run"
         fi
         log_info "[dry-run]     - psql: CREATE EXTENSION documentdb CASCADE${_ext_note}"
+        log_info "[dry-run]     - psql: install temporary getParameter rejection stub if the backend function is missing"
         log_info "[dry-run]     - psql: bootstrap admin user '${USERNAME}' via documentdb_api.create_user()${_admin_note}"
         log_info "[dry-run]     - systemctl enable documentdb-gateway-local@${preview_pg_version}.service"
         log_info "[dry-run]     - systemctl start  documentdb-gateway-local@${preview_pg_version}.service"

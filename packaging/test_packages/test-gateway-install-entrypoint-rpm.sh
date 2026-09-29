@@ -992,6 +992,14 @@ verify_gateway_crud() {
     local crud_script=""
 
     crud_script="$(cat <<'EOF'
+try {
+    db.getSiblingDB("admin").runCommand({getParameter: 1, featureCompatibilityVersion: 1});
+    throw new Error("getParameter unexpectedly succeeded");
+} catch (error) {
+    if (error.code !== 115 || error.codeName !== "CommandNotSupported") {
+        throw error;
+    }
+}
 const database = db.getSiblingDB("quickStartDatabase");
 database.quickStartCollection.deleteMany({});
 database.quickStartCollection.insertOne({name: "John Doe", email: "john@email.com"});

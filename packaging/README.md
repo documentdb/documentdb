@@ -82,6 +82,35 @@ setup is not overwritten, and brownfield or otherwise conflicting package,
 configuration, or data state is refused. This bootstrap makes no upgrade or
 repair promise.
 
+### Temporary getParameter workaround
+
+The OSS gateway calls a `get_parameter` function that the extension does not
+provide. After creating/updating the extension, `documentdb-setup` installs the
+same temporary rejection stub used by `documentdb-local`, in the selected
+instance's `postgres` database. Existing functions are preserved. Setup fails
+if the helper cannot install the stub.
+
+This returns `CommandNotSupported` (115), not `InternalError`, for valid
+`getParameter` requests. It does not implement server parameters or advertise
+a compatibility version. The helper ships in `documentdb-common` for both DEB
+and RPM; no gateway binary change is required. An existing installation needs
+the helper applied once; upgrading the package alone does not modify databases.
+
+For a default package-private PostgreSQL 18 instance, an administrator can apply
+the workaround without rerunning the full setup or restarting services:
+
+```sh
+sudo -u documentdb-local env \
+  PGHOST=/run/documentdb-local/18/postgresql PGUSER=documentdb-local \
+  bash /usr/share/documentdb/scripts/documentdb_install_getparameter_stub.sh \
+  9718 /usr/lib/postgresql/18/bin/psql
+```
+
+On RPM systems, use `/usr/pgsql-18/bin/psql`. For PostgreSQL 17, custom ports,
+or adopted instances, use that instance's actual owner, socket, port, and
+`psql` path. The stub persists across restarts and must be reconsidered when
+the gateway/extension gains real `getParameter` support.
+
 ## What CI builds (package-production tiers)
 
 First-party CI does **not** build the full distro × PG-major cartesian product.

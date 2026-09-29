@@ -3037,6 +3037,7 @@ class DocumentDBSetupwizardFlagsTests(unittest.TestCase):
             "Write postgresql.conf managed block via documentdb-tune",
             "Run documentdb-register-gateway --yes",
             "Run CREATE EXTENSION documentdb CASCADE",
+            "Install temporary getParameter rejection stub",
             "Bootstrap first admin user",
         ):
             self.assertRegex(
@@ -3061,6 +3062,7 @@ class DocumentDBSetupwizardFlagsTests(unittest.TestCase):
             "documentdb-tune --yes",
             "documentdb-register-gateway --yes",
             "CREATE EXTENSION documentdb CASCADE",
+            "getParameter rejection stub",
             "bootstrap admin user",
             "documentdb-postgresql@18.service",
             "documentdb-gateway-local@18.service",
