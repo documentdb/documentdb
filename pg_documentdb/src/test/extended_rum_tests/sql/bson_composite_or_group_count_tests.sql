@@ -98,20 +98,18 @@ SELECT document FROM bson_aggregation_count('grpq_db',
 --    cat, then $group by { type: $cat, subType: $sub } with $sum, then $sort on the
 --    count. The (cat, sub) group keys exactly match the leading columns of
 --    idx_cat_sub_ord.
---    OBSERVED: the good index is NOT used at all -- the plan falls back to a full
---    _id_ index scan with the whole predicate applied as a heap Filter (note the
---    large "Rows Removed by Filter"), then an explicit Sort feeds a GroupAggregate,
---    then a final Sort on count. This is the timing-out shape.
---    TODO: the $or-of-$and branches SHOULD be pushed to idx_cat_sub_ord (each branch
---    an ordered scan already grouped by (cat, sub)); sort-merged on (cat, sub) that
---    feeds a STREAMING GroupAggregate with no pre-group Sort, then only the final
---    Sort on count -- eliminating both the full _id_ scan and the pre-group Sort.
+--    OBSERVED: idx_cat_sub_ord is selected as an ordered scan that is already
+--    grouped by (cat, sub), so it feeds a streaming GroupAggregate with no
+--    pre-group Sort and only the final Sort on count remains. The full _id_ scan
+--    and the pre-group Sort are both gone, and the $or-of-$and branches are
+--    applied as a Filter over the much smaller ordered-scan output (note the
+--    small "Rows Removed by Filter").
 -- ============================================================================
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
     SELECT document FROM bson_aggregation_pipeline('grpq_db',
         '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }')
-$cmd$);
+$cmd$, p_ignore_heap_fetches => true);
 SELECT document FROM bson_aggregation_pipeline('grpq_db',
     '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }');
 
@@ -157,13 +155,12 @@ SELECT document FROM bson_aggregation_count('grpq_db',
 -- 5. AGGREGATE $group: ord range + $or of two $elemMatch (regex) filter, drop empty
 --    cat, then $group by { type: $cat, subType: $sub } with $sum, then $sort on
 --    count. Like section 2 but the filter is an array $elemMatch $or.
---    OBSERVED: same timing-out shape as section 2 -- a full _id_ index scan with the
---    predicate as a heap Filter, an explicit Sort, a GroupAggregate, then the final
---    Sort on count. Neither idx_tags_ord (for the filter) nor the (cat, sub) group
---    keys are exploited.
---    TODO: the $elemMatch $or branches should push to idx_tags_ord (see the count in
---    section 4), and the (cat, sub) group should stream off an ordered scan on those
---    keys, avoiding both the full _id_ scan and the pre-group Sort.
+--    OBSERVED: the (cat, sub) group keys are now exploited -- an ordered scan on
+--    idx_cat_sub_ord streams into a GroupAggregate with no pre-group Sort, leaving
+--    only the final Sort on count. The $elemMatch $or branches are still applied as
+--    a Filter over that scan rather than pushed to idx_tags_ord.
+--    TODO: the $elemMatch $or branches should also push to idx_tags_ord (see the
+--    count in section 4) instead of being evaluated as a Filter.
 -- ============================================================================
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
@@ -252,14 +249,13 @@ SELECT document FROM bson_aggregation_count('grpq_db',
 -- ============================================================================
 -- 10. AGGREGATE $group (EQUALITY companion to section 5): the section 5 $group pipeline
 --     with string equality instead of /i regex in the $elemMatch $or filter.
---     OBSERVED: still the timing-out shape -- a full _id_ index scan with the whole
---     predicate as a heap Filter (large "Rows Removed by Filter"), an explicit pre-group
---     Sort, a GroupAggregate, then the final Sort on count. Equality tightens the count
---     bounds (section 9) but does NOT change the $group plan: neither idx_tags_ord (for
---     the filter) nor the (cat, sub) group keys are exploited.
---     TODO: same as sections 2 and 5 -- push the $elemMatch $or branches to idx_tags_ord
---     and stream the (cat, sub) group off an ordered scan, avoiding the full _id_ scan
---     and the pre-group Sort. Independent of whether the predicate is equality or regex.
+--     OBSERVED: same shape as section 5 -- the (cat, sub) group keys stream off an
+--     ordered scan on idx_cat_sub_ord with no pre-group Sort, leaving only the final
+--     Sort on count. Equality tightens the count bounds (section 9) but does NOT
+--     change the $group plan; the $elemMatch $or branches remain a Filter rather than
+--     being pushed to idx_tags_ord.
+--     TODO: same as section 5 -- push the $elemMatch $or branches to idx_tags_ord,
+--     independent of whether the predicate is equality or regex.
 -- ============================================================================
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
@@ -296,7 +292,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
     SELECT document FROM bson_aggregation_pipeline('grpq_db',
         '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }')
-$cmd$);
+$cmd$, p_ignore_heap_fetches => true);
 SELECT document FROM bson_aggregation_pipeline('grpq_db',
     '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }');
 

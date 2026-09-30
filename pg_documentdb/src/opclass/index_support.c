@@ -8206,6 +8206,224 @@ ExtractBoundaryQualsForOrderedIndexPath(IndexPath *indexPath, int *num_sa_scans)
 }
 
 
+/*
+ * Builds temporary index clauses that use the native statistics operators for
+ * range bounds. The returned list aliases the original clauses unless at
+ * least one qual is replaced. Every allocation retained by the returned clauses
+ * is added to itemsToFree for shallow deallocation with list_free_deep.
+ */
+List *
+GetModifiedClauseListForOrderedIndexPath(IndexPath *indexPath, List **itemsToFree)
+{
+	ListCell *cell;
+	bool hasModifiedClauses = false;
+	List *modifiedClauses = NIL;
+	bool equalityPrefixes[INDEX_MAX_KEYS] = { 0 };
+	bool nonEqualityPrefixes[INDEX_MAX_KEYS] = { 0 };
+	int numConds[INDEX_MAX_KEYS] = { 0 };
+	bool hasMultipleConditionsForPath = false;
+
+	foreach(cell, indexPath->indexclauses)
+	{
+		IndexClause *iclause = (IndexClause *) lfirst(cell);
+		ListCell *indexQualCell;
+		foreach(indexQualCell, iclause->indexquals)
+		{
+			RestrictInfo *rinfo = lfirst_node(RestrictInfo, indexQualCell);
+			int32_t indexStrategy = 0;
+			int columnNumber = ProcessSingleCompositeFilter(
+				(Node *) rinfo->clause,
+				indexPath->indexinfo->opclassoptions[iclause->indexcol],
+				equalityPrefixes, nonEqualityPrefixes, &indexStrategy);
+			if (columnNumber < 0)
+			{
+				continue;
+			}
+
+			switch (indexStrategy)
+			{
+				case BSON_INDEX_STRATEGY_DOLLAR_GREATER:
+				case BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL:
+				case BSON_INDEX_STRATEGY_DOLLAR_LESS:
+				case BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL:
+				{
+					numConds[columnNumber]++;
+					hasMultipleConditionsForPath = numConds[columnNumber] > 1;
+					break;
+				}
+
+				default:
+				{
+					break;
+				}
+			}
+
+			if (hasMultipleConditionsForPath)
+			{
+				break;
+			}
+		}
+
+		if (hasMultipleConditionsForPath)
+		{
+			break;
+		}
+	}
+
+	if (!hasMultipleConditionsForPath)
+	{
+		return indexPath->indexclauses;
+	}
+
+	foreach(cell, indexPath->indexclauses)
+	{
+		IndexClause *iclause = (IndexClause *) lfirst(cell);
+
+		ListCell *lc2;
+		List *modifiedIndexQuals = NIL;
+		bool qualsModified = false;
+		foreach(lc2, iclause->indexquals)
+		{
+			RestrictInfo *rinfo = lfirst_node(RestrictInfo, lc2);
+			if (!IsA(rinfo->clause, OpExpr))
+			{
+				modifiedIndexQuals = lappend(modifiedIndexQuals, rinfo);
+				continue;
+			}
+
+			OpExpr *opExpr = (OpExpr *) rinfo->clause;
+			int32_t indexStrategy = 0;
+			int columnNumber = ProcessSingleCompositeFilter(
+				(Node *) opExpr, indexPath->indexinfo->opclassoptions[iclause->indexcol],
+				equalityPrefixes, nonEqualityPrefixes, &indexStrategy);
+			if (columnNumber < 0)
+			{
+				modifiedIndexQuals = lappend(modifiedIndexQuals, rinfo);
+				continue;
+			}
+
+			int btreeStrategy = 0;
+			switch (indexStrategy)
+			{
+				case BSON_INDEX_STRATEGY_DOLLAR_GREATER:
+				{
+					btreeStrategy = BTGreaterStrategyNumber;
+					break;
+				}
+
+				case BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL:
+				{
+					btreeStrategy = BTGreaterEqualStrategyNumber;
+					break;
+				}
+
+				case BSON_INDEX_STRATEGY_DOLLAR_LESS:
+				{
+					btreeStrategy = BTLessStrategyNumber;
+					break;
+				}
+
+				case BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL:
+				{
+					btreeStrategy = BTLessEqualStrategyNumber;
+					break;
+				}
+
+				default:
+				{
+					modifiedIndexQuals = lappend(modifiedIndexQuals, rinfo);
+					continue;
+				}
+			}
+
+			Oid opNo = NativeStatsBtreeOperatorForStrategy(btreeStrategy);
+			if (!OidIsValid(opNo) || list_length(opExpr->args) != 2)
+			{
+				modifiedIndexQuals = lappend(modifiedIndexQuals, rinfo);
+				continue;
+			}
+
+			Expr *firstArg = linitial(opExpr->args);
+			Expr *secondArg = lsecond(opExpr->args);
+			if (IsA(firstArg, Var) && IsA(secondArg, Const) &&
+				!((Const *) secondArg)->constisnull)
+			{
+				Const *argConst = (Const *) secondArg;
+				pgbson *argBson = DatumGetPgBson(argConst->constvalue);
+				pgbsonelement dollarElement = { 0 };
+				PgbsonToSinglePgbsonElementWithCollation(argBson, &dollarElement);
+
+				Const *pathValue = MakeTextConst(dollarElement.path,
+												 dollarElement.pathLength);
+				*itemsToFree = lappend(*itemsToFree,
+									   DatumGetPointer(pathValue->constvalue));
+				*itemsToFree = lappend(*itemsToFree, pathValue);
+				List *pathArgs = list_make2(firstArg, pathValue);
+				*itemsToFree = lappend(*itemsToFree, pathArgs);
+				Expr *projectedValue = (Expr *) makeFuncExpr(
+					BsonStatsProjectFuncOid(), BsonTypeId(),
+					pathArgs, InvalidOid,
+					DEFAULT_COLLATION_OID, COERCE_EXPLICIT_CALL);
+				*itemsToFree = lappend(*itemsToFree, projectedValue);
+				pgbson *queryDocument = BsonValueToDocumentPgbson(
+					&dollarElement.bsonValue);
+				*itemsToFree = lappend(*itemsToFree, queryDocument);
+				Const *queryValue = MakeBsonConst(queryDocument);
+				*itemsToFree = lappend(*itemsToFree, queryValue);
+				queryValue->consttype = BsonQueryTypeId();
+				Expr *modifiedOpExpr = make_opclause(opNo, BOOLOID, false,
+													 projectedValue,
+													 (Expr *) queryValue,
+													 opExpr->opcollid,
+													 opExpr->inputcollid);
+				*itemsToFree = lappend(*itemsToFree,
+									   ((OpExpr *) modifiedOpExpr)->args);
+				*itemsToFree = lappend(*itemsToFree, modifiedOpExpr);
+				RestrictInfo *rinfoCopy = makeNode(RestrictInfo);
+				*itemsToFree = lappend(*itemsToFree, rinfoCopy);
+				memcpy(rinfoCopy, rinfo, sizeof(RestrictInfo));
+				rinfoCopy->clause = modifiedOpExpr;
+
+				/* The cached selectivity belongs to the original clause. */
+				rinfoCopy->norm_selec = -1;
+				rinfoCopy->outer_selec = -1;
+				modifiedIndexQuals = lappend(modifiedIndexQuals, rinfoCopy);
+				qualsModified = true;
+			}
+			else
+			{
+				modifiedIndexQuals = lappend(modifiedIndexQuals, rinfo);
+			}
+		}
+
+		if (qualsModified)
+		{
+			hasModifiedClauses = true;
+			IndexClause *clauseCopy = palloc(sizeof(IndexClause));
+			*itemsToFree = lappend(*itemsToFree, modifiedIndexQuals);
+			*itemsToFree = lappend(*itemsToFree, clauseCopy);
+			memcpy(clauseCopy, iclause, sizeof(IndexClause));
+			clauseCopy->indexquals = modifiedIndexQuals;
+			modifiedClauses = lappend(modifiedClauses, clauseCopy);
+		}
+		else
+		{
+			list_free(modifiedIndexQuals);
+			modifiedClauses = lappend(modifiedClauses, iclause);
+		}
+	}
+
+	if (hasModifiedClauses)
+	{
+		*itemsToFree = lappend(*itemsToFree, modifiedClauses);
+		return modifiedClauses;
+	}
+
+	list_free(modifiedClauses);
+	return indexPath->indexclauses;
+}
+
+
 /* --------------------------------------------------------- */
 /* Private functions */
 /* --------------------------------------------------------- */

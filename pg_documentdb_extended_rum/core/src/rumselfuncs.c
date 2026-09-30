@@ -56,6 +56,7 @@ static void PopulateIndexStatsInfo(IndexOptInfo *index, RumStatsData *ginStats,
 								   double *numEntries);
 
 typedef List *(*BoundaryQualsSelectorFunc)(IndexPath *indexPath, int32_t *num_sa_scans);
+typedef List *(*CostQualsSelectorFunc)(IndexPath *indexPath, List **itemsToFree);
 
 
 /*
@@ -78,6 +79,12 @@ RMGR_PG_FUNCTION_DEF(DocumentDBRumOrderedCostEstimate)
 	double *dataPagesProportionFetched = (double *) PG_GETARG_POINTER(11);
 	BoundaryQualsSelectorFunc boundaryQualsSelector =
 		(BoundaryQualsSelectorFunc) PG_GETARG_POINTER(12);
+
+	CostQualsSelectorFunc costedQualsSelectorFunc = NULL;
+	if (PG_NARGS() > 13)
+	{
+		costedQualsSelectorFunc = (CostQualsSelectorFunc) PG_GETARG_POINTER(13);
+	}
 
 	IndexOptInfo *index = path->indexinfo;
 	RumStatsData ginStats;
@@ -119,7 +126,22 @@ RMGR_PG_FUNCTION_DEF(DocumentDBRumOrderedCostEstimate)
 	costs.numIndexTuples = orderedSelectivity * statsNumTuples;
 
 	/* Use generic cost estimate for composite style indexes */
-	genericcostestimate(root, path, loop_count, &costs);
+
+	if (costedQualsSelectorFunc != NULL)
+	{
+		List *itemsToFree = NIL;
+		List *newQuals = costedQualsSelectorFunc(path, &itemsToFree);
+		List *oldQuals = path->indexclauses;
+		path->indexclauses = newQuals;
+		genericcostestimate(root, path, loop_count, &costs);
+		path->indexclauses = oldQuals;
+		list_free_deep(itemsToFree);
+	}
+	else
+	{
+		genericcostestimate(root, path, loop_count, &costs);
+	}
+
 	index->tuples = numTuples;
 
 	/* Account for descent cost, which is significant for large indexes */

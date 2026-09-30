@@ -236,6 +236,11 @@ bool EnableSkipSortPushdownForNonPointEqualities =
 bool EnableIndexCorrelationFromStatistics =
 	DEFAULT_ENABLE_INDEX_CORRELATION_FROM_STATISTICS;
 
+/* Added in v1.1, enabled in v1.2, remove after v1.5 */
+#define DEFAULT_ENABLE_COMPOSITE_RANGE_SELECTIVITY true
+bool EnableCompositeRangeSelectivity =
+	DEFAULT_ENABLE_COMPOSITE_RANGE_SELECTIVITY;
+
 /* Added in v0.111, enabled in v0.115, remove after v1.0 */
 #define DEFAULT_ENABLE_PER_COLLECTION_PLANNER_STATISTICS true
 bool EnablePerCollectionPlannerStatistics =
@@ -1258,6 +1263,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to source the physical-order correlation of a composite index's leading path from extended statistics during cost estimation. When off, the correlation defaults to the base access method estimate."),
 		NULL, &EnableIndexCorrelationFromStatistics,
 		DEFAULT_ENABLE_INDEX_CORRELATION_FROM_STATISTICS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_composite_range_selectivity", newGucPrefix),
+		gettext_noop(
+			"Whether to combine multiple range conditions on a composite index path for selectivity estimation."),
+		NULL, &EnableCompositeRangeSelectivity,
+		DEFAULT_ENABLE_COMPOSITE_RANGE_SELECTIVITY,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
