@@ -1,0 +1,220 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+SET documentdb.next_collection_id TO 3100;
+SET documentdb.next_collection_index_id TO 3100;
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET documentdb.defaultUseCompositeOpClass TO on;
+SET documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_api.create_collection(
+    'collation_collection_ordering_db', 'count_values');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+UPDATE documentdb_api_catalog.collections
+SET options = '{ "collation": { "locale": "fr", "strength": 1 } }'::bson
+WHERE database_name = 'collation_collection_ordering_db'
+  AND collection_name = 'count_values';
+SELECT COUNT(documentdb_api.insert_one(
+    'collation_collection_ordering_db',
+    'count_values',
+    bson_build_document('_id', id, 'value', value)))
+FROM (VALUES
+    (1, 'cafe'),
+    (2, 'CAFE'),
+    (3, convert_from(decode('636166c3a9', 'hex'), 'UTF8')),
+    (4, convert_from(decode('434146c389', 'hex'), 'UTF8'))
+) AS docs(id, value);
+ count 
+-------
+     4
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'collation_collection_ordering_db',
+    '{
+      "createIndexes": "count_values",
+      "indexes": [
+        {
+          "key": { "value": 1 },
+          "name": "idx_value_fr_s1",
+          "collation": { "locale": "fr", "strength": 1 },
+          "storageEngine": { "enableOrderedIndex": true }
+        },
+        {
+          "key": { "value": 1 },
+          "name": "idx_value_fr_s2",
+          "collation": { "locale": "fr", "strength": 2 },
+          "storageEngine": { "enableOrderedIndex": true }
+        },
+        {
+          "key": { "value": 1 },
+          "name": "idx_value_simple",
+          "collation": { "locale": "simple" },
+          "storageEngine": { "enableOrderedIndex": true }
+        }
+      ]
+    }',
+    true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+SET documentdb.forceIndexOnlyScanIfAvailable TO on;
+-- Omitted, null, and empty command collations inherit the collection default.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_count(
+    'collation_collection_ordering_db',
+    '{ "count": "count_values", "query": { "value": "cafe" } }')
+$cmd$);
+                                         run_explain_and_trim                                         
+------------------------------------------------------------------------------------------------------
+ Aggregate
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: collation_collection_ordering_db.count_values
+         indexName: idx_value_fr_s1
+         indexKey: {"value": 1}
+         indexCollation: fr-u-ks-level1
+         isMultiKey: false
+         indexBounds: ["value": ["cafe", "cafe"]]
+         ->  Index Only Scan using idx_value_fr_s1 on documents_3101 collection
+               Index Cond: (document @= '{ "value" : "cafe", "collation" : "fr-u-ks-level1" }'::bson)
+(10 rows)
+
+SELECT document FROM documentdb_api.count_query(
+    'collation_collection_ordering_db',
+    '{ "count": "count_values", "query": { "value": "cafe" } }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "4" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_count(
+    'collation_collection_ordering_db',
+    '{ "count": "count_values", "query": { "value": "cafe" }, "collation": null }')
+$cmd$);
+                                         run_explain_and_trim                                         
+------------------------------------------------------------------------------------------------------
+ Aggregate
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: collation_collection_ordering_db.count_values
+         indexName: idx_value_fr_s1
+         indexKey: {"value": 1}
+         indexCollation: fr-u-ks-level1
+         isMultiKey: false
+         indexBounds: ["value": ["cafe", "cafe"]]
+         ->  Index Only Scan using idx_value_fr_s1 on documents_3101 collection
+               Index Cond: (document @= '{ "value" : "cafe", "collation" : "fr-u-ks-level1" }'::bson)
+(10 rows)
+
+SELECT document FROM documentdb_api.count_query(
+    'collation_collection_ordering_db',
+    '{ "count": "count_values", "query": { "value": "cafe" }, "collation": null }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "4" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_count(
+    'collation_collection_ordering_db',
+    '{ "count": "count_values", "query": { "value": "cafe" }, "collation": {} }')
+$cmd$);
+                                         run_explain_and_trim                                         
+------------------------------------------------------------------------------------------------------
+ Aggregate
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: collation_collection_ordering_db.count_values
+         indexName: idx_value_fr_s1
+         indexKey: {"value": 1}
+         indexCollation: fr-u-ks-level1
+         isMultiKey: false
+         indexBounds: ["value": ["cafe", "cafe"]]
+         ->  Index Only Scan using idx_value_fr_s1 on documents_3101 collection
+               Index Cond: (document @= '{ "value" : "cafe", "collation" : "fr-u-ks-level1" }'::bson)
+(10 rows)
+
+SELECT document FROM documentdb_api.count_query(
+    'collation_collection_ordering_db',
+    '{ "count": "count_values", "query": { "value": "cafe" }, "collation": {} }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "4" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Meaningful explicit collations select their matching ordered indexes.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_count(
+    'collation_collection_ordering_db',
+    '{ "count": "count_values", "query": { "value": "cafe" }, "collation": { "locale": "fr", "strength": 2 } }')
+$cmd$);
+                                         run_explain_and_trim                                         
+------------------------------------------------------------------------------------------------------
+ Aggregate
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: collation_collection_ordering_db.count_values
+         indexName: idx_value_fr_s2
+         indexKey: {"value": 1}
+         indexCollation: fr-u-ks-level2
+         isMultiKey: false
+         indexBounds: ["value": ["cafe", "cafe"]]
+         ->  Index Only Scan using idx_value_fr_s2 on documents_3101 collection
+               Index Cond: (document @= '{ "value" : "cafe", "collation" : "fr-u-ks-level2" }'::bson)
+(10 rows)
+
+SELECT document FROM documentdb_api.count_query(
+    'collation_collection_ordering_db',
+    '{ "count": "count_values", "query": { "value": "cafe" }, "collation": { "locale": "fr", "strength": 2 } }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "2" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_count(
+    'collation_collection_ordering_db',
+    '{ "count": "count_values", "query": { "value": "cafe" }, "collation": { "locale": "simple" } }')
+$cmd$);
+                              run_explain_and_trim                               
+---------------------------------------------------------------------------------
+ Aggregate
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: collation_collection_ordering_db.count_values
+         indexName: idx_value_simple
+         indexKey: {"value": 1}
+         isMultiKey: false
+         indexBounds: ["value": ["cafe", "cafe"]]
+         ->  Index Only Scan using idx_value_simple on documents_3101 collection
+               Index Cond: (document @= '{ "value" : "cafe" }'::bson)
+(9 rows)
+
+SELECT document FROM documentdb_api.count_query(
+    'collation_collection_ordering_db',
+    '{ "count": "count_values", "query": { "value": "cafe" }, "collation": { "locale": "simple" } }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET documentdb.forceIndexOnlyScanIfAvailable;
+RESET enable_bitmapscan;
+RESET enable_seqscan;
+RESET documentdb.enableExtendedExplainPlans;
+RESET documentdb.defaultUseCompositeOpClass;
+RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
+RESET documentdb_core.enableCollation;
+RESET search_path;

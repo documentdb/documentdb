@@ -2920,6 +2920,7 @@ GenerateCountQuery(text *databaseDatum, pgbson *countSpec, bool setStatementTime
 	AggregationPipelineBuildContext context = { 0 };
 	context.databaseNameDatum = databaseDatum;
 	context.joinStatus = JoinStageStatus_Unknown;
+	context.resolveDefaultCollation = true;
 
 	bson_iter_t countIterator;
 	PgbsonInitIterator(countSpec, &countIterator);
@@ -2989,6 +2990,7 @@ GenerateCountQuery(text *databaseDatum, pgbson *countSpec, bool setStatementTime
 				if (EnsureTopLevelFieldIsDocumentNullOrEmptyOk(
 						"collation", &countIterator))
 				{
+					context.resolveDefaultCollation = false;
 					ParseAndGetCollationString(value, context.collationString);
 				}
 			}

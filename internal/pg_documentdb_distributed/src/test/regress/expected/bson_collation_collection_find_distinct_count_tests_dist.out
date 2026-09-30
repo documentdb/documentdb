@@ -1,0 +1,133 @@
+NOTICE:  identifier "pg_regress/bson_collation_collection_find_distinct_count_tests_dist" will be truncated to "pg_regress/bson_collation_collection_find_distinct_count_tests_"
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,pg_catalog;
+SET citus.next_shard_id TO 271300000;
+SET documentdb.next_collection_id TO 27130000;
+SET documentdb.next_collection_index_id TO 27130000;
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableExtendedExplainPlans TO on;
+SET documentdb.useLocalExecutionShardQueries TO off;
+SET citus.enable_local_execution TO off;
+SELECT documentdb_api.create_collection('collation_default_dist_db', 'default_match');
+NOTICE:  creating collection
+ create_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+UPDATE documentdb_api_catalog.collections
+SET options = '{ "collation": { "locale": "fr", "strength": 1 } }'::documentdb_core.bson
+WHERE database_name = 'collation_default_dist_db' AND collection_name = 'default_match';
+SELECT documentdb_api.insert_one(
+    'collation_default_dist_db', 'default_match', '{ "_id": 1, "value": "cafe" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_default_dist_db', 'default_match', '{ "_id": 2, "value": "CAFÉ" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'collation_default_dist_db', 'default_match', '{ "_id": 3, "value": "CAFE" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection(
+    'collation_default_dist_db', 'default_match', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+-- Find, distinct, and count inherit the default across shards.
+SELECT document FROM bson_aggregation_find(
+    'collation_default_dist_db',
+    '{ "find": "default_match", "filter": { "value": "cafe" }, "sort": { "_id": 1 } }');
+                       document                       
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : "cafe" }
+ { "_id" : { "$numberInt" : "2" }, "value" : "CAFÉ" }
+ { "_id" : { "$numberInt" : "3" }, "value" : "CAFE" }
+(3 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_find(
+    'collation_default_dist_db',
+    '{ "find": "default_match", "filter": { "value": "cafe" }, "sort": { "_id": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                   
+---------------------------------------------------------------------
+ Sort
+   Sort Key: remote_scan."?sort?" NULLS FIRST
+   ->  Custom Scan (Citus Adaptive)
+         Task Count: 8
+         Tasks Shown: One of 8
+         ->  Task
+               Node: host=localhost port=58070 dbname=regression
+               ->  Seq Scan on documents_27130001_271300004 collection
+                     Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "value" : "cafe", "collation" : "fr-u-ks-level1" }'::documentdb_core.bson)
+(9 rows)
+
+SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
+FROM documentdb_api.distinct_query(
+    'collation_default_dist_db',
+    '{ "distinct": "default_match", "key": "value" }');
+         bson_dollar_project          
+---------------------------------------------------------------------
+ { "count" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT document FROM documentdb_api.count_query(
+    'collation_default_dist_db',
+    '{ "count": "default_match", "query": { "value": "cafe" } }');
+                               document                               
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "3" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_count(
+    'collation_default_dist_db',
+    '{ "count": "default_match", "query": { "value": "cafe" } }')
+$cmd$);
+                                                                     run_explain_and_trim                                                                      
+---------------------------------------------------------------------
+ Aggregate
+   ->  Custom Scan (Citus Adaptive)
+         Task Count: 8
+         Tasks Shown: One of 8
+         ->  Task
+               Node: host=localhost port=58070 dbname=regression
+               ->  Aggregate
+                     ->  Seq Scan on documents_27130001_271300004 collection
+                           Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "value" : "cafe", "collation" : "fr-u-ks-level1" }'::documentdb_core.bson)
+(9 rows)
+
+-- An explicit simple collation remains binary across shards.
+SELECT document FROM documentdb_api.count_query(
+    'collation_default_dist_db',
+    '{ "count": "default_match", "query": { "value": "cafe" }, "collation": { "locale": "simple" } }');
+                               document                               
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+END;
+RESET citus.enable_local_execution;
+RESET documentdb.useLocalExecutionShardQueries;
+RESET documentdb.enableExtendedExplainPlans;
+RESET documentdb_core.enableCollation;
+RESET search_path;

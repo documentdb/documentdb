@@ -182,6 +182,48 @@ FROM documentdb_api.distinct_query(
     'collation_find_db',
     '{ "distinct": "explicit_simple", "key": "value" }');
 
+-- Count inherits the collection default when command collation is omitted, null, or empty.
+SELECT document FROM documentdb_api.count_query(
+    'collation_find_db',
+    '{ "count": "default_match", "query": { "value": "cafe" } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_count(
+    'collation_find_db',
+    '{ "count": "default_match", "query": { "value": "cafe" } }')
+$cmd$);
+SELECT document FROM documentdb_api.count_query(
+    'collation_find_db',
+    '{ "count": "default_match", "query": { "value": "cafe" }, "collation": null }');
+SELECT document FROM documentdb_api.count_query(
+    'collation_find_db',
+    '{ "count": "default_match", "query": { "value": "cafe" }, "collation": {} }');
+
+-- Meaningful explicit command collations override the collection default.
+SELECT document FROM documentdb_api.count_query(
+    'collation_find_db',
+    '{ "count": "default_match", "query": { "value": "cafe" }, "collation": { "locale": "simple" } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_count(
+    'collation_find_db',
+    '{ "count": "default_match", "query": { "value": "cafe" }, "collation": { "locale": "simple" } }')
+$cmd$);
+SELECT document FROM documentdb_api.count_query(
+    'collation_find_db',
+    '{ "count": "default_match", "query": { "value": "cafe" }, "collation": { "locale": "fr", "strength": 2 } }');
+
+-- Collections without an applicable default and missing collections retain existing behavior.
+SELECT document FROM documentdb_api.count_query(
+    'collation_find_db',
+    '{ "count": "no_default", "query": { "value": "cafe" } }');
+SELECT document FROM documentdb_api.count_query(
+    'collation_find_db',
+    '{ "count": "missing_default", "query": { "value": "cafe" } }');
+SELECT document FROM documentdb_api.count_query(
+    'collation_find_db',
+    '{ "count": "explicit_simple", "query": { "value": "cafe" } }');
+
 -- Disabling collation also retains binary comparison behavior.
 SET documentdb_core.enableCollation TO off;
 SELECT document FROM bson_aggregation_find(
@@ -191,6 +233,9 @@ SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }')
 FROM documentdb_api.distinct_query(
     'collation_find_db',
     '{ "distinct": "default_match", "key": "value" }');
+SELECT document FROM documentdb_api.count_query(
+    'collation_find_db',
+    '{ "count": "default_match", "query": { "value": "cafe" } }');
 
 RESET documentdb_core.enableCollation;
 RESET documentdb.enableExtendedExplainPlans;
