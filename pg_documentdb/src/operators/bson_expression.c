@@ -1419,6 +1419,19 @@ EvaluateFieldPathAndWriteCore(bson_iter_t *document, const char *dottedPathExpre
 		}
 	}
 
+	/*
+	 * The path continues past a value that is neither a document nor an array, such
+	 * as null in { a: null } for "$a.b". The path resolves to missing, just as when
+	 * "a" itself is absent, so it must also be written as null when requested.
+	 */
+	if (isNullOnEmpty)
+	{
+		bson_value_t nullValue = { 0 };
+		nullValue.value_type = BSON_TYPE_NULL;
+		PgbsonElementWriterWriteValue(writer, &nullValue);
+		return true;
+	}
+
 	return false;
 }
 
