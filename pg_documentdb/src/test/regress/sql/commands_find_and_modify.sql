@@ -314,3 +314,28 @@ ROLLBACK;
 BEGIN;
   SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "proj_ops", "let": {"ignored": 1}, "query": {"_id": 1}, "update": {"$set": {"scalar": 999}}, "fields": {"arr": {"$elemMatch": {"x": 2}}}, "new": true}');
 ROLLBACK;
+
+-- A document that is matched but left unchanged must still report n: 1 and
+-- updatedExisting: true, as the regular update command does.
+SELECT 1 FROM documentdb_api.insert_one('fam', 'upsert_meta', '{"_id": "exists", "name": "old", "score": 40}');
+
+-- test 15: upsert whose update only has $setOnInsert, matching an existing document
+BEGIN;
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "upsert_meta", "query": {"_id": "exists"}, "update": {"$setOnInsert": {"name": "new", "score": 99}}, "upsert": true, "new": true}');
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "upsert_meta", "query": {"_id": "exists"}, "update": {"$setOnInsert": {"name": "new", "score": 99}}, "upsert": true, "new": false}');
+ROLLBACK;
+
+-- test 16: update that sets a field to its current value, without upsert
+BEGIN;
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "upsert_meta", "query": {"_id": "exists"}, "update": {"$set": {"score": 40}}, "new": true}');
+ROLLBACK;
+
+-- test 17: controls that must keep their existing results
+BEGIN;
+  -- a real update of an existing document
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "upsert_meta", "query": {"_id": "exists"}, "update": {"$set": {"score": 41}}, "new": true}');
+  -- an upsert that inserts because nothing matches
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "upsert_meta", "query": {"_id": "missing"}, "update": {"$setOnInsert": {"name": "new"}}, "upsert": true, "new": true}');
+  -- no match and no upsert
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "upsert_meta", "query": {"_id": "missing2"}, "update": {"$set": {"score": 1}}}');
+ROLLBACK;
