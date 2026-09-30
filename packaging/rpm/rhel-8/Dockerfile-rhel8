@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=rockylinux:8
+ARG BASE_IMAGE=rockylinux/rockylinux:8
 FROM ${BASE_IMAGE}
 
 ARG POSTGRES_VERSION=16

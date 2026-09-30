@@ -282,7 +282,7 @@ jobs:
         uses: actions/checkout@v5
       - name: documentdb-common co-install lifecycle (RPM)
         run: |
-          docker run --rm -v "$PWD:/repo" rockylinux:9 bash -c '
+          docker run --rm -v "$PWD:/repo" rockylinux/rockylinux:9 bash -c '
             set -e
             dnf -q install -y rpm-build findutils >/dev/null 2>&1
             bash /repo/packaging/test_packages/test-documentdb-common-coinstall.sh --type rpm'

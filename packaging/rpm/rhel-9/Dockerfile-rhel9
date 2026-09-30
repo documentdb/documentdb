@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=rockylinux:9
+ARG BASE_IMAGE=rockylinux/rockylinux:9
 FROM ${BASE_IMAGE}
 
 ARG POSTGRES_VERSION=16
@@ -53,10 +53,16 @@ RUN dnf -y install --allowerasing \
 RUN echo "Detected architecture: ${TARGETARCH}"
 
 # PostgreSQL repo setup for RHEL 9
+# PGDG builds each EL9 minor separately; fall back to its EL-major path only
+# when it doesn't publish the image's minor (as install.sh does).
 # Note: transient PGDG repodata signature outages were observed (repomd.xml GPG signature verification error). If happends again, consider temporarily using --nogpgcheck flag or check https://github.com/pgdg-packaging/pgdg-rpms/issues for fixing.
-RUN if [ -n "${TARGETARCH}" ] && ( [ "${TARGETARCH}" = "arm64" ] || [ "${TARGETARCH}" = "arm64v8" ] ); then ARCH=aarch64; else ARCH=x86_64; fi; \
+RUN . /etc/os-release; \
+    if [ -n "${TARGETARCH}" ] && ( [ "${TARGETARCH}" = "arm64" ] || [ "${TARGETARCH}" = "arm64v8" ] ); then ARCH=aarch64; else ARCH=x86_64; fi; \
     echo "Setting up PGDG repo for RHEL 9 (arch=${ARCH})" && \
     dnf -y --disablerepo=* install https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-${ARCH}/pgdg-redhat-repo-latest.noarch.rpm && \
+    { [ "$(curl --connect-timeout 15 --max-time 60 -sS -o /dev/null -w '%{http_code}' -I https://download.postgresql.org/pub/repos/yum/${POSTGRES_VERSION}/redhat/rhel-${VERSION_ID}-${ARCH}/repodata/repomd.xml)" != 404 ] || \
+      { echo "PGDG does not publish rhel-${VERSION_ID}; using its EL-major path" && \
+        sed -i 's/rhel-\$releasever_major\.\$releasever_minor-/rhel-\$releasever_major-/g' /etc/yum.repos.d/pgdg-redhat-all.repo; }; } && \
     dnf -qy module disable postgresql && \
     dnf -y install postgresql${POSTGRES_VERSION} \
     postgresql${POSTGRES_VERSION}-devel \

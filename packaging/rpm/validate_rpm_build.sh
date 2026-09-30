@@ -50,9 +50,9 @@ done
 
 # Test base image pull
 echo "4. Testing base image access..."
-if docker pull rockylinux:8 &> /dev/null; then
+if docker pull rockylinux/rockylinux:8 &> /dev/null; then
     echo "✅ Rocky Linux 8 base image is accessible"
-    docker rmi rockylinux:8 &> /dev/null || true
+    docker rmi rockylinux/rockylinux:8 &> /dev/null || true
 else
     echo "❌ Cannot pull Rocky Linux 8 base image"
     failed_repos+=("docker.io/rockylinux")

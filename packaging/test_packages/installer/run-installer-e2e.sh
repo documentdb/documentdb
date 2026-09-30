@@ -193,7 +193,7 @@ else
         --armor --detach-sign \
         --output "${RPM_DIR}/repodata/repomd.xml.asc" \
         "${RPM_DIR}/repodata/repomd.xml"
-    BASE_IMAGE="rockylinux:9"
+    BASE_IMAGE="rockylinux/rockylinux:9"
 fi
 
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 \

@@ -1,10 +1,10 @@
 # Single RHEL-family clean-install test image for the DocumentDB gateway +
 # stand-alone RPMs, shared by the rhel8 and rhel9 test targets. The caller
 # (build_gateway_packages.sh) selects the EL major
-# by passing --build-arg BASE_IMAGE (rockylinux:8 or rockylinux:9); every
+# by passing --build-arg BASE_IMAGE (rockylinux/rockylinux:8 or rockylinux/rockylinux:9); every
 # EL-major-specific step below derives the major from /etc/os-release so the two
 # families cannot drift. Mirrors the build-side packaging/rpm/Dockerfile_gateway_rhel.
-ARG BASE_IMAGE=rockylinux:9
+ARG BASE_IMAGE=rockylinux/rockylinux:9
 FROM ${BASE_IMAGE}
 
 ARG POSTGRES_VERSION=16
@@ -22,6 +22,10 @@ ARG TARGETARCH
 
 ENV POSTGRES_VERSION=${POSTGRES_VERSION}
 RUN . /etc/os-release && echo "Testing for RPM install on RHEL ${VERSION_ID%%.*}"
+
+# Rocky's own EL9 image sets tsflags=nodocs; keep %doc files like a real host,
+# since the clean-install tests check them.
+RUN sed -i '/^tsflags=nodocs/d' /etc/dnf/dnf.conf
 
 RUN [ -n "${RPM_PACKAGE_REL_PATH}" ] || (echo "ERROR: RPM_PACKAGE_REL_PATH build-arg is required." >&2; exit 1)
 RUN [ -n "${GATEWAY_RPM_PACKAGE_REL_PATH}" ] || (echo "ERROR: GATEWAY_RPM_PACKAGE_REL_PATH build-arg is required." >&2; exit 1)
@@ -70,13 +74,15 @@ RUN dnf -y install --allowerasing \
 
 RUN echo "Detected architecture: ${TARGETARCH}"
 
-# rockylinux:9 is frozen at 9.3, whose per-minor PGDG path is no longer
-# published; use PGDG's EL-major path (a no-op on EL8).
+# PGDG builds each EL9 minor separately; fall back to its EL-major path only
+# when it doesn't publish the image's minor (as install.sh does). No-op on EL8.
 RUN . /etc/os-release && EL_MAJOR="${VERSION_ID%%.*}"; \
     if [ -n "${TARGETARCH}" ] && ( [ "${TARGETARCH}" = "arm64" ] || [ "${TARGETARCH}" = "arm64v8" ] ); then ARCH=aarch64; else ARCH=x86_64; fi; \
     echo "Setting up PGDG repo for RHEL ${EL_MAJOR} (arch=${ARCH})" && \
     dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-${EL_MAJOR}-${ARCH}/pgdg-redhat-repo-latest.noarch.rpm && \
-    sed -i 's/rhel-\$releasever_major\.\$releasever_minor-/rhel-\$releasever_major-/g' /etc/yum.repos.d/pgdg-redhat-all.repo && \
+    { [ "$(curl --connect-timeout 15 --max-time 60 -sS -o /dev/null -w '%{http_code}' -I https://download.postgresql.org/pub/repos/yum/${POSTGRES_VERSION}/redhat/rhel-${VERSION_ID}-${ARCH}/repodata/repomd.xml)" != 404 ] || \
+      { echo "PGDG does not publish rhel-${VERSION_ID}; using its EL-major path" && \
+        sed -i 's/rhel-\$releasever_major\.\$releasever_minor-/rhel-\$releasever_major-/g' /etc/yum.repos.d/pgdg-redhat-all.repo; }; } && \
     dnf -qy module disable postgresql && \
     PKGS="postgresql${POSTGRES_VERSION} \
         postgresql${POSTGRES_VERSION}-devel \

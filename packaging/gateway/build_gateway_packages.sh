@@ -180,15 +180,16 @@ if [[ "$PACKAGE_TYPE" == "deb" ]]; then
             ;;
     esac
 elif [[ "$PACKAGE_TYPE" == "rpm" ]]; then
+    # Rocky's own images: Docker Hub's official rockylinux:8/9 stopped at 8.9/9.3.
     case $OS in
         rhel8)
-            DOCKER_IMAGE="rockylinux:8"
-            TEST_DOCKER_IMAGE="rockylinux:8"
+            DOCKER_IMAGE="rockylinux/rockylinux:8"
+            TEST_DOCKER_IMAGE="rockylinux/rockylinux:8"
             DOCKERFILE="${script_dir}/packaging/rpm/Dockerfile_gateway_rhel"
             ;;
         rhel9)
-            DOCKER_IMAGE="rockylinux:9"
-            TEST_DOCKER_IMAGE="rockylinux:9"
+            DOCKER_IMAGE="rockylinux/rockylinux:9"
+            TEST_DOCKER_IMAGE="rockylinux/rockylinux:9"
             DOCKERFILE="${script_dir}/packaging/rpm/Dockerfile_gateway_rhel"
             ;;
         *)

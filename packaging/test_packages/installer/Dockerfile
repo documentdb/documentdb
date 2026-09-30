@@ -6,6 +6,7 @@ FROM ${BASE_IMAGE}
 
 ARG DEBIAN_FRONTEND=noninteractive
 
+# Rocky's own EL9 image sets tsflags=nodocs; a real host keeps %doc files.
 RUN if command -v apt-get >/dev/null 2>&1; then \
         apt-get update && \
         apt-get install -y --no-install-recommends \
@@ -15,6 +16,7 @@ RUN if command -v apt-get >/dev/null 2>&1; then \
         locale-gen && \
         rm -rf /var/lib/apt/lists/*; \
     else \
+        sed -i '/^tsflags=nodocs/d' /etc/dnf/dnf.conf && \
         dnf install -y \
             systemd dbus ca-certificates curl-minimal gnupg2 \
             python3 openssl iproute procps-ng \

@@ -144,14 +144,15 @@ if [[ "$PACKAGE_TYPE" == "deb" ]]; then
             ;;
     esac
 elif [[ "$PACKAGE_TYPE" == "rpm" ]]; then
+    # Rocky's own images: Docker Hub's official rockylinux:8/9 stopped at 8.9/9.3.
     case $OS in
         rhel8)
             DOCKERFILE="${script_dir}/packaging/rpm/rhel-8/Dockerfile-rhel8"
-            DOCKER_IMAGE="rockylinux:8"
+            DOCKER_IMAGE="rockylinux/rockylinux:8"
             ;;
         rhel9)
             DOCKERFILE="${script_dir}/packaging/rpm/rhel-9/Dockerfile-rhel9"
-            DOCKER_IMAGE="rockylinux:9"
+            DOCKER_IMAGE="rockylinux/rockylinux:9"
             ;;
         *)
             echo "Error: Invalid OS specified for RPM build: $OS"
