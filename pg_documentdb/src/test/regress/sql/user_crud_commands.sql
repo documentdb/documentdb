@@ -570,3 +570,31 @@ DROP ROLE "connStatusAdminOptionUser";
 
 RESET documentdb.enableRoleCrud;
 RESET documentdb.enableRolesAdminDBCheck;
+
+-- dropUser and updateUser must reject user names of NAMEDATALEN (64) bytes or more before
+-- PostgreSQL truncates them to 63 bytes, so a longer name cannot act on an existing user whose
+-- name is its 63-byte prefix.
+SET documentdb.enableUsersAdminDBCheck TO ON;
+SELECT documentdb_api.create_user('{"createUser":"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu", "pwd":"test_password", "roles":[{"role":"readAnyDatabase","db":"admin"}], "$db":"admin"}');
+CREATE TEMP TABLE long_user_password_before AS SELECT rolpassword FROM pg_authid WHERE rolname = 'uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu';
+
+SET documentdb.enableUsernamePasswordConstraints TO ON;
+SELECT documentdb_api.drop_user('{"dropUser":"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu", "$db":"admin"}');
+SELECT documentdb_api.update_user('{"updateUser":"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu", "pwd":"new_password", "$db":"admin"}');
+
+SET documentdb.enableUsernamePasswordConstraints TO OFF;
+SELECT documentdb_api.drop_user('{"dropUser":"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu", "$db":"admin"}');
+SELECT documentdb_api.update_user('{"updateUser":"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu", "pwd":"new_password", "$db":"admin"}');
+RESET documentdb.enableUsernamePasswordConstraints;
+
+-- The limit is in bytes: 32 two-byte characters are 64 bytes and are rejected too.
+SELECT documentdb_api.drop_user('{"dropUser":"éééééééééééééééééééééééééééééééé", "$db":"admin"}');
+SELECT documentdb_api.update_user('{"updateUser":"éééééééééééééééééééééééééééééééé", "pwd":"new_password", "$db":"admin"}');
+
+-- The 63-byte user still exists with its original password, and its exact name still works.
+SELECT rolname FROM pg_roles WHERE rolname = 'uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu';
+SELECT a.rolpassword = b.rolpassword AS password_unchanged FROM pg_authid a, long_user_password_before b WHERE a.rolname = 'uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu';
+SELECT documentdb_api.drop_user('{"dropUser":"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu", "$db":"admin"}');
+SELECT count(*) FROM pg_roles WHERE rolname LIKE 'uuuuuuuuuu%';
+DROP TABLE long_user_password_before;
+RESET documentdb.enableUsersAdminDBCheck;

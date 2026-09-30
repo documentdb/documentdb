@@ -739,6 +739,18 @@ ParseDropUserSpec(pgbson *dropSpec)
 									"The field 'dropUser' is mandatory.")));
 			}
 
+			/*
+			 * PostgreSQL truncates identifiers longer than NAMEDATALEN - 1 bytes, so an
+			 * overlong name could otherwise drop an existing user whose name is its prefix.
+			 */
+			if (strLength >= NAMEDATALEN)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"The user name is too long. Try a user name shorter than %d characters.",
+									NAMEDATALEN)));
+			}
+
 			if (IsReservedRoleName(dropUser))
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
@@ -913,6 +925,18 @@ ParseUpdateUserSpec(pgbson *updateSpec, UpdateUserSpec *spec)
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 								errmsg(
 									"'updateUser' is a required field.")));
+			}
+
+			/*
+			 * PostgreSQL truncates identifiers longer than NAMEDATALEN - 1 bytes, so an
+			 * overlong name could otherwise update an existing user whose name is its prefix.
+			 */
+			if (strLength >= NAMEDATALEN)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"The user name is too long. Try a user name shorter than %d characters.",
+									NAMEDATALEN)));
 			}
 
 			if (IsReservedRoleName(spec->updateUser))

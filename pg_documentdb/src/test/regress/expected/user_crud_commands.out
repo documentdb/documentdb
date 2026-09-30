@@ -1102,3 +1102,57 @@ REVOKE documentdb_readonly_role FROM "connStatusAdminOptionUser";
 DROP ROLE "connStatusAdminOptionUser";
 RESET documentdb.enableRoleCrud;
 RESET documentdb.enableRolesAdminDBCheck;
+-- dropUser and updateUser must reject user names of NAMEDATALEN (64) bytes or more before
+-- PostgreSQL truncates them to 63 bytes, so a longer name cannot act on an existing user whose
+-- name is its 63-byte prefix.
+SET documentdb.enableUsersAdminDBCheck TO ON;
+SELECT documentdb_api.create_user('{"createUser":"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu", "pwd":"test_password", "roles":[{"role":"readAnyDatabase","db":"admin"}], "$db":"admin"}');
+            create_user
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+CREATE TEMP TABLE long_user_password_before AS SELECT rolpassword FROM pg_authid WHERE rolname = 'uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu';
+SET documentdb.enableUsernamePasswordConstraints TO ON;
+SELECT documentdb_api.drop_user('{"dropUser":"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu", "$db":"admin"}');
+ERROR:  The user name is too long. Try a user name shorter than 64 characters.
+SELECT documentdb_api.update_user('{"updateUser":"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu", "pwd":"new_password", "$db":"admin"}');
+ERROR:  The user name is too long. Try a user name shorter than 64 characters.
+SET documentdb.enableUsernamePasswordConstraints TO OFF;
+SELECT documentdb_api.drop_user('{"dropUser":"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu", "$db":"admin"}');
+ERROR:  The user name is too long. Try a user name shorter than 64 characters.
+SELECT documentdb_api.update_user('{"updateUser":"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu", "pwd":"new_password", "$db":"admin"}');
+ERROR:  The user name is too long. Try a user name shorter than 64 characters.
+RESET documentdb.enableUsernamePasswordConstraints;
+-- The limit is in bytes: 32 two-byte characters are 64 bytes and are rejected too.
+SELECT documentdb_api.drop_user('{"dropUser":"éééééééééééééééééééééééééééééééé", "$db":"admin"}');
+ERROR:  The user name is too long. Try a user name shorter than 64 characters.
+SELECT documentdb_api.update_user('{"updateUser":"éééééééééééééééééééééééééééééééé", "pwd":"new_password", "$db":"admin"}');
+ERROR:  The user name is too long. Try a user name shorter than 64 characters.
+-- The 63-byte user still exists with its original password, and its exact name still works.
+SELECT rolname FROM pg_roles WHERE rolname = 'uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu';
+                             rolname
+-----------------------------------------------------------------
+ uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu
+(1 row)
+
+SELECT a.rolpassword = b.rolpassword AS password_unchanged FROM pg_authid a, long_user_password_before b WHERE a.rolname = 'uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu';
+ password_unchanged
+--------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_user('{"dropUser":"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu", "$db":"admin"}');
+             drop_user
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT count(*) FROM pg_roles WHERE rolname LIKE 'uuuuuuuuuu%';
+ count
+-------
+     0
+(1 row)
+
+DROP TABLE long_user_password_before;
+RESET documentdb.enableUsersAdminDBCheck;
