@@ -199,6 +199,9 @@ static BackgroundIndexRunStatus build_index_concurrently_from_indexqueue_core(
 static Datum build_index_background_core(PG_FUNCTION_ARGS);
 static void PostProcessIndexForReIndex(int64 collectionId, IndexDetails *details, bool
 									   isReindexViaCreate);
+static void UpdatePostgresIndexForBackgroundOperation(uint64_t collectionId, int indexId,
+													  int operation, bool value,
+													  const char *indexNameSuffix);
 static void PostProcessIndexForCreateUnique(int64 collectionId, IndexDetails *details);
 static bool IndexSpecsAreEquivalentForUniqueness(const IndexSpec *leftIndexSpec,
 												 const IndexSpec *rightIndexSpec);
@@ -1007,12 +1010,14 @@ GenerateIndexCreateSpecForUpdateOptions(IndexDetails *indexDef, bool
 	bool isBackgroundBuild = true;
 	bool createIndexesConcurrently = true;
 	bool isTempCollection = false;
+	bool isUpgradeOptionsCommand = true;
 	char *indexBuildCmd = CreatePostgresIndexCreationCmd(indexDef->collectionId,
 														 indexDefinition,
 														 indexDef->indexId,
 														 createIndexesConcurrently,
 														 isTempCollection,
-														 isBackgroundBuild);
+														 isBackgroundBuild,
+														 isUpgradeOptionsCommand);
 	return indexBuildCmd;
 }
 
@@ -1604,10 +1609,12 @@ SubmitCreateIndexesRequest(Datum dbNameDatum,
 		}
 
 		bool isBackgroundBuild = true;
+		bool isUpgradeOptionsCommand = false;
 		char *cmd = CreatePostgresIndexCreationCmd(collectionId, indexDef, indexId,
 												   createIndexesConcurrently,
 												   isTempCollection,
-												   isBackgroundBuild);
+												   isBackgroundBuild,
+												   isUpgradeOptionsCommand);
 
 		Oid userOid = GetAuthenticatedUserId();
 		AddRequestInIndexQueue(cmd, indexId, collectionId, CREATE_INDEX_COMMAND_TYPE,
@@ -1736,16 +1743,6 @@ PostProcessIndexForReIndex(int64 collectionId, IndexDetails *details, bool
 	if (details->indexSpec.indexUnique == BoolIndexOption_True)
 	{
 		/* Unique index being reindexed - need to update the constraint properties */
-		Oid indexOid = get_relname_relid(reindex_indexname, ApiDataNamespaceOid());
-
-		List *indexOidList = list_make1_oid(indexOid);
-
-		/* Add any additional shard OIDs needed for this */
-		bool ignoreMissingShards = false;
-		indexOidList = list_concat(indexOidList,
-								   GetShardIndexOids(collectionId, indexOid,
-													 ignoreMissingShards));
-
 		/* Failure injection point 4: Before prepareUnique during reindex */
 		if (IndexBuildFailurePoint == 4)
 		{
@@ -1756,7 +1753,10 @@ PostProcessIndexForReIndex(int64 collectionId, IndexDetails *details, bool
 		}
 
 		bool prepareUnique = true;
-		UpdatePostgresIndexesForPrepareUnique(indexOidList, prepareUnique);
+		UpdatePostgresIndexWithOverride(
+			collectionId, details->indexId,
+			INDEX_METADATA_UPDATE_OPERATION_PREPARE_UNIQUE, prepareUnique, "_ccnew",
+			UpdatePostgresIndexForBackgroundOperation);
 
 		/* Failure injection point 5: After prepareUnique, before first rename during reindex */
 		if (IndexBuildFailurePoint == 5)
@@ -1789,6 +1789,17 @@ PostProcessIndexForReIndex(int64 collectionId, IndexDetails *details, bool
 		psprintf("ALTER INDEX %s.%s RENAME to %s", ApiDataSchemaName, reindex_indexname,
 				 base_indexname),
 		readOnly, SPI_OK_UTILITY, &isNullIgnore);
+}
+
+
+static void
+UpdatePostgresIndexForBackgroundOperation(uint64_t collectionId, int indexId,
+										  int operation, bool value,
+										  const char *indexNameSuffix)
+{
+	bool ignoreMissingShards = false;
+	UpdatePostgresIndexCoreWithSuffix(collectionId, indexId, operation, value,
+									  indexNameSuffix, ignoreMissingShards);
 }
 
 
@@ -1921,14 +1932,6 @@ PostProcessIndexForCreateUnique(int64 collectionId, IndexDetails *details)
 		UINT64_FORMAT,
 		details->indexId, collectionId);
 
-	List *indexOidList = list_make1_oid(indexOid);
-
-	/* Add any additional shard OIDs needed for this */
-	bool ignoreMissingShards = false;
-	indexOidList = list_concat(indexOidList,
-							   GetShardIndexOids(collectionId, indexOid,
-												 ignoreMissingShards));
-
 	/* Failure injection point 1: Before registering exclusion constraint */
 	if (IndexBuildFailurePoint == 1)
 	{
@@ -1940,7 +1943,11 @@ PostProcessIndexForCreateUnique(int64 collectionId, IndexDetails *details)
 
 	/* Step 1: Register the exclusion constraint (unvalidated) so new writes are protected */
 	bool prepareUnique = true;
-	UpdatePostgresIndexesForPrepareUnique(indexOidList, prepareUnique);
+	const char *indexNameSuffix = NULL;
+	UpdatePostgresIndexWithOverride(
+		collectionId, details->indexId,
+		INDEX_METADATA_UPDATE_OPERATION_PREPARE_UNIQUE, prepareUnique, indexNameSuffix,
+		UpdatePostgresIndexForBackgroundOperation);
 
 	/* Failure injection point 2: After registering constraint, before commit */
 	if (IndexBuildFailurePoint == 2)
@@ -2001,9 +2008,11 @@ PostProcessIndexForCreateUnique(int64 collectionId, IndexDetails *details)
 	if (!skipTableWalk)
 	{
 		/* Validate uniqueness for existing rows (table walk) */
-		UpdatePostgresIndexCore(collectionId, details->indexId,
-								INDEX_METADATA_UPDATE_OPERATION_UNIQUE, true,
-								ignoreMissingShards);
+		bool unique = true;
+		UpdatePostgresIndexWithOverride(
+			collectionId, details->indexId,
+			INDEX_METADATA_UPDATE_OPERATION_UNIQUE, unique, indexNameSuffix,
+			UpdatePostgresIndexForBackgroundOperation);
 
 		/* Failure injection point 3: After table walk completes */
 		if (IndexBuildFailurePoint == 3)

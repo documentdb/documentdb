@@ -240,17 +240,12 @@ set client_min_messages to debug1;
 SET citus.multi_shard_modify_mode TO 'sequential';
 SELECT documentdb_api.coll_mod('collmod', 'coll_mod_test_hidden', '{ "collMod": "coll_mod_test_hidden", "index": { "name": "my_idx_1", "hidden": true } }');
 DEBUG:  executing "SELECT index_id, index_spec, index_is_valid FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $2 AND (index_spec).index_name = $1;" via SPI
-DEBUG:  executing "WITH r1 AS (SELECT MIN($1 || '_' || sh.shardid) AS shardName FROM pg_dist_shard sh JOIN pg_dist_placement pl  on pl.shardid = sh.shardid WHERE logicalrelid = $1::regclass GROUP by groupid)  SELECT ARRAY_AGG(r1.shardName) FROM r1" via SPI
-DEBUG:  Executing command_node_worker on table documentdb_data.documents_9201_920004
+DEBUG:  executing "SELECT COUNT(*)::int4 FROM pg_dist_node WHERE nodecluster = 'default' AND noderole = 'primary' AND isactive" via SPI
 DEBUG:  executing "SELECT array_agg(shardid) FROM pg_dist_shard WHERE logicalrelid = $1" via SPI
 DEBUG:  executing "UPDATE pg_catalog.pg_index SET indisvalid = $1 WHERE indexrelid = $2 RETURNING indexrelid" via SPI
 DEBUG:  executing "UPDATE pg_catalog.pg_index SET indisvalid = $1 WHERE indexrelid = $2 RETURNING indexrelid" via SPI
 DEBUG:  executing "UPDATE pg_catalog.pg_index SET indisvalid = $1 WHERE indexrelid = $2 RETURNING indexrelid" via SPI
 DEBUG:  executing "UPDATE pg_catalog.pg_index SET indisvalid = $1 WHERE indexrelid = $2 RETURNING indexrelid" via SPI
-DEBUG:  Skipping command_node_worker on table documentdb_data.documents_9201_920005 since not in chosen shards
-DEBUG:  Skipping command_node_worker on table documentdb_data.documents_9201_920006 since not in chosen shards
-DEBUG:  executing "SELECT citus_is_coordinator()" via SPI
-DEBUG:  executing "select COUNT(1) from citus_shards cs join pg_dist_node pd on cs.nodename = pd.nodename and cs.nodeport = pd.nodeport where cs.table_name = $1::regclass and pd.groupid = 0" via SPI
 DEBUG:  executing "UPDATE documentdb_api_catalog.collection_indexes SET index_spec = $1 WHERE index_id = $2;" via SPI
                                    coll_mod                                   
 ---------------------------------------------------------------------

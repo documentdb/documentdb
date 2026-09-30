@@ -730,16 +730,18 @@ GetShardIndexOids(uint64_t collectionId, Oid indexOid, bool ignoreMissing)
 
 void
 UpdatePostgresIndexWithOverride(uint64_t collectionId, int indexId, int operation, bool
-								value,
-								void (*default_update)(uint64_t, int, int, bool))
+								value, const char *indexNameSuffix,
+								void (*default_update)(uint64_t, int, int, bool,
+													   const char *))
 {
 	if (update_postgres_index_hook != NULL)
 	{
-		update_postgres_index_hook(collectionId, indexId, operation, value);
+		update_postgres_index_hook(collectionId, indexId, operation, value,
+								   indexNameSuffix);
 	}
 	else
 	{
-		default_update(collectionId, indexId, operation, value);
+		default_update(collectionId, indexId, operation, value, indexNameSuffix);
 	}
 }
 

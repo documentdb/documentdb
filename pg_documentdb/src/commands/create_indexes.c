@@ -5331,9 +5331,11 @@ CreatePostgresIndex(uint64 collectionId, IndexDef *indexDef, int indexId,
 					bool concurrently, bool isTempCollection, bool isUnsharded)
 {
 	bool isBackgroundBuild = false;
+	bool isUpgradeOptionsCommand = false;
 	char *cmd = CreatePostgresIndexCreationCmd(collectionId, indexDef, indexId,
 											   concurrently, isTempCollection,
-											   isBackgroundBuild);
+											   isBackgroundBuild,
+											   isUpgradeOptionsCommand);
 	const Oid userOid = InvalidOid;
 	bool useSerialExecution = isUnsharded;
 	ExecuteCreatePostgresIndexCmd(cmd, concurrently, userOid, useSerialExecution);
@@ -5346,7 +5348,7 @@ CreatePostgresIndex(uint64 collectionId, IndexDef *indexDef, int indexId,
 char *
 CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int indexId,
 							   bool concurrently, bool isTempCollection,
-							   bool isBackgroundBuild)
+							   bool isBackgroundBuild, bool isUpgradeOptionsCommand)
 {
 	StringInfo cmdStr = makeStringInfo();
 	bool unique = indexDef->unique == BoolIndexOption_True;
@@ -5367,10 +5369,18 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 									 indexDef->enableLargeIndexKeys ==
 									 BoolIndexOption_True;
 
-		isBackgroundNonBlockingUnique = EnableNonBlockingUniqueIndexBuild &&
+		isBackgroundNonBlockingUnique = (EnableNonBlockingUniqueIndexBuild ||
+										 isUpgradeOptionsCommand) &&
 										isBackgroundBuild &&
 										CanBuildNonBlockingUniqueIndex() &&
 										IsCompositePathIndex(indexDef);
+
+		if (isUpgradeOptionsCommand && !isBackgroundNonBlockingUnique)
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							errmsg(
+								"updating unique index options requires non-blocking unique index build support")));
+		}
 	}
 
 	if (EnableExtendedIndexes &&

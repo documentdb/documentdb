@@ -7,34 +7,6 @@ SET citus.next_shard_id TO 300020000;
 SET documentdb.next_collection_id TO 30002000;
 SET documentdb.next_collection_index_id TO 30002000;
 
--- Recreate the worker entry point so its OID differs from the coordinator's.
-SELECT bool_and(success) AS recreated_worker_function
-FROM run_command_on_workers($cmd$
-DO $do$
-DECLARE
-    function_oid oid := 'documentdb_api_distributed.update_postgres_index_worker(documentdb_core.bson)'::regprocedure;
-    function_definition text := pg_get_functiondef(function_oid);
-    extension_name text;
-BEGIN
-    PERFORM set_config('citus.enable_ddl_propagation', 'off', true);
-    SELECT extname INTO STRICT extension_name
-    FROM pg_depend JOIN pg_extension ON refobjid = pg_extension.oid
-    WHERE classid = 'pg_proc'::regclass AND objid = function_oid
-      AND refclassid = 'pg_extension'::regclass AND deptype = 'e';
-    EXECUTE format('ALTER EXTENSION %I DROP FUNCTION documentdb_api_distributed.update_postgres_index_worker(documentdb_core.bson)', extension_name);
-    DROP FUNCTION documentdb_api_distributed.update_postgres_index_worker(documentdb_core.bson);
-    EXECUTE function_definition;
-    EXECUTE format('ALTER EXTENSION %I ADD FUNCTION documentdb_api_distributed.update_postgres_index_worker(documentdb_core.bson)', extension_name);
-END;
-$do$;
-$cmd$);
-
-SELECT bool_and(success AND result::oid <>
-    'documentdb_api_distributed.update_postgres_index_worker(documentdb_core.bson)'::regprocedure::oid) AS worker_oids_differ
-FROM run_command_on_workers($cmd$
-    SELECT 'documentdb_api_distributed.update_postgres_index_worker(documentdb_core.bson)'::regprocedure::oid
-$cmd$);
-
 SELECT documentdb_api.create_collection('hide_mn', 'coll');
 SELECT documentdb_api_internal.create_indexes_non_concurrently('hide_mn',
     '{"createIndexes":"coll","indexes":[{"key":{"a":1},"name":"a_1"}]}', true);

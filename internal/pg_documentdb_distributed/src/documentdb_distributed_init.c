@@ -34,6 +34,12 @@ char *ClusterAdminRole = DEFAULT_CLUSTER_ADMIN_ROLE;
 #define DEFAULT_ENABLE_MOVE_COLLECTION true
 bool EnableMoveCollection = DEFAULT_ENABLE_MOVE_COLLECTION;
 
+/* FeatureFlag */
+/* Added in v1.2, Pending stabilization, enable in v1.4 */
+#define DEFAULT_ENABLE_NON_BLOCKING_UNIQUE_INDEX_BUILD_ON_MULTI_NODE false
+bool EnableNonBlockingUniqueIndexBuildOnMultiNode =
+	DEFAULT_ENABLE_NON_BLOCKING_UNIQUE_INDEX_BUILD_ON_MULTI_NODE;
+
 /* SystemConfig */
 #define DEFAULT_ENABLE_SKIP_UPGRADE_FOR_UNINITIALIZED_CLUSTER true
 bool EnableSkipUpgradeForUninitializedCluster =
@@ -72,6 +78,14 @@ InitDocumentDBDistributedConfigurations(const char *prefix)
 		gettext_noop(
 			"Determines whether or not to enable move collection."),
 		NULL, &EnableMoveCollection, DEFAULT_ENABLE_MOVE_COLLECTION,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_non_blocking_unique_index_build_on_multi_node", prefix),
+		gettext_noop(
+			"Whether to enable non-blocking unique index builds across multiple nodes."),
+		NULL, &EnableNonBlockingUniqueIndexBuildOnMultiNode,
+		DEFAULT_ENABLE_NON_BLOCKING_UNIQUE_INDEX_BUILD_ON_MULTI_NODE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

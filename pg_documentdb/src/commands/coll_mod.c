@@ -178,8 +178,7 @@ static pgbson * UpdateOperationKeyInIndexOptions(pgbson *indexOptions,
 static void UpdatePostgresIndex(uint64_t collectionId, int indexId, int operation, bool
 								value);
 static void UpdatePostgresIndexOverride(uint64_t collectionId, int indexId, int operation,
-										bool
-										value);
+										bool value, const char *indexNameSuffix);
 static void UpdatePostgresIndexesForHide(List *indexOids, bool hidden);
 static void UpdatePostgresIndexesForUnique(List *indexOids, bool unique);
 static void RegisterExclusionInPgIndexCatalog(Oid indexoid);
@@ -1454,17 +1453,21 @@ UpdatePostgresIndex(uint64_t collectionId, int indexId, int operation, bool valu
 	}
 	else
 	{
+		const char *indexNameSuffix = NULL;
 		UpdatePostgresIndexWithOverride(collectionId, indexId, operation, value,
+										indexNameSuffix,
 										UpdatePostgresIndexOverride);
 	}
 }
 
 
 static void
-UpdatePostgresIndexOverride(uint64_t collectionId, int indexId, int operation, bool value)
+UpdatePostgresIndexOverride(uint64_t collectionId, int indexId, int operation, bool value,
+							const char *indexNameSuffix)
 {
 	bool ignoreMissingShards = false;
-	UpdatePostgresIndexCore(collectionId, indexId, operation, value, ignoreMissingShards);
+	UpdatePostgresIndexCoreWithSuffix(collectionId, indexId, operation, value,
+									  indexNameSuffix, ignoreMissingShards);
 }
 
 
@@ -1472,9 +1475,23 @@ void
 UpdatePostgresIndexCore(uint64_t collectionId, int indexId, IndexMetadataUpdateOperation
 						operation, bool value, bool ignoreMissingShards)
 {
+	const char *indexNameSuffix = NULL;
+	UpdatePostgresIndexCoreWithSuffix(collectionId, indexId, operation, value,
+									  indexNameSuffix,
+									  ignoreMissingShards);
+}
+
+
+void
+UpdatePostgresIndexCoreWithSuffix(uint64_t collectionId, int indexId,
+								  IndexMetadataUpdateOperation operation, bool value,
+								  const char *indexNameSuffix, bool ignoreMissingShards)
+{
 	/* First get the OID of the index */
 	char postgresIndexName[NAMEDATALEN] = { 0 };
-	pg_sprintf(postgresIndexName, DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT, indexId);
+	pg_snprintf(postgresIndexName, sizeof(postgresIndexName),
+				DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "%s", indexId,
+				indexNameSuffix == NULL ? "" : indexNameSuffix);
 	Oid indexOid = get_relname_relid(postgresIndexName, ApiDataNamespaceOid());
 
 	List *indexOidList = NIL;

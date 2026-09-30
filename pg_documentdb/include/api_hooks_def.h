@@ -283,7 +283,8 @@ typedef List *(*GetShardIndexOids_HookType)(uint64_t collectionId, Oid indexOid,
 extern GetShardIndexOids_HookType get_shard_index_oids_hook;
 
 typedef void (*UpdatePostgresIndex_HookType)(uint64_t collectionId, int indexId, int
-											 operation, bool value);
+											 operation, bool value,
+											 const char *indexNameSuffix);
 extern UpdatePostgresIndex_HookType update_postgres_index_hook;
 
 typedef const char *(*GetOperationCancellationQuery_HookType)(int64 shardId,

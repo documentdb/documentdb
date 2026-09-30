@@ -34,9 +34,11 @@
 
 #include "distributed_index_operations.h"
 #include "distributed_schema_operations.h"
+#include "node_distributed_operations.h"
 
 extern bool UseLocalExecutionShardQueries;
 extern char *ApiDistributedSchemaName;
+extern bool EnableNonBlockingUniqueIndexBuildOnMultiNode;
 
 extern bool ShouldSetupIndexQueueInUdf;
 extern bool EnableMetadataReferenceTableSync;
@@ -881,18 +883,12 @@ GetEffectiveAggregateFunctionOidCore(Aggref *aggref, Oid *aggregateFunctionOid)
 static bool
 CanBuildNonBlockingUniqueIndexCore(void)
 {
-	bool isNull = false;
-	Datum result = ExtensionExecuteQueryViaSPI(
-		"SELECT COUNT(*)::int4 FROM pg_dist_node where nodecluster = 'default' AND noderole = 'primary' and isactive",
-		true, SPI_OK_SELECT, &isNull);
-
-	if (isNull)
+	if (EnableNonBlockingUniqueIndexBuildOnMultiNode)
 	{
-		return false;
+		return true;
 	}
 
-	/* Multi-node clusters currently cannot build unique non-blocking indexes */
-	return DatumGetInt32(result) <= 1;
+	return IsSingleNodeCluster();
 }
 
 

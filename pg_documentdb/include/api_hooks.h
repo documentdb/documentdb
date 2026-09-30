@@ -275,8 +275,9 @@ bool ShouldScheduleIndexBuildJobs(void);
 List * GetShardIndexOids(uint64_t collectionId, Oid indexOid, bool ignoreMissing);
 
 void UpdatePostgresIndexWithOverride(uint64_t collectionId, int indexId, int operation,
-									 bool value,
-									 void (*default_update)(uint64_t, int, int, bool));
+									 bool value, const char *indexNameSuffix,
+									 void (*default_update)(uint64_t, int, int, bool,
+															const char *));
 
 const char * GetOperationCancellationQuery(int64 shardId, StringView *opIdStringView,
 										   int *nargs, Oid **argTypes, Datum **argValues,

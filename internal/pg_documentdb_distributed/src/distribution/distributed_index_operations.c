@@ -36,6 +36,7 @@ documentdb_update_postgres_index_worker(PG_FUNCTION_ARGS)
 	int indexId = 0;
 	bool value = false;
 	bool hasValue = false;
+	const char *indexNameSuffix = NULL;
 	bson_iter_t argIter;
 	PgbsonInitIterator(argBson, &argIter);
 	while (bson_iter_next(&argIter))
@@ -58,6 +59,16 @@ documentdb_update_postgres_index_worker(PG_FUNCTION_ARGS)
 			value = bson_iter_as_bool(&argIter);
 			hasValue = true;
 		}
+		else if (strcmp(key, "indexNameSuffix") == 0)
+		{
+			if (!BSON_ITER_HOLDS_UTF8(&argIter))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+								errmsg(
+									"Unexpected indexNameSuffix type for update_postgres_index_worker")));
+			}
+			indexNameSuffix = bson_iter_utf8(&argIter, NULL);
+		}
 		else
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
@@ -75,7 +86,8 @@ documentdb_update_postgres_index_worker(PG_FUNCTION_ARGS)
 	}
 
 	bool ignoreMissingShards = true;
-	UpdatePostgresIndexCore(collectionId, indexId, operation, value, ignoreMissingShards);
+	UpdatePostgresIndexCoreWithSuffix(collectionId, indexId, operation, value,
+									  indexNameSuffix, ignoreMissingShards);
 
 	PG_RETURN_POINTER(PgbsonInitEmpty());
 }
@@ -83,7 +95,7 @@ documentdb_update_postgres_index_worker(PG_FUNCTION_ARGS)
 
 void
 UpdateDistributedPostgresIndex(uint64_t collectionId, int indexId, int operation,
-							   bool value)
+							   bool value, const char *indexNameSuffix)
 {
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
@@ -91,6 +103,10 @@ UpdateDistributedPostgresIndex(uint64_t collectionId, int indexId, int operation
 	PgbsonWriterAppendInt32(&writer, "indexId", 7, indexId);
 	PgbsonWriterAppendInt32(&writer, "operation", 9, operation);
 	PgbsonWriterAppendBool(&writer, "value", 5, value);
+	if (indexNameSuffix != NULL)
+	{
+		PgbsonWriterAppendUtf8(&writer, "indexNameSuffix", 15, indexNameSuffix);
+	}
 
 	MongoCollection *collection = GetMongoCollectionByColId(collectionId, NoLock);
 	if (collection == NULL)

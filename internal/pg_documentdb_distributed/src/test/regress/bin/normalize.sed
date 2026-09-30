@@ -29,6 +29,11 @@ s/""sn"" : \{ ""\$date"" : \{ ""\$numberLong"" : ""[0-9]*"" \} \}/""sn"" : NOW_S
 s/documentdb_api_catalog.shard_key_and_document/shard_key_and_document/g
 s/documentdb_api_internal.generate_unique_shard_document/generate_unique_shard_document/g
 s/documentdb_core.bson/bson/g
+# Per-node commands can use any eligible collection relation as a transactional
+# routing vehicle, so its DEBUG rows and error CONTEXT are not deterministic.
+/^(s[0-9]+: )?DEBUG:  executing "WITH r1 AS \(SELECT dn.groupid AS groupid, MIN\(sh.logicalrelid::regclass::text\) FILTER /d
+/^(s[0-9]+: )?DEBUG:  (Executing|Skipping) command_node_worker on table /d
+/^CONTEXT:  SQL statement "SELECT .*command_node_worker/ s/(documentdb_data\.documents_)[0-9]+(_[0-9]+)?/\1<ROUTE_TABLE>/g
 # PostgreSQL versions can report collection ACL failures against either the
 # coordinator table or its physical shard.
 s/^(ERROR:  permission denied for table )documents_[0-9]+(_[0-9]+)?$/\1documents_<COLLECTION>/g

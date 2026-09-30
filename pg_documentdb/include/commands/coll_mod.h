@@ -22,6 +22,11 @@ void UpdatePostgresIndexCore(uint64_t collectionId, int indexId,
 							 IndexMetadataUpdateOperation operation, bool value, bool
 							 ignoreMissingShards);
 
+void UpdatePostgresIndexCoreWithSuffix(uint64_t collectionId, int indexId,
+									   IndexMetadataUpdateOperation operation, bool value,
+									   const char *indexNameSuffix,
+									   bool ignoreMissingShards);
+
 void UpdatePostgresIndexesForPrepareUnique(List *indexOids, bool prepareUnique);
 
 #endif
