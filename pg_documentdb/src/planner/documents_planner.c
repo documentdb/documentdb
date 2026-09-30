@@ -163,6 +163,7 @@ extern bool EnableDollarSampleReservoirScan;
 extern bool EnableMergeSortForInPrefix;
 extern bool EnablePartialFilterEvalOnPlanner;
 extern bool EnableRumIndexOnlyScanProjectionWrapper;
+extern bool EnableSupportObjectIdFunctionPfePushdown;
 
 planner_hook_type ExtensionPreviousPlannerHook = NULL;
 set_rel_pathlist_hook_type ExtensionPreviousSetRelPathlistHook = NULL;
@@ -2439,6 +2440,53 @@ ForceExcludeNonIndexPaths(PlannerInfo *root, RelOptInfo *rel,
 }
 
 
+static OpExpr *
+GetBsonIndexBoundsOperatorForObjectId(Oid funcOid, Expr *documentArg, Const *queryArg)
+{
+	Oid operatorId = InvalidOid;
+	Oid opfuncId = InvalidOid;
+	if (funcOid == BsonEqualMatchObjectIdRuntimeFunctionId())
+	{
+		operatorId = BsonIndexBoundsEqualOperatorId();
+		opfuncId = BsonIndexBoundsEqualOperatorFuncId();
+	}
+	else if (funcOid == BsonGreaterThanMatchObjectIdRuntimeFunctionId())
+	{
+		operatorId = BsonIndexBoundsGreaterThanOperatorId();
+		opfuncId = BsonIndexBoundsGreaterThanOperatorFuncId();
+	}
+	else if (funcOid == BsonGreaterThanEqualMatchObjectIdRuntimeFunctionId())
+	{
+		operatorId = BsonIndexBoundsGreaterThanEqualOperatorId();
+		opfuncId = BsonIndexBoundsGreaterThanEqualOperatorFuncId();
+	}
+	else if (funcOid == BsonLessThanMatchObjectIdRuntimeFunctionId())
+	{
+		operatorId = BsonIndexBoundsLessThanOperatorId();
+		opfuncId = BsonIndexBoundsLessThanOperatorFuncId();
+	}
+	else if (funcOid == BsonLessThanEqualMatchObjectIdRuntimeFunctionId())
+	{
+		operatorId = BsonIndexBoundsLessThanEqualOperatorId();
+		opfuncId = BsonIndexBoundsLessThanEqualOperatorFuncId();
+	}
+	else
+	{
+		return NULL;
+	}
+
+	Const *bsonIndexBoundsConst = copyObject(queryArg);
+	bsonIndexBoundsConst->consttype = BsonIndexBoundsTypeId();
+
+	OpExpr *opExpr = (OpExpr *) make_opclause(operatorId, BOOLOID, false,
+											  documentArg, (Expr *) bsonIndexBoundsConst,
+											  InvalidOid, InvalidOid);
+	opExpr->opfuncid = opfuncId;
+
+	return opExpr;
+}
+
+
 static Node *
 AugmentBaseRestrictInfoCore(Node *node, void *context)
 {
@@ -2453,22 +2501,29 @@ AugmentBaseRestrictInfoCore(Node *node, void *context)
 	{
 		/* For $in, we want to track for PFE as a scalar array operator */
 		FuncExpr *func = (FuncExpr *) node;
-		if (list_length(func->args) < 2)
+		uint32_t argCount = list_length(func->args);
+
+		bool enableObjectIdPfePushdown = EnableSupportObjectIdFunctionPfePushdown &&
+										 IsClusterVersionAtleast(DocDB_V0, 112, 1);
+		if (argCount != 2 &&
+			(!enableObjectIdPfePushdown || argCount != 3))
 		{
 			return node;
 		}
 
-		Expr *firstArg = linitial(func->args);
-		Expr *secondArg = lsecond(func->args);
-		if (!IsA(secondArg, Const))
+		Expr *documentArg = linitial(func->args);
+		Expr *queryArg = argCount == 2 ? lsecond(func->args) : lthird(func->args);
+		if (!IsA(queryArg, Const))
 		{
 			return node;
 		}
 
-		if (func->funcid == BsonInMatchFunctionId())
+		if (func->funcid == BsonInMatchFunctionId() ||
+			(enableObjectIdPfePushdown &&
+			 func->funcid == BsonInObjectIdMatchFunctionId()))
 		{
-			Const *secondConst = (Const *) secondArg;
-			pgbson *inBson = DatumGetPgBson(secondConst->constvalue);
+			Const *queryConst = (Const *) queryArg;
+			pgbson *inBson = DatumGetPgBson(queryConst->constvalue);
 
 			pgbsonelement inElement;
 			const char *collation = PgbsonToSinglePgbsonElementWithCollation(inBson,
@@ -2478,7 +2533,7 @@ AugmentBaseRestrictInfoCore(Node *node, void *context)
 			bson_iter_t arrayIterator;
 			BsonValueInitIterator(&inElement.bsonValue, &arrayIterator);
 
-			Expr *expr = CreateScalarArrayOpExprForInWithBsonIndexBounds(firstArg,
+			Expr *expr = CreateScalarArrayOpExprForInWithBsonIndexBounds(documentArg,
 																		 inElement.path,
 																		 collation,
 																		 &arrayIterator);
@@ -2487,10 +2542,12 @@ AugmentBaseRestrictInfoCore(Node *node, void *context)
 				return (Node *) expr;
 			}
 		}
-		else if (func->funcid == BsonRegexMatchFunctionId())
+		else if (func->funcid == BsonRegexMatchFunctionId() ||
+				 (enableObjectIdPfePushdown &&
+				  func->funcid == BsonRegexObjectIdMatchFunctionId()))
 		{
-			Const *secondConst = (Const *) secondArg;
-			pgbson *regexBson = DatumGetPgBson(secondConst->constvalue);
+			Const *queryConst = (Const *) queryArg;
+			pgbson *regexBson = DatumGetPgBson(queryConst->constvalue);
 
 			pgbsonelement regexElement;
 			PgbsonToSinglePgbsonElementWithCollation(regexBson, &regexElement);
@@ -2514,8 +2571,17 @@ AugmentBaseRestrictInfoCore(Node *node, void *context)
 
 			OpExpr *stringGte = (OpExpr *) make_opclause(
 				BsonGreaterThanEqualMatchRuntimeOperatorId(), BOOLOID, false,
-				firstArg, (Expr *) stringMinConst, InvalidOid, InvalidOid);
+				documentArg, (Expr *) stringMinConst, InvalidOid, InvalidOid);
 			stringGte->opfuncid = BsonGreaterThanEqualMatchRuntimeFunctionId();
+
+			/*
+			 * Stored _id values cannot have the regex BSON type, so the string
+			 * lower bound is the complete type implication for _id.
+			 */
+			if (func->funcid == BsonRegexObjectIdMatchFunctionId())
+			{
+				return (Node *) stringGte;
+			}
 
 			/* Build regex lower bound using GetLowerBound */
 			bson_value_t regexLower = GetLowerBound(BSON_TYPE_REGEX);
@@ -2529,11 +2595,22 @@ AugmentBaseRestrictInfoCore(Node *node, void *context)
 
 			OpExpr *regexGte = (OpExpr *) make_opclause(
 				BsonGreaterThanEqualMatchRuntimeOperatorId(), BOOLOID, false,
-				firstArg, (Expr *) regexMinConst, InvalidOid, InvalidOid);
+				documentArg, (Expr *) regexMinConst, InvalidOid, InvalidOid);
 			regexGte->opfuncid = BsonGreaterThanEqualMatchRuntimeFunctionId();
 
 			/* Build OR expression: string_gte OR regex_gte */
 			return (Node *) make_orclause(list_make2(stringGte, regexGte));
+		}
+
+		if (enableObjectIdPfePushdown)
+		{
+			OpExpr *opExpr = GetBsonIndexBoundsOperatorForObjectId(func->funcid,
+																   documentArg,
+																   (Const *) queryArg);
+			if (opExpr != NULL)
+			{
+				return (Node *) opExpr;
+			}
 		}
 	}
 

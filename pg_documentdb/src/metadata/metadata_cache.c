@@ -612,6 +612,30 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the bson_dollar_eq(<bson>, <bsonindexbounds>) */
 	Oid BsonIndedBoundsEqualOperatorFuncId;
 
+	/* OID of the <bson> ##> <bsonindexbounds> operator */
+	Oid BsonIndexBoundsGreaterThanOperatorId;
+
+	/* OID of the bson_dollar_gt(<bson>, <bsonindexbounds>) */
+	Oid BsonIndedBoundsGreaterThanOperatorFuncId;
+
+	/* OID of the <bson> ##>= <bsonindexbounds> operator */
+	Oid BsonIndexBoundsGreaterThanEqualOperatorId;
+
+	/* OID of the bson_dollar_gte(<bson>, <bsonindexbounds>) */
+	Oid BsonIndedBoundsGreaterThanEqualOperatorFuncId;
+
+	/* OID of the <bson> ##< <bsonindexbounds> operator */
+	Oid BsonIndexBoundsLessThanOperatorId;
+
+	/* OID of the bson_dollar_lt(<bson>, <bsonindexbounds>) */
+	Oid BsonIndedBoundsLessThanOperatorFuncId;
+
+	/* OID of the <bson> ##<= <bsonindexbounds> operator */
+	Oid BsonIndexBoundsLessThanEqualOperatorId;
+
+	/* OID of the bson_dollar_lte(<bson>, <bsonindexbounds>) */
+	Oid BsonIndedBoundsLessThanEqualOperatorFuncId;
+
 	/* OID of the $gt function function for bson_values */
 	Oid BsonValueGreaterMatchFunctionId;
 
@@ -2677,6 +2701,80 @@ BsonIndexBoundsEqualOperatorFuncId(void)
 	return GetBinaryOperatorFunctionIdWithSchema(
 		&Cache.BsonIndedBoundsEqualOperatorFuncId,
 		"bson_dollar_eq", BsonTypeId(), BsonIndexBoundsTypeId(), ApiInternalSchemaNameV2);
+}
+
+
+Oid
+BsonIndexBoundsGreaterThanOperatorId(void)
+{
+	return GetInternalBinaryOperatorId(
+		&Cache.BsonIndexBoundsGreaterThanOperatorId,
+		BsonTypeId(), "##>", BsonIndexBoundsTypeId());
+}
+
+
+Oid
+BsonIndexBoundsGreaterThanOperatorFuncId(void)
+{
+	return GetBinaryOperatorFunctionIdWithSchema(
+		&Cache.BsonIndedBoundsGreaterThanOperatorFuncId,
+		"bson_dollar_gt", BsonTypeId(), BsonIndexBoundsTypeId(), ApiInternalSchemaNameV2);
+}
+
+
+Oid
+BsonIndexBoundsGreaterThanEqualOperatorId(void)
+{
+	return GetInternalBinaryOperatorId(
+		&Cache.BsonIndexBoundsGreaterThanEqualOperatorId,
+		BsonTypeId(), "##>=", BsonIndexBoundsTypeId());
+}
+
+
+Oid
+BsonIndexBoundsGreaterThanEqualOperatorFuncId(void)
+{
+	return GetBinaryOperatorFunctionIdWithSchema(
+		&Cache.BsonIndedBoundsGreaterThanEqualOperatorFuncId,
+		"bson_dollar_gte", BsonTypeId(), BsonIndexBoundsTypeId(),
+		ApiInternalSchemaNameV2);
+}
+
+
+Oid
+BsonIndexBoundsLessThanOperatorId(void)
+{
+	return GetInternalBinaryOperatorId(
+		&Cache.BsonIndexBoundsLessThanOperatorId,
+		BsonTypeId(), "##<", BsonIndexBoundsTypeId());
+}
+
+
+Oid
+BsonIndexBoundsLessThanOperatorFuncId(void)
+{
+	return GetBinaryOperatorFunctionIdWithSchema(
+		&Cache.BsonIndedBoundsLessThanOperatorFuncId,
+		"bson_dollar_lt", BsonTypeId(), BsonIndexBoundsTypeId(), ApiInternalSchemaNameV2);
+}
+
+
+Oid
+BsonIndexBoundsLessThanEqualOperatorId(void)
+{
+	return GetInternalBinaryOperatorId(
+		&Cache.BsonIndexBoundsLessThanEqualOperatorId,
+		BsonTypeId(), "##<=", BsonIndexBoundsTypeId());
+}
+
+
+Oid
+BsonIndexBoundsLessThanEqualOperatorFuncId(void)
+{
+	return GetBinaryOperatorFunctionIdWithSchema(
+		&Cache.BsonIndedBoundsLessThanEqualOperatorFuncId,
+		"bson_dollar_lte", BsonTypeId(), BsonIndexBoundsTypeId(),
+		ApiInternalSchemaNameV2);
 }
 
 

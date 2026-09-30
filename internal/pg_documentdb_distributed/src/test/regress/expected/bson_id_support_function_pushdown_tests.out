@@ -370,3 +370,1266 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db'
 (8 rows)
 
 COMMIT;
+---------------------------------------------------------------------
+-- Section 5: Partial RUM index implication from _id predicates
+---------------------------------------------------------------------
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_unsharded', '{ "_id": 5, "p_eq": 1, "p_in": 1, "p_gt": 1, "p_gte": 1, "p_lt": 1, "p_lte": 1, "p_exists": 1, "p_string": 1, "c_eq": 1, "c_in": 1, "c_gt": 1, "c_gte": 1, "c_lt": 1, "c_lte": 1, "c_exists": 1, "c_string": 1 }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_unsharded', '{ "_id": 10, "p_eq": 1, "p_in": 1, "p_gt": 1, "p_gte": 1, "p_lt": 1, "p_lte": 1, "p_exists": 1, "p_string": 1, "c_eq": 1, "c_in": 1, "c_gt": 1, "c_gte": 1, "c_lt": 1, "c_lte": 1, "c_exists": 1, "c_string": 1 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_unsharded', '{ "_id": 20, "p_eq": 1, "p_in": 1, "p_gt": 1, "p_gte": 1, "p_lt": 1, "p_lte": 1, "p_exists": 1, "p_string": 1, "c_eq": 1, "c_in": 1, "c_gt": 1, "c_gte": 1, "c_lt": 1, "c_lte": 1, "c_exists": 1, "c_string": 1 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_unsharded', '{ "_id": 30, "p_eq": 1, "p_in": 1, "p_gt": 1, "p_gte": 1, "p_lt": 1, "p_lte": 1, "p_exists": 1, "p_string": 1, "c_eq": 1, "c_in": 1, "c_gt": 1, "c_gte": 1, "c_lt": 1, "c_lte": 1, "c_exists": 1, "c_string": 1 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_unsharded', '{ "_id": 40, "p_eq": 1, "p_in": 1, "p_gt": 1, "p_gte": 1, "p_lt": 1, "p_lte": 1, "p_exists": 1, "p_string": 1, "c_eq": 1, "c_in": 1, "c_gt": 1, "c_gte": 1, "c_lt": 1, "c_lte": 1, "c_exists": 1, "c_string": 1 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_unsharded', '{ "_id": "abc", "p_eq": 1, "p_in": 1, "p_gt": 1, "p_gte": 1, "p_lt": 1, "p_lte": 1, "p_exists": 1, "p_string": 1, "c_eq": 1, "c_in": 1, "c_gt": 1, "c_gte": 1, "c_lt": 1, "c_lte": 1, "c_exists": 1, "c_string": 1 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_unsharded', '{ "_id": "abd", "p_eq": 1, "p_in": 1, "p_gt": 1, "p_gte": 1, "p_lt": 1, "p_lte": 1, "p_exists": 1, "p_string": 1, "c_eq": 1, "c_in": 1, "c_gt": 1, "c_gte": 1, "c_lt": 1, "c_lte": 1, "c_exists": 1, "c_string": 1 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('id_push_dist_db',
+  '{ "createIndexes": "pfe_unsharded", "indexes": [
+    { "key": { "p_eq": 1 }, "name": "idx_p_eq", "partialFilterExpression": { "_id": 20 } },
+    { "key": { "p_in": 1 }, "name": "idx_p_in", "partialFilterExpression": { "_id": { "$in": [20, 30] } } },
+    { "key": { "p_gt": 1 }, "name": "idx_p_gt", "partialFilterExpression": { "_id": { "$gt": 10 } } },
+    { "key": { "p_gte": 1 }, "name": "idx_p_gte", "partialFilterExpression": { "_id": { "$gte": 10 } } },
+    { "key": { "p_lt": 1 }, "name": "idx_p_lt", "partialFilterExpression": { "_id": { "$lt": 30 } } },
+    { "key": { "p_lte": 1 }, "name": "idx_p_lte", "partialFilterExpression": { "_id": { "$lte": 30 } } },
+    { "key": { "p_exists": 1 }, "name": "idx_p_exists", "partialFilterExpression": { "_id": { "$exists": true } } },
+    { "key": { "c_eq": 1, "_id": 1 }, "name": "idx_c_eq_id", "partialFilterExpression": { "_id": 20 } },
+    { "key": { "c_in": 1, "_id": 1 }, "name": "idx_c_in_id", "partialFilterExpression": { "_id": { "$in": [20, 30] } } },
+    { "key": { "c_gt": 1, "_id": 1 }, "name": "idx_c_gt_id", "partialFilterExpression": { "_id": { "$gt": 10 } } },
+    { "key": { "c_gte": 1, "_id": 1 }, "name": "idx_c_gte_id", "partialFilterExpression": { "_id": { "$gte": 10 } } },
+    { "key": { "c_lt": 1, "_id": 1 }, "name": "idx_c_lt_id", "partialFilterExpression": { "_id": { "$lt": 30 } } },
+    { "key": { "c_lte": 1, "_id": 1 }, "name": "idx_c_lte_id", "partialFilterExpression": { "_id": { "$lte": 30 } } },
+    { "key": { "c_exists": 1, "_id": 1 }, "name": "idx_c_exists_id", "partialFilterExpression": { "_id": { "$exists": true } } }
+  ] }', true);
+                                                                                                    create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "15" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key('id_push_dist_db', 'pfe_unsharded');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+ANALYZE;
+BEGIN;
+SET LOCAL documentdb.enable_support_function_id_pushdown TO on;
+SET LOCAL enable_seqscan TO off;
+-- The PFE implication GUC defaults on and can independently disable this optimization.
+SHOW documentdb.enable_support_object_id_function_pfe_pushdown;
+ documentdb.enable_support_object_id_function_pfe_pushdown
+---------------------------------------------------------------------
+ on
+(1 row)
+
+SET LOCAL documentdb.enable_support_object_id_function_pfe_pushdown TO off;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "p_eq": 1, "_id": 20 } }') $explain$) AS "QUERY PLAN";
+                                                                                                                    QUERY PLAN
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860004_258600024 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "p_eq" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "20" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "c_eq": 1, "_id": 20 } }') $explain$) AS "QUERY PLAN";
+                                                                                                                    QUERY PLAN
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860004_258600024 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "c_eq" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "20" } }'::documentdb_core.bson))
+(7 rows)
+
+SET LOCAL documentdb.enable_support_object_id_function_pfe_pushdown TO on;
+-- 5a: Equality, $in, range, and boundary cases
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "p_eq": 1, "_id": 20 } }') $explain$) AS "QUERY PLAN";
+                                                              QUERY PLAN                                                              
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_p_eq on documents_25860004_258600024 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "p_eq" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "20" } }'::documentdb_core.bson)
+(8 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "p_in": 1, "_id": { "$in": [20] } } }') $explain$) AS "QUERY PLAN";
+                                                              QUERY PLAN                                                              
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_p_in on documents_25860004_258600024 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "p_in" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "20" } }'::documentdb_core.bson)
+(8 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "p_gt": 1, "_id": { "$gt": 20 } } }') $explain$) AS "QUERY PLAN";
+                                                              QUERY PLAN                                                              
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_p_gt on documents_25860004_258600024 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "p_gt" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@>) '{ "_id" : { "$numberInt" : "20" } }'::documentdb_core.bson)
+(8 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "p_gt": 1, "_id": { "$gte": 20 } } }') $explain$) AS "QUERY PLAN";
+                                                              QUERY PLAN                                                              
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_p_gt on documents_25860004_258600024 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "p_gt" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@>=) '{ "_id" : { "$numberInt" : "20" } }'::documentdb_core.bson)
+(8 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "p_gt": 1, "_id": 20 } }') $explain$) AS "QUERY PLAN";
+                                                              QUERY PLAN                                                              
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_p_gt on documents_25860004_258600024 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "p_gt" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "20" } }'::documentdb_core.bson)
+(8 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "p_gte": 1, "_id": { "$gte": 10 } } }') $explain$) AS "QUERY PLAN";
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_p_gte on documents_25860004_258600024 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "p_gte" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@>=) '{ "_id" : { "$numberInt" : "10" } }'::documentdb_core.bson)
+(8 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "p_lt": 1, "_id": { "$lt": 20 } } }') $explain$) AS "QUERY PLAN";
+                                                              QUERY PLAN                                                              
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_p_lt on documents_25860004_258600024 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "p_lt" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@<) '{ "_id" : { "$numberInt" : "20" } }'::documentdb_core.bson)
+(8 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "p_lt": 1, "_id": { "$lte": 20 } } }') $explain$) AS "QUERY PLAN";
+                                                              QUERY PLAN                                                              
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_p_lt on documents_25860004_258600024 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "p_lt" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@<=) '{ "_id" : { "$numberInt" : "20" } }'::documentdb_core.bson)
+(8 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "p_lt": 1, "_id": 20 } }') $explain$) AS "QUERY PLAN";
+                                                              QUERY PLAN                                                              
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_p_lt on documents_25860004_258600024 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "p_lt" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "20" } }'::documentdb_core.bson)
+(8 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "p_lte": 1, "_id": { "$lte": 30 } } }') $explain$) AS "QUERY PLAN";
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_p_lte on documents_25860004_258600024 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "p_lte" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@<=) '{ "_id" : { "$numberInt" : "30" } }'::documentdb_core.bson)
+(8 rows)
+
+-- 5b: $in subset case
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "p_gt": 1, "_id": { "$in": [20, 30] } } }') $explain$) AS "QUERY PLAN";
+                                                                           QUERY PLAN                                                                           
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_p_gt on documents_25860004_258600024 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "p_gt" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "20" }, { "$numberInt" : "30" } ] }'::documentdb_core.bson)
+(8 rows)
+
+-- 5c: Lower-bound, equality, $in, and $regex predicates imply $exists: true
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "p_exists": 1, "_id": { "$exists": true } } }') $explain$) AS "QUERY PLAN";
+                                                                QUERY PLAN                                                                
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_p_exists on documents_25860004_258600024 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "p_exists" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@>=) '{ "_id" : { "$minKey" : 1 } }'::documentdb_core.bson)
+(8 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "p_exists": 1, "_id": 20 } }') $explain$) AS "QUERY PLAN";
+                                                                QUERY PLAN                                                                
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_p_exists on documents_25860004_258600024 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "p_exists" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "20" } }'::documentdb_core.bson)
+(8 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "p_exists": 1, "_id": { "$gt": 20 } } }') $explain$) AS "QUERY PLAN";
+                                                                QUERY PLAN                                                                
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_p_exists on documents_25860004_258600024 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "p_exists" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@>) '{ "_id" : { "$numberInt" : "20" } }'::documentdb_core.bson)
+(8 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "p_exists": 1, "_id": { "$gte": 20 } } }') $explain$) AS "QUERY PLAN";
+                                                                QUERY PLAN                                                                
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_p_exists on documents_25860004_258600024 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "p_exists" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@>=) '{ "_id" : { "$numberInt" : "20" } }'::documentdb_core.bson)
+(8 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "p_exists": 1, "_id": { "$in": [20, 30] } } }') $explain$) AS "QUERY PLAN";
+                                                                           QUERY PLAN                                                                           
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_p_exists on documents_25860004_258600024 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "p_exists" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "20" }, { "$numberInt" : "30" } ] }'::documentdb_core.bson)
+(8 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "p_exists": 1, "_id": { "$regex": "^ab" } } }') $explain$) AS "QUERY PLAN";
+                                                                                QUERY PLAN                                                                                 
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_p_exists on documents_25860004_258600024 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "p_exists" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "^ab", "options" : "" } } }'::documentdb_core.bson)
+(8 rows)
+
+-- 5d: String and numeric PFE boundaries for regex
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_regex_single_string', '{ "_id": "abc", "k": 1 }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_regex_single_string', '{ "_id": "abd", "k": 1 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_regex_single_string', '{ "_id": "", "k": 1 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('id_push_dist_db',
+  '{ "createIndexes": "pfe_regex_single_string", "indexes": [{ "key": { "k": 1 }, "name": "idx_regex_single_string", "partialFilterExpression": { "_id": { "$gte": "" } } }] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key('id_push_dist_db', 'pfe_regex_single_string');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_regex_single_number', '{ "_id": "abc", "k": 1 }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_regex_single_number', '{ "_id": "abd", "k": 1 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('id_push_dist_db',
+  '{ "createIndexes": "pfe_regex_single_number", "indexes": [{ "key": { "k": 1 }, "name": "idx_regex_single_number", "partialFilterExpression": { "_id": { "$gt": 10 } } }] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key('id_push_dist_db', 'pfe_regex_single_number');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_regex_comp_string', '{ "_id": "abc", "k": 1 }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_regex_comp_string', '{ "_id": "abd", "k": 1 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_regex_comp_string', '{ "_id": "", "k": 1 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('id_push_dist_db',
+  '{ "createIndexes": "pfe_regex_comp_string", "indexes": [{ "key": { "k": 1, "_id": 1 }, "name": "idx_regex_comp_string", "partialFilterExpression": { "_id": { "$gte": "" } } }] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key('id_push_dist_db', 'pfe_regex_comp_string');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_regex_comp_number', '{ "_id": "abc", "k": 1 }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_regex_comp_number', '{ "_id": "abd", "k": 1 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('id_push_dist_db',
+  '{ "createIndexes": "pfe_regex_comp_number", "indexes": [{ "key": { "k": 1, "_id": 1 }, "name": "idx_regex_comp_number", "partialFilterExpression": { "_id": { "$gt": 10 } } }] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key('id_push_dist_db', 'pfe_regex_comp_number');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_regex_single_prefix', '{ "_id": "a", "k": 1 }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_regex_single_prefix', '{ "_id": "ab", "k": 1 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('id_push_dist_db',
+  '{ "createIndexes": "pfe_regex_single_prefix", "indexes": [{ "key": { "k": 1 }, "name": "idx_regex_single_prefix", "partialFilterExpression": { "_id": { "$gte": "ab" } } }] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key('id_push_dist_db', 'pfe_regex_single_prefix');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_regex_comp_prefix', '{ "_id": "a", "k": 1 }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_regex_comp_prefix', '{ "_id": "ab", "k": 1 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('id_push_dist_db',
+  '{ "createIndexes": "pfe_regex_comp_prefix", "indexes": [{ "key": { "k": 1, "_id": 1 }, "name": "idx_regex_comp_prefix", "partialFilterExpression": { "_id": { "$gte": "ab" } } }] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key('id_push_dist_db', 'pfe_regex_comp_prefix');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_regex_single_string", "filter": { "k": 1, "_id": { "$regex": "^ab" } } }') $explain$) AS "QUERY PLAN";
+                                                                                QUERY PLAN                                                                                 
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using documents_rum_index_25860023_258600026 on documents_25860005_258600026 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "k" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "^ab", "options" : "" } } }'::documentdb_core.bson)
+(8 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_regex_single_string", "filter": { "k": 1, "_id": { "$regex": ".*" } } }') $explain$) AS "QUERY PLAN";
+                                                                                QUERY PLAN                                                                                
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using documents_rum_index_25860023_258600026 on documents_25860005_258600026 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "k" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : ".*", "options" : "" } } }'::documentdb_core.bson)
+(8 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_regex_single_string", "filter": { "k": 1, "_id": { "$regex": "^$" } } }') $explain$) AS "QUERY PLAN";
+                                                                                QUERY PLAN                                                                                
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using documents_rum_index_25860023_258600026 on documents_25860005_258600026 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "k" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "^$", "options" : "" } } }'::documentdb_core.bson)
+(8 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_regex_single_string", "filter": { "k": 1, "_id": { "$regex": "a|z" } } }') $explain$) AS "QUERY PLAN";
+                                                                                QUERY PLAN                                                                                 
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using documents_rum_index_25860023_258600026 on documents_25860005_258600026 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "k" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "a|z", "options" : "" } } }'::documentdb_core.bson)
+(8 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_regex_single_string", "filter": { "k": 1, "_id": { "$regex": "^AB", "$options": "i" } } }') $explain$) AS "QUERY PLAN";
+                                                                                 QUERY PLAN                                                                                 
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using documents_rum_index_25860023_258600026 on documents_25860005_258600026 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "k" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "^AB", "options" : "i" } } }'::documentdb_core.bson)
+(8 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_regex_single_number", "filter": { "k": 1, "_id": { "$regex": "^ab" } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                                       QUERY PLAN                                                                                                                                        
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860006_258600028 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "^ab", "options" : "" } } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_regex_comp_string", "filter": { "k": 1, "_id": { "$regex": "^ab" } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                                         QUERY PLAN                                                                                                                                          
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using documents_rum_index_25860027_258600030 on documents_25860007_258600030 collection
+               Index Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "^ab", "options" : "" } } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_regex_comp_string", "filter": { "k": 1, "_id": { "$regex": ".*" } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                                         QUERY PLAN                                                                                                                                         
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using documents_rum_index_25860027_258600030 on documents_25860007_258600030 collection
+               Index Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : ".*", "options" : "" } } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_regex_comp_string", "filter": { "k": 1, "_id": { "$regex": "^$" } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                                         QUERY PLAN                                                                                                                                         
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using documents_rum_index_25860027_258600030 on documents_25860007_258600030 collection
+               Index Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "^$", "options" : "" } } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_regex_comp_string", "filter": { "k": 1, "_id": { "$regex": "a|z" } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                                         QUERY PLAN                                                                                                                                          
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using documents_rum_index_25860027_258600030 on documents_25860007_258600030 collection
+               Index Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "a|z", "options" : "" } } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_regex_comp_string", "filter": { "k": 1, "_id": { "$regex": "^AB", "$options": "i" } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                                          QUERY PLAN                                                                                                                                          
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using documents_rum_index_25860027_258600030 on documents_25860007_258600030 collection
+               Index Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "^AB", "options" : "i" } } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_regex_comp_number", "filter": { "k": 1, "_id": { "$regex": "^ab" } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                                       QUERY PLAN                                                                                                                                        
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860008_258600032 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "^ab", "options" : "" } } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_regex_single_prefix", "filter": { "k": 1, "_id": { "$regex": "^ab?" } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                                        QUERY PLAN                                                                                                                                        
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860009_258600034 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "^ab?", "options" : "" } } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_regex_comp_prefix", "filter": { "k": 1, "_id": { "$regex": "^ab?" } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                                        QUERY PLAN                                                                                                                                        
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860010_258600036 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "^ab?", "options" : "" } } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "p_gt": 1, "_id": { "$gt": 20 } }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+              document               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "30" } }
+ { "_id" : { "$numberInt" : "40" } }
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "p_lt": 1, "_id": { "$lte": 20 } }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+              document               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" } }
+ { "_id" : { "$numberInt" : "10" } }
+ { "_id" : { "$numberInt" : "20" } }
+(3 rows)
+
+SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_regex_single_string", "filter": { "k": 1, "_id": { "$regex": "^ab" } }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+     document      
+---------------------------------------------------------------------
+ { "_id" : "abc" }
+ { "_id" : "abd" }
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_regex_single_string", "filter": { "k": 1, "_id": { "$regex": ".*" } }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+     document      
+---------------------------------------------------------------------
+ { "_id" : "" }
+ { "_id" : "abc" }
+ { "_id" : "abd" }
+(3 rows)
+
+SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_regex_single_string", "filter": { "k": 1, "_id": { "$regex": "^$" } }, "projection": { "_id": 1 } }');
+    document    
+---------------------------------------------------------------------
+ { "_id" : "" }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_regex_single_prefix", "filter": { "k": 1, "_id": { "$regex": "^ab?" } }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+     document     
+---------------------------------------------------------------------
+ { "_id" : "a" }
+ { "_id" : "ab" }
+(2 rows)
+
+-- 5e: Composite RUM keys containing _id cover every supported PFE form
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "c_eq": 1, "_id": 20 } }') $explain$) AS "QUERY PLAN";
+                                                                                                                      QUERY PLAN                                                                                                                       
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_c_eq_id on documents_25860004_258600024 collection
+               Index Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "c_eq" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "20" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "c_in": 1, "_id": { "$in": [20] } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                      QUERY PLAN                                                                                                                       
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_c_in_id on documents_25860004_258600024 collection
+               Index Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "c_in" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "20" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "c_gt": 1, "_id": { "$gt": 20 } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                      QUERY PLAN                                                                                                                       
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_c_gt_id on documents_25860004_258600024 collection
+               Index Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "c_gt" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@>) '{ "_id" : { "$numberInt" : "20" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "c_gte": 1, "_id": { "$gte": 10 } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                       QUERY PLAN                                                                                                                        
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_c_gte_id on documents_25860004_258600024 collection
+               Index Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "c_gte" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@>=) '{ "_id" : { "$numberInt" : "10" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "c_lt": 1, "_id": { "$lt": 20 } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                      QUERY PLAN                                                                                                                       
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_c_lt_id on documents_25860004_258600024 collection
+               Index Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "c_lt" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@<) '{ "_id" : { "$numberInt" : "20" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "c_lte": 1, "_id": { "$lte": 30 } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                       QUERY PLAN                                                                                                                        
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_c_lte_id on documents_25860004_258600024 collection
+               Index Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "c_lte" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@<=) '{ "_id" : { "$numberInt" : "30" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "c_exists": 1, "_id": { "$exists": true } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                      QUERY PLAN                                                                                                                      
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_c_exists_id on documents_25860004_258600024 collection
+               Index Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "c_exists" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@>=) '{ "_id" : { "$minKey" : 1 } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_unsharded", "filter": { "c_in": 1, "_id": { "$in": [20, 30] } }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+              document               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "20" } }
+ { "_id" : { "$numberInt" : "30" } }
+(2 rows)
+
+-- 5f: Isolated negative implication cases for both index shapes
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_negative_eq', '{ "_id": 30, "k_single": 1, "k_comp": 1 }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('id_push_dist_db',
+  '{ "createIndexes": "pfe_negative_eq", "indexes": [
+    { "key": { "k_single": 1 }, "name": "idx_negative_eq_single", "partialFilterExpression": { "_id": 20 } },
+    { "key": { "k_comp": 1, "_id": 1 }, "name": "idx_negative_eq_comp", "partialFilterExpression": { "_id": 20 } }
+  ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key('id_push_dist_db', 'pfe_negative_eq');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_eq", "filter": { "k_single": 1, "_id": 30 } }') $explain$) AS "QUERY PLAN";
+                                                                                                                      QUERY PLAN                                                                                                                       
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860011_258600038 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_single" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "30" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_eq", "filter": { "k_comp": 1, "_id": 30 } }') $explain$) AS "QUERY PLAN";
+                                                                                                                     QUERY PLAN                                                                                                                      
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860011_258600038 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_comp" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "30" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_negative_in', '{ "_id": 40, "k_single": 1, "k_comp": 1 }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('id_push_dist_db',
+  '{ "createIndexes": "pfe_negative_in", "indexes": [
+    { "key": { "k_single": 1 }, "name": "idx_negative_in_single", "partialFilterExpression": { "_id": { "$in": [20, 30] } } },
+    { "key": { "k_comp": 1, "_id": 1 }, "name": "idx_negative_in_comp", "partialFilterExpression": { "_id": { "$in": [20, 30] } } }
+  ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key('id_push_dist_db', 'pfe_negative_in');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_in", "filter": { "k_single": 1, "_id": { "$in": [20, 40] } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                                     QUERY PLAN                                                                                                                                      
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860012_258600040 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_single" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "20" }, { "$numberInt" : "40" } ] }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_in", "filter": { "k_comp": 1, "_id": { "$in": [20, 40] } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                                    QUERY PLAN                                                                                                                                     
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860012_258600040 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_comp" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "20" }, { "$numberInt" : "40" } ] }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_negative_gt', '{ "_id": 10, "k_single": 1, "k_comp": 1 }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('id_push_dist_db',
+  '{ "createIndexes": "pfe_negative_gt", "indexes": [
+    { "key": { "k_single": 1 }, "name": "idx_negative_gt_single", "partialFilterExpression": { "_id": { "$gt": 10 } } },
+    { "key": { "k_comp": 1, "_id": 1 }, "name": "idx_negative_gt_comp", "partialFilterExpression": { "_id": { "$gt": 10 } } }
+  ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key('id_push_dist_db', 'pfe_negative_gt');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_gt", "filter": { "k_single": 1, "_id": { "$gte": 10 } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                       QUERY PLAN                                                                                                                       
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860013_258600042 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_single" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@>=) '{ "_id" : { "$numberInt" : "10" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_gt", "filter": { "k_comp": 1, "_id": { "$gte": 10 } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                      QUERY PLAN                                                                                                                      
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860013_258600042 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_comp" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@>=) '{ "_id" : { "$numberInt" : "10" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_gt", "filter": { "k_single": 1, "_id": 10 } }') $explain$) AS "QUERY PLAN";
+                                                                                                                      QUERY PLAN
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860013_258600042 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_single" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "10" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_gt", "filter": { "k_comp": 1, "_id": 10 } }') $explain$) AS "QUERY PLAN";
+                                                                                                                     QUERY PLAN
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860013_258600042 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_comp" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "10" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_gt", "filter": { "k_single": 1, "_id": { "$in": [10, 20] } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                                     QUERY PLAN
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860013_258600042 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_single" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ] }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_gt", "filter": { "k_comp": 1, "_id": { "$in": [10, 20] } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                                    QUERY PLAN
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860013_258600042 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_comp" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" } ] }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_negative_gte', '{ "_id": 5, "k_single": 1, "k_comp": 1 }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('id_push_dist_db',
+  '{ "createIndexes": "pfe_negative_gte", "indexes": [
+    { "key": { "k_single": 1 }, "name": "idx_negative_gte_single", "partialFilterExpression": { "_id": { "$gte": 10 } } },
+    { "key": { "k_comp": 1, "_id": 1 }, "name": "idx_negative_gte_comp", "partialFilterExpression": { "_id": { "$gte": 10 } } }
+  ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key('id_push_dist_db', 'pfe_negative_gte');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_gte", "filter": { "k_single": 1, "_id": { "$gte": 5 } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                      QUERY PLAN                                                                                                                       
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860014_258600044 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_single" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@>=) '{ "_id" : { "$numberInt" : "5" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_gte", "filter": { "k_comp": 1, "_id": { "$gte": 5 } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                     QUERY PLAN                                                                                                                      
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860014_258600044 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_comp" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@>=) '{ "_id" : { "$numberInt" : "5" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_negative_lt', '{ "_id": 30, "k_single": 1, "k_comp": 1 }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('id_push_dist_db',
+  '{ "createIndexes": "pfe_negative_lt", "indexes": [
+    { "key": { "k_single": 1 }, "name": "idx_negative_lt_single", "partialFilterExpression": { "_id": { "$lt": 30 } } },
+    { "key": { "k_comp": 1, "_id": 1 }, "name": "idx_negative_lt_comp", "partialFilterExpression": { "_id": { "$lt": 30 } } }
+  ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key('id_push_dist_db', 'pfe_negative_lt');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_lt", "filter": { "k_single": 1, "_id": { "$lte": 30 } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                       QUERY PLAN                                                                                                                       
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860015_258600046 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_single" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@<=) '{ "_id" : { "$numberInt" : "30" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_lt", "filter": { "k_comp": 1, "_id": { "$lte": 30 } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                      QUERY PLAN                                                                                                                      
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860015_258600046 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_comp" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@<=) '{ "_id" : { "$numberInt" : "30" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_lt", "filter": { "k_single": 1, "_id": 30 } }') $explain$) AS "QUERY PLAN";
+                                                                                                                      QUERY PLAN
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860015_258600046 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_single" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "30" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_lt", "filter": { "k_comp": 1, "_id": 30 } }') $explain$) AS "QUERY PLAN";
+                                                                                                                     QUERY PLAN
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860015_258600046 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_comp" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "30" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_negative_lte', '{ "_id": 40, "k_single": 1, "k_comp": 1 }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('id_push_dist_db',
+  '{ "createIndexes": "pfe_negative_lte", "indexes": [
+    { "key": { "k_single": 1 }, "name": "idx_negative_lte_single", "partialFilterExpression": { "_id": { "$lte": 30 } } },
+    { "key": { "k_comp": 1, "_id": 1 }, "name": "idx_negative_lte_comp", "partialFilterExpression": { "_id": { "$lte": 30 } } }
+  ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key('id_push_dist_db', 'pfe_negative_lte');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_lte", "filter": { "k_single": 1, "_id": { "$lte": 40 } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                       QUERY PLAN                                                                                                                       
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860016_258600048 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_single" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@<=) '{ "_id" : { "$numberInt" : "40" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_lte", "filter": { "k_comp": 1, "_id": { "$lte": 40 } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                      QUERY PLAN                                                                                                                      
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860016_258600048 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_comp" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@<=) '{ "_id" : { "$numberInt" : "40" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_api.insert_one('id_push_dist_db', 'pfe_negative_exists', '{ "_id": 20, "k_single": 1, "k_comp": 1 }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('id_push_dist_db',
+  '{ "createIndexes": "pfe_negative_exists", "indexes": [
+    { "key": { "k_single": 1 }, "name": "idx_negative_exists_single", "partialFilterExpression": { "_id": { "$exists": true } } },
+    { "key": { "k_comp": 1, "_id": 1 }, "name": "idx_negative_exists_comp", "partialFilterExpression": { "_id": { "$exists": true } } }
+  ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key('id_push_dist_db', 'pfe_negative_exists');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_exists", "filter": { "k_single": 1, "_id": { "$exists": false } } }') $explain$) AS "QUERY PLAN";
+                                                                                                             QUERY PLAN                                                                                                              
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860017_258600050 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_single" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@?) '{ "_id" : false }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_exists", "filter": { "k_comp": 1, "_id": { "$exists": false } } }') $explain$) AS "QUERY PLAN";
+                                                                                                            QUERY PLAN                                                                                                             
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860017_258600050 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_comp" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@?) '{ "_id" : false }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_exists", "filter": { "k_single": 1, "_id": { "$lt": 20 } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                      QUERY PLAN
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860017_258600050 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_single" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@<) '{ "_id" : { "$numberInt" : "20" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_exists", "filter": { "k_comp": 1, "_id": { "$lt": 20 } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                     QUERY PLAN
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860017_258600050 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_comp" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@<) '{ "_id" : { "$numberInt" : "20" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_exists", "filter": { "k_single": 1, "_id": { "$lte": 20 } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                       QUERY PLAN
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860017_258600050 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_single" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@<=) '{ "_id" : { "$numberInt" : "20" } }'::documentdb_core.bson))
+(7 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($explain$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_dist_db', '{ "find": "pfe_negative_exists", "filter": { "k_comp": 1, "_id": { "$lte": 20 } } }') $explain$) AS "QUERY PLAN";
+                                                                                                                      QUERY PLAN
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_25860017_258600050 collection
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "k_comp" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@<=) '{ "_id" : { "$numberInt" : "20" } }'::documentdb_core.bson))
+(7 rows)
+
+COMMIT;

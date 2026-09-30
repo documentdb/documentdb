@@ -380,6 +380,11 @@ bool EnableDistinctScanForOrderedGroupFirst =
 #define DEFAULT_ENABLE_SUPPORT_FUNCTION_ID_PUSHDOWN false
 bool EnableSupportFunctionIdPushdown = DEFAULT_ENABLE_SUPPORT_FUNCTION_ID_PUSHDOWN;
 
+/* Added on v1.2, enabled on v1.2, remove after v1.4 */
+#define DEFAULT_ENABLE_SUPPORT_OBJECT_ID_FUNCTION_PFE_PUSHDOWN true
+bool EnableSupportObjectIdFunctionPfePushdown =
+	DEFAULT_ENABLE_SUPPORT_OBJECT_ID_FUNCTION_PFE_PUSHDOWN;
+
 /*
  * SECTION: Aggregation & Query feature flags
  */
@@ -1544,6 +1549,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableSupportFunctionIdPushdown,
 		DEFAULT_ENABLE_SUPPORT_FUNCTION_ID_PUSHDOWN,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_support_object_id_function_pfe_pushdown", newGucPrefix),
+		gettext_noop(
+			"Whether _id support functions participate in partial index implication."),
+		NULL,
+		&EnableSupportObjectIdFunctionPfePushdown,
+		DEFAULT_ENABLE_SUPPORT_OBJECT_ID_FUNCTION_PFE_PUSHDOWN,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

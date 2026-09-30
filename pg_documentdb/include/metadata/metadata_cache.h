@@ -168,6 +168,14 @@ Oid BsonNotGreaterThanFunctionId(void);
 Oid BsonNotGreaterThanEqualFunctionId(void);
 Oid BsonIndexBoundsEqualOperatorId(void);
 Oid BsonIndexBoundsEqualOperatorFuncId(void);
+Oid BsonIndexBoundsGreaterThanOperatorId(void);
+Oid BsonIndexBoundsGreaterThanOperatorFuncId(void);
+Oid BsonIndexBoundsGreaterThanEqualOperatorId(void);
+Oid BsonIndexBoundsGreaterThanEqualOperatorFuncId(void);
+Oid BsonIndexBoundsLessThanOperatorId(void);
+Oid BsonIndexBoundsLessThanOperatorFuncId(void);
+Oid BsonIndexBoundsLessThanEqualOperatorId(void);
+Oid BsonIndexBoundsLessThanEqualOperatorFuncId(void);
 
 /* operators */
 Oid BigintEqualOperatorId(void);
