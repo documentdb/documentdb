@@ -243,6 +243,7 @@ pub(super) struct GatewayWireProtocol {
     shutdown_token: CancellationToken,
     response_chunk_size: usize,
     connection_id: Option<Uuid>,
+    server_certificate_thumbprint: Option<String>,
 }
 
 impl GatewayWireProtocol {
@@ -260,14 +261,21 @@ impl GatewayWireProtocol {
             shutdown_token,
             response_chunk_size,
             connection_id: None,
+            server_certificate_thumbprint: None,
         }
     }
 
-    /// Creates a protocol instance scoped to one gateway connection.
+    /// Creates a protocol instance scoped to one gateway connection, carrying
+    /// the certificate thumbprint captured on its TLS handshake.
     #[must_use]
-    pub(super) fn for_connection(&self, connection_id: Uuid) -> Self {
+    pub(super) fn for_connection(
+        &self,
+        connection_id: Uuid,
+        server_certificate_thumbprint: Option<String>,
+    ) -> Self {
         let mut protocol = self.clone();
         protocol.connection_id = Some(connection_id);
+        protocol.server_certificate_thumbprint = server_certificate_thumbprint;
         protocol
     }
 }
@@ -292,6 +300,7 @@ impl Protocol for GatewayWireProtocol {
                 self.telemetry.clone(),
                 connection,
                 self.connection_id.unwrap_or_else(Uuid::new_v4),
+                self.server_certificate_thumbprint.clone(),
             ),
             self.shutdown_token.clone(),
             self.response_chunk_size,
@@ -421,6 +430,7 @@ fn connection_context_from_info(
     telemetry: Option<Box<dyn TelemetryProvider>>,
     connection: &ConnectionInfo,
     connection_id: Uuid,
+    server_certificate_thumbprint: Option<String>,
 ) -> ConnectionContext {
     let ip_address = connection_peer_ip(connection);
     let transport_protocol = if connection.local_path.is_some() {
@@ -444,6 +454,7 @@ fn connection_context_from_info(
             .service_context
             .tls_provider()
             .ciphersuite_name_to_i32(tls.cipher_suite.as_deref());
+        connection_context.set_server_certificate_thumbprint(server_certificate_thumbprint);
     }
 
     connection_context

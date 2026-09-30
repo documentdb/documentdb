@@ -43,7 +43,7 @@ async fn connection_protocol_preserves_gateway_connection_id() {
         CancellationToken::new(),
         1024,
     )
-    .for_connection(connection_id);
+    .for_connection(connection_id, None);
     let connection = NacelleConnectionMeta::tcp(None, None);
 
     assert_eq!(

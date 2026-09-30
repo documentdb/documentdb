@@ -166,6 +166,49 @@ where
     true
 }
 
+/// Replies with `ShutdownInProgress` and flags the connection to close when the
+/// server certificate has rotated. Returns `true` when such a reply was issued.
+pub(super) async fn maybe_reply_cert_rotation_closure<W>(
+    connection_context: &mut ConnectionContext,
+    header: &Header,
+    writer: &mut W,
+    requires_response: bool,
+    request_tracker: &RequestTracker,
+    activity_id: &str,
+    handle_message_start: Instant,
+) -> bool
+where
+    W: AsyncWrite + Unpin,
+{
+    if !connection_context.cert_rotation_requires_graceful_closure() {
+        return false;
+    }
+
+    tracing::warn!(
+        activity_id = activity_id,
+        "Closing connection gracefully due to certificate rotation."
+    );
+
+    let error = DocumentDBError::documentdb_error(
+        ErrorCode::ShutdownInProgress,
+        "Graceful shutdown requested due to certificate rotation".to_owned(),
+    );
+    reply_with_request_error(
+        connection_context,
+        header,
+        &error,
+        None,
+        writer,
+        requires_response,
+        None,
+        request_tracker,
+        activity_id,
+        Some(handle_message_start),
+    )
+    .await;
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -381,6 +424,205 @@ mod tests {
         assert!(
             request_tracker.get_interval_elapsed_time(RequestIntervalKind::HandleResponse) > 0,
             "failed response should record response handling time"
+        );
+    }
+
+    const ROTATED_THUMBPRINT: &str = "0000000000000000000000000000000000000000";
+
+    async fn execute_maybe_reply_cert_rotation_closure(
+        connection_context: &mut ConnectionContext,
+        header: &Header,
+        request_tracker: &RequestTracker,
+        activity_id: &str,
+        requires_response: bool,
+    ) -> (bool, Vec<u8>) {
+        let (mut response_writer, mut response_reader) = tokio::io::duplex(4096);
+        let should_stop = maybe_reply_cert_rotation_closure(
+            connection_context,
+            header,
+            &mut response_writer,
+            requires_response,
+            request_tracker,
+            activity_id,
+            Instant::now(),
+        )
+        .await;
+        drop(response_writer);
+
+        let mut response_bytes = Vec::new();
+        response_reader
+            .read_to_end(&mut response_bytes)
+            .await
+            .expect("response reader should drain bytes");
+
+        (should_stop, response_bytes)
+    }
+
+    #[tokio::test]
+    async fn cert_rotation_closure_skipped_when_disabled() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        // Rotation is present, but the feature is disabled.
+        connection_context
+            .set_server_certificate_thumbprint_for_test(Some(ROTATED_THUMBPRINT.to_owned()));
+        let logout_document = logout_document();
+        let (header, _) = build_op_msg_parts(&logout_document, 61);
+        let request_tracker = RequestTracker::new();
+
+        let (should_stop, response_bytes) = execute_maybe_reply_cert_rotation_closure(
+            &mut connection_context,
+            &header,
+            &request_tracker,
+            "activity-cert-rotation-disabled",
+            true,
+        )
+        .await;
+
+        assert!(!should_stop, "closure should be skipped when disabled");
+        assert!(
+            response_bytes.is_empty(),
+            "no response should be written when the feature is disabled"
+        );
+        assert!(!connection_context.close_after_response());
+    }
+
+    #[tokio::test]
+    async fn cert_rotation_closure_skipped_when_certificate_unchanged() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        dynamic_configuration.set_enable_graceful_closure_on_cert_rotation(true);
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        // Leave the captured thumbprint matching the provider's current one.
+        let logout_document = logout_document();
+        let (header, _) = build_op_msg_parts(&logout_document, 62);
+        let request_tracker = RequestTracker::new();
+
+        let (should_stop, response_bytes) = execute_maybe_reply_cert_rotation_closure(
+            &mut connection_context,
+            &header,
+            &request_tracker,
+            "activity-cert-rotation-unchanged",
+            true,
+        )
+        .await;
+
+        assert!(
+            !should_stop,
+            "closure should be skipped when the certificate has not rotated"
+        );
+        assert!(response_bytes.is_empty());
+        assert!(!connection_context.close_after_response());
+    }
+
+    #[tokio::test]
+    async fn cert_rotation_closure_writes_shutdown_error_on_rotation() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        dynamic_configuration.set_enable_graceful_closure_on_cert_rotation(true);
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        connection_context
+            .set_server_certificate_thumbprint_for_test(Some(ROTATED_THUMBPRINT.to_owned()));
+        let logout_document = logout_document();
+        let (header, _) = build_op_msg_parts(&logout_document, 63);
+        let request_tracker = RequestTracker::new();
+
+        let (should_stop, response_bytes) = execute_maybe_reply_cert_rotation_closure(
+            &mut connection_context,
+            &header,
+            &request_tracker,
+            "activity-cert-rotation-triggered",
+            true,
+        )
+        .await;
+
+        assert!(should_stop, "rotation should stop request processing");
+        assert!(
+            connection_context.close_after_response(),
+            "connection should be flagged to close after the response"
+        );
+        let (response_header, response_document) = decode_op_msg_response(&response_bytes);
+        assert_header_matches(
+            &response_header,
+            response_header.message_length(),
+            63,
+            63,
+            OpCode::Msg,
+        );
+        assert_error_response(&response_document, ErrorCode::ShutdownInProgress);
+    }
+
+    #[tokio::test]
+    async fn cert_rotation_closure_is_rate_limited_within_interval() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        dynamic_configuration.set_enable_graceful_closure_on_cert_rotation(true);
+        // A large interval means a second check within the same interval is skipped.
+        dynamic_configuration.set_connection_graceful_closure_interval_sec(3600);
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        connection_context
+            .set_server_certificate_thumbprint_for_test(Some(ROTATED_THUMBPRINT.to_owned()));
+        let logout_document = logout_document();
+        let (header, _) = build_op_msg_parts(&logout_document, 64);
+        let request_tracker = RequestTracker::new();
+
+        let (first_stop, _) = execute_maybe_reply_cert_rotation_closure(
+            &mut connection_context,
+            &header,
+            &request_tracker,
+            "activity-cert-rotation-first",
+            true,
+        )
+        .await;
+        assert!(first_stop, "first check should detect rotation");
+
+        let (second_stop, second_bytes) = execute_maybe_reply_cert_rotation_closure(
+            &mut connection_context,
+            &header,
+            &request_tracker,
+            "activity-cert-rotation-second",
+            true,
+        )
+        .await;
+        assert!(
+            !second_stop,
+            "a second check within the interval should be rate-limited"
+        );
+        assert!(second_bytes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cert_rotation_closure_skips_wire_response_when_not_required() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        dynamic_configuration.set_enable_graceful_closure_on_cert_rotation(true);
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        connection_context
+            .set_server_certificate_thumbprint_for_test(Some(ROTATED_THUMBPRINT.to_owned()));
+        let logout_document = logout_document();
+        let (header, _) = build_op_msg_parts(&logout_document, 65);
+        let request_tracker = RequestTracker::new();
+
+        let (should_stop, response_bytes) = execute_maybe_reply_cert_rotation_closure(
+            &mut connection_context,
+            &header,
+            &request_tracker,
+            "activity-cert-rotation-no-response",
+            false,
+        )
+        .await;
+
+        assert!(
+            should_stop,
+            "rotation handling still stops request processing"
+        );
+        assert!(
+            connection_context.close_after_response(),
+            "connection should still be flagged to close"
+        );
+        assert!(
+            response_bytes.is_empty(),
+            "no wire response should be written when a response is not required"
         );
     }
 }

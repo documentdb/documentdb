@@ -30,6 +30,18 @@ pub(crate) const SOCKET_CONNECTION_IDLE_TIMEOUT_KEY: &str = "SocketConnectionIdl
 pub(crate) const SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS: u64 = 18_000;
 pub const ENABLE_REQUEST_METRICS_KEY: &str = "enable_request_metrics";
 
+/// Dynamic-configuration key controlling whether a connection is closed
+/// gracefully once the server certificate is rotated on disk.
+pub(crate) const ENABLE_GRACEFUL_CLOSURE_ON_CERT_ROTATION_KEY: &str =
+    "enableGracefulClosureOnCertRotation";
+/// Dynamic-configuration key for the minimum interval between certificate
+/// rotation checks on a connection.
+pub(crate) const CONNECTION_GRACEFUL_CLOSURE_INTERVAL_SEC_KEY: &str =
+    "connectionGracefulClosureIntervalSec";
+/// Default interval, in seconds, between certificate rotation checks when the
+/// dynamic-configuration value is absent.
+pub(crate) const CONNECTION_GRACEFUL_CLOSURE_INTERVAL_DEFAULT_SECS: u64 = 300;
+
 /// These are the required configuration fields.
 ///
 /// A trait that defines the configuration setup for the application.

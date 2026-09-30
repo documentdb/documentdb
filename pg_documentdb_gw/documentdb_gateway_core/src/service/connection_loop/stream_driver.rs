@@ -60,6 +60,14 @@ pub async fn handle_stream<T, R, S>(
                     idle_timeout,
                 )
                 .await;
+
+                if connection_context.close_after_response() {
+                    tracing::debug!(
+                        activity_id = connection_activity_id_as_str,
+                        "Closing connection after graceful closure on certificate rotation."
+                    );
+                    break;
+                }
             }
 
             Ok(None) => {
@@ -368,5 +376,57 @@ mod tests {
             stream_handle.written_bytes().is_empty(),
             "write failure while replying to a read error should not leave partial output"
         );
+    }
+
+    #[tokio::test]
+    async fn handle_stream_closes_connection_after_certificate_rotation() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        dynamic_configuration.set_enable_graceful_closure_on_cert_rotation(true);
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        // Simulate a rotation by capturing a thumbprint that differs from the
+        // provider's current certificate.
+        connection_context.set_server_certificate_thumbprint_for_test(Some(
+            "0000000000000000000000000000000000000000".to_owned(),
+        ));
+        let (mut client_stream, server_stream) = tokio::io::duplex(4096);
+
+        let server_task = tokio::spawn(async move {
+            handle_stream::<DocumentDBDataClient, _, _>(
+                server_stream,
+                connection_context,
+                &DefaultRequestRouter {},
+            )
+            .await;
+        });
+
+        // Two requests are sent, but the connection should close after the
+        // first graceful-closure reply, so the second is never answered.
+        client_stream
+            .write_all(&build_op_msg_request(&logout_document(), 91))
+            .await
+            .expect("first request should be written");
+        client_stream
+            .write_all(&build_op_msg_request(&logout_document(), 92))
+            .await
+            .expect("second request should be written");
+
+        let mut response_bytes = Vec::new();
+        client_stream
+            .read_to_end(&mut response_bytes)
+            .await
+            .expect("client reader should drain responses");
+        server_task
+            .await
+            .expect("server task should finish without panicking");
+
+        let responses = decode_op_msg_responses(&response_bytes);
+        assert_eq!(
+            responses.len(),
+            1,
+            "connection should close after a single graceful-closure reply"
+        );
+        assert_eq!(responses[0].0.response_to(), 91);
+        assert_error_response(&responses[0].1, ErrorCode::ShutdownInProgress);
     }
 }

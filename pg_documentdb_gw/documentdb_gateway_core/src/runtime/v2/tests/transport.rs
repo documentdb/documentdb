@@ -21,8 +21,8 @@ use crate::{
         protocol as runtime_protocol,
         tests::support::{
             build_op_msg_request, build_op_msg_request_with_document, decode_header,
-            read_wire_response, start_serial_test_connection, test_service_context,
-            TestDynamicConfiguration,
+            read_wire_response, start_serial_test_connection,
+            start_serial_test_connection_with_tls, test_service_context, TestDynamicConfiguration,
         },
         wire,
     },
@@ -175,6 +175,52 @@ async fn serial_transport_returns_configured_shutdown_response() {
         .await
         .expect("server task should join")
         .expect("server connection should close cleanly");
+}
+
+#[tokio::test]
+async fn serial_transport_closes_connection_after_certificate_rotation() {
+    let dynamic_configuration = TestDynamicConfiguration::default();
+    dynamic_configuration.set_enable_graceful_closure_on_cert_rotation(true);
+    dynamic_configuration.set_connection_graceful_closure_interval_sec(0);
+    let service_context = test_service_context(dynamic_configuration).await;
+    // Present TLS metadata and a stale established thumbprint so the provider's
+    // current certificate is treated as rotated for this connection.
+    let (mut client, server_task) = start_serial_test_connection_with_tls(
+        service_context,
+        CancellationToken::new(),
+        Some(nacelle::core::NacelleConnectionTlsMeta::new("openssl")),
+        Some("STALE0000000000000000000000000000000000".to_owned()),
+    );
+
+    // The first request receives the graceful-closure reply.
+    client
+        .write_all(&build_op_msg_request(1, 0))
+        .await
+        .expect("first request should write");
+    let response = read_wire_response(&mut client).await;
+    let error_document = bson::Document::from_reader(&response[wire::op_msg_prefix_length()..])
+        .expect("graceful-closure response document should decode");
+    assert_eq!(
+        error_document.get_str("errmsg"),
+        Ok("Graceful shutdown requested due to certificate rotation")
+    );
+
+    // The next request finds the connection flagged for closure and closes it,
+    // forcing the client to reconnect and perform a fresh TLS handshake.
+    client
+        .write_all(&build_op_msg_request(2, 0))
+        .await
+        .expect("second request should write");
+    assert!(matches!(
+        server_task.await.expect("server task should join"),
+        Err(NacelleError::ConnectionClosed)
+    ));
+    let mut trailing = Vec::new();
+    client
+        .read_to_end(&mut trailing)
+        .await
+        .expect("closed connection should reach EOF");
+    assert!(trailing.is_empty());
 }
 
 #[tokio::test]

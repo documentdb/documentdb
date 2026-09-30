@@ -46,7 +46,7 @@ use openssl::{
     hash::MessageDigest,
     pkey::{Id, PKey, PKeyRef, Private},
     ssl::{SslAcceptor, SslCipherRef},
-    x509::X509,
+    x509::{X509Ref, X509},
 };
 
 use crate::{
@@ -420,6 +420,21 @@ impl TlsProvider {
             .map_or(0, |mapping| mapping(ciphersuite))
     }
 
+    /// Returns the SHA-1 thumbprint of the currently loaded server certificate,
+    /// which reflects the latest reloaded certificate, or `None` on failure.
+    #[must_use]
+    pub fn current_certificate_thumbprint(&self) -> Option<String> {
+        let bundle = self.certificate_bundle.load();
+        Self::sha1_thumbprint(&bundle.certificate).ok()
+    }
+
+    /// Returns the SHA-1 thumbprint of the given certificate, or `None` on
+    /// failure. Callers pass the certificate presented on the TLS handshake.
+    #[must_use]
+    pub fn certificate_thumbprint(certificate: &X509Ref) -> Option<String> {
+        Self::sha1_thumbprint(certificate).ok()
+    }
+
     pub fn is_valid_certificate(&self) -> bool {
         let bundle = self.certificate_bundle.load();
         let Ok(pubkey) = bundle.certificate.public_key() else {
@@ -445,7 +460,7 @@ impl TlsProvider {
         is_valid
     }
 
-    fn sha1_thumbprint(cert: &X509) -> Result<String> {
+    fn sha1_thumbprint(cert: &X509Ref) -> Result<String> {
         let der = cert.to_der()?;
         let digest = openssl::hash::hash(MessageDigest::sha1(), &der)?;
         Ok(hex::encode_upper(digest))

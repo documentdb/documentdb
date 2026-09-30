@@ -26,6 +26,7 @@ use crate::{
     error::Result,
     postgres::conn_mgmt::{Connection, PgPoolSettings},
     security::principal::Principal,
+    service::TlsProvider,
     telemetry::TelemetryProvider,
 };
 
@@ -44,6 +45,12 @@ pub struct ConnectionContext {
     pub ssl_protocol: String,
     transport_protocol: String,
     connection_id_hash: i32,
+    /// Thumbprint of the certificate captured on the TLS handshake; `None` for plaintext.
+    server_certificate_thumbprint: Option<String>,
+    /// Time of the last rotation check, used to rate-limit checks.
+    last_cert_rotation_check: Option<Instant>,
+    /// Set once a graceful closure has been sent so the loop closes after the response.
+    close_after_response: bool,
 }
 
 impl ConnectionContext {
@@ -68,6 +75,12 @@ impl ConnectionContext {
             .map(|tls| tls.version_str().to_owned())
             .unwrap_or_default();
 
+        // Capture the handshake certificate (TLS only) so rotation detection
+        // compares against the cert this connection actually negotiated.
+        let server_certificate_thumbprint = tls_config
+            .and_then(SslRef::certificate)
+            .and_then(TlsProvider::certificate_thumbprint);
+
         Self {
             start_time: Instant::now(),
             connection_id,
@@ -82,6 +95,9 @@ impl ConnectionContext {
             ssl_protocol,
             transport_protocol,
             connection_id_hash: Self::get_uuid_hash(connection_id),
+            server_certificate_thumbprint,
+            last_cert_rotation_check: None,
+            close_after_response: false,
         }
     }
 
@@ -258,6 +274,67 @@ impl ConnectionContext {
     #[must_use]
     pub fn dynamic_configuration(&self) -> Arc<dyn DynamicConfiguration> {
         self.service_context.dynamic_configuration()
+    }
+
+    /// Returns `true` when the server certificate has rotated since this
+    /// connection was established, flagging it to close after its response. The
+    /// check is rate-limited to once per `connectionGracefulClosureIntervalSec`.
+    #[must_use]
+    pub fn cert_rotation_requires_graceful_closure(&mut self) -> bool {
+        let configuration = self.dynamic_configuration();
+        if !configuration.enable_graceful_closure_on_cert_rotation() {
+            return false;
+        }
+
+        let Some(established_thumbprint) = self.server_certificate_thumbprint.clone() else {
+            return false;
+        };
+
+        let interval =
+            Duration::from_secs(configuration.connection_graceful_closure_interval_sec());
+        let now = Instant::now();
+        if let Some(last_check) = self.last_cert_rotation_check {
+            if now.duration_since(last_check) < interval {
+                return false;
+            }
+        }
+        self.last_cert_rotation_check = Some(now);
+
+        let current_thumbprint = self
+            .service_context
+            .tls_provider()
+            .current_certificate_thumbprint();
+
+        match current_thumbprint {
+            Some(current) if current != established_thumbprint => {
+                tracing::warn!(
+                    connection_id = %self.connection_id,
+                    "Graceful closure needed because of certificate rotation."
+                );
+                self.close_after_response = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Returns `true` when the connection loop should close after this response.
+    #[must_use]
+    pub const fn close_after_response(&self) -> bool {
+        self.close_after_response
+    }
+
+    /// Records the certificate thumbprint captured on this connection's TLS
+    /// handshake. Used by the v2 runtime, which builds the context after the
+    /// handshake completes.
+    pub fn set_server_certificate_thumbprint(&mut self, thumbprint: Option<String>) {
+        self.server_certificate_thumbprint = thumbprint;
+    }
+
+    #[cfg(test)]
+    pub fn set_server_certificate_thumbprint_for_test(&mut self, thumbprint: Option<String>) {
+        self.server_certificate_thumbprint = thumbprint;
+        self.last_cert_rotation_check = None;
     }
 
     /// Generates a per-request activity ID by embedding the given `request_id`

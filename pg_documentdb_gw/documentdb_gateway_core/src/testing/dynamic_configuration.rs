@@ -13,9 +13,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use bson::{rawbson, RawBson};
 
 use crate::configuration::{
-    DynamicConfiguration, MAX_REQUEST_TIMEOUT_DEFAULT_SEC, MAX_REQUEST_TIMEOUT_SEC_KEY,
-    SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS, SOCKET_CONNECTION_IDLE_TIMEOUT_KEY,
-    TRANSACTION_TIMEOUT_DEFAULT_SEC, TRANSACTION_TIMEOUT_SEC_KEY,
+    DynamicConfiguration, CONNECTION_GRACEFUL_CLOSURE_INTERVAL_SEC_KEY,
+    ENABLE_GRACEFUL_CLOSURE_ON_CERT_ROTATION_KEY, MAX_REQUEST_TIMEOUT_DEFAULT_SEC,
+    MAX_REQUEST_TIMEOUT_SEC_KEY, SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS,
+    SOCKET_CONNECTION_IDLE_TIMEOUT_KEY, TRANSACTION_TIMEOUT_DEFAULT_SEC,
+    TRANSACTION_TIMEOUT_SEC_KEY,
 };
 
 const UNSET_U64: u64 = u64::MAX;
@@ -25,6 +27,8 @@ pub struct TestDynamicConfiguration {
     send_shutdown_responses: AtomicBool,
     allow_transaction_snapshot: AtomicBool,
     socket_connection_idle_timeout_sec: AtomicU64,
+    enable_graceful_closure_on_cert_rotation: AtomicBool,
+    connection_graceful_closure_interval_sec: AtomicU64,
 }
 
 impl Default for TestDynamicConfiguration {
@@ -33,6 +37,8 @@ impl Default for TestDynamicConfiguration {
             send_shutdown_responses: AtomicBool::new(false),
             allow_transaction_snapshot: AtomicBool::new(false),
             socket_connection_idle_timeout_sec: AtomicU64::new(UNSET_U64),
+            enable_graceful_closure_on_cert_rotation: AtomicBool::new(false),
+            connection_graceful_closure_interval_sec: AtomicU64::new(UNSET_U64),
         }
     }
 }
@@ -46,6 +52,16 @@ impl TestDynamicConfiguration {
         self.socket_connection_idle_timeout_sec
             .store(value, Ordering::Relaxed);
     }
+
+    pub fn set_enable_graceful_closure_on_cert_rotation(&self, value: bool) {
+        self.enable_graceful_closure_on_cert_rotation
+            .store(value, Ordering::Relaxed);
+    }
+
+    pub fn set_connection_graceful_closure_interval_sec(&self, value: u64) {
+        self.connection_graceful_closure_interval_sec
+            .store(value, Ordering::Relaxed);
+    }
 }
 
 impl DynamicConfiguration for TestDynamicConfiguration {
@@ -56,6 +72,9 @@ impl DynamicConfiguration for TestDynamicConfiguration {
     fn get_bool(&self, key: &str, default: bool) -> bool {
         match key {
             "SendShutdownResponses" => self.send_shutdown_responses.load(Ordering::Relaxed),
+            ENABLE_GRACEFUL_CLOSURE_ON_CERT_ROTATION_KEY => self
+                .enable_graceful_closure_on_cert_rotation
+                .load(Ordering::Relaxed),
             _ => default,
         }
     }
@@ -69,6 +88,16 @@ impl DynamicConfiguration for TestDynamicConfiguration {
             SOCKET_CONNECTION_IDLE_TIMEOUT_KEY => {
                 let value = self
                     .socket_connection_idle_timeout_sec
+                    .load(Ordering::Relaxed);
+                if value == UNSET_U64 {
+                    default
+                } else {
+                    value
+                }
+            }
+            CONNECTION_GRACEFUL_CLOSURE_INTERVAL_SEC_KEY => {
+                let value = self
+                    .connection_graceful_closure_interval_sec
                     .load(Ordering::Relaxed);
                 if value == UNSET_U64 {
                     default

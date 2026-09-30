@@ -74,6 +74,11 @@ impl GatewayConnectionState {
                 .dynamic_configuration()
                 .send_shutdown_responses()
     }
+
+    /// Returns whether the connection was flagged to close after its response.
+    const fn should_close_after_graceful_closure(&self) -> bool {
+        self.connection_context.close_after_response()
+    }
 }
 
 pub(super) struct GatewayRuntimeHandler<T, R> {
@@ -101,7 +106,12 @@ where
         &'connection self,
         mut context: SerialTcpRequestContext<'connection, GatewayWireProtocol>,
     ) -> std::result::Result<TcpHandlerCompletion<GatewayWireProtocol>, NacelleError> {
-        if context.connection().state.should_close_for_shutdown() {
+        if context.connection().state.should_close_for_shutdown()
+            || context
+                .connection()
+                .state
+                .should_close_after_graceful_closure()
+        {
             return Err(NacelleError::ConnectionClosed);
         }
         if let Some(error) = context.request().head.decode_error() {
@@ -139,7 +149,12 @@ where
         &'connection self,
         mut context: SerialTcpOneWayContext<'connection, GatewayWireProtocol>,
     ) -> std::result::Result<Completed, NacelleError> {
-        if context.connection().state.should_close_for_shutdown() {
+        if context.connection().state.should_close_for_shutdown()
+            || context
+                .connection()
+                .state
+                .should_close_after_graceful_closure()
+        {
             return Err(NacelleError::ConnectionClosed);
         }
         if let Some(error) = context.request().head.decode_error() {

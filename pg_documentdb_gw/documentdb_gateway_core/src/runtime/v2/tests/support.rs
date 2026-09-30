@@ -57,6 +57,20 @@ pub(super) fn start_serial_test_connection(
     DuplexStream,
     tokio::task::JoinHandle<std::result::Result<(), NacelleError>>,
 ) {
+    start_serial_test_connection_with_tls(service_context, shutdown_token, None, None)
+}
+
+/// Starts one serial runtime connection, optionally presenting TLS metadata and
+/// an established server-certificate thumbprint to exercise rotation handling.
+pub(super) fn start_serial_test_connection_with_tls(
+    service_context: ServiceContext,
+    shutdown_token: CancellationToken,
+    tls_meta: Option<nacelle::core::NacelleConnectionTlsMeta>,
+    server_certificate_thumbprint: Option<String>,
+) -> (
+    DuplexStream,
+    tokio::task::JoinHandle<std::result::Result<(), NacelleError>>,
+) {
     let runtime_state = NacelleRuntimeState::new(
         NacelleLimits::default()
             .with_max_connections(8)
@@ -67,16 +81,23 @@ pub(super) fn start_serial_test_connection(
     let config = NacelleTcpConfig::default()
         .with_max_frame_len(TEST_MAX_FRAME_LEN)
         .with_request_body_mode(TcpRequestBodyMode::Streaming);
-    let protocol = Arc::new(GatewayWireProtocol::new(
-        service_context,
-        None,
-        shutdown_token,
-        config.response_buffer_capacity,
-    ));
+    let protocol = Arc::new(
+        GatewayWireProtocol::new(
+            service_context,
+            None,
+            shutdown_token,
+            config.response_buffer_capacity,
+        )
+        .for_connection(uuid::Uuid::new_v4(), server_certificate_thumbprint),
+    );
     let (client, mut server) = tokio::io::duplex(64 * 1024);
     let handler = Arc::new(GatewayRuntimeHandler::<DocumentDBDataClient, _>::new(
         DefaultRequestRouter {},
     ));
+    let mut connection_meta = nacelle::core::NacelleConnectionMeta::tcp(None, None);
+    if let Some(tls_meta) = tls_meta {
+        connection_meta = connection_meta.with_tls(tls_meta);
+    }
     let server_task = tokio::spawn(async move {
         Box::pin(serve_serial_stream_without_connection_limit(
             &mut server,
@@ -87,7 +108,7 @@ pub(super) fn start_serial_test_connection(
             NacelleTelemetry::default(),
             runtime_state,
             NacelleTcpLimits::default(),
-            nacelle::core::NacelleConnectionMeta::tcp(None, None),
+            connection_meta,
         ))
         .await
     });

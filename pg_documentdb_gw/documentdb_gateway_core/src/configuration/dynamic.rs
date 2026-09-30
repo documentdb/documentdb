@@ -12,7 +12,9 @@ use bson::RawBson;
 
 use crate::{
     configuration::{
-        Version, SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS, SOCKET_CONNECTION_IDLE_TIMEOUT_KEY,
+        Version, CONNECTION_GRACEFUL_CLOSURE_INTERVAL_DEFAULT_SECS,
+        CONNECTION_GRACEFUL_CLOSURE_INTERVAL_SEC_KEY, ENABLE_GRACEFUL_CLOSURE_ON_CERT_ROTATION_KEY,
+        SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS, SOCKET_CONNECTION_IDLE_TIMEOUT_KEY,
     },
     postgres::conn_mgmt,
 };
@@ -159,6 +161,22 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
         self.get_u64(
             SOCKET_CONNECTION_IDLE_TIMEOUT_KEY,
             SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS,
+        )
+    }
+
+    /// Whether an established connection should be closed gracefully once the
+    /// server certificate has been rotated on disk. Defaults to `false`.
+    fn enable_graceful_closure_on_cert_rotation(&self) -> bool {
+        self.get_bool(ENABLE_GRACEFUL_CLOSURE_ON_CERT_ROTATION_KEY, false)
+    }
+
+    /// Minimum interval, in seconds, between certificate rotation checks on a
+    /// single connection. Defaults to
+    /// `CONNECTION_GRACEFUL_CLOSURE_INTERVAL_DEFAULT_SECS`.
+    fn connection_graceful_closure_interval_sec(&self) -> u64 {
+        self.get_u64(
+            CONNECTION_GRACEFUL_CLOSURE_INTERVAL_SEC_KEY,
+            CONNECTION_GRACEFUL_CLOSURE_INTERVAL_DEFAULT_SECS,
         )
     }
 

@@ -279,6 +279,19 @@ async fn process_message<T, W, R>(
     {
         return;
     }
+    if error_reply::maybe_reply_cert_rotation_closure(
+        connection_context,
+        header,
+        writer,
+        requires_response,
+        request_tracker,
+        activity_id,
+        handle_message_start,
+    )
+    .await
+    {
+        return;
+    }
     let format_request_start = Instant::now();
     let wire_request = match protocol::reader::parse_request(message, &mut requires_response) {
         Ok(request) => request,

@@ -27,7 +27,7 @@ use crate::{
     error::{DocumentDBError, Result},
     postgres::PgDataClient,
     runtime::v2::{connection::GatewayRuntime, wire},
-    service::{create_tcp_listeners, ListenerConfig, RequestRouter},
+    service::{create_tcp_listeners, ListenerConfig, RequestRouter, TlsProvider},
     telemetry::{record_startup_metrics, TelemetryProvider},
     time::STARTUP_INSTANT,
 };
@@ -161,13 +161,22 @@ where
             DocumentDBError::internal_error(format!("SSL handshake failed: {error:?}."))
         })?;
         let connection = connection.with_tls(openssl_tls_meta(tls_stream.ssl()));
+        let server_certificate_thumbprint = tls_stream
+            .ssl()
+            .certificate()
+            .and_then(TlsProvider::certificate_thumbprint);
         tracing::info!(
             activity_id = connection_activity_id.as_str(),
             "TLS TCP connection established - Connection Id {connection_id}, client IP {}",
             ip_address
         );
         runtime
-            .serve(tls_stream, connection, connection_id)
+            .serve(
+                tls_stream,
+                connection,
+                connection_id,
+                server_certificate_thumbprint,
+            )
             .await
             .map_err(|error| wire::error_to_documentdb(&error))?;
     } else {
@@ -177,7 +186,7 @@ where
             ip_address
         );
         runtime
-            .serve(tcp_stream, connection, connection_id)
+            .serve(tcp_stream, connection, connection_id, None)
             .await
             .map_err(|error| wire::error_to_documentdb(&error))?;
     }
@@ -231,7 +240,7 @@ where
         "Unix socket connection established - Connection Id {connection_id}"
     );
     runtime
-        .serve(unix_stream, connection, connection_id)
+        .serve(unix_stream, connection, connection_id, None)
         .await
         .map_err(|error| wire::error_to_documentdb(&error))?;
     tracing::debug!(
