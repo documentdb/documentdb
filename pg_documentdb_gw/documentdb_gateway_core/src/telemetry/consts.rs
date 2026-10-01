@@ -14,6 +14,8 @@ pub mod labels {
     pub const DB_OPERATION_NAME: &str = "db.operation.name";
     pub const DB_OPERATION_PHASE: &str = "db.operation.phase";
     pub const ERROR_TYPE: &str = "error.type";
+    pub const AUTHENTICATION_MECHANISM: &str = "docdb.authentication.mechanism";
+    pub const AUTHENTICATION_OUTCOME: &str = "docdb.authentication.outcome";
     pub const TRANSACTION_END_OUTCOME: &str = "docdb.transaction.end.outcome";
     pub const CURSOR_END_REASON: &str = "docdb.cursor.end.reason";
 }
@@ -24,6 +26,7 @@ pub mod metric_names {
     pub const DOCUMENTS_INSERTED: &str = "docdb.gateway.documents.inserted";
     pub const DOCUMENTS_RETURNED: &str = "docdb.gateway.documents.returned";
     pub const DOCUMENTS_UPDATED: &str = "docdb.gateway.documents.updated";
+    pub const AUTHENTICATION_ATTEMPTS: &str = "docdb.gateway.authentication.attempts";
     pub const OPERATION_DURATION: &str = "docdb.gateway.operation.duration";
     pub const OPERATIONS: &str = "docdb.gateway.operations";
     pub const REQUEST_SIZE_TOTAL: &str = "docdb.gateway.request.size.total";

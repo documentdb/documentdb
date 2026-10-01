@@ -25,6 +25,9 @@ pub mod utils;
 // Re-export commonly used types
 pub use config::TelemetrySettings;
 pub use log_request_fail::log_request_failure;
-pub use metrics::{describe_metrics, record_gateway_metrics, record_startup_metrics};
+pub use metrics::{
+    describe_metrics, record_authentication_attempt, record_gateway_metrics,
+    record_startup_metrics, AuthenticationOutcome,
+};
 pub use telemetry_provider::TelemetryProvider;
 pub use utils::{ns_to_ms, NANOS_PER_MILLISECOND};

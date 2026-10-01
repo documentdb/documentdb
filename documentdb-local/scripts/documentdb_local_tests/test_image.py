@@ -749,8 +749,7 @@ class DefaultContainerTests(_ContainerTestBase):
         dbStats, ...) cannot go missing silently, the generalised #650 class.
         The required set is the statically-parsed calls plus the enumerated
         explain aggregation family (bson_aggregation_{find,pipeline,count,
-        distinct}), minus routines with no OSS definition (authenticate_token),
-        which the gateway builds by a runtime-templated name.
+        distinct}), which the gateway builds by a runtime-templated name.
 
         This is a name-existence check (schema.proname), not a signature/arity
         or prokind match: a routine shipped with the wrong overload (e.g.

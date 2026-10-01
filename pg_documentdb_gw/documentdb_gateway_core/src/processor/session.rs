@@ -42,7 +42,7 @@ async fn terminate_sessions(
     sessions_field: &RawArray,
 ) -> Result<()> {
     let logical_session_ids = parse_logical_session_ids(sessions_field)?;
-    let caller = connection_context.auth_state.principal()?;
+    let caller = connection_context.user().principal()?;
     let transaction_store = connection_context.service_context.transaction_store();
     let is_replica_cluster = connection_context
         .dynamic_configuration()

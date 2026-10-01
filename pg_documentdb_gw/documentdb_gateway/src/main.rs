@@ -27,6 +27,7 @@ mod cli;
 use std::sync::Arc;
 
 use documentdb_gateway_core::{
+    auth::AuthenticationManager,
     configuration::{DocumentDBSetupConfiguration, PgConfiguration, SetupConfiguration},
     error::DocumentDBError,
     postgres::{conn_mgmt, create_query_catalog, DocumentDBDataClient},
@@ -65,6 +66,17 @@ fn exit_after_postgres_startup_failure(
     } else {
         15
     });
+}
+
+fn shutdown_telemetry(telemetry_manager: Option<TelemetryManager>) {
+    if let Some(manager) = telemetry_manager {
+        if let Err(error) = manager.shutdown() {
+            // Emit an error line and attempt to emit in tracing telemetry,
+            // which may or may not be in a good state to emit.
+            eprintln!("Failed to shutdown telemetry manager: {error}");
+            tracing::error!("Failed to shutdown telemetry manager: {error}");
+        }
+    }
 }
 
 fn main() {
@@ -189,6 +201,7 @@ async fn start_gateway(mut setup_configuration: DocumentDBSetupConfiguration) {
         dynamic_configuration,
         connection_pool_manager,
         tls_provider,
+        AuthenticationManager::new(),
     );
 
     if enable_v2_runtime {
@@ -213,9 +226,5 @@ async fn start_gateway(mut setup_configuration: DocumentDBSetupConfiguration) {
         .unwrap();
     }
 
-    if let Some(manager) = telemetry_manager {
-        if let Err(err) = manager.shutdown() {
-            tracing::error!("Failed to shutdown telemetry manager: {err}");
-        }
-    }
+    shutdown_telemetry(telemetry_manager);
 }

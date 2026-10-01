@@ -10,6 +10,7 @@
 use std::{sync::Arc, time::Duration};
 
 use documentdb_gateway_core::{
+    auth::AuthenticationManager,
     configuration::{DocumentDBSetupConfiguration, PgConfiguration, SetupConfiguration},
     error::Result,
     postgres::{conn_mgmt, create_query_catalog, DocumentDBDataClient},
@@ -158,6 +159,7 @@ async fn run_docdb_gateway(setup_configuration_file: &str) -> Result<()> {
         dynamic_configuration,
         connection_pool_manager,
         tls_provider,
+        AuthenticationManager::new(),
     );
 
     run_gateway::<DocumentDBDataClient, _>(

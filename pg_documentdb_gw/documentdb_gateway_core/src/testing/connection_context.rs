@@ -14,6 +14,7 @@ use tokio::sync::OnceCell;
 use uuid::Uuid;
 
 use crate::{
+    auth::AuthenticationManager,
     configuration::{
         CertInputType, CertificateOptions, DocumentDBSetupConfiguration, DynamicConfiguration,
         SetupConfiguration,
@@ -34,6 +35,21 @@ pub async fn test_connection_context(
     metrics_enabled: bool,
     dynamic_configuration: Arc<dyn DynamicConfiguration>,
     telemetry_provider: Option<Box<dyn TelemetryProvider>>,
+) -> ConnectionContext {
+    test_connection_context_with_authentication_manager(
+        metrics_enabled,
+        dynamic_configuration,
+        telemetry_provider,
+        AuthenticationManager::new(),
+    )
+    .await
+}
+
+pub async fn test_connection_context_with_authentication_manager(
+    metrics_enabled: bool,
+    dynamic_configuration: Arc<dyn DynamicConfiguration>,
+    telemetry_provider: Option<Box<dyn TelemetryProvider>>,
+    authentication_manager: AuthenticationManager,
 ) -> ConnectionContext {
     let setup_configuration = test_setup_configuration(metrics_enabled);
     let query_catalog = create_query_catalog();
@@ -71,6 +87,7 @@ pub async fn test_connection_context(
         dynamic_configuration,
         pool_manager,
         test_tls_provider().await,
+        authentication_manager,
     );
 
     ConnectionContext::new(

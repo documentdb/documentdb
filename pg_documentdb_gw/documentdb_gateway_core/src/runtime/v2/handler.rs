@@ -58,7 +58,7 @@ impl GatewayConnectionState {
     /// Returns whether the connection has authenticated.
     #[must_use]
     pub(super) fn is_authenticated(&self) -> bool {
-        self.connection_context.auth_state.is_authenticated()
+        self.connection_context.user().is_authenticated()
     }
 
     #[cfg(test)]

@@ -44,16 +44,6 @@ concrete names are enumerated in ``EXPLAIN_AGGREGATION_FUNCTIONS`` and folded
 back in by ``required_backend_functions()`` -- so the active contract test still
 covers them. Everything else the gateway calls is a static name the parser
 captures directly.
-
-OSS gap
--------
-``documentdb_api_internal.authenticate_token`` is called by the gateway
-(token-auth path) but has no ``CREATE FUNCTION`` under ``oss/`` -- it is an
-internal-only routine that documentdb-local never invokes (the emulator uses
-SCRAM). It is listed in ``KNOWN_MISSING_IN_OSS`` and subtracted from the
-*required* set so the active image contract does not go permanently red against
-the OSS extension. It is still captured by the parser (it is a real, statically
-named call) so the parser assertion and the report stay honest.
 """
 
 from __future__ import annotations
@@ -80,16 +70,6 @@ QUERY_CATALOG_RS = (
 # (~50 static today; ~53 required with the explain family). Shared by both the
 # unit test and the image test.
 MIN_EXPECTED_BACKEND_FUNCTIONS = 40
-
-# Routines the gateway QueryCatalog calls that are NOT defined in the OSS
-# extension, so the active image contract must not require them. Kept explicit
-# (not dropped from the parser) so the exclusion is auditable and a future OSS
-# definition can be spotted.
-#   * documentdb_api_internal.authenticate_token: the token-auth path, unused by
-#     documentdb-local (SCRAM only); internal-only, no CREATE FUNCTION under oss/.
-KNOWN_MISSING_IN_OSS: frozenset[str] = frozenset(
-    {"documentdb_api_internal.authenticate_token"}
-)
 
 # A call to a documentdb backend routine: ``<schema>.<fn>(``. The schema
 # alternation lists the longer names first so ``documentdb_api_internal`` /
@@ -147,8 +127,7 @@ def extract_referenced_functions(rust_source: str) -> set[str]:
 def required_backend_functions(rust_source: str) -> set[str]:
     """Return every backend routine the gateway calls that must exist in the
     *shipped OSS extension*: the statically-parsed calls plus the enumerated
-    explain aggregation family (which the static parser cannot resolve on its
-    own), minus ``KNOWN_MISSING_IN_OSS`` (internal-only routines with no OSS
-    definition that documentdb-local never invokes)."""
+    explain aggregation family, which the static parser cannot resolve on its
+    own."""
     parsed = extract_referenced_functions(rust_source)
-    return (parsed | EXPLAIN_AGGREGATION_FUNCTIONS) - KNOWN_MISSING_IN_OSS
+    return parsed | EXPLAIN_AGGREGATION_FUNCTIONS

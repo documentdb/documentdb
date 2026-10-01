@@ -72,7 +72,7 @@ where
     let request_tracker = RequestTracker::new();
 
     let read_request_start = Instant::now();
-    let authenticated = connection_context.auth_state.is_authenticated();
+    let authenticated = connection_context.user().is_authenticated();
     let message = match protocol::reader::read_request_with_timeout(
         authenticated,
         header,
@@ -199,7 +199,7 @@ where
         .await;
         return writer.into_result();
     }
-    if !connection_context.auth_state.is_authenticated()
+    if !connection_context.user().is_authenticated()
         && message_length > usize::try_from(MAX_PRE_AUTH_MESSAGE_SIZE_BYTES).unwrap_or(250_000)
     {
         let error = DocumentDBError::message_size_exceeded();

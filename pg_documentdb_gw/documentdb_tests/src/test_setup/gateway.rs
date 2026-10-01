@@ -12,6 +12,7 @@ use std::sync::{
 };
 
 use documentdb_gateway_core::{
+    auth::AuthenticationManager,
     configuration::{DocumentDBSetupConfiguration, PgConfiguration, SetupConfiguration},
     error::Result,
     postgres::DocumentDBDataClient,
@@ -62,6 +63,7 @@ pub async fn run_test_gateway(
         dynamic_configuration,
         connection_pool_manager,
         tls_provider,
+        AuthenticationManager::new(),
     );
 
     ready_flag.store(true, Ordering::SeqCst);

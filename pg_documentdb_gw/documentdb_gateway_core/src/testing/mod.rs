@@ -16,7 +16,9 @@ mod pool;
 mod request_documents;
 pub mod telemetry;
 
-pub use connection_context::test_connection_context;
+pub use connection_context::{
+    test_connection_context, test_connection_context_with_authentication_manager,
+};
 pub use dynamic_configuration::TestDynamicConfiguration;
 pub use env_guard::EnvGuard;
 pub use op_msg::{

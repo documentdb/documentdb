@@ -13,7 +13,7 @@ use bson::RawDocument;
 use tokio_postgres::{error::SqlState, types::Type, Row};
 
 use crate::{
-    auth::AuthState,
+    auth::UserAuthState,
     context::{ConnectionContext, Cursor, RequestContext, ServiceContext},
     error::{DocumentDBError, Result},
     explain::Verbosity,
@@ -147,14 +147,17 @@ impl DocumentDBDataClient {
 
 #[async_trait]
 impl PgDataClient for DocumentDBDataClient {
-    fn new_authorized(service_context: &ServiceContext, authorization: &AuthState) -> Result<Self> {
-        let user = authorization.username()?;
-        let settings = authorization.data_pool_settings()?;
+    fn new_authorized(
+        service_context: &ServiceContext,
+        authorization: &UserAuthState,
+    ) -> Result<Self> {
+        let name = authorization.principal()?.name();
+        let data_pool_settings = authorization.data_pool_settings()?;
 
         let connection_pool = Some(
             service_context
                 .connection_pool_manager()
-                .get_data_pool_with_settings(user, settings)?,
+                .get_data_pool_with_settings(name, data_pool_settings)?,
         );
 
         Ok(Self {

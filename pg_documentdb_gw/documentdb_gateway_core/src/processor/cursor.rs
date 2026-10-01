@@ -135,7 +135,7 @@ pub async fn process_kill_cursors(
     let (removed_cursors, missing_cursors) = connection_context
         .service_context
         .cursor_store()
-        .kill_cursors(&cursor_ids, connection_context.auth_state.principal()?);
+        .kill_cursors(&cursor_ids, connection_context.user().principal()?);
 
     if !removed_cursors.is_empty() {
         pg_data_client
@@ -317,7 +317,7 @@ pub async fn process_get_more(
         Ok(())
     })?;
 
-    let caller = connection_context.auth_state.principal()?;
+    let caller = connection_context.user().principal()?;
 
     let id = id.ok_or(DocumentDBError::bad_value(
         "getMore not present in document".to_owned(),

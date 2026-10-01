@@ -28,7 +28,7 @@ _SYNTHETIC = """
     QueryCatalog {
         a: "SELECT documentdb_api.drop_database($1)".to_owned(),
         b: "SELECT * FROM documentdb_api.insert($1, $2, $3, NULL)".to_owned(),
-        c: "SELECT documentdb_api_internal.authenticate_token($1, $2)".to_owned(),
+        c: "SELECT documentdb_api_internal.authenticate_with_scram_sha256($1, $2, $3)".to_owned(),
         d: "CALL documentdb_api.insert_txn_proc($1, $2, $3, NULL)".to_owned(),
         e: "SELECT documentdb_api.get_parameter ($1, $2, $3)".to_owned(),
         f: "COALESCE(documentdb_api_catalog.bson_array_agg(r.doc, ''))".to_owned(),
@@ -48,7 +48,7 @@ class ExtractTests(unittest.TestCase):
             {
                 "documentdb_api.drop_database",
                 "documentdb_api.insert",
-                "documentdb_api_internal.authenticate_token",
+                "documentdb_api_internal.authenticate_with_scram_sha256",
                 "documentdb_api.insert_txn_proc",
                 "documentdb_api.get_parameter",
                 # Static executable calls in the catalog/core schemas are in
@@ -119,37 +119,14 @@ class ExtractTests(unittest.TestCase):
 
 
 class RequiredSetTests(unittest.TestCase):
-    def test_required_adds_explain_and_drops_oss_gap(self):
+    def test_required_adds_explain_aggregation_family(self):
         # required_backend_functions() folds the enumerated explain aggregation
-        # family in on top of the statically-parsed calls, then subtracts the
-        # OSS-missing routines (authenticate_token) so the active image contract
-        # does not require a routine the OSS extension does not define.
+        # family in on top of the statically-parsed calls.
         extracted = cc.extract_referenced_functions(_SYNTHETIC)
         required = cc.required_backend_functions(_SYNTHETIC)
         self.assertEqual(
             required,
-            (extracted | set(cc.EXPLAIN_AGGREGATION_FUNCTIONS))
-            - cc.KNOWN_MISSING_IN_OSS,
-        )
-
-    def test_known_missing_is_parsed_but_not_required(self):
-        # authenticate_token IS a real static call the parser must still see
-        # (keep the report honest), but it must NOT be in the required set (no
-        # CREATE FUNCTION under oss/, so requiring it would go permanently red).
-        self.assertIn(
-            "documentdb_api_internal.authenticate_token",
-            cc.extract_referenced_functions(_SYNTHETIC),
-        )
-        self.assertNotIn(
-            "documentdb_api_internal.authenticate_token",
-            cc.required_backend_functions(_SYNTHETIC),
-        )
-
-    def test_known_missing_membership_is_pinned(self):
-        # Pin the exact exclusion set so a future addition/removal is deliberate.
-        self.assertEqual(
-            cc.KNOWN_MISSING_IN_OSS,
-            frozenset({"documentdb_api_internal.authenticate_token"}),
+            extracted | set(cc.EXPLAIN_AGGREGATION_FUNCTIONS),
         )
 
 
@@ -252,7 +229,8 @@ class RealCatalogTests(unittest.TestCase):
 
     def test_includes_internal_schema_routines(self):
         self.assertIn(
-            "documentdb_api_internal.authenticate_token", self.functions
+            "documentdb_api_internal.authenticate_with_scram_sha256",
+            self.functions,
         )
 
     def test_includes_core_and_catalog_static_calls(self):
@@ -286,20 +264,14 @@ class RealCatalogTests(unittest.TestCase):
 
     def test_required_adds_explain_aggregation_family(self):
         # The dynamic explain routines are excluded from the static parse but
-        # re-added by required_backend_functions() (minus the OSS gap), so the
-        # active gate covers bson_aggregation_{find,pipeline,count,distinct}.
+        # re-added by required_backend_functions(), so the active gate covers
+        # bson_aggregation_{find,pipeline,count,distinct}.
         required = cc.required_backend_functions(self.source)
         self.assertTrue(set(cc.EXPLAIN_AGGREGATION_FUNCTIONS) <= required)
         for base in ("find", "pipeline", "count", "distinct"):
             self.assertIn(
                 f"documentdb_api_catalog.bson_aggregation_{base}", required
             )
-
-    def test_required_excludes_oss_gap(self):
-        self.assertNotIn(
-            "documentdb_api_internal.authenticate_token",
-            cc.required_backend_functions(self.source),
-        )
 
     def test_parses_a_substantial_set(self):
         # ~50 backend routines across the four documentdb schemas today; a floor

@@ -14,7 +14,7 @@ use tokio::time::{Duration, Instant};
 use tokio_postgres::Row;
 
 use crate::{
-    auth::AuthState,
+    auth::UserAuthState,
     configuration::DynamicConfiguration,
     context::{ConnectionContext, Cursor, RequestContext, ServiceContext},
     error::Result,
@@ -33,12 +33,15 @@ use crate::{
 
 #[async_trait]
 pub trait PgDataClient: Send + Sync {
-    /// Creates a new client authorized with the given [`AuthState`].
+    /// Creates a new client authorized with the given [`UserAuthState`].
     ///
     /// # Errors
     /// Returns an error if the client cannot be constructed (e.g. missing
     /// connection pool for the authorized user).
-    fn new_authorized(service_context: &ServiceContext, authorization: &AuthState) -> Result<Self>
+    fn new_authorized(
+        service_context: &ServiceContext,
+        authorization: &UserAuthState,
+    ) -> Result<Self>
     where
         Self: Sized;
 
@@ -508,7 +511,7 @@ pub trait PgDataClient: Send + Sync {
         Fut: Future<Output = std::result::Result<T, StatementError>> + Send,
     {
         let source = if let Some((lsid, _)) = connection_context.transaction.as_ref() {
-            let caller = connection_context.auth_state.principal()?;
+            let caller = connection_context.user().principal()?;
 
             if let Some(connection) = self
                 .service_context()
@@ -609,7 +612,7 @@ pub trait PgDataClient: Send + Sync {
                 cursor_timeout,
                 lsid,
                 transaction_number,
-                connection_context.auth_state.principal()?,
+                connection_context.user().principal()?,
             );
         }
 

@@ -17,7 +17,7 @@ use tokio::time::{Duration, Instant};
 use uuid::{Builder, Uuid};
 
 use crate::{
-    auth::AuthState,
+    auth::UserAuthState,
     configuration::DynamicConfiguration,
     context::{
         session::SessionKey, Cursor, CursorId, CursorKey, CursorRef, CursorStoreEntry,
@@ -35,7 +35,6 @@ pub struct ConnectionContext {
     pub start_time: Instant,
     pub connection_id: Uuid,
     pub service_context: Arc<ServiceContext>,
-    pub auth_state: AuthState,
     pub requires_response: bool,
     pub client_information: Option<RawDocumentBuf>,
     pub transaction: Option<(LogicalSessionId, TransactionNumber)>,
@@ -45,6 +44,7 @@ pub struct ConnectionContext {
     pub ssl_protocol: String,
     transport_protocol: String,
     connection_id_hash: i32,
+    user: UserAuthState,
     /// Thumbprint of the certificate captured on the TLS handshake; `None` for plaintext.
     server_certificate_thumbprint: Option<String>,
     /// Time of the last rotation check, used to rate-limit checks.
@@ -85,7 +85,6 @@ impl ConnectionContext {
             start_time: Instant::now(),
             connection_id,
             service_context: Arc::new(service_context),
-            auth_state: AuthState::new(),
             requires_response: true,
             client_information: None,
             transaction: None,
@@ -95,6 +94,7 @@ impl ConnectionContext {
             ssl_protocol,
             transport_protocol,
             connection_id_hash: Self::get_uuid_hash(connection_id),
+            user: UserAuthState::default(),
             server_certificate_thumbprint,
             last_cert_rotation_check: None,
             close_after_response: false,
@@ -258,8 +258,13 @@ impl ConnectionContext {
     /// # Errors
     ///
     /// Returns an error if the operation fails.
-    pub fn allocate_data_pool(&mut self, password: &str) -> Result<()> {
-        let username = self.auth_state.username()?;
+    pub fn set_authenticated_user(
+        &mut self,
+        mut user: UserAuthState,
+        password: &str,
+    ) -> Result<()> {
+        let username = user.principal()?.name();
+
         let settings = PgPoolSettings::from_configuration(
             self.service_context.dynamic_configuration().as_ref(),
         );
@@ -267,7 +272,10 @@ impl ConnectionContext {
         self.service_context
             .connection_pool_manager()
             .allocate_data_pool_with_settings(username, password, settings)?;
-        self.auth_state.set_data_pool_settings(settings);
+
+        user.set_data_pool_settings(settings);
+        self.user = user;
+
         Ok(())
     }
 
@@ -385,5 +393,35 @@ impl ConnectionContext {
         connection_id.hash(&mut hasher);
         let finished_hash = hasher.finish();
         ((finished_hash ^ (finished_hash >> 32)) & 0x7fff_ffff) as i32
+    }
+
+    #[must_use]
+    pub const fn user(&self) -> &UserAuthState {
+        &self.user
+    }
+
+    pub fn update_user_expiration_status(&mut self) {
+        self.user.update_expiration_status();
+    }
+
+    pub const fn user_mut(&mut self) -> &mut UserAuthState {
+        &mut self.user
+    }
+
+    pub fn set_user(&mut self, user: UserAuthState) {
+        self.user = user;
+    }
+
+    pub fn begin_authentication(&mut self, scheme: &str) {
+        let reauthentication_principal = self.user.reauthentication_principal().cloned();
+        self.set_user(UserAuthState::begin(scheme, reauthentication_principal));
+    }
+
+    pub fn clear_user(&mut self) {
+        self.user = UserAuthState::default();
+    }
+
+    pub fn clear_failed_authentication(&mut self) {
+        self.user.clear_failed_attempt();
     }
 }

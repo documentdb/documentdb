@@ -9,6 +9,7 @@
 use std::{sync::Arc, time::Duration};
 
 use crate::{
+    auth::AuthenticationManager,
     configuration::{DynamicConfiguration, SetupConfiguration},
     context::{CursorStore, SessionManager, SessionResourceMetrics, TransactionStore},
     postgres::{conn_mgmt::PoolManager, QueryCatalog},
@@ -23,6 +24,7 @@ pub struct ServiceContextInner {
     pub tls_provider: TlsProvider,
     request_metrics_enabled: bool,
     session_manager: SessionManager,
+    authentication_manager: AuthenticationManager,
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +37,7 @@ impl ServiceContext {
         dynamic_configuration: Arc<dyn DynamicConfiguration>,
         connection_pool_manager: Arc<PoolManager>,
         tls_provider: TlsProvider,
+        authentication_manager: AuthenticationManager,
     ) -> Self {
         let request_metrics_enabled = setup_configuration
             .telemetry_settings()
@@ -67,6 +70,7 @@ impl ServiceContext {
             tls_provider,
             request_metrics_enabled,
             session_manager,
+            authentication_manager,
         };
         Self(Arc::new(inner))
     }
@@ -114,5 +118,10 @@ impl ServiceContext {
     #[must_use]
     pub fn request_metrics_enabled(&self) -> bool {
         self.0.request_metrics_enabled
+    }
+
+    #[must_use]
+    pub fn authentication_manager(&self) -> &AuthenticationManager {
+        &self.0.authentication_manager
     }
 }

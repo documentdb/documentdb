@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tokio::time::{Duration, Instant};
 
 use crate::{
+    auth::AuthenticationManager,
     configuration::{DynamicConfiguration, SetupConfiguration},
     context::ServiceContext,
     error::Result,
@@ -24,6 +25,7 @@ pub fn get_service_context(
     dynamic_configuration: Arc<dyn DynamicConfiguration>,
     connection_pool_manager: Arc<PoolManager>,
     tls_provider: TlsProvider,
+    authentication_manager: AuthenticationManager,
 ) -> ServiceContext {
     tracing::info!("Initial dynamic configuration: {dynamic_configuration:?}");
 
@@ -34,6 +36,7 @@ pub fn get_service_context(
         dynamic_configuration,
         connection_pool_manager,
         tls_provider,
+        authentication_manager,
     )
 }
 

@@ -13,6 +13,7 @@ pub enum EventId {
     Probe = 2000,
     RequestTrace = 2001,
     ConnectionPool = 2002,
+    Authentication = 2003,
     // Values 2101 to 2199 are reserved for different types of user request failures.
     RequestFailure = 2101,
 }
