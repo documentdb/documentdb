@@ -1,3 +1,4 @@
+\i sql/bson_collation_collection_aggregate_tests.sql
 -- Copyright (c) Microsoft Corporation.
 -- Licensed under the MIT License.
 -- SPDX-License-Identifier: MIT
@@ -6,7 +7,7 @@ SET documentdb.next_collection_id TO 782300;
 SET documentdb.next_collection_index_id TO 782300;
 SET documentdb_core.enableCollation TO on;
 SELECT documentdb_api.create_collection('collation_aggregate_db', 'source');
-NOTICE:  creating collection
+psql:sql/bson_collation_collection_aggregate_tests.sql:11: NOTICE:  creating collection
  create_collection 
 -------------------
  t
@@ -318,10 +319,10 @@ SELECT document FROM bson_aggregation_pipeline(
     '{ "aggregate": "source", "pipeline": [
         { "$group": { "_id": null, "categories": { "$addToSet": "$category" } } }
     ] }');
-ERROR:  collation is not supported with the $addToSet accumulator in $group yet.
+psql:sql/bson_collation_collection_aggregate_tests.sql:214: ERROR:  collation is not supported with the $addToSet accumulator in $group yet.
 -- A collection with no default collation keeps binary behavior.
 SELECT documentdb_api.create_collection('collation_aggregate_db', 'no_default');
-NOTICE:  creating collection
+psql:sql/bson_collation_collection_aggregate_tests.sql:217: NOTICE:  creating collection
  create_collection 
 -------------------
  t
@@ -354,7 +355,7 @@ SELECT document FROM bson_aggregation_pipeline(
 
 -- A simple collection default also keeps binary behavior.
 SELECT documentdb_api.create_collection('collation_aggregate_db', 'simple_default');
-NOTICE:  creating collection
+psql:sql/bson_collation_collection_aggregate_tests.sql:230: NOTICE:  creating collection
  create_collection 
 -------------------
  t
@@ -442,42 +443,42 @@ SELECT documentdb_api.drop_database('collation_aggregate_db');
 
 -- Nested pipeline collection-default collation inheritance.
 SELECT documentdb_api.create_collection('collation_nested_db', 'source');
-NOTICE:  creating collection
+psql:sql/bson_collation_collection_aggregate_tests.sql:278: NOTICE:  creating collection
  create_collection 
 -------------------
  t
 (1 row)
 
 SELECT documentdb_api.create_collection('collation_nested_db', 'lookup_target');
-NOTICE:  creating collection
+psql:sql/bson_collation_collection_aggregate_tests.sql:279: NOTICE:  creating collection
  create_collection 
 -------------------
  t
 (1 row)
 
 SELECT documentdb_api.create_collection('collation_nested_db', 'union_target');
-NOTICE:  creating collection
+psql:sql/bson_collation_collection_aggregate_tests.sql:280: NOTICE:  creating collection
  create_collection 
 -------------------
  t
 (1 row)
 
 SELECT documentdb_api.create_collection('collation_nested_db', 'graph_target');
-NOTICE:  creating collection
+psql:sql/bson_collation_collection_aggregate_tests.sql:281: NOTICE:  creating collection
  create_collection 
 -------------------
  t
 (1 row)
 
 SELECT documentdb_api.create_collection('collation_nested_db', 'binary_source');
-NOTICE:  creating collection
+psql:sql/bson_collation_collection_aggregate_tests.sql:282: NOTICE:  creating collection
  create_collection 
 -------------------
  t
 (1 row)
 
 SELECT documentdb_api.create_collection('collation_nested_db', 'defaulted_target');
-NOTICE:  creating collection
+psql:sql/bson_collation_collection_aggregate_tests.sql:283: NOTICE:  creating collection
  create_collection 
 -------------------
  t
@@ -1382,29 +1383,26 @@ SELECT document FROM bson_aggregation_pipeline(
         } }
     ] }')
 $cmd$) AS plan(query_plan);
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      query_plan                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     query_plan                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Subquery Scan on agg_stage_4
    Output: documentdb_api_internal.bson_dollar_project(agg_stage_4.document, '{ "_id" : { "$numberInt" : "0" }, "count" : { "$numberInt" : "1" }, "minimumRank" : { "$numberInt" : "1" }, "maximumRank" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1-kn-true'::text)
    ->  GroupAggregate
-         Output: bson_repath_and_build('_id'::text, '{ "" : null, "collation" : "en-u-ks-level1-kn-true" }'::bson, 'count'::text, documentdb_api_internal.bsoncount(1), 'minimumRank'::text, documentdb_api_internal.bsonminwithexpr((documentdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1-kn-true'::text)), '{ "" : "$rank" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1-kn-true'::text), 'maximumRank'::text, documentdb_api_internal.bsonmaxwithexpr((documentdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1-kn-true'::text)), '{ "" : "$rank" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1-kn-true'::text)), ('{ "" : null, "collation" : "en-u-ks-level1-kn-true" }'::bson)
-         Group Key: '{ "" : null, "collation" : "en-u-ks-level1-kn-true" }'::bson
-         ->  Result
-               Output: '{ "" : null, "collation" : "en-u-ks-level1-kn-true" }'::bson, (documentdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1-kn-true'::text))
-               ->  Append
-                     ->  Bitmap Heap Scan on documentdb_data.documents_782305 collection
-                           Output: documentdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1-kn-true'::text)
-                           Recheck Cond: (collection.shard_key_value = '782305'::bigint)
-                           Filter: (collection.document @= '{ "key" : "cafe", "collation" : "en-u-ks-level1-kn-true" }'::bson)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '782305'::bigint)
-                     ->  Bitmap Heap Scan on documentdb_data.documents_782307 collection_0_1
-                           Output: documentdb_api_internal.bson_dollar_project(collection_0_1.document, '{ "_id" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1-kn-true'::text)
-                           Recheck Cond: (collection_0_1.shard_key_value = '782307'::bigint)
-                           Filter: (collection_0_1.document @= '{ "key" : "cafe", "collation" : "en-u-ks-level1-kn-true" }'::bson)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection_0_1.shard_key_value = '782307'::bigint)
-(20 rows)
+         Output: bson_repath_and_build('_id'::text, '{ "" : null, "collation" : "en-u-ks-level1-kn-true" }'::bson, 'count'::text, documentdb_api_internal.bsoncount(1), 'minimumRank'::text, documentdb_api_internal.bsonminwithexpr((documentdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1-kn-true'::text)), '{ "" : "$rank" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1-kn-true'::text), 'maximumRank'::text, documentdb_api_internal.bsonmaxwithexpr((documentdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1-kn-true'::text)), '{ "" : "$rank" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1-kn-true'::text)), '{ "" : null, "collation" : "en-u-ks-level1-kn-true" }'::bson
+         ->  Append
+               ->  Bitmap Heap Scan on documentdb_data.documents_782305 collection
+                     Output: documentdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1-kn-true'::text)
+                     Recheck Cond: (collection.shard_key_value = '782305'::bigint)
+                     Filter: (collection.document @= '{ "key" : "cafe", "collation" : "en-u-ks-level1-kn-true" }'::bson)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (collection.shard_key_value = '782305'::bigint)
+               ->  Bitmap Heap Scan on documentdb_data.documents_782307 collection_0_1
+                     Output: documentdb_api_internal.bson_dollar_project(collection_0_1.document, '{ "_id" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1-kn-true'::text)
+                     Recheck Cond: (collection_0_1.shard_key_value = '782307'::bigint)
+                     Filter: (collection_0_1.document @= '{ "key" : "cafe", "collation" : "en-u-ks-level1-kn-true" }'::bson)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (collection_0_1.shard_key_value = '782307'::bigint)
+(17 rows)
 
 -- $unionWith with explicit simple override.
 SELECT query_plan
@@ -1436,29 +1434,26 @@ SELECT document FROM bson_aggregation_pipeline(
         } }
     ], "collation": { "locale": "simple" } }')
 $cmd$) AS plan(query_plan);
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                          query_plan                                                                                                                                                                                                                                                                                                                                                                                                                                                                           
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                         query_plan                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Subquery Scan on agg_stage_4
    Output: documentdb_api_internal.bson_dollar_project(agg_stage_4.document, '{ "_id" : { "$numberInt" : "0" }, "count" : { "$numberInt" : "1" }, "minimumRank" : { "$numberInt" : "1" }, "maximumRank" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  GroupAggregate
-         Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'count'::text, documentdb_api_internal.bsoncount(1), 'minimumRank'::text, documentdb_api_internal.bsonminwithexpr((documentdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)), '{ "" : "$rank" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'maximumRank'::text, documentdb_api_internal.bsonmaxwithexpr((documentdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)), '{ "" : "$rank" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
-         Group Key: '{ "" : null }'::bson
-         ->  Result
-               Output: '{ "" : null }'::bson, (documentdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               ->  Append
-                     ->  Bitmap Heap Scan on documentdb_data.documents_782305 collection
-                           Output: documentdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-                           Recheck Cond: (collection.shard_key_value = '782305'::bigint)
-                           Filter: (collection.document @= '{ "key" : "cafe" }'::bson)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '782305'::bigint)
-                     ->  Bitmap Heap Scan on documentdb_data.documents_782307 collection_0_1
-                           Output: documentdb_api_internal.bson_dollar_project(collection_0_1.document, '{ "_id" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-                           Recheck Cond: (collection_0_1.shard_key_value = '782307'::bigint)
-                           Filter: (collection_0_1.document @= '{ "key" : "cafe" }'::bson)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection_0_1.shard_key_value = '782307'::bigint)
-(20 rows)
+         Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'count'::text, documentdb_api_internal.bsoncount(1), 'minimumRank'::text, documentdb_api_internal.bsonminwithexpr((documentdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)), '{ "" : "$rank" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'maximumRank'::text, documentdb_api_internal.bsonmaxwithexpr((documentdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)), '{ "" : "$rank" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), '{ "" : null }'::bson
+         ->  Append
+               ->  Bitmap Heap Scan on documentdb_data.documents_782305 collection
+                     Output: documentdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+                     Recheck Cond: (collection.shard_key_value = '782305'::bigint)
+                     Filter: (collection.document @= '{ "key" : "cafe" }'::bson)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (collection.shard_key_value = '782305'::bigint)
+               ->  Bitmap Heap Scan on documentdb_data.documents_782307 collection_0_1
+                     Output: documentdb_api_internal.bson_dollar_project(collection_0_1.document, '{ "_id" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+                     Recheck Cond: (collection_0_1.shard_key_value = '782307'::bigint)
+                     Filter: (collection_0_1.document @= '{ "key" : "cafe" }'::bson)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (collection_0_1.shard_key_value = '782307'::bigint)
+(17 rows)
 
 -- $graphLookup with inherited collection default.
 SELECT query_plan

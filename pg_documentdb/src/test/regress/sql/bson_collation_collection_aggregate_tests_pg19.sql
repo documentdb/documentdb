@@ -1,0 +1,1 @@
+\i sql/bson_collation_collection_aggregate_tests.sql

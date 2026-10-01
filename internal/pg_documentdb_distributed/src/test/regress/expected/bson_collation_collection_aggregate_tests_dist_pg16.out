@@ -1,3 +1,4 @@
+\i sql/bson_collation_collection_aggregate_tests_dist.sql
 -- Copyright (c) Microsoft Corporation.
 -- Licensed under the MIT License.
 -- SPDX-License-Identifier: MIT
@@ -9,7 +10,7 @@ SET documentdb_core.enableCollation TO on;
 SET documentdb.useLocalExecutionShardQueries TO off;
 SET citus.propagate_set_commands TO 'local';
 SELECT documentdb_api.create_collection('collation_aggregate_dist_db', 'source');
-NOTICE:  creating collection
+psql:sql/bson_collation_collection_aggregate_tests_dist.sql:14: NOTICE:  creating collection
  create_collection 
 ---------------------------------------------------------------------
  t
@@ -197,7 +198,7 @@ SELECT document FROM bson_aggregation_pipeline(
         { "$sort": { "firstId": 1 } }
     ] }')
 $cmd$, p_ignore_distributed_subplan_ids => true) AS plan(query_plan);
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               query_plan                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             query_plan                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
@@ -333,42 +334,42 @@ SELECT documentdb_api.drop_collection('collation_aggregate_dist_db', 'source');
 
 -- Nested pipeline collection-default collation inheritance.
 SELECT documentdb_api.create_collection('collation_nested_dist_db', 'source');
-NOTICE:  creating collection
+psql:sql/bson_collation_collection_aggregate_tests_dist.sql:184: NOTICE:  creating collection
  create_collection 
 ---------------------------------------------------------------------
  t
 (1 row)
 
 SELECT documentdb_api.create_collection('collation_nested_dist_db', 'lookup_target');
-NOTICE:  creating collection
+psql:sql/bson_collation_collection_aggregate_tests_dist.sql:185: NOTICE:  creating collection
  create_collection 
 ---------------------------------------------------------------------
  t
 (1 row)
 
 SELECT documentdb_api.create_collection('collation_nested_dist_db', 'union_target');
-NOTICE:  creating collection
+psql:sql/bson_collation_collection_aggregate_tests_dist.sql:186: NOTICE:  creating collection
  create_collection 
 ---------------------------------------------------------------------
  t
 (1 row)
 
 SELECT documentdb_api.create_collection('collation_nested_dist_db', 'graph_target');
-NOTICE:  creating collection
+psql:sql/bson_collation_collection_aggregate_tests_dist.sql:187: NOTICE:  creating collection
  create_collection 
 ---------------------------------------------------------------------
  t
 (1 row)
 
 SELECT documentdb_api.create_collection('collation_nested_dist_db', 'binary_source');
-NOTICE:  creating collection
+psql:sql/bson_collation_collection_aggregate_tests_dist.sql:188: NOTICE:  creating collection
  create_collection 
 ---------------------------------------------------------------------
  t
 (1 row)
 
 SELECT documentdb_api.create_collection('collation_nested_dist_db', 'defaulted_target');
-NOTICE:  creating collection
+psql:sql/bson_collation_collection_aggregate_tests_dist.sql:189: NOTICE:  creating collection
  create_collection 
 ---------------------------------------------------------------------
  t
@@ -1509,12 +1510,11 @@ $cmd$, p_ignore_distributed_subplan_ids => true) AS plan(query_plan);
          ->  Subquery Scan on agg_stage_4
                Output: documentdb_api_internal.bson_dollar_project(agg_stage_4.document, '{ "_id" : { "$numberInt" : "0" }, "count" : { "$numberInt" : "1" }, "minimumRank" : { "$numberInt" : "1" }, "maximumRank" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1-kn-true'::text)
                ->  GroupAggregate
-                     Output: documentdb_core.bson_repath_and_build('_id'::text, '{ "" : null, "collation" : "en-u-ks-level1-kn-true" }'::documentdb_core.bson, 'count'::text, documentdb_api_internal.bsoncount(1), 'minimumRank'::text, documentdb_api_internal.bsonminwithexpr(intermediate_result.document, '{ "" : "$rank" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1-kn-true'::text), 'maximumRank'::text, documentdb_api_internal.bsonmaxwithexpr(intermediate_result.document, '{ "" : "$rank" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1-kn-true'::text)), ('{ "" : null, "collation" : "en-u-ks-level1-kn-true" }'::documentdb_core.bson)
-                     Group Key: '{ "" : null, "collation" : "en-u-ks-level1-kn-true" }'::documentdb_core.bson
+                     Output: documentdb_core.bson_repath_and_build('_id'::text, '{ "" : null, "collation" : "en-u-ks-level1-kn-true" }'::documentdb_core.bson, 'count'::text, documentdb_api_internal.bsoncount(1), 'minimumRank'::text, documentdb_api_internal.bsonminwithexpr(intermediate_result.document, '{ "" : "$rank" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1-kn-true'::text), 'maximumRank'::text, documentdb_api_internal.bsonmaxwithexpr(intermediate_result.document, '{ "" : "$rank" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1-kn-true'::text)), '{ "" : null, "collation" : "en-u-ks-level1-kn-true" }'::documentdb_core.bson
                      ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
-                           Output: '{ "" : null, "collation" : "en-u-ks-level1-kn-true" }'::documentdb_core.bson, intermediate_result.document
+                           Output: intermediate_result.document
                            Function Call: read_intermediate_result('XXX_3'::text, 'binary'::citus_copy_format)
-(55 rows)
+(54 rows)
 
 SELECT document FROM bson_aggregation_pipeline(
     'collation_nested_dist_db',
@@ -1628,12 +1628,11 @@ $cmd$, p_ignore_distributed_subplan_ids => true) AS plan(query_plan);
          ->  Subquery Scan on agg_stage_4
                Output: documentdb_api_internal.bson_dollar_project(agg_stage_4.document, '{ "_id" : { "$numberInt" : "0" }, "count" : { "$numberInt" : "1" }, "minimumRank" : { "$numberInt" : "1" }, "maximumRank" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
                ->  GroupAggregate
-                     Output: documentdb_core.bson_repath_and_build('_id'::text, '{ "" : null }'::documentdb_core.bson, 'count'::text, documentdb_api_internal.bsoncount(1), 'minimumRank'::text, documentdb_api_internal.bsonminwithexpr(intermediate_result.document, '{ "" : "$rank" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text), 'maximumRank'::text, documentdb_api_internal.bsonmaxwithexpr(intermediate_result.document, '{ "" : "$rank" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)), ('{ "" : null }'::documentdb_core.bson)
-                     Group Key: '{ "" : null }'::documentdb_core.bson
+                     Output: documentdb_core.bson_repath_and_build('_id'::text, '{ "" : null }'::documentdb_core.bson, 'count'::text, documentdb_api_internal.bsoncount(1), 'minimumRank'::text, documentdb_api_internal.bsonminwithexpr(intermediate_result.document, '{ "" : "$rank" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text), 'maximumRank'::text, documentdb_api_internal.bsonmaxwithexpr(intermediate_result.document, '{ "" : "$rank" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)), '{ "" : null }'::documentdb_core.bson
                      ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
-                           Output: '{ "" : null }'::documentdb_core.bson, intermediate_result.document
+                           Output: intermediate_result.document
                            Function Call: read_intermediate_result('XXX_3'::text, 'binary'::citus_copy_format)
-(55 rows)
+(54 rows)
 
 -- $graphLookup supports a distributed source when the target remains
 -- unsharded, and both traversal and restriction inherit the source default.
