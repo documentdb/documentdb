@@ -129,13 +129,33 @@ case "$1" in
         # numbered Workflow B recipe duplicated the design doc and aged
         # quickly. Keep this banner short and point at one canonical
         # reference (the design doc) for the full Workflow B steps.
+        # --cluster <N>/main, not a bare psql: the rest of the recipe is
+        # parameterised on <N>, but a bare psql follows the default socket, so
+        # on a host where another major owns it the extensions land there and
+        # the documentdb-register-gateway line below reports them missing.
+        #
+        # Both statements are required: documentdb-tune pins
+        # alternate_index_handler_name='extended_rum' whenever the extended-RUM
+        # extension is installed (the default here) and CASCADE does not pull it
+        # in, so without it no new index can be built. Static copy of the recipe
+        # documentdb-tools-lib.sh single-sources — this scriptlet cannot source
+        # that library, which ships in documentdb-postgresql-tools. Its flags
+        # match documentdb_create_extension_command's; verify_install_banner_
+        # extension_hint in packaging/test_packages/test-gateway-install-
+        # entrypoint.sh checks the statements, their order, the BEGIN/COMMIT
+        # wrap and the cluster coordinates, which is less than full equivalence
+        # with that renderer.
         echo "Next: choose one workflow."
         echo "  • Workflow C (recommended): \`sudo apt install documentdb && sudo documentdb-setup --admin-user admin\`"
         echo "  • Workflow B (gateway on top of an existing PG, replace <N> with the PG major such as 18):"
         echo "      sudo apt install postgresql-<N>-documentdb documentdb-postgresql-tools && \\"
         echo "        sudo documentdb-tune --pg-version <N> --cluster main --yes && \\"
         echo "        sudo systemctl restart postgresql@<N>-main && \\"
-        echo "        sudo -u postgres psql -c 'CREATE EXTENSION documentdb CASCADE;' && \\"
+        echo "        sudo -u postgres psql --cluster <N>/main -d postgres -X -v ON_ERROR_STOP=1 \\"
+        echo "          -c 'BEGIN;' \\"
+        echo "          -c 'CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;' \\"
+        echo "          -c 'CREATE EXTENSION IF NOT EXISTS documentdb_extended_rum CASCADE;' \\"
+        echo "          -c 'COMMIT;' && \\"
         echo "        sudo documentdb-register-gateway --target-postgres-instance <N>/main --admin-user admin --yes && \\"
         echo "        sudo systemctl reload postgresql@<N>-main && \\"
         echo "        sudo systemctl enable --now documentdb-gateway"

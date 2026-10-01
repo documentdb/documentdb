@@ -949,6 +949,94 @@ verify_postgres_state() {
     fi
 }
 
+# The gateway banner is the highest-traffic copy of the CREATE EXTENSION recipe
+# and the one copy that cannot source documentdb-tools-lib.sh, so it is a static
+# duplicate -- and it is what drifted last time, telling operators to run a
+# single CASCADE long after the tools knew an extended-RUM cluster needs two.
+# Asserted against the INSTALLED scriptlet, i.e. the shipped artifact.
+verify_install_banner_extension_hint() {
+    log "Verifying the gateway postinst banner names both extensions."
+
+    # No skip: the installed scriptlet is package content, not a runtime
+    # capability. Missing means documentdb-gateway is not installed here, which
+    # is a broken test image, and skipping would report PASS for an assertion
+    # that never ran.
+    local postinst="/var/lib/dpkg/info/documentdb-gateway.postinst"
+    [[ -f "${postinst}" ]] \
+        || fail "${postinst} is missing: documentdb-gateway's installed postinst must be present for this assertion to mean anything"
+
+    # echo lines only: the scriptlet's own comments quote the single-statement
+    # form and would trip the negative check below.
+    local banner=""
+    banner="$(sudo grep -E '^[[:space:]]*echo ' "${postinst}" || true)"
+
+    printf '%s\n' "${banner}" | grep -Fq 'CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;' \
+        || fail "documentdb-gateway postinst does not print the documentdb CREATE EXTENSION recipe"
+    printf '%s\n' "${banner}" | grep -Fq 'CREATE EXTENSION IF NOT EXISTS documentdb_extended_rum CASCADE;' \
+        || fail "documentdb-gateway postinst prints a CREATE EXTENSION recipe that omits documentdb_extended_rum -- an operator following the Workflow B banner ends up with a database where no new index can be built -- \"Index access method extended_rum is not available\". Keep it in sync with documentdb_create_extension_command in documentdb-tools-lib.sh."
+
+    # A bare "CASCADE" with no IF NOT EXISTS is the pre-fix single-statement
+    # form; catch a partial revert that adds the second line but restores the
+    # old first one.
+    if printf '%s\n' "${banner}" | grep -Eq "CREATE EXTENSION documentdb CASCADE"; then
+        fail "documentdb-gateway postinst still contains the pre-fix single-statement recipe 'CREATE EXTENSION documentdb CASCADE'"
+    fi
+
+    # Naming both extensions but targeting the wrong server fails just as
+    # completely as naming one: a bare psql follows the default socket, not the
+    # <N> the rest of the banner is parameterised on.
+    printf '%s\n' "${banner}" | grep -Fq 'psql --cluster <N>/main' \
+        || fail "documentdb-gateway postinst prints a CREATE EXTENSION recipe with no cluster coordinates -- on a host where another PostgreSQL major owns the default socket, the extensions are created in the wrong cluster and documentdb-register-gateway then reports them missing"
+
+    # Presence is not order: documentdb_extended_rum's install SQL consumes
+    # objects the base extension creates, so a banner listing it first is a
+    # recipe that fails halfway. Same flags as documentdb_create_extension_command,
+    # so a pasted banner behaves like the tools' own recipe.
+    local base_at extra_at
+    base_at="$(printf '%s\n' "${banner}" | grep -n 'CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;' | head -1 | cut -d: -f1)"
+    extra_at="$(printf '%s\n' "${banner}" | grep -n 'CREATE EXTENSION IF NOT EXISTS documentdb_extended_rum CASCADE;' | head -1 | cut -d: -f1)"
+    (( base_at < extra_at )) \
+        || fail "documentdb-gateway postinst prints documentdb_extended_rum before documentdb (lines ${base_at} and ${extra_at}); its install SQL needs the base extension's objects, so that order fails halfway"
+    # One transaction: a failed second statement must not leave the first committed.
+    local begin_at commit_at
+    begin_at="$(printf '%s\n' "${banner}" | grep -nF -- "-c 'BEGIN;'" | head -1 | cut -d: -f1)"
+    commit_at="$(printf '%s\n' "${banner}" | grep -nF -- "-c 'COMMIT;'" | head -1 | cut -d: -f1)"
+    [[ -n "${begin_at}" && -n "${commit_at}" ]] && (( begin_at < base_at && extra_at < commit_at )) \
+        || fail "documentdb-gateway postinst does not wrap both CREATE EXTENSION statements in -c 'BEGIN;' ... -c 'COMMIT;' (BEGIN line '${begin_at}', COMMIT line '${commit_at}'); a failed documentdb_extended_rum then leaves documentdb committed without it"
+    printf '%s\n' "${banner}" | grep -Fq 'psql --cluster <N>/main -d postgres -X -v ON_ERROR_STOP=1' \
+        || fail "documentdb-gateway postinst's psql line does not carry -d postgres -X -v ON_ERROR_STOP=1; it must match documentdb_create_extension_command in documentdb-tools-lib.sh, so a half-applied recipe cannot look like a success"
+
+    # Bounded on purpose: statements, their order, the target and the flags --
+    # not equivalence with the renderer's output.
+    log "Gateway postinst banner: both extensions named, in order, targeted."
+}
+
+# A tuned cluster whose documentdb_extended_rum was never created looks healthy
+# in \dx but cannot build a new index, so assert the behaviour rather
+# than only the catalog rows.
+verify_index_creation_works() {
+    local probe_db="documentdb_pkg_index_probe"
+    local index_spec='{"createIndexes": "probe_coll", "indexes": [{"key": {"n": 1}, "name": "n_1"}]}'
+    local index_row="" index_ok="" index_retval="" probe_err=""
+
+    log "Verifying index creation works end-to-end."
+    create_temp_file probe_err "/tmp/documentdb-index-probe.XXXXXX.log"
+    # stderr goes to a file rather than merged into the captured value, so only
+    # the result row lands there. statement_timeout bounds the call so a build
+    # that never completes fails the suite instead of hanging it.
+    if ! index_row="$(run_psql "SET client_min_messages = warning; SET statement_timeout = '180s'; SELECT ok, retval::text FROM documentdb_api.create_indexes_background('${probe_db}', '${index_spec}'::documentdb_core.bson);" 2>"${probe_err}")"; then
+        fail "createIndexes failed after a packaged install: $(cat "${probe_err}")"
+    fi
+    # ok=false is in-band: psql exits 0 and the reason lives in retval, so a
+    # message built from the ok flag alone names neither the access method nor
+    # the missing extension -- the one regression this test exists to catch.
+    index_ok="${index_row%%|*}"
+    index_retval="${index_row#*|}"
+    assert_eq "${index_ok}" "t" "create_indexes_background did not report ok=true (retval: ${index_retval}; stderr: $(cat "${probe_err}"))"
+
+    run_psql "SELECT documentdb_api.drop_database('${probe_db}');" >/dev/null 2>&1 || true
+}
+
 verify_gateway_crud() {
     local mongosh_log="/tmp/mongosh-smoke.log"
     local crud_script=""
@@ -2017,10 +2105,21 @@ verify_workflow_a_documentdb_tune_direct() {
 
     # --yes apply must write the managed block, then --restore must strip it
     # exactly back to the pre-apply state.
-    sudo documentdb-tune --pg-version "${PG_MAJOR}" --pgdata "${data_dir}" --yes >/dev/null 2>&1 \
+    local apply_out=""
+    apply_out="$(sudo documentdb-tune --pg-version "${PG_MAJOR}" --pgdata "${data_dir}" --yes 2>&1)" \
         || fail "documentdb-tune --yes apply failed"
     sudo grep -Fq '# >>> documentdb-setup managed configuration >>>' "${conf_file}" \
         || fail "documentdb-tune apply did not insert managed block into ${conf_file}"
+
+    # Writing the config is only half of Workflow A: documentdb-tune is the only
+    # tool that knows an extended-RUM cluster also needs documentdb_extended_rum,
+    # so assert the guidance, not just the file.
+    local tune_extended_rum_control
+    tune_extended_rum_control="$(pg_config --sharedir)/extension/documentdb_extended_rum.control"
+    if [[ -f "${tune_extended_rum_control}" ]]; then
+        printf '%s\n' "${apply_out}" | grep -Fq 'CREATE EXTENSION IF NOT EXISTS documentdb_extended_rum CASCADE;' \
+            || fail "documentdb-tune wrote alternate_index_handler_name='extended_rum' but never tells the operator to create documentdb_extended_rum -- following it produces a database where no new index can be built: ${apply_out}"
+    fi
 
     sudo documentdb-tune --pg-version "${PG_MAJOR}" --pgdata "${data_dir}" --restore --yes >/dev/null 2>&1 \
         || fail "documentdb-tune --restore failed"
@@ -2029,6 +2128,336 @@ verify_workflow_a_documentdb_tune_direct() {
     fi
 
     log "Phase 9a: Workflow A passed."
+}
+
+# packaging-design.md tells operators --start creates the extensions for them
+# and no longer documents a manual fallback, yet nothing in this suite, the
+# smoke test, or CI ever runs it -- so without this the path ships never having
+# executed. Asserts behaviour (extensions present, an index builds), not just
+# the exit code.
+verify_createcluster_start_creates_extensions() {
+    log "Phase 9a2: documentdb-createcluster --start end-to-end."
+
+    # postgresql-common ships pg_createcluster and this suite's image installs
+    # it; its absence is a broken image, not a capability this test may skip.
+    command -v pg_createcluster >/dev/null 2>&1 \
+        || fail "pg_createcluster is missing from this image, so documentdb-createcluster cannot be exercised at all"
+
+    local probe_cluster="ddbstart"
+    local nostart_cluster="ddbnostart"
+    local extended_rum_control=""
+    extended_rum_control="$(pg_config --sharedir)/extension/documentdb_extended_rum.control"
+
+    # Idempotent pre-clean: a previous aborted run must not fail this one.
+    sudo pg_dropcluster --stop "${PG_MAJOR}" "${probe_cluster}" >/dev/null 2>&1 || true
+    sudo pg_dropcluster --stop "${PG_MAJOR}" "${nostart_cluster}" >/dev/null 2>&1 || true
+
+    # ── (1) --start: create + tune + start + create extensions ──────
+    local start_out=""
+    if ! start_out="$(sudo documentdb-createcluster "${PG_MAJOR}" "${probe_cluster}" --start 2>&1)"; then
+        sudo pg_dropcluster --stop "${PG_MAJOR}" "${probe_cluster}" >/dev/null 2>&1 || true
+        fail "documentdb-createcluster --start failed: ${start_out}"
+    fi
+
+    local ext_rows=""
+    if ! ext_rows="$(sudo -u postgres psql --cluster "${PG_MAJOR}/${probe_cluster}" -d postgres \
+            -X -tAq -v ON_ERROR_STOP=1 \
+            -c "SELECT extname FROM pg_extension WHERE extname LIKE 'documentdb%' ORDER BY 1;" 2>&1)"; then
+        sudo pg_dropcluster --stop "${PG_MAJOR}" "${probe_cluster}" >/dev/null 2>&1 || true
+        fail "cannot query extensions in ${PG_MAJOR}/${probe_cluster}: ${ext_rows}"
+    fi
+    printf '%s\n' "${ext_rows}" | grep -qx 'documentdb' \
+        || { sudo pg_dropcluster --stop "${PG_MAJOR}" "${probe_cluster}" >/dev/null 2>&1 || true
+             fail "documentdb-createcluster --start did not create the documentdb extension (got: ${ext_rows})"; }
+
+    # Required exactly when the control file is on disk: that is the condition
+    # documentdb-tune uses to pin the handler.
+    if [[ -f "${extended_rum_control}" ]]; then
+        printf '%s\n' "${ext_rows}" | grep -qx 'documentdb_extended_rum' \
+            || { sudo pg_dropcluster --stop "${PG_MAJOR}" "${probe_cluster}" >/dev/null 2>&1 || true
+                 fail "documentdb-createcluster --start left documentdb_extended_rum uncreated while documentdb-tune pinned extended_rum -- no new index can be built in this cluster (extensions present: ${ext_rows})"; }
+    fi
+
+    # The behavioural assertion: an index must actually build here.
+    local probe_db="documentdb_createcluster_probe"
+    local index_spec='{"createIndexes": "probe_coll", "indexes": [{"key": {"n": 1}, "name": "n_1"}]}'
+    local index_row="" index_err=""
+    # stderr to its own file, never merged: the row is prefix-matched below and
+    # a stray WARNING ahead of it would fail this on a healthy cluster. Same
+    # handling as verify_index_creation_works.
+    create_temp_file index_err "/tmp/documentdb-createcluster-probe.XXXXXX.log"
+    # -q like run_psql's -Atq: without it psql prints a "SET" command tag for
+    # each SET ahead of the result row, breaking the prefix match below.
+    if ! index_row="$(sudo -u postgres psql --cluster "${PG_MAJOR}/${probe_cluster}" -d postgres \
+            -X -tAq -v ON_ERROR_STOP=1 \
+            -c "SET client_min_messages = warning; SET statement_timeout = '180s'; SELECT ok, retval::text FROM documentdb_api.create_indexes_background('${probe_db}', '${index_spec}'::documentdb_core.bson);" 2>"${index_err}")"; then
+        sudo pg_dropcluster --stop "${PG_MAJOR}" "${probe_cluster}" >/dev/null 2>&1 || true
+        fail "createIndexes failed in a cluster built by documentdb-createcluster --start: $(cat "${index_err}")"
+    fi
+    if [[ "${index_row}" != t\|* ]]; then
+        sudo pg_dropcluster --stop "${PG_MAJOR}" "${probe_cluster}" >/dev/null 2>&1 || true
+        fail "create_indexes_background did not report ok=true in a documentdb-createcluster --start cluster (row: '${index_row}'; stderr: $(cat "${index_err}"))"
+    fi
+
+    # --start created them, so the banner must not also hand out a recipe.
+    if printf '%s\n' "${start_out}" | grep -Fq 'CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;'; then
+        sudo pg_dropcluster --stop "${PG_MAJOR}" "${probe_cluster}" >/dev/null 2>&1 || true
+        fail "documentdb-createcluster --start printed a CREATE EXTENSION recipe for work it already did: ${start_out}"
+    fi
+
+    sudo pg_dropcluster --stop "${PG_MAJOR}" "${probe_cluster}" >/dev/null 2>&1 \
+        || fail "could not drop probe cluster ${PG_MAJOR}/${probe_cluster}"
+
+    # ── (2) no --start: printed order must be runnable top to bottom ──
+    local nostart_out=""
+    if ! nostart_out="$(sudo documentdb-createcluster "${PG_MAJOR}" "${nostart_cluster}" 2>&1)"; then
+        sudo pg_dropcluster --stop "${PG_MAJOR}" "${nostart_cluster}" >/dev/null 2>&1 || true
+        fail "documentdb-createcluster (no --start) failed: ${nostart_out}"
+    fi
+
+    local start_line ext_line hint_count
+    start_line="$(printf '%s\n' "${nostart_out}" | grep -n '^Start with:' | head -1 | cut -d: -f1)"
+    ext_line="$(printf '%s\n' "${nostart_out}" | grep -n 'CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;' | head -1 | cut -d: -f1)"
+    hint_count="$(printf '%s\n' "${nostart_out}" | grep -c 'CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;' || true)"
+
+    sudo pg_dropcluster --stop "${PG_MAJOR}" "${nostart_cluster}" >/dev/null 2>&1 \
+        || fail "could not drop probe cluster ${PG_MAJOR}/${nostart_cluster}"
+
+    [[ -n "${start_line}" && -n "${ext_line}" ]] \
+        || fail "documentdb-createcluster (no --start) did not print both the start command and the CREATE EXTENSION recipe: ${nostart_out}"
+    (( start_line < ext_line )) \
+        || fail "documentdb-createcluster (no --start) printed the CREATE EXTENSION recipe BEFORE the start command -- following it top to bottom runs CREATE EXTENSION against a stopped cluster: ${nostart_out}"
+    (( hint_count == 1 )) \
+        || fail "documentdb-createcluster (no --start) printed the CREATE EXTENSION recipe ${hint_count} times (expected exactly 1; documentdb-tune should be invoked with --no-next-steps): ${nostart_out}"
+
+    # The recipe must name the cluster it just created, not the default one.
+    printf '%s\n' "${nostart_out}" | grep -Fq -- "--cluster ${PG_MAJOR}/${nostart_cluster}" \
+        || fail "documentdb-createcluster (no --start) printed a CREATE EXTENSION recipe without --cluster ${PG_MAJOR}/${nostart_cluster}; on a multi-cluster host it targets the wrong server: ${nostart_out}"
+
+    log "Phase 9a2: documentdb-createcluster --start passed."
+}
+
+# psql against a disposable probe cluster: tuple-only, one statement, no psqlrc.
+probe_cluster_psql() {
+    local cluster="$1" sql="$2"
+    sudo -u postgres psql --cluster "${PG_MAJOR}/${cluster}" -d postgres \
+        -X -tAq -v ON_ERROR_STOP=1 -c "${sql}"
+}
+
+# A failed documentdb_extended_rum must not leave documentdb committed without
+# it. Forces that failure with an event trigger on a started, tuned, still-empty
+# cluster, then asserts neither extension survived -- for the rendered command
+# every tool prints and for the SQL createcluster pipes through psql -f -.
+verify_extension_recipe_rolls_back_as_a_unit() {
+    local cluster="$1"
+    local lib="/usr/share/documentdb/scripts/documentdb-tools-lib.sh"
+    [[ -f "${lib}" ]] || fail "${lib} is missing; documentdb-postgresql-tools is not installed"
+
+    probe_cluster_psql "${cluster}" "CREATE FUNCTION public.ddb_block_extended_rum() RETURNS event_trigger LANGUAGE plpgsql AS \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_event_trigger_ddl_commands() WHERE object_type = 'extension' AND object_identity = 'documentdb_extended_rum') THEN RAISE EXCEPTION 'ddb-probe: forced documentdb_extended_rum failure'; END IF; END \$\$;" >/dev/null \
+        && probe_cluster_psql "${cluster}" "CREATE EVENT TRIGGER ddb_block_extended_rum ON ddl_command_end WHEN TAG IN ('CREATE EXTENSION') EXECUTE FUNCTION public.ddb_block_extended_rum();" >/dev/null \
+        || fail "could not install the failure-injection event trigger in ${PG_MAJOR}/${cluster}"
+
+    local recipe="" form="" out="" rc=0 left=""
+    recipe="$(bash -c 'source "$1"; documentdb_create_extension_command postgres postgres documentdb_extended_rum --cluster "$2"' \
+        _ "${lib}" "${PG_MAJOR}/${cluster}")" \
+        || fail "documentdb_create_extension_command rendered nothing"
+
+    for form in command createcluster; do
+        rc=0
+        if [[ "${form}" == command ]]; then
+            out="$(bash -c "${recipe}" 2>&1)" || rc=$?
+        else
+            out="$(bash -c 'source "$1"; documentdb_create_extension_sql documentdb_extended_rum' _ "${lib}" \
+                | sudo -u postgres psql --cluster "${PG_MAJOR}/${cluster}" -d postgres -X -v ON_ERROR_STOP=1 -f - 2>&1)" || rc=$?
+        fi
+        (( rc != 0 )) \
+            || fail "the ${form} recipe succeeded although documentdb_extended_rum was forced to fail: ${out}"
+        printf '%s\n' "${out}" | grep -Fq 'ddb-probe: forced documentdb_extended_rum failure' \
+            || fail "the ${form} recipe failed, but not at the forced documentdb_extended_rum error: ${out}"
+        left="$(probe_cluster_psql "${cluster}" "SELECT count(*) FROM pg_extension WHERE extname IN ('documentdb', 'documentdb_extended_rum');")"
+        [[ "${left}" == "0" ]] \
+            || fail "the ${form} recipe left ${left} DocumentDB extension(s) behind after documentdb_extended_rum failed; documentdb must roll back with it: ${out}"
+    done
+
+    probe_cluster_psql "${cluster}" "DROP EVENT TRIGGER ddb_block_extended_rum; DROP FUNCTION public.ddb_block_extended_rum();" >/dev/null \
+        || fail "could not drop the failure-injection event trigger from ${PG_MAJOR}/${cluster}"
+    log "Phase 9a3: a failed documentdb_extended_rum rolls documentdb back too."
+}
+
+# The regression this PR exists for: a database that was tuned and started but
+# only ever got `CREATE EXTENSION documentdb CASCADE`. Phase 9a2 proves the
+# fresh --start path; the wizard smoke starts from a database the wizard
+# already provisioned. Neither reaches the state an operator following the old
+# manual instructions ends up in, and neither runs the recipe the tools print
+# to get out of it -- which is what this does, end to end, on the emitted
+# command rather than a reconstruction of it.
+verify_manual_repair_of_missing_index_extension() {
+    log "Phase 9a3: repairing an existing tuned database that is missing the index extension."
+
+    command -v pg_createcluster >/dev/null 2>&1 \
+        || fail "pg_createcluster is missing from this image, so the manual-install state cannot be reproduced"
+
+    local extended_rum_control=""
+    extended_rum_control="$(pg_config --sharedir)/extension/documentdb_extended_rum.control"
+    if [[ ! -f "${extended_rum_control}" ]]; then
+        # Not a required artifact of this package set: without the control file
+        # documentdb-tune pins no alternate handler, so there is no missing
+        # handler to repair. Recorded so a green run still says it did not run.
+        record_skip "manual-repair-missing-index-extension" \
+            "documentdb_extended_rum.control is not installed in this image"
+        return 0
+    fi
+
+    local probe_cluster="ddbrepair"
+    local probe_db="documentdb_repair_probe"
+    local before_spec='{"createIndexes": "probe_coll", "indexes": [{"key": {"n": 1}, "name": "n_1"}]}'
+    # A different index, so the success below cannot be an existing-index no-op.
+    local after_spec='{"createIndexes": "probe_coll", "indexes": [{"key": {"m": 1}, "name": "m_1"}]}'
+    local index_sql_prefix="SET documentdb_core.bsonUseEJson TO true; SET client_min_messages = warning; SET statement_timeout = '180s'; SELECT ok, retval::text FROM documentdb_api.create_indexes_background"
+
+    # Idempotent pre-clean: a previous aborted run must not fail this one.
+    sudo pg_dropcluster --stop "${PG_MAJOR}" "${probe_cluster}" >/dev/null 2>&1 || true
+
+    # ── (1) the state the old instructions produce ──────────────────
+    # Deliberately not documentdb-createcluster --start: this is the manual
+    # Workflow A path, where the operator creates the extensions by hand.
+    sudo pg_createcluster "${PG_MAJOR}" "${probe_cluster}" -- \
+        --auth-local=peer --auth-host=scram-sha-256 --encoding=UTF8 >/dev/null 2>&1 \
+        || fail "could not create probe cluster ${PG_MAJOR}/${probe_cluster}"
+
+    # Drops only this scenario's cluster (and with it the probe database).
+    # Reads probe_cluster from the caller's scope, so it is only for use here.
+    repair_cleanup() {
+        sudo pg_dropcluster --stop "${PG_MAJOR}" "${probe_cluster}" >/dev/null 2>&1 || true
+    }
+
+    if ! sudo documentdb-tune --pg-version "${PG_MAJOR}" --cluster "${probe_cluster}" --yes >/dev/null 2>&1; then
+        repair_cleanup
+        fail "documentdb-tune failed for ${PG_MAJOR}/${probe_cluster}"
+    fi
+    if ! sudo pg_ctlcluster "${PG_MAJOR}" "${probe_cluster}" start; then
+        repair_cleanup
+        fail "probe cluster ${PG_MAJOR}/${probe_cluster} did not start after tuning"
+    fi
+    # Subshell, so its fail() returns here and the probe cluster is dropped.
+    ( verify_extension_recipe_rolls_back_as_a_unit "${probe_cluster}" ) \
+        || { repair_cleanup; fail "the CREATE EXTENSION recipe is not atomic in ${PG_MAJOR}/${probe_cluster}"; }
+    # The omission itself: base extension only.
+    if ! probe_cluster_psql "${probe_cluster}" 'CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;' >/dev/null 2>&1; then
+        repair_cleanup
+        fail "could not create the base documentdb extension in ${PG_MAJOR}/${probe_cluster}"
+    fi
+    local extra_present=""
+    extra_present="$(probe_cluster_psql "${probe_cluster}" "SELECT count(*) FROM pg_extension WHERE extname = 'documentdb_extended_rum';" 2>&1)" \
+        || { repair_cleanup; fail "cannot read pg_extension in ${PG_MAJOR}/${probe_cluster}: ${extra_present}"; }
+    if [[ "${extra_present}" != "0" ]]; then
+        repair_cleanup
+        fail "CREATE EXTENSION documentdb CASCADE pulled in documentdb_extended_rum (count=${extra_present}); this scenario no longer reproduces the manual-install gap"
+    fi
+
+    # ── (2) an index must NOT be creatable in that state ────────────
+    local before_row="" before_err="" before_rc=0 before_evidence=""
+    create_temp_file before_err "/tmp/documentdb-repair-before.XXXXXX.log"
+    before_row="$(probe_cluster_psql "${probe_cluster}" \
+        "${index_sql_prefix}('${probe_db}', '${before_spec}'::documentdb_core.bson);" \
+        2>"${before_err}")" || before_rc=$?
+    before_evidence="${before_row} $(cat "${before_err}")"
+
+    # Either transport is fine -- the handler error arrives as a SQL error
+    # (nonzero psql) or in-band as ok=false with the reason in retval -- but the
+    # failure has to BE the missing handler. Treating any failure as the
+    # expected one lets an unrelated permission error, a malformed row, or a
+    # typo stand in for the defect this scenario exists to reproduce, and the
+    # repair below would then be credited with fixing something that never
+    # happened.
+    if (( before_rc == 0 )) && [[ "${before_row}" == t\|* ]]; then
+        repair_cleanup
+        fail "a new index was built in a database missing documentdb_extended_rum (row: '${before_row}') -- the tuned cluster pins an alternate index handler, so this must fail until the extension exists"
+    fi
+    if (( before_rc == 0 )) && [[ "${before_row}" != f\|* ]]; then
+        repair_cleanup
+        fail "the pre-repair index request returned neither a SQL error nor an ok=false row (row: '${before_row}'; stderr: $(cat "${before_err}")) -- without a result this proves nothing about the missing-handler state"
+    fi
+    # GetBsonIndexAmByIndexAmName in pg_documentdb/src/index_am/index_am_utils.c:
+    # "Index access method %s is not available, check the alternate_index_handler_name setting".
+    if ! printf '%s' "${before_evidence}" \
+            | grep -Eq 'ndex access method [^ ]*extended_rum[^ ]* is not available'; then
+        repair_cleanup
+        fail "the pre-repair index request failed, but not because 'extended_rum' was unavailable (psql rc=${before_rc}; row: '${before_row}'; stderr: $(cat "${before_err}")) -- this scenario has to start at the missing-handler defect, not at any other error"
+    fi
+    if (( before_rc == 0 )); then
+        log "Phase 9a3: new index blocked before repair, reported in-band (row: ${before_row})."
+    else
+        log "Phase 9a3: new index blocked before repair, reported as a SQL error (psql rc=${before_rc}): $(head -c 400 "${before_err}")"
+    fi
+
+    # ── (3) re-running tune must recognise the config and say why ───
+    local tune_out=""
+    if ! tune_out="$(sudo documentdb-tune --pg-version "${PG_MAJOR}" --cluster "${probe_cluster}" --yes 2>&1)"; then
+        repair_cleanup
+        fail "re-running documentdb-tune on an already-tuned cluster failed: ${tune_out}"
+    fi
+    printf '%s\n' "${tune_out}" | grep -Fq 'already up to date' \
+        || { repair_cleanup; fail "documentdb-tune did not report the config as already up to date on a second identical run: ${tune_out}"; }
+    printf '%s\n' "${tune_out}" | grep -Fq -- "--cluster ${PG_MAJOR}/${probe_cluster}" \
+        || { repair_cleanup; fail "documentdb-tune's recovery recipe does not name the cluster it was run against; on a multi-cluster host it repairs the wrong server: ${tune_out}"; }
+
+    local restart_at recipe_at
+    restart_at="$(printf '%s\n' "${tune_out}" | grep -ni 'restart' | head -1 | cut -d: -f1)"
+    recipe_at="$(printf '%s\n' "${tune_out}" | grep -n 'CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;' | head -1 | cut -d: -f1)"
+    [[ -n "${restart_at}" && -n "${recipe_at}" ]] \
+        || { repair_cleanup; fail "documentdb-tune's already-current output is missing the restart prerequisite or the extension recipe: ${tune_out}"; }
+    (( restart_at < recipe_at )) \
+        || { repair_cleanup; fail "documentdb-tune printed the CREATE EXTENSION recipe before the restart prerequisite; pre-restart the extension's library is not loaded and the recipe errors out of _PG_init: ${tune_out}"; }
+
+    # ── (4) run what it actually printed ────────────────────────────
+    # The emitted psql line, not a reconstruction: picked by the SQL and the
+    # psql call together, so the restart/sudo lines above it cannot match.
+    local recipe=""
+    recipe="$(printf '%s\n' "${tune_out}" \
+        | grep -F 'CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;' | grep -F ' psql ' | head -1)"
+    recipe="${recipe#*\[documentdb-tune\] }"
+    recipe="${recipe#"${recipe%%[![:space:]]*}"}"
+    [[ "${recipe}" == sudo\ * ]] \
+        || { repair_cleanup; fail "could not find the emitted psql recipe in documentdb-tune's output (got: '${recipe}'): ${tune_out}"; }
+    # The command's own target, asserted before it runs: a recipe that repairs
+    # some other cluster or database would still leave this one broken.
+    [[ "${recipe}" == *"--cluster ${PG_MAJOR}/${probe_cluster}"* && "${recipe}" == *"-d postgres"* ]] \
+        || { repair_cleanup; fail "the emitted recipe does not target ${PG_MAJOR}/${probe_cluster}'s postgres database: ${recipe}"; }
+    local recipe_err=""
+    create_temp_file recipe_err "/tmp/documentdb-repair-recipe.XXXXXX.log"
+    if ! bash -c "${recipe}" >/dev/null 2>"${recipe_err}"; then
+        repair_cleanup
+        fail "the CREATE EXTENSION recipe documentdb-tune printed does not run: ${recipe} -- $(cat "${recipe_err}")"
+    fi
+
+    # ── (5) the repair landed where it was aimed, and unblocks indexes ──
+    local reported_datadir expected_datadir ext_rows after_row after_err
+    # Identity, not just reachability: --cluster N/C could resolve elsewhere.
+    reported_datadir="$(probe_cluster_psql "${probe_cluster}" 'SHOW data_directory;')"
+    expected_datadir="$(pg_lsclusters -h | awk -v v="${PG_MAJOR}" -v c="${probe_cluster}" '$1 == v && $2 == c { print $6 }')"
+    [[ -n "${expected_datadir}" && "${reported_datadir}" == "${expected_datadir}" ]] \
+        || { repair_cleanup; fail "the repaired session is not on the probe cluster (psql says '${reported_datadir}', pg_lsclusters says '${expected_datadir}')"; }
+
+    ext_rows="$(probe_cluster_psql "${probe_cluster}" "SELECT extname FROM pg_extension WHERE extname LIKE 'documentdb%' ORDER BY 1;")"
+    printf '%s\n' "${ext_rows}" | grep -qx 'documentdb' \
+        || { repair_cleanup; fail "the base documentdb extension is gone after the repair (got: ${ext_rows})"; }
+    printf '%s\n' "${ext_rows}" | grep -qx 'documentdb_extended_rum' \
+        || { repair_cleanup; fail "the recipe documentdb-tune printed did not create documentdb_extended_rum (got: ${ext_rows})"; }
+
+    create_temp_file after_err "/tmp/documentdb-repair-after.XXXXXX.log"
+    if ! after_row="$(probe_cluster_psql "${probe_cluster}" \
+            "${index_sql_prefix}('${probe_db}', '${after_spec}'::documentdb_core.bson);" 2>"${after_err}")"; then
+        repair_cleanup
+        fail "createIndexes still fails after running the printed repair: $(cat "${after_err}")"
+    fi
+    if [[ "${after_row}" != t\|* ]]; then
+        repair_cleanup
+        fail "create_indexes_background did not report ok=true after the printed repair (row: '${after_row}'; stderr: $(cat "${after_err}"))"
+    fi
+
+    repair_cleanup
+    log "Phase 9a3: manual repair of a missing index extension passed."
 }
 
 verify_workflow_b_documentdb_register_gateway_direct() {
@@ -2207,6 +2636,8 @@ main() {
     verify_self_managed_postgres_persistence
     verify_live_cluster_readoption
     verify_postgres_state
+    verify_install_banner_extension_hint
+    verify_index_creation_works
     verify_tls_key_permissions
     verify_connection_file_ownership
     verify_gateway_check_connectivity
@@ -2239,6 +2670,8 @@ main() {
     # cluster + extension +
     # gateway OS user are all still in place.
     verify_workflow_a_documentdb_tune_direct
+    verify_createcluster_start_creates_extensions
+    verify_manual_repair_of_missing_index_extension
     verify_workflow_b_documentdb_register_gateway_direct
 
     # Phase 9c: sample-data load coverage (parity with the RPM suite, which

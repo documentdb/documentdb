@@ -60,11 +60,14 @@ log_verbose() { if [[ "${VERBOSE}" == "true" ]]; then echo "[${PROG}] $*" >&2; f
 # Source the shared tools library for the PostgreSQL bin-directory candidate
 # helper (documentdb_pg_bindir_candidates), so find_psql shares one Debian/RHEL
 # layout list with documentdb-tune / documentdb-register-gateway / documentdb-
-# setup instead of hardcoding it. The library ships beside this script in a dev
+# setup instead of hardcoding it, and for the shared index-extension recipe and
+# resolver used by cmd_check. The library ships beside this script in a dev
 # checkout and at /usr/share/documentdb/scripts/ from the documentdb-postgresql-
 # tools package (both files ship together). Sourced after die is defined so a
-# missing library fails with a clear message; the only helper used here
-# (documentdb_pg_bindir_candidates) is a pure printf that needs no host hooks.
+# missing library fails with a clear message. Its readers run psql through
+# run_as_user when they are given an OS-user argument, which this script
+# defines below; callers that only render advice (documentdb-tune) need no such
+# hook.
 _DDB_TOOLS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 for _ddb_cand in "${_DDB_TOOLS_LIB_DIR}/documentdb-tools-lib.sh" \
                  "/usr/share/documentdb/scripts/documentdb-tools-lib.sh"; do
@@ -784,6 +787,17 @@ SQL
     log "Password reset for user '${USERNAME}'."
 }
 
+# The remedy for a database missing extensions: the targeted psql command plus
+# whatever caveat this host needs. Shared by both cmd_check call sites so the
+# base-extension and index-handler advice cannot drift apart.
+print_extension_remedy() {
+    local required_ext="${1:-}" line=""
+    while IFS= read -r line; do
+        log "  ${line}"
+    done < <(documentdb_create_extension_advice "${PG_OWNER}" "${TARGET_DB}" \
+                "${required_ext}" -h "${SOCKET_DIR}" -p "${PG_PORT}")
+}
+
 cmd_check() {
     local psql_bin ext_check
     psql_bin="$(find_psql)"
@@ -795,6 +809,42 @@ cmd_check() {
     fi
     log "PostgreSQL connectivity: OK"
 
+    # The config may pin an alternate index access method, satisfied only by a
+    # per-database extension. Resolved from the live GUC, falling back to the
+    # installed control file pre-restart so the advice never degrades to the
+    # single-statement recipe. Status captured explicitly: under set -e a bare
+    # assignment would abort here, and status 2 is an answer, not a failure.
+    local pg_major="" required_ext="" handler_name="" resolution_rc=0
+    pg_major="$(documentdb_read_pg_major "${psql_bin}" "${SOCKET_DIR}" \
+        "${PG_PORT}" "${TARGET_DB}" "${PG_OWNER}")"
+    required_ext="$(documentdb_required_index_extension "${psql_bin}" "${SOCKET_DIR}" \
+        "${PG_PORT}" "${TARGET_DB}" "${PG_OWNER}" "${pg_major}")" || resolution_rc=$?
+    case "${resolution_rc}" in
+        0|2) ;;
+        *) die "Cannot determine which index extension database '${TARGET_DB}' requires (status ${resolution_rc})." ;;
+    esac
+    handler_name="$(documentdb_index_handler_for_extension "${required_ext}")"
+
+    # Status 2: the server did not answer, so this is an inference from the
+    # installed control file — and with nothing to infer from, empty means
+    # "unknown", not "nothing else needed". Say which one, before any remedy.
+    if (( resolution_rc == 2 )); then
+        if [[ -n "${required_ext}" ]]; then
+            log "Index handler: '${handler_name}' (${required_ext}) per the installed control file."
+            # Report the observation, not a cause: status 2 covers a GUC that
+            # does not exist yet AND a read that simply failed, so naming the
+            # first would send an operator to restart a healthy server on the
+            # strength of a query that did not answer.
+            log "  documentdb.alternate_index_handler_name could not be read from this server,"
+            log "  so this requirement is inferred from installed files. If PostgreSQL has not"
+            log "  restarted since documentdb-tune ran, restart it before creating extensions."
+        else
+            log "WARNING: cannot tell which index extension this database needs: the server did not"
+            log "  answer for documentdb.alternate_index_handler_name and the installed extensions"
+            log "  could not be probed. Any command below may be incomplete."
+        fi
+    fi
+
     log "Checking DocumentDB extension..."
     ext_check="$(run_as_user "${PG_OWNER}" "${psql_bin}" -h "${SOCKET_DIR}" -p "${PG_PORT}" \
         -d "${TARGET_DB}" -X -tA -c "SELECT 1 FROM pg_extension WHERE extname = 'documentdb';" 2>/dev/null || true)"
@@ -802,8 +852,43 @@ cmd_check() {
     if [[ "${ext_check}" == "1" ]]; then
         log "DocumentDB extension: loaded"
     else
-        log "DocumentDB extension: NOT loaded (run CREATE EXTENSION documentdb CASCADE;)"
+        log "DocumentDB extension: NOT loaded"
+        print_extension_remedy "${required_ext}"
         return 1
+    fi
+
+    # Reported separately: 'documentdb' being present says nothing about whether
+    # indexes work, and a database missing this extension cannot build a new
+    # index at all.
+    if [[ -n "${required_ext}" ]]; then
+        local am_ext_check am_err_file
+        am_err_file="$(mktemp)" || die "Cannot create a temporary file for the extension probe."
+        _TEMP_FILES+=("${am_err_file}")
+        # Fail closed: with 2>/dev/null || true a permission error or dropped
+        # connection is indistinguishable from a missing extension, and we would
+        # report the extension MISSING in a healthy database. Same
+        # reasoning as the users_info pre-check in cmd_reset_password.
+        if ! am_ext_check="$(run_as_user "${PG_OWNER}" "${psql_bin}" -h "${SOCKET_DIR}" -p "${PG_PORT}" \
+                -d "${TARGET_DB}" -X -tA -v ON_ERROR_STOP=1 \
+                -c "SELECT 1 FROM pg_extension WHERE extname = '${required_ext}';" 2>"${am_err_file}")"; then
+            die "Cannot probe for the '${required_ext}' extension in database '${TARGET_DB}': $(cat "${am_err_file}")"
+        fi
+        if [[ "${am_ext_check}" == "1" ]]; then
+            log "Index access method '${handler_name}' (${required_ext}): available"
+        elif [[ "${ext_check}" == "1" ]]; then
+            log "Index access method '${handler_name}' (${required_ext}): MISSING"
+            if (( resolution_rc == 0 )); then
+                # PGC_USERSET: this is the setting in effect for the connection
+                # and database just probed, not a proven cluster-wide pin.
+                log "  documentdb.alternate_index_handler_name is '${handler_name}' for this"
+                log "  connection, but '${required_ext}' is not created in database '${TARGET_DB}'."
+            else
+                log "  '${required_ext}' is installed on this host but not created in database"
+                log "  '${TARGET_DB}'."
+            fi
+            log "  New index builds fail with \"Index access method ${handler_name} is not available\"."
+            print_extension_remedy "${required_ext}"
+        fi
     fi
 }
 

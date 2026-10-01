@@ -29,6 +29,11 @@ YES=false
 VERBOSE=false
 TOAST_COMPRESSION_REQUESTED=""  # explicit --toast-compression choice
 TOAST_COMPRESSION=""            # resolved value; "" leaves the setting alone
+# Post-apply operator guidance (restart, then create the extensions). Cleared
+# by --no-next-steps for wrappers like documentdb-createcluster that do the work
+# themselves or print their own: otherwise the operator reads the recipe twice,
+# plus a "restart" for a cluster the wrapper has not started yet.
+PRINT_NEXT_STEPS=true
 
 # Resolved at runtime
 CONFIG_TARGET=""
@@ -112,6 +117,10 @@ Options:
                     default for EVERY database, not just DocumentDB's; use
                     "default" there if others must keep the server's setting.
   --yes             Apply changes without prompting
+  --no-next-steps   Suppress the post-apply operator guidance (restart the
+                    server, then create the extensions). For wrapper tools that
+                    print their own; not needed when running documentdb-tune
+                    directly.
   --dry-run         Show what would change without writing
   --restore         Remove the managed config block
   --print           Print the recommended config snippet to stdout and exit
@@ -168,16 +177,11 @@ detect_distro() {
     fi
 }
 
+# An unresolvable share directory is not fatal here: documentdb_detect_extended_rum
+# reads the empty value as "not installed" and the handler stays unpinned, which is
+# what documentdb-createcluster's probe concludes from the same failure.
 resolve_pg_sharedir() {
-    PG_SHAREDIR=""
-    local d pg_config
-    while IFS= read -r d; do
-        pg_config="${d}/pg_config"
-        if [[ -x "${pg_config}" ]]; then
-            PG_SHAREDIR="$("${pg_config}" --sharedir 2>/dev/null || true)"
-            return 0
-        fi
-    done < <(documentdb_pg_bindir_candidates "${PG_VERSION}")
+    PG_SHAREDIR="$(documentdb_pg_sharedir "${PG_VERSION}" || true)"
 }
 
 resolve_config_target() {
@@ -1026,6 +1030,16 @@ do_apply() {
                 log_verbose "Fragment is current but the live postgresql.conf is missing the include line; applying to add it."
             else
                 log "Config is already up to date: ${CONFIG_TARGET}"
+                # Re-running tune is a common move when indexes fail, and the
+                # answer is usually the missing CREATE EXTENSION, not the
+                # config. Not under --dry-run, which applied nothing, and not
+                # under --no-next-steps: a wrapper that suppressed the guidance
+                # must not get a stray restart line on this path either.
+                if [[ "${DRY_RUN}" != "true" && "${PRINT_NEXT_STEPS}" == "true" ]]; then
+                    log "If PostgreSQL has not restarted since this config was written, restart it first."
+                    print_restart_instruction
+                    print_create_extension_next_step
+                fi
                 return 0
             fi
         fi
@@ -1094,6 +1108,28 @@ do_apply() {
 
     log "Config written to ${CONFIG_TARGET}"
 
+    print_restart_instruction
+
+    print_create_extension_next_step
+}
+
+# The restart that makes the config live. Extracted so every path pointing at
+# CREATE EXTENSION prints this FIRST — pg_documentdb_extended_rum errors out of
+# _PG_init unless already in shared_preload_libraries.
+#
+# Gated on PRINT_NEXT_STEPS too: a restart line is post-apply guidance, and
+# documentdb-createcluster tunes a cluster that was never started, where
+# "Restart the cluster" contradicts the "Start with: ..." it prints next.
+print_restart_instruction() {
+    [[ "${PRINT_NEXT_STEPS}" == "true" ]] || return 0
+
+    # Every restart command below is written with sudo. Say once that a host
+    # without it needs a root shell instead; the extension recipe that follows
+    # renders its own runner and reports that separately.
+    if ! command -v sudo >/dev/null 2>&1; then
+        log "This host has no sudo: run the restart command below as root, without the 'sudo' prefix."
+    fi
+
     if [[ -n "${PG_VERSION}" ]]; then
         if has_working_systemd; then
             if [[ "${IS_DEBIAN}" == "true" && -z "${PGDATA}" ]]; then
@@ -1126,6 +1162,85 @@ do_apply() {
                 log "Restart PostgreSQL to apply the new settings (your distro's preferred command)."
             fi
         fi
+    fi
+}
+
+# The config is only half a working install: with HAS_EXTENDED_RUM the block
+# pins alternate_index_handler_name='extended_rum', an access method that does
+# not exist until documentdb_extended_rum is created. tune cannot do that itself
+# (the cluster may be stopped, and the GUC is cluster-wide while the extension
+# is per-database), so print the command.
+#
+# Always call print_restart_instruction before this.
+print_create_extension_next_step() {
+    [[ "${PRINT_NEXT_STEPS}" == "true" ]] || return 0
+
+    local extra_extension=""
+    if [[ "${HAS_EXTENDED_RUM}" == "true" ]]; then
+        extra_extension="documentdb_extended_rum"
+    fi
+
+    # Name the cluster this invocation tuned: without coordinates the command
+    # follows the default socket and port, a different server on a
+    # multi-cluster host. Separate arguments, because the socket directory is
+    # read from the host's configuration and must reach the operator's shell as
+    # data rather than as syntax.
+    local -a conn_args=()
+    if [[ "${IS_DEBIAN}" == "true" && -z "${PGDATA}" && -n "${PG_VERSION}" ]]; then
+        conn_args=(--cluster "${PG_VERSION}/${CLUSTER_NAME}")
+    else
+        conn_args=(-h "$(_resolve_effective_socket_dir)" -p "$(_resolve_effective_port)")
+    fi
+
+    # A --pgdata instance need not be owned by "postgres" (documentdb-setup
+    # runs stand-alone clusters as documentdb-local), and sudo -u postgres
+    # fails peer auth there. Read the owner off the data directory — and when
+    # that does not yield a usable account (no such directory, stat's UNKNOWN
+    # sentinel for an unmapped uid, or root, which PostgreSQL refuses to run
+    # as) say so instead of printing a command that cannot work.
+    local owner="postgres" owner_answer=""
+    if [[ -n "${PGDATA}" ]]; then
+        if [[ -d "${PGDATA}" ]]; then
+            owner_answer="$(trim_whitespace "$(stat -c '%U' "${PGDATA}" 2>/dev/null || true)")"
+        fi
+        owner="${owner_answer}"
+        case "${owner}" in
+            ""|root|UNKNOWN) owner="" ;;
+        esac
+    fi
+
+    # "the postgres database", not "each database": the block pins
+    # cron.database_name='postgres' and documentdb requires pg_cron, which can
+    # only be created there.
+    local noun="extension"
+    [[ -n "${extra_extension}" ]] && noun="extensions"
+    log "Then create the DocumentDB ${noun} in the 'postgres' database:"
+
+    local advice_line=""
+    if [[ -z "${owner}" ]]; then
+        if [[ -z "${owner_answer}" ]]; then
+            log "  Cannot read the owner of ${PGDATA}, so the exact command cannot be printed."
+        else
+            log "  ${PGDATA} is owned by '${owner_answer}', which cannot own a PostgreSQL session."
+        fi
+        log "  Run these as the account that owns the instance, against $(documentdb_shell_quote "${conn_args[@]}"):"
+        while IFS= read -r advice_line; do
+            log "    ${advice_line}"
+        done < <(documentdb_create_extension_sql "${extra_extension}")
+    else
+        while IFS= read -r advice_line; do
+            log "  ${advice_line}"
+        done < <(documentdb_create_extension_advice "${owner}" postgres \
+                    "${extra_extension}" "${conn_args[@]}")
+    fi
+
+    if [[ -n "${extra_extension}" ]]; then
+        log "Both statements are required: this config sets"
+        log "documentdb.alternate_index_handler_name = 'extended_rum', which resolves only"
+        log "in databases where ${extra_extension} exists — without it a new index"
+        log "build fails with \"Index access method extended_rum is not available\"."
+        log "Run them after PostgreSQL restarts: ${extra_extension} loads only from"
+        log "shared_preload_libraries."
     fi
 }
 
@@ -1209,6 +1324,7 @@ parse_arguments() {
                 esac
                 TOAST_COMPRESSION_REQUESTED="$2"; shift 2 ;;
             --yes) YES=true; shift ;;
+            --no-next-steps) PRINT_NEXT_STEPS=false; shift ;;
             --dry-run) DRY_RUN=true; shift ;;
             --restore) ACTION="restore"; shift ;;
             --print) ACTION="print"; shift ;;

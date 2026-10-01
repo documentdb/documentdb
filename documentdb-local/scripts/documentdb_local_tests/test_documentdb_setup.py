@@ -4748,6 +4748,11 @@ class GatewayAdminUsageSurfaceTests(unittest.TestCase):
             'run_as_user() { printf "%s" "${EXTENSION_PRESENT}"; }\n'
             'log() { echo "$*"; }\n'
             'die() { echo "$*" >&2; exit 1; }\n'
+            # The index-handler resolution has its own tests; stub it out.
+            "documentdb_read_pg_major() { echo 18; }\n"
+            "documentdb_required_index_extension() { :; }\n"
+            "documentdb_index_handler_for_extension() { :; }\n"
+            "print_extension_remedy() { :; }\n"
             + check.group(0) + "\ncmd_check\n"
         )
         for present, expected in (("1", 0), ("", 1)):
@@ -9451,3 +9456,830 @@ class ToastCompressionTests(unittest.TestCase):
             "tune must derive the Debian fragment path from the shared "
             "helper, not construct it inline",
         )
+
+
+class ExtendedRumPackagedInstallTests(unittest.TestCase):
+    """documentdb-tune pins documentdb.alternate_index_handler_name from a
+    control-file probe, but the access method it names lives in a per-database
+    extension that `CREATE EXTENSION documentdb CASCADE` does not pull in. The
+    tools therefore have to print one shared, correctly targeted recipe, say
+    what they actually know about the requirement, and — for
+    documentdb-createcluster --start — run it after the server is up."""
+
+    CREATECLUSTER_SCRIPT = (OSS_ROOT / "documentdb-local" / "scripts" /
+                            "documentdb-createcluster.sh")
+    BASE_SQL = "CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;"
+    EXTRA_SQL = "CREATE EXTENSION IF NOT EXISTS documentdb_extended_rum CASCADE;"
+    BEGIN_SQL = "BEGIN;"
+    COMMIT_SQL = "COMMIT;"
+    BINDIR_LINE = ("    printf '/usr/lib/postgresql/%s/bin\\n/usr/pgsql-%s/bin\\n' "
+                   '"${major}" "${major}"')
+
+    # ---- fixtures ---------------------------------------------------------
+
+    def _bash(self, script, env=None, timeout=30):
+        # Absolute interpreter: several cases hand the script a PATH with
+        # nothing on it but their own stubs.
+        bash = shutil.which("bash") or "/bin/bash"
+        return subprocess.run(
+            [bash, "-c", script], stdin=subprocess.DEVNULL,
+            capture_output=True, text=True, timeout=timeout, env=env,
+        )
+
+    def _stub(self, directory, name, body):
+        """A shim on PATH. Inert by design: these tests never run psql, a
+        privilege helper, or pg_createcluster for real."""
+        path = Path(directory) / name
+        path.write_text("#!/bin/sh\n" + body, encoding="utf-8")
+        path.chmod(0o755)
+        return path
+
+    def _tools_lib_with_fake_bindir(self):
+        """The library, with its hardcoded PostgreSQL bin-directory candidates
+        replaced by $DDB_TEST_BINDIR, so documentdb_pg_sharedir and the
+        extended-RUM control-file probe run their real logic against a
+        fixture."""
+        text = TOOLS_LIB.read_text(encoding="utf-8")
+        self.assertIn(self.BINDIR_LINE, text,
+                      "documentdb_pg_bindir_candidates changed shape; update this fixture")
+        return text.replace(
+            self.BINDIR_LINE,
+            '    printf \'%s\\n\' "${DDB_TEST_BINDIR:-/nonexistent}"',
+        )
+
+    def _render(self, call, td, path_dirs=None):
+        """Render one recipe and read back the ARGUMENTS a shell would pass,
+        by eval-ing the rendered line into an inert sink rather than splitting
+        it on whitespace. Returns (render_rc, line, [args])."""
+        stage_tools_lib(td)
+        lib = shlex.quote(str(Path(td) / "documentdb-tools-lib.sh"))
+        script = (
+            "set -uo pipefail\n"
+            f"source {lib}\n"
+            'sink() { printf "ARG[%s]\\n" "$@"; }\n'
+            f'line="$({call})" || {{ printf "RC[%s]\\n" "$?"; exit 0; }}\n'
+            'printf "LINE[%s]\\n" "${line}"\n'
+            'eval "sink ${line}"\n'
+        )
+        env = dict(os.environ)
+        if path_dirs is None:
+            # Which runner the recipe names depends on what the host has, and
+            # a minimal container has no sudo: pin it unless a case is
+            # specifically about the fallbacks.
+            runners = Path(td) / "runners"
+            runners.mkdir(exist_ok=True)
+            self._stub(runners, "sudo", "exit 0\n")
+            path_dirs = [runners, env["PATH"]]
+        env["PATH"] = os.pathsep.join(str(d) for d in path_dirs)
+        r = self._bash(script, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rc, line, args = 0, "", []
+        for out_line in r.stdout.splitlines():
+            if out_line.startswith("RC["):
+                rc = int(out_line[3:-1])
+            elif out_line.startswith("LINE["):
+                line = out_line[5:-1]
+            elif out_line.startswith("ARG["):
+                args.append(out_line[4:-1])
+        return rc, line, args
+
+    # ---- T1/T2: the shared recipe -----------------------------------------
+
+    def test_recipe_targets_a_debian_cluster_with_both_statements_in_order(self):
+        with tempfile.TemporaryDirectory() as td:
+            rc, line, args = self._render(
+                'documentdb_create_extension_command postgres postgres '
+                'documentdb_extended_rum --cluster 18/main', td)
+            self.assertEqual(rc, 0, line)
+            self.assertEqual(
+                args,
+                ["sudo", "-u", "postgres", "psql", "--cluster", "18/main",
+                 "-d", "postgres", "-X", "-v", "ON_ERROR_STOP=1",
+                 "-c", self.BEGIN_SQL, "-c", self.BASE_SQL,
+                 "-c", self.EXTRA_SQL, "-c", self.COMMIT_SQL],
+                f"rendered: {line}",
+            )
+
+    def test_recipe_carries_the_socket_port_owner_and_database_it_was_given(self):
+        with tempfile.TemporaryDirectory() as td:
+            rc, line, args = self._render(
+                'documentdb_create_extension_command documentdb-local appdb '
+                'documentdb_extended_rum -h /run/documentdb-local/18/postgresql -p 9718',
+                td)
+            self.assertEqual(rc, 0, line)
+            self.assertEqual(
+                args,
+                ["sudo", "-u", "documentdb-local", "psql",
+                 "-h", "/run/documentdb-local/18/postgresql", "-p", "9718",
+                 "-d", "appdb", "-X", "-v", "ON_ERROR_STOP=1",
+                 "-c", self.BEGIN_SQL, "-c", self.BASE_SQL,
+                 "-c", self.EXTRA_SQL, "-c", self.COMMIT_SQL],
+                f"rendered: {line}",
+            )
+
+    def test_recipe_omits_the_second_statement_when_no_handler_is_required(self):
+        # The empty third argument is the whole contract for a cluster with no
+        # alternate handler: one statement, not a stray "CREATE EXTENSION ;".
+        with tempfile.TemporaryDirectory() as td:
+            rc, line, args = self._render(
+                'documentdb_create_extension_command postgres postgres "" '
+                '--cluster 18/main', td)
+            self.assertEqual(rc, 0, line)
+            self.assertEqual(
+                [a for i, a in enumerate(args) if i and args[i - 1] == "-c"],
+                [self.BEGIN_SQL, self.BASE_SQL, self.COMMIT_SQL],
+                f"rendered: {line}")
+
+    def test_recipe_keeps_shell_metacharacters_as_argument_data(self):
+        # The socket directory and owner come from the host's configuration and
+        # from stat, and the result is printed for an administrator to paste.
+        # A value that carries shell syntax has to arrive as one literal
+        # argument -- the marker file below is what "it did not" looks like.
+        with tempfile.TemporaryDirectory() as td:
+            marker = Path(td) / "executed"
+            socket_dir = f"/run/pg; touch {marker}"
+            rc, line, args = self._render(
+                'documentdb_create_extension_command "wei\'rd" postgres "" '
+                f'-h {shlex.quote(socket_dir)} -p 5432', td)
+            self.assertEqual(rc, 0, line)
+            self.assertFalse(marker.exists(),
+                             f"the rendered recipe executed its own argument: {line}")
+            self.assertIn(socket_dir, args, f"rendered: {line}")
+            self.assertIn("wei'rd", args, f"rendered: {line}")
+
+    def test_recipe_preserves_a_supported_socket_path_unquoted(self):
+        # "+" is legal in a socket directory and register's URI-host policy
+        # accepts it; quoting must not start rejecting or mangling it.
+        with tempfile.TemporaryDirectory() as td:
+            rc, line, args = self._render(
+                'documentdb_create_extension_command postgres postgres "" '
+                '-h /run/pg+tenant -p 5432', td)
+            self.assertEqual(rc, 0, line)
+            self.assertIn("-h /run/pg+tenant -p 5432", line)
+            self.assertIn("/run/pg+tenant", args)
+
+    def test_recipe_prefers_sudo_then_runuser_then_su(self):
+        # The recipe is pasted into the operator's own shell, where runuser and
+        # su need root -- so sudo wins when it exists, and the fallbacks are
+        # only rendered when it does not.
+        with tempfile.TemporaryDirectory() as td:
+            binaries = Path(td) / "bin"
+            binaries.mkdir()
+            for name in ("sudo", "runuser", "su"):
+                self._stub(binaries, name, "exit 0\n")
+            call = ('documentdb_create_extension_command postgres postgres "" '
+                    '--cluster 18/main')
+
+            rc, line, args = self._render(call, td, path_dirs=[binaries])
+            self.assertEqual(rc, 0, line)
+            self.assertEqual(args[:3], ["sudo", "-u", "postgres"], line)
+
+            (binaries / "sudo").unlink()
+            rc, line, args = self._render(call, td, path_dirs=[binaries])
+            self.assertEqual(rc, 0, line)
+            self.assertEqual(args[:4], ["runuser", "-u", "postgres", "--"], line)
+
+            (binaries / "runuser").unlink()
+            rc, line, args = self._render(call, td, path_dirs=[binaries])
+            self.assertEqual(rc, 0, line)
+            self.assertEqual(args[:4], ["su", "-s", "/bin/bash", "postgres"], line)
+            self.assertEqual(args[4], "-c", line)
+            # su takes ONE command string: the inner command has to survive
+            # being quoted twice, or the statements arrive as su's arguments.
+            self.assertIn(self.BASE_SQL, args[5], line)
+
+    def test_advice_prints_the_statements_when_no_runner_exists(self):
+        # Surfacing "there is nothing to paste here" beats printing a command
+        # the host cannot run.
+        with tempfile.TemporaryDirectory() as td:
+            binaries = Path(td) / "empty-bin"
+            binaries.mkdir()
+            stage_tools_lib(td)
+            lib = shlex.quote(str(Path(td) / "documentdb-tools-lib.sh"))
+            env = dict(os.environ)
+            env["PATH"] = str(binaries)
+            r = self._bash(
+                "set -uo pipefail\n"
+                f"source {lib}\n"
+                'documentdb_create_extension_advice postgres postgres '
+                'documentdb_extended_rum --cluster 18/main\n',
+                env=env,
+            )
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("no sudo, runuser or su", r.stdout)
+            # Pasted statements need the transaction too.
+            self.assertIn(
+                "\n".join([self.BEGIN_SQL, self.BASE_SQL, self.EXTRA_SQL,
+                           self.COMMIT_SQL]),
+                r.stdout)
+            self.assertIn("--cluster 18/main", r.stdout,
+                          "statements without a target land in whichever cluster "
+                          "owns the default socket")
+            self.assertNotIn("psql", r.stdout)
+
+    def test_advice_says_the_fallback_needs_root(self):
+        with tempfile.TemporaryDirectory() as td:
+            binaries = Path(td) / "bin"
+            binaries.mkdir()
+            self._stub(binaries, "runuser", "exit 0\n")
+            stage_tools_lib(td)
+            lib = shlex.quote(str(Path(td) / "documentdb-tools-lib.sh"))
+            env = dict(os.environ)
+            env["PATH"] = str(binaries)
+            r = self._bash(
+                "set -uo pipefail\n"
+                f"source {lib}\n"
+                'documentdb_create_extension_advice postgres postgres "" '
+                '--cluster 18/main\n',
+                env=env,
+            )
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("runuser", r.stdout.splitlines()[0])
+            self.assertIn("as root", r.stdout.splitlines()[1])
+
+    # ---- T5/T7: what the resolver actually knows --------------------------
+
+    def _resolver_fixture(self, td, live_output="", live_exit=0,
+                          control_file=True, bindir_has_pg_config=True):
+        """A psql that answers the handler query with `live_output` (or fails),
+        plus a PostgreSQL bin/share layout that either ships the extended-RUM
+        control file or does not. Returns (env, psql_path, calls_log)."""
+        td = Path(td)
+        stage_tools_lib(td, self._tools_lib_with_fake_bindir())
+        bindir = td / "pgbin"
+        bindir.mkdir()
+        sharedir = td / "pgshare"
+        (sharedir / "extension").mkdir(parents=True)
+        if control_file:
+            (sharedir / "extension" / "documentdb_extended_rum.control").write_text(
+                "default_version = '0.106-0'\n", encoding="utf-8")
+        calls = td / "calls.log"
+        if bindir_has_pg_config:
+            self._stub(bindir, "pg_config",
+                       f'echo pg_config >> {shlex.quote(str(calls))}\n'
+                       f'echo {shlex.quote(str(sharedir))}\n')
+        psql = self._stub(td, "psql",
+                          f'echo psql >> {shlex.quote(str(calls))}\n'
+                          f'printf "%s\\n" {shlex.quote(live_output)}\n'
+                          f'exit {live_exit}\n')
+        env = dict(os.environ)
+        env["DDB_TEST_BINDIR"] = str(bindir)
+        return env, psql, calls
+
+    def _resolve(self, td, major="18", **fixture):
+        env, psql, calls = self._resolver_fixture(td, **fixture)
+        lib = shlex.quote(str(Path(td) / "documentdb-tools-lib.sh"))
+        r = self._bash(
+            "set -euo pipefail\n"
+            f"source {lib}\n"
+            "rc=0\n"
+            f'out="$(documentdb_required_index_extension {shlex.quote(str(psql))} '
+            f'/run/postgresql 5432 postgres "" {shlex.quote(major)})" || rc=$?\n'
+            'printf "RC[%s]OUT[%s]\\n" "${rc}" "${out}"\n',
+            env=env,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(r.stdout.startswith("RC["), r.stdout)
+        rc, _, rest = r.stdout.strip()[3:].partition("]OUT[")
+        calls_text = calls.read_text(encoding="utf-8") if calls.exists() else ""
+        return int(rc), rest.rstrip("]"), calls_text
+
+    def test_resolver_returns_the_live_answer_as_authoritative(self):
+        with tempfile.TemporaryDirectory() as td:
+            rc, out, calls = self._resolve(td, live_output="extended_rum")
+            self.assertEqual((rc, out), (0, "documentdb_extended_rum"))
+            self.assertNotIn("pg_config", calls,
+                             "a live answer must not be second-guessed against disk")
+
+    def test_resolver_treats_an_empty_live_answer_as_an_answer(self):
+        # The GUC exists and is empty: this cluster has no alternate handler,
+        # and predicting a future one from the installed files would tell the
+        # operator to create an extension the server does not want.
+        with tempfile.TemporaryDirectory() as td:
+            rc, out, calls = self._resolve(td, live_output="")
+            self.assertEqual((rc, out), (0, ""))
+            self.assertNotIn("pg_config", calls)
+
+    def test_resolver_marks_a_control_file_answer_as_not_live_confirmed(self):
+        # Pre-restart the GUC does not exist yet, so the answer comes from the
+        # installed control file -- correct, but status 2: the caller has to
+        # say "restart first", not "this cluster pins".
+        with tempfile.TemporaryDirectory() as td:
+            rc, out, calls = self._resolve(
+                td, live_output="__documentdb_guc_absent__")
+            self.assertEqual((rc, out), (2, "documentdb_extended_rum"))
+            self.assertIn("pg_config", calls)
+
+    def test_resolver_marks_an_unreadable_server_as_not_live_confirmed(self):
+        with tempfile.TemporaryDirectory() as td:
+            rc, out, _ = self._resolve(td, live_exit=1)
+            self.assertEqual((rc, out), (2, "documentdb_extended_rum"))
+
+    def test_resolver_reports_status_2_when_it_never_reached_disk(self):
+        # Empty output at status 2 is "unknown", not "nothing needed": with no
+        # major there is no share directory to probe at all, and a caller that
+        # read this as 0 would print a confident single-statement repair.
+        with tempfile.TemporaryDirectory() as td:
+            rc, out, calls = self._resolve(
+                td, major="", live_output="__documentdb_guc_absent__")
+            self.assertEqual((rc, out), (2, ""))
+            self.assertNotIn("pg_config", calls)
+        with tempfile.TemporaryDirectory() as td:
+            rc, out, _ = self._resolve(
+                td, live_exit=1, bindir_has_pg_config=False)
+            self.assertEqual((rc, out), (2, ""))
+
+    def test_resolver_reports_no_extra_extension_when_it_is_not_installed(self):
+        with tempfile.TemporaryDirectory() as td:
+            rc, out, calls = self._resolve(
+                td, live_output="__documentdb_guc_absent__", control_file=False)
+            self.assertEqual((rc, out), (2, ""))
+            self.assertIn("pg_config", calls)
+
+    def test_status_2_needs_the_explicit_capture_both_callers_use(self):
+        # Why documentdb-gateway-admin and documentdb-register-gateway write
+        # `|| rc=$?`: under set -e the bare assignment aborts the tool on a
+        # perfectly ordinary pre-restart answer.
+        with tempfile.TemporaryDirectory() as td:
+            env, psql, _ = self._resolver_fixture(
+                td, live_output="__documentdb_guc_absent__")
+            lib = shlex.quote(str(Path(td) / "documentdb-tools-lib.sh"))
+            call = (f'documentdb_required_index_extension {shlex.quote(str(psql))} '
+                    '/run/postgresql 5432 postgres "" 18')
+            captured = self._bash(
+                "set -euo pipefail\n"
+                f"source {lib}\n"
+                "rc=0\n"
+                f'out="$({call})" || rc=$?\n'
+                'echo "SURVIVED rc=${rc} out=${out}"\n',
+                env=env,
+            )
+            self.assertEqual(captured.returncode, 0, captured.stderr)
+            self.assertIn("SURVIVED rc=2 out=documentdb_extended_rum",
+                          captured.stdout)
+
+            bare = self._bash(
+                "set -euo pipefail\n"
+                f"source {lib}\n"
+                f'out="$({call})"\n'
+                'echo "SURVIVED"\n',
+                env=env,
+            )
+            self.assertNotEqual(bare.returncode, 0,
+                                "control: a bare assignment must abort, which is "
+                                "the failure mode the callers guard against")
+            self.assertNotIn("SURVIVED", bare.stdout)
+
+    # ---- T3: documentdb-createcluster's order of operations ---------------
+
+    # Everything the wrapper shells out to, plus the handful of coreutils the
+    # script and the library need. The list is explicit so a case can leave one
+    # tool out and get the real "not installed" path.
+    CC_HOST_TOOLS = ("dirname", "cat", "sed", "grep", "tr", "cut", "uname",
+                     "mktemp", "rm", "head", "sort", "id", "stat", "awk")
+
+    def _createcluster_fixture(self, td, with_psql=True, control_file=True):
+        """The real wrapper, staged beside a library whose PostgreSQL layout
+        points at fixtures, with every external it calls replaced by a logging
+        stub. Nothing here creates a cluster or talks to a server."""
+        td = Path(td)
+        stage_tools_lib(td, self._tools_lib_with_fake_bindir())
+        text = self.CREATECLUSTER_SCRIPT.read_text(encoding="utf-8")
+        script = td / "documentdb-createcluster.sh"
+        script.write_text(text, encoding="utf-8")
+
+        stubs = td / "stubs"
+        stubs.mkdir()
+        log = td / "calls.log"
+        quoted_log = shlex.quote(str(log))
+        for name in ("pg_createcluster", "documentdb-tune"):
+            self._stub(stubs, name, f'echo "{name} $*" >> {quoted_log}\n')
+        self._stub(stubs, "pg_ctlcluster",
+                   f'echo "pg_ctlcluster $*" >> {quoted_log}\n'
+                   'exit "${DDB_START_EXIT:-0}"\n')
+        if with_psql:
+            self._stub(stubs, "psql",
+                       f'echo "psql $*" >> {quoted_log}\n'
+                       f'cat >> {quoted_log}\n'
+                       'exit "${DDB_PSQL_EXIT:-0}"\n')
+        # run_as_user's first choice; exec'ing through keeps the psql stub's
+        # stdin, which is where the DDL actually is.
+        self._stub(stubs, "runuser",
+                   f'echo "runuser $*" >> {quoted_log}\n'
+                   'shift 2\n'
+                   '[ "$1" = "--" ] && shift\n'
+                   'exec "$@"\n')
+        self._stub(stubs, "sudo", 'exit 0\n')
+
+        bindir = td / "pgbin"
+        bindir.mkdir()
+        sharedir = td / "pgshare"
+        (sharedir / "extension").mkdir(parents=True)
+        if control_file:
+            (sharedir / "extension" / "documentdb_extended_rum.control").write_text(
+                "default_version = '0.106-0'\n", encoding="utf-8")
+        self._stub(bindir, "pg_config", f'echo {shlex.quote(str(sharedir))}\n')
+
+        host = td / "hostbin"
+        host.mkdir()
+        for tool in self.CC_HOST_TOOLS:
+            found = shutil.which(tool)
+            if found:
+                (host / tool).symlink_to(found)
+
+        env = dict(os.environ)
+        env["PATH"] = os.pathsep.join([str(stubs), str(host)])
+        env["DDB_TEST_BINDIR"] = str(bindir)
+        return script, log, env
+
+    def _run_createcluster(self, script, env, *args, timeout=30):
+        bash = shutil.which("bash") or "/bin/bash"
+        return subprocess.run(
+            [bash, str(script), *args], stdin=subprocess.DEVNULL,
+            capture_output=True, text=True, timeout=timeout, env=env,
+        )
+
+    def test_createcluster_without_start_prints_start_then_one_recipe(self):
+        with tempfile.TemporaryDirectory() as td:
+            script, log, env = self._createcluster_fixture(td)
+            r = self._run_createcluster(script, env, "18", "probe")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            out = r.stdout.splitlines()
+            start_at = next(i for i, l in enumerate(out) if l.startswith("Start with:"))
+            recipe_at = next(i for i, l in enumerate(out) if self.BASE_SQL in l)
+            self.assertLess(start_at, recipe_at,
+                            f"the recipe must follow the start command:\n{r.stdout}")
+            self.assertEqual(sum(1 for l in out if self.BASE_SQL in l), 1,
+                             f"exactly one recipe (tune is run with --no-next-steps):\n{r.stdout}")
+            self.assertIn("--cluster 18/probe", out[recipe_at])
+            self.assertIn(self.EXTRA_SQL, out[recipe_at])
+            calls = log.read_text(encoding="utf-8")
+            self.assertIn("--no-next-steps", calls)
+            self.assertNotIn("pg_ctlcluster", calls,
+                             "no --start must not start anything")
+            self.assertNotIn("psql", calls,
+                             "no --start must not create extensions")
+
+    def test_createcluster_start_provisions_after_the_server_is_up(self):
+        with tempfile.TemporaryDirectory() as td:
+            script, log, env = self._createcluster_fixture(td)
+            r = self._run_createcluster(script, env, "18", "probe", "--start")
+            self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+            calls = log.read_text(encoding="utf-8")
+            self.assertLess(calls.index("pg_ctlcluster"), calls.index("psql"),
+                            f"the DDL needs a running server:\n{calls}")
+            self.assertIn("psql --cluster 18/probe -d postgres -X -v ON_ERROR_STOP=1 -f -",
+                          calls)
+            self.assertIn(self.BASE_SQL, calls)
+            self.assertIn(self.EXTRA_SQL, calls)
+            self.assertLess(calls.index(self.BASE_SQL), calls.index(self.EXTRA_SQL),
+                            "documentdb_extended_rum's install SQL needs the base "
+                            "extension's objects")
+            self.assertIn("\n".join([self.BEGIN_SQL, self.BASE_SQL, self.EXTRA_SQL,
+                                     self.COMMIT_SQL]), calls,
+                          "a failed documentdb_extended_rum must roll documentdb back")
+            self.assertNotIn(self.BASE_SQL, r.stdout,
+                             "a successful --start must not also hand out a recipe")
+
+    def test_createcluster_reports_a_start_failure_with_both_next_steps(self):
+        with tempfile.TemporaryDirectory() as td:
+            script, log, env = self._createcluster_fixture(td)
+            env["DDB_START_EXIT"] = "1"
+            r = self._run_createcluster(script, env, "18", "probe", "--start")
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn("did not start", r.stderr)
+            self.assertIn("pg_ctlcluster 18 probe start", r.stderr)
+            self.assertIn(self.BASE_SQL, r.stderr)
+            self.assertIn("--cluster 18/probe", r.stderr)
+            self.assertIn("refuse", r.stderr,
+                          "re-running the wrapper will not work; say so")
+            self.assertNotIn("psql", log.read_text(encoding="utf-8"),
+                             "no DDL against a server that did not start")
+
+    def test_createcluster_reports_a_ddl_failure_against_a_running_cluster(self):
+        with tempfile.TemporaryDirectory() as td:
+            script, log, env = self._createcluster_fixture(td)
+            env["DDB_PSQL_EXIT"] = "1"
+            r = self._run_createcluster(script, env, "18", "probe", "--start")
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn("failed to create the DocumentDB extensions", r.stderr)
+            self.assertIn("running", r.stderr)
+            self.assertIn("--cluster 18/probe", r.stderr)
+            self.assertIn(self.EXTRA_SQL, r.stderr)
+
+    def test_createcluster_checks_for_psql_before_creating_anything(self):
+        with tempfile.TemporaryDirectory() as td:
+            script, log, env = self._createcluster_fixture(td, with_psql=False)
+            r = self._run_createcluster(script, env, "18", "probe", "--start")
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn("psql is not available", r.stderr)
+            self.assertFalse(log.exists(),
+                             "the preflight must fire before pg_createcluster runs")
+
+    def test_createcluster_help_and_platform_guard_precede_the_library(self):
+        # --help and the "Debian/Ubuntu only" diagnostic have to work on a host
+        # where neither the library nor pg_createcluster is installed.
+        with tempfile.TemporaryDirectory() as td:
+            script, log, env = self._createcluster_fixture(td)
+            (Path(td) / "documentdb-tools-lib.sh").unlink()
+            r = self._run_createcluster(script, env, "--help")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("Usage: documentdb-createcluster", r.stdout)
+
+            (Path(td) / "stubs" / "pg_createcluster").unlink()
+            r = self._run_createcluster(script, env, "18", "probe")
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn("Debian/Ubuntu only", r.stderr)
+
+    # ---- T4: documentdb-tune's post-apply guidance ------------------------
+
+    def _tune_fixture(self, td, owner="documentdb-local", stat_exit=0,
+                      control_file=True):
+        """The real documentdb-tune against a throwaway --pgdata, with the
+        extended-RUM control file present (so it pins the handler) and a stat
+        that reports `owner` for the data directory."""
+        td = Path(td)
+        stage_tools_lib(td, self._tools_lib_with_fake_bindir())
+        script = td / "documentdb-tune.sh"
+        script.write_text(TUNE_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+
+        data_dir = td / "data"
+        data_dir.mkdir()
+        (data_dir / "PG_VERSION").write_text("18\n", encoding="utf-8")
+        (data_dir / "postgresql.conf").write_text(
+            "unix_socket_directories = '/tmp/ok'\nport = 5442\n", encoding="utf-8")
+
+        bindir = td / "pgbin"
+        bindir.mkdir()
+        sharedir = td / "pgshare"
+        (sharedir / "extension").mkdir(parents=True)
+        if control_file:
+            (sharedir / "extension" / "documentdb_extended_rum.control").write_text(
+                "default_version = '0.106-0'\n", encoding="utf-8")
+        self._stub(bindir, "pg_config", f'echo {shlex.quote(str(sharedir))}\n')
+
+        stubs = td / "stubs"
+        stubs.mkdir()
+        self._stub(stubs, "stat",
+                   f'printf "%s\\n" {shlex.quote(owner)}\nexit {stat_exit}\n')
+        # Pinned for the same reason as in _render: the printed runner follows
+        # the host, and the assertions below name one.
+        self._stub(stubs, "sudo", "exit 0\n")
+        env = dict(os.environ)
+        env["PATH"] = os.pathsep.join([str(stubs), env["PATH"]])
+        env["DDB_TEST_BINDIR"] = str(bindir)
+        return script, data_dir, env
+
+    def _run_tune(self, script, data_dir, env, *args):
+        bash = shutil.which("bash") or "/bin/bash"
+        return subprocess.run(
+            [bash, str(script), "--pgdata", str(data_dir), *args],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            timeout=30, env=env,
+        )
+
+    def test_tune_prints_the_restart_before_one_targeted_recipe(self):
+        with tempfile.TemporaryDirectory() as td:
+            script, data_dir, env = self._tune_fixture(td)
+            r = self._run_tune(script, data_dir, env, "--yes")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            lines = r.stdout.splitlines()
+            restart_at = next(i for i, l in enumerate(lines) if "restart" in l.lower())
+            recipe_at = next(i for i, l in enumerate(lines) if self.BASE_SQL in l)
+            self.assertLess(restart_at, recipe_at,
+                            f"the library loads only from shared_preload_libraries:\n{r.stdout}")
+            self.assertEqual(sum(1 for l in lines if self.BASE_SQL in l), 1, r.stdout)
+            recipe = lines[recipe_at]
+            self.assertIn("sudo -u documentdb-local psql", recipe)
+            self.assertIn("-h /tmp/ok -p 5442", recipe)
+            self.assertIn("-d postgres -X -v ON_ERROR_STOP=1", recipe)
+            self.assertIn(self.EXTRA_SQL, recipe)
+
+    def test_tune_repeats_the_recovery_advice_when_the_config_is_current(self):
+        # Re-running tune is what an operator does when indexes fail, and the
+        # answer is usually the CREATE EXTENSION they never ran -- so the
+        # already-current path has to say it too, not just "up to date".
+        with tempfile.TemporaryDirectory() as td:
+            script, data_dir, env = self._tune_fixture(td)
+            first = self._run_tune(script, data_dir, env, "--yes")
+            self.assertEqual(first.returncode, 0, first.stderr)
+            second = self._run_tune(script, data_dir, env, "--yes")
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertIn("already up to date", second.stdout)
+            lines = second.stdout.splitlines()
+            restart_at = next(i for i, l in enumerate(lines) if "restart" in l.lower())
+            recipe_at = next(i for i, l in enumerate(lines) if self.BASE_SQL in l)
+            self.assertLess(restart_at, recipe_at, second.stdout)
+            self.assertIn("-h /tmp/ok -p 5442", lines[recipe_at])
+
+    def test_tune_no_next_steps_suppresses_guidance_on_both_paths(self):
+        # documentdb-createcluster prints its own, in an order that accounts
+        # for a cluster it has not started yet: nothing may escape the flag.
+        with tempfile.TemporaryDirectory() as td:
+            script, data_dir, env = self._tune_fixture(td)
+            first = self._run_tune(script, data_dir, env, "--yes", "--no-next-steps")
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertNotIn(self.BASE_SQL, first.stdout)
+            self.assertNotIn("restart", first.stdout.lower())
+
+            second = self._run_tune(script, data_dir, env, "--yes", "--no-next-steps")
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertIn("already up to date", second.stdout)
+            self.assertNotIn(self.BASE_SQL, second.stdout)
+            self.assertNotIn("restart", second.stdout.lower(),
+                             "the already-current path must obey the flag too")
+
+    def test_tune_dry_run_prints_no_recipe_for_work_it_did_not_do(self):
+        with tempfile.TemporaryDirectory() as td:
+            script, data_dir, env = self._tune_fixture(td)
+            fresh = self._run_tune(script, data_dir, env, "--dry-run")
+            self.assertEqual(fresh.returncode, 0, fresh.stderr)
+            self.assertNotIn(self.BASE_SQL, fresh.stdout)
+
+            self.assertEqual(self._run_tune(script, data_dir, env, "--yes").returncode, 0)
+            current = self._run_tune(script, data_dir, env, "--dry-run")
+            self.assertEqual(current.returncode, 0, current.stderr)
+            self.assertNotIn(self.BASE_SQL, current.stdout)
+
+    def test_tune_withholds_the_command_when_the_owner_is_unusable(self):
+        # stat's UNKNOWN sentinel, root (which PostgreSQL refuses to run as),
+        # and a stat that fails are all "no account to name": printing
+        # `sudo -u UNKNOWN psql` would just waste the operator's time.
+        for owner, stat_exit in (("UNKNOWN", 0), ("root", 0), ("", 1)):
+            with self.subTest(owner=owner or "stat-failure"):
+                with tempfile.TemporaryDirectory() as td:
+                    script, data_dir, env = self._tune_fixture(
+                        td, owner=owner, stat_exit=stat_exit)
+                    r = self._run_tune(script, data_dir, env, "--yes")
+                    self.assertEqual(r.returncode, 0, r.stderr)
+                    self.assertIn(self.BASE_SQL, r.stdout,
+                                  "the statements themselves are still useful")
+                    recipe = next(l for l in r.stdout.splitlines()
+                                  if self.BASE_SQL in l)
+                    self.assertNotIn("psql", recipe,
+                                     "no runnable command without an account to run it as")
+                    if owner:
+                        self.assertIn(f"owned by '{owner}'", r.stdout)
+                    else:
+                        self.assertIn("Cannot read the owner", r.stdout)
+
+    def test_tune_restore_is_unaffected_by_the_new_guidance(self):
+        with tempfile.TemporaryDirectory() as td:
+            script, data_dir, env = self._tune_fixture(td)
+            self.assertEqual(self._run_tune(script, data_dir, env, "--yes").returncode, 0)
+            conf = data_dir / "postgresql.conf"
+            self.assertIn("documentdb-setup managed configuration",
+                          conf.read_text(encoding="utf-8"))
+            r = self._run_tune(script, data_dir, env, "--restore", "--yes")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertNotIn("documentdb-setup managed configuration",
+                             conf.read_text(encoding="utf-8"))
+            self.assertNotIn(self.BASE_SQL, r.stdout)
+
+    # ---- T6: what `documentdb-gateway-admin check` tells an operator ------
+
+    def _admin_check(self, td, live="extended_rum", live_exit=0, base="1",
+                     extra="1", extra_exit=0, extra_stderr="",
+                     control_file=True, break_mktemp=False):
+        """Run the real cmd_check with a psql that answers each of its queries
+        from the arguments above. Only the caller's logic is under test here --
+        no server, no catalog."""
+        td = Path(td)
+        bindir = td / "pgbin"
+        bindir.mkdir()
+        sharedir = td / "pgshare"
+        (sharedir / "extension").mkdir(parents=True)
+        if control_file:
+            (sharedir / "extension" / "documentdb_extended_rum.control").write_text(
+                "default_version = '0.106-0'\n", encoding="utf-8")
+        self._stub(bindir, "pg_config", f'echo {shlex.quote(str(sharedir))}\n')
+        psql = self._stub(
+            td, "psql",
+            'sql=""\n'
+            'for a in "$@"; do sql="$a"; done\n'
+            'case "$sql" in\n'
+            '  *alternate_index_handler_name*)\n'
+            f'    printf "%s\\n" {shlex.quote(live)}; exit {live_exit} ;;\n'
+            '  *server_version_num*) echo 18; exit 0 ;;\n'
+            "  *\"extname = 'documentdb_extended_rum'\"*)\n"
+            f'    printf "%s" {shlex.quote(extra_stderr)} >&2\n'
+            f'    [ -n {shlex.quote(extra)} ] && printf "%s\\n" {shlex.quote(extra)}\n'
+            f'    exit {extra_exit} ;;\n'
+            "  *\"extname = 'documentdb'\"*)\n"
+            f'    [ -n {shlex.quote(base)} ] && printf "%s\\n" {shlex.quote(base)}\n'
+            '    exit 0 ;;\n'
+            '  *) echo 1; exit 0 ;;\n'
+            'esac\n')
+
+        # Staged without its `main "$@"` line, so sourcing defines the
+        # functions instead of running the CLI; the library goes with it
+        # because the script finds it beside itself.
+        stage_tools_lib(td, self._tools_lib_with_fake_bindir())
+        admin = td / "documentdb-gateway-admin.sh"
+        admin.write_text(
+            "\n".join(l for l in GATEWAY_ADMIN_SCRIPT.read_text(encoding="utf-8").splitlines()
+                       if l != 'main "$@"') + "\n",
+            encoding="utf-8")
+
+        harness = [
+            "set -uo pipefail",
+            "source " + shlex.quote(str(admin)),
+            # The library's PostgreSQL layout, pointed at the fixture above.
+            'documentdb_pg_bindir_candidates() { printf "%s\\n" '
+            + shlex.quote(str(bindir)) + "; }",
+            'find_psql() { printf "%s" ' + shlex.quote(str(psql)) + "; }",
+            # Inert: drop the account and run the stub directly.
+            'run_as_user() { shift; "$@"; }',
+            'PG_OWNER=postgres; TARGET_DB=appdb; SOCKET_DIR=/run/postgresql; PG_PORT=5432',
+            "_TEMP_FILES=()",
+        ]
+        if break_mktemp:
+            harness.append("mktemp() { return 1; }")
+        harness.append("cmd_check")
+        return self._bash("\n".join(harness) + "\n")
+
+    def test_admin_check_reports_a_healthy_database(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._admin_check(td)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("DocumentDB extension: loaded", r.stdout)
+            self.assertIn("(documentdb_extended_rum): available", r.stdout)
+            self.assertNotIn(self.BASE_SQL, r.stdout,
+                             "nothing to repair, so no recipe")
+
+    def test_admin_check_names_the_missing_index_extension_and_its_remedy(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._admin_check(td, extra="")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("(documentdb_extended_rum): MISSING", r.stdout)
+            self.assertIn("New index builds fail", r.stdout)
+            recipe = next(l for l in r.stdout.splitlines() if self.BASE_SQL in l)
+            self.assertIn("-h /run/postgresql -p 5432", recipe)
+            self.assertIn("-d appdb", recipe)
+            self.assertIn(self.EXTRA_SQL, recipe)
+
+    def test_admin_check_fails_when_the_extension_query_fails(self):
+        # A permission error is not "the extension is missing": reporting it as
+        # missing would send the operator to create something that is there.
+        with tempfile.TemporaryDirectory() as td:
+            r = self._admin_check(td, extra="", extra_exit=1,
+                                  extra_stderr="permission denied for table pg_extension")
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn("Cannot probe for the 'documentdb_extended_rum' extension",
+                          r.stderr)
+            self.assertIn("permission denied", r.stderr)
+            self.assertNotIn("MISSING", r.stdout)
+
+    def test_admin_check_says_when_the_requirement_is_only_inferred(self):
+        # Pre-restart the GUC does not exist, so the answer comes from the
+        # installed control file: the restart has to come before the recipe.
+        with tempfile.TemporaryDirectory() as td:
+            r = self._admin_check(td, live="__documentdb_guc_absent__",
+                                  base="", extra="")
+            # documentdb is missing, so --check fails after printing the remedy.
+            self.assertEqual(r.returncode, 1, r.stderr)
+            lines = r.stdout.splitlines()
+            self.assertIn("installed control file", r.stdout)
+            restart_at = next(i for i, l in enumerate(lines) if "restart" in l.lower())
+            recipe_at = next(i for i, l in enumerate(lines) if self.BASE_SQL in l)
+            self.assertLess(restart_at, recipe_at, r.stdout)
+            self.assertIn(self.EXTRA_SQL, lines[recipe_at])
+
+    def test_admin_check_warns_when_it_cannot_determine_the_requirement(self):
+        # No live answer and nothing installed to infer from: an empty result
+        # is "unknown", and a confident base-only recipe would be a lie.
+        with tempfile.TemporaryDirectory() as td:
+            r = self._admin_check(td, live="__documentdb_guc_absent__",
+                                  base="", extra="", control_file=False)
+            # documentdb is missing, so --check fails after printing the remedy.
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertIn("cannot tell which index extension", r.stdout)
+            self.assertIn("may be incomplete", r.stdout)
+
+    def test_admin_check_reports_a_failed_temp_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._admin_check(td, break_mktemp=True)
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn("temporary file", r.stderr)
+
+    def test_admin_check_does_not_blame_the_libraries_for_a_failed_read(self):
+        # Status 2 means "not live-confirmed", which covers both a GUC that
+        # does not exist yet and a query that simply did not answer. Stating
+        # the first sends an operator to restart a healthy server on the
+        # strength of a failed observation.
+        with tempfile.TemporaryDirectory() as td:
+            r = self._admin_check(td, live="", live_exit=1, base="", extra="")
+            # documentdb is missing, so --check fails after printing the remedy.
+            self.assertEqual(r.returncode, 1, r.stderr)
+            # The diagnosis wraps across log lines, each with its own prefix;
+            # compare it as one sentence.
+            flat = " ".join(" ".join(
+                l.replace("[documentdb-gateway-admin]", "") for l in r.stdout.splitlines()
+            ).split())
+            self.assertNotIn("has not loaded", flat)
+            self.assertIn("could not be read from this server", flat)
+            self.assertIn("inferred from installed files", flat)
+            self.assertIn("If PostgreSQL has not restarted since documentdb-tune ran", flat)
+            recipe = next(l for l in r.stdout.splitlines() if self.BASE_SQL in l)
+            self.assertIn(self.EXTRA_SQL, recipe,
+                          "the inferred requirement still belongs in the remedy")

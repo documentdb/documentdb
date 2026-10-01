@@ -455,31 +455,45 @@ sudo documentdb-tune --pg-version 18 --cluster main --dry-run       # preview
 sudo documentdb-tune --pg-version 18 --cluster main --yes
 sudo systemctl restart postgresql@18-main
 
-# (3) Create the extension in the `postgres` database (the tune fragment
+# (3) Create the extensions in the `postgres` database (the tune fragment
 # pins cron.database_name='postgres', so pg_cron — pulled in via CASCADE —
 # only allows extension creation there). If you need a custom DB name,
 # either override cron.database_name in the per-instance documentdb.conf
 # fragment before restart, OR keep the DocumentDB metadata in `postgres`
 # and create your application data DBs separately.
-sudo -u postgres psql -d postgres -v ON_ERROR_STOP=1 \
-        -c 'CREATE EXTENSION documentdb CASCADE;'
+#
+# Both statements are required when documentdb-tune wrote
+# documentdb.alternate_index_handler_name='extended_rum' (it does whenever the
+# extended-RUM extension is installed, the default for these packages).
+# CASCADE does not pull in documentdb_extended_rum, and without it no new index
+# can be built. One transaction, so a failure leaves neither behind.
+# documentdb-tune prints the exact command for your host.
+#
+# --cluster 18/main: a bare psql follows the default socket and port, which on a
+# host running several majors is not the instance tuned above.
+sudo -u postgres psql --cluster 18/main -d postgres -X -v ON_ERROR_STOP=1 \
+        -c 'BEGIN;' \
+        -c 'CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;' \
+        -c 'CREATE EXTENSION IF NOT EXISTS documentdb_extended_rum CASCADE;' \
+        -c 'COMMIT;'
 
-# (4) Verify
-sudo -u postgres psql -d postgres -c '\dx documentdb*'
-# Should list: documentdb, documentdb_core, plus dependencies (pg_cron, pgvector, postgis, ...)
+# (4) Verify — same instance as step (3)
+sudo -u postgres psql --cluster 18/main -d postgres -c '\dx documentdb*'
+# Should list: documentdb, documentdb_core, documentdb_extended_rum, plus
+# dependencies (pg_cron, pgvector, postgis, ...)
 ```
 
-**Even simpler on Debian/Ubuntu when starting from scratch:**
+**Even simpler on Debian/Ubuntu when starting from a PostgreSQL instance that does not exist yet:**
 
 ```bash
 sudo apt install postgresql-18-documentdb
 sudo apt install documentdb-postgresql-tools
-sudo documentdb-createcluster 18 main --start
-sudo -u postgres psql -d postgres -v ON_ERROR_STOP=1 \
-        -c 'CREATE EXTENSION documentdb CASCADE;'
+sudo documentdb-createcluster 18 docdb --start
 ```
 
-`documentdb-createcluster` wraps `pg_createcluster` and `documentdb-tune`, so the PostgreSQL instance is created and the per-instance `documentdb.conf` fragment is written in one step. On Debian/Ubuntu the instance config stays under `/etc/postgresql/18/main/`, while the managed fragment lives at `/etc/postgresql-common/documentdb/18/main/documentdb.conf`. When `--start` is requested, the wrapper tunes the instance before starting it.
+`docdb` must not already exist: `documentdb-createcluster` wraps `pg_createcluster`, which refuses a name that is taken — including the `main` instance the `postgresql-18` package creates on install. Use Workflow A above for that one.
+
+The wrapper creates the PostgreSQL instance and writes the per-instance `documentdb.conf` fragment in one step. With `--start` it then starts the instance and creates the DocumentDB extensions — including `documentdb_extended_rum` when the tuning requires it — in its `postgres` database, so no manual `CREATE EXTENSION` step is left. Without `--start` it prints the start command and the extension recipe instead. On Debian/Ubuntu the instance config stays under `/etc/postgresql/18/docdb/`, while the managed fragment lives at `/etc/postgresql-common/documentdb/18/docdb/documentdb.conf`.
 
 After verification the administrator has three options:
 
@@ -512,7 +526,17 @@ sudo apt install postgresql-18-documentdb documentdb-gateway
 sudo apt install documentdb-postgresql-tools
 sudo documentdb-tune --pg-version 18 --cluster main --yes
 sudo systemctl restart postgresql@18-main
-sudo -u postgres psql -d postgres -c 'CREATE EXTENSION documentdb CASCADE;'
+# Both statements: documentdb-tune pins
+# documentdb.alternate_index_handler_name='extended_rum' whenever the
+# extended-RUM extension is installed (the default), and CASCADE does not pull
+# it in. Skipping the second leaves a database where no new index can be built;
+# BEGIN/COMMIT keeps a failed second statement from leaving the first behind.
+# --cluster 18/main targets the instance tuned on the line above.
+sudo -u postgres psql --cluster 18/main -d postgres -X -v ON_ERROR_STOP=1 \
+    -c 'BEGIN;' \
+    -c 'CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;' \
+    -c 'CREATE EXTENSION IF NOT EXISTS documentdb_extended_rum CASCADE;' \
+    -c 'COMMIT;'
 
 # (3) One-shot PostgreSQL-side gateway registration against the local PostgreSQL instance.
 # Auto-detects when there is exactly one PostgreSQL instance on the host (typical case).
@@ -535,8 +559,9 @@ sudo systemctl enable --now documentdb-gateway
 # making PWFILE itself readable by the postgres user. The password appears
 # briefly in psql's argv (visible to root and the postgres user via ps for the
 # lifetime of the process), which is acceptable for this scripted bootstrap.
-# Run this against the same database where CREATE EXTENSION was executed (postgres here).
-sudo -u postgres psql -d postgres -X -v ON_ERROR_STOP=1 \
+# Run this against the same instance and database where CREATE EXTENSION was
+# executed (18/main, postgres here).
+sudo -u postgres psql --cluster 18/main -d postgres -X -v ON_ERROR_STOP=1 \
     -v admin_password="$(sudo cat "$PWFILE")" <<'SQL'
 SELECT documentdb_api.create_user(
   jsonb_build_object(
@@ -648,7 +673,7 @@ The bolded cells are the only places `postgresql.conf`, `pg_hba.conf`, or `pg_id
 | `documentdb-postgresql@N.service` | `documentdb-common` | Stand-alone private PostgreSQL service template (shared, major-agnostic file) for greenfield/per-major flows; instantiated per-major, with the per-major instance lifecycle managed by `documentdb-N`. |
 | `documentdb-gateway-local@N.service` | `documentdb-common` | Stand-alone gateway service template (shared file) paired with `documentdb-local@N.target`; brownfield keeps the adopted PostgreSQL service outside this unit's ownership boundary. |
 | `documentdb-tune` | `documentdb-postgresql-tools` | Apply or remove the recommended DocumentDB config for one local PostgreSQL instance. On Debian/Ubuntu this writes `/etc/postgresql-common/documentdb/%v/%c/documentdb.conf` and ensures the instance `postgresql.conf` includes it. On RHEL (or when `--pgdata` is given) it writes a marked managed block directly into the target `postgresql.conf`. |
-| `documentdb-createcluster N C` | `documentdb-postgresql-tools` | Debian/Ubuntu helper that wraps `pg_createcluster N C`, runs `documentdb-tune` for that specific PostgreSQL instance, then starts the instance if requested. |
+| `documentdb-createcluster N C` | `documentdb-postgresql-tools` | Debian/Ubuntu helper that wraps `pg_createcluster N C`, runs `documentdb-tune` for that specific PostgreSQL instance, and with `--start` starts it and creates the DocumentDB extensions (plus `documentdb_extended_rum` when the tuning requires it) in its `postgres` database. Without `--start` it prints those steps instead. |
 | `documentdb-register-gateway` | `documentdb-postgresql-tools` | One-shot local gateway registration against an existing PostgreSQL instance (Workflow B). |
 | `documentdb-gateway-admin` | `documentdb-postgresql-tools` | Administrator helper for ongoing user/role management against a DocumentDB-enabled PostgreSQL instance (`create-user`, `drop-user`, `list-users`, `reset-password`, `check`). Used by `documentdb-setup` and `documentdb-register-gateway` for the optional first-admin bootstrap; day-2 user management is normally done via the wire protocol but this CLI remains available for scripted scenarios where no admin connection is yet established. |
 | `documentdb-setup` | `documentdb-common` | Stand-alone package setup wizard (shared, major-agnostic file; delegates to `documentdb-tune` and `documentdb-register-gateway`). |

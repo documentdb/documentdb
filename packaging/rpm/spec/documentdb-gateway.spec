@@ -131,16 +131,38 @@ echo "                       /usr/share/doc/documentdb-gateway/examples/gateway.
 echo "                       /etc/documentdb/gateway/gateway.env"
 echo "  sudoedit /etc/documentdb/gateway/gateway.env"
 echo ""
+# No --cluster here: that is Debian pg_wrapper only, and the right RHEL
+# coordinates depend on the port each major was given. A bare psql is correct
+# for the single-major case; the multi-major caveat is a separate advisory line
+# below, not an inline comment, because a '#' inside a backslash-continued
+# command comments out the continuation and truncates the pasted recipe.
+#
+# Both statements are required: documentdb-tune pins
+# alternate_index_handler_name='extended_rum' whenever the extended-RUM
+# extension is installed (the default here) and CASCADE does not pull it in, so
+# without it no new index can be built. Static copy of the recipe
+# documentdb-tools-lib.sh single-sources — this scriptlet cannot source that
+# library. Its flags match documentdb_create_extension_command's;
+# verify_install_banner_extension_hint in packaging/test_packages/test-gateway-
+# install-entrypoint-rpm.sh checks the statements, their order and the
+# BEGIN/COMMIT wrap, which is less than full equivalence with that renderer. Mirrors the DEB banner in
+# documentdb-local/maintainer-scripts/gateway/postinst.
 echo "Next: choose one workflow."
 echo "  * Workflow C (recommended): sudo dnf install documentdb && sudo documentdb-setup --admin-user admin"
 echo "  * Workflow B (gateway on top of an existing PG, replace <N> with the PG major such as 18):"
 echo "      sudo dnf install postgresql<N>-documentdb documentdb-postgresql-tools && \\"
 echo "        sudo documentdb-tune --pg-version <N> --pgdata /var/lib/pgsql/<N>/data --yes && \\"
 echo "        sudo systemctl restart postgresql-<N> && \\"
-echo "        sudo -u postgres psql -c 'CREATE EXTENSION documentdb CASCADE;' && \\"
+echo "        sudo -u postgres psql -d postgres -X -v ON_ERROR_STOP=1 \\"
+echo "          -c 'BEGIN;' \\"
+echo "          -c 'CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;' \\"
+echo "          -c 'CREATE EXTENSION IF NOT EXISTS documentdb_extended_rum CASCADE;' \\"
+echo "          -c 'COMMIT;' && \\"
 echo "        sudo documentdb-register-gateway --target-postgres-instance <N>/main --admin-user admin --yes && \\"
 echo "        sudo systemctl reload postgresql-<N> && \\"
 echo "        sudo systemctl enable --now documentdb-gateway"
+echo "    If more than one PostgreSQL major runs on this host, add -p <port> to the"
+echo "    psql line so the extensions land in the instance you just tuned."
 echo "  See /usr/share/doc/documentdb-gateway/ and the packaging-design.md \"User workflows\" section."
 
 %preun

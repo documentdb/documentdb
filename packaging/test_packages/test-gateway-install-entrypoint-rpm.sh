@@ -987,6 +987,91 @@ verify_postgres_state() {
     fi
 }
 
+# The gateway banner is the highest-traffic copy of the CREATE EXTENSION recipe
+# and the one copy that cannot source documentdb-tools-lib.sh, so it is a static
+# duplicate -- and it is what drifted last time, telling operators to run a
+# single CASCADE long after the tools knew an extended-RUM cluster needs two.
+# Asserted against the INSTALLED scriptlet, i.e. the shipped artifact.
+verify_install_banner_extension_hint() {
+    log "Verifying the gateway %post banner names both extensions."
+
+    # No skip: the installed scriptlet is package content, not a runtime
+    # capability. An empty answer means documentdb-gateway is not installed
+    # here, which is a broken test image, and skipping would report PASS for an
+    # assertion that never ran.
+    local scripts=""
+    if ! scripts="$(rpm -q --scripts documentdb-gateway 2>/dev/null)" || [[ -z "${scripts}" ]]; then
+        fail "rpm -q --scripts documentdb-gateway returned nothing: the installed %post scriptlet must be readable for this assertion to mean anything"
+    fi
+
+    # echo lines only: the scriptlet's own comments quote the single-statement
+    # form and would trip the negative check below.
+    local banner=""
+    banner="$(printf '%s\n' "${scripts}" | grep -E '^[[:space:]]*echo ' || true)"
+
+    printf '%s\n' "${banner}" | grep -Fq 'CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;' \
+        || fail "documentdb-gateway %post does not print the documentdb CREATE EXTENSION recipe"
+    printf '%s\n' "${banner}" | grep -Fq 'CREATE EXTENSION IF NOT EXISTS documentdb_extended_rum CASCADE;' \
+        || fail "documentdb-gateway %post prints a CREATE EXTENSION recipe that omits documentdb_extended_rum -- an operator following the Workflow B banner ends up with a database where no new index can be built -- \"Index access method extended_rum is not available\". Keep it in sync with documentdb_create_extension_command in documentdb-tools-lib.sh."
+
+    if printf '%s\n' "${banner}" | grep -Eq "CREATE EXTENSION documentdb CASCADE"; then
+        fail "documentdb-gateway %post still contains the pre-fix single-statement recipe 'CREATE EXTENSION documentdb CASCADE'"
+    fi
+
+    # Presence is not order: documentdb_extended_rum's install SQL consumes
+    # objects the base extension creates, so a banner listing it first is a
+    # recipe that fails halfway. Same flags as documentdb_create_extension_command,
+    # so a pasted banner behaves like the tools' own recipe.
+    local base_at extra_at
+    base_at="$(printf '%s\n' "${banner}" | grep -n 'CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;' | head -1 | cut -d: -f1)"
+    extra_at="$(printf '%s\n' "${banner}" | grep -n 'CREATE EXTENSION IF NOT EXISTS documentdb_extended_rum CASCADE;' | head -1 | cut -d: -f1)"
+    (( base_at < extra_at )) \
+        || fail "documentdb-gateway %post prints documentdb_extended_rum before documentdb (lines ${base_at} and ${extra_at}); its install SQL needs the base extension's objects, so that order fails halfway"
+    # One transaction: a failed second statement must not leave the first committed.
+    local begin_at commit_at
+    begin_at="$(printf '%s\n' "${banner}" | grep -nF -- "-c 'BEGIN;'" | head -1 | cut -d: -f1)"
+    commit_at="$(printf '%s\n' "${banner}" | grep -nF -- "-c 'COMMIT;'" | head -1 | cut -d: -f1)"
+    [[ -n "${begin_at}" && -n "${commit_at}" ]] && (( begin_at < base_at && extra_at < commit_at )) \
+        || fail "documentdb-gateway %post does not wrap both CREATE EXTENSION statements in -c 'BEGIN;' ... -c 'COMMIT;' (BEGIN line '${begin_at}', COMMIT line '${commit_at}'); a failed documentdb_extended_rum then leaves documentdb committed without it"
+    printf '%s\n' "${banner}" | grep -Fq 'psql -d postgres -X -v ON_ERROR_STOP=1' \
+        || fail "documentdb-gateway %post's psql line does not carry -d postgres -X -v ON_ERROR_STOP=1; it must match documentdb_create_extension_command in documentdb-tools-lib.sh, so a half-applied recipe cannot look like a success"
+
+    # RHEL has no pg_wrapper --cluster, so the multi-major caveat is the whole
+    # targeting advice this banner can give.
+    printf '%s\n' "${banner}" | grep -Fq -- '-p <port>' \
+        || fail "documentdb-gateway %post dropped the multi-major advisory telling the operator to add -p <port>; on a host running several PostgreSQL majors the extensions then land in whichever instance owns the default port"
+
+    # Bounded on purpose: statements, their order, the flags and the port
+    # advisory -- not equivalence with the renderer's output.
+    log "Gateway %post banner: both extensions named, in order, with the port advisory."
+}
+
+# A tuned cluster whose documentdb_extended_rum was never created looks healthy
+# in \dx but cannot build a new index, so assert the behaviour rather
+# than only the catalog rows.
+verify_index_creation_works() {
+    local probe_db="documentdb_pkg_index_probe"
+    local index_spec='{"createIndexes": "probe_coll", "indexes": [{"key": {"n": 1}, "name": "n_1"}]}'
+    local index_row="" index_ok="" index_retval="" probe_err=""
+
+    log "Verifying index creation works end-to-end."
+    create_temp_file probe_err "/tmp/documentdb-index-probe.XXXXXX.log"
+    # stderr goes to a file rather than merged into the captured value, so only
+    # the result row lands there. statement_timeout bounds the call so a build
+    # that never completes fails the suite instead of hanging it.
+    if ! index_row="$(run_psql "SET client_min_messages = warning; SET statement_timeout = '180s'; SELECT ok, retval::text FROM documentdb_api.create_indexes_background('${probe_db}', '${index_spec}'::documentdb_core.bson);" 2>"${probe_err}")"; then
+        fail "createIndexes failed after a packaged install: $(cat "${probe_err}")"
+    fi
+    # ok=false is in-band: psql exits 0 and the reason lives in retval, so a
+    # message built from the ok flag alone names neither the access method nor
+    # the missing extension -- the one regression this test exists to catch.
+    index_ok="${index_row%%|*}"
+    index_retval="${index_row#*|}"
+    assert_eq "${index_ok}" "t" "create_indexes_background did not report ok=true (retval: ${index_retval}; stderr: $(cat "${probe_err}"))"
+
+    run_psql "SELECT documentdb_api.drop_database('${probe_db}');" >/dev/null 2>&1 || true
+}
+
 verify_gateway_crud() {
     local mongosh_log="/tmp/mongosh-smoke.log"
     local crud_script=""
@@ -1437,6 +1522,8 @@ main() {
     verify_self_managed_postgres_persistence
     verify_live_cluster_readoption
     verify_postgres_state
+    verify_install_banner_extension_hint
+    verify_index_creation_works
     verify_tls_key_permissions
     verify_gateway_crud
     verify_sample_data_absent
