@@ -8847,6 +8847,7 @@ class UxReviewFixTests(unittest.TestCase):
         # so a re-run applies the shipped documentdb--X--Y.sql migrations.
         script = SETUP_SCRIPT.read_text(encoding="utf-8")
         for fn, ext in (
+            ("_create_documentdb_extension_inline", "documentdb_core"),
             ("_create_documentdb_extension_inline", "documentdb"),
             ("_create_extended_rum_extension_inline", "documentdb_extended_rum"),
         ):
@@ -8862,6 +8863,20 @@ class UxReviewFixTests(unittest.TestCase):
                 body,
                 f"{fn} must idempotently upgrade the in-database extension",
             )
+            # ALTER EXTENSION does not cascade to dependencies; core goes first
+            # because documentdb is built against it.
+            if ext == "documentdb_core":
+                self.assertLess(
+                    body.index("ALTER EXTENSION documentdb_core UPDATE;"),
+                    body.index("ALTER EXTENSION documentdb UPDATE;"),
+                    "core must be upgraded before its dependent extension",
+                )
+                self.assertLess(body.index("BEGIN;"), body.index("CREATE EXTENSION"))
+                self.assertLess(
+                    body.index("ALTER EXTENSION documentdb UPDATE;"),
+                    body.index("COMMIT;"),
+                    "core and documentdb upgrades must commit together",
+                )
 
     def test_resolve_password_fails_fast_under_yes_without_source(self):
         # --yes with no password source must die with an actionable message

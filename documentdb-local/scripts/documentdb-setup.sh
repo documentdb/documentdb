@@ -3225,6 +3225,8 @@ SQL
 # verbatim as "$@" args, so they live in tiny wrappers.
 _create_documentdb_extension_inline() {
     run_as_user "${PG_OWNER}" "${PSQL}" -h "${PG_SOCKET_DIR}" -p "${PG_PORT}" -d postgres -X -v ON_ERROR_STOP=1 <<'SQL'
+-- One transaction so a failed documentdb upgrade does not leave core upgraded alone.
+BEGIN;
 CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;
 -- Idempotently upgrade the in-database extension to the installed default
 -- version. On a first install this is a no-op; on a re-run after a package
@@ -3235,7 +3237,10 @@ CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;
 -- ever advances the extension's default_version without shipping the
 -- contiguous documentdb--X--Y.sql upgrade path ("extension has no update
 -- path"). Every release must ship the matching upgrade script.
+-- ALTER EXTENSION does not update dependencies, so upgrade core first.
+ALTER EXTENSION documentdb_core UPDATE;
 ALTER EXTENSION documentdb UPDATE;
+COMMIT;
 SQL
 }
 
