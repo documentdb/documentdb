@@ -1561,20 +1561,18 @@ SET documentdb_core.enableWriteDocumentsInRepath TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_null_path_test", "pipeline": [ { "$sort": { "_id": 1 } }, { "$group": { "_id": { "province": "$g_home.province" }, "names": { "$push": "$name" }, "count": { "$sum": 1 } } }, { "$sort": { "_id.province": 1 } } ] }');
                                                  document                                                 
 ----------------------------------------------------------------------------------------------------------
- { "_id" : {  }, "names" : [ "Charlie" ], "count" : { "$numberInt" : "1" } }
- { "_id" : { "province" : null }, "names" : [ "Bob", "Eve", "Frank" ], "count" : { "$numberInt" : "3" } }
+ { "_id" : { "province" : null }, "names" : [ "Bob", "Charlie", "Eve", "Frank" ], "count" : { "$numberInt" : "4" } }
  { "_id" : { "province" : "Beijing" }, "names" : [ "Diana" ], "count" : { "$numberInt" : "1" } }
  { "_id" : { "province" : "Shanghai" }, "names" : [ "Alice" ], "count" : { "$numberInt" : "1" } }
-(4 rows)
+(3 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_deep_null_test", "pipeline": [ { "$sort": { "_id": 1 } }, { "$group": { "_id": { "deep": "$val.a.b" }, "ids": { "$push": "$_id" }, "count": { "$sum": 1 } } }, { "$sort": { "_id.deep": 1 } } ] }');
                                              document                                              
 ---------------------------------------------------------------------------------------------------
- { "_id" : {  }, "ids" : [ "e04", "e02", "e03", "e05", "e07" ], "count" : { "$numberInt" : "5" } }
- { "_id" : { "deep" : null }, "ids" : [ "e08", "e06" ], "count" : { "$numberInt" : "2" } }
+ { "_id" : { "deep" : null }, "ids" : [ "e08", "e02", "e03", "e04", "e05", "e06", "e07" ], "count" : { "$numberInt" : "7" } }
  { "_id" : { "deep" : [ "arr1", "arr2" ] }, "ids" : [ "e09" ], "count" : { "$numberInt" : "1" } }
  { "_id" : { "deep" : "deep_ok" }, "ids" : [ "e01" ], "count" : { "$numberInt" : "1" } }
-(4 rows)
+(3 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_deep_null_test", "pipeline": [ { "$project": { "result": "$val.a.b" } }, { "$sort": { "_id": 1 } } ] }');
                      document                     
@@ -1594,20 +1592,18 @@ SET documentdb_core.enableWriteDocumentsInRepath TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_null_path_test", "pipeline": [ { "$sort": { "_id": 1 } }, { "$group": { "_id": { "province": "$g_home.province" }, "names": { "$push": "$name" }, "count": { "$sum": 1 } } }, { "$sort": { "_id.province": 1 } } ] }');
                                                  document                                                 
 ----------------------------------------------------------------------------------------------------------
- { "_id" : {  }, "names" : [ "Charlie" ], "count" : { "$numberInt" : "1" } }
- { "_id" : { "province" : null }, "names" : [ "Bob", "Eve", "Frank" ], "count" : { "$numberInt" : "3" } }
+ { "_id" : { "province" : null }, "names" : [ "Bob", "Charlie", "Eve", "Frank" ], "count" : { "$numberInt" : "4" } }
  { "_id" : { "province" : "Beijing" }, "names" : [ "Diana" ], "count" : { "$numberInt" : "1" } }
  { "_id" : { "province" : "Shanghai" }, "names" : [ "Alice" ], "count" : { "$numberInt" : "1" } }
-(4 rows)
+(3 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_deep_null_test", "pipeline": [ { "$sort": { "_id": 1 } }, { "$group": { "_id": { "deep": "$val.a.b" }, "ids": { "$push": "$_id" }, "count": { "$sum": 1 } } }, { "$sort": { "_id.deep": 1 } } ] }');
                                              document                                              
 ---------------------------------------------------------------------------------------------------
- { "_id" : {  }, "ids" : [ "e04", "e02", "e03", "e05", "e07" ], "count" : { "$numberInt" : "5" } }
- { "_id" : { "deep" : null }, "ids" : [ "e08", "e06" ], "count" : { "$numberInt" : "2" } }
+ { "_id" : { "deep" : null }, "ids" : [ "e08", "e02", "e03", "e04", "e05", "e06", "e07" ], "count" : { "$numberInt" : "7" } }
  { "_id" : { "deep" : [ "arr1", "arr2" ] }, "ids" : [ "e09" ], "count" : { "$numberInt" : "1" } }
  { "_id" : { "deep" : "deep_ok" }, "ids" : [ "e01" ], "count" : { "$numberInt" : "1" } }
-(4 rows)
+(3 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_deep_null_test", "pipeline": [ { "$project": { "result": "$val.a.b" } }, { "$sort": { "_id": 1 } } ] }');
                      document                     

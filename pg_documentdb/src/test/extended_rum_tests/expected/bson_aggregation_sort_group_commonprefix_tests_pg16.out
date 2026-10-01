@@ -1524,7 +1524,7 @@ SELECT document FROM bson_aggregation_pipeline('db',
     ], "cursor": {}, "hint": "idx_ax" }');
           document          
 ----------------------------
- { "firstVal" : "name_58" }
+ { "_id" : null, "firstVal" : "name_58" }
 (1 row)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
@@ -1563,8 +1563,8 @@ SELECT document FROM bson_aggregation_pipeline('db',
     ], "cursor": {}, "hint": "idx_ax_b" }');
                      document                     
 --------------------------------------------------
- { "_id" : { "b" : "X" }, "firstVal" : "name_2" }
- { "_id" : { "b" : "Y" }, "firstVal" : "name_1" }
+ { "_id" : { "ax" : null, "b" : "X" }, "firstVal" : "name_2" }
+ { "_id" : { "ax" : null, "b" : "Y" }, "firstVal" : "name_1" }
 (2 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
