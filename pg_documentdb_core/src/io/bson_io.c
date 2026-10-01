@@ -30,6 +30,7 @@
 #include "io/bson_core.h"
 #include "utils/documentdb_errors.h"
 #include "types/decimal128.h"
+#include "utils/date_utils.h"
 
 
 extern bool BsonTextUseJsonRepresentation;
@@ -819,6 +820,15 @@ PgbsonElementWriterWriteSQLValue(pgbson_element_writer *writer,
 				}
 			}
 
+			PgbsonElementWriterWriteValue(writer, &fieldBsonValue);
+			return;
+		}
+
+		case TIMESTAMPTZOID:
+		{
+			fieldBsonValue.value_type = BSON_TYPE_DATE_TIME;
+			fieldBsonValue.value.v_datetime = TimestampTzToUnixMillis(
+				DatumGetTimestampTz(fieldValue));
 			PgbsonElementWriterWriteValue(writer, &fieldBsonValue);
 			return;
 		}

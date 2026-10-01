@@ -36,4 +36,8 @@ bool IsBtreeBsonSelectivityFromStatsEnabledForRelation(PlannerInfo *planner,
 void GetCorrelationFromStatistics(PlannerInfo *root, IndexPath *path,
 								  double *indexCorrelation);
 
+double GetCustomStatisticsSelectivityForLookup(Oid funcExpr, List *funcArgs,
+											   SpecialJoinInfo *sjinfo,
+											   PlannerInfo *planner, JoinType joinType,
+											   int varRelid);
 #endif

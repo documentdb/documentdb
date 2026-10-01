@@ -174,6 +174,43 @@ GetPgTimestampFromUnixEpoch(int64_t epochInMs)
 
 
 /*
+ * Converts a postgres TimestampTz into milliseconds since the Unix epoch
+ * (1970-01-01 UTC), which is the representation a BSON date carries.
+ *
+ * TimestampTz is microseconds since the postgres epoch (2000-01-01). Whole
+ * seconds since the Unix epoch come from timestamptz_to_time_t(), and the
+ * millisecond component is derived from the microsecond remainder. Because the
+ * postgres to Unix epoch offset is a whole number of seconds, that remainder
+ * matches a Unix based remainder, except that C truncates toward zero so it can
+ * be negative for pre 2000 timestamps. Borrowing a second normalizes it into
+ * [0, USECS_PER_SEC). This keeps millisecond precision, preserves values before
+ * the Unix epoch, and avoids floating point arithmetic.
+ */
+static inline int64
+TimestampTzToUnixMillis(TimestampTz timestamp)
+{
+	if (TIMESTAMP_NOT_FINITE(timestamp))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_OVERFLOW),
+						errmsg(
+							"timestamp is not finite.")));
+	}
+
+	time_t secondsSinceUnixEpoch = timestamptz_to_time_t(timestamp);
+	int64 usecRem = timestamp % USECS_PER_SEC;
+	if (usecRem < 0)
+	{
+		usecRem += USECS_PER_SEC;
+		secondsSinceUnixEpoch -= 1;
+	}
+
+	Assert(usecRem >= 0 && usecRem < USECS_PER_SEC);
+	return ((int64) secondsSinceUnixEpoch) * MILLISECONDS_IN_SECOND +
+		   (usecRem / MILLISECONDS_IN_SECOND);
+}
+
+
+/*
  * Gets the current time in milliseconds since epoch
  */
 static inline long

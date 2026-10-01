@@ -25,6 +25,7 @@
 #include <catalog/pg_statistic_ext.h>
 #include <catalog/pg_statistic.h>
 #include <statistics/statistics.h>
+#include <utils/fmgrprotos.h>
 
 #include "query/bson_dollar_selectivity.h"
 #include "planner/selectivity.h"
@@ -38,6 +39,7 @@
 extern bool EnablePerCollectionPlannerStatistics;
 extern bool EnableCompositeIndexPlanner;
 extern bool EnableIndexCorrelationFromStatistics;
+extern bool EnableLookupJoinSelectivityFromStats;
 
 /* CODESYNC with system_configs.c */
 #define ARRAY_STATISTICS_MAX_SAMPLE_COUNT 128
@@ -53,14 +55,6 @@ typedef struct StatsProjectState
 	int sampleCount;
 	int maxAllowedSamples;
 } StatsProjectState;
-
-/* PG selectivity functions */
-extern Datum eqsel(PG_FUNCTION_ARGS);
-extern Datum scalargtsel(PG_FUNCTION_ARGS);
-extern Datum scalargesel(PG_FUNCTION_ARGS);
-extern Datum scalarltsel(PG_FUNCTION_ARGS);
-extern Datum scalarlesel(PG_FUNCTION_ARGS);
-extern Datum neqsel(PG_FUNCTION_ARGS);
 
 static double GetStatisticsNoStatsData(List *args, Oid selectivityOpExpr, double
 									   defaultExprSelectivity,
@@ -239,6 +233,123 @@ GetDollarExistsSelectivity(PlannerInfo *planner, Oid selectivityOpExpr, Node *le
 	CLAMP_PROBABILITY(selectivity);
 	list_free(args);
 	return selectivity;
+}
+
+
+/*
+ * Computes the join selectivity for a lookup join filter from the collected
+ * statistics on the two joined paths.
+ *
+ * The lookup join filter is a plain boolean function rather than an equality
+ * operator, so the standard estimator never sees it and the planner would
+ * otherwise fall back to a fixed selectivity that ignores cardinality. This
+ * rewrites the filter into an equality between the two extracted paths and
+ * asks the standard estimator for a number, so a high cardinality path
+ * estimates the small number of matching rows it actually has.
+ *
+ * Returns the fixed low selectivity fallback when the shape is not recognized,
+ * when statistics are unavailable, or when the behavior is disabled.
+ */
+double
+GetCustomStatisticsSelectivityForLookup(Oid funcExpr, List *funcArgs,
+										SpecialJoinInfo *sjinfo,
+										PlannerInfo *planner, JoinType joinType,
+										int varRelid)
+{
+	if (!EnableLookupJoinSelectivityFromStats)
+	{
+		return LowSelectivity;
+	}
+
+	Expr *leftDocExpr = linitial(funcArgs);
+	Expr *pathExpr = lthird(funcArgs);
+	Expr *joinExpr = lsecond(funcArgs);
+
+	if (IsA(leftDocExpr, Var) &&
+		IsA(pathExpr, Const) &&
+		IsA(joinExpr, FuncExpr))
+	{
+		FuncExpr *joinFunc = (FuncExpr *) joinExpr;
+		if (joinFunc->funcid ==
+			DocumentDBApiInternalBsonLookupExtractFilterExpressionFunctionOid() &&
+			list_length(joinFunc->args) >= 2)
+		{
+			Expr *rightDocExpr = linitial(joinFunc->args);
+			Expr *rightPathExpr = lsecond(joinFunc->args);
+
+			if ((IsA(rightDocExpr, Var) || IsA(rightDocExpr, Param)) &&
+				IsA(rightPathExpr, Const))
+			{
+				Var *leftVar = castNode(Var, leftDocExpr);
+				RelOptInfo *leftRel = find_base_rel(planner, leftVar->varno);
+
+				if (!EnablePlannerCostSelectivityFromRelOptInfo(planner, leftRel))
+				{
+					/* Default if planner stats is not available */
+					return LowSelectivity;
+				}
+
+				/* Form the OpExpr for the $lookup join. We write the lookup join to be of the form
+				 * bson_stats_project(document, 'pathExpr') = bson_stats_project(document, 'pathexpr')
+				 * and then apply eqjoinsel for it.
+				 */
+				pgbson *extractBson = DatumGetPgBson(
+					((Const *) rightPathExpr)->constvalue);
+				pgbsonelement pgbsonElement;
+				PgbsonToSinglePgbsonElementWithCollation(extractBson,
+														 &pgbsonElement);
+
+				Const *rightFilterConst = MakeTextConst(pgbsonElement.path,
+														pgbsonElement.pathLength);
+
+				FuncExpr *leftFunc = makeFuncExpr(BsonStatsProjectFuncOid(),
+												  BsonTypeId(), list_make2(
+													  leftDocExpr, pathExpr),
+												  InvalidOid,
+												  DEFAULT_COLLATION_OID,
+												  COERCE_EXPLICIT_CALL);
+				FuncExpr *rightFunc = makeFuncExpr(BsonStatsProjectFuncOid(),
+												   BsonTypeId(), list_make2(
+													   rightDocExpr,
+													   rightFilterConst),
+												   InvalidOid,
+												   DEFAULT_COLLATION_OID,
+												   COERCE_EXPLICIT_CALL);
+
+				float8 joinSelectivity;
+				if (sjinfo != NULL)
+				{
+					Datum joinSel = DirectFunctionCall5(eqjoinsel,
+														PointerGetDatum(planner),
+														ObjectIdGetDatum(
+															BsonEqualOperatorId()),
+														PointerGetDatum(
+															list_make2(leftFunc,
+																	   rightFunc)),
+														Int32GetDatum(
+															joinType),
+														PointerGetDatum(
+															sjinfo));
+					joinSelectivity = DatumGetFloat8(joinSel);
+				}
+				else
+				{
+					joinSelectivity = DatumGetFloat8(
+						DirectFunctionCall4(eqsel, PointerGetDatum(planner),
+											ObjectIdGetDatum(
+												BsonEqualOperatorId()),
+											PointerGetDatum(list_make2(leftFunc,
+																	   rightFunc)),
+											Int32GetDatum(varRelid)));
+				}
+
+				CLAMP_PROBABILITY(joinSelectivity);
+				return joinSelectivity;
+			}
+		}
+	}
+
+	return LowSelectivity;
 }
 
 

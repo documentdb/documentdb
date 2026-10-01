@@ -22,6 +22,7 @@
 #include "io/bsonvalue_utils.h"
 #include "utils/documentdb_errors.h"
 #include "utils/string_view.h"
+#include "utils/date_utils.h"
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -954,28 +955,11 @@ PgbsonWriterAppendDateTime(pgbson_writer *writer, const char *path, uint32_t
 						   TimestampTz timestamp)
 {
 	/*
-	 * bson_append_date_time expects milliseconds since the Unix epoch (1970-01-01 UTC).
-	 * PostgreSQL's TimestampTz is microseconds since the PostgreSQL epoch (2000-01-01).
-	 * Obtain whole seconds since Unix epoch using timestamptz_to_time_t() (leveraging
-	 * core's epoch conversion), then add the millisecond component computed from the
-	 * microsecond remainder of the original TimestampTz. Because the PG→Unix epoch
-	 * offset is an integral number of whole seconds, (timestamp % USECS_PER_SEC)
-	 * yields the same microsecond-within-second component a Unix-based remainder
-	 * would—except it may be negative for pre‑2000 timestamps due to C's truncation
-	 * toward zero. Normalize a negative remainder by "borrowing" one second so the
-	 * remainder is always in [0, USECS_PER_SEC). This keeps millisecond precision
-	 * and avoids floating point operations.
+	 * bson_append_date_time expects milliseconds since the Unix epoch
+	 * (1970-01-01 UTC), which TimestampTzToUnixMillis produces from postgres'
+	 * microseconds-since-2000 representation.
 	 */
-	time_t secondsSinceUnixEpoch = timestamptz_to_time_t(timestamp);
-	int64 usecRem = timestamp % USECS_PER_SEC;
-	if (usecRem < 0)
-	{
-		usecRem += USECS_PER_SEC;
-		secondsSinceUnixEpoch -= 1;
-	}
-	Assert(usecRem >= 0 && usecRem < USECS_PER_SEC);
-	int64 milliSinceUnixEpoch = ((int64) secondsSinceUnixEpoch) * 1000 + (usecRem / 1000);
-
+	int64 milliSinceUnixEpoch = TimestampTzToUnixMillis(timestamp);
 	if (!bson_append_date_time(&(writer->innerBson), path, pathLength,
 							   milliSinceUnixEpoch))
 	{

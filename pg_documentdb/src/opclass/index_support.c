@@ -361,10 +361,12 @@ extern bool EnableCompositeReducedCorrelatedBoundsPlanning;
 extern bool EnableMergeSortForBitmapOr;
 extern bool EnableCrossIndexBitmapOrSortMerge;
 extern bool EnableCompositeReducedCorrelatedFirstOwnerFallback;
+extern bool EnableLookupJoinSelectivityFromStats;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
 /* --------------------------------------------------------- */
+
 static Expr * HandleSupportRequestCondition(SupportRequestIndexCondition *req);
 static Path * ReplaceFunctionOperatorsInPlanPath(PlannerInfo *root, RelOptInfo *rel,
 												 Path *path, PlanParentType parentType,
@@ -759,9 +761,23 @@ bson_dollar_lookup_filter_support(PG_FUNCTION_ARGS)
 		SupportRequestSelectivity *req = (SupportRequestSelectivity *) supportRequest;
 
 		/*
-		 * Consider low selectivity of lookup filter for better index estimates.
+		 * Default to a low selectivity for the lookup filter so that index
+		 * estimates stay reasonable when the join shape is not recognized.
 		 */
-		req->selectivity = LowSelectivity;
+		double selectivity = LowSelectivity;
+		if (req->funcid == BsonDollarLookupJoinFilterFunctionOid() &&
+			list_length(req->args) >= 3)
+		{
+			/* Estimate the join from the collected statistics where possible. */
+			selectivity = GetCustomStatisticsSelectivityForLookup(req->funcid,
+																  req->args,
+																  req->sjinfo,
+																  req->root,
+																  req->jointype,
+																  req->varRelid);
+		}
+
+		req->selectivity = selectivity;
 		PG_RETURN_POINTER(req);
 	}
 
@@ -8123,17 +8139,25 @@ ExtractBoundaryQualsForOrderedIndexPath(IndexPath *indexPath, int *num_sa_scans)
 				continue;
 			}
 
-			Expr *clauseArg = lsecond(((OpExpr *) clause)->args);
-			if (!IsA(clauseArg, Const))
+			OpExpr *opExpr = (OpExpr *) clause;
+			Expr *clauseArg = lsecond(opExpr->args);
+			if (IsA(clauseArg, Const))
 			{
 				/* We only support const args for now */
+				Const *clauseConst = (Const *) clauseArg;
+				if (clauseConst->constisnull)
+				{
+					/* We don't support null const args for now */
+					continue;
+				}
+			}
+			else if (IsA(clauseArg, FuncExpr) &&
+					 !EnableLookupJoinSelectivityFromStats)
+			{
 				continue;
 			}
-
-			Const *clauseConst = (Const *) clauseArg;
-			if (clauseConst->constisnull)
+			else if (!IsA(clauseArg, FuncExpr))
 			{
-				/* We don't support null const args for now */
 				continue;
 			}
 

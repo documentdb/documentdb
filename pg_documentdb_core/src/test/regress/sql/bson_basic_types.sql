@@ -77,3 +77,24 @@ BEGIN;
 set local documentdb_core.bsonUseEJson TO false;
 SELECT COUNT(1) FROM test WHERE bson_hex_to_bson(bson_out(document)) != document;
 ROLLBACK;
+-- bson_build_document accepts a timestamptz and writes it as a bson date.
+-- The session time zone must not affect the result, since a timestamptz
+-- denotes an absolute instant.
+BEGIN;
+set local documentdb_core.bsonUseEJson TO true;
+set local TimeZone TO 'UTC';
+SELECT bson_build_document('whole'::text, '2024-03-05T00:00:00Z'::timestamptz,
+                           'millis'::text, '2024-03-05T00:00:00.123Z'::timestamptz,
+                           'preEpoch'::text, '1969-07-20T20:17:40Z'::timestamptz,
+                           'preEpochMillis'::text, '1969-07-20T20:17:40.250Z'::timestamptz);
+set local TimeZone TO 'America/Los_Angeles';
+SELECT bson_build_document('whole'::text, '2024-03-05T00:00:00Z'::timestamptz,
+                           'preEpochMillis'::text, '1969-07-20T20:17:40.250Z'::timestamptz);
+ROLLBACK;
+-- A non finite timestamptz has no bson date representation, so it is rejected
+-- rather than silently converted to a sentinel instant. These run outside a
+-- transaction block so that each case is exercised independently.
+SELECT bson_build_document('unbounded'::text, 'infinity'::timestamptz);
+SELECT bson_build_document('unbounded'::text, '-infinity'::timestamptz);
+SELECT bson_build_document('bounded'::text, '2024-03-05T00:00:00Z'::timestamptz,
+                           'unbounded'::text, 'infinity'::timestamptz);

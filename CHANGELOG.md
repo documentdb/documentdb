@@ -1,4 +1,6 @@
 ### documentdb v1.2-0 (Unreleased) ###
+* Estimate the inner side of a `$lookup` join from collected statistics instead of a fixed fallback selectivity, so an index on the `foreignField` is costed correctly. Controlled by the default-on `documentdb.enable_lookup_join_selectivity_from_stats` setting. *[Perf]*
+* Support `timestamptz` values in `bson_build_document`, writing them as BSON dates with millisecond precision. *[Feature]*
 * Allow scalar leading-key distinct pushdown on multikey reduced-correlated indexes when `documentdb.enable_distinct_multi_key_sort_pushdown` is enabled. *[Perf]*
 * Allow `_id` support-function predicates to prove eligible partial RUM index filters when `documentdb.enable_support_function_id_pushdown` is enabled, with the default-on `documentdb.enable_support_object_id_function_pfe_pushdown` setting independently controlling partial-index implication. *[Bugfix/Perf]*
 

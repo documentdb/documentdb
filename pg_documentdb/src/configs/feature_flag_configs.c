@@ -511,6 +511,11 @@ bool ForceNestedLookupPipelineAfterJoin =
 bool EnableLookupJoinIndexWithLinearPipeline =
 	DEFAULT_ENABLE_LOOKUP_JOIN_INDEX_WITH_LINEAR_PIPELINE;
 
+/* Added on v1.2, enabled on v1.2, remove after v1.4 */
+#define DEFAULT_ENABLE_LOOKUP_JOIN_SELECTIVITY_FROM_STATS true
+bool EnableLookupJoinSelectivityFromStats =
+	DEFAULT_ENABLE_LOOKUP_JOIN_SELECTIVITY_FROM_STATS;
+
 /*
  * SECTION: Collation feature flags
  */
@@ -737,6 +742,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether lookup joins can use the foreign-field index through a linear inner pipeline."),
 		NULL, &EnableLookupJoinIndexWithLinearPipeline,
 		DEFAULT_ENABLE_LOOKUP_JOIN_INDEX_WITH_LINEAR_PIPELINE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_lookup_join_selectivity_from_stats", newGucPrefix),
+		gettext_noop(
+			"Whether the inner side of a lookup join derives its selectivity from collected statistics instead of a fixed fallback."),
+		NULL, &EnableLookupJoinSelectivityFromStats,
+		DEFAULT_ENABLE_LOOKUP_JOIN_SELECTIVITY_FROM_STATS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

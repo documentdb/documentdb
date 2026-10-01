@@ -41,3 +41,4 @@ test: bson_mergesort_in_prefix_tests
 test: bson_composite_or_merge_append_tests
 test: documentdb_rum_guc_naming_conventions
 test: rum_vacuum_orphaned_leaf_cleanup_tests
+test: bson_lookup_foreign_field_index_tests
