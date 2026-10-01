@@ -126,7 +126,6 @@ const UNSUPPORTED_COMMANDS: &[&str] = &[
     "replSetUpdatePosition",
     "resetError",
     "reSync",
-    "serverStatus",
     "setFeatureCompatibilityVersion",
     "setFreeMonitoring",
     "setParameter",

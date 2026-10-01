@@ -12,8 +12,8 @@ use crate::{
     explain,
     postgres::PgDataClient,
     processor::{
-        constant, cursor, data_description, data_management, indexing, ismaster, roles, session,
-        transaction, users,
+        constant, cursor, data_description, data_management, indexing, ismaster, roles,
+        server_status, session, transaction, users,
     },
     requests::RequestType,
     responses::Response,
@@ -220,6 +220,11 @@ pub async fn process_request(
             data_management::process_validate(request_context, connection_context, pg_data_client)
                 .await
         }
+        RequestType::ServerStatus => Ok(server_status::process(
+            request_context,
+            connection_context,
+            &dynamic_config,
+        )),
         RequestType::DropIndexes => {
             indexing::process_drop_indexes(request_context, connection_context, pg_data_client)
                 .await

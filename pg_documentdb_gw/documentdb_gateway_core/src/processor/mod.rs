@@ -14,6 +14,7 @@ mod indexing;
 mod ismaster;
 mod process;
 mod roles;
+mod server_status;
 mod session;
 mod transaction;
 mod users;
