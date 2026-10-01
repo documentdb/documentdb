@@ -1,4 +1,5 @@
 ### documentdb v1.1-0 (Unreleased) ###
+* Reject `dropUser` and `updateUser` user names of 64 bytes or more before PostgreSQL truncates them, so an overlong name can no longer drop or modify an existing user whose name is its 63-byte prefix (#734). *[Bugfix]*
 * Preserve `admin.system.users` system-catalog permission checks while filtering memberships to catalog-backed custom roles. *[Bugfix]*
 * Return custom-role metadata from `admin.system.roles` in `rolesInfo` and from `admin.system.users` in `usersInfo` and `connectionStatus`. Admin- and root-role users can list or inspect every catalog role, while other users can list or inspect roles they inherit directly or transitively; built-in roles remain excluded. *[Bugfix]*
 * Derive `$merge` target permissions from its configured actions instead of unconditionally requiring read, insert, and update, and avoid requiring update permission for `$out`'s insert-only query. *[Bugfix]*
