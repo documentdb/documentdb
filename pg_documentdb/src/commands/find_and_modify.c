@@ -593,6 +593,15 @@ ProcessFindAndModifySpec(MongoCollection *collection, FindAndModifySpec *spec,
 
 		bool performedUpdateOrUpsert = updateOneResult.isRowUpdated ||
 									   updateOneResult.upsertedObjectId != NULL;
+
+		/*
+		 * A document that was matched but left unchanged by the update, for example
+		 * when the update only has $setOnInsert or sets a field to its current value,
+		 * still counts as an existing match, as in the regular update command.
+		 */
+		bool matchedExisting = updateOneResult.isRowUpdated ||
+							   updateOneResult.updateSkipped;
+
 		if (updateOneResult.isRetry)
 		{
 			/*
@@ -621,8 +630,8 @@ ProcessFindAndModifySpec(MongoCollection *collection, FindAndModifySpec *spec,
 			.value = updateOneResult.resultDocument,
 			.isUpdateCommand = true,
 			.lastErrorObject = {
-				.n = performedUpdateOrUpsert ? 1 : 0,
-				.updatedExisting = updateOneResult.isRowUpdated,
+				.n = (matchedExisting || updateOneResult.upsertedObjectId != NULL) ? 1 : 0,
+				.updatedExisting = matchedExisting,
 				.upsertedObjectId = updateOneResult.upsertedObjectId
 			}
 		};
