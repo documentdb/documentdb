@@ -199,9 +199,9 @@ pub async fn process_request(
         | RequestType::PlanCacheClearFilters
         | RequestType::PlanCacheSetFilter
         | RequestType::RefreshSessions
-        | RequestType::KillAllSessions
         | RequestType::KillAllSessionsByPattern
         | RequestType::EnableSharding => Ok(constant::ok_response()),
+        RequestType::KillAllSessions => session::validate_kill_all_sessions(request_context),
         RequestType::PlanCacheListFilters => Ok(constant::plan_cache_list_filters_response()),
         RequestType::SaslContinue | RequestType::SaslStart | RequestType::Logout => Err(
             DocumentDBError::internal_error("Command should have been handled by Auth".to_owned()),
