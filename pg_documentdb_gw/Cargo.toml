@@ -5,7 +5,6 @@ members = [
     "documentdb_gateway",
     "documentdb_gateway_core",
     "documentdb_gateway_otel",
-    "documentdb_macros",
     "documentdb_tests"
 ]
 # Locally vendored, patched copy of tokio-postgres (see [patch.crates-io] below).
@@ -36,7 +35,6 @@ criterion = { version = "0.8.2", features = ["async_tokio", "html_reports"] }
 dashmap = { version = "6.1.0", default-features = false, features = ["inline"] }
 deadpool = { version = "0.12.3", features = ["rt_tokio_1"] }
 deadpool-postgres = "0.14.1"
-documentdb_macros = { path = "documentdb_macros" }
 documentdb_gateway_core = { path = "documentdb_gateway_core" }
 documentdb_gateway_otel = { path = "documentdb_gateway_otel" }
 dyn-clone = "1.0.20"
@@ -59,6 +57,8 @@ openssl = "0.10.81"
 opentelemetry = { version = "0.32.0", features = ["metrics", "trace"] }
 opentelemetry-otlp = { version = "0.32.0", features = ["grpc-tonic", "metrics", "trace"] }
 opentelemetry_sdk = { version = "0.32.0", features = ["rt-tokio", "metrics", "trace"] }
+proc-macro2 = "1.0.106"
+quote = "1.0.45"
 rand = "0.10.2"
 regex = "1.12.3"
 scc = { version = "3.7.0", features = ["equivalent", "serde"] }
@@ -66,6 +66,7 @@ serde = { version = "1.0.228", features = ["derive", "rc"] }
 serde_json = { version = "1.0.149", features = ["arbitrary_precision"] }
 socket2 = "0.6.4"
 strum_macros = "0.28.0"
+syn = { version = "2.0", default-features = false, features = ["derive", "printing"] }
 tokio = { version = "1", features = ["full", "tracing"] }
 tokio-openssl = "0.6.5"
 tokio-postgres = { version = "0.7.18", features = ["with-serde_json-1", "array-impls"] }

@@ -616,7 +616,6 @@ dependencies = [
  "dashmap",
  "deadpool",
  "deadpool-postgres",
- "documentdb_macros",
  "dyn-clone",
  "either",
  "hex",
@@ -624,6 +623,8 @@ dependencies = [
  "nacelle",
  "once_cell",
  "openssl",
+ "proc-macro2",
+ "quote",
  "rand 0.10.2",
  "regex",
  "scc",
@@ -631,6 +632,7 @@ dependencies = [
  "serde_json",
  "socket2",
  "strum_macros",
+ "syn",
  "tokio",
  "tokio-openssl",
  "tokio-postgres",
@@ -656,10 +658,6 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
 ]
-
-[[package]]
-name = "documentdb_macros"
-version = "0.1.0"
 
 [[package]]
 name = "documentdb_tests"

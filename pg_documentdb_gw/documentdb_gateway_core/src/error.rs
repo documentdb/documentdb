@@ -10,7 +10,6 @@ use std::{backtrace::Backtrace, fmt::Display, io};
 
 use bson::raw::ValueAccessError;
 use deadpool_postgres::{BuildError, CreatePoolError, PoolError};
-use documentdb_macros::{documentdb_error_code_enum, documentdb_extensive_log_postgres_errors};
 use openssl::error::ErrorStack;
 use tokio_postgres::error::SqlState;
 
@@ -22,8 +21,11 @@ use crate::{
     },
 };
 
-documentdb_error_code_enum!();
-documentdb_extensive_log_postgres_errors!();
+include!(concat!(env!("OUT_DIR"), "/error_code_enum.rs"));
+include!(concat!(
+    env!("OUT_DIR"),
+    "/postgres_error_logging_mapping.rs"
+));
 
 impl ErrorCode {
     /// Returns the HTTP status code for this error code.

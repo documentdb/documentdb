@@ -63,7 +63,7 @@ fi
 cargo about generate "${CARGO_ABOUT_FLAGS[@]}" -c $SOURCEDIR/about.toml -m $SOURCEDIR/Cargo.toml --format json > /tmp/licenses.json
 
 # Allowlist of crates to exclude (these are part of our own codebase)
-ALLOWLIST="documentdb_gateway|documentdb_macros|documentdb_gateway_core"
+ALLOWLIST="documentdb_gateway|documentdb_gateway_core"
 
 # Write header
 {

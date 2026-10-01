@@ -395,7 +395,6 @@ dependencies = [
  "dashmap",
  "deadpool",
  "deadpool-postgres",
- "documentdb_macros",
  "dyn-clone",
  "either",
  "hex",
@@ -403,6 +402,8 @@ dependencies = [
  "nacelle",
  "once_cell",
  "openssl",
+ "proc-macro2",
+ "quote",
  "rand 0.10.2",
  "regex",
  "scc",
@@ -410,6 +411,7 @@ dependencies = [
  "serde_json",
  "socket2",
  "strum_macros",
+ "syn 2.0.108",
  "tokio",
  "tokio-openssl",
  "tokio-postgres",
@@ -418,10 +420,6 @@ dependencies = [
  "uuid",
  "whoami",
 ]
-
-[[package]]
-name = "documentdb_macros"
-version = "0.1.0"
 
 [[package]]
 name = "dyn-clone"
@@ -1421,18 +1419,18 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.103"
+version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ee95bc4ef87b8d5ba32e8b7714ccc834865276eab0aed5c9958d00ec45f49e8"
+checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
 ]
 
 [[package]]
 name = "quote"
-version = "1.0.41"
+version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce25767e7b499d1b604768e7cde645d14cc8584231ea6b295e9c9eb22c02e1d1"
+checksum = "1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001"
 dependencies = [
  "proc-macro2",
 ]

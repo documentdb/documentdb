@@ -7,7 +7,6 @@
  */
 
 use bson::{Bson, Document, RawDocument, RawDocumentBuf};
-use documentdb_macros::documentdb_int_error_mapping;
 use tokio_postgres::{error::SqlState, Row};
 
 use crate::{
@@ -60,7 +59,11 @@ pub fn postgres_sqlstate_to_i32(sql_state: &SqlState) -> i32 {
     res
 }
 
-documentdb_int_error_mapping!();
+/// Maps a known `PostgreSQL` error state to its wire-protocol error code.
+#[must_use]
+pub fn from_known_external_error_code(state: &SqlState) -> Option<i32> {
+    include!(concat!(env!("OUT_DIR"), "/int_error_mapping.rs"))
+}
 
 const fn map_postgres_transport_error(
     io_error_kind: Option<std::io::ErrorKind>,
