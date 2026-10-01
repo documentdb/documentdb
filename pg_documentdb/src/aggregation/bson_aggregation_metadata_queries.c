@@ -252,7 +252,12 @@ GenerateListIndexesQuery(text *databaseDatum, pgbson *listIndexesSpec,
 		if (StringViewEqualsCString(&keyView, "listIndexes") ||
 			StringViewEqualsCString(&keyView, "listindexes"))
 		{
-			EnsureTopLevelFieldType("listIndexes", &listIndexesIter, BSON_TYPE_UTF8);
+			if (!BSON_ITER_HOLDS_UTF8(&listIndexesIter))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
+								errmsg("Collection name contains an invalid data type %s",
+									   BsonIterTypeName(&listIndexesIter))));
+			}
 			collectionName.string = bson_iter_utf8(&listIndexesIter,
 												   &collectionName.length);
 			ValidateNamespaceStringForEmbeddedNull(collectionName.string,

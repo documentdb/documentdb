@@ -631,7 +631,12 @@ ParseDropIndexesArg(pgbson *arg, Datum *databaseNameDatum)
 		if (strcmp(argKey, "dropIndexes") == 0 ||
 			strcmp(argKey, "deleteIndexes") == 0)
 		{
-			EnsureTopLevelFieldType("dropIndexes.dropIndexes", &argIter, BSON_TYPE_UTF8);
+			if (!BSON_ITER_HOLDS_UTF8(&argIter))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
+								errmsg("Collection name contains an invalid data type %s",
+									   BsonIterTypeName(&argIter))));
+			}
 
 			const bson_value_t *dropIndexesVal = bson_iter_value(&argIter);
 			ValidateNamespaceStringForEmbeddedNull(dropIndexesVal->value.v_utf8.str,

@@ -110,6 +110,12 @@ SELECT bson_dollar_json_schema('{ "name":"pazu" }', '{ "$jsonSchema": { "propert
 SELECT bson_dollar_json_schema('{ "name":"pazu" }', '{ "$jsonSchema": { "properties" : { "name" : { "bsonType": "string", "description": true } } } }');
 SELECT bson_dollar_json_schema('{ "name":"pazu" }', '{ "$jsonSchema": { "properties" : { "name" : { "bsonType": "string", "description": ["a", "b"] } } } }');
 
+------------------------ title ---------------------------------------------------
+SELECT bson_dollar_json_schema('{ "name":"pazu" }', '{ "$jsonSchema": { "properties" : { "name" : { "bsonType": "string", "title": "Name of the person" } } } }');
+SELECT bson_dollar_json_schema('{ "name":"pazu" }', '{ "$jsonSchema": { "properties" : { "name" : { "bsonType": "string", "title": 12345 } } } }');
+SELECT bson_dollar_json_schema('{ "name":"pazu" }', '{ "$jsonSchema": { "properties" : { "name" : { "bsonType": "string", "title": true } } } }');
+SELECT bson_dollar_json_schema('{ "name":"pazu" }', '{ "$jsonSchema": { "properties" : { "name" : { "bsonType": "string", "title": ["a", "b"] } } } }');
+
 -------------------------------------------------------------------------------
 --                          Numeric Validators                               --
 -------------------------------------------------------------------------------
@@ -122,6 +128,9 @@ SELECT bson_dollar_json_schema('{ "age": 6 }', '{ "$jsonSchema": { "properties" 
 
 -- Must be a non-zero
 SELECT bson_dollar_json_schema('{ "age": 6 }', '{ "$jsonSchema": { "properties" : { "age" : { "multipleOf": 0 } } } }');
+
+-- Must be positive
+SELECT bson_dollar_json_schema('{ "age": 6 }', '{ "$jsonSchema": { "properties" : { "age" : { "multipleOf": -3 } } } }');
 
 -- Must not be NaN
 SELECT bson_dollar_json_schema('{ "age": 6 }', '{ "$jsonSchema": { "properties" : { "age" : { "multipleOf": {"$numberDecimal" : "NaN"} } } } }');

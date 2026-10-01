@@ -125,6 +125,13 @@ SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.
 ERROR:  The namespace list_metadata_db1.list_metadata_view1_1 refers to a view object rather than a collection
 SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('list_metadata_db1', '{ "listIndexes": "list_metadata_non_existent" }') ORDER BY 1;
 ERROR:  Namespace does not currently exist: list_metadata_db1.list_metadata_non_existent
+-- listIndexes with a non-string collection name fails with InvalidNamespace
+SELECT documentdb_api.list_indexes_cursor_first_page('list_metadata_db1', '{ "listIndexes": 123 }');
+ERROR:  Collection name contains an invalid data type int
+SELECT documentdb_api.list_indexes_cursor_first_page('list_metadata_db1', '{ "listIndexes": { "a": 1 } }');
+ERROR:  Collection name contains an invalid data type object
+SELECT documentdb_api.list_indexes_cursor_first_page('list_metadata_db1', '{ "listIndexes": null }');
+ERROR:  Collection name contains an invalid data type null
 -- test with add distributed metadata when there's a view
 SELECT COUNT(*) FROM ( SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_collections_cursor_first_page('list_metadata_db1', '{ "listCollections": 1, "addDistributedMetadata": true }')) i;
  count 

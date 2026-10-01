@@ -90,7 +90,7 @@ ERROR:  The BSON field 'findAndModify.upsert' has an incorrect type 'array'; it 
 SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "not_supported", "arrayFilters": 1}');
 ERROR:  The BSON field 'findAndModify.arrayFields' has an incorrect type 'int'; it should be of type 'array'.
 SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "not_supported", "hint": 1}');
-ERROR:  findAndModify.hint is not implemented yet
+ERROR:  The BSON field 'findAndModify.hint' has an incorrect type 'int'; it should be one of the following valid types: [object, string]
 -- unknown option
 SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "unknown_option", "unknown_option": 1}');
 ERROR:  The BSON field 'findAndModify.unknown_option' is not recognized as a valid field.

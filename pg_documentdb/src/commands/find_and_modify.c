@@ -114,12 +114,6 @@ typedef struct
 } FindAndModifyResult;
 
 
-/* findAndModify specific not-implemented options */
-const char *const NotImplementedOptions[] = {
-	"hint"
-};
-
-
 PG_FUNCTION_INFO_V1(command_find_and_modify);
 
 
@@ -267,7 +261,7 @@ ParseFindAndModifyMessage(pgbson *message, Datum *databaseNameDatum)
 		{
 			if (!BSON_ITER_HOLDS_UTF8(&messageIter))
 			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
 								errmsg("Collection name contains an invalid data type %s",
 									   BsonIterTypeName(&messageIter))));
 			}
@@ -390,10 +384,29 @@ ParseFindAndModifyMessage(pgbson *message, Datum *databaseNameDatum)
 		else if (strcmp(key, "let") == 0)
 		{
 			ReportFeatureUsage(FEATURE_LET_TOP_LEVEL);
-			EnsureTopLevelFieldType("findAndModify.let", &messageIter,
-									BSON_TYPE_DOCUMENT);
+			if (EnsureTopLevelFieldTypeNullOk("findAndModify.let", &messageIter,
+											  BSON_TYPE_DOCUMENT))
+			{
+				let = *bson_iter_value(&messageIter);
+			}
+		}
+		else if (strcmp(key, "hint") == 0)
+		{
+			if (!BSON_ITER_HOLDS_DOCUMENT(&messageIter) &&
+				!BSON_ITER_HOLDS_UTF8(&messageIter))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
+								errmsg(
+									"The BSON field 'findAndModify.hint' has an incorrect "
+									"type '%s'; it should be one of the following valid "
+									"types: [object, string]",
+									BsonIterTypeName(&messageIter))));
+			}
 
-			let = *bson_iter_value(&messageIter);
+			/*
+			 * hint is validated for type compatibility but not currently
+			 * applied, consistent with update and delete handling.
+			 */
 		}
 		else if (strcmp(key, "$db") == 0)
 		{
@@ -423,18 +436,6 @@ ParseFindAndModifyMessage(pgbson *message, Datum *databaseNameDatum)
 			ereport(DEBUG1, (errmsg("findAndModify.%s is not implemented yet", key)));
 
 			continue;
-		}
-
-		/* XXX: But we don't silently ignore the following */
-		for (long unsigned int i = 0; i < lengthof(NotImplementedOptions); i++)
-		{
-			const char *notImplementedOption = NotImplementedOptions[i];
-			if (strcmp(key, notImplementedOption) == 0)
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-								errmsg("findAndModify.%s is not implemented yet",
-									   notImplementedOption)));
-			}
 		}
 
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),

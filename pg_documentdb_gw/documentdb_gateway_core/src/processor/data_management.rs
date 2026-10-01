@@ -324,6 +324,11 @@ pub async fn process_get_parameter(
                                         "showDetails should be convertible to a bool".to_owned(),
                                     ))?;
                             }
+                            "setAt" if !matches!(v, RawBsonRef::String(_) | RawBsonRef::Null) => {
+                                return Err(DocumentDBError::type_mismatch(
+                                    "setAt should be a string".to_owned(),
+                                ));
+                            }
                             _ => {}
                         }
                     }

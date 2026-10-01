@@ -17,7 +17,7 @@ ERROR:  $db cannot be NULL
 CALL documentdb_api.drop_indexes('db', '{}');
 ERROR:  The BSON field 'dropIndexes.dropIndexes' is required but was not provided
 CALL documentdb_api.drop_indexes('db', '{"dropIndexes": null, "index": ["my_idx_1", "does_not_exist"]}');
-ERROR:  The BSON field 'dropIndexes.dropIndexes' has an incorrect type 'null'; it should be of type 'string'.
+ERROR:  Collection name contains an invalid data type null
 CALL documentdb_api.drop_indexes('db', '{"dropIndexes": "collection_3", "unknown_field": 1}');
 ERROR:  The BSON field 'dropIndexes.unknown_field' is not recognized as a valid field.
 CALL documentdb_api.drop_indexes('db', '{"dropIndexes": "collection_3", "index": null}');
@@ -32,7 +32,7 @@ CALL documentdb_api.drop_indexes('db', '{"dropIndexes": "collection_3", "index":
 (1 row)
 
 CALL documentdb_api.drop_indexes('db', '{"dropIndexes": 1, "index":[]}');
-ERROR:  The BSON field 'dropIndexes.dropIndexes' has an incorrect type 'int'; it should be of type 'string'.
+ERROR:  Collection name contains an invalid data type int
 CALL documentdb_api.drop_indexes('db', '{"dropIndexes": "collection_3", "index": 1}');
 ERROR:  The BSON field 'dropIndexes.index' has an incorrect type 'int'; it should be of type '[string, object]'.
 ---- dropIndexes - top level - not implemented yet ----

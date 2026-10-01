@@ -2152,6 +2152,11 @@ CreateBoolExprFromLogicalExpression(bson_iter_t *queryDocIterator,
 		SchemaTreeState localTreeStateIgnore = { };
 		bson_iter_t schemaIter;
 		const bson_value_t *queryDocValue = bson_iter_value(queryDocIterator);
+		if (queryDocValue->value_type != BSON_TYPE_DOCUMENT)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
+							errmsg("$jsonSchema must be of object type")));
+		}
 		BsonValueInitIterator(queryDocValue, &schemaIter);
 		BuildSchemaTree(&localTreeStateIgnore, &schemaIter);
 

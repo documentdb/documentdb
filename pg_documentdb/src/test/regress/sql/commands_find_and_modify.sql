@@ -76,6 +76,11 @@ BEGIN;
 
   SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "collection", "query": {"z": { "$exists": false } }, "sort": {"a": 1}, "update": [{"$set": {"a": -10}}, {"$addFields": {"z": 7}}], "upsert": false, "new": true, "fields": {"_id": 0}}');
   SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "collection", "query": {"a": 2000 }, "update": [ {"$set": {"p": 40, "_id": 2000, "r": 50}}, {"$unset": "p"}, {"$set": {"r": 70}}], "new": true, "fields": {"_id": 0}, "upsert": 1}');
+
+  -- hint (string / object) and let (null) are accepted (validated but not applied)
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "collection", "query": {"a": 5}, "update": {"$set": {"h": 1}}, "hint": "a_1", "new": true, "fields": {"_id": 0}}');
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "collection", "query": {"a": 5}, "update": {"$set": {"h": 2}}, "hint": {"a": 1}, "new": true, "fields": {"_id": 0}}');
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "collection", "query": {"a": 5}, "update": {"$set": {"h": 3}}, "let": null, "new": true, "fields": {"_id": 0}}');
 ROLLBACK;
 
 BEGIN;

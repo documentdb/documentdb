@@ -197,6 +197,17 @@ BuildSchemaTreeCoreOnNode(bson_iter_t *schemaIter, SchemaNode *node)
 
 			/* No validation needed for description field */
 		}
+		else if (strcmp(key, "title") == 0)
+		{
+			if (value->value_type != BSON_TYPE_UTF8)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
+								errmsg(
+									"$jsonSchema keyword 'title' must be a string")));
+			}
+
+			/* title is an annotation keyword with no effect on validation */
+		}
 		else if (strcmp(key, "enum") == 0)
 		{
 			ParseEnum(value, node);
@@ -220,13 +231,6 @@ BuildSchemaTreeCoreOnNode(bson_iter_t *schemaIter, SchemaNode *node)
 								errmsg(
 									"$jsonSchema keyword 'multipleOf' must be a number")));
 			}
-			if ((value->value_type == BSON_TYPE_DECIMAL128 && IsDecimal128Zero(value)) ||
-				(BsonValueAsDouble(value) == 0.0))
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
-								errmsg(
-									"$jsonSchema keyword 'multipleOf' must have a positive value")));
-			}
 			if (IsBsonValueNaN(value))
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
@@ -236,6 +240,13 @@ BuildSchemaTreeCoreOnNode(bson_iter_t *schemaIter, SchemaNode *node)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 								errmsg("Division by an infinite value is not allowed")));
+			}
+			if ((value->value_type == BSON_TYPE_DECIMAL128 && IsDecimal128Zero(value)) ||
+				(BsonValueAsDouble(value) <= 0.0))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
+								errmsg(
+									"$jsonSchema keyword 'multipleOf' must have a positive value")));
 			}
 			node->validations.numeric->multipleOf = (bson_value_t *) palloc0(
 				sizeof(bson_value_t));

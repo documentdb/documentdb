@@ -89,7 +89,7 @@ ERROR:  The BSON field 'findAndModify.upsert' has an incorrect type 'array'; it 
 SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "not_supported", "arrayFilters": 1}');
 ERROR:  The BSON field 'findAndModify.arrayFields' has an incorrect type 'int'; it should be of type 'array'.
 SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "not_supported", "hint": 1}');
-ERROR:  findAndModify.hint is not implemented yet
+ERROR:  The BSON field 'findAndModify.hint' has an incorrect type 'int'; it should be one of the following valid types: [object, string]
 -- unknown option
 SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "unknown_option", "unknown_option": 1}');
 ERROR:  The BSON field 'findAndModify.unknown_option' is not recognized as a valid field.
@@ -171,6 +171,25 @@ BEGIN;
                                                                                                                                      find_and_modify                                                                                                                                     
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ("{ ""lastErrorObject"" : { ""n"" : { ""$numberInt"" : ""1"" }, ""updatedExisting"" : false, ""upserted"" : { ""$numberInt"" : ""2000"" } }, ""value"" : { ""a"" : { ""$numberInt"" : ""2000"" }, ""r"" : { ""$numberInt"" : ""70"" } }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+  -- hint (string / object) and let (null) are accepted (validated but not applied)
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "collection", "query": {"a": 5}, "update": {"$set": {"h": 1}}, "hint": "a_1", "new": true, "fields": {"_id": 0}}');
+                                                                         find_and_modify                                                                         
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""lastErrorObject"" : { ""n"" : { ""$numberInt"" : ""0"" }, ""updatedExisting"" : false }, ""value"" : null, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "collection", "query": {"a": 5}, "update": {"$set": {"h": 2}}, "hint": {"a": 1}, "new": true, "fields": {"_id": 0}}');
+                                                                         find_and_modify                                                                         
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""lastErrorObject"" : { ""n"" : { ""$numberInt"" : ""0"" }, ""updatedExisting"" : false }, ""value"" : null, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "collection", "query": {"a": 5}, "update": {"$set": {"h": 3}}, "let": null, "new": true, "fields": {"_id": 0}}');
+                                                                         find_and_modify                                                                         
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""lastErrorObject"" : { ""n"" : { ""$numberInt"" : ""0"" }, ""updatedExisting"" : false }, ""value"" : null, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
 ROLLBACK;
@@ -842,7 +861,7 @@ ROLLBACK;
 -- test 14: let/variables pass-through with $elemMatch projection
 BEGIN;
   SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "proj_ops", "let": {"ignored": 1}, "query": {"_id": 1}, "update": {"$set": {"scalar": 999}}, "fields": {"arr": {"$elemMatch": {"x": 2}}}, "new": true}');
-                                                                                                                             find_and_modify
+                                                                                                                             find_and_modify                                                                                                                             
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ("{ ""lastErrorObject"" : { ""n"" : { ""$numberInt"" : ""1"" }, ""updatedExisting"" : true }, ""value"" : { ""_id"" : { ""$numberInt"" : ""1"" }, ""arr"" : [ { ""x"" : { ""$numberInt"" : ""2"" }, ""y"" : ""b"" } ] }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
