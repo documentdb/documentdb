@@ -584,6 +584,11 @@ bool EnableCommutativeUpdateMany =
 bool EnableCommutativeDeleteMany =
 	DEFAULT_ENABLE_COMMUTATIVE_DELETE_MANY;
 
+/* Added in v1.2, pending stabilization, enable in v1.3 */
+#define DEFAULT_ENABLE_UPDATE_WORKER_PLAN_CACHE false
+bool EnableUpdateWorkerPlanCache =
+	DEFAULT_ENABLE_UPDATE_WORKER_PLAN_CACHE;
+
 
 /*
  * SECTION: Changestream feature flags
@@ -1528,6 +1533,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableCommutativeDeleteMany,
 		DEFAULT_ENABLE_COMMUTATIVE_DELETE_MANY,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_update_worker_plan_cache", newGucPrefix),
+		gettext_noop(
+			"Whether to reuse a cached prepared plan for the per-op update worker dispatch to avoid re-parsing and re-planning on every operation."),
+		NULL,
+		&EnableUpdateWorkerPlanCache,
+		DEFAULT_ENABLE_UPDATE_WORKER_PLAN_CACHE,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

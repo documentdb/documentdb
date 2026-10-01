@@ -125,6 +125,9 @@
 
 #define QUERY_ID_IS_CUSTOM_ROLE (59L << 32)
 
+/* Plan ID for the per-op update worker dispatch */
+#define QUERY_CALL_UPDATE_WORKER (63L << 32)
+
 /*
  * Compile-time plan cache ID collision detection.
  *
@@ -217,6 +220,9 @@ pg_attribute_unused() =
 
 	/* Role catalog lookup (59) */
 	PlanCacheIdEntry(QUERY_ID_IS_CUSTOM_ROLE),
+
+	/* Update worker dispatch (63) */
+	PlanCacheIdEntry(QUERY_CALL_UPDATE_WORKER),
 };
 /* *INDENT-ON* */
 

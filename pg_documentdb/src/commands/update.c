@@ -128,6 +128,13 @@ extern bool EnableUpdateManyWorkerPushdown;
 extern bool EnableCommutativeUpdateMany;
 
 /*
+ * Feature flag (default off): when on, CallUpdateWorker parameterizes the
+ * shard_key_value filter and reuses a cached prepared plan across the batch
+ * instead of building + planning the dispatch query on every op.
+ */
+extern bool EnableUpdateWorkerPlanCache;
+
+/*
  * UpdateSpec describes a single update operation.
  */
 typedef struct
@@ -2626,13 +2633,6 @@ CallUpdateWorker(MongoCollection *collection, pgbson *serializedSpec,
 	char argNulls[6] = { ' ', ' ', ' ', ' ', 'n', 'n' };
 	Oid argTypes[6] = { INT8OID, INT8OID, REGCLASSOID, BYTEAOID, BYTEAOID, TEXTOID };
 
-	const char *updateQuery = FormatSqlQuery(
-		" SELECT %s.update_worker($1, $2, $3, $4::%s.bson, $5::%s.bsonsequence, $6) FROM %s.documents_"
-		UINT64_FORMAT " WHERE shard_key_value = %ld",
-		DocumentDBApiInternalSchemaName, CoreSchemaNameV2, CoreSchemaNameV2,
-		ApiDataSchemaName, collection->collectionId,
-		shardKeyHash);
-
 	argValues[0] = UInt64GetDatum(collection->collectionId);
 
 	/* p_shard_key_value */
@@ -2662,11 +2662,84 @@ CallUpdateWorker(MongoCollection *collection, pgbson *serializedSpec,
 	bool isNulls[1] = { false };
 	int numResults = 1;
 
-	/* forceDelegation assumes nested distribution */
-	RunMultiValueQueryWithNestedDistribution(updateQuery, argCount, argTypes, argValues,
-											 argNulls,
-											 readOnly, SPI_OK_SELECT, resultDatum,
-											 isNulls, numResults);
+	/*
+	 * Build the common update_worker dispatch, then append the shard_key_value
+	 * filter that differs by mode. With plan caching enabled we bind it as a
+	 * parameter ($2) so the query text is constant per collection and a prepared
+	 * plan can be reused across the batch; otherwise we inline it as a literal so
+	 * the one-shot dispatch is router-pruned at plan time.
+	 */
+	StringInfoData updateQuery;
+	initStringInfo(&updateQuery);
+	appendStringInfo(&updateQuery,
+					 " SELECT %s.update_worker($1, $2, $3, $4::%s.bson, $5::%s.bsonsequence, $6) FROM %s.documents_"
+					 UINT64_FORMAT,
+					 DocumentDBApiInternalSchemaName, CoreSchemaNameV2, CoreSchemaNameV2,
+					 ApiDataSchemaName, collection->collectionId);
+
+
+	/*
+	 * forceDelegation assumes nested distribution. Reuse the parameterized dispatch
+	 * plan when caching is enabled; otherwise inline the shard key for per-operation
+	 * router pruning.
+	 */
+	if (EnableUpdateWorkerPlanCache)
+	{
+		appendStringInfoString(&updateQuery, " WHERE shard_key_value = $2");
+		if (SPI_connect() != SPI_OK_CONNECT)
+		{
+			ereport(ERROR, (errmsg("could not connect to SPI manager")));
+		}
+
+		int gucLevel = NewGUCNestLevel();
+		AllowNestedDistributionInCurrentTransaction();
+
+		SPIPlanPtr plan = GetSPIQueryPlan(collection->collectionId,
+										  QUERY_CALL_UPDATE_WORKER,
+										  updateQuery.data, argTypes, argCount);
+
+		ereport(DEBUG1, (errmsg("executing \"%s\" via cached SPI plan",
+								updateQuery.data)));
+
+		long maxTupleCount = 1;
+		if (SPI_execute_plan(plan, argValues, argNulls, readOnly, maxTupleCount) !=
+			SPI_OK_SELECT)
+		{
+			ereport(ERROR, (errmsg("could not run SPI plan")));
+		}
+
+		isNulls[0] = true;
+		if (SPI_processed > 0 && SPI_tuptable != NULL)
+		{
+			int columnNumber = 1;
+			resultDatum[0] = SPI_getbinval(SPI_tuptable->vals[0],
+										   SPI_tuptable->tupdesc, columnNumber,
+										   &isNulls[0]);
+			if (!isNulls[0])
+			{
+				/* Preserve the BSON response after SPI_finish frees its context. */
+				bool typeByValue = false;
+				int typeLength = -1;
+				resultDatum[0] = SPI_datumTransfer(resultDatum[0], typeByValue,
+												   typeLength);
+			}
+		}
+
+		RollbackGUCChange(gucLevel);
+
+		if (SPI_finish() != SPI_OK_FINISH)
+		{
+			ereport(ERROR, (errmsg("could not finish SPI connection")));
+		}
+	}
+	else
+	{
+		appendStringInfo(&updateQuery, " WHERE shard_key_value = %ld", shardKeyHash);
+		RunMultiValueQueryWithNestedDistribution(updateQuery.data, argCount, argTypes,
+												 argValues, argNulls, readOnly,
+												 SPI_OK_SELECT, resultDatum, isNulls,
+												 numResults);
+	}
 
 	if (isNulls[0])
 	{

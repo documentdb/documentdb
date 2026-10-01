@@ -1047,3 +1047,198 @@ EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6515 SET docume
 --10. with collation filter
 EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6515 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : 1}', NULL, 'en-u-ks-level1');
 ROLLBACK;
+
+-- Shared fixture for the plan-cache scenarios below.
+SELECT documentdb_api.create_collection('db', 'shard_batch');
+SELECT documentdb_api.shard_collection('db', 'shard_batch', '{ "sk": "hashed" }', false);
+SELECT count(*) FROM (
+	SELECT documentdb_api.insert_one('db', 'shard_batch',
+		FORMAT('{"_id":%s,"sk":%s,"v":0,"w":0}', g,
+			   ((g - 1) % 8) + 1)::documentdb_core.bson)
+	FROM generate_series(1, 40) g) t;
+
+-- =============================================================================
+-- Plan-cache scenarios: exercise enable_update_worker_plan_cache on the same sharded
+-- collection.  Each scenario runs in BEGIN/ROLLBACK so base data stays intact.
+-- =============================================================================
+
+-- Scenario PC-0: verify both dispatch modes under DEBUG1.  With the GUC off each
+-- op is dispatched through the plain runner with the shard_key_value inlined as
+-- a literal, so the query text differs per op and is planned per op.  With the
+-- GUC on each op is dispatched through the cached-plan runner with the
+-- shard_key_value bound as $2, so the query text is identical across ops and one
+-- prepared plan is reused.  Both modes must produce identical documents.
+BEGIN;
+SET LOCAL client_min_messages TO DEBUG1;
+SET LOCAL documentdb.enable_update_worker_plan_cache TO off;
+SELECT documentdb_api.update('db', '{"update":"shard_batch","updates":[
+    {"q":{"sk":1,"_id":1},"u":{"$set":{"cacheMode":"off"}},"multi":false},
+    {"q":{"sk":2,"_id":2},"u":{"$set":{"cacheMode":"off"}},"multi":false}
+]}');
+RESET client_min_messages;
+SELECT document FROM documentdb_api.collection('db', 'shard_batch')
+    WHERE document @@ '{"cacheMode":"off"}' ORDER BY object_id;
+ROLLBACK;
+
+BEGIN;
+SET LOCAL client_min_messages TO DEBUG1;
+SET LOCAL documentdb.enable_update_worker_plan_cache TO on;
+SELECT documentdb_api.update('db', '{"update":"shard_batch","updates":[
+    {"q":{"sk":1,"_id":1},"u":{"$set":{"cacheMode":"on"}},"multi":false},
+    {"q":{"sk":2,"_id":2},"u":{"$set":{"cacheMode":"on"}},"multi":false}
+]}');
+-- A second command in the same transaction must reuse the same cached plan: the
+-- dispatched query text is identical to the one above even though it targets a
+-- different shard key value and a different update operator.
+SELECT documentdb_api.update('db', '{"update":"shard_batch","updates":[
+    {"q":{"sk":3,"_id":3},"u":{"$inc":{"v":7}},"multi":false}
+]}');
+RESET client_min_messages;
+-- The cached plan must apply each op to exactly its own target document.
+SELECT document FROM documentdb_api.collection('db', 'shard_batch')
+    WHERE document @@ '{"cacheMode":"on"}' ORDER BY object_id;
+SELECT document FROM documentdb_api.collection('db', 'shard_batch')
+    WHERE document @@ '{"_id":3}' ORDER BY object_id;
+-- Documents outside the targeted shard key values must be untouched.
+SELECT count(*) AS untouched_docs FROM documentdb_api.collection('db', 'shard_batch')
+    WHERE document @@ '{"v":0}';
+ROLLBACK;
+
+-- Scenario PC-0U: unsharded collection with plan cache.  An unsharded update
+-- dispatches the whole batch in one update_worker call keyed by the collection
+-- id, so the cached-plan runner must be used and reused across commands, and the
+-- results must match the uncached mode.
+SELECT documentdb_api.create_collection('db', 'unsharded_plan_cache');
+SELECT count(*) FROM (
+    SELECT documentdb_api.insert_one('db', 'unsharded_plan_cache',
+        FORMAT('{"_id":%s,"v":0}', g)::documentdb_core.bson)
+    FROM generate_series(1, 4) g) t;
+
+BEGIN;
+SET LOCAL client_min_messages TO DEBUG1;
+SET LOCAL documentdb.enable_update_worker_plan_cache TO off;
+SELECT documentdb_api.update('db', '{"update":"unsharded_plan_cache","updates":[
+    {"q":{"_id":1},"u":{"$set":{"mode":"off"}},"multi":false}
+]}');
+RESET client_min_messages;
+SELECT document FROM documentdb_api.collection('db', 'unsharded_plan_cache')
+    WHERE document @@ '{"_id":1}' ORDER BY object_id;
+ROLLBACK;
+
+BEGIN;
+SET LOCAL client_min_messages TO DEBUG1;
+SET LOCAL documentdb.enable_update_worker_plan_cache TO on;
+SELECT documentdb_api.update('db', '{"update":"unsharded_plan_cache","updates":[
+    {"q":{"_id":1},"u":{"$set":{"mode":"on"}},"multi":false}
+]}');
+-- Second single update on the same unsharded collection reuses the cached plan.
+SELECT documentdb_api.update('db', '{"update":"unsharded_plan_cache","updates":[
+    {"q":{"_id":2},"u":{"$set":{"mode":"on"}},"multi":false}
+]}');
+RESET client_min_messages;
+SELECT document FROM documentdb_api.collection('db', 'unsharded_plan_cache')
+    WHERE document @@ '{"mode":"on"}' ORDER BY object_id;
+SELECT count(*) AS untouched_docs FROM documentdb_api.collection('db', 'unsharded_plan_cache')
+    WHERE document @@ '{"v":0}';
+ROLLBACK;
+
+SELECT documentdb_api.drop_collection('db', 'unsharded_plan_cache');
+
+-- Scenario PC-1: upsert with plan cache — the insert path through update_worker
+-- must produce the same result regardless of the cache setting.
+BEGIN;
+SET LOCAL documentdb.enable_update_worker_plan_cache TO off;
+SELECT documentdb_api.update('db', '{"update":"shard_batch","ordered":false,"updates":[
+    {"q":{"sk":100,"_id":100},"u":{"$set":{"sk":100,"v":1}},"multi":false,"upsert":true},
+    {"q":{"sk":101,"_id":101},"u":{"$set":{"sk":101,"v":1}},"multi":false,"upsert":true}
+]}');
+SELECT document FROM documentdb_api.collection('db', 'shard_batch')
+    WHERE document @@ '{"$or":[{"_id":100},{"_id":101}]}' ORDER BY object_id;
+ROLLBACK;
+
+BEGIN;
+SET LOCAL documentdb.enable_update_worker_plan_cache TO on;
+SELECT documentdb_api.update('db', '{"update":"shard_batch","ordered":false,"updates":[
+    {"q":{"sk":100,"_id":100},"u":{"$set":{"sk":100,"v":1}},"multi":false,"upsert":true},
+    {"q":{"sk":101,"_id":101},"u":{"$set":{"sk":101,"v":1}},"multi":false,"upsert":true}
+]}');
+SELECT document FROM documentdb_api.collection('db', 'shard_batch')
+    WHERE document @@ '{"$or":[{"_id":100},{"_id":101}]}' ORDER BY object_id;
+ROLLBACK;
+
+-- Scenario PC-2: GUC toggled mid-session — switching on/off/on must not corrupt
+-- state.  The cached plan from the first ON block must survive the OFF toggle.
+BEGIN;
+SET LOCAL documentdb.enable_update_worker_plan_cache TO on;
+SELECT documentdb_api.update('db', '{"update":"shard_batch","updates":[
+    {"q":{"sk":1,"_id":1},"u":{"$set":{"tog":1}},"multi":false}
+]}');
+SET LOCAL documentdb.enable_update_worker_plan_cache TO off;
+SELECT documentdb_api.update('db', '{"update":"shard_batch","updates":[
+    {"q":{"sk":2,"_id":2},"u":{"$set":{"tog":1}},"multi":false}
+]}');
+SET LOCAL documentdb.enable_update_worker_plan_cache TO on;
+SELECT documentdb_api.update('db', '{"update":"shard_batch","updates":[
+    {"q":{"sk":3,"_id":3},"u":{"$set":{"tog":1}},"multi":false}
+]}');
+SELECT document FROM documentdb_api.collection('db', 'shard_batch')
+    WHERE document @@ '{"tog":1}' ORDER BY object_id;
+ROLLBACK;
+
+-- Scenario PC-3: plan invalidation after DDL — drop and recreate a collection,
+-- the cached plan for the old collectionId must not be reused for the new one.
+SELECT documentdb_api.create_collection('db', 'shard_batch_ddl');
+SELECT documentdb_api.shard_collection('db', 'shard_batch_ddl', '{ "sk": "hashed" }', false);
+SELECT count(*) FROM (
+    SELECT documentdb_api.insert_one('db', 'shard_batch_ddl',
+        FORMAT('{"_id":%s,"sk":%s,"v":0}', g, g)::documentdb_core.bson)
+    FROM generate_series(1, 6) g) t;
+
+SET documentdb.enable_update_worker_plan_cache TO on;
+-- Warm the cache
+SELECT documentdb_api.update('db', '{"update":"shard_batch_ddl","updates":[
+    {"q":{"sk":1,"_id":1},"u":{"$set":{"pre_drop":1}},"multi":false}
+]}');
+-- Drop + recreate (new collectionId internally)
+SELECT documentdb_api.drop_collection('db', 'shard_batch_ddl');
+SELECT documentdb_api.create_collection('db', 'shard_batch_ddl');
+SELECT documentdb_api.shard_collection('db', 'shard_batch_ddl', '{ "sk": "hashed" }', false);
+SELECT count(*) FROM (
+    SELECT documentdb_api.insert_one('db', 'shard_batch_ddl',
+        FORMAT('{"_id":%s,"sk":%s,"v":0}', g, g)::documentdb_core.bson)
+    FROM generate_series(1, 6) g) t;
+-- Must succeed with a new plan (not crash or route to stale shard)
+SELECT documentdb_api.update('db', '{"update":"shard_batch_ddl","updates":[
+    {"q":{"sk":1,"_id":1},"u":{"$set":{"post_drop":1}},"multi":false},
+    {"q":{"sk":2,"_id":2},"u":{"$set":{"post_drop":1}},"multi":false}
+]}');
+SELECT document FROM documentdb_api.collection('db', 'shard_batch_ddl')
+    WHERE document @@ '{"post_drop":1}' ORDER BY object_id;
+RESET documentdb.enable_update_worker_plan_cache;
+SELECT documentdb_api.drop_collection('db', 'shard_batch_ddl');
+
+-- Scenario PC-4: no-match ops in an unordered batch with plan cache — the cached
+-- plan must handle n=0 responses correctly without corrupting subsequent ops.
+BEGIN;
+SET LOCAL documentdb.enable_update_worker_plan_cache TO on;
+SELECT documentdb_api.update('db', '{"update":"shard_batch","ordered":false,"updates":[
+    {"q":{"sk":1,"_id":1},"u":{"$set":{"v":50}},"multi":false},
+    {"q":{"sk":999,"_id":999},"u":{"$set":{"v":50}},"multi":false},
+    {"q":{"sk":3,"_id":3},"u":{"$set":{"v":50}},"multi":false}
+]}');
+SELECT document FROM documentdb_api.collection('db', 'shard_batch')
+    WHERE document @@ '{"v":50}' ORDER BY object_id;
+ROLLBACK;
+
+-- Scenario PC-5: multi:true with plan cache — multi:true does not use the per-op
+-- worker dispatch, so the cached plan path must not interfere.
+BEGIN;
+SET LOCAL documentdb.enable_update_worker_plan_cache TO on;
+SELECT documentdb_api.update('db', '{"update":"shard_batch","updates":[
+    {"q":{"sk":2},"u":{"$inc":{"w":1}},"multi":true}
+]}');
+SELECT document FROM documentdb_api.collection('db', 'shard_batch')
+    WHERE document @@ '{"sk":2}' ORDER BY object_id;
+ROLLBACK;
+
+SELECT documentdb_api.drop_collection('db', 'shard_batch');
