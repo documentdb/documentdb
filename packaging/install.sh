@@ -2,12 +2,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 #
-# Clean-host bootstrap for the current stable DocumentDB stand-alone packages.
+# Clean-host bootstrap for stable or explicitly selected RC packages.
 #
 # The script trusts the public package repositories, installs
-# documentdb-<major>, and hands provisioning to documentdb-setup. It keeps no
-# state of its own: what it does is derived from the installed packages and
-# from the configuration documentdb-setup owns.
+# documentdb-<major>, and hands provisioning to documentdb-setup. RC installs
+# record their origin because RC and final packages can have identical versions.
 #
 # Supported hosts:
 #   Ubuntu 24.04 LTS                          amd64, arm64
@@ -29,6 +28,7 @@ BLOCKED_ADMIN_PREFIXES="documentdb citus pg internal_role"
 INSTALL_LOCK_DIR="/run/lock/documentdb-installer.lock"
 STATE_ROOT="/etc/documentdb/local"
 DATA_ROOT="/var/lib/documentdb-local"
+RC_STATE_FILE="/etc/documentdb/installer-release-candidate"
 
 PGDG_APT_KEY_URL="https://www.postgresql.org/media/keys/ACCC4CF8.asc"
 PGDG_APT_KEY_FINGERPRINT="B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8"
@@ -45,6 +45,7 @@ DOCUMENTDB_APT_REPOSITORY_URL="https://documentdb.io/deb"
 DOCUMENTDB_RPM_REPOSITORY_URL="https://documentdb.io/rpm/rhel9"
 
 PG_MAJOR="${DEFAULT_PG_MAJOR}"
+RELEASE_VERSION="stable"
 ADMIN_USER="${DEFAULT_ADMIN_USER}"
 ADMIN_USER_EXPLICIT="false"
 ADMIN_PASSWORD_FILE=""
@@ -104,6 +105,9 @@ Supported hosts:
   RHEL/Rocky/Alma/CentOS Stream 9   x86_64, aarch64
 
 Options:
+  --version <stable|vX.Y-RCN>  Release selection (default: stable repository).
+                              RCs, such as v1.0-RC1, are for disposable testing
+                              only, with no maintenance or supported upgrades.
   --pg-major <17|18>          PostgreSQL major (default: 18)
   --admin-user <USER>         Initial DocumentDB administrator (default: admin)
   --admin-password-file <FILE>
@@ -241,6 +245,11 @@ validate_listen_port() {
 parse_arguments() {
     while [ "$#" -gt 0 ]; do
         case "$1" in
+            --version)
+                [ "$#" -ge 2 ] || die "--version requires a value."
+                RELEASE_VERSION="$2"
+                shift 2
+                ;;
             --pg-major)
                 [ "$#" -ge 2 ] || die "--pg-major requires a value."
                 PG_MAJOR="$2"
@@ -280,6 +289,16 @@ parse_arguments() {
 }
 
 validate_arguments() {
+    # The tag becomes a URL path segment, so only vX.Y-RCN passes; the
+    # charset check first keeps a newline from hiding a second line from grep.
+    case "${RELEASE_VERSION}" in
+        stable) ;;
+        *[!A-Za-z0-9.-]*) die "--version must be stable or an RC tag such as v1.0-RC1." ;;
+        *)
+            printf '%s\n' "${RELEASE_VERSION}" | grep -Eqx 'v[0-9]+\.[0-9]+-RC[0-9]+' ||
+                die "--version must be stable or an RC tag such as v1.0-RC1."
+            ;;
+    esac
     case "${PG_MAJOR}" in
         17|18) ;;
         *) die "--pg-major must be 17 or 18." ;;
@@ -513,6 +532,7 @@ validate_native_environment() {
     for required in grep awk sed sort find mktemp install cp stat curl; do
         require_command "${required}"
     done
+    [ "${RELEASE_VERSION}" = "stable" ] || require_command sha256sum
 
     if [ "${PACKAGE_FAMILY}" = "apt" ]; then
         require_command apt-get
@@ -567,6 +587,7 @@ validate_trust_file() {
         die "${trust_label} ${trust_path} must be root-owned mode 0${trust_mode} with one hard link (found: ${trust_metadata:-unknown})."
 }
 
+# $1 is a dpkg Status-Abbrev pattern; the default lists installed packages.
 list_documentdb_packages() {
     if [ "${TESTING}" = "true" ]; then
         printf '%s\n' "${DOCUMENTDB_INSTALLER_TEST_EXISTING_PACKAGES:-}"
@@ -575,9 +596,9 @@ list_documentdb_packages() {
     if [ "${PACKAGE_FAMILY}" = "apt" ]; then
         dpkg-query -W -f='${db:Status-Abbrev} ${binary:Package}\n' \
             'documentdb*' 'postgresql-*-documentdb' 2>/dev/null |
-            awk '$1 ~ /^.i$/ { print $2 }' | sort -u || true
+            awk -v state="${1:-^.i\$}" '$1 ~ state { print $2 }' | sort -u || true
     else
-        rpm -qa --qf '%{NAME}\n' 'documentdb*' 2>/dev/null | sort -u || true
+        rpm -qa --qf '%{NAME}\n' 'documentdb*' 'postgresql*-documentdb' 2>/dev/null | sort -u || true
     fi
 }
 
@@ -588,7 +609,21 @@ detect_installation_state() {
     SELECTED_PACKAGE_INSTALLED="false"
     SETUP_CONFIGURED="false"
 
+    if [ -e "$(system_path "${RC_STATE_FILE}")" ] ||
+        [ -L "$(system_path "${RC_STATE_FILE}")" ]; then
+        die "A release-candidate installation was started on this host. Use a fresh host; rerunning this installer, including stable mode, cannot upgrade or adopt an RC."
+    fi
     installed_packages="$(list_documentdb_packages)"
+    if [ "${RELEASE_VERSION}" != "stable" ]; then
+        # Any dpkg state but not-installed counts: removed or half-installed
+        # packages keep conffiles, and setup leaves files dpkg does not track.
+        if [ -n "$(list_documentdb_packages '^.[^n]')" ] ||
+            directory_has_entries "$(system_path /etc/documentdb)" ||
+            directory_has_entries "$(system_path "${DATA_ROOT}")" ||
+            directory_has_entries "$(system_path /var/lib/documentdb-gateway)"; then
+            die "Release candidates require a clean host with no DocumentDB packages, configuration, or data. Upgrades into, between, or out of RCs are not supported."
+        fi
+    fi
     other_majors="$(
         printf '%s\n' "${installed_packages}" |
             sed -n -E 's/^documentdb-([0-9]+)([-.].*)?$/\1/p' |
@@ -769,6 +804,9 @@ preflight_repositories() {
         preflight_apt_repositories
     else
         preflight_rpm_repositories
+    fi
+    if [ "${RELEASE_VERSION}" != "stable" ] && [ "${DOCUMENTDB_REPO_PRESENT}" = "true" ]; then
+        die "RC installation requires a clean host without a DocumentDB stable repository. Existing repository configuration is not removed."
     fi
 }
 
@@ -1064,6 +1102,10 @@ validate_required_setup_inputs() {
 
 print_plan() {
     log "Installation plan"
+    printf '  Release:          %s\n' "${RELEASE_VERSION}"
+    if [ "${RELEASE_VERSION}" != "stable" ]; then
+        warn "${RELEASE_VERSION} is for disposable testing only, not production. No RC maintenance or supported upgrades."
+    fi
     printf '  Operating system: %s\n' "${OS_DISPLAY}"
     if [ "${PACKAGE_FAMILY}" = "apt" ]; then
         printf '  Architecture:     %s\n  Package manager:  apt\n' "${APT_ARCH}"
@@ -1105,18 +1147,24 @@ install_ubuntu() {
             0644 "${DESIRED_PGDG_SOURCE}"
     fi
 
-    ensure_apt_keyring \
-        "$(system_path /usr/share/keyrings/documentdb-archive-keyring.gpg)" \
-        "${DOCUMENTDB_KEY_URL}" "${DOCUMENTDB_KEY_FINGERPRINT}" "DocumentDB"
-    if [ "${DOCUMENTDB_REPO_PRESENT}" = "true" ]; then
-        log "Reusing the existing DocumentDB APT repository configuration."
-    else
-        write_root_file "$(system_path /etc/apt/sources.list.d/documentdb.list)" \
-            0644 "${DESIRED_DOCUMENTDB_SOURCE}"
+    if [ "${RELEASE_VERSION}" = "stable" ]; then
+        ensure_apt_keyring \
+            "$(system_path /usr/share/keyrings/documentdb-archive-keyring.gpg)" \
+            "${DOCUMENTDB_KEY_URL}" "${DOCUMENTDB_KEY_FINGERPRINT}" "DocumentDB"
+        if [ "${DOCUMENTDB_REPO_PRESENT}" = "true" ]; then
+            log "Reusing the existing DocumentDB APT repository configuration."
+        else
+            write_root_file "$(system_path /etc/apt/sources.list.d/documentdb.list)" \
+                0644 "${DESIRED_DOCUMENTDB_SOURCE}"
+        fi
     fi
 
     apt_get update
-    apt_get install -y "documentdb-${PG_MAJOR}"
+    if [ "${RELEASE_VERSION}" = "stable" ]; then
+        apt_get install -y "documentdb-${PG_MAJOR}"
+    else
+        install_release_packages
+    fi
 }
 
 rpm_package_installed() {
@@ -1131,23 +1179,31 @@ rpm_package_installed() {
 
 # PGDG publishes per-minor repositories only for current EL9 minors, so a host
 # held on an older minor (such as RHEL EUS) falls back to the EL-major path.
+# Stream has an empty $releasever_minor, so its PGDG URLs end in "rhel-9.-".
 use_pgdg_major_path_if_minor_unpublished() {
-    [ "${DISTRO_KIND}" != "centos-stream" ] || return 0
-    case "${OS_VERSION_ID}" in
-        9.*) ;;
-        *) return 0 ;;
-    esac
-    if [ "${DRY_RUN}" = "true" ]; then
-        log "Would switch PGDG to its rhel-9 repository path if rhel-${OS_VERSION_ID} is not published."
-        return 0
+    if [ "${DISTRO_KIND}" = "centos-stream" ]; then
+        if [ "${DRY_RUN}" = "true" ]; then
+            log "Would switch PGDG to its rhel-9 repository path for CentOS Stream."
+            return 0
+        fi
+        log "CentOS Stream has no minor release; using the PGDG rhel-9 repository path."
+    else
+        case "${OS_VERSION_ID}" in
+            9.*) ;;
+            *) return 0 ;;
+        esac
+        if [ "${DRY_RUN}" = "true" ]; then
+            log "Would switch PGDG to its rhel-9 repository path if rhel-${OS_VERSION_ID} is not published."
+            return 0
+        fi
+        # Only a definite 404 switches paths; network errors are left for dnf to report.
+        pgdg_minor_status="$(curl --disable --proto '=https' --tlsv1.2 \
+            --connect-timeout 15 --max-time 60 -sS -o /dev/null -w '%{http_code}' -I \
+            "https://download.postgresql.org/pub/repos/yum/${PG_MAJOR}/redhat/rhel-${OS_VERSION_ID}-${RPM_ARCH}/repodata/repomd.xml")" ||
+            pgdg_minor_status=""
+        [ "${pgdg_minor_status}" = "404" ] || return 0
+        log "PGDG does not publish rhel-${OS_VERSION_ID}; using its rhel-9 repository path."
     fi
-    # Only a definite 404 switches paths; network errors are left for dnf to report.
-    pgdg_minor_status="$(curl --disable --proto '=https' --tlsv1.2 \
-        --connect-timeout 15 --max-time 60 -sS -o /dev/null -w '%{http_code}' -I \
-        "https://download.postgresql.org/pub/repos/yum/${PG_MAJOR}/redhat/rhel-${OS_VERSION_ID}-${RPM_ARCH}/repodata/repomd.xml")" ||
-        pgdg_minor_status=""
-    [ "${pgdg_minor_status}" = "404" ] || return 0
-    log "PGDG does not publish rhel-${OS_VERSION_ID}; using its rhel-9 repository path."
     run_root sed -i 's/rhel-\$releasever_major\.\$releasever_minor-/rhel-$releasever_major-/g' \
         "$(system_path /etc/yum.repos.d/pgdg-redhat-all.repo)"
 }
@@ -1204,18 +1260,88 @@ install_rhel_family() {
 
     run_root_no_stdin dnf -qy module disable postgresql
 
-    ensure_rpm_key "$(system_path /etc/pki/rpm-gpg/RPM-GPG-KEY-documentdb)" \
-        "${DOCUMENTDB_KEY_URL}" "${DOCUMENTDB_KEY_FINGERPRINT}" "DocumentDB"
-    if [ "${DOCUMENTDB_REPO_PRESENT}" = "true" ]; then
-        log "Reusing the existing DocumentDB DNF repository configuration."
-    else
-        write_root_file "$(system_path /etc/yum.repos.d/documentdb.repo)" \
-            0644 "${DESIRED_DOCUMENTDB_RPM_REPO}"
+    if [ "${RELEASE_VERSION}" = "stable" ]; then
+        ensure_rpm_key "$(system_path /etc/pki/rpm-gpg/RPM-GPG-KEY-documentdb)" \
+            "${DOCUMENTDB_KEY_URL}" "${DOCUMENTDB_KEY_FINGERPRINT}" "DocumentDB"
+        if [ "${DOCUMENTDB_REPO_PRESENT}" = "true" ]; then
+            log "Reusing the existing DocumentDB DNF repository configuration."
+        else
+            write_root_file "$(system_path /etc/yum.repos.d/documentdb.repo)" \
+                0644 "${DESIRED_DOCUMENTDB_RPM_REPO}"
+        fi
     fi
 
     run_root_no_stdin dnf clean expire-cache
     run_root_no_stdin dnf -y makecache --refresh
-    run_root_no_stdin dnf install -y "documentdb-${PG_MAJOR}"
+    if [ "${RELEASE_VERSION}" = "stable" ]; then
+        run_root_no_stdin dnf install -y "documentdb-${PG_MAJOR}"
+    else
+        install_release_packages
+    fi
+}
+
+# Packages are found by role, OS, architecture and PostgreSQL major in the
+# release's SHA256SUMS, so a new RC needs no edit here.
+release_package_patterns() {
+    version='[0-9][A-Za-z0-9.+~-]*'
+    if [ "${PACKAGE_FAMILY}" = "apt" ]; then
+        printf '%s\n' \
+            "ubuntu24[.]04-documentdb-${PG_MAJOR}_${version}_all[.]deb" \
+            "ubuntu24[.]04-documentdb-common_${version}_all[.]deb" \
+            "ubuntu24[.]04-documentdb-postgresql-tools_${version}_all[.]deb" \
+            "ubuntu24[.]04-documentdb-gateway_${version}_${APT_ARCH}[.]deb" \
+            "ubuntu24[.]04-postgresql-${PG_MAJOR}-documentdb_${version}_${APT_ARCH}[.]deb"
+    else
+        printf '%s\n' \
+            "documentdb-${PG_MAJOR}-${version}[.]noarch[.]rpm" \
+            "documentdb-common-${version}[.]noarch[.]rpm" \
+            "documentdb-postgresql-tools-${version}[.]noarch[.]rpm" \
+            "documentdb-gateway-${version}[.]el9[.]${RPM_ARCH}[.]rpm" \
+            "rhel9-postgresql${PG_MAJOR}-documentdb-${version}[.]el9[.]${RPM_ARCH}[.]rpm"
+    fi
+}
+
+install_release_packages() {
+    release_url="https://github.com/documentdb/documentdb/releases/download/${RELEASE_VERSION}"
+    if [ "${DRY_RUN}" = "true" ]; then
+        log "Would download ${release_url}/SHA256SUMS, select this host's five packages from it, and verify each."
+        set -- "<packages-listed-in-SHA256SUMS>"
+    else
+        release_dir="${TMP_DIR}/release"
+        mkdir -m 0700 "${release_dir}"
+        strict_curl "${release_url}/SHA256SUMS" "${release_dir}/SHA256SUMS" ||
+            die "Cannot download ${RELEASE_VERSION} checksums; no stable fallback."
+        set --
+        while read -r release_pattern; do
+            release_match="$(awk -v pattern="^${release_pattern}\$" '$2 ~ pattern { print $1 "/" $2 }' "${release_dir}/SHA256SUMS")"
+            case "${release_match}" in
+                ''|*[[:space:]]*) die "${RELEASE_VERSION} must publish exactly one package matching ${release_pattern}." ;;
+            esac
+            release_checksum="${release_match%%/*}"
+            release_package="${release_match#*/}"
+            case "${release_checksum}" in
+                ''|*[!0-9a-fA-F]*) die "Missing or invalid checksum for ${release_package}." ;;
+            esac
+            [ "${#release_checksum}" -eq 64 ] ||
+                die "Expected one SHA256 checksum for ${release_package}."
+            strict_curl "${release_url}/${release_package}" "${release_dir}/${release_package}" ||
+                die "Cannot download ${release_package}; no stable fallback."
+            (
+                cd "${release_dir}"
+                printf '%s  %s\n' "${release_checksum}" "${release_package}" | sha256sum --check --status
+            ) || die "Checksum verification failed for ${release_package}."
+            set -- "$@" "${release_dir}/${release_package}"
+        done <<EOF
+$(release_package_patterns)
+EOF
+    fi
+
+    write_root_file "$(system_path "${RC_STATE_FILE}")" 0644 "${RELEASE_VERSION}"
+    if [ "${PACKAGE_FAMILY}" = "apt" ]; then
+        apt_get install -y "$@"
+    else
+        run_root_no_stdin dnf install -y "$@"
+    fi
 }
 
 run_setup() {
