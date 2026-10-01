@@ -3,6 +3,7 @@
 * Support `timestamptz` values in `bson_build_document`, writing them as BSON dates with millisecond precision. *[Feature]*
 * Allow scalar leading-key distinct pushdown on multikey reduced-correlated indexes when `documentdb.enable_distinct_multi_key_sort_pushdown` is enabled. *[Perf]*
 * Allow `_id` support-function predicates to prove eligible partial RUM index filters when `documentdb.enable_support_function_id_pushdown` is enabled, with the default-on `documentdb.enable_support_object_id_function_pfe_pushdown` setting independently controlling partial-index implication. *[Bugfix/Perf]*
+* Apply find, count, and distinct command stages after a view's terminal aggregation stage, preventing grouped views from producing invalid aggregate plans. *[Bugfix]*
 
 ### documentdb v1.1-0 (Unreleased) ###
 * Allow `collMod` to rename an index when its key pattern and current name both match the catalog entry. *[Feature]*

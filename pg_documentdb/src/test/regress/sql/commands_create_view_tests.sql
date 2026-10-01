@@ -127,3 +127,15 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "targetViewToSort", "pipeline": [ { "$project": { "sum": { "$add": ["$a", "$b"] } } }, { "$sort": { "$natural": 1 } } ] }');
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "targetViewToSort", "pipeline": [ { "$project": { "sum": { "$add": ["$a", "$b"] } } }, { "$sort": { "$natural": -1 } } ] }');
 SELECT drop_collection('db','targetCollection');
+
+-- Find filters apply after a view's terminal grouping stage.
+SELECT documentdb_api.insert_one('db', 'grouped_orders_source', '{ "_id": 1, "regionCode": "region_west" }');
+SELECT documentdb_api.insert_one('db', 'grouped_orders_source', '{ "_id": 2, "regionCode": "region_west" }');
+SELECT documentdb_api.insert_one('db', 'grouped_orders_source', '{ "_id": 3, "regionCode": "region_east" }');
+SELECT documentdb_api.create_collection_view('db', '{ "create": "grouped_orders_view", "viewOn": "grouped_orders_source", "pipeline": [ { "$group": { "_id": "$regionCode", "totalDocuments": { "$count": {} } } } ] }');
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('db', '{ "find": "grouped_orders_view", "filter": { "_id": "region_west" } }');
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "grouped_orders_view", "pipeline": [ { "$match": { "_id": "region_west" } } ] }');
+SELECT document FROM documentdb_api_catalog.bson_aggregation_count('db', '{ "count": "grouped_orders_view", "query": { "_id": "region_west" } }');
+SELECT document FROM documentdb_api_catalog.bson_aggregation_count('db', '{ "count": "grouped_orders_view" }');
+SELECT document FROM documentdb_api_catalog.bson_aggregation_distinct('db', '{ "distinct": "grouped_orders_view", "key": "_id", "query": { "_id": "region_west" } }');
+SELECT document FROM documentdb_api_catalog.bson_aggregation_distinct('db', '{ "distinct": "grouped_orders_view", "key": "_id" }');
