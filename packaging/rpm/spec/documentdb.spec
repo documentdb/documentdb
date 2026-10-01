@@ -85,13 +85,15 @@ CRUD operations on BSON data types within a PostgreSQL framework.
 This package depends on PGDG-provided PostgreSQL extension packages
 (pgvector_%{pg_version}, pg_cron_%{pg_version}, postgis36_%{pg_version}). On
 RHEL/Rocky/AlmaLinux, enable the PGDG, EPEL, and CodeReady Builder (CRB)
-repositories BEFORE installing so dependency resolution succeeds (adjust the
-EL major and arch for your host; use 'powertools' instead of 'crb' on EL8):
+repositories BEFORE installing so dependency resolution succeeds (the '||' lines
+fall back to the subscribed-RHEL form; RHUI images use their
+codeready-builder-for-rhel-9-<arch>-rhui-rpms id; adjust the EL major and arch
+for your host; use 'powertools' instead of 'crb' on EL8):
 
   sudo dnf install -y dnf-plugins-core
   sudo dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm
-  sudo dnf install -y epel-release
-  sudo dnf config-manager --set-enabled crb
+  sudo dnf install -y epel-release || sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+  sudo dnf config-manager --set-enabled crb || sudo subscription-manager repos --enable codeready-builder-for-rhel-9-x86_64-rpms
   sudo dnf -qy module disable postgresql
 
 Then install this extension-only package: sudo dnf install postgresql%{pg_version}-documentdb

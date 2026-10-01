@@ -214,6 +214,20 @@ jobs:
 
           **Repository-backed install (recommended):** see <https://documentdb.io> → Package Installation. Repository publication follows shortly after this release.
 
+          ### ⚠️ RHEL / Rocky / AlmaLinux: enable PGDG + EPEL + CRB first
+
+          \`dnf install\` fails dependency resolution until these repositories are enabled: PGDG's \`postgis36_N\` needs \`libqhull_r.so.7\`, which only CRB ships, and CRB is off by default. EL9 x86_64 example:
+
+          \`\`\`sh
+          sudo dnf install -y dnf-plugins-core
+          sudo dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm
+          sudo dnf install -y epel-release || sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+          sudo dnf config-manager --set-enabled crb || sudo subscription-manager repos --enable codeready-builder-for-rhel-9-x86_64-rpms
+          sudo dnf -qy module disable postgresql
+          \`\`\`
+
+          The \`||\` lines fall back to the subscribed-RHEL form. EL8, arm64, RHUI and troubleshooting: [packaging/README.md](https://github.com/${{ github.repository }}/blob/v${VERSION_DASH}/packaging/README.md).
+
           ### First-party (Tier 1) targets
 
           | Format | Distro | PostgreSQL | Architectures |

@@ -3,6 +3,8 @@
 render_documentdb_pg_conf spells the settings and
 documentdb_required_preload_libraries owns the required library set; a failure
 in either must stop documentdb-setup, documentdb-tune and the sample generator.
+The pin test at the end holds the copies that packaging/README.md's "Where the
+DocumentDB defaults live" table admits equal to their owner.
 """
 
 import re
@@ -445,6 +447,79 @@ class ImageDefaultPinTests(unittest.TestCase):
         self.assertEqual(r.stdout.split("\n")[:3],
                          [self._table()["POSTGRESQL_PORT"][1], "disabled, allowTLS, requireTLS", "USERNAME"])
         self.assertNotIn("unexpected", r.stdout)
+
+
+class RhelPrerequisitePinTests(unittest.TestCase):
+    """packaging/README.md owns the RHEL prerequisite block. The two RPM
+    %description blocks repeat it for `dnf info` and the release footer repeats
+    it for the release page; none of them can read the README when a user sees
+    them. The block is `sudo` lines only: rpm blanks any `#` line inside
+    %description, so a commented alternative would vanish from `dnf info`
+    while this test, which reads the spec source, stayed green."""
+
+    README = PACKAGING / "README.md"
+    SPECS = (PACKAGING / "rpm" / "spec" / "documentdb.spec",
+             PACKAGING / "rpm" / "spec" / "documentdb-local-meta.spec")
+    RELEASE_WORKFLOW = OSS_ROOT / ".github" / "workflows" / "documentdb_release.yml"
+    FOOTER_STEP = "- name: Append release footer (install, verify, support tier)"
+    FIRST = "sudo dnf install -y dnf-plugins-core"
+
+    @staticmethod
+    def _lines(text):
+        """Whitespace-folded lines. Nothing else is folded: every copy spells
+        the PGDG URL literally, so a different EL major or arch is drift."""
+        return [re.sub(r"[ \t]+", " ", line).strip() for line in text.splitlines()]
+
+    def _block(self, lines, where):
+        """The run of `sudo` lines that starts at the dnf-plugins-core install.
+        Anchoring there also keeps it ahead of `config-manager`, which that
+        plugin provides. Sliced by line, not by regex."""
+        self.assertIn(self.FIRST, lines, f"{where} has no RHEL prerequisite block")
+        start = lines.index(self.FIRST)
+        end = start
+        while end < len(lines) and lines[end].startswith("sudo "):
+            end += 1
+        return lines[start:end]
+
+    def _readme_block(self):
+        lines = self._lines(self.README.read_text(encoding="utf-8"))
+        starts = [i for i, line in enumerate(lines) if line.startswith("> **RHEL / Rocky / AlmaLinux prerequisite")]
+        self.assertEqual(len(starts), 1, "packaging/README.md lost the RHEL prerequisite blockquote")
+        quote = []
+        for line in lines[starts[0]:]:
+            if not line.startswith(">"):
+                break
+            quote.append(re.sub(r"^> ?", "", line))
+        fence = quote[quote.index("```bash") + 1:quote.index("```", quote.index("```bash") + 1)]
+        for line in fence:
+            self.assertRegex(line, r"^sudo ", f"packaging/README.md prerequisite fence must hold only `sudo` lines, spelt as `A || B` where a distro differs; rpm blanks `#` lines in %description: {line!r}")
+            # The release footer is an unquoted heredoc; these would expand there.
+            self.assertNotRegex(line, r"[$`\\]", f"packaging/README.md prerequisite block must stay heredoc-safe: {line!r}")
+        return self._block(fence, "packaging/README.md")
+
+    def _description_block(self, spec):
+        m = re.search(r"(?ms)^%description\n(.*?)(?=^%[A-Za-z])", spec.read_text(encoding="utf-8"))
+        self.assertIsNotNone(m, f"{spec.name} has no %description")
+        return self._block(self._lines(m.group(1)), f"{spec.name} %description")
+
+    def _footer_block(self):
+        """Only the footer step's heredoc, so commands elsewhere in the
+        workflow cannot stand in for the published release body."""
+        lines = self._lines(self.RELEASE_WORKFLOW.read_text(encoding="utf-8"))
+        self.assertIn(self.FOOTER_STEP, lines, f"documentdb_release.yml lost its {self.FOOTER_STEP!r} step")
+        start = lines.index(self.FOOTER_STEP)
+        self.assertIn("EOF", lines[start:], "the release footer step lost its heredoc")
+        return self._block(lines[start:lines.index("EOF", start)], "the release footer")
+
+    def test_rpm_descriptions_carry_the_readme_block(self):
+        for spec in self.SPECS:
+            with self.subTest(spec=spec.name):
+                self.assertEqual(self._description_block(spec), self._readme_block(),
+                                 f"{spec.name} %description differs from packaging/README.md's RHEL prerequisite block")
+
+    def test_release_footer_carries_the_readme_block(self):
+        self.assertEqual(self._footer_block(), self._readme_block(),
+                         "the release footer differs from packaging/README.md's RHEL prerequisite block")
 
 
 if __name__ == "__main__":

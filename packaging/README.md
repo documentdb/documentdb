@@ -204,24 +204,49 @@ each workflow.
 > The DocumentDB RPMs depend on PGDG-provided PostgreSQL extension packages
 > (`pgvector_N`, `pg_cron_N`, `postgis36_N`), which live in the PGDG, EPEL, and
 > CodeReady Builder (CRB) repositories. On a stock RHEL-family host `dnf install
-> documentdb` fails dependency resolution until those repos are enabled. Enable
-> them once (adjust the EL major/arch for your host; use `powertools` instead of
-> `crb` on EL8):
+> documentdb` fails dependency resolution until those repos are enabled. **CRB
+> is disabled by default and required**: `postgis36_N` pulls in `gdal*-libs`,
+> which needs `libqhull_r.so.7`, and only CRB ships it. `packaging/install.sh`
+> does this itself; the block below is for hand installs. Adjust the EL
+> major/arch for your host:
 >
 > ```bash
 > sudo dnf install -y dnf-plugins-core
 > sudo dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm
-> sudo dnf install -y epel-release
-> sudo dnf config-manager --set-enabled crb
+> sudo dnf install -y epel-release || sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+> sudo dnf config-manager --set-enabled crb || sudo subscription-manager repos --enable codeready-builder-for-rhel-9-x86_64-rpms
 > sudo dnf -qy module disable postgresql
 > ```
 >
-> On EL8 replace `EL-9` with `EL-8` in the PGDG URL and use `--set-enabled
-> powertools` instead of `crb`; on arm64 replace `x86_64` with `aarch64`.
+> The `||` lines fall back to the subscribed-RHEL form, which has no `crb`
+> repo id and no `epel-release` package. RHUI cloud images have neither:
+> enable the `codeready-builder-for-rhel-9-<arch>-rhui-rpms` id that
+> `dnf repolist --all` lists. On EL8 replace `EL-9` with `EL-8` in the PGDG
+> URL, `crb` with `powertools`, and `rhel-9` / `latest-9` with `rhel-8` /
+> `latest-8`; on arm64 replace `x86_64` with `aarch64`.
 > Then the RHEL install commands mirror the Debian workflows above with `dnf`
 > (for example `sudo dnf install documentdb` for Workflow C). This guidance is
 > also embedded in the `%description` of the extension and meta RPMs, so it is
 > visible via `dnf info` before install.
+
+> **Troubleshooting: `nothing provides libqhull_r.so.7()(64bit)`.**
+> A `dnf install` that ends in ~20 near-identical lines like
+>
+> ```text
+> - nothing provides libqhull_r.so.7()(64bit) needed by gdal313-libs-...PGDG.rhel9.x86_64 from pgdg-common
+> ```
+>
+> means the **CRB repository is not enabled**. The message never names the
+> repository that provides `libqhull_r`, and the GDAL candidates are noise from
+> the `postgis36_N` -> `gdal*-libs` -> `libqhull_r` chain. Fix it with the
+> prerequisite block above — the missing line is usually:
+>
+> ```bash
+> sudo dnf config-manager --set-enabled crb   # EL8: --set-enabled powertools
+> ```
+>
+> Confirm with `dnf provides "libqhull_r.so.7()(64bit)"`, which should report a
+> `libqhull_r` package from `Repo : crb` (`powertools` on EL8).
 
 > **Multi-major side-by-side on Debian/Ubuntu (advanced capability).**
 > The major-agnostic files (`documentdb-setup`, the `@`-templated units, helper
