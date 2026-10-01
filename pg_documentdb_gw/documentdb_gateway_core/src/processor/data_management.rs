@@ -8,10 +8,10 @@
 
 use std::sync::Arc;
 
-use bson::{spec::ElementType, RawBsonRef};
+use bson::RawBsonRef;
 
 use crate::{
-    bson::convert_to_bool,
+    bson::{convert_to_bool, decimal128_to_f64},
     configuration::DynamicConfiguration,
     context::{ConnectionContext, RequestContext},
     error::{DocumentDBError, ErrorCode, Result},
@@ -167,24 +167,27 @@ pub async fn process_count(
         .await
 }
 
-#[expect(clippy::expect_used, reason = "BSON type already verified")]
 #[expect(
     clippy::cast_precision_loss,
     reason = "precision loss acceptable for scale"
 )]
 fn convert_to_scale(scale: RawBsonRef) -> Result<f64> {
-    match scale.element_type() {
-        ElementType::Double => Ok(scale.as_f64().expect("Type of bson was checked.")),
-        ElementType::Int32 => Ok(f64::from(
-            scale.as_i32().expect("Type of bson was checked."),
-        )),
-        ElementType::Int64 => Ok(scale.as_i64().expect("Type of bson was checked.") as f64),
-        ElementType::Undefined | ElementType::Null => Ok(1.0),
-        _ => Err(DocumentDBError::documentdb_error(
+    match scale {
+        RawBsonRef::Double(d) => Ok(d),
+        RawBsonRef::Int32(i) => Ok(f64::from(i)),
+        RawBsonRef::Int64(i) => Ok(i as f64),
+        RawBsonRef::Decimal128(d) => decimal128_to_f64(d).ok_or_else(|| {
+            DocumentDBError::documentdb_error(
+                ErrorCode::TypeMismatch,
+                "Unexpected value for scale".to_owned(),
+            )
+        }),
+        RawBsonRef::Undefined | RawBsonRef::Null => Ok(1.0),
+        other => Err(DocumentDBError::documentdb_error(
             ErrorCode::TypeMismatch,
             format!(
                 "Unexpected bson type for scale: {:#?}",
-                scale.element_type()
+                other.element_type()
             ),
         )),
     }
@@ -376,4 +379,55 @@ pub async fn process_compact(
     pg_data_client
         .execute_compact(request_context, connection_context)
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use bson::Decimal128;
+
+    use super::*;
+
+    fn approx(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-9
+    }
+
+    #[test]
+    fn convert_to_scale_accepts_numeric_and_decimal() {
+        assert!(approx(
+            convert_to_scale(RawBsonRef::Double(2.5)).expect("double accepted"),
+            2.5
+        ));
+        assert!(approx(
+            convert_to_scale(RawBsonRef::Int32(7)).expect("int32 accepted"),
+            7.0
+        ));
+        assert!(approx(
+            convert_to_scale(RawBsonRef::Int64(1024)).expect("int64 accepted"),
+            1024.0
+        ));
+
+        let dec = "1024".parse::<Decimal128>().expect("valid decimal");
+        assert!(approx(
+            convert_to_scale(RawBsonRef::Decimal128(dec)).expect("decimal accepted"),
+            1024.0
+        ));
+    }
+
+    #[test]
+    fn convert_to_scale_defaults_null_and_undefined_to_one() {
+        assert!(approx(
+            convert_to_scale(RawBsonRef::Null).expect("null accepted"),
+            1.0
+        ));
+        assert!(approx(
+            convert_to_scale(RawBsonRef::Undefined).expect("undefined accepted"),
+            1.0
+        ));
+    }
+
+    #[test]
+    fn convert_to_scale_rejects_non_numeric_types() {
+        convert_to_scale(RawBsonRef::String("x")).expect_err("string rejected");
+        convert_to_scale(RawBsonRef::Boolean(true)).expect_err("bool rejected");
+    }
 }
