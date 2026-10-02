@@ -1450,18 +1450,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                                              Index Cond: (collection.shard_key_value = '25702018'::bigint)
 (21 rows)
 
-SELECT documentdb_api.drop_collection('db', 'sortgroup_safe_test');
- drop_collection 
------------------
- t
-(1 row)
-
 -- =============================================================================
 -- Test 34: $group key with nested field path when intermediate field is null
 -- =============================================================================
 -- Case 1: g_home is a document with province field
 SELECT documentdb_api.insert_one('db','group_null_path_test','{ "_id": "001", "name": "Alice", "g_home": { "province": "Shanghai" } }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:476: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:474: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1504,7 +1498,7 @@ SELECT documentdb_api.insert_one('db','group_null_path_test','{ "_id": "006", "n
 
 -- Test 34b: deeply nested path with various intermediate non-document types
 SELECT documentdb_api.insert_one('db','group_deep_null_test','{ "_id": "e01", "val": { "a": { "b": "deep_ok" } } }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:489: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:487: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1640,7 +1634,7 @@ SELECT documentdb_api.drop_collection('db', 'group_deep_null_test');
 
 -- minimum int64 leaving moving $sum and $avg windows
 SELECT documentdb_api.insert_one('db','sumavg_int64_min_window','{ "_id": 1, "value": { "$numberLong": "-9223372036854775808" } }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:522: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:520: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1662,5 +1656,65 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int
                                                         document                                                        
 ------------------------------------------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "3" }, "slidingSum" : { "$numberLong" : "3" }, "slidingAvg" : { "$numberDouble" : "1.5" } }
+(1 row)
+
+-- =============================================================================
+-- Test 35: The combined sort/group optimization crosses a view boundary.
+-- =============================================================================
+SELECT documentdb_api.create_collection_view(
+    'db',
+    '{ "create": "sortgroup_safe_view", "viewOn": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } } ] }'
+);
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{
+    "aggregate": "sortgroup_safe_view",
+    "pipeline": [
+        { "$group": { "_id": "$g", "total": { "$sum": "$v" }, "count": { "$count": {} } } },
+        { "$sort": { "_id": 1 } }
+    ]
+}');
+                                       document                                       
+--------------------------------------------------------------------------------------
+ { "_id" : "A", "total" : { "$numberInt" : "16" }, "count" : { "$numberInt" : "2" } }
+ { "_id" : "B", "total" : { "$numberInt" : "14" }, "count" : { "$numberInt" : "2" } }
+(2 rows)
+
+-- The view's sort on seq should be removed before the group is planned.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{
+    "aggregate": "sortgroup_safe_view",
+    "pipeline": [
+        { "$group": { "_id": "$g", "total": { "$sum": "$v" }, "count": { "$count": {} } } }
+    ]
+}');
+                                                                                                                                                                                                                                                                                               QUERY PLAN                                                                                                                                                                                                                                                                                                
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'total'::text, documentdb_api_internal.bsonsumwithexpr(document, '{ "" : "$v" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'count'::text, documentdb_api_internal.bsoncount(1)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   ->  Sort
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Bitmap Heap Scan on documentdb_data.documents_25702018 collection
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Recheck Cond: (collection.shard_key_value = '25702018'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '25702018'::bigint)
+(11 rows)
+
+SELECT documentdb_api.drop_collection('db', 'sortgroup_safe_view');
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:551: NOTICE:  table "documents_25702022" does not exist, skipping
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'sortgroup_safe_test');
+ drop_collection 
+-----------------
+ t
 (1 row)
 

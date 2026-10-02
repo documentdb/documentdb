@@ -284,9 +284,25 @@ SELECT drain_skip_report(
 
 RESET documentdb.defaultCursorFirstPageBatchSize;
 ------------------------------------------------------------
--- Projection keeps LIMIT/OFFSET in the generated subquery. The planner
+-- Projection keeps OFFSET and any LIMIT in the generated subquery. The planner
 -- authorizes those counts without authorizing arbitrary nested queries.
 ------------------------------------------------------------
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('skiptest', '{ "find": "coll", "skip": 3, "projection": { "a": 1 } }');
+                                                                                                   QUERY PLAN                                                                                                   
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_1
+   Output: documentdb_api_internal.bson_dollar_project_find(agg_stage_1.document, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Limit
+         Output: collection.document
+         ->  Custom Scan (DocumentDBApiCursorScan)
+               Output: collection.document
+               cursorScanType: Primary Key Scan
+               indexName: _id_
+               ->  Index Scan using _id_ on documentdb_data.documents_25870001 collection
+                     Output: collection.shard_key_value, collection.object_id, collection.document
+                     Index Cond: (collection.shard_key_value = '25870001'::bigint)
+(11 rows)
+
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('skiptest', '{ "find": "coll", "skip": 3, "limit": 6, "projection": { "a": 1 } }');
                                                                                                    QUERY PLAN                                                                                                   
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------

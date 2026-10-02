@@ -698,6 +698,15 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 SELECT document FROM bson_aggregation_pipeline('config', '{ "aggregate": "databases", "pipeline": [{ "$match": { "_id": "dyncurdb" } }], "cursor": {} }');
 SELECT document FROM bson_aggregation_pipeline('config', '{ "aggregate": "chunks", "pipeline": [{ "$match": { "ns": "dyncurdb.dyncoll" } }], "cursor": {} }');
 
+-- A view-backed find with $near remains non-streamable. The view pipeline
+-- forces the find filter through the optimizer-visible synthetic match stage.
+SELECT documentdb_api.create_collection_view('dyncurdb', '{ "create": "geoview", "viewOn": "geocoll", "pipeline": [{ "$match": { "_id": { "$gt": 0 } } }] }');
+SET documentdb.enableDynamicCursors TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "geoview", "filter": { "loc": { "$near": { "$geometry": { "type": "Point", "coordinates": [0, 0] } } } } }');
+SET documentdb.enableDynamicCursors TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "geoview", "filter": { "loc": { "$near": { "$geometry": { "type": "Point", "coordinates": [0, 0] } } } } }');
+SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "geoview", "filter": { "loc": { "$near": { "$geometry": { "type": "Point", "coordinates": [0, 0] } } } } }');
+
 -- Reset for any tests that may run after this section.
 SET documentdb.enableDynamicCursors TO off;
 RESET documentdb.enableCursorsOnAggregationQueryRewrite;

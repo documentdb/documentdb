@@ -203,9 +203,10 @@ SELECT drain_skip_report(
 RESET documentdb.defaultCursorFirstPageBatchSize;
 
 ------------------------------------------------------------
--- Projection keeps LIMIT/OFFSET in the generated subquery. The planner
+-- Projection keeps OFFSET and any LIMIT in the generated subquery. The planner
 -- authorizes those counts without authorizing arbitrary nested queries.
 ------------------------------------------------------------
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('skiptest', '{ "find": "coll", "skip": 3, "projection": { "a": 1 } }');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('skiptest', '{ "find": "coll", "skip": 3, "limit": 6, "projection": { "a": 1 } }');
 SELECT drain_skip_report(
     '{ "find": "coll", "skip": 3, "limit": 4, "projection": { "a": 1 }, "batchSize": 2 }',

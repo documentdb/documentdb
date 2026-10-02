@@ -1740,8 +1740,86 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 (10 rows)
 
 -- ============================================================================
+-- Section 6 - project push-up crosses a view boundary
+-- ============================================================================
+SELECT documentdb_api.create_collection_view(
+    'proj_pushup_db',
+    '{
+      "create": "orders_items_view",
+      "viewOn": "orders_coll",
+      "pipeline": [
+        { "$unwind": "$items" },
+        { "$match": { "items.kind": "x" } }
+      ]
+    }'
+);
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO off;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_items_view",
+    "pipeline": [
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+                       document                        
+-------------------------------------------------------
+ { "_id" : "A", "totalQty" : { "$numberInt" : "5" } }
+ { "_id" : "B", "totalQty" : { "$numberInt" : "10" } }
+(2 rows)
+
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO on;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_items_view",
+    "pipeline": [
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+                       document                        
+-------------------------------------------------------
+ { "_id" : "A", "totalQty" : { "$numberInt" : "5" } }
+ { "_id" : "B", "totalQty" : { "$numberInt" : "10" } }
+(2 rows)
+
+-- The synthetic project should be pushed below the view's unwind.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_items_view",
+    "pipeline": [
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } }
+    ],
+    "cursor": {}
+}');
+                                                                                                                                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                                                                                                                                   
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ HashAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalQty'::text, documentdb_api_internal.bsonsumwithexpr(agg_stage_2.document, '{ "" : "$items.qty" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_2
+         Output: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_2.document
+         Filter: (agg_stage_2.document #= '{ "items.kind" : "x" }'::bsonquery)
+         ->  ProjectSet
+               Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
+               ->  Seq Scan on documentdb_data.documents_87001 collection
+                     Output: collection.shard_key_value, collection.object_id, collection.document
+(10 rows)
+
+-- ============================================================================
 -- Clean up
 -- ============================================================================
+SELECT documentdb_api.drop_collection('proj_pushup_db', 'orders_items_view');
+NOTICE:  table "documents_87004" does not exist, skipping
+ drop_collection 
+-----------------
+ t
+(1 row)
+
 SELECT documentdb_api.drop_collection('proj_pushup_db', 'orders_coll');
  drop_collection 
 -----------------

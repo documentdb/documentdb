@@ -2208,6 +2208,41 @@ SELECT document FROM bson_aggregation_pipeline('config', '{ "aggregate": "chunks
  { "ns" : "dyncurdb.dyncoll", "shard" : "defaultShard", "min" : { "$numberLong" : "-9223372036854775808" }, "max" : { "$numberLong" : "9223372036854775807" } }
 (1 row)
 
+-- A view-backed find with $near remains non-streamable. The view pipeline
+-- forces the find filter through the optimizer-visible synthetic match stage.
+SELECT documentdb_api.create_collection_view('dyncurdb', '{ "create": "geoview", "viewOn": "geocoll", "pipeline": [{ "$match": { "_id": { "$gt": 0 } } }] }');
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SET documentdb.enableDynamicCursors TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "geoview", "filter": { "loc": { "$near": { "$geometry": { "type": "Point", "coordinates": [0, 0] } } } } }');
+                                                                                                                        QUERY PLAN                                                                                                                        
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using geo_idx on documentdb_data.documents_2604 collection
+   Output: document, (bson_validate_geography(document, 'loc'::text) <|-|> '{ "key" : "loc", "near" : { "type" : "Point", "coordinates" : [ { "$numberInt" : "0" }, { "$numberInt" : "0" } ] }, "distanceField" : "dist", "spherical" : true }'::bson)
+   Order By: (bson_validate_geography(collection.document, 'loc'::text) <|-|> '{ "key" : "loc", "near" : { "type" : "Point", "coordinates" : [ { "$numberInt" : "0" }, { "$numberInt" : "0" } ] }, "distanceField" : "dist", "spherical" : true }'::bson)
+   Filter: ((collection.document @> '{ "_id" : { "$numberInt" : "0" } }'::bson) AND (collection.object_id > '{ "" : { "$numberInt" : "0" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
+(4 rows)
+
+SET documentdb.enableDynamicCursors TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "geoview", "filter": { "loc": { "$near": { "$geometry": { "type": "Point", "coordinates": [0, 0] } } } } }');
+                                                                                                                        QUERY PLAN                                                                                                                        
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using geo_idx on documentdb_data.documents_2604 collection
+   Output: document, (bson_validate_geography(document, 'loc'::text) <|-|> '{ "key" : "loc", "near" : { "type" : "Point", "coordinates" : [ { "$numberInt" : "0" }, { "$numberInt" : "0" } ] }, "distanceField" : "dist", "spherical" : true }'::bson)
+   Order By: (bson_validate_geography(collection.document, 'loc'::text) <|-|> '{ "key" : "loc", "near" : { "type" : "Point", "coordinates" : [ { "$numberInt" : "0" }, { "$numberInt" : "0" } ] }, "distanceField" : "dist", "spherical" : true }'::bson)
+   Filter: ((collection.document @> '{ "_id" : { "$numberInt" : "0" } }'::bson) AND (collection.object_id > '{ "" : { "$numberInt" : "0" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
+(4 rows)
+
+SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "geoview", "filter": { "loc": { "$near": { "$geometry": { "type": "Point", "coordinates": [0, 0] } } } } }');
+                                                               document                                                               
+--------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "loc" : { "type" : "Point", "coordinates" : [ { "$numberInt" : "0" }, { "$numberInt" : "0" } ] } }
+ { "_id" : { "$numberInt" : "2" }, "loc" : { "type" : "Point", "coordinates" : [ { "$numberInt" : "1" }, { "$numberInt" : "1" } ] } }
+(2 rows)
+
 -- Reset for any tests that may run after this section.
 SET documentdb.enableDynamicCursors TO off;
 RESET documentdb.enableCursorsOnAggregationQueryRewrite;

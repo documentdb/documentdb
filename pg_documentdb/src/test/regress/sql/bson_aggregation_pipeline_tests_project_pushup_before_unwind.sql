@@ -1058,11 +1058,57 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     "cursor": {}
 }');
 
+-- ============================================================================
+-- Section 6 - project push-up crosses a view boundary
+-- ============================================================================
+
+SELECT documentdb_api.create_collection_view(
+    'proj_pushup_db',
+    '{
+      "create": "orders_items_view",
+      "viewOn": "orders_coll",
+      "pipeline": [
+        { "$unwind": "$items" },
+        { "$match": { "items.kind": "x" } }
+      ]
+    }'
+);
+
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO off;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_items_view",
+    "pipeline": [
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO on;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_items_view",
+    "pipeline": [
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+-- The synthetic project should be pushed below the view's unwind.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_items_view",
+    "pipeline": [
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } }
+    ],
+    "cursor": {}
+}');
+
 
 -- ============================================================================
 -- Clean up
 -- ============================================================================
 
+SELECT documentdb_api.drop_collection('proj_pushup_db', 'orders_items_view');
 SELECT documentdb_api.drop_collection('proj_pushup_db', 'orders_coll');
 SELECT documentdb_api.drop_collection('proj_pushup_db', 'lookup_target');
 SELECT documentdb_api.drop_collection('proj_pushup_db', 'multi_unwind_coll');

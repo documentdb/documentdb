@@ -163,11 +163,6 @@ typedef struct AggregationPipelineBuildContext
 	/* The number of nested levels (incremented by MigrateSubQuery) */
 	int numNestedLevels;
 
-	/*
-	 * Whether or not to apply the optimization transformation on the stages
-	 */
-	bool optimizePipelineStages;
-
 	/* Whether or not the query has join stages (to optimize subquery behavior) */
 	JoinStageStatus joinStatus;
 
@@ -280,9 +275,17 @@ Aggref * CreateMultiArgAggregate(Oid aggregateFunctionId, List *args, List *argT
 								 ParseState *parseState);
 List * ExtractAggregationStages(const bson_value_t *pipelineValue,
 								AggregationPipelineBuildContext *context);
+List * TryOptimizeAggregationPipelines(List *aggregationStages,
+									   AggregationPipelineBuildContext *context);
 Query * GenerateBaseTableQuery(text *databaseDatum, const StringView *collectionNameView,
 							   pg_uuid_t *collectionUuid, const bson_value_t *indexHint,
 							   AggregationPipelineBuildContext *context);
+Query * GenerateBaseTableQueryAndGetStages(text *databaseDatum, const
+										   StringView *collectionNameView,
+										   pg_uuid_t *collectionUuid, const
+										   bson_value_t *indexHint,
+										   AggregationPipelineBuildContext *context,
+										   List **pipelineStagesToApply);
 Query * GenerateBaseAgnosticQuery(text *databaseDatum,
 								  AggregationPipelineBuildContext *context);
 RangeTblEntry * MakeSubQueryRte(Query *subQuery, int stageNum, int pipelineDepth,

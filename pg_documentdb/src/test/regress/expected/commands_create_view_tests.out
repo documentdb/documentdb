@@ -325,6 +325,26 @@ SELECT documentdb_api.insert_one('db', 'targetCollection', '{ "_id" : 3, "a" : 3
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
+-- The find filter must run above the view's group stage.
+SELECT documentdb_api.create_collection_view('db', '{ "create": "targetGroupedView", "viewOn": "targetCollection", "pipeline": [ { "$group": { "_id": "$b", "count": { "$sum": 1 } } } ] }');
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('db', '{ "find": "targetGroupedView", "filter": { "_id": 1 } }');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "count" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'targetGroupedView');
+NOTICE:  table "documents_6515" does not exist, skipping
+ drop_collection 
+-----------------
+ t
+(1 row)
+
 SELECT documentdb_api.create_collection_view('db', '{ "create": "targetViewToSort", "viewOn": "targetCollection", "pipeline": [ { "$sort": { "_id": 1 } } ] }');
          create_collection_view         
 ----------------------------------------

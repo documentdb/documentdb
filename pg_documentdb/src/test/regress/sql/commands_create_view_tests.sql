@@ -117,6 +117,12 @@ SELECT documentdb_api.create_collection_view('db', FORMAT('{ "create": "create_v
 SELECT documentdb_api.insert_one('db', 'targetCollection', '{ "_id" : 1, "a" : 2, "b" : 3 }', NULL);
 SELECT documentdb_api.insert_one('db', 'targetCollection', '{ "_id" : 2, "a" : 1, "b" : 2 }', NULL);
 SELECT documentdb_api.insert_one('db', 'targetCollection', '{ "_id" : 3, "a" : 3, "b" : 1 }', NULL);
+
+-- The find filter must run above the view's group stage.
+SELECT documentdb_api.create_collection_view('db', '{ "create": "targetGroupedView", "viewOn": "targetCollection", "pipeline": [ { "$group": { "_id": "$b", "count": { "$sum": 1 } } } ] }');
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('db', '{ "find": "targetGroupedView", "filter": { "_id": 1 } }');
+SELECT documentdb_api.drop_collection('db', 'targetGroupedView');
+
 SELECT documentdb_api.create_collection_view('db', '{ "create": "targetViewToSort", "viewOn": "targetCollection", "pipeline": [ { "$sort": { "_id": 1 } } ] }');
 SELECT document FROM documentdb_api_catalog.bson_aggregation_find('db', '{ "find": "targetViewToSort", "projection": {}, "sort": { "$natural": 1 }}');
 SELECT document FROM documentdb_api_catalog.bson_aggregation_find('db', '{ "find": "targetViewToSort", "projection": {}, "sort": { "$natural": -1 }}');

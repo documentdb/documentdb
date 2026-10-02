@@ -2068,8 +2068,6 @@ OptimizeLookup(LookupArgs *lookupArgs,
 	strncpy((char *) optimizationArgs->rightQueryContext.collationString,
 			leftQueryContext->collationString, MAX_ICU_COLLATION_LENGTH);
 	optimizationArgs->rightQueryContext.parentStageName = ParentStageName_LOOKUP;
-	optimizationArgs->rightQueryContext.optimizePipelineStages =
-		leftQueryContext->optimizePipelineStages;
 	optimizationArgs->rightQueryContext.joinStatus = JoinStageStatus_HasJoinsOrUnions;
 
 	optimizationArgs->isLookupAgnostic = lookupArgs->from.length == 0;
@@ -2365,8 +2363,14 @@ OptimizeLookup(LookupArgs *lookupArgs,
 	 */
 	optimizationArgs->inlinedPipelineStages = ExtractAggregationStages(
 		&inlinedLookupPipeline, &optimizationArgs->rightQueryContext);
+	optimizationArgs->inlinedPipelineStages = TryOptimizeAggregationPipelines(
+		optimizationArgs->inlinedPipelineStages,
+		&optimizationArgs->rightQueryContext);
 	optimizationArgs->nonInlinedPipelineStages = ExtractAggregationStages(
 		&nonInlinedLookupPipeline, &optimizationArgs->rightQueryContext);
+	optimizationArgs->nonInlinedPipelineStages = TryOptimizeAggregationPipelines(
+		optimizationArgs->nonInlinedPipelineStages,
+		&optimizationArgs->rightQueryContext);
 
 	/*
 	 * If the first non-inline stages is a $match (which contains let and $expr),

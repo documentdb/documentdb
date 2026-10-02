@@ -722,6 +722,85 @@ SELECT documentdb_api.create_collection_view(
  { "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
+SELECT documentdb_api.create_collection_view(
+    'lookup_post_join_db',
+    '{
+      "create": "orders_items_lookup_view",
+      "viewOn": "orders",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "as": "items"
+          }
+        }
+      ]
+    }'
+);
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- A lookup at the end of the view pipeline and an unwind at the start of the
+-- outer pipeline should use the combined lookup-unwind stage.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders_items_lookup_view",
+      "pipeline": [
+        { "$unwind": "$items" },
+        { "$project": { "_id": 1, "itemId": "$items._id" } },
+        { "$sort": { "_id": 1, "itemId": 1 } }
+      ]
+    }
+    $pipeline$
+);
+                                document                                 
+-------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemId" : { "$numberInt" : "101" } }
+ { "_id" : { "$numberInt" : "1" }, "itemId" : { "$numberInt" : "102" } }
+ { "_id" : { "$numberInt" : "1" }, "itemId" : { "$numberInt" : "103" } }
+ { "_id" : { "$numberInt" : "1" }, "itemId" : { "$numberInt" : "104" } }
+ { "_id" : { "$numberInt" : "2" }, "itemId" : { "$numberInt" : "102" } }
+ { "_id" : { "$numberInt" : "2" }, "itemId" : { "$numberInt" : "103" } }
+ { "_id" : { "$numberInt" : "2" }, "itemId" : { "$numberInt" : "104" } }
+(7 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders_items_lookup_view",
+      "pipeline": [
+        { "$unwind": "$items" }
+      ]
+    }
+    $pipeline$
+);
+                                                                                         QUERY PLAN                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   Output: bson_dollar_merge_documents_at_path(collection.document, collection_0_1.document, 'items'::text)
+   ->  Bitmap Heap Scan on documentdb_data.documents_25720001 collection
+         Output: collection.shard_key_value, collection.object_id, collection.document
+         Recheck Cond: (collection.shard_key_value = '25720001'::bigint)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (collection.shard_key_value = '25720001'::bigint)
+   ->  Bitmap Heap Scan on documentdb_data.documents_25720002 collection_0_1
+         Output: collection_0_1.document
+         Recheck Cond: (collection_0_1.shard_key_value = '25720002'::bigint)
+         Filter: bson_dollar_lookup_join_filter(collection_0_1.document, bson_dollar_lookup_extract_filter_expression(collection.document, '{ "code" : "itemCodes" }'::bson), 'code'::text)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (collection_0_1.shard_key_value = '25720002'::bigint)
+(13 rows)
+
 -- Flag-off view baselines.
 SELECT document
 FROM bson_aggregation_pipeline(

@@ -466,8 +466,6 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "total": { "$sum": "$v" }, "firstVal": { "$first": "$v" } } }, { "$sort": { "_id": 1 } } ] }');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "total": { "$sum": "$v" }, "firstVal": { "$first": "$v" } } }, { "$sort": { "_id": 1 } } ] }');
 
-SELECT documentdb_api.drop_collection('db', 'sortgroup_safe_test');
-
 -- =============================================================================
 -- Test 34: $group key with nested field path when intermediate field is null
 -- =============================================================================
@@ -524,3 +522,31 @@ SELECT documentdb_api.insert_one('db','sumavg_int64_min_window','{ "_id": 2, "va
 SELECT documentdb_api.insert_one('db','sumavg_int64_min_window','{ "_id": 3, "value": 2 }');
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int64_min_window", "pipeline": [ { "$setWindowFields": { "sortBy": {"_id": 1}, "output": { "slidingSum": { "$sum": "$value", "window": { "documents": [-1, 0] } }, "slidingAvg": { "$avg": "$value", "window": { "documents": [-1, 0] } } } } }, { "$match": { "_id": 3 } }, { "$project": { "value": 0 } } ] }');
+
+-- =============================================================================
+-- Test 35: The combined sort/group optimization crosses a view boundary.
+-- =============================================================================
+
+SELECT documentdb_api.create_collection_view(
+    'db',
+    '{ "create": "sortgroup_safe_view", "viewOn": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } } ] }'
+);
+
+SELECT document FROM bson_aggregation_pipeline('db', '{
+    "aggregate": "sortgroup_safe_view",
+    "pipeline": [
+        { "$group": { "_id": "$g", "total": { "$sum": "$v" }, "count": { "$count": {} } } },
+        { "$sort": { "_id": 1 } }
+    ]
+}');
+
+-- The view's sort on seq should be removed before the group is planned.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{
+    "aggregate": "sortgroup_safe_view",
+    "pipeline": [
+        { "$group": { "_id": "$g", "total": { "$sum": "$v" }, "count": { "$count": {} } } }
+    ]
+}');
+
+SELECT documentdb_api.drop_collection('db', 'sortgroup_safe_view');
+SELECT documentdb_api.drop_collection('db', 'sortgroup_safe_test');

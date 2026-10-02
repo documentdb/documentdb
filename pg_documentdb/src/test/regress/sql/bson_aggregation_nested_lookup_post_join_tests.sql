@@ -620,6 +620,55 @@ SELECT documentdb_api.create_collection_view(
     }'
 );
 
+SELECT documentdb_api.create_collection_view(
+    'lookup_post_join_db',
+    '{
+      "create": "orders_items_lookup_view",
+      "viewOn": "orders",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCodes",
+            "foreignField": "code",
+            "as": "items"
+          }
+        }
+      ]
+    }'
+);
+
+-- A lookup at the end of the view pipeline and an unwind at the start of the
+-- outer pipeline should use the combined lookup-unwind stage.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders_items_lookup_view",
+      "pipeline": [
+        { "$unwind": "$items" },
+        { "$project": { "_id": 1, "itemId": "$items._id" } },
+        { "$sort": { "_id": 1, "itemId": 1 } }
+      ]
+    }
+    $pipeline$
+);
+
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_post_join_db',
+    $pipeline$
+    {
+      "aggregate": "orders_items_lookup_view",
+      "pipeline": [
+        { "$unwind": "$items" }
+      ]
+    }
+    $pipeline$
+);
+
 -- Flag-off view baselines.
 SELECT document
 FROM bson_aggregation_pipeline(
