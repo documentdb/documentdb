@@ -4058,12 +4058,13 @@ class ClaimDataDirectoryTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def _function(self):
+        # Every function the helper defines, up to its sourced-or-executed guard.
         match = re.search(
-            r"^claim_data_directory\(\) \{\n.*?^\}$",
+            r"^postmaster_identity\(\) \{\n.*?^claim_data_directory\(\) \{\n.*?^\}$",
             CLAIM_HELPER.read_text(encoding="utf-8"),
             flags=re.DOTALL | re.MULTILINE,
         )
-        self.assertIsNotNone(match, "could not locate claim_data_directory()")
+        self.assertIsNotNone(match, "could not locate the claim helper's functions")
         return match.group(0) + "\n"
 
     def _claim(self, data_dir=None, prefix=""):
@@ -4084,11 +4085,11 @@ class ClaimDataDirectoryTests(unittest.TestCase):
 
     OVERRIDE = "export DOCUMENTDB_FORCE_REMOVE_STALE_POSTMASTER_PID=true\n"
 
-    def _spawn_holder(self):
+    def _spawn_holder(self, after_claim=""):
         out = self.root / "holder.log"
         with out.open("w") as sink:
             proc = subprocess.Popen(
-                ["bash", "-c", self._function() + 'claim_data_directory "%s"\necho held\nexec sleep 300\n' % self.data],
+                ["bash", "-c", self._function() + 'claim_data_directory "%s"\n%secho held\nexec sleep 300\n' % (self.data, after_claim)],
                 stdout=sink,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,
@@ -4134,6 +4135,151 @@ class ClaimDataDirectoryTests(unittest.TestCase):
         self.assertIn("Warning: removing", forced.stderr)
         self.assertIn("claimed", forced.stdout)
         self.assertFalse(self.pidfile.exists(), "the override must remove the pidfile")
+
+    def _spawn_recorded_holder(self):
+        """A holder that plays its own postmaster: it inherits the lock fd and is recorded."""
+        return self._spawn_holder(after_claim=(
+            "printf '%%s\\n%s\\n1700000000\\n' $$ > \"%s\"\nrecord_postmaster_owner \"%s\"\n"
+            % (self.data, self.pidfile, self.data)
+        ))
+
+    def _owner_record(self):
+        return self.data / ".documentdb-local" / "postmaster-owner"
+
+    def test_a_pidfile_from_a_postmaster_that_held_the_lock_is_removed_after_an_unclean_stop(self):
+        holder = self._spawn_recorded_holder()
+        self.assertEqual(self._owner_record().read_text(), "%d 1700000000\n" % holder.pid)
+        holder.kill()
+        holder.wait(timeout=10)
+
+        result = self._claim()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Warning: removing", result.stderr)
+        self.assertIn("unclean stop", result.stderr)
+        self.assertIn("claimed", result.stdout)
+        self.assertFalse(self.pidfile.exists())
+
+    def test_a_recorded_recovery_still_reminds_about_an_unneeded_override(self):
+        holder = self._spawn_recorded_holder()
+        holder.kill()
+        holder.wait(timeout=10)
+
+        result = self._claim(prefix=self.OVERRIDE)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("unclean stop", result.stderr)
+        self.assertIn("was not needed for this; unset it", result.stderr)
+        self.assertFalse(self.pidfile.exists())
+
+    def test_a_pidfile_from_another_postmaster_is_refused_despite_a_record(self):
+        holder = self._spawn_recorded_holder()
+        holder.kill()
+        holder.wait(timeout=10)
+        # A container without the lock reused the volume and wrote its own pidfile.
+        self._write_pidfile(4243)
+
+        result = self._claim()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("DOCUMENTDB_FORCE_REMOVE_STALE_POSTMASTER_PID", result.stderr)
+        self.assertTrue(self.pidfile.exists())
+
+    def test_a_pidfile_reusing_the_recorded_pid_with_another_start_time_is_refused(self):
+        holder = self._spawn_recorded_holder()
+        holder.kill()
+        holder.wait(timeout=10)
+        # A new PID namespace handed the same PID to a postmaster started later.
+        self.pidfile.write_text(
+            "%d\n%s\n1700000010\n9712\n/var/run/postgresql\n" % (holder.pid, self.data),
+            encoding="utf-8",
+        )
+
+        result = self._claim()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("DOCUMENTDB_FORCE_REMOVE_STALE_POSTMASTER_PID", result.stderr)
+        self.assertTrue(self.pidfile.exists())
+
+    def test_a_recorded_pidfile_is_not_removed_while_the_lock_is_held(self):
+        holder = self._spawn_recorded_holder()
+
+        result = self._claim()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("already using the data directory", result.stderr)
+        self.assertTrue(self.pidfile.exists())
+        self.assertIsNone(holder.poll())
+
+    def test_only_a_lock_holder_records_its_postmaster(self):
+        self._write_pidfile(4242)
+
+        result = subprocess.run(
+            ["bash", "-c", self._function() + 'record_postmaster_owner "%s"\n' % self.data],
+            text=True, capture_output=True, timeout=30, stdin=subprocess.DEVNULL,
+        )
+
+        # A skipped record says so: the operator must know the override will be needed.
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Warning: not recording the postmaster", result.stderr)
+        self.assertIn("DOCUMENTDB_FORCE_REMOVE_STALE_POSTMASTER_PID", result.stderr)
+        self.assertFalse(self._owner_record().exists())
+        self.assertEqual(self._claim().returncode, 1)
+
+    def test_a_standalone_backend_is_not_recorded(self):
+        # initdb's backends inherit the lock fd but write a negative PID.
+        holder = self._spawn_holder(after_claim=(
+            "printf -- '-%%s\\n%s\\n1700000000\\n' $$ > \"%s\"\nrecord_postmaster_owner \"%s\"\n"
+            % (self.data, self.pidfile, self.data)
+        ))
+        holder.kill()
+        holder.wait(timeout=10)
+
+        self.assertFalse(self._owner_record().exists())
+        self.assertIn("Warning: not recording", (self.root / "holder.log").read_text())
+
+    def test_an_already_recorded_dead_postmaster_needs_no_warning(self):
+        # The startup poller recorded it; the post-start call finds it dead.
+        holder = self._spawn_recorded_holder()
+        holder.kill()
+        holder.wait(timeout=10)
+
+        result = subprocess.run(
+            ["bash", "-c", self._function() + 'exec 200<"%s"\nflock -n 200 || exit 9\nrecord_postmaster_owner "%s"\n' % (self.data, self.data)],
+            text=True, capture_output=True, timeout=30, stdin=subprocess.DEVNULL,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("Warning", result.stderr)
+        self.assertEqual(self._claim().returncode, 0)
+
+    def test_vouching_waits_for_a_complete_pidfile(self):
+        # The entrypoint polls vouched_postmaster while the postmaster starts;
+        # an empty pidfile (created, not yet written) must not vouch or record.
+        holder = self._spawn_holder(after_claim=(
+            ": > \"%s\"\nvouched_postmaster \"%s\" && echo vouched\n"
+            "printf '%%s\\n%s\\n1700000000\\n' $$ > \"%s\"\nvouched_postmaster \"%s\"\n"
+            % (self.pidfile, self.data, self.data, self.pidfile, self.data)
+        ))
+        holder.kill()
+        holder.wait(timeout=10)
+
+        log = (self.root / "holder.log").read_text()
+        self.assertNotIn("vouched", log)
+        self.assertIn("%d 1700000000\n" % holder.pid, log)
+        self.assertFalse(self._owner_record().exists())
+
+    def test_a_postmaster_that_does_not_hold_the_lock_is_not_recorded(self):
+        # The lock holder records, but the pidfile names a process without fd 200.
+        holder = self._spawn_holder(after_claim=(
+            "printf '%%s\\n%s\\n1700000000\\n' %d > \"%s\"\nrecord_postmaster_owner \"%s\"\n"
+            % (self.data, os.getpid(), self.pidfile, self.data)
+        ))
+        holder.kill()
+        holder.wait(timeout=10)
+
+        self.assertFalse(self._owner_record().exists())
+        self.assertEqual(self._claim().returncode, 1)
 
     def test_claiming_leaves_a_fresh_data_directory_empty(self):
         result = self._claim()
@@ -4230,6 +4376,26 @@ class ClaimDataDirectoryTests(unittest.TestCase):
         result = self._claim()
 
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertTrue(self.pidfile.exists())
+
+    def test_truncated_pid_file_is_removed_by_the_override_under_errexit(self):
+        # The sudo re-exec path runs with set -euo pipefail; an unparseable
+        # identity must fall through to the override, not abort the claim.
+        self.pidfile.write_text("", encoding="utf-8")
+
+        result = self._claim(prefix="set -euo pipefail\n" + self.OVERRIDE)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("claimed", result.stdout)
+        self.assertFalse(self.pidfile.exists())
+
+    def test_truncated_pid_file_is_refused_with_guidance_under_errexit(self):
+        self.pidfile.write_text("", encoding="utf-8")
+
+        result = self._claim(prefix="set -euo pipefail\n")
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("DOCUMENTDB_FORCE_REMOVE_STALE_POSTMASTER_PID", result.stderr)
         self.assertTrue(self.pidfile.exists())
 
     def test_missing_pid_file_is_a_noop(self):

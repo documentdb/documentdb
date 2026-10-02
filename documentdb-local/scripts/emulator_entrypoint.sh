@@ -158,10 +158,15 @@ Optional arguments:
                         DOCUMENTDB_FORCE_OWNERSHIP_REPAIR=true to force a
                         full recursive ownership repair on the next start.
                         A leftover postmaster.pid from an unclean stop
-                        (docker kill, OOM, host crash) refuses to start,
-                        because another container may still be serving the
-                        volume. Once no other container uses it, create or
-                        recreate the container with
+                        (docker kill, OOM, host crash) is removed on the next
+                        start when this image's directory lock shows its
+                        postmaster wrote it. That trusts the volume's flock,
+                        so a volume shared by several hosts is unsupported.
+                        Any other postmaster.pid refuses
+                        to start, because a container without the lock (an
+                        older image) may still be serving the volume. Once no
+                        other container uses it, create or recreate the
+                        container with
                         DOCUMENTDB_FORCE_REMOVE_STALE_POSTMASTER_PID=true
                         (docker start cannot add it) to remove the file; it
                         stays in force on every later start until removed.
@@ -928,8 +933,22 @@ if [ "$START_POSTGRESQL" = "true" ]; then
     # below creates the user before the gateway starts instead.
     start_oss_server_args+=(-u "" -d "$DATA_PATH" -p "$POSTGRESQL_PORT")
 
+    # start_oss_server.sh returns only after crash recovery and setup, so record
+    # the postmaster as soon as it holds the lock, or a kill before then would
+    # leave an unrecorded pidfile that needs the override.
+    (
+        i=0
+        while [ $i -lt 600 ] && ! vouched_postmaster "$DATA_PATH" >/dev/null; do
+            sleep 0.5
+            i=$((i + 1))
+        done
+        [ $i -lt 600 ] && record_postmaster_owner "$DATA_PATH"
+    ) &
+    record_watch_pid=$!
     "$SCRIPT_DIR/start_oss_server.sh" "${start_oss_server_args[@]}" | tee -a "$OSS_SERVER_LOG"
     start_oss_server_rc=${PIPESTATUS[0]}
+    kill "$record_watch_pid" 2>/dev/null
+    wait "$record_watch_pid" 2>/dev/null
     if [ "$start_oss_server_rc" -ne 0 ]; then
         # $? here is tee's, so the script's own status has to be read
         # explicitly. A setup step that fails *after* the postmaster
@@ -998,6 +1017,7 @@ if [ "$START_POSTGRESQL" = "true" ]; then
         i=$((i + 1))
     done
     echo "PostgreSQL is running."
+    record_postmaster_owner "$DATA_PATH"
 
     # postmaster.pid appears BEFORE crash recovery finishes, but every post-start
     # step below (lz4 probe, getParameter stub, config reload) needs a server

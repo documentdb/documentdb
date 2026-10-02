@@ -1788,6 +1788,25 @@ CLAIM_CALL = '    claim_data_directory "$DATA_PATH" 2>&6\n'
 LOCK_HELD_MSG = "already using the data directory"
 PIDFILE_REFUSED_MSG = "DOCUMENTDB_FORCE_REMOVE_STALE_POSTMASTER_PID"
 PIDFILE_REMOVED_MSG = "Warning: removing /data/postmaster.pid"
+PIDFILE_STALE_MSG = "left by an unclean stop of the previous container"
+POST_START_MSG = "Checking if PostgreSQL is running"
+OWNER_RECORD = "/data/.documentdb-local/postmaster-owner"
+IMAGE_START_SCRIPT = "/home/documentdb/gateway/scripts/start_oss_server.sh"
+# Appended to the start script: the first boot stays inside startup, with
+# PostgreSQL up, until the test kills it. /tmp is in the container's own
+# layer, so the restart runs the script normally.
+HOLD_MARKER = "/tmp/documentdb-test-held"
+START_HOLD = (
+    f"\nif [ ! -e {HOLD_MARKER} ]; then\n"
+    f"    touch {HOLD_MARKER}\n"
+    "    while :; do sleep 1; done\n"
+    "fi\n"
+)
+# The marker must exist before the kill, or the restart would hold too.
+HELD_AND_RECORDED = (
+    f'[ -e {HOLD_MARKER} ] && r="$(cat {OWNER_RECORD})" && '
+    '[ "$r" = "$(sed -n 1p /data/postmaster.pid) $(sed -n 3p /data/postmaster.pid)" ]'
+)
 
 
 @_SKIP_UNLESS_IMAGE
@@ -1900,9 +1919,8 @@ class DataDirectoryInterlockTests(_VolumeTestBase):
                 self._assert_pidfile_intact(holder)
                 self._insert(holder, f"still-serving-after-{tag}")
 
-    def test_a_holder_that_takes_no_lock_is_not_taken_over(self):
-        """The pidfile of a live container that predates the interlock has no
-        flock behind it. A free flock must not be read as proof of staleness."""
+    def _noclaim_run_args(self) -> list[str]:
+        """Run args for a holder that behaves like an image without the interlock."""
         shipped = _docker("run", "--rm", "--entrypoint", "cat", self.image,
                           IMAGE_ENTRYPOINT, timeout=120).stdout
         self.assertEqual(
@@ -1917,8 +1935,12 @@ class DataDirectoryInterlockTests(_VolumeTestBase):
             CLAIM_CALL, "    : claim removed to simulate an image without the interlock\n"
         ), encoding="utf-8")
         script.chmod(0o755)
+        return ["-v", f"{script}:{IMAGE_ENTRYPOINT}:ro"]
 
-        holder = self._start("noclaim", run_args=["-v", f"{script}:{IMAGE_ENTRYPOINT}:ro"])
+    def test_a_holder_that_takes_no_lock_is_not_taken_over(self):
+        """The pidfile of a live container that predates the interlock has no
+        flock behind it. A free flock must not be read as proof of staleness."""
+        holder = self._start("noclaim", run_args=self._noclaim_run_args())
         _wait_for_ready(holder)
         _docker("exec", holder, "chmod", "700", "/data")
         before = self._data_metadata(holder)
@@ -1963,11 +1985,79 @@ class DataDirectoryInterlockTests(_VolumeTestBase):
             "1",
         )
 
-    def test_an_unclean_stop_is_recovered_only_with_the_override(self):
+    def test_an_unclean_stop_recovers_on_the_next_start(self):
+        """docker start (and so restart: unless-stopped) must not need the
+        override after docker kill or a dead postmaster (#109)."""
         first = self._start("first")
         _wait_for_ready(first)
         self._insert(first, "before-kill")
         _docker("kill", first, timeout=60)
+
+        _docker("start", first, timeout=60)
+        # docker logs still holds the first boot's readiness marker.
+        deadline = time.monotonic() + DEFAULT_READY_TIMEOUT
+        while True:
+            logs = _docker("logs", first, check=False)
+            if (logs.stdout + logs.stderr).count(READY_LOG) >= 2:
+                break
+            running = _docker("inspect", "-f", "{{.State.Running}}", first, check=False)
+            self.assertEqual(running.stdout.strip(), "true",
+                             "restart exited:\n" + logs.stdout + logs.stderr)
+            self.assertLess(time.monotonic(), deadline, "restart never became ready")
+            time.sleep(2)
+        self.assertIn(PIDFILE_STALE_MSG, logs.stdout + logs.stderr)
+        self._insert(first, "after-restart")
+
+        # The postmaster dies on its own, as on an OOM kill.
+        _docker("exec", first, "bash", "-c",
+                "kill -9 \"$(head -1 /data/postmaster.pid)\"", timeout=60)
+        self._wait_for_exit(first)
+        replacement = self._start("replacement")
+        _wait_for_ready(replacement)
+        self.assertEqual(
+            self._count(INTERLOCK_DB_NAME, INTERLOCK_COLLECTION, replacement,
+                        "{_id: {$in: ['before-kill', 'after-restart']}}"),
+            "2",
+        )
+
+    def _held_start_run_args(self) -> list[str]:
+        """Run args whose first boot never returns from start_oss_server.sh."""
+        shipped = _docker("run", "--rm", "--entrypoint", "cat", self.image,
+                          IMAGE_START_SCRIPT, timeout=120).stdout
+        script_dir = pathlib.Path(tempfile.mkdtemp(prefix="docdb-image-held-"))
+        self.addCleanup(shutil.rmtree, script_dir, ignore_errors=True)
+        script = script_dir / "start_oss_server.sh"
+        script.write_text(shipped + START_HOLD, encoding="utf-8")
+        script.chmod(0o755)
+        return ["-v", f"{script}:{IMAGE_START_SCRIPT}:ro"]
+
+    def test_a_kill_during_startup_recovers_on_the_next_start(self):
+        """A kill before startup finishes, e.g. during crash recovery, must not
+        need the override. Only the record taken while PostgreSQL starts can
+        vouch for the pidfile; the readiness-time kill above cannot tell."""
+        first = self._start("first", run_args=self._held_start_run_args())
+        deadline = time.monotonic() + 120
+        while _docker("exec", first, "bash", "-c", HELD_AND_RECORDED,
+                      check=False).returncode != 0:
+            logs = _docker("logs", first, check=False)
+            self.assertLess(time.monotonic(), deadline,
+                            "the postmaster was not recorded while startup was held:\n"
+                            + logs.stdout + logs.stderr)
+            time.sleep(0.5)
+        logs = _docker("logs", first, check=False)
+        self.assertNotIn(POST_START_MSG, logs.stdout + logs.stderr, "startup was not held open")
+        _docker("kill", first, timeout=60)
+
+        _docker("start", first, timeout=60)
+        _wait_for_ready(first)
+        logs = _docker("logs", first, check=False)
+        self.assertIn(PIDFILE_STALE_MSG, logs.stdout + logs.stderr)
+
+    def test_an_unrecorded_pidfile_is_recovered_only_with_the_override(self):
+        holder = self._start("noclaim", run_args=self._noclaim_run_args())
+        _wait_for_ready(holder)
+        self._insert(holder, "before-kill")
+        _docker("kill", holder, timeout=60)
 
         refused = self._start("refused")
         self._assert_refused(refused, PIDFILE_REFUSED_MSG)

@@ -24,6 +24,8 @@ services:
       # data volume (alphabetical order):
       # - ./init-data:/init_doc_db.d:ro
     restart: unless-stopped
+    # Room for PostgreSQL's fast shutdown past Docker's 10s default, so a stop skips crash recovery.
+    stop_grace_period: 30s
     # No healthcheck block needed: the image ships a built-in probe
     # (/usr/local/bin/documentdb-healthcheck) that reports healthy only after
     # initialization finished, PostgreSQL accepts connections, and the
