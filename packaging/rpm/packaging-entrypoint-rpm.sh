@@ -97,6 +97,34 @@ if [[ "$first_entry" != *"- ${VER_DASH}"* ]]; then
 fi
 echo "Newest %changelog entry: ${first_entry}"
 
+# Resolve versions for the spec's bundled() provides from the same source the build used.
+# Subshell because setup_versions.sh runs `set -u`.
+bundled_versions=$(bash -c 'set -e; . /build/scripts/setup_versions.sh
+    printf "%s %s %s\n" "$(GetLibbsonVersion)" "$(GetPcre2Version)" "$(GetIntelDecimalMathLibVersion)"') \
+    || { echo "ERROR: could not read versions from scripts/setup_versions.sh" >&2; exit 1; }
+read -r LIBBSON_VER PCRE2_VER IDML_VER <<<"$bundled_versions"
+
+# Strip the Launchpad packaging suffix; only the upstream version is rpm-legal.
+IDML_VER=${IDML_VER#applied/}
+IDML_VER=${IDML_VER%%-*}
+
+for v in "$LIBBSON_VER" "$PCRE2_VER" "$IDML_VER"; do
+    [[ "$v" =~ ^[A-Za-z0-9._+~]+$ ]] \
+        || { echo "ERROR: '$v' is not usable as an rpm version in a bundled() provide" >&2; exit 1; }
+done
+
+# Only substitute inside bundled() Provides lines to avoid touching %changelog entries.
+sed -i -e "/^Provides:[[:space:]]*bundled(/{
+         s/LIBBSON_VERSION/${LIBBSON_VER}/
+         s/PCRE2_VERSION/${PCRE2_VER}/
+         s/INTEL_DECIMAL_MATH_LIB_VERSION/${IDML_VER}/
+       }" rpm/documentdb.spec
+if grep -n '^Provides:.*_VERSION' rpm/documentdb.spec >&2; then
+    echo "ERROR: the bundled() provide above kept its placeholder" >&2
+    exit 1
+fi
+echo "Bundled versions: libbson ${LIBBSON_VER}, pcre2 ${PCRE2_VER}, intel-decimal-math ${IDML_VER}"
+
 cp rpm/documentdb.spec ~/rpmbuild/SPECS/
 
 # Prepare the source directory
@@ -134,8 +162,42 @@ else
     esac
 fi
 
-for rpm_file in ~/rpmbuild/RPMS/${RPM_ARCH}/*.rpm; do
-    [ -e "$rpm_file" ] || continue
+# Guard: the RPM must not ship or depend on libbson (it is statically linked).
+# The only allowed libbson Provides is the bundled() declaration at the pinned version.
+# All three bundled() declarations must be present for CVE scanner coverage.
+shopt -s nullglob
+rpm_files=(~/rpmbuild/RPMS/${RPM_ARCH}/*.rpm)
+shopt -u nullglob
+if (( ${#rpm_files[@]} == 0 )); then
+    echo "ERROR: rpmbuild produced no RPM under ~/rpmbuild/RPMS/${RPM_ARCH}" >&2
+    exit 1
+fi
+bundled_provides=(
+    "bundled(libbson) = ${LIBBSON_VER}"
+    "bundled(pcre2) = ${PCRE2_VER}"
+    "bundled(intel-decimal-math) = ${IDML_VER}"
+)
+for rpm_file in "${rpm_files[@]}"; do
+    for query in --list --provides --requires --conflicts --obsoletes; do
+        out=$(rpm -qp "$query" "$rpm_file") \
+            || { echo "ERROR: rpm -qp $query failed on $(basename "$rpm_file")" >&2; exit 1; }
+        if [[ "$query" == --provides ]]; then
+            out=$(grep -vxF "${bundled_provides[0]}" <<<"$out" || true)
+        fi
+        if grep -i libbson >&2 <<<"$out"; then
+            echo "ERROR: $(basename "$rpm_file") ships or declares the libbson above (rpm -qp $query)." >&2
+            exit 1
+        fi
+    done
+
+    provides=$(rpm -qp --provides "$rpm_file") \
+        || { echo "ERROR: rpm -qp --provides failed on $(basename "$rpm_file")" >&2; exit 1; }
+    for decl in "${bundled_provides[@]}"; do
+        grep -qxF "$decl" <<<"$provides" \
+            || { echo "ERROR: $(basename "$rpm_file") does not Provide '${decl}'; see the Provides block in the spec." >&2; exit 1; }
+    done
+    echo "libbson guard: $(basename "$rpm_file") is clean, and declares ${bundled_provides[*]}"
+
     base_rpm=$(basename "$rpm_file")
     mv "$rpm_file" "/output/${OS}-${base_rpm}"
 done

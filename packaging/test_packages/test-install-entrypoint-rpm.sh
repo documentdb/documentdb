@@ -34,6 +34,36 @@ for f in /usr/pgsql-${POSTGRES_VERSION}/lib/pg_documentdb.so \
 done
 echo "✓ packaged extension artifacts present"
 
+# ── libbson co-installability ─────────────────────────────────────────────
+# Verify both install orders work against EPEL's libbson. Fails (not skips)
+# if libbson is pre-installed, since this image should ship none.
+echo "=== libbson co-installability ==="
+DOCDB_PKG="postgresql${POSTGRES_VERSION}-documentdb"
+
+if rpm -q libbson >/dev/null 2>&1; then
+    echo "✗ libbson is already installed; this image ships none, so direction 1 would prove nothing"
+    exit 1
+fi
+if ! dnf install -y libbson; then
+    echo "✗ 'dnf install libbson' failed with ${DOCDB_PKG} installed"
+    exit 1
+fi
+echo "✓ EPEL libbson installs onto a host that already has ${DOCDB_PKG}"
+
+# --noautoremove keeps deps while the extension is briefly gone.
+# Assert state explicitly since dnf exits 0 on no-ops.
+dnf remove -y --noautoremove "${DOCDB_PKG}"
+if rpm -q "${DOCDB_PKG}" >/dev/null 2>&1; then
+    echo "✗ ${DOCDB_PKG} survived the remove; direction 2 would prove nothing"
+    exit 1
+fi
+if ! dnf install -y /tmp/documentdb.rpm || ! rpm -q "${DOCDB_PKG}" >/dev/null 2>&1; then
+    echo "✗ installing ${DOCDB_PKG} over an existing libbson failed"
+    exit 1
+fi
+echo "✓ ${DOCDB_PKG} installs onto a host that already has EPEL libbson"
+echo "=================================="
+
 # The RPM no longer ships a source tree (see the note in the spec's %install).
 # `make check` below therefore runs against the REPO COPY this test image was
 # built from — /usr/src/documentdb comes from the test Dockerfile's
@@ -49,6 +79,7 @@ fi
 echo "NOTE: running the regression suite against the repo copy at" \
      "/usr/src/documentdb (test-image COPY). The package ships no source tree."
 cd /usr/src/documentdb
+python3 packaging/test_packages/test_packaging_guards.py
 
 # Keep the internal directory out of the testing, exactly as the DEB entrypoint
 # (test-install-entrypoint.sh) does: the internal distributed suite preloads
@@ -75,15 +106,7 @@ else
     exit 1
 fi
 
-# Test libbson pkg-config
-if pkg-config --exists libbson-static-1.0; then
-    echo "✓ libbson-static-1.0 pkg-config available"
-else
-    echo "✗ libbson-static-1.0 pkg-config not found"
-    echo "Available pkg-config packages with 'bson':"
-    pkg-config --list-all | grep -i bson || echo "None found"
-    exit 1
-fi
+# No pkg-config check: nothing below recompiles C.
 
 # Test pg_regress
 PGXS=$($PG_CONFIG --pgxs)

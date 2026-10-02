@@ -8,4 +8,9 @@ Package: postgresql-POSTGRES_VERSION-documentdb
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}, postgresql-POSTGRES_VERSION, postgresql-POSTGRES_VERSION-cron, postgresql-POSTGRES_VERSION-pgvector, postgresql-POSTGRES_VERSION-postgis-3, postgresql-POSTGRES_VERSION-rum
 Suggests: documentdb-postgresql-tools
+# CVE tracking for statically linked libs. Versions substituted by packaging-entrypoint.sh.
+# Static-Built-Using names only Debian/Ubuntu sources we build from; upstream tarballs go in Bundled, like RPM bundled().
+# XB- prefix because older dpkg (deb11/ubuntu22.04) drops unknown fields; XB- works everywhere.
+XB-Static-Built-Using: intelrdfpmath (= INTEL_DECIMAL_MATH_LIB_VERSION)
+XB-Bundled: libbson (= LIBBSON_VERSION), pcre2 (= PCRE2_VERSION)
 Description: DocumentDB is the open-source engine powering vCore-based Azure Cosmos DB for MongoDB. It offers a native implementation of document-oriented NoSQL database, enabling seamless CRUD operations on BSON data types within a PostgreSQL framework.

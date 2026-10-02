@@ -7,27 +7,13 @@
 # treated every text file as a script and choked on Rust sources whose first
 # line is an attribute like `#![expect(...)]`. The source tree is no longer
 # packaged, so the buildroot now holds only the extension .so files, the
-# .control/.sql files and the bundled libbson — none of which carry shebangs.
+# .control/.sql files — none of which carry shebangs.
 # Retained as a defensive no-op: it costs nothing and keeps the build portable
 # across native-Linux and WSL-mounted hosts where mode bits are unreliable.
 %undefine __brp_mangle_shebangs
 
-# Filters two auto-generated runtime Requires. The `make` half is now moot: it
-# came from the source tree's Makefile shebangs, which are no longer packaged.
-# The `pkg-config` half is LOAD-BEARING: this package ships
-# %%{_libdir}/pkgconfig/libbson-static-1.0.pc, and rpm's pkgconfig dependency
-# generator emits `Requires: /usr/bin/pkg-config` for any packaged .pc — VERIFIED
-# by rebuilding without this filter (the requirement appears; with it, it does
-# not). Nothing in the package invokes pkg-config at RUN time — the .pc exists
-# for build-time consumers of the bundled libbson — so pulling pkgconf onto
-# every install is unwanted dependency creep. Do NOT delete this filter while
-# the .pc ships.
-#
-# Caveat before touching it: __requires_exclude is SINGLE-VALUED, so a second
-# filter written the same way REPLACES this one rather than adding to it; and it
-# drops matches with no build-time diagnostic. If a future component genuinely
-# needs pkg-config at run time, widen the alternation here rather than adding a
-# second %%global, and re-verify with `rpm -qpR` after a build.
+# Defensive no-op: nothing packaged needs make or pkg-config at run time.
+# __requires_exclude is single-valued; widen the alternation, don't add a second %%global.
 %global __requires_exclude ^/usr/bin/(make|pkg-config)$
 
 Name:           postgresql%{pg_version}-documentdb
@@ -72,10 +58,14 @@ Requires:       rum_%{pg_version}
 # when the operator wants documentdb-tune for postgresql.conf hardening but
 # can omit it for read-only / driver-only deployments.
 Suggests:       documentdb-postgresql-tools
-# Libbson is now bundled, so no runtime Requires for it.
-# pcre2 is statically linked.
-# The Intel Decimal Math library is statically linked into the extension .so;
-# libbid.a itself is not packaged (see the note in %%install).
+
+# Pinned static libraries keep versions consistent across supported distributions.
+# Declare embedded copies for CVE tracking using Fedora's bundled-library convention:
+# https://docs.fedoraproject.org/en-US/packaging-guidelines/#bundling
+# Versions come from scripts/setup_versions.sh via packaging-entrypoint-rpm.sh.
+Provides:       bundled(libbson) = LIBBSON_VERSION
+Provides:       bundled(pcre2) = PCRE2_VERSION
+Provides:       bundled(intel-decimal-math) = INTEL_DECIMAL_MATH_LIB_VERSION
 
 %description
 DocumentDB is the open-source engine powering vCore-based Azure Cosmos DB for MongoDB. 
@@ -172,18 +162,8 @@ rm -rf %{buildroot}/usr/pgsql-%{pg_version}/lib/bitcode
 # empty directories, and a scriptlet that deletes paths it does not own is a worse
 # precedent than the cosmetic residue.
 
-# Bundle libbson shared library and pkg-config file
-# These are installed by install_setup_libbson.sh into /usr (default INSTALLDESTDIR)
-mkdir -p %{buildroot}%{_libdir}
-mkdir -p %{buildroot}%{_libdir}/pkgconfig
-
-# fully versioned .so file
-cp /usr/%{_lib}/libbson-1.0.so.0.0.0 %{buildroot}%{_libdir}/
-# Copy the main symlinks
-cp -P /usr/%{_lib}/libbson-1.0.so %{buildroot}%{_libdir}/
-cp -P /usr/%{_lib}/libbson-1.0.so.0 %{buildroot}%{_libdir}/
-# static library
-cp /usr/%{_lib}/pkgconfig/libbson-static-1.0.pc %{buildroot}%{_libdir}/pkgconfig/
+# libbson is statically linked; no standalone .so or .pc files are packaged.
+# Shipping them would collide with EPEL's libbson on the default RHEL host shape.
 
 # The source tree is deliberately NOT packaged.
 #
@@ -218,31 +198,7 @@ cp /usr/%{_lib}/pkgconfig/libbson-static-1.0.pc %{buildroot}%{_libdir}/pkgconfig
 /usr/pgsql-%{pg_version}/share/extension/*.control
 /usr/pgsql-%{pg_version}/share/extension/*.sql
 
-# Bundled libbson files.
-#
-# KNOWN LIMITATION — these four paths are MAJOR-INDEPENDENT (%%{_libdir} is
-# /usr/lib64), yet every per-major postgresql<N>-documentdb owns them. RPM
-# tolerates a shared path only when the files are byte-identical, and this
-# pipeline does not guarantee that: each major builds in its own container
-# layer (POSTGRES_VERSION is baked into the build image). Co-installing two
-# majors therefore works only while their libbson artifacts happen to match; a
-# staggered release that bumps one major's version first can produce
-#   "file /usr/lib64/libbson-1.0.so.0.0.0 ... conflicts with file from package
-#    postgresql<M>-documentdb"
-#
-# Splitting these into a shared subpackage was tried and reverted: it makes the
-# extension RPM un-installable on its own (every image and test that does
-# `dnf install <one rpm>` fails on the unresolvable dependency until the new
-# package is threaded through build_packages.sh, all three test Dockerfiles and
-# the gateway build script), and it does not actually fix the root cause —
-# each per-major build would still emit its own copy at the same NEVRA, so
-# which bytes ship becomes decided by build order instead of by a file
-# conflict. The real fix is to build libbson ONCE as its own target and publish
-# it once; that is a build-pipeline change, tracked separately.
-%{_libdir}/libbson-1.0.so
-%{_libdir}/libbson-1.0.so.0
-%{_libdir}/libbson-1.0.so.0.0.0
-%{_libdir}/pkgconfig/libbson-static-1.0.pc
+# All paths are under /usr/pgsql-<major>/ to avoid cross-major and distro collisions.
 
 %changelog
 # NOTE: this block is REPLACED at build time by

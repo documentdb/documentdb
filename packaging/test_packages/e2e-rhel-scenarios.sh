@@ -7,6 +7,8 @@
 # blocks/sample data/day-2/erase; this covers what it does not, focusing on
 # the paths where RHEL genuinely differs from Debian:
 #
+#   RH-LIBBSON    the extension RPM co-installs with EPEL's libbson in
+#                 both transaction directions (no standalone libbson files)
 #   RH-TUNE       documentdb-tune writes its managed block INTO the data
 #                 dir's postgresql.conf (RHEL layout) rather than a
 #                 separate fragment + include line (Debian layout), and
@@ -47,6 +49,16 @@ log()  { echo -e "\033[1;36m[e2e-rhel]\033[0m $*"; }
 pass() { PASS_COUNT=$((PASS_COUNT + 1)); echo -e "\033[1;32mPASS\033[0m $*"; }
 fail() { FAIL_COUNT=$((FAIL_COUNT + 1)); FAILED_IDS+=("$1"); echo -e "\033[1;31mFAIL\033[0m $*"; }
 skip() { e2e_skip "$@"; }
+
+# Print summary on every exit path, including mid-run aborts.
+print_summary() {
+    echo ""
+    echo "══════════════════════════════════════════"
+    echo " e2e-rhel: ${PASS_COUNT} passed, ${FAIL_COUNT} failed, ${SKIP_COUNT} skipped"
+    (( SKIP_COUNT > 0 )) && echo " skipped: ${SKIPPED_IDS[*]}"
+    (( FAIL_COUNT > 0 )) && echo " failed: ${FAILED_IDS[*]}"
+    return 0
+}
 
 PW_FILE=/root/.e2e-rhel-pw
 printf '%s' 'RhelE2e-Pw1' > "${PW_FILE}"
@@ -99,6 +111,59 @@ snapshot_state() {
 reset_install_state() {
     documentdb-setup --restore --yes >/dev/null 2>&1 || true
     documentdb-local-reset --pg-version "${PG_MAJOR}" --confirm-destroy >/dev/null 2>&1 || true
+}
+
+# ── RH-LIBBSON: the extension RPM must co-install with EPEL's libbson ──
+# Tests both install orders. Skips direction 1 if libbson is already present
+# (full-product image); test-install-entrypoint-rpm.sh covers the strict case.
+scenario_libbson_coinstall() {
+    local docdb_pkg="postgresql${PG_MAJOR}-documentdb"
+    local logfile
+    logfile="$(mktemp /tmp/e2e-rhel-libbson.XXXXXX.log)"
+    trap 'rm -f "${logfile}"' RETURN
+
+    if ! rpm -q "${docdb_pkg}" >/dev/null 2>&1; then
+        fail "RH-LIBBSON: ${docdb_pkg} is not installed; nothing to co-install with"
+        # Every later scenario needs the extension; abort early.
+        echo "ABORT: ${docdb_pkg} is not installed; skipping the rest of the suite" >&2
+        rm -f "${logfile}"
+        print_summary
+        exit 1
+    fi
+
+    # Direction 1: DocumentDB is already installed in this image.
+    if rpm -q libbson >/dev/null 2>&1; then
+        skip "RH-LIBBSON: libbson already installed; direction 1 not exercised"
+    elif dnf install -y libbson > "${logfile}" 2>&1; then
+        pass "RH-LIBBSON: EPEL libbson installs onto a host that already has ${docdb_pkg}"
+    else
+        tail -20 "${logfile}" >&2
+        fail "RH-LIBBSON: EPEL libbson cannot be installed alongside ${docdb_pkg}"
+        return
+    fi
+
+    # Direction 2: install extension over existing libbson.
+    # --nodeps because the meta-package Requires it; same NEVRA comes back.
+    if [[ ! -r /tmp/documentdb.rpm ]]; then
+        skip "RH-LIBBSON: /tmp/documentdb.rpm not staged; reverse direction not exercised"
+        return
+    fi
+    rpm -e --nodeps "${docdb_pkg}" >> "${logfile}" 2>&1
+    if rpm -q "${docdb_pkg}" >/dev/null 2>&1; then
+        fail "RH-LIBBSON: could not remove ${docdb_pkg}; reverse direction not exercised"
+        return
+    fi
+    if dnf install -y /tmp/documentdb.rpm >> "${logfile}" 2>&1 && rpm -q "${docdb_pkg}" >/dev/null 2>&1; then
+        pass "RH-LIBBSON: ${docdb_pkg} installs onto a host that already has EPEL libbson"
+    else
+        tail -20 "${logfile}" >&2
+        fail "RH-LIBBSON: ${docdb_pkg} cannot be installed over EPEL libbson"
+        # Abort: later scenarios would all fail without the extension.
+        echo "ABORT: ${docdb_pkg} could not be restored; skipping the rest of the suite" >&2
+        rm -f "${logfile}"
+        print_summary
+        exit 1
+    fi
 }
 
 # ── RH-READONLY / RH-DRYRUN on a clean host ────────────────────────────
@@ -522,6 +587,7 @@ scenario_rpm_hygiene() {
         || fail "RH-HYGIENE: binaries survived the erase: ${residue[*]}"
 }
 
+scenario_libbson_coinstall
 scenario_readonly_dryrun
 scenario_conflicts
 scenario_tune_rhel_layout
@@ -530,14 +596,8 @@ scenario_scoped_restore
 scenario_brownfield_rhel
 scenario_rpm_hygiene
 
-echo ""
-echo "══════════════════════════════════════════"
-echo " e2e-rhel: ${PASS_COUNT} passed, ${FAIL_COUNT} failed, ${SKIP_COUNT} skipped"
-if (( SKIP_COUNT > 0 )); then
-    echo " skipped: ${SKIPPED_IDS[*]}"
-fi
+print_summary
 if (( FAIL_COUNT > 0 )); then
-    echo " failed: ${FAILED_IDS[*]}"
     exit 1
 fi
 echo " ALL RHEL SCENARIOS PASSED"
