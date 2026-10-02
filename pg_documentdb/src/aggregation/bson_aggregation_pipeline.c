@@ -442,6 +442,8 @@ static Query * ApplyFindSpecCore(const FindSpec *spec, Query *query,
 								 AggregationPipelineBuildContext *context);
 static void ResolveDefaultCollation(MongoCollection *collection,
 									AggregationPipelineBuildContext *context);
+static void ResolveAndCaptureCollation(MongoCollection *collection, QueryData *queryData,
+									   AggregationPipelineBuildContext *context);
 static void SetStreamingSkipLimitForFind(const FindSpec *spec,
 										 MongoCollection *collection,
 										 QueryData *queryData,
@@ -1737,7 +1739,7 @@ ParseAggregationQueryAndLookupCollection(text *database, pgbson *aggregationSpec
 	context->databaseNameDatum = database;
 	context->optimizePipelineStages = true;
 	context->joinStatus = JoinStageStatus_Unknown;
-	context->resolveDefaultCollation = true;
+	context->shouldResolveDefaultCollation = true;
 	queryData->cursorKind = QueryCursorType_Unspecified;
 	queryData->streamingLimit = 0;
 	queryData->streamingSkip = 0;
@@ -1836,7 +1838,7 @@ ParseAggregationQueryAndLookupCollection(text *database, pgbson *aggregationSpec
 				if (EnsureTopLevelFieldIsDocumentNullOrEmptyOk(
 						"collation", &aggregationIterator))
 				{
-					context->resolveDefaultCollation = false;
+					context->shouldResolveDefaultCollation = false;
 					ParseAndGetCollationString(value, context->collationString);
 				}
 			}
@@ -1897,7 +1899,7 @@ ParseAggregationQueryAndLookupCollection(text *database, pgbson *aggregationSpec
 	if (context->requiresTailableCursor)
 	{
 		queryData->cursorKind = QueryCursorType_Tailable;
-		context->resolveDefaultCollation = false;
+		context->shouldResolveDefaultCollation = false;
 	}
 
 	/*
@@ -1914,11 +1916,7 @@ ParseAggregationQueryAndLookupCollection(text *database, pgbson *aggregationSpec
 			PointerGetDatum(context->databaseNameDatum), collectionNameDatum,
 			AccessShareLock);
 
-		if (context->resolveDefaultCollation)
-		{
-			ResolveDefaultCollation(collection, context);
-			context->resolveDefaultCollation = false;
-		}
+		ResolveAndCaptureCollation(collection, queryData, context);
 
 		/*
 		 * Set the namespace name now so the remote-dispatch path (which skips the
@@ -1930,7 +1928,7 @@ ParseAggregationQueryAndLookupCollection(text *database, pgbson *aggregationSpec
 	}
 	else
 	{
-		context->resolveDefaultCollation = false;
+		context->shouldResolveDefaultCollation = false;
 	}
 
 	/*
@@ -2203,7 +2201,7 @@ ParseFindQuery(pgbson *findSpec, QueryData *queryData,
 												BSON_TYPE_DOCUMENT);
 						if (!IsBsonValueEmptyDocument(value))
 						{
-							context->resolveDefaultCollation = false;
+							context->shouldResolveDefaultCollation = false;
 							ParseAndGetCollationString(value,
 													   context->collationString);
 						}
@@ -2781,7 +2779,7 @@ ParseFindQueryAndLookupCollection(text *database, pgbson *findSpec,
 	/* For finds, we can generally query the shard directly if available. */
 	plan->context.allowShardBaseTable = true;
 	plan->context.databaseNameDatum = database;
-	plan->context.resolveDefaultCollation = true;
+	plan->context.shouldResolveDefaultCollation = true;
 
 	/* Find queries have no joins */
 	plan->context.joinStatus = JoinStageStatus_NoJoinsOrUnions;
@@ -2793,6 +2791,8 @@ ParseFindQueryAndLookupCollection(text *database, pgbson *findSpec,
 		PointerGetDatum(cstring_to_text_with_len(plan->spec.collectionName.string,
 												 plan->spec.collectionName.length)),
 		AccessShareLock);
+
+	ResolveAndCaptureCollation(plan->collection, queryData, &plan->context);
 
 	/*
 	 * Set the namespace name now so the remote-dispatch path (which skips
@@ -2924,7 +2924,7 @@ GenerateCountQuery(text *databaseDatum, pgbson *countSpec, bool setStatementTime
 	AggregationPipelineBuildContext context = { 0 };
 	context.databaseNameDatum = databaseDatum;
 	context.joinStatus = JoinStageStatus_Unknown;
-	context.resolveDefaultCollation = true;
+	context.shouldResolveDefaultCollation = true;
 
 	bson_iter_t countIterator;
 	PgbsonInitIterator(countSpec, &countIterator);
@@ -2994,7 +2994,7 @@ GenerateCountQuery(text *databaseDatum, pgbson *countSpec, bool setStatementTime
 				if (EnsureTopLevelFieldIsDocumentNullOrEmptyOk(
 						"collation", &countIterator))
 				{
-					context.resolveDefaultCollation = false;
+					context.shouldResolveDefaultCollation = false;
 					ParseAndGetCollationString(value, context.collationString);
 				}
 			}
@@ -3180,7 +3180,7 @@ GenerateDistinctQuery(text *databaseDatum, pgbson *distinctSpec, bool setStateme
 	context.joinStatus = JoinStageStatus_Unknown;
 
 	/* Distinct supports collation starting with version 1.1. */
-	context.resolveDefaultCollation = IsClusterVersionAtleast(DocDB_V1, 1, 0);
+	context.shouldResolveDefaultCollation = IsClusterVersionAtleast(DocDB_V1, 1, 0);
 
 	bson_iter_t distinctIter;
 	PgbsonInitIterator(distinctSpec, &distinctIter);
@@ -3237,7 +3237,7 @@ GenerateDistinctQuery(text *databaseDatum, pgbson *distinctSpec, bool setStateme
 				if (EnsureTopLevelFieldIsDocumentNullOrEmptyOk(
 						"collation", &distinctIter))
 				{
-					context.resolveDefaultCollation = false;
+					context.shouldResolveDefaultCollation = false;
 					ParseAndGetCollationString(value, context.collationString);
 				}
 			}
@@ -9456,6 +9456,47 @@ FillRteForMongoCollection(Query *query, RangeTblEntry *rte,
 
 
 static void
+ResolveAndCaptureCollation(MongoCollection *collection, QueryData *queryData,
+						   AggregationPipelineBuildContext *context)
+{
+	if (!EnableCollation)
+	{
+		context->shouldResolveDefaultCollation = false;
+		return;
+	}
+
+	/*
+	 * shouldResolveDefaultCollation is transient parse state: it is true when
+	 * the command did not provide an explicit collation. hasCapturedCollation
+	 * is durable cursor state and remains true after the effective value has
+	 * been captured, including when the value is empty for binary semantics.
+	 */
+	if (context->shouldResolveDefaultCollation)
+	{
+		if (queryData->hasCapturedCollation)
+		{
+			/* Reuse the retained value instead of reading collection metadata again. */
+			strlcpy((char *) context->collationString,
+					queryData->collationString,
+					sizeof(context->collationString));
+		}
+		else
+		{
+			/* A new query resolves the inherited collection default once. */
+			ResolveDefaultCollation(collection, context);
+		}
+
+		context->shouldResolveDefaultCollation = false;
+	}
+
+	/* An empty value is resolved binary semantics, not missing state. */
+	queryData->hasCapturedCollation = true;
+	strlcpy(queryData->collationString, context->collationString,
+			sizeof(queryData->collationString));
+}
+
+
+static void
 ResolveDefaultCollation(MongoCollection *collection,
 						AggregationPipelineBuildContext *context)
 {
@@ -9525,10 +9566,10 @@ GenerateBaseTableQuery(text *databaseDatum, const StringView *collectionNameView
 		}
 	}
 
-	if (context->resolveDefaultCollation)
+	if (context->shouldResolveDefaultCollation)
 	{
 		ResolveDefaultCollation(collection, context);
-		context->resolveDefaultCollation = false;
+		context->shouldResolveDefaultCollation = false;
 	}
 
 	List *pipelineStages = NIL;

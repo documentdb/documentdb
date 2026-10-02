@@ -1,0 +1,539 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog,
+    documentdb_api_internal, public;
+SET citus.next_shard_id TO 1235000;
+SET documentdb.next_collection_id TO 12350;
+SET documentdb.next_collection_index_id TO 12350;
+SET documentdb.enableDynamicCursors TO on;
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET documentdb.defaultUseCompositeOpClass TO on;
+SET documentdb.enableIndexOnlyScanForFindProject TO on;
+SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
+DO $$
+DECLARE
+    dynamic_cursor_nodes int;
+    aggregate_cursor_nodes int;
+    collation_nodes int;
+    ordered_collation_nodes int;
+    composite_opclass_nodes int;
+    index_only_nodes int;
+    reloaded_nodes int;
+BEGIN
+    SELECT count(*) INTO dynamic_cursor_nodes
+    FROM run_command_on_all_nodes(
+        $cmd$ALTER SYSTEM SET documentdb.enableDynamicCursors = 'on'$cmd$)
+    WHERE success;
+
+    SELECT count(*) INTO aggregate_cursor_nodes
+    FROM run_command_on_all_nodes(
+        $cmd$ALTER SYSTEM SET documentdb.enableCursorsOnAggregationQueryRewrite = 'on'$cmd$)
+    WHERE success;
+
+    SELECT count(*) INTO collation_nodes
+    FROM run_command_on_all_nodes(
+        $cmd$ALTER SYSTEM SET documentdb_core.enableCollation = 'on'$cmd$)
+    WHERE success;
+
+    SELECT count(*) INTO ordered_collation_nodes
+    FROM run_command_on_all_nodes(
+        $cmd$ALTER SYSTEM SET documentdb.enableCollationWithNonUniqueOrderedIndexes = 'on'$cmd$)
+    WHERE success;
+
+    SELECT count(*) INTO composite_opclass_nodes
+    FROM run_command_on_all_nodes(
+        $cmd$ALTER SYSTEM SET documentdb.defaultUseCompositeOpClass = 'on'$cmd$)
+    WHERE success;
+
+    SELECT count(*) INTO index_only_nodes
+    FROM run_command_on_all_nodes(
+        $cmd$ALTER SYSTEM SET documentdb.enableIndexOnlyScanForFindProject = 'on'$cmd$)
+    WHERE success;
+
+    SELECT count(*) INTO reloaded_nodes
+    FROM run_command_on_all_nodes($cmd$SELECT pg_reload_conf()$cmd$)
+    WHERE success;
+
+    IF dynamic_cursor_nodes <> 2 OR aggregate_cursor_nodes <> 2 OR
+       collation_nodes <> 2 OR
+       ordered_collation_nodes <> 2 OR composite_opclass_nodes <> 2 OR
+       index_only_nodes <> 2 OR
+       reloaded_nodes <> 2 THEN
+        RAISE EXCEPTION 'failed to configure all nodes';
+    END IF;
+END
+$$;
+SELECT create_collection('collation_dynamic_cursor_db', 'remote_default');
+NOTICE:  creating collection
+ create_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- Seed the immutable default directly in the catalog because collection
+-- creation does not yet accept it.
+UPDATE documentdb_api_catalog.collections
+SET options = '{ "collation": { "locale": "en", "strength": 1 } }'::bson
+WHERE database_name = 'collation_dynamic_cursor_db'
+  AND collection_name = 'remote_default';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+ invalidate_collection_cache 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT insert_one(
+    'collation_dynamic_cursor_db', 'remote_default',
+    '{ "_id": 1, "category": "cafe" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT insert_one(
+    'collation_dynamic_cursor_db', 'remote_default',
+    '{ "_id": 2, "category": "CAFÉ" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT insert_one(
+    'collation_dynamic_cursor_db', 'remote_default',
+    '{ "_id": 3, "category": "Cafe" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT insert_one(
+    'collation_dynamic_cursor_db', 'remote_default',
+    '{ "_id": 4, "category": "tea" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'collation_dynamic_cursor_db',
+    '{
+        "createIndexes": "remote_default",
+        "indexes": [
+          {
+            "key": { "category": 1, "_id": 1 },
+            "name": "category_id_en_s1",
+            "storageEngine": { "enableOrderedIndex": true },
+            "collation": { "locale": "en", "strength": 1 }
+          }
+        ]
+    }',
+    TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+ANALYZE;
+CREATE FUNCTION drain_remote_collation_cursor(
+    p_cursor_id bigint,
+    p_continuation bson)
+RETURNS TABLE(
+    page_number int,
+    batch bson,
+    worker_has_collation bool,
+    has_continuation bool)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_page bson;
+    v_continuation bson := p_continuation;
+    v_get_more_spec bson;
+    v_page_number int := 1;
+BEGIN
+    v_get_more_spec := FORMAT(
+        '{
+            "getMore": { "$numberLong": "%s" },
+            "collection": "remote_default",
+            "batchSize": 1
+        }',
+        p_cursor_id)::bson;
+
+    WHILE v_continuation IS NOT NULL AND v_page_number < 20 LOOP
+        worker_has_collation :=
+            (v_continuation::text::jsonb -> 'wc') ? 'cl';
+
+        SELECT cursorpage, continuation
+        INTO v_page, v_continuation
+        FROM cursor_get_more(
+            'collation_dynamic_cursor_db',
+            v_get_more_spec,
+            v_continuation);
+
+        v_page_number := v_page_number + 1;
+        page_number := v_page_number;
+        batch := bson_dollar_project(
+            v_page,
+            '{ "_id": 0,
+               "ids": "$cursor.nextBatch._id",
+               "cursorId": "$cursor.id" }');
+        has_continuation := v_continuation IS NOT NULL;
+        RETURN NEXT;
+    END LOOP;
+
+    IF v_continuation IS NOT NULL THEN
+        RAISE EXCEPTION 'remote cursor did not drain within 20 pages';
+    END IF;
+END;
+$$;
+CALL documentdb_distributed_test_helpers.place_collection_on_node(
+    'collation_dynamic_cursor_db', 'remote_default', 1);
+-- The streaming cursor retains the inherited default in every worker
+-- continuation.
+CREATE TEMP TABLE remote_streaming_first_page AS
+SELECT cursorpage, continuation
+FROM find_cursor_first_page(
+    'collation_dynamic_cursor_db',
+    '{
+        "find": "remote_default",
+        "filter": { "category": "CAFE" },
+        "sort": { "_id": 1 },
+        "projection": { "_id": 1 },
+        "hint": "category_id_en_s1",
+        "batchSize": 1
+    }',
+    123501);
+SELECT bson_dollar_project(
+           cursorpage,
+           '{ "_id": 0,
+              "ids": "$cursor.firstBatch._id",
+              "cursorId": "$cursor.id" }') AS first_page,
+       NOT (continuation::text::jsonb ? 'cl')
+           AS coordinator_omits_collation,
+       (continuation::text::jsonb -> 'wc') ? 'cl'
+           AS worker_has_collation,
+       (bson_dollar_project(
+            continuation,
+            '{ "wc.dc.type": 1 }') ->> 'wc.dc.type') IS NOT NULL AS remote_streaming
+FROM remote_streaming_first_page;
+                                    first_page                                     | coordinator_omits_collation | worker_has_collation | remote_streaming 
+---------------------------------------------------------------------
+ { "ids" : [ { "$numberInt" : "1" } ], "cursorId" : { "$numberLong" : "123501" } } | t                           | t                    | t
+(1 row)
+
+-- Aggregate cursors use the same worker-owned retained collation state.
+CREATE TEMP TABLE remote_aggregate_first_page AS
+SELECT cursorpage, continuation
+FROM aggregate_cursor_first_page(
+    'collation_dynamic_cursor_db',
+    '{
+        "aggregate": "remote_default",
+        "pipeline": [
+            { "$match": { "category": "cafe" } }
+        ],
+        "hint": "category_id_en_s1",
+        "cursor": { "batchSize": 1 }
+    }',
+    123504);
+SELECT bson_dollar_project(
+           cursorpage,
+           '{ "_id": 0,
+              "ids": "$cursor.firstBatch._id",
+              "cursorId": "$cursor.id" }') AS first_page,
+       NOT (continuation::text::jsonb ? 'cl')
+           AS coordinator_omits_collation,
+       (continuation::text::jsonb -> 'wc') ? 'cl'
+           AS worker_has_collation,
+       (bson_dollar_project(
+            continuation,
+            '{ "wc.dc.type": 1 }') ->> 'wc.dc.type') IS NOT NULL AS remote_streaming
+FROM remote_aggregate_first_page;
+                                    first_page                                     | coordinator_omits_collation | worker_has_collation | remote_streaming 
+---------------------------------------------------------------------
+ { "ids" : [ { "$numberInt" : "1" } ], "cursorId" : { "$numberLong" : "123504" } } | t                           | t                    | t
+(1 row)
+
+-- A legacy worker continuation without retained state falls back to the
+-- unchanged immutable collection default.
+CREATE TEMP TABLE remote_legacy_first_page AS
+SELECT cursorpage, continuation
+FROM find_cursor_first_page(
+    'collation_dynamic_cursor_db',
+    '{
+        "find": "remote_default",
+        "filter": { "category": "CAFE" },
+        "sort": { "_id": 1 },
+        "projection": { "_id": 1 },
+        "hint": "category_id_en_s1",
+        "batchSize": 1
+    }',
+    123503);
+-- Evict metadata without changing the immutable default. The legacy
+-- compatibility case intentionally exercises fallback with valid metadata.
+SELECT documentdb_api_internal.invalidate_collection_cache();
+ invalidate_collection_cache 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT count(*) = 2 AS invalidated_all_nodes
+FROM run_command_on_all_nodes(
+    $cmd$SELECT documentdb_api_internal.invalidate_collection_cache()$cmd$)
+WHERE success;
+ invalidated_all_nodes 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT bson_dollar_project(continuation, '{ "wc.cl": 0 }')
+       AS missing_worker_collation
+FROM remote_legacy_first_page \gset
+CREATE TEMP TABLE remote_missing_worker_resume AS
+SELECT cursorpage, continuation
+FROM cursor_get_more(
+    'collation_dynamic_cursor_db',
+    '{
+        "getMore": { "$numberLong": "123503" },
+        "collection": "remote_default",
+        "batchSize": 1
+    }',
+    :'missing_worker_collation'::bson);
+SELECT bson_dollar_project(
+           cursorpage,
+           '{ "_id": 0,
+              "ids": "$cursor.nextBatch._id",
+              "cursorId": "$cursor.id" }') AS page,
+       NOT (continuation::text::jsonb ? 'cl')
+           AS coordinator_omits_collation,
+       (continuation::text::jsonb -> 'wc') ? 'cl' AS worker_restored
+FROM remote_missing_worker_resume;
+                                       page                                        | coordinator_omits_collation | worker_restored 
+---------------------------------------------------------------------
+ { "ids" : [ { "$numberInt" : "2" } ], "cursorId" : { "$numberLong" : "123503" } } | t                           | t
+(1 row)
+
+SELECT *
+FROM drain_remote_collation_cursor(
+    123503,
+    (SELECT continuation FROM remote_missing_worker_resume));
+ page_number |                                    batch                                     | worker_has_collation | has_continuation 
+---------------------------------------------------------------------
+           2 | { "ids" : [ { "$numberInt" : "3" } ], "cursorId" : { "$numberLong" : "0" } } | t                    | f
+(1 row)
+
+DROP TABLE remote_missing_worker_resume;
+DROP TABLE remote_legacy_first_page;
+-- Supported commands cannot remove the immutable default. This catalog-only
+-- fault makes metadata re-resolution binary on every node so the worker
+-- continuation must use its retained collation state.
+UPDATE documentdb_api_catalog.collections
+SET options = '{}'::bson
+WHERE database_name = 'collation_dynamic_cursor_db'
+  AND collection_name = 'remote_default';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+ invalidate_collection_cache 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT count(*) = 2 AS invalidated_all_nodes
+FROM run_command_on_all_nodes(
+    $cmd$SELECT documentdb_api_internal.invalidate_collection_cache()$cmd$)
+WHERE success;
+ invalidated_all_nodes 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT *
+FROM drain_remote_collation_cursor(
+    123501,
+    (SELECT continuation FROM remote_streaming_first_page));
+ page_number |                                       batch                                       | worker_has_collation | has_continuation 
+---------------------------------------------------------------------
+           2 | { "ids" : [ { "$numberInt" : "2" } ], "cursorId" : { "$numberLong" : "123501" } } | t                    | t
+           3 | { "ids" : [ { "$numberInt" : "3" } ], "cursorId" : { "$numberLong" : "0" } }      | t                    | f
+(2 rows)
+
+DROP TABLE remote_streaming_first_page;
+SELECT *
+FROM drain_remote_collation_cursor(
+    123504,
+    (SELECT continuation FROM remote_aggregate_first_page));
+ page_number |                                       batch                                       | worker_has_collation | has_continuation 
+---------------------------------------------------------------------
+           2 | { "ids" : [ { "$numberInt" : "2" } ], "cursorId" : { "$numberLong" : "123504" } } | t                    | t
+           3 | { "ids" : [ { "$numberInt" : "3" } ], "cursorId" : { "$numberLong" : "0" } }      | t                    | f
+(2 rows)
+
+DROP TABLE remote_aggregate_first_page;
+-- Restore the setup default before opening an independent file cursor.
+UPDATE documentdb_api_catalog.collections
+SET options = '{ "collation": { "locale": "en", "strength": 1 } }'::bson
+WHERE database_name = 'collation_dynamic_cursor_db'
+  AND collection_name = 'remote_default';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+ invalidate_collection_cache 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT count(*) = 2 AS invalidated_all_nodes
+FROM run_command_on_all_nodes(
+    $cmd$SELECT documentdb_api_internal.invalidate_collection_cache()$cmd$)
+WHERE success;
+ invalidated_all_nodes 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- A remote file cursor keeps the result set materialized with the inherited
+-- default selected for its first page.
+CREATE TEMP TABLE remote_file_first_page AS
+SELECT cursorpage, continuation
+FROM find_cursor_first_page(
+    'collation_dynamic_cursor_db',
+    '{
+        "find": "remote_default",
+        "sort": { "category": 1, "_id": 1 },
+        "projection": { "_id": 1 },
+        "skip": 1,
+        "batchSize": 1
+    }',
+    123502);
+SELECT bson_dollar_project(
+           cursorpage,
+           '{ "_id": 0,
+              "ids": "$cursor.firstBatch._id",
+              "cursorId": "$cursor.id" }') AS first_page,
+       NOT (continuation::text::jsonb ? 'cl')
+           AS coordinator_omits_collation,
+       NOT ((continuation::text::jsonb -> 'wc') ? 'cl')
+           AS worker_omits_collation,
+       (bson_dollar_project(
+            continuation,
+            '{ "wc.qf": 1 }') ->> 'wc.qf') IS NOT NULL AS remote_file
+FROM remote_file_first_page;
+                                    first_page                                     | coordinator_omits_collation | worker_omits_collation | remote_file 
+---------------------------------------------------------------------
+ { "ids" : [ { "$numberInt" : "2" } ], "cursorId" : { "$numberLong" : "123502" } } | t                           | t                      | t
+(1 row)
+
+-- Apply the same catalog-only fault before continuing the materialized cursor.
+UPDATE documentdb_api_catalog.collections
+SET options = '{}'::bson
+WHERE database_name = 'collation_dynamic_cursor_db'
+  AND collection_name = 'remote_default';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+ invalidate_collection_cache 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT count(*) = 2 AS invalidated_all_nodes
+FROM run_command_on_all_nodes(
+    $cmd$SELECT documentdb_api_internal.invalidate_collection_cache()$cmd$)
+WHERE success;
+ invalidated_all_nodes 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT *
+FROM drain_remote_collation_cursor(
+    123502,
+    (SELECT continuation FROM remote_file_first_page));
+ page_number |                                       batch                                       | worker_has_collation | has_continuation 
+---------------------------------------------------------------------
+           2 | { "ids" : [ { "$numberInt" : "3" } ], "cursorId" : { "$numberLong" : "123502" } } | f                    | t
+           3 | { "ids" : [ { "$numberInt" : "4" } ], "cursorId" : { "$numberLong" : "0" } }      | f                    | f
+(2 rows)
+
+DROP TABLE remote_file_first_page;
+UPDATE documentdb_api_catalog.collections
+SET options = '{ "collation": { "locale": "en", "strength": 1 } }'::bson
+WHERE database_name = 'collation_dynamic_cursor_db'
+  AND collection_name = 'remote_default';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+ invalidate_collection_cache 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT count(*) = 2 AS invalidated_all_nodes
+FROM run_command_on_all_nodes(
+    $cmd$SELECT documentdb_api_internal.invalidate_collection_cache()$cmd$)
+WHERE success;
+ invalidated_all_nodes 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+DROP FUNCTION drain_remote_collation_cursor(bigint, bson);
+SELECT drop_collection('collation_dynamic_cursor_db', 'remote_default');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+DO $$
+DECLARE
+    reset_dynamic_cursor_nodes int;
+    reset_aggregate_cursor_nodes int;
+    reset_collation_nodes int;
+    reset_ordered_collation_nodes int;
+    reset_composite_opclass_nodes int;
+    reset_index_only_nodes int;
+    reloaded_nodes int;
+BEGIN
+    SELECT count(*) INTO reset_dynamic_cursor_nodes
+    FROM run_command_on_all_nodes(
+        $cmd$ALTER SYSTEM RESET documentdb.enableDynamicCursors$cmd$)
+    WHERE success;
+
+    SELECT count(*) INTO reset_aggregate_cursor_nodes
+    FROM run_command_on_all_nodes(
+        $cmd$ALTER SYSTEM RESET documentdb.enableCursorsOnAggregationQueryRewrite$cmd$)
+    WHERE success;
+
+    SELECT count(*) INTO reset_collation_nodes
+    FROM run_command_on_all_nodes(
+        $cmd$ALTER SYSTEM RESET documentdb_core.enableCollation$cmd$)
+    WHERE success;
+
+    SELECT count(*) INTO reset_ordered_collation_nodes
+    FROM run_command_on_all_nodes(
+        $cmd$ALTER SYSTEM RESET documentdb.enableCollationWithNonUniqueOrderedIndexes$cmd$)
+    WHERE success;
+
+    SELECT count(*) INTO reset_composite_opclass_nodes
+    FROM run_command_on_all_nodes(
+        $cmd$ALTER SYSTEM RESET documentdb.defaultUseCompositeOpClass$cmd$)
+    WHERE success;
+
+    SELECT count(*) INTO reset_index_only_nodes
+    FROM run_command_on_all_nodes(
+        $cmd$ALTER SYSTEM RESET documentdb.enableIndexOnlyScanForFindProject$cmd$)
+    WHERE success;
+
+    SELECT count(*) INTO reloaded_nodes
+    FROM run_command_on_all_nodes($cmd$SELECT pg_reload_conf()$cmd$)
+    WHERE success;
+
+    IF reset_dynamic_cursor_nodes <> 2 OR reset_aggregate_cursor_nodes <> 2 OR
+       reset_collation_nodes <> 2 OR
+       reset_ordered_collation_nodes <> 2 OR
+       reset_composite_opclass_nodes <> 2 OR reset_index_only_nodes <> 2 OR
+       reloaded_nodes <> 2 THEN
+        RAISE EXCEPTION 'failed to reset all nodes';
+    END IF;
+END
+$$;
+RESET documentdb_core.enableCollation;
+RESET documentdb.enableDynamicCursors;
+RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
+RESET documentdb.defaultUseCompositeOpClass;
+RESET documentdb.enableIndexOnlyScanForFindProject;
+RESET documentdb.enableCursorsOnAggregationQueryRewrite;
+RESET search_path;

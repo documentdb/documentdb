@@ -143,6 +143,13 @@ typedef struct
 	TimeSystemVariables timeSystemVariables;
 
 	/*
+	 * Whether collationString contains the effective query collation captured
+	 * for cursor continuation. An empty captured value means binary semantics.
+	 */
+	bool hasCapturedCollation;
+	char collationString[MAX_ICU_COLLATION_LENGTH];
+
+	/*
 	 * Whether this query is being built from the planner aggregation
 	 * query cursor rewrite path (enableCursorsOnAggregationQueryRewrite).
 	 */

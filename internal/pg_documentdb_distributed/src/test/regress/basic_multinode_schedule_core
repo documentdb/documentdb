@@ -7,6 +7,7 @@ test: multinode/nonblocking_unique_index_hook
 test: multinode/commands_collmod_hidden
 test: multinode/dynamic_cursor_remote_unsharded_tests_mini 
 test: multinode/dynamic_cursor_remote_unsharded_tests
+test: multinode/dynamic_cursor_collation_tests
 test: multinode/reservoir_sample_unsharded
 test: multinode/reservoir_sample_heap_skip
 test: multinode/move_collection_local_execution

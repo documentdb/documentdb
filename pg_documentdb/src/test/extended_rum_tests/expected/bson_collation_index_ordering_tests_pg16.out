@@ -8482,6 +8482,79 @@ RESET documentdb.enableExtendedExplainPlans;
 RESET enable_seqscan;
 DROP SCHEMA collation_ordered_test_schema CASCADE;
 psql:sql/bson_collation_index_ordering_tests.sql:2495: NOTICE:  drop cascades to function collation_ordered_test_schema.gin_bson_index_term_to_bson(bytea)
+-- ===== Section: inherited collation dynamic cursor continuation ======
+-- Seed the immutable default directly in the catalog because collection
+-- creation does not yet accept it. The dynamic continuation must retain and
+-- apply that collation.
+SET documentdb.enableDynamicCursors TO on;
+SET documentdb.enable_dynamic_cursor_with_skiplimit TO on;
+UPDATE documentdb_api_catalog.collections
+SET options = '{ "collation": { "locale": "en", "numericOrdering": true } }'
+WHERE database_name = 'ord_coll_ordered_db'
+  AND collection_name = 'ord_numord_true';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+ invalidate_collection_cache 
+-----------------------------
+ 
+(1 row)
+
+CREATE TEMP TABLE inherited_collation_limit AS
+SELECT cursorpage, continuation, persistconnection
+FROM find_cursor_first_page(
+    'ord_coll_ordered_db',
+    '{ "find": "ord_numord_true", "sort": { "item": 1 }, "hint": "item_numord_true_idx", "limit": 4, "batchSize": 2 }',
+    81004);
+SELECT bson_dollar_project(
+           cursorpage, '{ "cursor.firstBatch._id": 1 }') AS first_page,
+       persistconnection,
+       continuation::text::jsonb ? 'cl' AS has_collation,
+       continuation::text::jsonb ? 'qd' AS dynamic_streaming,
+       bson_dollar_project(
+           continuation, '{ "dc.type": 1, "lim": 1 }') AS continuation_flags
+FROM inherited_collation_limit;
+                                                  first_page                                                  | persistconnection | has_collation | dynamic_streaming |                               continuation_flags                                
+--------------------------------------------------------------------------------------------------------------+-------------------+---------------+-------------------+---------------------------------------------------------------------------------
+ { "cursor" : { "firstBatch" : [ { "_id" : { "$numberInt" : "1" } }, { "_id" : { "$numberInt" : "3" } } ] } } | f                 | t             | t                 | { "dc" : { "type" : { "$numberInt" : "3" } }, "lim" : { "$numberLong" : "2" } }
+(1 row)
+
+-- Supported commands cannot remove the immutable default. This catalog-only
+-- fault makes metadata re-resolution binary so continuation must use cl.
+UPDATE documentdb_api_catalog.collections
+SET options = '{}'
+WHERE database_name = 'ord_coll_ordered_db'
+  AND collection_name = 'ord_numord_true';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+ invalidate_collection_cache 
+-----------------------------
+ 
+(1 row)
+
+SELECT bson_dollar_project(
+           cursorpage, '{ "cursor.nextBatch._id": 1 }') AS second_page,
+       continuation IS NULL AS exhausted
+FROM cursor_get_more(
+    'ord_coll_ordered_db',
+    '{ "getMore": { "$numberLong": "81004" }, "collection": "ord_numord_true", "batchSize": 2 }',
+    (SELECT continuation FROM inherited_collation_limit));
+                                                 second_page                                                 | exhausted 
+-------------------------------------------------------------------------------------------------------------+-----------
+ { "cursor" : { "nextBatch" : [ { "_id" : { "$numberInt" : "5" } }, { "_id" : { "$numberInt" : "2" } } ] } } | t
+(1 row)
+
+DROP TABLE inherited_collation_limit;
+-- Restore the catalog state that preceded this test-only setup.
+UPDATE documentdb_api_catalog.collections
+SET options = '{}'
+WHERE database_name = 'ord_coll_ordered_db'
+  AND collection_name = 'ord_numord_true';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+ invalidate_collection_cache 
+-----------------------------
+ 
+(1 row)
+
+RESET documentdb.enable_dynamic_cursor_with_skiplimit;
+RESET documentdb.enableDynamicCursors;
 RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
 RESET documentdb.defaultUseCompositeOpClass;
 RESET documentdb_core.enableCollation;

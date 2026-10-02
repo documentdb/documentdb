@@ -1,0 +1,237 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+
+SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog,
+    documentdb_api_internal, public;
+
+SET citus.next_shard_id TO 300030000;
+SET documentdb.next_collection_id TO 30003000;
+SET documentdb.next_collection_index_id TO 30003000;
+SET documentdb.enableDynamicCursors TO on;
+SET documentdb_core.enableCollation TO on;
+
+SELECT create_collection(
+    'sharded_find_collation_db', 'sharded_default');
+
+-- Seed the immutable default directly in the catalog because collection
+-- creation does not yet accept it.
+UPDATE documentdb_api_catalog.collections
+SET options = '{ "collation": { "locale": "en", "strength": 1 } }'::bson
+WHERE database_name = 'sharded_find_collation_db'
+  AND collection_name = 'sharded_default';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+
+SELECT shard_collection(
+    'sharded_find_collation_db',
+    'sharded_default',
+    '{ "region": "hashed" }',
+    false);
+
+SELECT 1 FROM insert_one(
+    'sharded_find_collation_db', 'sharded_default',
+    '{ "_id": 1, "region": "north", "category": "cafe" }');
+SELECT 1 FROM insert_one(
+    'sharded_find_collation_db', 'sharded_default',
+    '{ "_id": 2, "region": "south", "category": "CAFÉ" }');
+SELECT 1 FROM insert_one(
+    'sharded_find_collation_db', 'sharded_default',
+    '{ "_id": 3, "region": "east", "category": "Cafe" }');
+SELECT 1 FROM insert_one(
+    'sharded_find_collation_db', 'sharded_default',
+    '{ "_id": 4, "region": "west", "category": "CAFE" }');
+SELECT 1 FROM insert_one(
+    'sharded_find_collation_db', 'sharded_default',
+    '{ "_id": 5, "region": "central", "category": "tea" }');
+
+ANALYZE;
+
+SELECT count(DISTINCT s.shardid) > 1 AS spans_shards
+FROM documentdb_api_catalog.collections c
+JOIN pg_dist_shard s
+  ON s.logicalrelid =
+     ('documentdb_data.documents_' || c.collection_id)::regclass
+WHERE c.database_name = 'sharded_find_collation_db'
+  AND c.collection_name = 'sharded_default';
+
+-- The inherited strength-1 default matches all case and accent variants.
+CREATE TEMP TABLE sharded_inherited_first_page AS
+SELECT cursorpage, continuation, persistconnection
+FROM find_cursor_first_page(
+    'sharded_find_collation_db',
+    '{
+        "find": "sharded_default",
+        "filter": { "category": "CAFE" },
+        "sort": { "_id": 1 },
+        "projection": { "_id": 1 },
+        "batchSize": 1
+    }',
+    300030001);
+
+SELECT bson_dollar_project(
+           cursorpage,
+           '{ "_id": 0,
+              "ids": "$cursor.firstBatch._id",
+              "cursorId": "$cursor.id" }') AS first_page,
+       continuation IS NOT NULL AS has_continuation,
+       persistconnection AS coordinator_holds_portal,
+       continuation::text::jsonb ? 'qn' AS persisted_cursor
+FROM sharded_inherited_first_page;
+
+-- Supported commands cannot remove the immutable default. This catalog-only
+-- fault makes metadata re-resolution binary so continuation must keep using
+-- the open portal instead of rebuilding the query from collection metadata.
+UPDATE documentdb_api_catalog.collections
+SET options = '{}'::bson
+WHERE database_name = 'sharded_find_collation_db'
+  AND collection_name = 'sharded_default';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+
+-- The open cursor retains the inherited collation across all remaining pages.
+CREATE TEMP TABLE sharded_inherited_second_page AS
+SELECT cursorpage, continuation
+FROM cursor_get_more(
+    'sharded_find_collation_db',
+    '{
+        "getMore": { "$numberLong": "300030001" },
+        "collection": "sharded_default",
+        "batchSize": 1
+    }',
+    (SELECT continuation FROM sharded_inherited_first_page));
+
+SELECT bson_dollar_project(
+           cursorpage,
+           '{ "_id": 0,
+              "ids": "$cursor.nextBatch._id",
+              "cursorId": "$cursor.id" }') AS second_page,
+       continuation IS NOT NULL AS has_continuation
+FROM sharded_inherited_second_page;
+
+CREATE TEMP TABLE sharded_inherited_third_page AS
+SELECT cursorpage, continuation
+FROM cursor_get_more(
+    'sharded_find_collation_db',
+    '{
+        "getMore": { "$numberLong": "300030001" },
+        "collection": "sharded_default",
+        "batchSize": 1
+    }',
+    (SELECT continuation FROM sharded_inherited_second_page));
+
+SELECT bson_dollar_project(
+           cursorpage,
+           '{ "_id": 0,
+              "ids": "$cursor.nextBatch._id",
+              "cursorId": "$cursor.id" }') AS third_page,
+       continuation IS NOT NULL AS has_continuation
+FROM sharded_inherited_third_page;
+
+CREATE TEMP TABLE sharded_inherited_final_page AS
+SELECT cursorpage, continuation
+FROM cursor_get_more(
+    'sharded_find_collation_db',
+    '{
+        "getMore": { "$numberLong": "300030001" },
+        "collection": "sharded_default",
+        "batchSize": 1
+    }',
+    (SELECT continuation FROM sharded_inherited_third_page));
+
+SELECT bson_dollar_project(
+           cursorpage,
+           '{ "_id": 0,
+              "ids": "$cursor.nextBatch._id",
+              "cursorId": "$cursor.id" }') AS final_page,
+       continuation IS NULL AS exhausted
+FROM sharded_inherited_final_page;
+
+UPDATE documentdb_api_catalog.collections
+SET options = '{ "collation": { "locale": "en", "strength": 1 } }'::bson
+WHERE database_name = 'sharded_find_collation_db'
+  AND collection_name = 'sharded_default';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+
+-- Aggregate cursor results retain the same inherited default.
+CREATE TEMP TABLE sharded_aggregate_first_page AS
+SELECT cursorpage, continuation, persistconnection
+FROM aggregate_cursor_first_page(
+    'sharded_find_collation_db',
+    '{
+        "aggregate": "sharded_default",
+        "pipeline": [
+            { "$match": { "category": "CAFE" } },
+            { "$sort": { "_id": 1 } },
+            { "$project": { "_id": 1 } }
+        ],
+        "cursor": { "batchSize": 1 }
+    }',
+    300030002);
+
+SELECT bson_dollar_project(
+           cursorpage,
+           '{ "_id": 0,
+              "ids": "$cursor.firstBatch._id",
+              "cursorId": "$cursor.id" }') AS first_page,
+       continuation IS NOT NULL AS has_continuation,
+       persistconnection AS coordinator_holds_portal,
+       continuation::text::jsonb ? 'qn' AS persisted_cursor
+FROM sharded_aggregate_first_page;
+
+UPDATE documentdb_api_catalog.collections
+SET options = '{}'::bson
+WHERE database_name = 'sharded_find_collation_db'
+  AND collection_name = 'sharded_default';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+
+SELECT bson_dollar_project(
+           cursorpage,
+           '{ "_id": 0,
+              "ids": "$cursor.nextBatch._id",
+              "cursorId": "$cursor.id" }') AS aggregate_final_page,
+       continuation IS NULL AS exhausted
+FROM cursor_get_more(
+    'sharded_find_collation_db',
+    '{
+        "getMore": { "$numberLong": "300030002" },
+        "collection": "sharded_default",
+        "batchSize": 10
+    }',
+    (SELECT continuation FROM sharded_aggregate_first_page));
+
+UPDATE documentdb_api_catalog.collections
+SET options = '{ "collation": { "locale": "en", "strength": 1 } }'::bson
+WHERE database_name = 'sharded_find_collation_db'
+  AND collection_name = 'sharded_default';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+
+-- Explicit simple collation overrides the collection default.
+SELECT bson_dollar_project(
+           cursorpage,
+           '{ "_id": 0,
+              "ids": "$cursor.firstBatch._id",
+              "cursorId": "$cursor.id" }') AS explicit_simple
+FROM find_cursor_first_page(
+    'sharded_find_collation_db',
+    '{
+        "find": "sharded_default",
+        "filter": { "category": "CAFE" },
+        "sort": { "_id": 1 },
+        "projection": { "_id": 1 },
+        "collation": { "locale": "simple" },
+        "batchSize": 10,
+        "singleBatch": true
+    }',
+    300030003);
+
+DROP TABLE sharded_inherited_first_page;
+DROP TABLE sharded_inherited_second_page;
+DROP TABLE sharded_inherited_third_page;
+DROP TABLE sharded_inherited_final_page;
+DROP TABLE sharded_aggregate_first_page;
+
+SELECT drop_collection(
+    'sharded_find_collation_db', 'sharded_default');
+
+RESET documentdb.enableDynamicCursors;
+RESET documentdb_core.enableCollation;
+RESET search_path;

@@ -210,10 +210,12 @@ typedef struct LocalFirstPageResult
 static void ParseGetMoreSpec(text **database, pgbson *getMoreSpec, pgbson *cursorSpec,
 							 QueryGetMoreInfo *getMoreInfo, bool setStatementTimeout);
 
+static void AppendCollationToContinuation(pgbson_writer *writer,
+										  QueryKind queryKind,
+										  const QueryData *queryData);
 static pgbson * BuildStreamingContinuationDocument(HTAB *cursorMap, pgbson *querySpec,
 												   int64_t cursorId, QueryKind queryKind,
-												   TimeSystemVariables *
-												   timeSystemVariables,
+												   const QueryData *queryData,
 												   int numIterations);
 static pgbson * BuildTailableContinuationDocument(pgbson *continuationDoc,
 												  pgbson *querySpec,
@@ -229,8 +231,7 @@ static pgbson * BuildDynamicStreamingContinuationDocument(int64_t cursorId, Quer
 														  pgbson *continuationDoc,
 														  int64_t remainingLimit,
 														  bool hasFetchedRows,
-														  TimeSystemVariables *
-														  timeSystemVariables);
+														  const QueryData *queryData);
 
 static pgbson * BuildPersistedContinuationDocument(const char *cursorName, int64_t
 												   cursorId, QueryKind queryKind,
@@ -300,8 +301,7 @@ static pgbson * BuildRemoteCursorContinuationDocument(int64_t cursorId,
 													  int numIterations,
 													  pgbson *workerContinuation,
 													  Oid distributedTableOid,
-													  TimeSystemVariables *
-													  timeSystemVariables);
+													  const QueryData *queryData);
 
 
 /* --------------------------------------------------------- */
@@ -662,6 +662,15 @@ DrainLocalCursorGetMorePage(text *database, pgbson *cursorSpec,
 			queryData.timeSystemVariables =
 				getMoreInfo->queryData.timeSystemVariables;
 
+			queryData.hasCapturedCollation =
+				getMoreInfo->queryData.hasCapturedCollation;
+			if (queryData.hasCapturedCollation)
+			{
+				memcpy(queryData.collationString,
+					   getMoreInfo->queryData.collationString,
+					   sizeof(queryData.collationString));
+			}
+
 			bool setStatementTimeout = false;
 			Query *query = GenerateCursorQueryForKind(
 				database, getMoreInfo->querySpec, &queryData,
@@ -681,7 +690,7 @@ DrainLocalCursorGetMorePage(text *database, pgbson *cursorSpec,
 							  BuildStreamingContinuationDocument(
 				cursorMap, getMoreInfo->querySpec, getMoreInfo->cursorId,
 				getMoreInfo->queryKind,
-				&getMoreInfo->queryData.timeSystemVariables, numIterations);
+				&queryData, numIterations);
 			hash_destroy(cursorMap);
 			break;
 		}
@@ -694,6 +703,15 @@ DrainLocalCursorGetMorePage(text *database, pgbson *cursorSpec,
 			queryData.cursorStateConst = getMoreInfo->dynamicCursorState;
 			queryData.streamingLimit = getMoreInfo->remainingLimit;
 			queryData.hasFetchedRows = getMoreInfo->hasFetchedRows;
+
+			queryData.hasCapturedCollation =
+				getMoreInfo->queryData.hasCapturedCollation;
+			if (queryData.hasCapturedCollation)
+			{
+				memcpy(queryData.collationString,
+					   getMoreInfo->queryData.collationString,
+					   sizeof(queryData.collationString));
+			}
 
 			bool setStatementTimeout = false;
 			Query *query = GenerateCursorQueryForKind(
@@ -748,7 +766,7 @@ DrainLocalCursorGetMorePage(text *database, pgbson *cursorSpec,
 				continuationDoc = BuildDynamicStreamingContinuationDocument(
 					getMoreInfo->cursorId, getMoreInfo->queryKind,
 					getMoreInfo->querySpec, 1, innerDoc, remainingNext,
-					hasFetchedRows, &getMoreInfo->queryData.timeSystemVariables);
+					hasFetchedRows, &queryData);
 			}
 			break;
 		}
@@ -861,7 +879,7 @@ aggregation_cursor_get_more(text *database, pgbson *getMoreSpec,
 					getMoreInfo.numIterations + 1,
 					page.continuation,
 					getMoreInfo.distributedTableOid,
-					&getMoreInfo.queryData.timeSystemVariables);
+					&getMoreInfo.queryData);
 			}
 
 			return FormCursorResultDatum(page.pageBson, remoteContinuation, false,
@@ -1127,6 +1145,15 @@ GenerateGetMoreQuery(text *database, pgbson *getMoreSpec, pgbson *continuationSp
 			queryData.streamingLimit = getMoreInfo.remainingLimit;
 			queryData.hasFetchedRows = getMoreInfo.hasFetchedRows;
 
+			queryData.hasCapturedCollation =
+				getMoreInfo.queryData.hasCapturedCollation;
+			if (queryData.hasCapturedCollation)
+			{
+				memcpy(queryData.collationString,
+					   getMoreInfo.queryData.collationString,
+					   sizeof(queryData.collationString));
+			}
+
 			query = GenerateCursorQueryForKind(database, getMoreInfo.querySpec,
 											   &queryData, getMoreInfo.queryKind,
 											   cursorParamKind, setStatementTimeout);
@@ -1369,7 +1396,7 @@ HandleRemoteUnshardedFirstPage(text *database, pgbson *querySpec, int64_t cursor
 		continuationDoc = BuildRemoteCursorContinuationDocument(
 			cursorId, queryKind, querySpec, 1,
 			page.continuation, collection->relationId,
-			&queryData->timeSystemVariables);
+			queryData);
 	}
 	else
 	{
@@ -1468,8 +1495,7 @@ HandleLocalFirstPageRequestCore(text *database, pgbson *querySpec, int64_t curso
 				cursorId = GenerateCursorId(cursorId);
 				continuationDoc = BuildStreamingContinuationDocument(cursorMap, querySpec,
 																	 cursorId, queryKind,
-																	 &queryData->
-																	 timeSystemVariables,
+																	 queryData,
 																	 numIterations);
 			}
 
@@ -1561,7 +1587,7 @@ HandleLocalFirstPageRequestCore(text *database, pgbson *querySpec, int64_t curso
 						BuildDynamicStreamingContinuationDocument(
 							cursorId, queryKind, querySpec, numIterations,
 							innerDoc, remainingNext, hasFetchedRows,
-							&queryData->timeSystemVariables);
+							queryData);
 				}
 			}
 			else
@@ -1668,15 +1694,32 @@ ReportCursorTopologyFeatureUsage(CursorTopology topology)
 }
 
 
+static void
+AppendCollationToContinuation(pgbson_writer *writer, QueryKind queryKind,
+							  const QueryData *queryData)
+{
+	Assert(queryData != NULL);
+	bool supportsCollation = queryKind == QueryKind_Find ||
+							 queryKind == QueryKind_Aggregate;
+	Assert(!queryData->hasCapturedCollation || supportsCollation);
+
+	if (supportsCollation && queryData->hasCapturedCollation)
+	{
+		PgbsonWriterAppendUtf8(writer, "cl", 2, queryData->collationString);
+	}
+}
+
+
 /*
  * Serializes a cursor document that can be reused by getMore for a streaming query.
  */
 static pgbson *
 BuildStreamingContinuationDocument(HTAB *cursorMap, pgbson *querySpec, int64_t cursorId,
 								   QueryKind queryKind,
-								   TimeSystemVariables *timeSystemVariables, int
-								   numIterations)
+								   const QueryData *queryData, int numIterations)
 {
+	Assert(queryData != NULL);
+
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
 	PgbsonWriterAppendInt64(&writer, "qi", 2, cursorId);
@@ -1688,14 +1731,16 @@ BuildStreamingContinuationDocument(HTAB *cursorMap, pgbson *querySpec, int64_t c
 	/* For streaming cursor, save the query with "qc" key. */
 	PgbsonWriterAppendDocument(&writer, "qc", 2, querySpec);
 
+	AppendCollationToContinuation(&writer, queryKind, queryData);
 	SerializeContinuationsToWriter(&writer, cursorMap);
 
 	/* In the response add the number of iterations (used in tests) */
 	PgbsonWriterAppendInt32(&writer, "numIters", 8, numIterations);
 
 	/* Add time system variables accordingly */
-	if (timeSystemVariables != NULL && timeSystemVariables->nowValue.value_type !=
-		BSON_TYPE_EOD)
+	const TimeSystemVariables *timeSystemVariables =
+		&queryData->timeSystemVariables;
+	if (timeSystemVariables->nowValue.value_type != BSON_TYPE_EOD)
 	{
 		PgbsonWriterAppendValue(&writer, "sn", 2, &timeSystemVariables->nowValue);
 	}
@@ -1754,8 +1799,10 @@ BuildDynamicStreamingContinuationDocument(int64_t cursorId, QueryKind queryKind,
 										  pgbson *continuationDoc,
 										  int64_t remainingLimit,
 										  bool hasFetchedRows,
-										  TimeSystemVariables *timeSystemVariables)
+										  const QueryData *queryData)
 {
+	Assert(queryData != NULL);
+
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
 	PgbsonWriterAppendInt64(&writer, "qi", 2, cursorId);
@@ -1767,6 +1814,7 @@ BuildDynamicStreamingContinuationDocument(int64_t cursorId, QueryKind queryKind,
 	/* For dynamic streaming cursor, save the query with "qd" key. */
 	PgbsonWriterAppendDocument(&writer, "qd", 2, querySpec);
 
+	AppendCollationToContinuation(&writer, queryKind, queryData);
 	PgbsonWriterAppendDocument(&writer, "dc", 2, continuationDoc);
 	PgbsonWriterAppendBool(&writer, "hasFetchedRows", 14, hasFetchedRows);
 
@@ -1792,8 +1840,9 @@ BuildDynamicStreamingContinuationDocument(int64_t cursorId, QueryKind queryKind,
 	PgbsonWriterAppendInt32(&writer, "numIters", 8, numIterations);
 
 	/* Add time system variables accordingly */
-	if (timeSystemVariables != NULL && timeSystemVariables->nowValue.value_type !=
-		BSON_TYPE_EOD)
+	const TimeSystemVariables *timeSystemVariables =
+		&queryData->timeSystemVariables;
+	if (timeSystemVariables->nowValue.value_type != BSON_TYPE_EOD)
 	{
 		PgbsonWriterAppendValue(&writer, "sn", 2, &timeSystemVariables->nowValue);
 	}
@@ -2045,6 +2094,19 @@ ParseCursorInputSpec(pgbson *cursorSpec, QueryGetMoreInfo *getMoreInfo)
 				continue;
 			}
 
+			/* cl: Effective collation retained when the cursor started */
+			case 'c':
+			{
+				if (pathKey[1] == 'l' && pathKey[2] == '\0')
+				{
+					strlcpy(getMoreInfo->queryData.collationString,
+							bson_iter_utf8(&cursorSpecIter, NULL),
+							sizeof(getMoreInfo->queryData.collationString));
+					getMoreInfo->queryData.hasCapturedCollation = true;
+				}
+				continue;
+			}
+
 			/* hasFetchedRows: whether a prior page returned any rows */
 			case 'h':
 			{
@@ -2197,8 +2259,10 @@ BuildRemoteCursorContinuationDocument(int64_t cursorId, QueryKind queryKind,
 									  pgbson *querySpec, int numIterations,
 									  pgbson *workerContinuation,
 									  Oid distributedTableOid,
-									  TimeSystemVariables *timeSystemVariables)
+									  const QueryData *queryData)
 {
+	Assert(queryData != NULL);
+
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
 	PgbsonWriterAppendInt64(&writer, "qi", 2, cursorId);
@@ -2219,8 +2283,9 @@ BuildRemoteCursorContinuationDocument(int64_t cursorId, QueryKind queryKind,
 
 	PgbsonWriterAppendInt32(&writer, "numIters", 8, numIterations);
 
-	if (timeSystemVariables != NULL && timeSystemVariables->nowValue.value_type !=
-		BSON_TYPE_EOD)
+	const TimeSystemVariables *timeSystemVariables =
+		&queryData->timeSystemVariables;
+	if (timeSystemVariables->nowValue.value_type != BSON_TYPE_EOD)
 	{
 		PgbsonWriterAppendValue(&writer, "sn", 2, &timeSystemVariables->nowValue);
 	}
@@ -2474,7 +2539,7 @@ FormCursorResultDatum(pgbson *cursorPage, pgbson *continuation,
  *   $4 - continuation (bson, empty for first page; a local cursor spec on getMore)
  *   $5 - query kind (int4: 1=find, 2=aggregate)
  *   $6 - extra options bag (bson, nullable; { "p_use_file_based_cursor": bool,
- *        "p_batch_size": int })
+ *        "p_batch_size": int, "p_namespace": string })
  *
  * Why the batch size is threaded in p_extra rather than read solely from the
  * query spec: the spec only yields a batch size on the paths that re-parse it.

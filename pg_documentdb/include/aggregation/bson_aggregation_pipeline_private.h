@@ -244,8 +244,8 @@ typedef struct AggregationPipelineBuildContext
 	 */
 	const char collationString[MAX_ICU_COLLATION_LENGTH];
 
-	/* Whether the first collection lookup should supply its default collation. */
-	bool resolveDefaultCollation;
+	/* Whether parsing left the effective collation to collection metadata. */
+	bool shouldResolveDefaultCollation;
 
 	/* *********************************************************************
 	 * Feature tracking fields
