@@ -1,4 +1,5 @@
 set documentdb.enableExtendedExplainPlans to on;
+set documentdb.enablePerCollectionPlannerStatistics to on;
 
 -- if documentdb_extended_rum exists, set alternate index handler
 SELECT pg_catalog.set_config('documentdb.alternate_index_handler_name', 'extended_rum', false), extname FROM pg_extension WHERE extname = 'documentdb_extended_rum';
@@ -619,6 +620,8 @@ ANALYZE documentdb_data.documents_:collection_id_6;
 -- now create 2 types of indexes: One that only matches the order by and one that matches the order and filters
 SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db', '{ "createIndexes": "index_orderby_selection", "indexes": [ { "key": { "orderKey": 1, "otherPath": 1 }, "enableOrderedIndex": true, "name": "sortIndex_1" }] }', true);
 SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db', '{ "createIndexes": "index_orderby_selection", "indexes": [ { "key": { "filter1": 1, "filter2": 1, "orderKey": 1, "filter3": 1 }, "enableOrderedIndex": true, "name": "filterSortIndex_1" }] }', true);
+SELECT documentdb_api.coll_mod('comp_ordind_db', 'index_orderby_selection',
+    '{ "collMod": "index_orderby_selection", "enableStats": true }');
 
 SELECT COUNT(*) FROM ( SELECT documentdb_api.insert_one('comp_ordind_db', 'index_orderby_selection',
     FORMAT('{ "_id": %s, "filter1": "filter1-%s", "filter2": "filter2-%s", "filter3": %s, "orderKey": %s, "otherPath": "somePath-%s" }', i, i % 10, i, i % 100, i, i)::bson) FROM generate_series(1, 10000) i) j;
@@ -626,13 +629,41 @@ SELECT COUNT(*) FROM ( SELECT documentdb_api.insert_one('comp_ordind_db', 'index
 reset enable_sort;
 ANALYZE documentdb_data.documents_:collection_id_6;
 
+SHOW documentdb.enablePerCollectionPlannerStatistics;
+SELECT EXISTS (
+    SELECT 1
+    FROM pg_stats_ext_exprs
+    WHERE schemaname = 'documentdb_data'
+        AND (tablename = FORMAT('documents_%s', :collection_id_6)
+            OR tablename LIKE FORMAT('documents_%s_%%', :collection_id_6))
+    HAVING BOOL_OR(expr LIKE '%filter1%')
+        AND BOOL_OR(expr LIKE '%filter2%')
+        AND BOOL_OR(expr LIKE '%filter3%')
+) AS planner_statistics_exist;
+
 -- this has all the paths matching.
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
     SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "filter1": "filter1-5", "filter2": "filter2-55", "filter3": { "$gt": 50 } }, "sort": { "orderKey": 1 }, "limit": 10 }')
 $cmd$);
 
--- this one can't push the order by but should prefer the filter.
+-- Without per-collection statistics, the full-scan cost and selectivity determine
+-- whether the filter index plus a top-N sort is cheaper than the sort index.
+SET documentdb.enablePerCollectionPlannerStatistics TO off;
+SET documentdb.enable_full_scan_cost_and_selectivity TO off;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "filter1": "filter1-5", "filter2": { "$gte": "filter2-55" }, "filter3": { "$gt": 50 } }, "sort": { "orderKey": 1 }, "limit": 10 }')
+$cmd$);
+RESET documentdb.enable_full_scan_cost_and_selectivity;
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "filter1": "filter1-5", "filter2": { "$gte": "filter2-55" }, "filter3": { "$gt": 50 } }, "sort": { "orderKey": 1 }, "limit": 10 }')
+$cmd$);
+RESET documentdb.enablePerCollectionPlannerStatistics;
+
+-- With per-collection statistics, the sort index remains cheaper with LIMIT 10.
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
     SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "filter1": "filter1-5", "filter2": { "$gte": "filter2-55" }, "filter3": { "$gt": 50 } }, "sort": { "orderKey": 1 }, "limit": 10 }')
@@ -640,7 +671,7 @@ $cmd$);
 
 SELECT documentdb_api.coll_mod('comp_ordind_db', 'index_orderby_selection', '{ "collMod": "index_orderby_selection", "index": { "name": "filterSortIndex_1", "hidden": true }}');
 
--- now it picks the sort index
+-- hiding the filter index leaves the sort index as the available candidate.
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
     SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "filter1": "filter1-5", "filter2": { "$gte": "filter2-55" }, "filter3": { "$gt": 50 } }, "sort": { "orderKey": 1 }, "limit": 10 }')

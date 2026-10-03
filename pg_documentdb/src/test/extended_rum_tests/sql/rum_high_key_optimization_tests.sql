@@ -50,6 +50,7 @@ WHERE database_name = 'highkeydb' AND collection_name = 'page_isolated_suffix' \
 set documentdb.enableExtendedExplainPlans to on;
 set documentdb.enableExplainScanIndexCosts to off;
 set documentdb.forceDisableSeqScan to on;
+set enable_bitmapscan to off;
 
 -- Baseline: with the optimization disabled the ordered scan still crosses every
 -- page, but the highKeyEligiblePages counter is never emitted.
@@ -453,3 +454,5 @@ SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_find('highkeydb', '{
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "compound_key", "filter": { "a": { "$lte": 5000 } }, "sort": { "a": -1 } }'::bson) $cmd$);
+
+reset enable_bitmapscan;

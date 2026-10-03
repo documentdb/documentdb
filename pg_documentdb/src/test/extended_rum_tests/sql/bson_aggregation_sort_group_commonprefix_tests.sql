@@ -326,14 +326,16 @@ SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } }
+        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } },
+        { "$sort": { "_id": 1 } }
     ], "cursor": {}, "hint": "_id_" }');
 
 SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } }
+        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } },
+        { "$sort": { "_id": 1 } }
     ], "cursor": {}, "hint": "_id_" }');
 RESET enable_hashagg;
 RESET enable_sort;
@@ -355,14 +357,16 @@ SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1, "c": 1 } },
-        { "$group": { "_id": { "a": "$a", "b": "$b" }, "firstVal": { "$first": "$name" } } }
+        { "$group": { "_id": { "a": "$a", "b": "$b" }, "firstVal": { "$first": "$name" } } },
+        { "$sort": { "_id": 1 } }
     ], "cursor": {}, "hint": "_id_" }');
 
 SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1, "c": 1 } },
-        { "$group": { "_id": { "a": "$a", "b": "$b" }, "firstVal": { "$first": "$name" } } }
+        { "$group": { "_id": { "a": "$a", "b": "$b" }, "firstVal": { "$first": "$name" } } },
+        { "$sort": { "_id": 1 } }
     ], "cursor": {}, "hint": "_id_" }');
 RESET enable_hashagg;
 RESET enable_sort;
@@ -385,14 +389,16 @@ SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } }
+        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } },
+        { "$sort": { "_id": 1 } }
     ], "cursor": {}, "hint": "idx_a_b" }');
 
 SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } }
+        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } },
+        { "$sort": { "_id": 1 } }
     ], "cursor": {}, "hint": "idx_a_b" }');
 RESET enable_hashagg;
 RESET enable_sort;

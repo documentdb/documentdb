@@ -287,6 +287,11 @@ bool EnableScalarAggregateAccumulatorPathCollection =
 bool EnableSkipSettingOrderScanDirectionForFullScanExpr =
 	DEFAULT_ENABLE_SKIP_SETTING_ORDER_SCAN_DIRECTION_FOR_FULL_SCAN_EXPR;
 
+/* Added on v1.1, enabled on v1.1, remove after v1.3 */
+#define DEFAULT_ENABLE_FULL_SCAN_COST_AND_SELECTIVITY true
+bool EnableFullScanCostAndSelectivity =
+	DEFAULT_ENABLE_FULL_SCAN_COST_AND_SELECTIVITY;
+
 /* Added in v0.112, enabled in v0.112, remove after v1.3 */
 #define DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK true
 bool EnablePartialMatchHasRecheck = DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK;
@@ -952,6 +957,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to skip setting the order scan direction for a full scan expression"),
 		NULL, &EnableSkipSettingOrderScanDirectionForFullScanExpr,
 		DEFAULT_ENABLE_SKIP_SETTING_ORDER_SCAN_DIRECTION_FOR_FULL_SCAN_EXPR,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_full_scan_cost_and_selectivity", newGucPrefix),
+		gettext_noop(
+			"Whether full-scan planner support reports all rows selected with negligible execution cost."),
+		NULL, &EnableFullScanCostAndSelectivity,
+		DEFAULT_ENABLE_FULL_SCAN_COST_AND_SELECTIVITY,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

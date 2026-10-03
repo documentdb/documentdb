@@ -33,18 +33,18 @@ SET enable_bitmapscan TO off;
 -- ============================================================================
 -- Non-multi-key composite index over the scalar (cat, sub, ord) predicate keys.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('grpq_db',
- '{ "createIndexes": "docs", "indexes": [ { "key": { "cat": 1, "sub": 1, "ord": -1 }, "name": "idx_cat_sub_ord", "enableOrderedIndex": 1 } ] }', TRUE);
+    '{ "createIndexes": "docs", "indexes": [ { "key": { "cat": 1, "sub": 1, "ord": -1 }, "name": "idx_cat_sub_ord", "enableOrderedIndex": 1 } ] }', TRUE);
 psql:sql/bson_composite_or_group_count_tests.sql:39: NOTICE:  creating collection
- create_indexes_non_concurrently
----------------------------------------------------------------------
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
 -- Multi-key (rct) composite index over the array tags.name / tags.val + ord.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('grpq_db',
- '{ "createIndexes": "docs", "indexes": [ { "key": { "tags.name": 1, "tags.val": 1, "ord": -1 }, "name": "idx_tags_ord", "enableOrderedIndex": 1 } ] }', TRUE);
- create_indexes_non_concurrently
----------------------------------------------------------------------
+    '{ "createIndexes": "docs", "indexes": [ { "key": { "tags.name": 1, "tags.val": 1, "ord": -1 }, "name": "idx_tags_ord", "enableOrderedIndex": 1 } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
@@ -53,9 +53,9 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('grpq_db',
 -- /^NAME1$/i regex is logically an equality on this index. Used by the CI-index
 -- sections below to test whether the planner lowers a /i regex onto it.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('grpq_db',
- '{ "createIndexes": "docs", "indexes": [ { "key": { "tags.name": 1, "tags.val": 1, "ord": -1 }, "name": "idx_tags_ord_ci", "enableOrderedIndex": 1, "collation": { "locale": "en", "strength": 1 } } ] }', TRUE);
- create_indexes_non_concurrently
----------------------------------------------------------------------
+    '{ "createIndexes": "docs", "indexes": [ { "key": { "tags.name": 1, "tags.val": 1, "ord": -1 }, "name": "idx_tags_ord_ci", "enableOrderedIndex": 1, "collation": { "locale": "en", "strength": 1 } } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "3" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
@@ -63,18 +63,18 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('grpq_db',
 -- the "NAME1"/"V1" tag pair and every 11th the "NAME2"/"V2" pair so the $elemMatch
 -- branches match a deterministic subset.
 SELECT COUNT(documentdb_api.insert_one('grpq_db', 'docs',
- ('{ "_id": ' || i::text ||
- ', "ord": ' || (i % 200)::text ||
- ', "cat": "c' || (i % 4)::text || '"' ||
- ', "sub": "s' || (i % 3)::text || '"' ||
- ', "tags": [ { "name": "' || (CASE WHEN i % 7 = 0 THEN 'NAME1' ELSE 'n' || (i % 13)::text END) ||
- '", "val": "' || (CASE WHEN i % 7 = 0 THEN 'V1' ELSE 'x' || (i % 5)::text END) || '" }, ' ||
- '{ "name": "' || (CASE WHEN i % 11 = 0 THEN 'NAME2' ELSE 'm' || (i % 9)::text END) ||
- '", "val": "' || (CASE WHEN i % 11 = 0 THEN 'V2' ELSE 'y' || (i % 4)::text END) || '" } ] }')::bson))
+    ('{ "_id": ' || i::text ||
+     ', "ord": ' || (i % 200)::text ||
+     ', "cat": "c' || (i % 4)::text || '"' ||
+     ', "sub": "s' || (i % 3)::text || '"' ||
+     ', "tags": [ { "name": "' || (CASE WHEN i % 7 = 0 THEN 'NAME1' ELSE 'n' || (i % 13)::text END) ||
+        '", "val": "' || (CASE WHEN i % 7 = 0 THEN 'V1' ELSE 'x' || (i % 5)::text END) || '" }, ' ||
+        '{ "name": "' || (CASE WHEN i % 11 = 0 THEN 'NAME2' ELSE 'm' || (i % 9)::text END) ||
+        '", "val": "' || (CASE WHEN i % 11 = 0 THEN 'V2' ELSE 'y' || (i % 4)::text END) || '" } ] }')::bson))
 FROM generate_series(1, 200) i;
- count
----------------------------------------------------------------------
- 200
+ count 
+-------
+   200
 (1 row)
 
 -- VACUUM (ANALYZE) the collection heap (not a bare ANALYZE) so the visibility
@@ -101,33 +101,33 @@ VACUUM (ANALYZE) documentdb_data.documents_49401;
 --    basic_schedule); PG15-17 use the base expected file.
 -- ============================================================================
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
- EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
- SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] }, "hint": "idx_cat_sub_ord" }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('grpq_db',
+        '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] }, "hint": "idx_cat_sub_ord" }')
 $cmd$, p_ignore_heap_fetches => true);
- run_explain_and_trim
----------------------------------------------------------------------
+                                                                                        run_explain_and_trim                                                                                        
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
- ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
- namespaceName: grpq_db.docs
- indexName: idx_cat_sub_ord
- indexKey: {"cat": 1,"sub": 1,"ord": -1}
- isMultiKey: false
- indexBounds: ["cat": (MinKey, MaxKey), "sub": (MinKey, MaxKey), "ord": DESC[50, 150]]
- innerScanLoops: 125 loops
- scanType: ordered
- scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 8)]
- ->  Index Only Scan using idx_cat_sub_ord on documents_49401 collection (actual rows=17 loops=1)
- Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
- Filter: (((document @= '{ "cat" : "c1" }'::bson) AND (document @= '{ "sub" : "s1" }'::bson)) OR ((document @= '{ "cat" : "c2" }'::bson) AND (document @= '{ "sub" : "s2" }'::bson)))
- Rows Removed by Filter: 84
- Heap Fetches: xxx
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
+         namespaceName: grpq_db.docs
+         indexName: idx_cat_sub_ord
+         indexKey: {"cat": 1,"sub": 1,"ord": -1}
+         isMultiKey: false
+         indexBounds: ["cat": (MinKey, MaxKey), "sub": (MinKey, MaxKey), "ord": DESC[50, 150]]
+         innerScanLoops: 125 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 8)]
+         ->  Index Only Scan using idx_cat_sub_ord on documents_49401 collection (actual rows=17 loops=1)
+               Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
+               Filter: (((document @= '{ "cat" : "c1" }'::bson) AND (document @= '{ "sub" : "s1" }'::bson)) OR ((document @= '{ "cat" : "c2" }'::bson) AND (document @= '{ "sub" : "s2" }'::bson)))
+               Rows Removed by Filter: 84
+               Heap Fetches: xxx
 (15 rows)
 
 SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] }, "hint": "idx_cat_sub_ord" }');
- document
----------------------------------------------------------------------
+    '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] }, "hint": "idx_cat_sub_ord" }');
+                               document                                
+-----------------------------------------------------------------------
  { "n" : { "$numberInt" : "17" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -144,34 +144,32 @@ SELECT document FROM bson_aggregation_count('grpq_db',
 --    small "Rows Removed by Filter").
 -- ============================================================================
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
- EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
- SELECT document FROM bson_aggregation_pipeline('grpq_db',
- '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('grpq_db',
+        '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }')
 $cmd$, p_ignore_heap_fetches => true);
- run_explain_and_trim
----------------------------------------------------------------------
+                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                          
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
- Sort Key: (bson_orderby(agg_stage_3.document, '{ "count" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
- Sort Method: quicksort  Memory: xxxkB
- ->  Subquery Scan on agg_stage_3 (actual rows=2 loops=1)
- ->  GroupAggregate (actual rows=2 loops=1)
- Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
- ->  Sort (actual rows=17 loops=1)
- Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
- Sort Method: quicksort  Memory: xxxkB
- ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
- namespaceName: grpq_db.docs
- indexName: _id_
- ->  Index Scan using _id_ on documents_49401 collection (actual rows=17 loops=1)
- Index Cond: (shard_key_value = '49401'::bigint)
- Filter: ((document @!= '{ "cat" : null }'::bson) AND (document @!= '{ "cat" : "" }'::bson) AND (document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson) AND (((document @= '{ "cat" : "c1" }'::bson) AND (document @= '{ "sub" : "s1" }'::bson)) OR ((document @= '{ "cat" : "c2" }'::bson) AND (document @= '{ "sub" : "s2" }'::bson))))
- Rows Removed by Filter: 183
-(16 rows)
+   Sort Key: (bson_orderby(agg_stage_3.document, '{ "count" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_3 (actual rows=2 loops=1)
+         ->  HashAggregate (actual rows=2 loops=1)
+               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Batches: 1  Memory Usage: xxxkB
+               ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
+                     namespaceName: grpq_db.docs
+                     indexName: _id_
+                     ->  Index Scan using _id_ on documents_49401 collection (actual rows=17 loops=1)
+                           Index Cond: (shard_key_value = '49401'::bigint)
+                           Filter: ((document @!= '{ "cat" : null }'::bson) AND (document @!= '{ "cat" : "" }'::bson) AND (document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson) AND (((document @= '{ "cat" : "c1" }'::bson) AND (document @= '{ "sub" : "s1" }'::bson)) OR ((document @= '{ "cat" : "c2" }'::bson) AND (document @= '{ "sub" : "s2" }'::bson))))
+                           Rows Removed by Filter: 183
+(14 rows)
 
 SELECT document FROM bson_aggregation_pipeline('grpq_db',
- '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }');
- document
----------------------------------------------------------------------
+    '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }');
+                                     document                                      
+-----------------------------------------------------------------------------------
  { "_id" : { "type" : "c2", "subType" : "s2" }, "count" : { "$numberInt" : "9" } }
  { "_id" : { "type" : "c1", "subType" : "s1" }, "count" : { "$numberInt" : "8" } }
 (2 rows)
@@ -186,33 +184,33 @@ SELECT document FROM bson_aggregation_pipeline('grpq_db',
 --    case-insensitive index rather than the all-strings range.
 -- ============================================================================
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
- EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
- SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('grpq_db',
+        '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }')
 $cmd$);
- run_explain_and_trim
----------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                                                                                                                                       
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
- ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
- namespaceName: grpq_db.docs
- indexName: idx_tags_ord
- indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
- isMultiKey: true
- multiKeyPaths: tags.name, tags.val
- hasCorrelatedTerms: true
- indexBounds: ["tags.name": ["", { }), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]], ["tags.name": [{ "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }], "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]], ["tags.name": ["", { }), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]], ["tags.name": [{ "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }], "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]]
- innerScanLoops: 22 loops
- scanType: regular
- scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 14), (isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 9), (isInequality: true, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0)]
- ->  Index Scan using idx_tags_ord on documents_49401 collection (actual rows=1 loops=1)
- Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson) AND (document @<> '{ "tags.name" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "9" }, "value" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "isTopLevel" : false, "hasMultiSegmentSubpath" : false } ] } }'::bson) AND (document @<> '{ "tags.name" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "9" }, "value" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "isTopLevel" : false, "hasMultiSegmentSubpath" : false } ] } }'::bson))
- Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) AND (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+         namespaceName: grpq_db.docs
+         indexName: idx_tags_ord
+         indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
+         isMultiKey: true
+         multiKeyPaths: tags.name, tags.val
+         hasCorrelatedTerms: true
+         indexBounds: ["tags.name": ["", { }), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]], ["tags.name": [{ "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }], "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]], ["tags.name": ["", { }), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]], ["tags.name": [{ "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }], "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]]
+         innerScanLoops: 22 loops
+         scanType: regular
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 14), (isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 9), (isInequality: true, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0)]
+         ->  Index Scan using idx_tags_ord on documents_49401 collection (actual rows=1 loops=1)
+               Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson) AND (document @<> '{ "tags.name" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "9" }, "value" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "isTopLevel" : false, "hasMultiSegmentSubpath" : false } ] } }'::bson) AND (document @<> '{ "tags.name" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "9" }, "value" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "isTopLevel" : false, "hasMultiSegmentSubpath" : false } ] } }'::bson))
+               Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) AND (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
 (15 rows)
 
 SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }');
- document
----------------------------------------------------------------------
+    '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }');
+                               document                               
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -230,35 +228,35 @@ SELECT document FROM bson_aggregation_count('grpq_db',
 --    section 9 shows equality alone pins both tags.name and tags.val to point bounds.)
 -- ============================================================================
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
- EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
- SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('grpq_db',
+        '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }')
 $cmd$);
- run_explain_and_trim
----------------------------------------------------------------------
+                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                       
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
- ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
- namespaceName: grpq_db.docs
- indexName: idx_tags_ord
- indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
- isMultiKey: true
- multiKeyPaths: tags.name, tags.val
- hasCorrelatedTerms: true
- indexBounds: ["tags.name": (MinKey, MaxKey), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]]
- numDuplicates: 101 entries
- innerScanLoops: 358 loops
- scanType: ordered
- scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 19)]
- ->  Index Scan using idx_tags_ord on documents_49401 collection (actual rows=22 loops=1)
- Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
- Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) OR (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
- Rows Removed by Filter: 79
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
+         namespaceName: grpq_db.docs
+         indexName: idx_tags_ord
+         indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
+         isMultiKey: true
+         multiKeyPaths: tags.name, tags.val
+         hasCorrelatedTerms: true
+         indexBounds: ["tags.name": (MinKey, MaxKey), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]]
+         numDuplicates: 101 entries
+         innerScanLoops: 358 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 19)]
+         ->  Index Scan using idx_tags_ord on documents_49401 collection (actual rows=22 loops=1)
+               Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
+               Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) OR (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
+               Rows Removed by Filter: 79
 (17 rows)
 
 SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }');
- document
----------------------------------------------------------------------
+    '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }');
+                               document                                
+-----------------------------------------------------------------------
  { "n" : { "$numberInt" : "22" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -274,46 +272,44 @@ SELECT document FROM bson_aggregation_count('grpq_db',
 --    count in section 4) instead of being evaluated as a Filter.
 -- ============================================================================
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
- EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
- SELECT document FROM bson_aggregation_pipeline('grpq_db',
- '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('grpq_db',
+        '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }')
 $cmd$);
- run_explain_and_trim
----------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                        run_explain_and_trim                                                                                                                                                                                                                                                                                                                         
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=12 loops=1)
- Sort Key: (bson_orderby(agg_stage_3.document, '{ "count" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
- Sort Method: quicksort  Memory: xxxkB
- ->  Subquery Scan on agg_stage_3 (actual rows=12 loops=1)
- ->  GroupAggregate (actual rows=12 loops=1)
- Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
- ->  Sort (actual rows=22 loops=1)
- Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
- Sort Method: quicksort  Memory: xxxkB
- ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
- namespaceName: grpq_db.docs
- indexName: _id_
- ->  Index Scan using _id_ on documents_49401 collection (actual rows=22 loops=1)
- Index Cond: (shard_key_value = '49401'::bigint)
- Filter: ((document @!= '{ "cat" : null }'::bson) AND (document @!= '{ "cat" : "" }'::bson) AND (document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson) AND ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) OR (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson)))
- Rows Removed by Filter: 178
-(16 rows)
+   Sort Key: (bson_orderby(agg_stage_3.document, '{ "count" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_3 (actual rows=12 loops=1)
+         ->  HashAggregate (actual rows=12 loops=1)
+               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Batches: 1  Memory Usage: xxxkB
+               ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
+                     namespaceName: grpq_db.docs
+                     indexName: _id_
+                     ->  Index Scan using _id_ on documents_49401 collection (actual rows=22 loops=1)
+                           Index Cond: (shard_key_value = '49401'::bigint)
+                           Filter: ((document @!= '{ "cat" : null }'::bson) AND (document @!= '{ "cat" : "" }'::bson) AND (document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson) AND ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) OR (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson)))
+                           Rows Removed by Filter: 178
+(14 rows)
 
 SELECT document FROM bson_aggregation_pipeline('grpq_db',
- '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }');
- document
----------------------------------------------------------------------
+    '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }');
+                                     document                                      
+-----------------------------------------------------------------------------------
  { "_id" : { "type" : "c3", "subType" : "s0" }, "count" : { "$numberInt" : "3" } }
- { "_id" : { "type" : "c0", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
- { "_id" : { "type" : "c0", "subType" : "s2" }, "count" : { "$numberInt" : "2" } }
- { "_id" : { "type" : "c1", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
  { "_id" : { "type" : "c3", "subType" : "s2" }, "count" : { "$numberInt" : "2" } }
+ { "_id" : { "type" : "c1", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
+ { "_id" : { "type" : "c0", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
+ { "_id" : { "type" : "c2", "subType" : "s0" }, "count" : { "$numberInt" : "2" } }
  { "_id" : { "type" : "c2", "subType" : "s2" }, "count" : { "$numberInt" : "2" } }
  { "_id" : { "type" : "c3", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
+ { "_id" : { "type" : "c0", "subType" : "s2" }, "count" : { "$numberInt" : "2" } }
  { "_id" : { "type" : "c0", "subType" : "s0" }, "count" : { "$numberInt" : "2" } }
- { "_id" : { "type" : "c2", "subType" : "s0" }, "count" : { "$numberInt" : "2" } }
  { "_id" : { "type" : "c1", "subType" : "s2" }, "count" : { "$numberInt" : "1" } }
- { "_id" : { "type" : "c1", "subType" : "s0" }, "count" : { "$numberInt" : "1" } }
  { "_id" : { "type" : "c2", "subType" : "s1" }, "count" : { "$numberInt" : "1" } }
+ { "_id" : { "type" : "c1", "subType" : "s0" }, "count" : { "$numberInt" : "1" } }
 (12 rows)
 
 -- ============================================================================
@@ -331,36 +327,36 @@ SELECT document FROM bson_aggregation_pipeline('grpq_db',
 --    tags.name/tags.val form tight point bounds instead of (MinKey, MaxKey).
 -- ============================================================================
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
- EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
- SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('grpq_db',
+        '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }')
 $cmd$);
- run_explain_and_trim
----------------------------------------------------------------------
+                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
- ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
- namespaceName: grpq_db.docs
- indexName: idx_tags_ord_ci
- indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
- indexCollation: en-u-ks-level1
- isMultiKey: true
- multiKeyPaths: tags.name, tags.val
- hasCorrelatedTerms: true
- indexBounds: ["tags.name": (MinKey, MaxKey), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]]
- numDuplicates: 101 entries
- innerScanLoops: 358 loops
- scanType: ordered
- scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 61)]
- ->  Index Scan using idx_tags_ord_ci on documents_49401 collection (actual rows=1 loops=1)
- Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
- Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) AND (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
- Rows Removed by Filter: 100
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+         namespaceName: grpq_db.docs
+         indexName: idx_tags_ord_ci
+         indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
+         indexCollation: en-u-ks-level1
+         isMultiKey: true
+         multiKeyPaths: tags.name, tags.val
+         hasCorrelatedTerms: true
+         indexBounds: ["tags.name": (MinKey, MaxKey), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]]
+         numDuplicates: 101 entries
+         innerScanLoops: 358 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 61)]
+         ->  Index Scan using idx_tags_ord_ci on documents_49401 collection (actual rows=1 loops=1)
+               Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
+               Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) AND (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
+               Rows Removed by Filter: 100
 (18 rows)
 
 SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }');
- document
----------------------------------------------------------------------
+    '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }');
+                               document                               
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -377,36 +373,36 @@ SELECT document FROM bson_aggregation_count('grpq_db',
 --    equality on idx_tags_ord_ci, yielding tight per-branch bounds (ideally index-only).
 -- ============================================================================
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
- EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
- SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('grpq_db',
+        '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }')
 $cmd$);
- run_explain_and_trim
----------------------------------------------------------------------
+                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                       
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
- ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
- namespaceName: grpq_db.docs
- indexName: idx_tags_ord_ci
- indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
- indexCollation: en-u-ks-level1
- isMultiKey: true
- multiKeyPaths: tags.name, tags.val
- hasCorrelatedTerms: true
- indexBounds: ["tags.name": (MinKey, MaxKey), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]]
- numDuplicates: 101 entries
- innerScanLoops: 358 loops
- scanType: ordered
- scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 61)]
- ->  Index Scan using idx_tags_ord_ci on documents_49401 collection (actual rows=22 loops=1)
- Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
- Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) OR (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
- Rows Removed by Filter: 79
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
+         namespaceName: grpq_db.docs
+         indexName: idx_tags_ord_ci
+         indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
+         indexCollation: en-u-ks-level1
+         isMultiKey: true
+         multiKeyPaths: tags.name, tags.val
+         hasCorrelatedTerms: true
+         indexBounds: ["tags.name": (MinKey, MaxKey), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]]
+         numDuplicates: 101 entries
+         innerScanLoops: 358 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 61)]
+         ->  Index Scan using idx_tags_ord_ci on documents_49401 collection (actual rows=22 loops=1)
+               Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
+               Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) OR (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
+               Rows Removed by Filter: 79
 (18 rows)
 
 SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }');
- document
----------------------------------------------------------------------
+    '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }');
+                               document                                
+-----------------------------------------------------------------------
  { "n" : { "$numberInt" : "22" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -417,34 +413,34 @@ SELECT document FROM bson_aggregation_count('grpq_db',
 --    recheck. This demonstrates the current first-owner tie-break behavior.
 -- ============================================================================
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
- EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
- SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('grpq_db',
+        '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }')
 $cmd$);
- run_explain_and_trim
----------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                      run_explain_and_trim                                                                                                                                                                                                                                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
- ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
- namespaceName: grpq_db.docs
- indexName: idx_tags_ord
- indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
- isMultiKey: true
- multiKeyPaths: tags.name, tags.val
- hasCorrelatedTerms: true
- indexBounds: ["tags.name": ["NAME1", "NAME1"], "tags.val": ["V1", "V1"], "ord": DESC[50, 150]]
- innerScanLoops: 15 loops
- scanType: ordered
- scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 14)]
- ->  Index Scan using idx_tags_ord on documents_49401 collection (actual rows=1 loops=1)
- Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson) AND (document @<> '{ "tags.name" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "NAME1", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson) AND (document @<> '{ "tags.val" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "V1", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson))
- Filter: ((document @#? '{ "tags" : { "name" : "NAME1", "val" : "V1" } }'::bson) AND (document @#? '{ "tags" : { "name" : "NAME2", "val" : "V2" } }'::bson))
- Rows Removed by Filter: 13
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+         namespaceName: grpq_db.docs
+         indexName: idx_tags_ord
+         indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
+         isMultiKey: true
+         multiKeyPaths: tags.name, tags.val
+         hasCorrelatedTerms: true
+         indexBounds: ["tags.name": ["NAME1", "NAME1"], "tags.val": ["V1", "V1"], "ord": DESC[50, 150]]
+         innerScanLoops: 15 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 14)]
+         ->  Index Scan using idx_tags_ord on documents_49401 collection (actual rows=1 loops=1)
+               Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson) AND (document @<> '{ "tags.name" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "NAME1", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson) AND (document @<> '{ "tags.val" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "V1", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson))
+               Filter: ((document @#? '{ "tags" : { "name" : "NAME1", "val" : "V1" } }'::bson) AND (document @#? '{ "tags" : { "name" : "NAME2", "val" : "V2" } }'::bson))
+               Rows Removed by Filter: 13
 (16 rows)
 
 SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }');
- document
----------------------------------------------------------------------
+    '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }');
+                               document                               
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -461,35 +457,35 @@ SELECT document FROM bson_aggregation_count('grpq_db',
 --    bounded branches should union index-only (same index-only TODO as section 4).
 -- ============================================================================
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
- EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
- SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('grpq_db',
+        '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }')
 $cmd$);
- run_explain_and_trim
----------------------------------------------------------------------
+                                                                           run_explain_and_trim                                                                           
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
- ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
- namespaceName: grpq_db.docs
- indexName: idx_tags_ord
- indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
- isMultiKey: true
- multiKeyPaths: tags.name, tags.val
- hasCorrelatedTerms: true
- indexBounds: ["tags.name": (MinKey, MaxKey), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]]
- numDuplicates: 101 entries
- innerScanLoops: 358 loops
- scanType: ordered
- scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 19)]
- ->  Index Scan using idx_tags_ord on documents_49401 collection (actual rows=22 loops=1)
- Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
- Filter: ((document @#? '{ "tags" : { "name" : "NAME1", "val" : "V1" } }'::bson) OR (document @#? '{ "tags" : { "name" : "NAME2", "val" : "V2" } }'::bson))
- Rows Removed by Filter: 79
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
+         namespaceName: grpq_db.docs
+         indexName: idx_tags_ord
+         indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
+         isMultiKey: true
+         multiKeyPaths: tags.name, tags.val
+         hasCorrelatedTerms: true
+         indexBounds: ["tags.name": (MinKey, MaxKey), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]]
+         numDuplicates: 101 entries
+         innerScanLoops: 358 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 19)]
+         ->  Index Scan using idx_tags_ord on documents_49401 collection (actual rows=22 loops=1)
+               Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
+               Filter: ((document @#? '{ "tags" : { "name" : "NAME1", "val" : "V1" } }'::bson) OR (document @#? '{ "tags" : { "name" : "NAME2", "val" : "V2" } }'::bson))
+               Rows Removed by Filter: 79
 (17 rows)
 
 SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }');
- document
----------------------------------------------------------------------
+    '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }');
+                               document                                
+-----------------------------------------------------------------------
  { "n" : { "$numberInt" : "22" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -505,46 +501,44 @@ SELECT document FROM bson_aggregation_count('grpq_db',
 --     independent of whether the predicate is equality or regex.
 -- ============================================================================
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
- EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
- SELECT document FROM bson_aggregation_pipeline('grpq_db',
- '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('grpq_db',
+        '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }')
 $cmd$);
- run_explain_and_trim
----------------------------------------------------------------------
+                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                             
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=12 loops=1)
- Sort Key: (bson_orderby(agg_stage_3.document, '{ "count" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
- Sort Method: quicksort  Memory: xxxkB
- ->  Subquery Scan on agg_stage_3 (actual rows=12 loops=1)
- ->  GroupAggregate (actual rows=12 loops=1)
- Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
- ->  Sort (actual rows=22 loops=1)
- Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
- Sort Method: quicksort  Memory: xxxkB
- ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
- namespaceName: grpq_db.docs
- indexName: _id_
- ->  Index Scan using _id_ on documents_49401 collection (actual rows=22 loops=1)
- Index Cond: (shard_key_value = '49401'::bigint)
- Filter: ((document @!= '{ "cat" : null }'::bson) AND (document @!= '{ "cat" : "" }'::bson) AND (document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson) AND ((document @#? '{ "tags" : { "name" : "NAME1", "val" : "V1" } }'::bson) OR (document @#? '{ "tags" : { "name" : "NAME2", "val" : "V2" } }'::bson)))
- Rows Removed by Filter: 178
-(16 rows)
+   Sort Key: (bson_orderby(agg_stage_3.document, '{ "count" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_3 (actual rows=12 loops=1)
+         ->  HashAggregate (actual rows=12 loops=1)
+               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Batches: 1  Memory Usage: xxxkB
+               ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
+                     namespaceName: grpq_db.docs
+                     indexName: _id_
+                     ->  Index Scan using _id_ on documents_49401 collection (actual rows=22 loops=1)
+                           Index Cond: (shard_key_value = '49401'::bigint)
+                           Filter: ((document @!= '{ "cat" : null }'::bson) AND (document @!= '{ "cat" : "" }'::bson) AND (document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson) AND ((document @#? '{ "tags" : { "name" : "NAME1", "val" : "V1" } }'::bson) OR (document @#? '{ "tags" : { "name" : "NAME2", "val" : "V2" } }'::bson)))
+                           Rows Removed by Filter: 178
+(14 rows)
 
 SELECT document FROM bson_aggregation_pipeline('grpq_db',
- '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }');
- document
----------------------------------------------------------------------
+    '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }');
+                                     document                                      
+-----------------------------------------------------------------------------------
  { "_id" : { "type" : "c3", "subType" : "s0" }, "count" : { "$numberInt" : "3" } }
- { "_id" : { "type" : "c0", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
- { "_id" : { "type" : "c0", "subType" : "s2" }, "count" : { "$numberInt" : "2" } }
- { "_id" : { "type" : "c1", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
  { "_id" : { "type" : "c3", "subType" : "s2" }, "count" : { "$numberInt" : "2" } }
+ { "_id" : { "type" : "c1", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
+ { "_id" : { "type" : "c0", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
+ { "_id" : { "type" : "c2", "subType" : "s0" }, "count" : { "$numberInt" : "2" } }
  { "_id" : { "type" : "c2", "subType" : "s2" }, "count" : { "$numberInt" : "2" } }
  { "_id" : { "type" : "c3", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
+ { "_id" : { "type" : "c0", "subType" : "s2" }, "count" : { "$numberInt" : "2" } }
  { "_id" : { "type" : "c0", "subType" : "s0" }, "count" : { "$numberInt" : "2" } }
- { "_id" : { "type" : "c2", "subType" : "s0" }, "count" : { "$numberInt" : "2" } }
  { "_id" : { "type" : "c1", "subType" : "s2" }, "count" : { "$numberInt" : "1" } }
- { "_id" : { "type" : "c1", "subType" : "s0" }, "count" : { "$numberInt" : "1" } }
  { "_id" : { "type" : "c2", "subType" : "s1" }, "count" : { "$numberInt" : "1" } }
+ { "_id" : { "type" : "c1", "subType" : "s0" }, "count" : { "$numberInt" : "1" } }
 (12 rows)
 
 -- ============================================================================
@@ -561,360 +555,354 @@ SELECT document FROM bson_aggregation_pipeline('grpq_db',
 SET documentdb_rum.forceRumOrderedIndexScan TO on;
 -- Scenario 1 (forced ordered): plan + result must match section 1 above.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
- EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
- SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] }, "hint": "idx_cat_sub_ord" }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('grpq_db',
+        '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] }, "hint": "idx_cat_sub_ord" }')
 $cmd$, p_ignore_heap_fetches => true);
- run_explain_and_trim
----------------------------------------------------------------------
+                                                                                        run_explain_and_trim                                                                                        
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
- ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
- namespaceName: grpq_db.docs
- indexName: idx_cat_sub_ord
- indexKey: {"cat": 1,"sub": 1,"ord": -1}
- isMultiKey: false
- indexBounds: ["cat": (MinKey, MaxKey), "sub": (MinKey, MaxKey), "ord": DESC[50, 150]]
- innerScanLoops: 125 loops
- scanType: ordered
- scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 8)]
- ->  Index Only Scan using idx_cat_sub_ord on documents_49401 collection (actual rows=17 loops=1)
- Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
- Filter: (((document @= '{ "cat" : "c1" }'::bson) AND (document @= '{ "sub" : "s1" }'::bson)) OR ((document @= '{ "cat" : "c2" }'::bson) AND (document @= '{ "sub" : "s2" }'::bson)))
- Rows Removed by Filter: 84
- Heap Fetches: xxx
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
+         namespaceName: grpq_db.docs
+         indexName: idx_cat_sub_ord
+         indexKey: {"cat": 1,"sub": 1,"ord": -1}
+         isMultiKey: false
+         indexBounds: ["cat": (MinKey, MaxKey), "sub": (MinKey, MaxKey), "ord": DESC[50, 150]]
+         innerScanLoops: 125 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 8)]
+         ->  Index Only Scan using idx_cat_sub_ord on documents_49401 collection (actual rows=17 loops=1)
+               Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
+               Filter: (((document @= '{ "cat" : "c1" }'::bson) AND (document @= '{ "sub" : "s1" }'::bson)) OR ((document @= '{ "cat" : "c2" }'::bson) AND (document @= '{ "sub" : "s2" }'::bson)))
+               Rows Removed by Filter: 84
+               Heap Fetches: xxx
 (15 rows)
 
 SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] }, "hint": "idx_cat_sub_ord" }');
- document
----------------------------------------------------------------------
+    '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] }, "hint": "idx_cat_sub_ord" }');
+                               document                                
+-----------------------------------------------------------------------
  { "n" : { "$numberInt" : "17" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 -- Scenario 2 (forced ordered): plan + result must match section 2 above.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
- EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
- SELECT document FROM bson_aggregation_pipeline('grpq_db',
- '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('grpq_db',
+        '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }')
 $cmd$, p_ignore_heap_fetches => true);
- run_explain_and_trim
----------------------------------------------------------------------
+                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                          
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
- Sort Key: (bson_orderby(agg_stage_3.document, '{ "count" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
- Sort Method: quicksort  Memory: xxxkB
- ->  Subquery Scan on agg_stage_3 (actual rows=2 loops=1)
- ->  GroupAggregate (actual rows=2 loops=1)
- Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
- ->  Sort (actual rows=17 loops=1)
- Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
- Sort Method: quicksort  Memory: xxxkB
- ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
- namespaceName: grpq_db.docs
- indexName: _id_
- ->  Index Scan using _id_ on documents_49401 collection (actual rows=17 loops=1)
- Index Cond: (shard_key_value = '49401'::bigint)
- Filter: ((document @!= '{ "cat" : null }'::bson) AND (document @!= '{ "cat" : "" }'::bson) AND (document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson) AND (((document @= '{ "cat" : "c1" }'::bson) AND (document @= '{ "sub" : "s1" }'::bson)) OR ((document @= '{ "cat" : "c2" }'::bson) AND (document @= '{ "sub" : "s2" }'::bson))))
- Rows Removed by Filter: 183
-(16 rows)
+   Sort Key: (bson_orderby(agg_stage_3.document, '{ "count" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_3 (actual rows=2 loops=1)
+         ->  HashAggregate (actual rows=2 loops=1)
+               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Batches: 1  Memory Usage: xxxkB
+               ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
+                     namespaceName: grpq_db.docs
+                     indexName: _id_
+                     ->  Index Scan using _id_ on documents_49401 collection (actual rows=17 loops=1)
+                           Index Cond: (shard_key_value = '49401'::bigint)
+                           Filter: ((document @!= '{ "cat" : null }'::bson) AND (document @!= '{ "cat" : "" }'::bson) AND (document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson) AND (((document @= '{ "cat" : "c1" }'::bson) AND (document @= '{ "sub" : "s1" }'::bson)) OR ((document @= '{ "cat" : "c2" }'::bson) AND (document @= '{ "sub" : "s2" }'::bson))))
+                           Rows Removed by Filter: 183
+(14 rows)
 
 SELECT document FROM bson_aggregation_pipeline('grpq_db',
- '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }');
- document
----------------------------------------------------------------------
+    '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }');
+                                     document                                      
+-----------------------------------------------------------------------------------
  { "_id" : { "type" : "c2", "subType" : "s2" }, "count" : { "$numberInt" : "9" } }
  { "_id" : { "type" : "c1", "subType" : "s1" }, "count" : { "$numberInt" : "8" } }
 (2 rows)
 
 -- Scenario 3 (forced ordered): plan + result must match section 3 above.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
- EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
- SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('grpq_db',
+        '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }')
 $cmd$);
- run_explain_and_trim
----------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                                                                                                                                       
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
- ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
- namespaceName: grpq_db.docs
- indexName: idx_tags_ord
- indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
- isMultiKey: true
- multiKeyPaths: tags.name, tags.val
- hasCorrelatedTerms: true
- indexBounds: ["tags.name": ["", { }), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]], ["tags.name": [{ "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }], "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]], ["tags.name": ["", { }), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]], ["tags.name": [{ "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }], "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]]
- innerScanLoops: 400 loops
- scanType: ordered
- scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 14), (isInequality: true, estimatedEntryCount: 0)]
- ->  Index Scan using idx_tags_ord on documents_49401 collection (actual rows=1 loops=1)
- Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson) AND (document @<> '{ "tags.name" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "9" }, "value" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "isTopLevel" : false, "hasMultiSegmentSubpath" : false } ] } }'::bson) AND (document @<> '{ "tags.name" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "9" }, "value" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "isTopLevel" : false, "hasMultiSegmentSubpath" : false } ] } }'::bson))
- Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) AND (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
- Rows Removed by Filter: 13
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+         namespaceName: grpq_db.docs
+         indexName: idx_tags_ord
+         indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
+         isMultiKey: true
+         multiKeyPaths: tags.name, tags.val
+         hasCorrelatedTerms: true
+         indexBounds: ["tags.name": ["", { }), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]], ["tags.name": [{ "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }], "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]], ["tags.name": ["", { }), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]], ["tags.name": [{ "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }], "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]]
+         innerScanLoops: 400 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 14), (isInequality: true, estimatedEntryCount: 0)]
+         ->  Index Scan using idx_tags_ord on documents_49401 collection (actual rows=1 loops=1)
+               Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson) AND (document @<> '{ "tags.name" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "9" }, "value" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "isTopLevel" : false, "hasMultiSegmentSubpath" : false } ] } }'::bson) AND (document @<> '{ "tags.name" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "9" }, "value" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "isTopLevel" : false, "hasMultiSegmentSubpath" : false } ] } }'::bson))
+               Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) AND (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
+               Rows Removed by Filter: 13
 (16 rows)
 
 SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }');
- document
----------------------------------------------------------------------
+    '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }');
+                               document                               
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 -- Scenario 4 (forced ordered): plan + result must match section 4 above.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
- EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
- SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('grpq_db',
+        '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }')
 $cmd$);
- run_explain_and_trim
----------------------------------------------------------------------
+                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                       
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
- ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
- namespaceName: grpq_db.docs
- indexName: idx_tags_ord
- indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
- isMultiKey: true
- multiKeyPaths: tags.name, tags.val
- hasCorrelatedTerms: true
- indexBounds: ["tags.name": (MinKey, MaxKey), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]]
- numDuplicates: 101 entries
- innerScanLoops: 358 loops
- scanType: ordered
- scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 19)]
- ->  Index Scan using idx_tags_ord on documents_49401 collection (actual rows=22 loops=1)
- Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
- Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) OR (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
- Rows Removed by Filter: 79
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
+         namespaceName: grpq_db.docs
+         indexName: idx_tags_ord
+         indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
+         isMultiKey: true
+         multiKeyPaths: tags.name, tags.val
+         hasCorrelatedTerms: true
+         indexBounds: ["tags.name": (MinKey, MaxKey), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]]
+         numDuplicates: 101 entries
+         innerScanLoops: 358 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 19)]
+         ->  Index Scan using idx_tags_ord on documents_49401 collection (actual rows=22 loops=1)
+               Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
+               Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) OR (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
+               Rows Removed by Filter: 79
 (17 rows)
 
 SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }');
- document
----------------------------------------------------------------------
+    '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }');
+                               document                                
+-----------------------------------------------------------------------
  { "n" : { "$numberInt" : "22" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 -- Scenario 5 (forced ordered): plan + result must match section 5 above.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
- EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
- SELECT document FROM bson_aggregation_pipeline('grpq_db',
- '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('grpq_db',
+        '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }')
 $cmd$);
- run_explain_and_trim
----------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                        run_explain_and_trim                                                                                                                                                                                                                                                                                                                         
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=12 loops=1)
- Sort Key: (bson_orderby(agg_stage_3.document, '{ "count" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
- Sort Method: quicksort  Memory: xxxkB
- ->  Subquery Scan on agg_stage_3 (actual rows=12 loops=1)
- ->  GroupAggregate (actual rows=12 loops=1)
- Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
- ->  Sort (actual rows=22 loops=1)
- Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
- Sort Method: quicksort  Memory: xxxkB
- ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
- namespaceName: grpq_db.docs
- indexName: _id_
- ->  Index Scan using _id_ on documents_49401 collection (actual rows=22 loops=1)
- Index Cond: (shard_key_value = '49401'::bigint)
- Filter: ((document @!= '{ "cat" : null }'::bson) AND (document @!= '{ "cat" : "" }'::bson) AND (document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson) AND ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) OR (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson)))
- Rows Removed by Filter: 178
-(16 rows)
+   Sort Key: (bson_orderby(agg_stage_3.document, '{ "count" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_3 (actual rows=12 loops=1)
+         ->  HashAggregate (actual rows=12 loops=1)
+               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Batches: 1  Memory Usage: xxxkB
+               ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
+                     namespaceName: grpq_db.docs
+                     indexName: _id_
+                     ->  Index Scan using _id_ on documents_49401 collection (actual rows=22 loops=1)
+                           Index Cond: (shard_key_value = '49401'::bigint)
+                           Filter: ((document @!= '{ "cat" : null }'::bson) AND (document @!= '{ "cat" : "" }'::bson) AND (document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson) AND ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) OR (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson)))
+                           Rows Removed by Filter: 178
+(14 rows)
 
 SELECT document FROM bson_aggregation_pipeline('grpq_db',
- '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }');
- document
----------------------------------------------------------------------
+    '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }');
+                                     document                                      
+-----------------------------------------------------------------------------------
  { "_id" : { "type" : "c3", "subType" : "s0" }, "count" : { "$numberInt" : "3" } }
- { "_id" : { "type" : "c0", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
- { "_id" : { "type" : "c0", "subType" : "s2" }, "count" : { "$numberInt" : "2" } }
- { "_id" : { "type" : "c1", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
  { "_id" : { "type" : "c3", "subType" : "s2" }, "count" : { "$numberInt" : "2" } }
+ { "_id" : { "type" : "c1", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
+ { "_id" : { "type" : "c0", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
+ { "_id" : { "type" : "c2", "subType" : "s0" }, "count" : { "$numberInt" : "2" } }
  { "_id" : { "type" : "c2", "subType" : "s2" }, "count" : { "$numberInt" : "2" } }
  { "_id" : { "type" : "c3", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
+ { "_id" : { "type" : "c0", "subType" : "s2" }, "count" : { "$numberInt" : "2" } }
  { "_id" : { "type" : "c0", "subType" : "s0" }, "count" : { "$numberInt" : "2" } }
- { "_id" : { "type" : "c2", "subType" : "s0" }, "count" : { "$numberInt" : "2" } }
  { "_id" : { "type" : "c1", "subType" : "s2" }, "count" : { "$numberInt" : "1" } }
- { "_id" : { "type" : "c1", "subType" : "s0" }, "count" : { "$numberInt" : "1" } }
  { "_id" : { "type" : "c2", "subType" : "s1" }, "count" : { "$numberInt" : "1" } }
+ { "_id" : { "type" : "c1", "subType" : "s0" }, "count" : { "$numberInt" : "1" } }
 (12 rows)
 
 -- Scenario 6 (forced ordered): plan + result must match section 6 above.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
- EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
- SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('grpq_db',
+        '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }')
 $cmd$);
- run_explain_and_trim
----------------------------------------------------------------------
+                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
- ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
- namespaceName: grpq_db.docs
- indexName: idx_tags_ord_ci
- indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
- indexCollation: en-u-ks-level1
- isMultiKey: true
- multiKeyPaths: tags.name, tags.val
- hasCorrelatedTerms: true
- indexBounds: ["tags.name": (MinKey, MaxKey), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]]
- numDuplicates: 101 entries
- innerScanLoops: 358 loops
- scanType: ordered
- scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 61)]
- ->  Index Scan using idx_tags_ord_ci on documents_49401 collection (actual rows=1 loops=1)
- Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
- Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) AND (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
- Rows Removed by Filter: 100
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+         namespaceName: grpq_db.docs
+         indexName: idx_tags_ord_ci
+         indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
+         indexCollation: en-u-ks-level1
+         isMultiKey: true
+         multiKeyPaths: tags.name, tags.val
+         hasCorrelatedTerms: true
+         indexBounds: ["tags.name": (MinKey, MaxKey), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]]
+         numDuplicates: 101 entries
+         innerScanLoops: 358 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 61)]
+         ->  Index Scan using idx_tags_ord_ci on documents_49401 collection (actual rows=1 loops=1)
+               Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
+               Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) AND (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
+               Rows Removed by Filter: 100
 (18 rows)
 
 SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }');
- document
----------------------------------------------------------------------
+    '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }');
+                               document                               
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 -- Scenario 7 (forced ordered): plan + result must match section 7 above.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
- EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
- SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('grpq_db',
+        '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }')
 $cmd$);
- run_explain_and_trim
----------------------------------------------------------------------
+                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                       
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
- ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
- namespaceName: grpq_db.docs
- indexName: idx_tags_ord_ci
- indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
- indexCollation: en-u-ks-level1
- isMultiKey: true
- multiKeyPaths: tags.name, tags.val
- hasCorrelatedTerms: true
- indexBounds: ["tags.name": (MinKey, MaxKey), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]]
- numDuplicates: 101 entries
- innerScanLoops: 358 loops
- scanType: ordered
- scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 61)]
- ->  Index Scan using idx_tags_ord_ci on documents_49401 collection (actual rows=22 loops=1)
- Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
- Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) OR (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
- Rows Removed by Filter: 79
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
+         namespaceName: grpq_db.docs
+         indexName: idx_tags_ord_ci
+         indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
+         indexCollation: en-u-ks-level1
+         isMultiKey: true
+         multiKeyPaths: tags.name, tags.val
+         hasCorrelatedTerms: true
+         indexBounds: ["tags.name": (MinKey, MaxKey), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]]
+         numDuplicates: 101 entries
+         innerScanLoops: 358 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 61)]
+         ->  Index Scan using idx_tags_ord_ci on documents_49401 collection (actual rows=22 loops=1)
+               Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
+               Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) OR (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
+               Rows Removed by Filter: 79
 (18 rows)
 
 SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }');
- document
----------------------------------------------------------------------
+    '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }');
+                               document                                
+-----------------------------------------------------------------------
  { "n" : { "$numberInt" : "22" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 -- Scenario 8 (forced ordered): plan + result must match section 8 above.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
- EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
- SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('grpq_db',
+        '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }')
 $cmd$);
- run_explain_and_trim
----------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                      run_explain_and_trim                                                                                                                                                                                                                                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
- ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
- namespaceName: grpq_db.docs
- indexName: idx_tags_ord
- indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
- isMultiKey: true
- multiKeyPaths: tags.name, tags.val
- hasCorrelatedTerms: true
- indexBounds: ["tags.name": ["NAME1", "NAME1"], "tags.val": ["V1", "V1"], "ord": DESC[50, 150]]
- innerScanLoops: 15 loops
- scanType: ordered
- scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 14)]
- ->  Index Scan using idx_tags_ord on documents_49401 collection (actual rows=1 loops=1)
- Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson) AND (document @<> '{ "tags.name" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "NAME1", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson) AND (document @<> '{ "tags.val" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "V1", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson))
- Filter: ((document @#? '{ "tags" : { "name" : "NAME1", "val" : "V1" } }'::bson) AND (document @#? '{ "tags" : { "name" : "NAME2", "val" : "V2" } }'::bson))
- Rows Removed by Filter: 13
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+         namespaceName: grpq_db.docs
+         indexName: idx_tags_ord
+         indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
+         isMultiKey: true
+         multiKeyPaths: tags.name, tags.val
+         hasCorrelatedTerms: true
+         indexBounds: ["tags.name": ["NAME1", "NAME1"], "tags.val": ["V1", "V1"], "ord": DESC[50, 150]]
+         innerScanLoops: 15 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 14)]
+         ->  Index Scan using idx_tags_ord on documents_49401 collection (actual rows=1 loops=1)
+               Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson) AND (document @<> '{ "tags.name" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "NAME1", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson) AND (document @<> '{ "tags.val" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "V1", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson))
+               Filter: ((document @#? '{ "tags" : { "name" : "NAME1", "val" : "V1" } }'::bson) AND (document @#? '{ "tags" : { "name" : "NAME2", "val" : "V2" } }'::bson))
+               Rows Removed by Filter: 13
 (16 rows)
 
 SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }');
- document
----------------------------------------------------------------------
+    '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }');
+                               document                               
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 -- Scenario 9 (forced ordered): plan + result must match section 9 above.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
- EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
- SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('grpq_db',
+        '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }')
 $cmd$);
- run_explain_and_trim
----------------------------------------------------------------------
+                                                                           run_explain_and_trim                                                                           
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
- ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
- namespaceName: grpq_db.docs
- indexName: idx_tags_ord
- indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
- isMultiKey: true
- multiKeyPaths: tags.name, tags.val
- hasCorrelatedTerms: true
- indexBounds: ["tags.name": (MinKey, MaxKey), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]]
- numDuplicates: 101 entries
- innerScanLoops: 358 loops
- scanType: ordered
- scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 19)]
- ->  Index Scan using idx_tags_ord on documents_49401 collection (actual rows=22 loops=1)
- Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
- Filter: ((document @#? '{ "tags" : { "name" : "NAME1", "val" : "V1" } }'::bson) OR (document @#? '{ "tags" : { "name" : "NAME2", "val" : "V2" } }'::bson))
- Rows Removed by Filter: 79
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
+         namespaceName: grpq_db.docs
+         indexName: idx_tags_ord
+         indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
+         isMultiKey: true
+         multiKeyPaths: tags.name, tags.val
+         hasCorrelatedTerms: true
+         indexBounds: ["tags.name": (MinKey, MaxKey), "tags.val": (MinKey, MaxKey), "ord": DESC[50, 150]]
+         numDuplicates: 101 entries
+         innerScanLoops: 358 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 19)]
+         ->  Index Scan using idx_tags_ord on documents_49401 collection (actual rows=22 loops=1)
+               Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
+               Filter: ((document @#? '{ "tags" : { "name" : "NAME1", "val" : "V1" } }'::bson) OR (document @#? '{ "tags" : { "name" : "NAME2", "val" : "V2" } }'::bson))
+               Rows Removed by Filter: 79
 (17 rows)
 
 SELECT document FROM bson_aggregation_count('grpq_db',
- '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }');
- document
----------------------------------------------------------------------
+    '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }');
+                               document                                
+-----------------------------------------------------------------------
  { "n" : { "$numberInt" : "22" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 -- Scenario 10 (forced ordered): plan + result must match section 10 above.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
- EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
- SELECT document FROM bson_aggregation_pipeline('grpq_db',
- '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }')
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline('grpq_db',
+        '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }')
 $cmd$);
- run_explain_and_trim
----------------------------------------------------------------------
+                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                             
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=12 loops=1)
- Sort Key: (bson_orderby(agg_stage_3.document, '{ "count" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
- Sort Method: quicksort  Memory: xxxkB
- ->  Subquery Scan on agg_stage_3 (actual rows=12 loops=1)
- ->  GroupAggregate (actual rows=12 loops=1)
- Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
- ->  Sort (actual rows=22 loops=1)
- Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
- Sort Method: quicksort  Memory: xxxkB
- ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
- namespaceName: grpq_db.docs
- indexName: _id_
- ->  Index Scan using _id_ on documents_49401 collection (actual rows=22 loops=1)
- Index Cond: (shard_key_value = '49401'::bigint)
- Filter: ((document @!= '{ "cat" : null }'::bson) AND (document @!= '{ "cat" : "" }'::bson) AND (document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson) AND ((document @#? '{ "tags" : { "name" : "NAME1", "val" : "V1" } }'::bson) OR (document @#? '{ "tags" : { "name" : "NAME2", "val" : "V2" } }'::bson)))
- Rows Removed by Filter: 178
-(16 rows)
+   Sort Key: (bson_orderby(agg_stage_3.document, '{ "count" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_3 (actual rows=12 loops=1)
+         ->  HashAggregate (actual rows=12 loops=1)
+               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Batches: 1  Memory Usage: xxxkB
+               ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
+                     namespaceName: grpq_db.docs
+                     indexName: _id_
+                     ->  Index Scan using _id_ on documents_49401 collection (actual rows=22 loops=1)
+                           Index Cond: (shard_key_value = '49401'::bigint)
+                           Filter: ((document @!= '{ "cat" : null }'::bson) AND (document @!= '{ "cat" : "" }'::bson) AND (document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson) AND ((document @#? '{ "tags" : { "name" : "NAME1", "val" : "V1" } }'::bson) OR (document @#? '{ "tags" : { "name" : "NAME2", "val" : "V2" } }'::bson)))
+                           Rows Removed by Filter: 178
+(14 rows)
 
 SELECT document FROM bson_aggregation_pipeline('grpq_db',
- '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }');
- document
----------------------------------------------------------------------
+    '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }');
+                                     document                                      
+-----------------------------------------------------------------------------------
  { "_id" : { "type" : "c3", "subType" : "s0" }, "count" : { "$numberInt" : "3" } }
- { "_id" : { "type" : "c0", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
- { "_id" : { "type" : "c0", "subType" : "s2" }, "count" : { "$numberInt" : "2" } }
- { "_id" : { "type" : "c1", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
  { "_id" : { "type" : "c3", "subType" : "s2" }, "count" : { "$numberInt" : "2" } }
+ { "_id" : { "type" : "c1", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
+ { "_id" : { "type" : "c0", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
+ { "_id" : { "type" : "c2", "subType" : "s0" }, "count" : { "$numberInt" : "2" } }
  { "_id" : { "type" : "c2", "subType" : "s2" }, "count" : { "$numberInt" : "2" } }
  { "_id" : { "type" : "c3", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
+ { "_id" : { "type" : "c0", "subType" : "s2" }, "count" : { "$numberInt" : "2" } }
  { "_id" : { "type" : "c0", "subType" : "s0" }, "count" : { "$numberInt" : "2" } }
- { "_id" : { "type" : "c2", "subType" : "s0" }, "count" : { "$numberInt" : "2" } }
  { "_id" : { "type" : "c1", "subType" : "s2" }, "count" : { "$numberInt" : "1" } }
- { "_id" : { "type" : "c1", "subType" : "s0" }, "count" : { "$numberInt" : "1" } }
  { "_id" : { "type" : "c2", "subType" : "s1" }, "count" : { "$numberInt" : "1" } }
+ { "_id" : { "type" : "c1", "subType" : "s0" }, "count" : { "$numberInt" : "1" } }
 (12 rows)
 
 RESET documentdb_rum.forceRumOrderedIndexScan;

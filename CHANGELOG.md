@@ -6,6 +6,7 @@
 * Apply find, count, and distinct command stages after a view's terminal aggregation stage, preventing grouped views from producing invalid aggregate plans. *[Bugfix]*
 
 ### documentdb v1.1-0 (Unreleased) ###
+* Add a default-on `documentdb.enable_full_scan_cost_and_selectivity` setting to control full-scan planner estimates and synthetic execution cost. *[Perf]*
 * Allow `collMod` to rename an index when its key pattern and current name both match the catalog entry. *[Feature]*
 * Preserve `admin.system.users` system-catalog permission checks while filtering memberships to catalog-backed custom roles. *[Bugfix]*
 * Return custom-role metadata from `admin.system.roles` in `rolesInfo` and from `admin.system.users` in `usersInfo` and `connectionStatus`. Admin- and root-role users can list or inspect every catalog role, while other users can list or inspect roles they inherit directly or transitively; built-in roles remain excluded. *[Bugfix]*

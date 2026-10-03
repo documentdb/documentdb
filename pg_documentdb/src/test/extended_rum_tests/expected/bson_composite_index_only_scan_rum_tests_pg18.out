@@ -1,3 +1,4 @@
+\i sql/bson_composite_index_only_scan_rum_tests_pg16.sql
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 -- enableGroupByDistinctScan and enableDistinctScanForGroupFirst are enabled by
 -- default starting in v116. Pin them off here so this suite keeps exercising the
@@ -8,7 +9,7 @@ SET documentdb.next_collection_id TO 9100;
 SET documentdb.next_collection_index_id TO 9100;
 -- Tests for composite on non-primary key
 select documentdb_api.insert_one('iosdb_rum', 'iosc_comp', '{"_id": 1, "country": "USA", "provider": "AWS"}');
-NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_rum_tests_pg16.sql:14: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -525,7 +526,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 
 -- Test index only scan for numeric fields
 SELECT documentdb_api.insert_one('iosdb_rum_numeric', 'rent_data', '{"_id": 1, "city": "NYC", "sqft": 300, "rent": 3000}');
-NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_rum_tests_pg16.sql:129: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1436,7 +1437,7 @@ SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregat
 
 -- missing covered aggregate target should match heap semantics
 SELECT documentdb_api.insert_one('iosdb_rum_missing', 'rent_data', '{"_id": 1, "city": "Seattle"}');
-NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_rum_tests_pg16.sql:352: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1485,7 +1486,7 @@ SELECT document FROM bson_aggregation_pipeline('iosdb_rum_missing', '{ "aggregat
 -- Verify that $group with dotted-path index keys uses index only scan and
 -- that the dotted-path reconstruction produces correct grouped results.
 SELECT documentdb_api.insert_one('iosdb_rum_dotted', 'rent_data', '{"_id": 1, "addr": {"city": "Seattle", "rent": 4000}, "sqft": 1500}');
-NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_rum_tests_pg16.sql:362: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2023,7 +2024,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 -- index.
 -- =============================================================================
 SELECT documentdb_api.create_collection('iosdb_rum', 'sum_const_test');
-NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_rum_tests_pg16.sql:485: NOTICE:  creating collection
  create_collection 
 -------------------
  t
@@ -2084,7 +2085,7 @@ SELECT documentdb_api.drop_collection('iosdb_rum', 'sum_const_test');
 -- The partial index predicate satisfies the query filter, so PG chooses it,
 -- but no index scan keys are generated.
 SELECT documentdb_api.insert_one('iosdb_rum', 'partial_zero_keys', '{"_id": 1, "a": 1, "b": 10}');
-NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_rum_tests_pg16.sql:504: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }

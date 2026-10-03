@@ -92,32 +92,28 @@ WHERE database_name = 'highkeydb' AND collection_name = 'page_isolated_suffix' \
 set documentdb.enableExtendedExplainPlans to on;
 set documentdb.enableExplainScanIndexCosts to off;
 set documentdb.forceDisableSeqScan to on;
+set enable_bitmapscan to off;
 -- Baseline: with the optimization disabled the ordered scan still crosses every
 -- page, but the highKeyEligiblePages counter is never emitted.
 set documentdb.enable_high_key_optimization to off;
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "single_key", "filter": { "a": { "$gte": 1 } }, "sort": { "a": 1 } }'::bson) $cmd$);
-                                    run_explain_and_trim                                    
---------------------------------------------------------------------------------------------
- Sort (actual rows=5000 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
-         namespaceName: highkeydb.single_key
-         indexName: a_1
-         indexKey: {"a": 1}
-         isMultiKey: false
-         indexBounds: ["a": [1, Infinity]]
-         innerScanLoops: 5000 loops
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
-         ->  Bitmap Heap Scan on documents_22001 collection (actual rows=5000 loops=1)
-               Recheck Cond: (document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
-               Heap Blocks: exact=52
-               ->  Bitmap Index Scan on a_1 (actual rows=5000 loops=1)
-                     Index Cond: (document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
-(17 rows)
+                                run_explain_and_trim                                 
+-------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
+   namespaceName: highkeydb.single_key
+   indexName: a_1
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": [1, Infinity]]
+   innerScanLoops: 5000 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
+   ->  Index Scan using a_1 on documents_22001 collection (actual rows=5000 loops=1)
+         Index Cond: (document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
+         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(12 rows)
 
 set documentdb.enable_high_key_optimization to on;
 -- Forward ordered scan over the full index: every page after the first has a
@@ -125,107 +121,88 @@ set documentdb.enable_high_key_optimization to on;
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "single_key", "filter": { "a": { "$gte": 1 } }, "sort": { "a": 1 } }'::bson) $cmd$);
-                                    run_explain_and_trim                                    
---------------------------------------------------------------------------------------------
- Sort (actual rows=5000 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
-         namespaceName: highkeydb.single_key
-         indexName: a_1
-         indexKey: {"a": 1}
-         isMultiKey: false
-         indexBounds: ["a": [1, Infinity]]
-         innerScanLoops: 5000 loops
-         highKeyEligiblePages: 18 pages
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
-         ->  Bitmap Heap Scan on documents_22001 collection (actual rows=5000 loops=1)
-               Recheck Cond: (document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
-               Heap Blocks: exact=52
-               ->  Bitmap Index Scan on a_1 (actual rows=5000 loops=1)
-                     Index Cond: (document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
-(18 rows)
+                                run_explain_and_trim                                 
+-------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
+   namespaceName: highkeydb.single_key
+   indexName: a_1
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": [1, Infinity]]
+   innerScanLoops: 5000 loops
+   highKeyEligiblePages: 18 pages
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
+   ->  Index Scan using a_1 on documents_22001 collection (actual rows=5000 loops=1)
+         Index Cond: (document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
+         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
 
 -- Backward ordered scan over the full index yields the same eligible page count.
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "single_key", "filter": { "a": { "$lte": 5000 } }, "sort": { "a": -1 } }'::bson) $cmd$);
-                                         run_explain_and_trim                                         
-------------------------------------------------------------------------------------------------------
- Sort (actual rows=5000 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
-         namespaceName: highkeydb.single_key
-         indexName: a_1
-         indexKey: {"a": 1}
-         isMultiKey: false
-         indexBounds: ["a": [-Infinity, 5000]]
-         innerScanLoops: 5000 loops
-         highKeyEligiblePages: 18 pages
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
-         ->  Bitmap Heap Scan on documents_22001 collection (actual rows=5000 loops=1)
-               Recheck Cond: (document @<= '{ "a" : { "$numberInt" : "5000" } }'::bson)
-               Heap Blocks: exact=52
-               ->  Bitmap Index Scan on a_1 (actual rows=5000 loops=1)
-                     Index Cond: (document @<= '{ "a" : { "$numberInt" : "5000" } }'::bson)
-(18 rows)
+                                             run_explain_and_trim                                              
+---------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
+   namespaceName: highkeydb.single_key
+   indexName: a_1
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": [-Infinity, 5000]]
+   isBackwardScan: true
+   innerScanLoops: 5000 loops
+   highKeyEligiblePages: 18 pages
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
+   ->  Index Scan using a_1 on documents_22001 collection (actual rows=5000 loops=1)
+         Index Cond: (document @<= '{ "a" : { "$numberInt" : "5000" } }'::bson)
+         Order By: (document OPERATOR(documentdb_api_internal.<>-|) '{ "a" : { "$numberInt" : "-1" } }'::bson)
+(14 rows)
 
 -- Selective forward scan (only the tail of the index matches): fewer eligible
 -- pages, matching the smaller number of leaf pages crossed.
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "single_key", "filter": { "a": { "$gte": 4000 } }, "sort": { "a": 1 } }'::bson) $cmd$);
-                                    run_explain_and_trim                                    
---------------------------------------------------------------------------------------------
- Sort (actual rows=1001 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1001 loops=1)
-         namespaceName: highkeydb.single_key
-         indexName: a_1
-         indexKey: {"a": 1}
-         isMultiKey: false
-         indexBounds: ["a": [4000, Infinity]]
-         innerScanLoops: 1001 loops
-         highKeyEligiblePages: 3 pages
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1001)]
-         ->  Bitmap Heap Scan on documents_22001 collection (actual rows=1001 loops=1)
-               Recheck Cond: (document @>= '{ "a" : { "$numberInt" : "4000" } }'::bson)
-               Heap Blocks: exact=11
-               ->  Bitmap Index Scan on a_1 (actual rows=1001 loops=1)
-                     Index Cond: (document @>= '{ "a" : { "$numberInt" : "4000" } }'::bson)
-(18 rows)
+                                run_explain_and_trim                                 
+-------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1001 loops=1)
+   namespaceName: highkeydb.single_key
+   indexName: a_1
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": [4000, Infinity]]
+   innerScanLoops: 1001 loops
+   highKeyEligiblePages: 3 pages
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1001)]
+   ->  Index Scan using a_1 on documents_22001 collection (actual rows=1001 loops=1)
+         Index Cond: (document @>= '{ "a" : { "$numberInt" : "4000" } }'::bson)
+         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
 
 -- Forward scan that terminates partway through the index ("a <= 2500"): only the
 -- pages whose high key still satisfies the bound are eligible.
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "single_key", "filter": { "a": { "$lte": 2500 } }, "sort": { "a": 1 } }'::bson) $cmd$);
-                                    run_explain_and_trim                                    
---------------------------------------------------------------------------------------------
- Sort (actual rows=2500 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2500 loops=1)
-         namespaceName: highkeydb.single_key
-         indexName: a_1
-         indexKey: {"a": 1}
-         isMultiKey: false
-         indexBounds: ["a": [-Infinity, 2500]]
-         innerScanLoops: 2501 loops
-         highKeyEligiblePages: 8 pages
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2500)]
-         ->  Bitmap Heap Scan on documents_22001 collection (actual rows=2500 loops=1)
-               Recheck Cond: (document @<= '{ "a" : { "$numberInt" : "2500" } }'::bson)
-               Heap Blocks: exact=26
-               ->  Bitmap Index Scan on a_1 (actual rows=2500 loops=1)
-                     Index Cond: (document @<= '{ "a" : { "$numberInt" : "2500" } }'::bson)
-(18 rows)
+                                run_explain_and_trim                                 
+-------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2500 loops=1)
+   namespaceName: highkeydb.single_key
+   indexName: a_1
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": [-Infinity, 2500]]
+   innerScanLoops: 2501 loops
+   highKeyEligiblePages: 8 pages
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2500)]
+   ->  Index Scan using a_1 on documents_22001 collection (actual rows=2500 loops=1)
+         Index Cond: (document @<= '{ "a" : { "$numberInt" : "2500" } }'::bson)
+         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
 
 -- Bounded range on both sides.
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
@@ -253,78 +230,64 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "single_key", "filter": { "a": { "$eq": 100 } }, "sort": { "a": 1 } }'::bson) $cmd$);
-                                    run_explain_and_trim                                    
---------------------------------------------------------------------------------------------
- Sort (actual rows=1 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
-         namespaceName: highkeydb.single_key
-         indexName: a_1
-         indexKey: {"a": 1}
-         isMultiKey: false
-         indexBounds: ["a": [100, 100]]
-         innerScanLoops: 1 loops
-         scanType: regular
-         scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 1)]
-         ->  Bitmap Heap Scan on documents_22001 collection (actual rows=1 loops=1)
-               Recheck Cond: (document @= '{ "a" : { "$numberInt" : "100" } }'::bson)
-               Heap Blocks: exact=1
-               ->  Bitmap Index Scan on a_1 (actual rows=1 loops=1)
-                     Index Cond: (document @= '{ "a" : { "$numberInt" : "100" } }'::bson)
-(17 rows)
+                               run_explain_and_trim                               
+----------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: highkeydb.single_key
+   indexName: a_1
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": [100, 100]]
+   innerScanLoops: 2 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 1)]
+   ->  Index Scan using a_1 on documents_22001 collection (actual rows=1 loops=1)
+         Index Cond: (document @= '{ "a" : { "$numberInt" : "100" } }'::bson)
+         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(12 rows)
 
 -- No matching rows: the ordered scan finds no eligible page and the counter is
 -- omitted (only reported when greater than zero).
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "single_key", "filter": { "a": { "$gt": 99999 } }, "sort": { "a": 1 } }'::bson) $cmd$);
-                                    run_explain_and_trim                                    
---------------------------------------------------------------------------------------------
- Sort (actual rows=0 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
-         namespaceName: highkeydb.single_key
-         indexName: a_1
-         indexKey: {"a": 1}
-         isMultiKey: false
-         indexBounds: ["a": (99999, Infinity]]
-         innerScanLoops: 0 loops
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
-         ->  Bitmap Heap Scan on documents_22001 collection (actual rows=0 loops=1)
-               Recheck Cond: (document @> '{ "a" : { "$numberInt" : "99999" } }'::bson)
-               ->  Bitmap Index Scan on a_1 (actual rows=0 loops=1)
-                     Index Cond: (document @> '{ "a" : { "$numberInt" : "99999" } }'::bson)
-(16 rows)
+                               run_explain_and_trim                               
+----------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
+   namespaceName: highkeydb.single_key
+   indexName: a_1
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": (99999, Infinity]]
+   innerScanLoops: 0 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
+   ->  Index Scan using a_1 on documents_22001 collection (actual rows=0 loops=1)
+         Index Cond: (document @> '{ "a" : { "$numberInt" : "99999" } }'::bson)
+         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(12 rows)
 
 -- Compound composite index: ordered scan on the leading field also reports the
 -- eligible page count.
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "compound_key", "filter": { "a": { "$gte": 1 } }, "sort": { "a": 1 } }'::bson) $cmd$);
-                                    run_explain_and_trim                                    
---------------------------------------------------------------------------------------------
- Sort (actual rows=5000 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
-         namespaceName: highkeydb.compound_key
-         indexName: a_1_b_1
-         indexKey: {"a": 1,"b": 1}
-         isMultiKey: false
-         indexBounds: ["a": [1, Infinity], "b": (MinKey, MaxKey)]
-         innerScanLoops: 5000 loops
-         highKeyEligiblePages: 29 pages
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
-         ->  Bitmap Heap Scan on documents_22002 collection (actual rows=5000 loops=1)
-               Recheck Cond: (document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
-               Heap Blocks: exact=52
-               ->  Bitmap Index Scan on a_1_b_1 (actual rows=5000 loops=1)
-                     Index Cond: (document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
-(18 rows)
+                                  run_explain_and_trim                                   
+-----------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
+   namespaceName: highkeydb.compound_key
+   indexName: a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   indexBounds: ["a": [1, Infinity], "b": (MinKey, MaxKey)]
+   innerScanLoops: 5000 loops
+   highKeyEligiblePages: 29 pages
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
+   ->  Index Scan using a_1_b_1 on documents_22002 collection (actual rows=5000 loops=1)
+         Index Cond: (document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
+         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
 
 -- Sanity check that the optimization does not change query results.
 SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "single_key", "filter": { "a": { "$gte": 4000 } }, "sort": { "a": 1 } }'::bson)) sub;
@@ -617,27 +580,22 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('highkeydb',
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "recheck_key", "filter": { "n": { "$gte": 1 } }, "sort": { "n": 1 } }'::bson) $cmd$);
-                                    run_explain_and_trim                                    
---------------------------------------------------------------------------------------------
- Sort (actual rows=5000 loops=1)
-   Sort Key: (bson_orderby(document, '{ "n" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
-         namespaceName: highkeydb.recheck_key
-         indexName: n_1
-         indexKey: {"n": 1}
-         isMultiKey: false
-         indexBounds: ["n": [1, Infinity]]
-         innerScanLoops: 5000 loops
-         highKeyEligiblePages: 18 pages
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
-         ->  Bitmap Heap Scan on documents_22004 collection (actual rows=5000 loops=1)
-               Recheck Cond: (document @>= '{ "n" : { "$numberInt" : "1" } }'::bson)
-               Heap Blocks: exact=47
-               ->  Bitmap Index Scan on n_1 (actual rows=5000 loops=1)
-                     Index Cond: (document @>= '{ "n" : { "$numberInt" : "1" } }'::bson)
-(18 rows)
+                                run_explain_and_trim                                 
+-------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
+   namespaceName: highkeydb.recheck_key
+   indexName: n_1
+   indexKey: {"n": 1}
+   isMultiKey: false
+   indexBounds: ["n": [1, Infinity]]
+   innerScanLoops: 5000 loops
+   highKeyEligiblePages: 18 pages
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
+   ->  Index Scan using n_1 on documents_22004 collection (actual rows=5000 loops=1)
+         Index Cond: (document @>= '{ "n" : { "$numberInt" : "1" } }'::bson)
+         Order By: (document |-<> '{ "n" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
 
 -- $bitsAllClear adds an index recheck function on the same bound: the scan stays
 -- ordered but highKeyEligiblePages is not reported.
@@ -777,53 +735,44 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('highkeydb',
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "exists_key", "filter": { "a": { "$exists": true } }, "sort": { "a": 1 } }'::bson) $cmd$);
-                                    run_explain_and_trim                                    
---------------------------------------------------------------------------------------------
- Sort (actual rows=5000 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
-         namespaceName: highkeydb.exists_key
-         indexName: a_1
-         indexKey: {"a": 1}
-         isMultiKey: false
-         indexBounds: ["a": [MinKey, MaxKey]]
-         innerScanLoops: 5000 loops
-         highKeyEligiblePages: 18 pages
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
-         ->  Bitmap Heap Scan on documents_22005 collection (actual rows=5000 loops=1)
-               Recheck Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-               Heap Blocks: exact=47
-               ->  Bitmap Index Scan on a_1 (actual rows=5000 loops=1)
-                     Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-(18 rows)
+                                run_explain_and_trim                                 
+-------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
+   namespaceName: highkeydb.exists_key
+   indexName: a_1
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": [MinKey, MaxKey]]
+   innerScanLoops: 5000 loops
+   highKeyEligiblePages: 18 pages
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
+   ->  Index Scan using a_1 on documents_22005 collection (actual rows=5000 loops=1)
+         Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
 
 -- Backward $exists ordered scan yields the same eligible page count.
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "exists_key", "filter": { "a": { "$exists": true } }, "sort": { "a": -1 } }'::bson) $cmd$);
-                                         run_explain_and_trim                                         
-------------------------------------------------------------------------------------------------------
- Sort (actual rows=5000 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
-         namespaceName: highkeydb.exists_key
-         indexName: a_1
-         indexKey: {"a": 1}
-         isMultiKey: false
-         indexBounds: ["a": [MinKey, MaxKey]]
-         innerScanLoops: 5000 loops
-         highKeyEligiblePages: 18 pages
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
-         ->  Bitmap Heap Scan on documents_22005 collection (actual rows=5000 loops=1)
-               Recheck Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-               Heap Blocks: exact=47
-               ->  Bitmap Index Scan on a_1 (actual rows=5000 loops=1)
-                     Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-(18 rows)
+                                             run_explain_and_trim                                              
+---------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
+   namespaceName: highkeydb.exists_key
+   indexName: a_1
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": [MinKey, MaxKey]]
+   isBackwardScan: true
+   innerScanLoops: 5000 loops
+   highKeyEligiblePages: 18 pages
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
+   ->  Index Scan using a_1 on documents_22005 collection (actual rows=5000 loops=1)
+         Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+         Order By: (document OPERATOR(documentdb_api_internal.<>-|) '{ "a" : { "$numberInt" : "-1" } }'::bson)
+(14 rows)
 
 -- Mixed collection: a leading block of documents store an explicit null or a
 -- MinKey for "a" (sorting at or below NULL) and the remainder store real
@@ -866,53 +815,44 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('highkeydb',
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "exists_mixed", "filter": { "a": { "$exists": true } }, "sort": { "a": 1 } }'::bson) $cmd$);
-                                    run_explain_and_trim                                    
---------------------------------------------------------------------------------------------
- Sort (actual rows=5000 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
-         namespaceName: highkeydb.exists_mixed
-         indexName: a_1
-         indexKey: {"a": 1}
-         isMultiKey: false
-         indexBounds: ["a": [MinKey, MaxKey]]
-         innerScanLoops: 3002 loops
-         highKeyEligiblePages: 11 pages
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
-         ->  Bitmap Heap Scan on documents_22006 collection (actual rows=5000 loops=1)
-               Recheck Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-               Heap Blocks: exact=45
-               ->  Bitmap Index Scan on a_1 (actual rows=5000 loops=1)
-                     Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-(18 rows)
+                                run_explain_and_trim                                 
+-------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
+   namespaceName: highkeydb.exists_mixed
+   indexName: a_1
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": [MinKey, MaxKey]]
+   innerScanLoops: 3002 loops
+   highKeyEligiblePages: 11 pages
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
+   ->  Index Scan using a_1 on documents_22006 collection (actual rows=5000 loops=1)
+         Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
 
 -- Backward: same subset is eligible; the null/MinKey tail (reached last) is not.
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "exists_mixed", "filter": { "a": { "$exists": true } }, "sort": { "a": -1 } }'::bson) $cmd$);
-                                         run_explain_and_trim                                         
-------------------------------------------------------------------------------------------------------
- Sort (actual rows=5000 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
-         namespaceName: highkeydb.exists_mixed
-         indexName: a_1
-         indexKey: {"a": 1}
-         isMultiKey: false
-         indexBounds: ["a": [MinKey, MaxKey]]
-         innerScanLoops: 3002 loops
-         highKeyEligiblePages: 11 pages
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
-         ->  Bitmap Heap Scan on documents_22006 collection (actual rows=5000 loops=1)
-               Recheck Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-               Heap Blocks: exact=45
-               ->  Bitmap Index Scan on a_1 (actual rows=5000 loops=1)
-                     Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-(18 rows)
+                                             run_explain_and_trim                                              
+---------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
+   namespaceName: highkeydb.exists_mixed
+   indexName: a_1
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": [MinKey, MaxKey]]
+   isBackwardScan: true
+   innerScanLoops: 3002 loops
+   highKeyEligiblePages: 10 pages
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
+   ->  Index Scan using a_1 on documents_22006 collection (actual rows=5000 loops=1)
+         Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+         Order By: (document OPERATOR(documentdb_api_internal.<>-|) '{ "a" : { "$numberInt" : "-1" } }'::bson)
+(14 rows)
 
 -- $exists still returns every document (nulls and MinKeys included).
 SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "exists_mixed", "filter": { "a": { "$exists": true } }, "sort": { "a": 1 } }'::bson)) sub;
@@ -957,51 +897,42 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('highkeydb',
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "minkey_key", "filter": { "a": { "$exists": true } }, "sort": { "a": 1 } }'::bson) $cmd$);
-                                    run_explain_and_trim                                    
---------------------------------------------------------------------------------------------
- Sort (actual rows=5000 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
-         namespaceName: highkeydb.minkey_key
-         indexName: a_1_b_1_c_1
-         indexKey: {"a": 1,"b": 1,"c": 1}
-         isMultiKey: false
-         indexBounds: ["a": [MinKey, MaxKey], "b": (MinKey, MaxKey), "c": (MinKey, MaxKey)]
-         innerScanLoops: 5000 loops
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
-         ->  Bitmap Heap Scan on documents_22007 collection (actual rows=5000 loops=1)
-               Recheck Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-               Heap Blocks: exact=52
-               ->  Bitmap Index Scan on a_1_b_1_c_1 (actual rows=5000 loops=1)
-                     Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-(17 rows)
+                                    run_explain_and_trim                                     
+---------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
+   namespaceName: highkeydb.minkey_key
+   indexName: a_1_b_1_c_1
+   indexKey: {"a": 1,"b": 1,"c": 1}
+   isMultiKey: false
+   indexBounds: ["a": [MinKey, MaxKey], "b": (MinKey, MaxKey), "c": (MinKey, MaxKey)]
+   innerScanLoops: 5000 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
+   ->  Index Scan using a_1_b_1_c_1 on documents_22007 collection (actual rows=5000 loops=1)
+         Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(12 rows)
 
 -- Backward ordered scan: same, no eligible pages.
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "minkey_key", "filter": { "a": { "$exists": true } }, "sort": { "a": -1 } }'::bson) $cmd$);
-                                         run_explain_and_trim                                         
-------------------------------------------------------------------------------------------------------
- Sort (actual rows=5000 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
-         namespaceName: highkeydb.minkey_key
-         indexName: a_1_b_1_c_1
-         indexKey: {"a": 1,"b": 1,"c": 1}
-         isMultiKey: false
-         indexBounds: ["a": [MinKey, MaxKey], "b": (MinKey, MaxKey), "c": (MinKey, MaxKey)]
-         innerScanLoops: 5000 loops
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
-         ->  Bitmap Heap Scan on documents_22007 collection (actual rows=5000 loops=1)
-               Recheck Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-               Heap Blocks: exact=52
-               ->  Bitmap Index Scan on a_1_b_1_c_1 (actual rows=5000 loops=1)
-                     Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-(17 rows)
+                                             run_explain_and_trim                                              
+---------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
+   namespaceName: highkeydb.minkey_key
+   indexName: a_1_b_1_c_1
+   indexKey: {"a": 1,"b": 1,"c": 1}
+   isMultiKey: false
+   indexBounds: ["a": [MinKey, MaxKey], "b": (MinKey, MaxKey), "c": (MinKey, MaxKey)]
+   isBackwardScan: true
+   innerScanLoops: 5000 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
+   ->  Index Scan using a_1_b_1_c_1 on documents_22007 collection (actual rows=5000 loops=1)
+         Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+         Order By: (document OPERATOR(documentdb_api_internal.<>-|) '{ "a" : { "$numberInt" : "-1" } }'::bson)
+(13 rows)
 
 -- All documents are still returned by $exists in both directions.
 SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "minkey_key", "filter": { "a": { "$exists": true } }, "sort": { "a": 1 } }'::bson)) sub;
@@ -1023,25 +954,22 @@ SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_find('highkeydb', '{
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "compound_key", "filter": { "a": { "$lte": 5000 } }, "sort": { "a": -1 } }'::bson) $cmd$);
-                                         run_explain_and_trim                                         
-------------------------------------------------------------------------------------------------------
- Sort (actual rows=5000 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
-         namespaceName: highkeydb.compound_key
-         indexName: a_1_b_1
-         indexKey: {"a": 1,"b": 1}
-         isMultiKey: false
-         indexBounds: ["a": [-Infinity, 5000], "b": (MinKey, MaxKey)]
-         innerScanLoops: 5000 loops
-         highKeyEligiblePages: 29 pages
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
-         ->  Bitmap Heap Scan on documents_22002 collection (actual rows=5000 loops=1)
-               Recheck Cond: (document @<= '{ "a" : { "$numberInt" : "5000" } }'::bson)
-               Heap Blocks: exact=52
-               ->  Bitmap Index Scan on a_1_b_1 (actual rows=5000 loops=1)
-                     Index Cond: (document @<= '{ "a" : { "$numberInt" : "5000" } }'::bson)
-(18 rows)
+                                             run_explain_and_trim                                              
+---------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5000 loops=1)
+   namespaceName: highkeydb.compound_key
+   indexName: a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   indexBounds: ["a": [-Infinity, 5000], "b": (MinKey, MaxKey)]
+   isBackwardScan: true
+   innerScanLoops: 5000 loops
+   highKeyEligiblePages: 29 pages
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
+   ->  Index Scan using a_1_b_1 on documents_22002 collection (actual rows=5000 loops=1)
+         Index Cond: (document @<= '{ "a" : { "$numberInt" : "5000" } }'::bson)
+         Order By: (document OPERATOR(documentdb_api_internal.<>-|) '{ "a" : { "$numberInt" : "-1" } }'::bson)
+(14 rows)
 
+reset enable_bitmapscan;

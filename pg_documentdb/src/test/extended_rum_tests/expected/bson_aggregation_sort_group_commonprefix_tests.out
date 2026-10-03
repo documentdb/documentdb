@@ -535,20 +535,22 @@ SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } }
+        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } },
+        { "$sort": { "_id": 1 } }
     ], "cursor": {}, "hint": "_id_" }');
                  document                 
 ------------------------------------------
  { "_id" : "A", "firstVal" : "name_18" }
- { "_id" : "C", "firstVal" : "name_50" }
  { "_id" : "B", "firstVal" : "name_100" }
+ { "_id" : "C", "firstVal" : "name_50" }
 (3 rows)
 
 SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } }
+        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } },
+        { "$sort": { "_id": 1 } }
     ], "cursor": {}, "hint": "_id_" }');
                  document                 
 ------------------------------------------
@@ -576,15 +578,16 @@ SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1, "c": 1 } },
-        { "$group": { "_id": { "a": "$a", "b": "$b" }, "firstVal": { "$first": "$name" } } }
+        { "$group": { "_id": { "a": "$a", "b": "$b" }, "firstVal": { "$first": "$name" } } },
+        { "$sort": { "_id": 1 } }
     ], "cursor": {}, "hint": "_id_" }');
                           document                           
 -------------------------------------------------------------
- { "_id" : { "a" : "B", "b" : "Y" }, "firstVal" : "name_1" }
  { "_id" : { "a" : "A", "b" : "X" }, "firstVal" : "name_6" }
  { "_id" : { "a" : "A", "b" : "Y" }, "firstVal" : "name_3" }
- { "_id" : { "a" : "C", "b" : "X" }, "firstVal" : "name_2" }
  { "_id" : { "a" : "B", "b" : "X" }, "firstVal" : "name_4" }
+ { "_id" : { "a" : "B", "b" : "Y" }, "firstVal" : "name_1" }
+ { "_id" : { "a" : "C", "b" : "X" }, "firstVal" : "name_2" }
  { "_id" : { "a" : "C", "b" : "Y" }, "firstVal" : "name_5" }
 (6 rows)
 
@@ -592,7 +595,8 @@ SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1, "c": 1 } },
-        { "$group": { "_id": { "a": "$a", "b": "$b" }, "firstVal": { "$first": "$name" } } }
+        { "$group": { "_id": { "a": "$a", "b": "$b" }, "firstVal": { "$first": "$name" } } },
+        { "$sort": { "_id": 1 } }
     ], "cursor": {}, "hint": "_id_" }');
                           document                           
 -------------------------------------------------------------
@@ -624,20 +628,22 @@ SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } }
+        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } },
+        { "$sort": { "_id": 1 } }
     ], "cursor": {}, "hint": "idx_a_b" }');
                 document                
 ----------------------------------------
  { "_id" : "A", "firstVal" : "name_6" }
- { "_id" : "C", "firstVal" : "name_2" }
  { "_id" : "B", "firstVal" : "name_4" }
+ { "_id" : "C", "firstVal" : "name_2" }
 (3 rows)
 
 SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } }
+        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } },
+        { "$sort": { "_id": 1 } }
     ], "cursor": {}, "hint": "idx_a_b" }');
                 document                
 ----------------------------------------
