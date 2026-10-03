@@ -12,6 +12,7 @@ mod data_description;
 mod data_management;
 mod indexing;
 mod ismaster;
+mod list_commands;
 mod process;
 mod roles;
 mod server_status;

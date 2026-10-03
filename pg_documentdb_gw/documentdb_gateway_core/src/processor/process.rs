@@ -12,8 +12,8 @@ use crate::{
     explain,
     postgres::PgDataClient,
     processor::{
-        constant, cursor, data_description, data_management, indexing, ismaster, roles,
-        server_status, session, transaction, users,
+        constant, cursor, data_description, data_management, indexing, ismaster, list_commands,
+        roles, server_status, session, transaction, users,
     },
     requests::RequestType,
     responses::Response,
@@ -283,7 +283,7 @@ pub async fn process_request(
         RequestType::AbortTransaction => {
             transaction::process_abort(connection_context, request_context.activity_id).await
         }
-        RequestType::ListCommands => Ok(constant::list_commands()),
+        RequestType::ListCommands => Ok(list_commands::process(dynamic_config.as_ref())),
         RequestType::EndSessions | RequestType::KillSessions => {
             session::end_or_kill_sessions(request_context, connection_context, pg_data_client).await
         }

@@ -116,6 +116,10 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
         self.get_bool("enableConnectionStatus", true)
     }
 
+    fn enable_role_crud(&self) -> bool {
+        self.get_bool("enableRoleCrud", false)
+    }
+
     fn enable_verbose_logging_in_gateway(&self) -> bool {
         self.get_bool("enableVerboseLoggingInGateway", false)
     }
