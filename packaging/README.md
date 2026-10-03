@@ -62,7 +62,7 @@ The default installs from the stable package repository. To test a release
 candidate on a clean, disposable host, select its tag explicitly:
 
 ```sh
-sh documentdb-install.sh --version v1.0-RC1
+sh documentdb-install.sh --version 1.0-rc2
 ```
 
 This selects the host's five packages from that release's `SHA256SUMS`,

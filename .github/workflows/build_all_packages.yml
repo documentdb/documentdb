@@ -36,7 +36,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'DocumentDB version to build (blank = derive from the control file)'
+        description: 'DocumentDB version to build (blank = the tag this run was started from, else the control file)'
         required: false
         type: string
       use_full_matrix:
@@ -50,7 +50,7 @@ on:
   workflow_call:
     inputs:
       version:
-        description: 'DocumentDB version to build (blank = derive from the control file)'
+        description: 'DocumentDB version to build (blank = the tag this run was started from, else the control file)'
         required: false
         type: string
       use_full_matrix:
@@ -258,6 +258,15 @@ jobs:
             exit 1
           fi
 
+          # GitHub release assets cannot hold ~, so a release candidate's files
+          # take the user-facing spelling (1.0~rc2 -> 1.0-rc2) before they are
+          # checksummed; a name collision would silently drop a package.
+          for f in *~*; do
+            [ -e "$f" ] || continue
+            [ ! -e "${f//\~/-}" ] || { echo "::error::Cannot rename $f: ${f//\~/-} exists"; exit 1; }
+            mv -- "$f" "${f//\~/-}"
+          done
+
           # Reproducible, sorted checksum manifest over packages and the
           # clean-host installer. Package category/total math below continues
           # to count only .deb/.rpm files.
@@ -279,7 +288,7 @@ jobs:
           tools_rpm=$(count_glob 'documentdb-postgresql-tools-*.rpm')
           common_rpm=$(count_glob 'documentdb-common-*.rpm')
           sa_rpm=$(count_glob 'documentdb-1[5-9]-*.rpm')
-          meta_rpm=$(count_glob "documentdb-${DOCUMENTDB_VERSION}-*.noarch.rpm")
+          meta_rpm=$(count_glob "documentdb-${DOCUMENTDB_VERSION//\~/-}-*.noarch.rpm")
 
           # Expected counts are DERIVED from the Tier-1 matrix dimensions
           # rather than hand-written twelve times: keep these two lists in step
@@ -323,7 +332,7 @@ jobs:
           )
 
           {
-            echo "DocumentDB packages — version ${DOCUMENTDB_VERSION}"
+            echo "DocumentDB packages — version ${DOCUMENTDB_VERSION//\~/-}"
             echo "Total package files: ${total}"
             echo
             printf '%-18s %-6s %s\n' "CATEGORY" "COUNT" "EXPECTED"

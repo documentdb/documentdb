@@ -105,8 +105,8 @@ Supported hosts:
   RHEL/Rocky/Alma/CentOS Stream 9   x86_64, aarch64
 
 Options:
-  --version <stable|vX.Y-RCN>  Release selection (default: stable repository).
-                              RCs, such as v1.0-RC1, are for disposable testing
+  --version <stable|X.Y-rcN>   Release selection (default: stable repository).
+                              RCs, such as 1.0-rc2, are for disposable testing
                               only, with no maintenance or supported upgrades.
   --pg-major <17|18>          PostgreSQL major (default: 18)
   --admin-user <USER>         Initial DocumentDB administrator (default: admin)
@@ -289,14 +289,17 @@ parse_arguments() {
 }
 
 validate_arguments() {
-    # The tag becomes a URL path segment, so only vX.Y-RCN passes; the
-    # charset check first keeps a newline from hiding a second line from grep.
+    # The tag becomes a URL path segment, so only an RC passes, in any
+    # spelling a user can copy from the release: 1.0-rc2, v1.0-RC2, the
+    # package's 1.0~rc2 or the gateway's 1.0.0-rc2. The charset check first
+    # keeps a newline from hiding a second line from grep.
     case "${RELEASE_VERSION}" in
         stable) ;;
-        *[!A-Za-z0-9.-]*) die "--version must be stable or an RC tag such as v1.0-RC1." ;;
+        *[!A-Za-z0-9.~-]*) die "--version must be stable or an RC such as 1.0-rc2." ;;
         *)
-            printf '%s\n' "${RELEASE_VERSION}" | grep -Eqx 'v[0-9]+\.[0-9]+-RC[0-9]+' ||
-                die "--version must be stable or an RC tag such as v1.0-RC1."
+            printf '%s\n' "${RELEASE_VERSION}" | grep -Eiqx 'v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\.0)?[-~]rc[1-9][0-9]*' ||
+                die "--version must be stable or an RC such as 1.0-rc2."
+            RELEASE_VERSION="$(printf '%s' "${RELEASE_VERSION#[vV]}" | tr 'RC~' 'rc-' | sed -E 's/^([0-9]+\.[0-9]+)\.0-rc/\1-rc/')"
             ;;
     esac
     case "${PG_MAJOR}" in
@@ -1302,7 +1305,8 @@ release_package_patterns() {
 }
 
 install_release_packages() {
-    release_url="https://github.com/documentdb/documentdb/releases/download/${RELEASE_VERSION}"
+    # Users type 1.0-rc2; the GitHub release tag is v1.0-RC2.
+    release_url="https://github.com/documentdb/documentdb/releases/download/v$(printf '%s' "${RELEASE_VERSION}" | tr 'rc' 'RC')"
     if [ "${DRY_RUN}" = "true" ]; then
         log "Would download ${release_url}/SHA256SUMS, select this host's five packages from it, and verify each."
         set -- "<packages-listed-in-SHA256SUMS>"

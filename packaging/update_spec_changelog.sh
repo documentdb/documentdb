@@ -21,11 +21,17 @@ fi
 INPUT_VER="$1"
 
 # normalize to dashed form if dotted provided (0.106.0 -> 0.106-0)
+# A release candidate (1.0~rc2) is documented under its release's 1.0-0
+# section, and its packages are titled with the candidate version.
 if [[ "$INPUT_VER" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
     VER_DASH="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}-${BASH_REMATCH[3]}"
+elif [[ "$INPUT_VER" =~ ^([0-9]+)\.([0-9]+)~rc[0-9]+$ ]]; then
+    VER_DASH="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}-0"
+    PKG_TITLE="$INPUT_VER"
 else
     VER_DASH="$INPUT_VER"
 fi
+PKG_TITLE="${PKG_TITLE:-$VER_DASH}"
 
 CHANGELOG=CHANGELOG.md
 SPEC=packaging/rpm/spec/documentdb.spec
@@ -107,10 +113,16 @@ temp_changelog=$(mktemp)
 trap 'rm -f "$temp_changelog"' EXIT
 {
     if [[ -n "$synthesize_version" ]]; then
-        printf '### documentdb v%s (Unreleased) ###\n' "$synthesize_version"
+        printf '### documentdb v%s (Unreleased) ###\n' "$PKG_TITLE"
     fi
-    sed -n "${start_line},${end_line}p" "$CHANGELOG"
+    # Retitle the release's section so the newest entry carries the candidate version.
+    sed -n "${start_line},${end_line}p" "$CHANGELOG" \
+        | sed "1s/v${VER_DASH//./\\.}\([^0-9~]\)/v${PKG_TITLE}\1/"
 } > "$temp_changelog"
+if ! head -n 1 "$temp_changelog" | grep -q "documentdb v${PKG_TITLE}"; then
+    echo "Error: could not retitle the CHANGELOG section for v${VER_DASH} as v${PKG_TITLE}; the package would ship as the wrong version." >&2
+    exit 1
+fi
 
 # Determine packager (try git config, else default)
 # Stable release identity: shipped changelog metadata must not depend on
@@ -206,8 +218,8 @@ while IFS= read -r line; do
         if [[ -n "$current_ver" ]]; then
             flush_section
         fi
-        # Extract version: look for 'v' followed by digits.digits- digits (e.g. v0.105-0 or v1.108-0)
-        if [[ "$line" =~ v([0-9]+\.[0-9]+-[0-9]+) ]]; then
+        # Extract version: 'v' followed by digits.digits-digits or a candidate (e.g. v0.105-0, v1.0~rc2)
+        if [[ "$line" =~ v([0-9]+\.[0-9]+(-[0-9]+|~rc[0-9]+)) ]]; then
             current_ver="${BASH_REMATCH[1]}"
         else
             # fallback: capture anything after 'v' up to a space or '('

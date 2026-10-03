@@ -10,6 +10,10 @@ on:
         default: false
         required: false
         type: boolean
+      version:
+        description: 'DocumentDB version to build, e.g. 1.0-rc2 (blank = the tag this run was started from, else the control file)'
+        required: false
+        type: string
   workflow_dispatch:
     inputs:
       push_images:
@@ -19,6 +23,10 @@ on:
         default: false
         required: false
         type: boolean
+      version:
+        description: 'DocumentDB version to build, e.g. 1.0-rc2 (blank = the tag this run was started from, else the control file)'
+        required: false
+        type: string
 
   push:
     branches:
@@ -68,15 +76,20 @@ jobs:
     - name: Extract and Format Default Version
       id: extract_version
       uses: ./.github/actions/resolve-documentdb-version
+      with:
+        version: ${{ inputs.version }}
     - name: Build Debian Package
       run: |
-        ./packaging/build_packages.sh --os deb13 --pg ${{ matrix.pg_version }} --output-dir downloaded-artifacts
+        ./packaging/build_packages.sh --os deb13 --pg ${{ matrix.pg_version }} --output-dir downloaded-artifacts --version "${{ steps.extract_version.outputs.version }}"
         ls -R downloaded-artifacts
     - name: Login to GHCR
       run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
     - name: Build ${{ matrix.arch }} Image
       run: |
         TAG=${{ env.IMAGE_TAG }}-pg${{ matrix.pg_version }}-${{ matrix.arch }}
+        # Image metadata shows the user-facing spelling (1.0~rc2 -> 1.0-rc2).
+        IMAGE_VERSION="${{ steps.extract_version.outputs.version }}"
+        IMAGE_VERSION="${IMAGE_VERSION//\~/-}"
         mapfile -t EXT_DEBS < <(find downloaded-artifacts -maxdepth 1 -type f -name 'deb13-postgresql-*-documentdb_*.deb' ! -name '*dbgsym*' | sort)
         [ "${#EXT_DEBS[@]}" -eq 1 ] || { echo 'Expected exactly one extension DEB artifact'; exit 1; }
         EXT_DEB=$(basename "${EXT_DEBS[0]}")
@@ -89,7 +102,7 @@ jobs:
           --build-arg BASE_IMAGE=debian:trixie-slim \
           --build-arg POSTGRES_VERSION=${{ matrix.pg_version }} \
           --build-arg DEB_PACKAGE_REL_PATH=downloaded-artifacts/$EXT_DEB \
-          --build-arg DOCUMENTDB_VERSION="${{ steps.extract_version.outputs.version }}" \
+          --build-arg DOCUMENTDB_VERSION="$IMAGE_VERSION" \
           --build-arg GIT_COMMIT="${{ github.sha }}" \
           --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
           --build-arg IMAGE_SOURCE="${{ github.server_url }}/${{ github.repository }}" \
@@ -102,17 +115,22 @@ jobs:
         IMAGE=ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:$TAG
         CONTAINER_NAME=documentdb-local-smoke-pg${{ matrix.pg_version }}-${{ matrix.arch }}
 
+        IMAGE_VERSION="${{ steps.extract_version.outputs.version }}"
+        IMAGE_VERSION="${IMAGE_VERSION//\~/-}"
         rev=$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE")
         ver=$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.version"}}' "$IMAGE")
         created=$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.created"}}' "$IMAGE")
         [ "$rev" = "${{ github.sha }}" ] || { echo "org.opencontainers.image.revision is '$rev', expected build sha '${{ github.sha }}'" >&2; exit 1; }
-        [ "$ver" = "${{ steps.extract_version.outputs.version }}" ] || { echo "org.opencontainers.image.version is '$ver', expected '${{ steps.extract_version.outputs.version }}'" >&2; exit 1; }
+        [ "$ver" = "$IMAGE_VERSION" ] || { echo "org.opencontainers.image.version is '$ver', expected '$IMAGE_VERSION'" >&2; exit 1; }
         [ -n "$created" ] || { echo "org.opencontainers.image.created is empty; BUILD_DATE was not passed or the label was dropped" >&2; exit 1; }
         vtxt=$(docker run --rm --entrypoint /bin/cat "$IMAGE" /version.txt)
         case "$vtxt" in
           ""|unknown*) echo "/version.txt is not stamped (got '$vtxt')" >&2; exit 1 ;;
         esac
         echo "Provenance OK: $vtxt"
+        gw=$(docker run --rm --entrypoint /home/documentdb/gateway/pg_documentdb_gw/target/release-with-symbols/documentdb_gateway "$IMAGE" --version)
+        expected="documentdb-gateway $(. packaging/documentdb-version.sh && documentdb_cargo_version "$IMAGE_VERSION")"
+        [ "$gw" = "$expected" ] || { echo "embedded gateway reports '$gw', expected '$expected'" >&2; exit 1; }
         SMOKE_DIR=$(mktemp -d)
         chmod 755 "$SMOKE_DIR"
         dump_logs=true
@@ -221,7 +239,9 @@ jobs:
       run: echo "Using DOCUMENTDB_VERSION=${{ needs.build-and-push.outputs.documentdb_version }}"
     - name: Set Default Values
       run: |
-        echo "MANIFEST_TAG=pg${{ matrix.pg_version }}-${{ needs.build-and-push.outputs.documentdb_version }}" >> $GITHUB_ENV
+        # Docker tags cannot hold ~, so 1.0~rc2 is published as pgN-1.0-rc2.
+        version="${{ needs.build-and-push.outputs.documentdb_version }}"
+        echo "MANIFEST_TAG=pg${{ matrix.pg_version }}-${version//\~/-}" >> $GITHUB_ENV
     - name: Create & push manifest for all PG versions
       run: |
         docker manifest create ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.MANIFEST_TAG }} \
@@ -262,8 +282,8 @@ jobs:
   create-manifest-latest:
     name: Create & push 'latest' manifest
     # Must match the per-arch push gate above: a manifest can only reference
-    # images that were actually published.
-    if: inputs.push_images || startsWith(github.ref, 'refs/tags/')
+    # images that were actually published. A pre-release never moves latest.
+    if: (inputs.push_images || startsWith(github.ref, 'refs/tags/')) && !contains(needs.build-and-push.outputs.documentdb_version, '~')
     runs-on: ubuntu-22.04
     needs: build-and-push
     steps:

@@ -293,12 +293,16 @@ unknown option|Unknown option: --bogus|--bogus
 positional argument|Unexpected positional arguments|-- extra
 missing pg-major value|--pg-major requires a value|--pg-major
 missing release value|--version requires a value|--version
-stable release tag|--version must be stable or an RC tag|--version v0.117-0
-moving release name|--version must be stable or an RC tag|--version latest
-RC suffix|--version must be stable or an RC tag|--version v1.0-RC1x
-RC without minor|--version must be stable or an RC tag|--version v1-RC1
-RC non-numeric version|--version must be stable or an RC tag|--version v1garbage-RC1
-release path traversal|--version must be stable or an RC tag|--version ../latest
+stable release tag|--version must be stable or an RC such as|--version v0.117-0
+moving release name|--version must be stable or an RC such as|--version latest
+RC suffix|--version must be stable or an RC such as|--version v1.0-RC1x
+RC without minor|--version must be stable or an RC such as|--version v1-RC1
+RC non-numeric version|--version must be stable or an RC such as|--version v1garbage-RC1
+release path traversal|--version must be stable or an RC such as|--version ../latest
+RC zero|--version must be stable or an RC such as|--version 1.0-rc0
+RC leading zero|--version must be stable or an RC such as|--version 01.0-rc2
+RC of a patch release|--version must be stable or an RC such as|--version 1.0.1-rc2
+RC double tilde|--version must be stable or an RC such as|--version 1.0~~rc2
 missing admin-user value|--admin-user requires a value|--admin-user
 missing password-file value|--admin-password-file requires a value|--admin-password-file
 missing listen-port value|--listen-port requires a value|--listen-port
@@ -394,6 +398,14 @@ test_release_selection() {
     expect_success "explicit stable" run_installer "${root}" --version stable
     assert_has "stable transaction unchanged" "install -y documentdb-18"
     assert_lacks "stable never downloads RC" "v1.0-RC1"
+    rc_root="$(new_root ubuntu 24.04)"
+    expect_success "RC as users type it" run_installer "${rc_root}" --version 1.0-rc2
+    assert_has "1.0-rc2 downloads release v1.0-RC2" "releases/download/v1.0-RC2/SHA256SUMS"
+    for spelling in V1.0-RC2 1.0~rc2 1.0.0-rc2 v1.0.0-RC2; do
+        alias_root="$(new_root ubuntu 24.04)"
+        expect_success "RC spelled ${spelling}" run_installer "${alias_root}" --version "${spelling}"
+        assert_has "${spelling} downloads release v1.0-RC2" "releases/download/v1.0-RC2/SHA256SUMS"
+    done
     for mode in --packages-only --no-enable; do
         expect_success "RC ${mode}" run_installer "${root}" --version v1.0-RC1 "${mode}"
         if [[ "${mode}" == --packages-only ]]; then
@@ -467,13 +479,13 @@ test_release_checksums() {
     local runner="${WORK_DIR}/release-runner.sh" name mode
     sed '/^# BEGIN EXECUTION BARRIER$/,$d' "${INSTALLER}" > "${library}"
     mkdir -p "${fixture}"
-    # Every RC1 asset, so selection must pick this host's five among them.
-    for name in ubuntu24.04-documentdb{,-17,-18,-common,-postgresql-tools}_1.0.0_all.deb \
-        ubuntu24.04-documentdb-gateway_1.0.0_{amd64,arm64}.deb \
-        ubuntu24.04-postgresql-{17,18}-documentdb_1.0-0_{amd64,arm64}.deb \
-        documentdb{,-17,-18,-common,-postgresql-tools}-1.0.0-1.noarch.rpm \
-        documentdb-gateway-1.0.0-1.el9.{x86_64,aarch64}.rpm \
-        rhel9-postgresql{17,18}-documentdb-1.0.0-1.el9.{x86_64,aarch64}.rpm; do
+    # Every RC2 asset, so selection must pick this host's five among them.
+    for name in ubuntu24.04-documentdb{,-17,-18,-common,-postgresql-tools}_1.0-rc2_all.deb \
+        ubuntu24.04-documentdb-gateway_1.0-rc2_{amd64,arm64}.deb \
+        ubuntu24.04-postgresql-{17,18}-documentdb_1.0-rc2_{amd64,arm64}.deb \
+        documentdb{,-17,-18,-common,-postgresql-tools}-1.0-rc2-1.noarch.rpm \
+        documentdb-gateway-1.0-rc2-1.el9.{x86_64,aarch64}.rpm \
+        rhel9-postgresql{17,18}-documentdb-1.0-rc2-1.el9.{x86_64,aarch64}.rpm; do
         printf 'fixture for %s\n' "${name}" > "${fixture}/${name}"
     done
     (cd "${fixture}" && sha256sum ./*.deb ./*.rpm | sed 's|  ./|  |' > SHA256SUMS)
@@ -483,7 +495,7 @@ set -eu
 . "$1"
 fixture="$2"
 mode="$3"
-RELEASE_VERSION=v1.0-RC1
+RELEASE_VERSION=1.0-rc2
 PACKAGE_FAMILY="${RELEASE_TEST_FAMILY:-apt}"
 APT_ARCH=arm64
 RPM_ARCH=x86_64
@@ -491,7 +503,7 @@ PG_MAJOR="${RELEASE_TEST_PG:-18}"
 TMP_DIR="$(mktemp -d)"
 strict_curl() {
     name="${1##*/}"
-    [ "${mode}:${name}" != "missing:ubuntu24.04-documentdb-common_1.0.0_all.deb" ] || return 22
+    [ "${mode}:${name}" != "missing:ubuntu24.04-documentdb-common_1.0-rc2_all.deb" ] || return 22
     [ "${mode}:${name}" != "missing-manifest:SHA256SUMS" ] || return 22
     cp "${fixture}/${name}" "$2"
     if [ "${mode}" = corrupt ] && [ "${name}" != SHA256SUMS ]; then
@@ -516,13 +528,33 @@ RUNNER
     expect_success "verified selected packages" sh "${runner}" "${library}" "${fixture}" good
     assert_has "verified packages reach one transaction" "TRANSACTION <install> <-y>"
     assert_has "RC origin recorded before package installation" \
-        $'RC-MARKER /etc/documentdb/installer-release-candidate 0644 v1.0-RC1\nTRANSACTION'
+        $'RC-MARKER /etc/documentdb/installer-release-candidate 0644 1.0-rc2\nTRANSACTION'
     assert_has "apt arm64 pg18 selects exactly its packages" \
+        "<install> <-y> <ubuntu24.04-documentdb-18_1.0-rc2_all.deb> <ubuntu24.04-documentdb-common_1.0-rc2_all.deb> <ubuntu24.04-documentdb-postgresql-tools_1.0-rc2_all.deb> <ubuntu24.04-documentdb-gateway_1.0-rc2_arm64.deb> <ubuntu24.04-postgresql-18-documentdb_1.0-rc2_arm64.deb>"
+    # v1.0-RC1 is still an accepted --version and its published assets carry
+    # GA-shaped names (1.0.0, extension 1.0-0); selection must keep matching them.
+    local rc1="${WORK_DIR}/release-fixture-rc1"
+    mkdir -p "${rc1}"
+    for name in ubuntu24.04-documentdb{,-17,-18,-common,-postgresql-tools}_1.0.0_all.deb \
+        ubuntu24.04-documentdb-gateway_1.0.0_{amd64,arm64}.deb \
+        ubuntu24.04-postgresql-{17,18}-documentdb_1.0-0_{amd64,arm64}.deb \
+        documentdb{,-17,-18,-common,-postgresql-tools}-1.0.0-1.noarch.rpm \
+        documentdb-gateway-1.0.0-1.el9.{x86_64,aarch64}.rpm \
+        rhel9-postgresql{17,18}-documentdb-1.0.0-1.el9.{x86_64,aarch64}.rpm; do
+        printf 'fixture for %s\n' "${name}" > "${rc1}/${name}"
+    done
+    (cd "${rc1}" && sha256sum ./*.deb ./*.rpm | sed 's|  ./|  |' > SHA256SUMS)
+    expect_success "RC1-shaped assets still selected" sh "${runner}" "${library}" "${rc1}" good
+    assert_has "apt arm64 pg18 selects RC1-shaped packages" \
         "<install> <-y> <ubuntu24.04-documentdb-18_1.0.0_all.deb> <ubuntu24.04-documentdb-common_1.0.0_all.deb> <ubuntu24.04-documentdb-postgresql-tools_1.0.0_all.deb> <ubuntu24.04-documentdb-gateway_1.0.0_arm64.deb> <ubuntu24.04-postgresql-18-documentdb_1.0-0_arm64.deb>"
+    expect_success "rpm x86_64 pg17 RC1-shaped selection" env RELEASE_TEST_FAMILY=rpm RELEASE_TEST_PG=17 \
+        sh "${runner}" "${library}" "${rc1}" good
+    assert_has "rpm x86_64 pg17 selects RC1-shaped packages" \
+        "<install> <-y> <documentdb-17-1.0.0-1.noarch.rpm> <documentdb-common-1.0.0-1.noarch.rpm> <documentdb-postgresql-tools-1.0.0-1.noarch.rpm> <documentdb-gateway-1.0.0-1.el9.x86_64.rpm> <rhel9-postgresql17-documentdb-1.0.0-1.el9.x86_64.rpm>"
     expect_success "rpm x86_64 pg17 selection" env RELEASE_TEST_FAMILY=rpm RELEASE_TEST_PG=17 \
         sh "${runner}" "${library}" "${fixture}" good
     assert_has "rpm x86_64 pg17 selects exactly its packages" \
-        "<install> <-y> <documentdb-17-1.0.0-1.noarch.rpm> <documentdb-common-1.0.0-1.noarch.rpm> <documentdb-postgresql-tools-1.0.0-1.noarch.rpm> <documentdb-gateway-1.0.0-1.el9.x86_64.rpm> <rhel9-postgresql17-documentdb-1.0.0-1.el9.x86_64.rpm>"
+        "<install> <-y> <documentdb-17-1.0-rc2-1.noarch.rpm> <documentdb-common-1.0-rc2-1.noarch.rpm> <documentdb-postgresql-tools-1.0-rc2-1.noarch.rpm> <documentdb-gateway-1.0-rc2-1.el9.x86_64.rpm> <rhel9-postgresql17-documentdb-1.0-rc2-1.el9.x86_64.rpm>"
     expect_success "regenerated manifest formatting is accepted" \
         sh "${runner}" "${library}" "${fixture}" manifest
     assert_has "regenerated manifest still verifies packages" "TRANSACTION <install> <-y>"
@@ -536,7 +568,7 @@ RUNNER
         assert_lacks "${mode} never installs packages or falls back" "TRANSACTION"
         assert_lacks "${mode} does not record an RC installation" "RC-MARKER"
     done
-    printf 'rebuilt payload\n' >> "${fixture}/ubuntu24.04-documentdb-common_1.0.0_all.deb"
+    printf 'rebuilt payload\n' >> "${fixture}/ubuntu24.04-documentdb-common_1.0-rc2_all.deb"
     expect_failure "rebuilt package with stale checksum" "Checksum verification failed" \
         sh "${runner}" "${library}" "${fixture}" good
     assert_lacks "stale checksum never installs" "TRANSACTION"

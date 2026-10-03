@@ -35,12 +35,15 @@ WORKDIR /home/documentdb/code/pg_documentdb_gw
 # `dpkg -l` package version, and the deb filename all agree. The source
 # version "0.1.0" is intentionally kept in git for development; packaging
 # overrides it at build time. Sanity-check the substitution worked.
+# Cargo needs X.Y.Z and has no ~, so a 1.0~rc2 package carries a 1.0.0-rc2 binary
+# (packaging/documentdb-version.sh).
 RUN if [ -z "$DOCUMENTDB_VERSION" ]; then \
         echo "ERROR: DOCUMENTDB_VERSION build-arg is required" >&2; exit 1; \
     fi && \
-    sed -i -E "s/^version = \".*\"/version = \"${DOCUMENTDB_VERSION}\"/" Cargo.toml && \
-    if ! grep -Eq "^version = \"${DOCUMENTDB_VERSION}\"$" Cargo.toml; then \
-        echo "ERROR: failed to set workspace Cargo.toml version to ${DOCUMENTDB_VERSION}" >&2; \
+    cargo_version="$(. ../packaging/documentdb-version.sh && documentdb_cargo_version "$DOCUMENTDB_VERSION")" && \
+    sed -i -E "s/^version = \".*\"/version = \"${cargo_version}\"/" Cargo.toml && \
+    if ! grep -Eq "^version = \"${cargo_version}\"$" Cargo.toml; then \
+        echo "ERROR: failed to set workspace Cargo.toml version to ${cargo_version}" >&2; \
         exit 1; \
     fi
 

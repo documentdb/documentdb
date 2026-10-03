@@ -8,8 +8,9 @@ description: >-
 inputs:
   version:
     description: >-
-      Explicit version in either grammar (X.Y-Z or X.Y.Z). Blank derives the
-      version from the control file.
+      Explicit version in either grammar (X.Y-Z or X.Y.Z) or a release
+      candidate (1.0-rc2). Blank derives the version from the pushed/dispatched
+      tag when there is one, otherwise from the control file.
     required: false
     default: ''
 
@@ -35,28 +36,70 @@ runs:
         set -euo pipefail
         control="pg_documentdb_core/documentdb_core.control"
 
-        raw="${INPUT_VERSION}"
-        if [ -n "$raw" ]; then
-          echo "Using provided version: $raw"
+        # One parser for every source so the tag, the input and the control
+        # file are compared in the same grammar. A release candidate (1.0-rc2,
+        # v1.0-RC2) builds as X.Y~rcN: the ~ sorts it below the X.Y.Z / X.Y-Z
+        # release in both dpkg and rpm.
+        parse() {
+          local raw="${1#[vV]}" rc
+          rc="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$rc" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)[-~]rc([1-9][0-9]*)$ ]]; then
+            dots="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}~rc${BASH_REMATCH[3]}"
+            dash="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}-0"
+          elif [[ "$raw" =~ ^([0-9]+)\.([0-9]+)[.-]([0-9]+)$ ]]; then
+            dots="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+            dash="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}-${BASH_REMATCH[3]}"
+          else
+            echo "::error::Could not resolve a DocumentDB version (got '$1'); expected X.Y-Z, X.Y.Z or a release candidate such as 1.0-rc2."
+            exit 1
+          fi
+        }
+
+        # A build dispatched on a release tag is that release: v1.0-RC1 was
+        # built with the input left blank and shipped as 1.0.0.
+        tag=""
+        case "${GITHUB_REF:-}" in refs/tags/v*) tag="${GITHUB_REF#refs/tags/}" ;; esac
+        # install.sh downloads an RC from v<X.Y>-RC<N> and GitHub paths are
+        # case-sensitive, so a tag spelled any other way would publish a
+        # release the installer cannot find.
+        if [ -n "$tag" ] && ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+-(RC[1-9][0-9]*|[0-9]+)$ ]]; then
+          echo "::error::Tag '${tag}' must be spelled vX.Y-Z or vX.Y-RCN (for example v1.0-RC2); install.sh downloads that exact name."
+          exit 1
+        fi
+
+        if [ -n "$INPUT_VERSION" ]; then
+          parse "$INPUT_VERSION"
+          echo "Using provided version: $INPUT_VERSION"
+          if [ -n "$tag" ]; then
+            input_dots="$dots"
+            parse "$tag"
+            if [ "$input_dots" != "$dots" ]; then
+              echo "::error::Provided version '${INPUT_VERSION}' does not match the tag '${tag}' this run was started from."
+              exit 1
+            fi
+          fi
+        elif [ -n "$tag" ]; then
+          parse "$tag"
+          echo "Derived version from tag: $tag"
         else
           if [ ! -f "$control" ]; then
             echo "::error::${control} not found — did this job check out the repository first?"
             exit 1
           fi
-          raw=$(grep -E "^default_version" "$control" | sed -E "s/.*'([0-9]+\.[0-9]+-[0-9]+)'.*/\1/")
-          echo "Derived version from control file: $raw"
+          parse "$(grep -E "^default_version" "$control" | sed -E "s/.*'([0-9]+\.[0-9]+-[0-9]+)'.*/\1/")"
+          echo "Derived version from control file: $dash"
         fi
 
-        # Validate rather than propagate a silently empty/garbled version into
-        # package filenames — the old inline snippets emitted whatever sed
-        # produced, so a control-file format change surfaced much later as an
-        # oddly named package instead of a failed step.
-        if [[ ! "$raw" =~ ^([0-9]+)\.([0-9]+)[.-]([0-9]+)$ ]]; then
-          echo "::error::Could not resolve a DocumentDB version (got '${raw}'); expected X.Y-Z or X.Y.Z."
-          exit 1
+        # A tag whose release (X.Y-Z, or X.Y-0 for an RC) disagrees with the
+        # control file would ship packages, changelog and SQL version for
+        # different releases. Fail before building.
+        if [ -n "$tag" ] && [ -f "$control" ]; then
+          control_dash="$(grep -E "^default_version" "$control" | sed -E "s/.*'([0-9]+\.[0-9]+-[0-9]+)'.*/\1/")"
+          if [ "$control_dash" != "$dash" ]; then
+            echo "::error::Tag '${tag}' resolves to release ${dash} but ${control} says '${control_dash}'. Bump the control file (and CHANGELOG.md) or fix the tag."
+            exit 1
+          fi
         fi
-        dots="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
-        dash="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}-${BASH_REMATCH[3]}"
 
         echo "Resolved version: ${dots} (control-file form ${dash})"
         echo "version=${dots}" >> "$GITHUB_OUTPUT"

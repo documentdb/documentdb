@@ -17,7 +17,7 @@ function show_help {
     echo "  --pg                 PG version to build packages for. Possible values: [15, 16, 17, 18]"
     echo ""
     echo "Optional Arguments:"
-    echo "  --version            The version of documentdb to build. Examples: [0.100.0, 0.101.0]"
+    echo "  --version            The version of documentdb to build. Examples: [0.100.0, 0.101.0, 1.0-rc2]"
     echo "  --test-clean-install Test installing the packages in a clean Docker container."
     echo "  --output-dir         Relative path from the repo root of the directory where to drop the packages. The directory will be created if it doesn't exist. Default: packaging"
     echo "  -h, --help           Display this help message."
@@ -117,6 +117,17 @@ if [[ -z "$PG" ]]; then
     exit 1
 fi
 
+# shellcheck source=documentdb-version.sh
+source "$script_dir/packaging/documentdb-version.sh"
+# Any RC spelling (1.0-rc2, v1.0-RC2, 1.0.0-rc2) builds as 1.0~rc2. With no
+# --version, a checkout on a release tag builds that release, not the control
+# file's GA version.
+DOCUMENTDB_VERSION="$(documentdb_package_version "$DOCUMENTDB_VERSION")"
+if [[ -z "$DOCUMENTDB_VERSION" ]]; then
+    DOCUMENTDB_VERSION="$(documentdb_tag_version "$script_dir")"
+    [[ -z "$DOCUMENTDB_VERSION" ]] || echo "DOCUMENTDB_VERSION taken from the release tag: $DOCUMENTDB_VERSION"
+fi
+
 if [[ -z "$DOCUMENTDB_VERSION" ]]; then
     DOCUMENTDB_VERSION=$(grep -E "^default_version" "$script_dir/pg_documentdb_core/documentdb_core.control" | sed -E "s/.*'([0-9]+\.[0-9]+-[0-9]+)'.*/\1/")
     DOCUMENTDB_VERSION=$(echo "$DOCUMENTDB_VERSION" | sed "s/-/./g")
@@ -135,9 +146,9 @@ fi
 # metadata and cause confusing failures (e.g. rpmbuild rejecting the spec
 # late, cargo refusing to compile because the workspace version is empty,
 # or operators seeing a literal placeholder in `dpkg -l` output).
-if ! [[ "$DOCUMENTDB_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+if ! [[ "$DOCUMENTDB_VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+([.-][0-9A-Za-z.-]+)?|~rc[0-9]+)$ ]]; then
     echo "Error: DOCUMENTDB_VERSION '$DOCUMENTDB_VERSION' is not a valid SemVer-compatible version string." >&2
-    echo "Expected: MAJOR.MINOR.PATCH (with optional .N or -PRERELEASE suffix), e.g. 0.113.0 or 1.2.3-rc1." >&2
+    echo "Expected: MAJOR.MINOR.PATCH (with optional .N or -PRERELEASE suffix), e.g. 0.113.0, 1.2.3-rc1, or a release candidate X.Y~rcN such as 1.0~rc2." >&2
     exit 1
 fi
 

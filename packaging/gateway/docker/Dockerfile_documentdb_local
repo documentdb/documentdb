@@ -38,6 +38,18 @@ COPY . /build
 
 WORKDIR /build/pg_documentdb_gw
 
+# `documentdb-gateway --version` prints the Cargo version, so stamp it like the
+# package builds do (packaging/documentdb-version.sh). Unstamped local
+# builds keep 0.1.0. The ARG is declared here, not at the top of the stage, so
+# a version change does not invalidate the toolchain layers above.
+ARG DOCUMENTDB_VERSION=unknown
+RUN if [ -n "${DOCUMENTDB_VERSION}" ] && [ "${DOCUMENTDB_VERSION}" != "unknown" ]; then \
+        cargo_version="$(. ../packaging/documentdb-version.sh && documentdb_cargo_version "${DOCUMENTDB_VERSION}")" && \
+        echo "${cargo_version}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$' || { echo "ERROR: DOCUMENTDB_VERSION '${DOCUMENTDB_VERSION}' is not a release version Cargo can carry" >&2; exit 1; } && \
+        sed -i -E "s/^version = \".*\"/version = \"${cargo_version}\"/" Cargo.toml && \
+        grep -Eq "^version = \"${cargo_version}\"$" Cargo.toml; \
+    fi
+
 RUN CARGO_MANIFEST_DIR=/build/pg_documentdb_gw cargo build --profile=release-with-symbols -p documentdb_gateway
 
 # Install mongosh in a throwaway stage so the final image only copies the runtime files.
@@ -248,11 +260,12 @@ RUN v="$(dpkg-query -W -f='${Version}' "postgresql-${POSTGRES_VERSION}-documentd
         && [ -n "$v" ] \
         || { echo "ERROR: cannot resolve the installed postgresql-${POSTGRES_VERSION}-documentdb version; /version.txt would misreport this build" >&2; exit 1; }; \
     if [ "${DOCUMENTDB_VERSION}" != "unknown" ] \
-        && [ "$(printf '%s' "${DOCUMENTDB_VERSION}" | tr - .)" != "$(printf '%s' "$v" | tr - .)" ]; then \
+        && [ "$(printf '%s' "${DOCUMENTDB_VERSION}" | tr '~-' '..')" != "$(printf '%s' "$v" | tr '~-' '..')" ]; then \
         echo "ERROR: DOCUMENTDB_VERSION build arg '${DOCUMENTDB_VERSION}' does not match the installed package version '$v'" >&2; exit 1; \
     fi; \
+    # A release candidate's package is 1.0~rc2; users see 1.0-rc2.
     printf '%s (commit %s, built %s, postgresql %s)\n' \
-        "$v" "${GIT_COMMIT}" "${BUILD_DATE:-unknown}" "${POSTGRES_VERSION}" \
+        "$(printf '%s' "$v" | tr '~' '-')" "${GIT_COMMIT}" "${BUILD_DATE:-unknown}" "${POSTGRES_VERSION}" \
     | sudo tee /version.txt >/dev/null
 
 # Built-in health probe: healthy once the entrypoint finished initialization,
