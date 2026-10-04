@@ -155,6 +155,11 @@ bool EnableFailureOnParallelIndexArrays = DEFAULT_ENABLE_FAILURE_ON_PARALLEL_IND
 bool EnableCompositeUniqueOptionalKey =
 	DEFAULT_ENABLE_COMPOSITE_UNIQUE_OPTIONAL_KEY;
 
+/* Added on v1.2, enabled on v1.2, remove after v1.4 */
+#define DEFAULT_ENABLE_UNIQUE_NULL_MISSING_EQUIVALENCE true
+bool EnableUniqueNullMissingEquivalence =
+	DEFAULT_ENABLE_UNIQUE_NULL_MISSING_EQUIVALENCE;
+
 /* Added in v1.2, Pending stabilization, enable in v1.4 */
 #define DEFAULT_ENABLE_COLLATED_UNIQUE_INDEXES false
 bool EnableCollatedUniqueIndexes =
@@ -866,6 +871,15 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable optional-key support for composite unique indexes."),
 		NULL, &EnableCompositeUniqueOptionalKey,
 		DEFAULT_ENABLE_COMPOSITE_UNIQUE_OPTIONAL_KEY,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_unique_null_missing_equivalence", newGucPrefix),
+		gettext_noop(
+			"Whether the unique index recheck treats a missing path as equal to a "
+			"null value."),
+		NULL, &EnableUniqueNullMissingEquivalence,
+		DEFAULT_ENABLE_UNIQUE_NULL_MISSING_EQUIVALENCE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

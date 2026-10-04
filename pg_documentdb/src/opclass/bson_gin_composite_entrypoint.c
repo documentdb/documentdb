@@ -5889,6 +5889,7 @@ GenerateCompositedUniqueEqualQueryValues(Datum *indexEntries, bool *partialMatch
 		int termIndex = i;
 		bool hasTruncationInEntry = false;
 		bool hasNullsInEntry = false;
+		bool hasMaybeUndefinedInEntry = false;
 		CompositeQueryRunData *runDataForEntry = runData;
 		partialMatch[i] = false;
 		for (uint32_t j = 0; j < pathCount; j++)
@@ -5965,10 +5966,20 @@ GenerateCompositedUniqueEqualQueryValues(Datum *indexEntries, bool *partialMatch
 				runDataForEntry->indexBounds[j].upperBound.isBoundInclusive = true;
 				runDataForEntry->indexBounds[j].lowerBound.isBoundInclusive = true;
 				runDataForEntry->indexBounds[j].isEqualityBound = true;
+
+				/*
+				 * A path missing from some elements under an array ancestor is
+				 * not necessarily a key (e.g. sparse indexes skip it), so an
+				 * equal term here must be rechecked against the unique key.
+				 */
+				if (IsIndexTermMaybeUndefined(&indexTerm))
+				{
+					hasMaybeUndefinedInEntry = true;
+				}
 			}
 		}
 
-		if (hasTruncationInEntry || hasNullsInEntry)
+		if (hasTruncationInEntry || hasNullsInEntry || hasMaybeUndefinedInEntry)
 		{
 			/* TODO: We can do better here and only do runtime recheck if that term matches */
 			runDataForEntry->metaInfo->requiresRuntimeRecheck = true;

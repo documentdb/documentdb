@@ -385,6 +385,211 @@ RESET client_min_messages;
 SELECT count(*) as nested_arr_rows FROM documentdb_api.collection('optkeydb', 'nested_arr_trunc');
 RESET documentdb.indexTermLimitOverride;
 
+-- ===== Section 15: Sparse compound unique indexes =====
+-- A sparse compound unique index skips documents missing every indexed path.
+-- Documents with at least one indexed path are indexed, and the missing paths
+-- compare as null.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
+  '{ "createIndexes": "sparse_compound", "indexes": [ { "key": { "x": 1, "y": 1 }, "name": "x_y_sparse", "unique": true, "sparse": true } ]}', TRUE);
+
+-- The layout uses the optional key and the sparse unique projection.
+SELECT pg_get_indexdef(i.indexrelid) ~ 'optsk=' AS has_optsk,
+       pg_get_indexdef(i.indexrelid) ~ 'true, true\)' AS is_sparse_composite
+FROM pg_index i
+WHERE i.indrelid = (SELECT ('documentdb_data.documents_' || collection_id)::regclass
+                    FROM documentdb_api_catalog.collections
+                    WHERE database_name = 'optkeydb' AND collection_name = 'sparse_compound')
+  AND i.indexrelid::regclass::text LIKE '%rum_index%';
+
+-- 15a: documents missing every indexed path are not indexed: both succeed.
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_compound', '{ "_id": 1 }');
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_compound', '{ "_id": 2, "z": 1 }');
+
+-- 15b: one path present: a duplicate of the present path with the other path
+-- missing fails, for either path.
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_compound', '{ "_id": 3, "x": 1 }');
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_compound', '{ "_id": 4, "x": 1 }');
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_compound', '{ "_id": 4, "y": 1 }');
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_compound', '{ "_id": 5, "y": 1 }');
+
+-- The documented semantics index the missing path as null, so an explicit
+-- null for it is the same key: duplicate key error, in either insert order
+-- (see the parity check in 15i).
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_compound', '{ "_id": 5, "x": 1, "y": null }');
+
+-- 15c: explicit null on every path is indexed. A later document with the same
+-- null and the other path missing is the same key and fails.
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_compound', '{ "_id": 6, "x": null, "y": null }');
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_compound', '{ "_id": 7, "x": null }');
+
+-- 15d: both paths present: compound key must match exactly to conflict.
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_compound', '{ "_id": 8, "x": 1, "y": 1 }');
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_compound', '{ "_id": 9, "x": 1, "y": 1 }');
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_compound', '{ "_id": 9, "x": 1.0, "y": { "$numberLong": "1" } }');
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_compound', '{ "_id": 9, "x": 1, "y": 2 }');
+
+-- 15e: arrays: any shared element on the array path conflicts for the same
+-- value of the other path.
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_compound', '{ "_id": 10, "x": [ 20, 21 ], "y": 5 }');
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_compound', '{ "_id": 11, "x": 21, "y": 5 }');
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_compound', '{ "_id": 11, "x": 21, "y": 6 }');
+
+-- 15f: updates. Adding an indexed path to a skipped document makes it indexed
+-- and enforced; removing every indexed path frees the key.
+SELECT documentdb_api.update('optkeydb',
+    '{ "update": "sparse_compound", "updates": [{ "q": { "_id": 1 }, "u": { "$set": { "x": 1, "y": 1 } } }] }');
+SELECT documentdb_api.update('optkeydb',
+    '{ "update": "sparse_compound", "updates": [{ "q": { "_id": 1 }, "u": { "$set": { "x": 1, "y": 3 } } }] }');
+SELECT documentdb_api.update('optkeydb',
+    '{ "update": "sparse_compound", "updates": [{ "q": { "_id": 8 }, "u": { "$unset": { "x": 1, "y": 1 } } }] }');
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_compound', '{ "_id": 12, "x": 1, "y": 1 }');
+SELECT documentdb_api.update('optkeydb',
+    '{ "update": "sparse_compound", "updates": [{ "q": { "_id": 12 }, "u": { "$unset": { "y": 1 } } }] }');
+
+-- 15g: upsert into an existing key fails, into a skipped (no paths) key succeeds.
+SELECT documentdb_api.update('optkeydb',
+    '{ "update": "sparse_compound", "updates": [{ "q": { "_id": 13 }, "u": { "$set": { "x": 21, "y": 6 } }, "upsert": true }] }');
+SELECT documentdb_api.update('optkeydb',
+    '{ "update": "sparse_compound", "updates": [{ "q": { "_id": 13 }, "u": { "$set": { "z": 13 } }, "upsert": true }] }');
+
+SELECT document FROM documentdb_api.collection('optkeydb', 'sparse_compound') ORDER BY object_id;
+
+-- 15h: dotted paths. A missing parent and a parent missing the leaf are both
+-- skipped, while a present leaf is enforced.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
+  '{ "createIndexes": "sparse_dotted", "indexes": [ { "key": { "p.q": 1, "r": -1 }, "name": "pq_r_sparse", "unique": true, "sparse": true } ]}', TRUE);
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_dotted', '{ "_id": 1, "p": { "s": 1 } }');
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_dotted', '{ "_id": 2, "p": { "s": 1 } }');
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_dotted', '{ "_id": 3, "p": [ { "s": 1 } ] }');
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_dotted', '{ "_id": 4, "p": { "q": "v" } }');
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_dotted', '{ "_id": 5, "p": [ { "q": "v" } ] }');
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_dotted', '{ "_id": 5, "p": { "q": "v" }, "r": 1 }');
+SELECT documentdb_api.insert_one('optkeydb', 'sparse_dotted', '{ "_id": 6, "p": { "q": "v" }, "r": 1 }');
+SELECT count(*) AS sparse_dotted_rows FROM documentdb_api.collection('optkeydb', 'sparse_dotted');
+
+-- 15i: parity with the optional key disabled. The same insert sequence runs
+-- with and without the optional key. Documents missing every indexed path
+-- never conflict in either layout (ords 1 and 2).
+-- Explicit null and a missing path are the same key under the documented
+-- semantics, so ords 4, 8, 16, 18 and 20 are duplicate key errors. With the
+-- optional key every candidate reaches the runtime recheck
+-- (bson_unique_shard_path_equal), which treats a path missing from one side
+-- as null in either insert order.
+-- CALLOUT: without the optional key these succeed, which is incorrect. A
+-- sparse compound index still indexes a document that has at least one of the
+-- indexed paths, and a missing path in such a document is the key null (e.g.
+-- { x: 1 } and { x: 1, y: null } are both the key (1, null) and conflict in
+-- either insert order). A sparse unique shard document omits missing paths and
+-- the composite hash covers only the present paths, so a null and a missing
+-- path hash differently and never reach the recheck. Fixing this changes the
+-- stored hash terms, so it needs a versioned index option rather than an in
+-- place change.
+SET documentdb.enable_composite_unique_optional_key TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
+  '{ "createIndexes": "sparse_compound_nooptkey", "indexes": [ { "key": { "x": 1, "y": 1 }, "name": "x_y_sparse", "unique": true, "sparse": true } ]}', TRUE);
+SET documentdb.enable_composite_unique_optional_key TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
+  '{ "createIndexes": "sparse_compound_parity", "indexes": [ { "key": { "x": 1, "y": 1 }, "name": "x_y_sparse", "unique": true, "sparse": true } ]}', TRUE);
+
+SELECT c.collection_name, pg_get_indexdef(i.indexrelid) ~ 'optsk=' AS has_optsk
+FROM documentdb_api_catalog.collections c
+JOIN pg_index i ON i.indrelid = ('documentdb_data.documents_' || c.collection_id)::regclass
+WHERE c.database_name = 'optkeydb'
+  AND c.collection_name IN ('sparse_compound_nooptkey', 'sparse_compound_parity')
+  AND i.indexrelid::regclass::text LIKE '%rum_index%'
+ORDER BY 1;
+
+WITH docs(ord, doc) AS (VALUES
+    (1, '{ "_id": 1 }'), (2, '{ "_id": 2 }'), (3, '{ "_id": 3, "x": 1 }'),
+    (4, '{ "_id": 4, "x": 1, "y": null }'), (5, '{ "_id": 5, "y": 1 }'),
+    (6, '{ "_id": 6, "y": 1 }'), (7, '{ "_id": 7, "x": null, "y": null }'),
+    (8, '{ "_id": 8, "x": null }'), (9, '{ "_id": 9, "x": [ 1, 2 ], "y": 1 }'),
+    (10, '{ "_id": 10, "x": 2, "y": 1 }'), (11, '{ "_id": 11, "x": 2, "y": [ 1, 7 ] }'),
+    (12, '{ "_id": 12, "x": { "$numberDecimal": "2" }, "y": 7 }'),
+    (13, '{ "_id": 13, "x": "s", "y": "s" }'), (14, '{ "_id": 14, "x": "s", "y": "t" }'),
+    (15, '{ "_id": 15, "x": 3, "y": null }'), (16, '{ "_id": 16, "x": 3 }'),
+    (17, '{ "_id": 17, "y": 9 }'), (18, '{ "_id": 18, "x": null, "y": 9 }'),
+    (19, '{ "_id": 19, "x": null, "y": 8 }'), (20, '{ "_id": 20, "y": 8 }'),
+    (21, '{ "_id": 21, "x": 5, "y": null }'), (22, '{ "_id": 22, "x": 5, "y": null }')),
+results AS (
+    SELECT ord,
+           documentdb_api.insert_one('optkeydb', 'sparse_compound_parity', doc::bson) AS with_optkey,
+           documentdb_api.insert_one('optkeydb', 'sparse_compound_nooptkey', doc::bson) AS without_optkey
+    FROM docs)
+SELECT ord,
+       with_optkey @? '{ "writeErrors": 1 }' AS optkey_dup,
+       without_optkey @? '{ "writeErrors": 1 }' AS nooptkey_dup
+FROM results ORDER BY ord;
+
+SELECT document FROM documentdb_api.collection('optkeydb', 'sparse_compound_parity') ORDER BY object_id;
+SELECT document FROM documentdb_api.collection('optkeydb', 'sparse_compound_nooptkey') ORDER BY object_id;
+
+-- Section 16: a dotted path missing from some elements under an array
+-- ancestor. A sparse index indexes only the present values of such a document,
+-- so { a: [ { b: 2 }, { d: 1 } ] } has the key 2 only and does not conflict with
+-- a literal null or with another array missing the path in some elements. A
+-- non sparse index also indexes null for the elements missing the path, so
+-- those are duplicates. The optional key must agree with the layout without it.
+SET documentdb.enable_composite_unique_optional_key TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
+  '{ "createIndexes": "partial_array_sparse_optkey", "indexes": [ { "key": { "a.b": 1 }, "name": "ab_sparse", "unique": true, "sparse": true } ]}', TRUE);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
+  '{ "createIndexes": "partial_array_optkey", "indexes": [ { "key": { "a.b": 1 }, "name": "ab", "unique": true } ]}', TRUE);
+SET documentdb.enable_composite_unique_optional_key TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
+  '{ "createIndexes": "partial_array_sparse_nooptkey", "indexes": [ { "key": { "a.b": 1 }, "name": "ab_sparse", "unique": true, "sparse": true } ]}', TRUE);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
+  '{ "createIndexes": "partial_array_nooptkey", "indexes": [ { "key": { "a.b": 1 }, "name": "ab", "unique": true } ]}', TRUE);
+SET documentdb.enable_composite_unique_optional_key TO on;
+
+-- Expected (sparse / non sparse): 1 ok / ok, 2 ok / dup, 3 ok / dup,
+-- 4 dup / dup, 5 ok / ok, 6 ok / dup (a missing path is null and row 1
+-- already holds null).
+WITH docs(ord, doc) AS (VALUES
+    (1, '{ "_id": 1, "a": [ { "b": 2 }, { "d": 1 } ] }'),
+    (2, '{ "_id": 2, "a": { "b": null } }'),
+    (3, '{ "_id": 3, "a": [ { "b": 3 }, { "d": 1 } ] }'),
+    (4, '{ "_id": 4, "a": [ { "b": 2 } ] }'),
+    (5, '{ "_id": 5, "a": [ { "b": 4 } ] }'),
+    (6, '{ "_id": 6 }')),
+results AS (
+    SELECT ord,
+           documentdb_api.insert_one('optkeydb', 'partial_array_sparse_optkey', doc::bson) AS sparse_optkey,
+           documentdb_api.insert_one('optkeydb', 'partial_array_sparse_nooptkey', doc::bson) AS sparse_nooptkey,
+           documentdb_api.insert_one('optkeydb', 'partial_array_optkey', doc::bson) AS optkey,
+           documentdb_api.insert_one('optkeydb', 'partial_array_nooptkey', doc::bson) AS nooptkey
+    FROM docs)
+SELECT ord,
+       sparse_optkey @? '{ "writeErrors": 1 }' AS sparse_optkey_dup,
+       sparse_nooptkey @? '{ "writeErrors": 1 }' AS sparse_nooptkey_dup,
+       optkey @? '{ "writeErrors": 1 }' AS optkey_dup,
+       nooptkey @? '{ "writeErrors": 1 }' AS nooptkey_dup
+FROM results ORDER BY ord;
+
+-- Section 17: enable_unique_null_missing_equivalence off restores the previous
+-- one way recheck: every path of the new document must match a term of the
+-- existing document, and paths present only on the existing document are
+-- ignored. A new null then no longer matches an existing missing path, while a
+-- new missing path still matches an existing null.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
+  '{ "createIndexes": "null_missing_flag", "indexes": [ { "key": { "x": 1, "y": 1 }, "name": "x_y_sparse", "unique": true, "sparse": true } ]}', TRUE);
+
+-- 17a: flag on: missing then null, and null then missing, are duplicates.
+SELECT documentdb_api.insert_one('optkeydb', 'null_missing_flag', '{ "_id": 1, "x": 1 }');
+SELECT documentdb_api.insert_one('optkeydb', 'null_missing_flag', '{ "_id": 2, "x": 1, "y": null }');
+SELECT documentdb_api.insert_one('optkeydb', 'null_missing_flag', '{ "_id": 3, "x": 2, "y": null }');
+SELECT documentdb_api.insert_one('optkeydb', 'null_missing_flag', '{ "_id": 4, "x": 2 }');
+
+-- 17b: flag off: null after missing succeeds, missing after null is a duplicate.
+SET documentdb.enable_unique_null_missing_equivalence TO off;
+SELECT documentdb_api.insert_one('optkeydb', 'null_missing_flag', '{ "_id": 2, "x": 1, "y": null }');
+SELECT documentdb_api.insert_one('optkeydb', 'null_missing_flag', '{ "_id": 4, "x": 2 }');
+
+-- 17c: flag off: exact duplicates are still rejected.
+SELECT documentdb_api.insert_one('optkeydb', 'null_missing_flag', '{ "_id": 5, "x": 1, "y": null }');
+SELECT documentdb_api.insert_one('optkeydb', 'null_missing_flag', '{ "_id": 6, "x": 2 }');
+RESET documentdb.enable_unique_null_missing_equivalence;
+
 RESET documentdb.enable_composite_unique_optional_key;
 RESET documentdb.enableCompositeUniqueHash;
 RESET documentdb.defaultUseCompositeOpClass;

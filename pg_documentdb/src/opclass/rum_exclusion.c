@@ -64,6 +64,7 @@
 /* --------------------------------------------------------- */
 
 extern int DefaultUniqueIndexKeyhashOverride;
+extern bool EnableUniqueNullMissingEquivalence;
 
 static pgbson * GetShardKeyAndDocument(HeapTupleHeader input, int64_t *shardKey);
 static IndexTraverseOption GetExclusionIndexTraverseOption(void *contextOptions,
@@ -76,11 +77,33 @@ static void GenerateTermsForExclusion(pgbson *document, int64_t shardKey,
 									  GinEntryPathData *pathData,
 									  bool generateRootTerm);
 static void ValidateExclusionPathSpec(const char *prefix);
+
+/*
+ * A path written into a unique shard document, whether it holds a null
+ * equivalent term, and (when probing) whether one of its terms matched.
+ */
+typedef struct UniqueShardDocumentPath
+{
+	StringView path;
+	bool hasNullTerm;
+	bool hasTermMatch;
+} UniqueShardDocumentPath;
+
+typedef struct UniqueShardDocumentPaths
+{
+	UniqueShardDocumentPath paths[INDEX_MAX_KEYS];
+	int32_t numPaths;
+} UniqueShardDocumentPaths;
+
 static bool ProcessUniqueShardDocumentKeysNew(pgbson *uniqueShardDocument,
 											  int64_t *shardKeyComparison,
-											  HTAB *termsHashSet, HASHACTION hashAction);
+											  HTAB *termsHashSet, HASHACTION hashAction,
+											  UniqueShardDocumentPaths *documentPaths);
 static HTAB * GetUniqueShardDocumentTermsHTABNew(pgbson *uniqueShardDocument,
-												 int64_t *shardKeyValue);
+												 int64_t *shardKeyValue,
+												 UniqueShardDocumentPaths *documentPaths);
+static bool AreUniqueShardDocumentPathsConflicting(UniqueShardDocumentPaths *leftPaths,
+												   UniqueShardDocumentPaths *rightPaths);
 
 typedef struct IndexBounds
 {
@@ -495,17 +518,24 @@ bson_unique_shard_path_equal(PG_FUNCTION_ARGS)
 	pgbson *right = PG_GETARG_PGBSON_PACKED(1);
 
 
-	/* Build HTAB with every pair of { <path> : <term> } */
+	/* Build HTAB with every pair of { <path> : <term> } and collect the paths */
 	int64_t leftShardKey = 0;
-	HTAB *leftHashTable = GetUniqueShardDocumentTermsHTABNew(left, &leftShardKey);
+	UniqueShardDocumentPaths leftPaths = { 0 };
+	HTAB *leftHashTable = GetUniqueShardDocumentTermsHTABNew(left, &leftShardKey,
+															 &leftPaths);
 
 	/*
 	 * Iterate through pgbson on the right to check if every path (key) has
-	 * a term match on the left.
+	 * a term match on the left, then reconcile paths present on only one side.
 	 */
 	int64_t rightShardKey = 0;
+	UniqueShardDocumentPaths rightPaths = { 0 };
 	bool uniquenessConflict = ProcessUniqueShardDocumentKeysNew(right, &rightShardKey,
-																leftHashTable, HASH_FIND);
+																leftHashTable, HASH_FIND,
+																&rightPaths) &&
+							  (!EnableUniqueNullMissingEquivalence ||
+							   AreUniqueShardDocumentPathsConflicting(&leftPaths,
+																	  &rightPaths));
 
 	hash_destroy(leftHashTable);
 	PG_FREE_IF_COPY(left, 0);
@@ -860,10 +890,16 @@ ExtractUniqueShardTermsFromInput(pgbson *input, int32_t *nentries, Pointer **ext
 	if (TryGetOptionalCollectionId(options, &optionalCollectionId) &&
 		(uint64_t) optionalCollectionId == metadata.shardKeyValue)
 	{
-		/* Unsharded collection and we're matching the collection id, skip generating hash
+		/*
+		 * A sparse unique document with no terms is missing every indexed path and
+		 * must never conflict, so it generates no entries and matches nothing. This
+		 * has to precede the optional key short circuit below: matching everything
+		 * there would defer the conflict decision to the path column, which still
+		 * generates terms for the missing paths.
+		 * Unsharded collection and we're matching the collection id, skip generating hash
 		 * terms.
 		 */
-		if (searchMode)
+		if (searchMode && metadata.numTerms > 0)
 		{
 			*searchMode = RUM_SEARCH_MODE_DEFAULT_TRUE;
 		}
@@ -1116,12 +1152,14 @@ GenerateTermsForExclusion(pgbson *document,
 /*
  * Utility function that iterates on all keys of a unique shard document and takes action
  * against a terms hash set. In case of a HASH_FIND action, this function also returns a
- * boolean indicating an uniqueness conflict.
+ * boolean indicating an uniqueness conflict. It also records each path and whether it
+ * holds a null term so that paths present on only one side can be reconciled after.
  */
 static bool
 ProcessUniqueShardDocumentKeysNew(pgbson *uniqueShardDocument,
 								  int64_t *shardKeyComparison,
-								  HTAB *termsHashSet, HASHACTION hashAction)
+								  HTAB *termsHashSet, HASHACTION hashAction,
+								  UniqueShardDocumentPaths *documentPaths)
 {
 	bson_iter_t specIter;
 	UniqueShardDocumentMetadata metadata = { 0 };
@@ -1129,6 +1167,7 @@ ProcessUniqueShardDocumentKeysNew(pgbson *uniqueShardDocument,
 	ParseUniqueShardMetadata(&specIter, &metadata);
 
 	*shardKeyComparison = metadata.shardKeyValue;
+	documentPaths->numPaths = 0;
 	while (bson_iter_next(&specIter))
 	{
 		/*
@@ -1140,46 +1179,59 @@ ProcessUniqueShardDocumentKeysNew(pgbson *uniqueShardDocument,
 			continue;
 		}
 
-		const char *key = bson_iter_key(&specIter);
-		uint32_t keyPathLength = strlen(key);
+		if (documentPaths->numPaths >= INDEX_MAX_KEYS)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg("Unique shard document has more paths than "
+								   "supported")));
+		}
+
+		UniqueShardDocumentPath *documentPath =
+			&documentPaths->paths[documentPaths->numPaths++];
+		documentPath->path = bson_iter_key_string_view(&specIter);
+		documentPath->hasNullTerm = false;
+		documentPath->hasTermMatch = false;
+
 		bson_iter_t arrayIter;
 		bson_iter_recurse(&specIter, &arrayIter);
-
-		bool keyTermMatch = false;
 		while (bson_iter_next(&arrayIter))
 		{
 			UniqueIndexTermHashEntry searchEntry = { 0 };
-			searchEntry.element.path = key;
-			searchEntry.element.pathLength = keyPathLength;
+			searchEntry.element.path = documentPath->path.string;
+			searchEntry.element.pathLength = documentPath->path.length;
 			searchEntry.element.bsonValue = *bson_iter_value(&arrayIter);
 			searchEntry.collationString = metadata.collation;
+
+			if (searchEntry.element.bsonValue.value_type == BSON_TYPE_NULL ||
+				searchEntry.element.bsonValue.value_type == BSON_TYPE_UNDEFINED)
+			{
+				documentPath->hasNullTerm = true;
+			}
 
 			/* Query hash table with given action. */
 			bool found;
 			hash_search(termsHashSet, &searchEntry, hashAction, &found);
 
-			if (found)
+			if (found && hashAction == HASH_FIND)
 			{
 				/* keyTerm pair on the document was found on the hash table. */
-				keyTermMatch = true;
+				documentPath->hasTermMatch = true;
 				break;
 			}
 		}
 
-		if (!keyTermMatch && hashAction == HASH_FIND)
+		if (hashAction == HASH_FIND && !documentPath->hasTermMatch &&
+			!(EnableUniqueNullMissingEquivalence && documentPath->hasNullTerm))
 		{
 			/*
-			 * No term for this key was found on the hash table, meaning the unique shard
-			 * documents don't have a uniqueness conflict. We return early if action is HASH_FIND.
+			 * No term for this key was found on the hash table and the path cannot
+			 * match a missing path on the left either, meaning the unique shard
+			 * documents don't have a uniqueness conflict.
 			 */
 			return false;
 		}
 	}
 
-	/*
-	 * Each path (key) on the document has a term match on the hash table, meaning
-	 * there's a uniqueness conflict.
-	 */
 	return true;
 }
 
@@ -1252,15 +1304,107 @@ CreateUniqueIndexTermHashSet(void)
 
 /*
  * Utility function that receives a unique shard document (i.e. document returned from the generate_unique_shard_document function),
- * inserts all terms in a hash table and returns it to the caller.
+ * inserts all terms in a hash table and returns it to the caller along with its paths.
  */
 static HTAB *
-GetUniqueShardDocumentTermsHTABNew(pgbson *uniqueShardDocument, int64_t *shardKeyValue)
+GetUniqueShardDocumentTermsHTABNew(pgbson *uniqueShardDocument, int64_t *shardKeyValue,
+								   UniqueShardDocumentPaths *documentPaths)
 {
 	HTAB *termsHashSet = CreateUniqueIndexTermHashSet();
 	ProcessUniqueShardDocumentKeysNew(uniqueShardDocument, shardKeyValue,
-									  termsHashSet, HASH_ENTER);
+									  termsHashSet, HASH_ENTER, documentPaths);
 	return termsHashSet;
+}
+
+
+static int
+CompareUniqueShardDocumentPath(const void *left, const void *right)
+{
+	const UniqueShardDocumentPath *leftPath = (const UniqueShardDocumentPath *) left;
+	const UniqueShardDocumentPath *rightPath = (const UniqueShardDocumentPath *) right;
+	return CompareStringView(&leftPath->path, &rightPath->path);
+}
+
+
+/*
+ * Given the paths of the left and right unique shard documents, where every path
+ * on the right has already been probed against the terms on the left, checks
+ * whether the documents conflict.
+ *
+ * A sparse unique shard document omits the paths missing from the source
+ * document. A missing path is the same key as a literal null, so a path present
+ * on only one side matches only when that side holds a null term for it, which
+ * keeps the check symmetric regardless of which document was inserted first. A
+ * document missing every path is not indexed and never conflicts. Non sparse
+ * documents always carry every path, so this reduces to a term match per path.
+ */
+static bool
+AreUniqueShardDocumentPathsConflicting(UniqueShardDocumentPaths *leftPaths,
+									   UniqueShardDocumentPaths *rightPaths)
+{
+	if (leftPaths->numPaths == 0 || rightPaths->numPaths == 0)
+	{
+		return false;
+	}
+
+	qsort(leftPaths->paths, leftPaths->numPaths, sizeof(UniqueShardDocumentPath),
+		  CompareUniqueShardDocumentPath);
+	qsort(rightPaths->paths, rightPaths->numPaths, sizeof(UniqueShardDocumentPath),
+		  CompareUniqueShardDocumentPath);
+
+	int32_t leftIndex = 0;
+	int32_t rightIndex = 0;
+	while (leftIndex < leftPaths->numPaths || rightIndex < rightPaths->numPaths)
+	{
+		int comparison;
+		if (leftIndex >= leftPaths->numPaths)
+		{
+			comparison = 1;
+		}
+		else if (rightIndex >= rightPaths->numPaths)
+		{
+			comparison = -1;
+		}
+		else
+		{
+			comparison = CompareUniqueShardDocumentPath(&leftPaths->paths[leftIndex],
+														&rightPaths->paths[rightIndex]);
+		}
+
+		if (comparison == 0)
+		{
+			/* Path on both sides: a right term must have matched a left term */
+			if (!rightPaths->paths[rightIndex].hasTermMatch)
+			{
+				return false;
+			}
+
+			leftIndex++;
+			rightIndex++;
+		}
+		else if (comparison < 0)
+		{
+			/* Path missing on the right: it matches only a null term on the left */
+			if (!leftPaths->paths[leftIndex].hasNullTerm)
+			{
+				return false;
+			}
+
+			leftIndex++;
+		}
+		else
+		{
+			/* Path missing on the left: it matches only a null term on the right */
+			if (!rightPaths->paths[rightIndex].hasNullTerm)
+			{
+				return false;
+			}
+
+			rightIndex++;
+		}
+	}
+
+	return true;
 }
 
 
