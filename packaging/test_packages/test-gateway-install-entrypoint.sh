@@ -2155,6 +2155,12 @@ verify_createcluster_start_creates_extensions() {
     # ── (1) --start: create + tune + start + create extensions ──────
     local start_out=""
     if ! start_out="$(sudo documentdb-createcluster "${PG_MAJOR}" "${probe_cluster}" --start 2>&1)"; then
+        sudo -u postgres psql --cluster "${PG_MAJOR}/${probe_cluster}" -d postgres -X \
+            -c "SELECT name, setting, sourcefile FROM pg_settings WHERE name IN ('config_file', 'data_directory', 'port', 'shared_preload_libraries');" \
+            -c "SELECT sourcefile, sourceline, name, setting, applied, error FROM pg_file_settings WHERE name = 'shared_preload_libraries' OR error IS NOT NULL;" \
+            || log "Could not query the failed probe cluster."
+        sudo tail -n 80 "/var/log/postgresql/postgresql-${PG_MAJOR}-${probe_cluster}.log" \
+            || log "Could not read the failed probe cluster log."
         sudo pg_dropcluster --stop "${PG_MAJOR}" "${probe_cluster}" >/dev/null 2>&1 || true
         fail "documentdb-createcluster --start failed: ${start_out}"
     fi
