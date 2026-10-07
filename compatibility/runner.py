@@ -37,6 +37,7 @@ from compatibility.contracts import (
     validate_client_report,
     validate_result,
 )
+from compatibility.npm import prepare_node_client
 
 LABEL = "org.documentdb.compatibility.run"
 MAX_COMMAND_OUTPUT = 4 * 1024 * 1024
@@ -203,6 +204,7 @@ def execute(
     output: Path,
     *,
     wheelhouse: Path | None = None,
+    package_cache: Path | None = None,
     demonstration: bool = False,
     run_url: str | None = None,
     trigger: str = "manual",
@@ -216,8 +218,10 @@ def execute(
         or not re.fullmatch(spec["version_pattern"], version)
     ):
         raise ValueError("Integration is disabled or the requested version is outside its policy")
-    if spec["runtime"] != "python":
-        raise ValueError("Only the Python runtime is implemented")
+    if wheelhouse is not None and spec["runtime"] != "python":
+        raise ValueError("--wheelhouse is only supported by Python integrations")
+    if package_cache is not None and spec["runtime"] != "nodejs":
+        raise ValueError("--package-cache is only supported by Node integrations")
     if output.suffix != ".json":
         raise ValueError("Result output must use a .json extension")
     if any(
@@ -266,7 +270,10 @@ def execute(
         with tempfile.TemporaryDirectory(prefix="docdb-compat-") as directory:
             context = Path(directory) / "context"
             context.mkdir()
-            digest = prepare_client(context, spec, version, wheelhouse)
+            if spec["runtime"] == "python":
+                digest = prepare_client(context, spec, version, wheelhouse)
+            else:
+                digest = prepare_node_client(context, spec, version, package_cache)
             result["upstream"]["artifact_sha256"] = digest
             result["suite_digest"] = suite_digest(integration, spec, root=context)
             candidate_image = f"docdb-compat-{run_id}"
@@ -451,6 +458,7 @@ def main() -> int:
     parser.add_argument("--documentdb-version", default="0.117.0")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--wheelhouse", type=Path)
+    parser.add_argument("--package-cache", type=Path, help="Reuse integrity-checked npm archives")
     parser.add_argument("--run-url")
     parser.add_argument("--trigger", choices=("manual", "push"), default="manual")
     parser.add_argument("--demonstration", action="store_true")
@@ -465,6 +473,7 @@ def main() -> int:
             args.documentdb_version,
             args.output,
             wheelhouse=args.wheelhouse,
+            package_cache=args.package_cache,
             demonstration=args.demonstration,
             run_url=args.run_url,
             trigger=args.trigger,

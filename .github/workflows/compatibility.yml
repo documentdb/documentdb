@@ -9,6 +9,7 @@ on:
         options:
           - all
           - pymongo
+          - nodejs
         default: all
         required: true
       version:

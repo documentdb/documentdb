@@ -89,8 +89,30 @@ def test_cleanup_uses_only_the_invocation_label(monkeypatch):
     assert all(f"label={runner.LABEL}=" + "a" * 32 in call for call in calls)
 
 
-def test_cli_selects_the_registry_default(tmp_path, record, registry, selection, monkeypatch):
-    integration = selection["integration"]
+@pytest.mark.parametrize("integration", ["nodejs"])
+def test_node_setup_failure_retains_a_runtime_neutral_envelope(
+    tmp_path, registry, monkeypatch, integration
+):
+    def unavailable(*args):
+        raise RuntimeError("npm archive unavailable")
+
+    monkeypatch.setattr(runner, "prepare_node_client", unavailable)
+    monkeypatch.setattr(runner, "cleanup", lambda *args: [])
+    result = runner.execute(
+        registry,
+        integration,
+        registry["integrations"][integration]["default_version"],
+        next(iter(registry["documentdb"])),
+        tmp_path / "result.json",
+    )
+    assert compatibility_state(result) == "Not tested"
+    assert result["schema_version"] == 2
+    assert result["upstream"]["runtime"] == {"name": "nodejs", "version": None}
+    assert "npm archive unavailable" in result["execution_error"]
+
+
+@pytest.mark.parametrize("integration", ["pymongo", "nodejs"])
+def test_cli_selects_the_registry_default(tmp_path, record, registry, monkeypatch, integration):
     captured = []
     monkeypatch.setattr(runner, "execute", lambda *args, **kwargs: captured.append(args) or record)
     monkeypatch.setattr(
@@ -103,6 +125,22 @@ def test_cli_selects_the_registry_default(tmp_path, record, registry, selection,
         integration,
         registry["integrations"][integration]["default_version"],
     )
+
+
+@pytest.mark.parametrize(
+    ("integration", "option"),
+    [("pymongo", "package_cache"), ("nodejs", "wheelhouse")],
+)
+def test_cache_options_cannot_cross_runtimes(tmp_path, registry, integration, option):
+    with pytest.raises(ValueError, match="only supported"):
+        runner.execute(
+            registry,
+            integration,
+            registry["integrations"][integration]["default_version"],
+            next(iter(registry["documentdb"])),
+            tmp_path / "result.json",
+            **{option: tmp_path / "cache"},
+        )
 
 
 def test_plain_and_encoded_credentials_are_redacted():
