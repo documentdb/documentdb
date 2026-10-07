@@ -5,10 +5,10 @@ DocumentDB image. PyMongo is the first reference integration. Shared execution,
 artifact verification, and result contracts are separate from the integration's
 scenario suite.
 
-Only the synchronous PyMongo profile is implemented here. Additional runtimes,
-workflow orchestration, dashboard rendering, durable publication, and release
-watching are separate additions. A registry entry alone does not implement a
-new runtime.
+Only the synchronous PyMongo profile is implemented here. A credential-free
+renderer presents the validated results as HTML and JSON. Additional runtimes,
+workflow orchestration, durable Git publication, and release watching are
+separate additions. A registry entry alone does not implement a new runtime.
 
 ## Reviewed baseline
 
@@ -107,6 +107,47 @@ Never share credentials or customer data.
 New runs use runtime-neutral schema version 2. Historical schema-version-1 Python
 records remain readable without rewriting their immutable provenance.
 
+## Results and dashboard preview
+
+Append locally produced normal and demonstration records to an immutable store:
+
+```bash
+python -m compatibility.publish \
+  --result compatibility/.test-results/pymongo-001/result.json \
+  --store compatibility/.test-results/history \
+  --site compatibility/.test-results/site --preview
+python -m compatibility.publish \
+  --result compatibility/.test-results/pymongo-demo-001/result.json \
+  --store compatibility/.test-results/history \
+  --site compatibility/.test-results/site --preview
+```
+
+Open `compatibility/.test-results/site/index.html`. The same validated history
+produces HTML, `current.json`, and `history.json`. Conflicting run IDs are rejected;
+identical replays are idempotent. Demonstrations remain separate from normal
+compatibility evidence. Local runs have no fabricated pipeline URL.
+
+| State | Meaning |
+| --- | --- |
+| Working | All required scenarios passed with verified artifacts |
+| Failing | A conclusive assertion or non-timeout operation/protocol failure |
+| Not tested | Missing or skipped coverage, timeouts, setup errors, or other incomplete execution |
+| Stale | The last conclusive result is older than the profile's freshness policy or no longer matches its execution inputs/artifacts |
+
+If a newer attempt cannot execute, retain the previous conclusive result while
+exposing the new attempt's failure separately. Keep version pairs and profiles
+distinct. Browser-side freshness also ages previously rendered results.
+
+The `--preview` option labels review prototypes and hides public issue links.
+Without it, the renderer provides prefilled links to the product repository's
+compatibility issue form. A report should include the actual version pair,
+runtime/profile, relevant run, and a minimal synthetic reproduction, never
+credentials or customer data.
+
+This renderer does not push Git history, deploy a site, create issues, or change
+repository settings. Public hosting and durable publication require a separately
+approved destination, publisher, operational owner, and reporting route.
+
 ## Extend and maintain
 
 Add a reviewed adapter directory, pinned image and package requirements, normal
@@ -123,7 +164,11 @@ python -m isort --check-only --settings-path compatibility/pyproject.toml compat
 python -m flake8 --max-line-length=100 --extend-ignore=E203 compatibility
 python -m mypy --config-file compatibility/pyproject.toml compatibility
 python -m pytest -c compatibility/pyproject.toml compatibility/unit
+node --test compatibility/unit/test_freshness.cjs
 ```
+
+Run the JavaScript freshness checks with Node 24 in a tooling container. They do
+not require a database or installed integration packages.
 
 Also exercise normal and deliberate-failure runs against the selected released
 database image. Assertions and fixtures should derive selected configuration
