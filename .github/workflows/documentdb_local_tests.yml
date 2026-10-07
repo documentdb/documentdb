@@ -60,6 +60,8 @@ jobs:
           python -m mypy --config-file compatibility/pyproject.toml compatibility
       - name: Run compatibility unit tests
         run: python -m pytest -c compatibility/pyproject.toml compatibility/unit
+      - name: Check the trusted Git history publisher
+        run: shellcheck compatibility/persist.sh
       - name: Check dashboard freshness
         run: |
           image=node:24.21.0-bookworm-slim@sha256:5cbc7caba8c2c0f0bca675d1b61b9f2857e1cf1853c6164ee9dd409501a936e7

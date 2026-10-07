@@ -6,9 +6,10 @@ artifact verification, and result contracts are separate from the integration's
 scenario suite.
 
 Only the synchronous PyMongo profile is implemented here. A credential-free
-renderer presents the validated results as HTML and JSON. Additional runtimes,
-workflow orchestration, durable Git publication, and release watching are
-separate additions. A registry entry alone does not implement a new runtime.
+renderer presents the validated results as HTML and JSON, and a separate trusted
+helper can append them to Git history. Additional runtimes, workflow orchestration,
+and release watching are separate additions. A registry entry alone does not
+implement a new runtime.
 
 ## Reviewed baseline
 
@@ -148,6 +149,36 @@ This renderer does not push Git history, deploy a site, create issues, or change
 repository settings. Public hosting and durable publication require a separately
 approved destination, publisher, operational owner, and reporting route.
 
+## Durable Git history
+
+The generic history helper is available for an explicitly configured trusted
+publisher, not for integration clients:
+
+```bash
+bash compatibility/persist.sh /path/to/result.json "$EXPECTED_RUN_URL"
+```
+
+Run it from the trusted source checkout with write access to the intended
+`origin`. Set `EXPECTED_RUN_URL` to the originating test attempt, not a later
+publication retry. The helper verifies that URL, declared coverage, database
+artifact, and execution-input digest, then appends `results/<id>.json` to
+`compatibility-data`.
+
+The helper uses non-force pushes with bounded conflict retries and initializes
+an orphan branch containing only result data. Identical replays are idempotent;
+conflicting run IDs fail rather than overwrite history. Concurrent writers'
+records survive retry, and temporary worktrees are removed. Retain the data
+branch independently of artifact expiration.
+
+Keep write credentials separate from integration execution. A publisher must
+retain failed attempts and serialize deployment only after results are durably
+stored. Render complete history with `compatibility.publish`, using `--preview`
+for review prototypes. Deployment retries must not delete or rewrite history.
+Cancellation before persistence is not a compatibility verdict.
+
+This helper is not automatically invoked by CI. It does not configure hosting,
+GitHub Pages, credentials, repository permissions, or a release-watcher ledger.
+
 ## Extend and maintain
 
 Add a reviewed adapter directory, pinned image and package requirements, normal
@@ -164,6 +195,7 @@ python -m isort --check-only --settings-path compatibility/pyproject.toml compat
 python -m flake8 --max-line-length=100 --extend-ignore=E203 compatibility
 python -m mypy --config-file compatibility/pyproject.toml compatibility
 python -m pytest -c compatibility/pyproject.toml compatibility/unit
+shellcheck compatibility/persist.sh
 node --test compatibility/unit/test_freshness.cjs
 ```
 
