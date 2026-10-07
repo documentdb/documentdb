@@ -77,6 +77,54 @@ def test_cli_forwards_the_execution_trigger(tmp_path, record, monkeypatch, trigg
     assert captured["trigger"] == trigger
 
 
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"trigger": "upstream_release"},
+        {"trigger": "upstream_release", "detection_id": "a" * 64},
+        {"trigger": "manual", "detection_id": "a" * 64},
+        {
+            "trigger": "upstream_release",
+            "detection_id": "a" * 64,
+            "expected_artifact_sha256s": ["b" * 64],
+            "demonstration": True,
+        },
+    ],
+)
+def test_unbound_upstream_execution_never_prepares_packages(
+    tmp_path, registry, selection, monkeypatch, arguments
+):
+    monkeypatch.setattr(
+        runner, "prepare_client", lambda *args: pytest.fail("Unbound request prepared a client")
+    )
+    with pytest.raises(ValueError):
+        runner.execute(registry, **selection, output=tmp_path / "result.json", **arguments)
+    assert not (tmp_path / "result.json").exists()
+
+
+def test_changed_upstream_artifact_fails_before_docker_execution(
+    tmp_path, registry, selection, monkeypatch
+):
+    monkeypatch.setattr(runner, "prepare_client", lambda *args: "c" * 64)
+    monkeypatch.setattr(
+        runner, "command", lambda *args, **kwargs: pytest.fail("Unexpected artifact reached Docker")
+    )
+    monkeypatch.setattr(runner, "cleanup", lambda *args: [])
+    output = tmp_path / "result.json"
+    result = runner.execute(
+        registry,
+        **selection,
+        output=output,
+        trigger="upstream_release",
+        detection_id="a" * 64,
+        expected_artifact_sha256s=["b" * 64],
+    )
+    assert compatibility_state(result) == "Not tested" and result["tests"] == []
+    assert "durably recorded" in result["execution_error"]
+    assert result["upstream"]["artifact_sha256"] == "c" * 64
+    assert json.loads(output.read_text())["detection_id"] == "a" * 64
+
+
 def test_cleanup_uses_only_the_invocation_label(monkeypatch):
     calls = []
 

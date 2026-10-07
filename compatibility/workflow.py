@@ -22,6 +22,8 @@ from compatibility.publish import (
     result_key,
     validate_incoming_result,
 )
+from compatibility.watcher import validate_dispatch
+from compatibility.watcher_state import RequestError
 
 
 def select_runs(
@@ -76,6 +78,7 @@ def collect_report(
     *,
     expected_run_url: str | None = None,
     summary: Path | None = None,
+    detection_id: str | None = None,
 ) -> bool:
     """Retain valid envelopes and expose rejected or absent evidence for every selected job."""
     if output.exists() or output.is_symlink():
@@ -108,7 +111,12 @@ def collect_report(
             if not path.exists() and not path.is_symlink():
                 raise ValueError("Missing result artifact for this integration and attempt")
             result = read_result(path)
-            if result_key(result) != key or result["trigger"] != "manual":
+            expected_trigger = "upstream_release" if detection_id is not None else "manual"
+            if (
+                result_key(result) != key
+                or result["trigger"] != expected_trigger
+                or result.get("detection_id") != detection_id
+            ):
                 raise ValueError("Result does not match the selected integration run")
             validate_incoming_result(result, registry, expected_run_url)
             append_result(store, result)
@@ -134,8 +142,9 @@ def collect_report(
             else "One or more profiles or artifacts need attention."
         ),
         "",
-        "| Integration | DocumentDB | Upstream | Profile | Mode | Result | Passed | Diagnostic |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Integration | DocumentDB | Upstream | Profile | Mode | Trigger |"
+        " Result | Passed | Diagnostic |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for row in rows:
         cells = [
@@ -144,6 +153,7 @@ def collect_report(
             row["upstream_version"],
             row["profile"],
             "Demonstration" if row["demonstration"] else "Compatibility",
+            row["trigger"] or "None",
             row["state"],
             f"{row['passed']}/{row['expected']}",
             row["error"] or "",
@@ -169,6 +179,8 @@ def main() -> int:
         command.add_argument("--version")
         command.add_argument("--documentdb-version", default="0.117.0")
         command.add_argument("--demonstration", action="store_true")
+        command.add_argument("--detection-id")
+        command.add_argument("--dispatch-id")
         if name == "report":
             command.add_argument("--input", type=Path, required=True)
             command.add_argument("--output", type=Path, required=True)
@@ -180,6 +192,23 @@ def main() -> int:
         runs = select_runs(
             registry, args.integration, args.version, args.documentdb_version, args.demonstration
         )
+        if args.detection_id is not None or args.dispatch_id is not None:
+            if (
+                not re.fullmatch(r"[a-f0-9]{64}", args.detection_id or "")
+                or not re.fullmatch(r"[a-f0-9]{32}", args.dispatch_id or "")
+                or len(runs) != 1
+                or args.demonstration
+            ):
+                raise ValueError(
+                    "Watcher provenance requires one normal profile and both valid IDs"
+                )
+            if args.command == "matrix":
+                artifacts = validate_dispatch(registry, runs, args.detection_id, args.dispatch_id)
+                runs[0].update(
+                    trigger="upstream_release",
+                    detection_id=args.detection_id,
+                    artifact_sha256s=artifacts,
+                )
         if args.command == "matrix":
             print(json.dumps({"include": runs}, separators=(",", ":")))
             return 0
@@ -190,8 +219,9 @@ def main() -> int:
             runs,
             expected_run_url=args.expected_run_url,
             summary=args.summary,
+            detection_id=args.detection_id,
         )
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, KeyError, TypeError, RequestError) as error:
         print(f"Invalid compatibility workflow request: {error}", file=sys.stderr)
         return 2
     print(f"Combined report: {args.output / 'summary.md'}")

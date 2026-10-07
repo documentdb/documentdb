@@ -138,6 +138,82 @@ def test_matrix_cli_does_not_emit_a_plan_for_invalid_input(monkeypatch, capsys):
     assert not captured.out and "single integration" in captured.err
 
 
+@pytest.mark.parametrize("authorized", [False, True])
+def test_upstream_matrix_uses_only_ledger_authorized_artifacts(
+    monkeypatch, capsys, selection, authorized
+):
+    def authorize(registry, runs, identifier, nonce):
+        assert runs == [{**selection, "demonstration": False}]
+        assert identifier == "a" * 64 and nonce == "b" * 32
+        if not authorized:
+            raise ValueError("Fixture ledger rejected this request")
+        return ["c" * 64]
+
+    monkeypatch.setattr(workflow, "validate_dispatch", authorize)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "workflow",
+            "matrix",
+            "--integration",
+            selection["integration"],
+            "--version",
+            selection["version"],
+            "--documentdb-version",
+            selection["documentdb_version"],
+            "--detection-id",
+            "a" * 64,
+            "--dispatch-id",
+            "b" * 32,
+        ],
+    )
+    assert workflow.main() == (0 if authorized else 2)
+    captured = capsys.readouterr()
+    if authorized:
+        assert json.loads(captured.out)["include"] == [
+            {
+                **selection,
+                "demonstration": False,
+                "trigger": "upstream_release",
+                "detection_id": "a" * 64,
+                "artifact_sha256s": ["c" * 64],
+            }
+        ]
+    else:
+        assert not captured.out and "ledger rejected" in captured.err
+
+
+@pytest.mark.parametrize("matching", [False, True])
+def test_upstream_report_preserves_only_matching_detection_provenance(
+    tmp_path, registry, runs, records, matching
+):
+    for record in records.values():
+        record.update(trigger="upstream_release", detection_id="a" * 64, run_url=RUN_URL)
+    incoming = write_records(tmp_path / "incoming", records)
+    output = tmp_path / "report"
+    assert (
+        workflow.collect_report(
+            incoming,
+            output,
+            registry,
+            runs,
+            expected_run_url=RUN_URL,
+            detection_id=("a" if matching else "b") * 64,
+        )
+        is matching
+    )
+    _, rows, history = read_report(output)
+    if matching:
+        assert {record["integration"]: record for record in history} == records
+        assert all(row["detection_id"] == "a" * 64 for row in rows.values())
+        assert all(row["trigger"] == "upstream_release" for row in rows.values())
+        assert "upstream\\_release" in (output / "summary.md").read_text()
+        assert "a" * 64 in (output / "site/index.html").read_text()
+    else:
+        assert history == [] and all(row["state"] == "Not tested" for row in rows.values())
+
+
 def test_combined_passes_preserve_envelopes_and_share_dashboard_data(
     tmp_path, registry, runs, records
 ):

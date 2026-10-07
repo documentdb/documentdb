@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "entries", "last_scan"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "entries": {
+      "type": "object", "maxProperties": 1000,
+      "propertyNames": {"pattern": "^[a-f0-9]{64}$"},
+      "additionalProperties": {"$ref": "#/$defs/entry"}
+    },
+    "last_scan": {
+      "type": ["object", "null"], "additionalProperties": false,
+      "required": ["run_url", "at", "observations", "error"],
+      "properties": {
+        "run_url": {"$ref": "#/$defs/run_url"},
+        "at": {"type": "string", "format": "date-time"},
+        "observations": {
+          "type": "array", "maxItems": 30,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["tag", "decision"],
+            "properties": {
+              "tag": {"type": "string", "maxLength": 100},
+              "decision": {"type": "string", "maxLength": 200}
+            }
+          }
+        },
+        "error": {"type": ["string", "null"], "maxLength": 500}
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "run_url": {"type": "string", "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/runs/[0-9]+(?:/attempts/[1-9][0-9]*)?$"},
+    "entry": {
+      "type": "object", "additionalProperties": false,
+      "required": ["integration", "version", "documentdb_version", "documentdb_image", "profile", "suite_digest", "artifacts", "release", "metadata_sha256", "detected_at", "source_sha", "detected_by", "status", "attempts", "review_run_url", "analysis", "error"],
+      "properties": {
+        "integration": {"const": "pymongo"},
+        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "documentdb_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "documentdb_image": {"type": "string", "pattern": "^ghcr\\.io/documentdb/documentdb/documentdb-local@sha256:[a-f0-9]{64}$"},
+        "profile": {"type": "string", "pattern": "^[a-z0-9_-]{1,80}$"},
+        "suite_digest": {"$ref": "#/$defs/sha256"},
+        "artifacts": {
+          "type": "array", "minItems": 1, "maxItems": 10,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["filename", "sha256"],
+            "properties": {
+              "filename": {"type": "string", "pattern": "^pymongo-[A-Za-z0-9_.+-]+\\.whl$", "maxLength": 250},
+              "sha256": {"$ref": "#/$defs/sha256"}
+            }
+          }
+        },
+        "release": {
+          "type": "object", "additionalProperties": false,
+          "required": ["id", "tag", "url", "published_at", "notes", "notes_sha256"],
+          "properties": {
+            "id": {"type": "integer", "minimum": 1},
+            "tag": {"type": "string", "maxLength": 100},
+            "url": {"type": "string", "pattern": "^https://github\\.com/mongodb/mongo-python-driver/releases/tag/[A-Za-z0-9.]+$"},
+            "published_at": {"type": "string", "format": "date-time"},
+            "notes": {"type": "string", "maxLength": 2000},
+            "notes_sha256": {"$ref": "#/$defs/sha256"}
+          }
+        },
+        "metadata_sha256": {"$ref": "#/$defs/sha256"},
+        "detected_at": {"type": "string", "format": "date-time"},
+        "source_sha": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+        "detected_by": {"$ref": "#/$defs/run_url"},
+        "status": {"enum": ["pending", "dispatching", "dispatched", "completed", "blocked", "superseded"]},
+        "attempts": {
+          "type": "array", "maxItems": 3,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["id", "watcher_run_url", "started_at", "state", "run_id", "run_url", "conclusion", "error"],
+            "properties": {
+              "id": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
+              "watcher_run_url": {"$ref": "#/$defs/run_url"},
+              "started_at": {"type": "string", "format": "date-time"},
+              "state": {"enum": ["dispatching", "dispatched", "rejected", "unknown", "reconciled"]},
+              "run_id": {"type": ["integer", "null"], "minimum": 1},
+              "run_url": {"type": ["string", "null"], "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/runs/[0-9]+$"},
+              "conclusion": {"type": ["string", "null"], "maxLength": 100},
+              "error": {"type": ["string", "null"], "maxLength": 500}
+            }
+          }
+        },
+        "review_run_url": {"$ref": "#/$defs/run_url"},
+        "analysis": {
+          "type": ["object", "null"], "additionalProperties": false,
+          "required": ["status", "model", "run_url", "prompt_sha256", "summary", "scenario_ids"],
+          "properties": {
+            "status": {"enum": ["complete", "unavailable"]},
+            "model": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,100}$"},
+            "run_url": {"$ref": "#/$defs/run_url"},
+            "prompt_sha256": {"$ref": "#/$defs/sha256"},
+            "summary": {"type": "string", "minLength": 1, "maxLength": 1000},
+            "scenario_ids": {
+              "type": "array", "maxItems": 100, "uniqueItems": true,
+              "items": {"type": "string", "pattern": "^test_[a-z0-9_]+$"}
+            }
+          }
+        },
+        "error": {"type": ["string", "null"], "maxLength": 500}
+      }
+    }
+  }
+}

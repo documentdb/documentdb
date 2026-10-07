@@ -13,3 +13,5 @@ pg_documentdb_extended_rum/core/src/roaring_bitmaps/*.[ch] -citus-style
 *.rs       text diff=rust encoding=utf-8 working-tree-encoding=UTF-8 eol=lf
 *.toml     text diff=toml encoding=utf-8 working-tree-encoding=UTF-8 eol=lf
 Cargo.lock text
+
+.github/workflows/*.lock.yml linguist-generated=true

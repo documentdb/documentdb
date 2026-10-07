@@ -28,6 +28,7 @@ from packaging.utils import parse_wheel_filename
 from packaging.version import Version
 
 from compatibility.contracts import (
+    PYTHON_PLATFORMS,
     ROOT,
     compatibility_state,
     expected_tests,
@@ -124,14 +125,11 @@ def prepare_client(
                 "cp",
                 "--abi",
                 "cp312",
-                "--platform",
-                "manylinux_2_28_x86_64",
-                "--platform",
-                "manylinux_2_17_x86_64",
-                "--platform",
-                "manylinux2014_x86_64",
-                "--platform",
-                "manylinux1_x86_64",
+                *(
+                    argument
+                    for platform in PYTHON_PLATFORMS
+                    for argument in ("--platform", platform)
+                ),
                 "--dest",
                 str(wheels),
                 "-r",
@@ -206,6 +204,8 @@ def execute(
     demonstration: bool = False,
     run_url: str | None = None,
     trigger: str = "manual",
+    detection_id: str | None = None,
+    expected_artifact_sha256s: list[str] | None = None,
 ) -> dict[str, Any]:
     """Emit a validated result even when setup, execution, or teardown fails."""
     spec = registry["integrations"][integration]
@@ -218,6 +218,20 @@ def execute(
         raise ValueError("Integration is disabled or the requested version is outside its policy")
     if spec["runtime"] != "python":
         raise ValueError("Only the Python runtime is implemented")
+    if trigger == "upstream_release":
+        if (
+            not detection_id
+            or not re.fullmatch(r"[a-f0-9]{64}", detection_id)
+            or not expected_artifact_sha256s
+            or len(expected_artifact_sha256s) > 10
+            or any(not re.fullmatch(r"[a-f0-9]{64}", value) for value in expected_artifact_sha256s)
+            or demonstration
+        ):
+            raise ValueError(
+                "Upstream execution requires a detection ID and reviewed artifact hashes"
+            )
+    elif detection_id is not None or expected_artifact_sha256s is not None:
+        raise ValueError("Watcher provenance is only supported for upstream-release execution")
     if output.suffix != ".json":
         raise ValueError("Result output must use a .json extension")
     if any(
@@ -258,6 +272,8 @@ def execute(
         "demonstration": demonstration,
         "execution_error": None,
     }
+    if detection_id is not None:
+        result["detection_id"] = detection_id
     validate_result(result, spec)
     password = secrets.token_urlsafe(24) + "Aa1!"
     image = ""
@@ -268,6 +284,10 @@ def execute(
             context.mkdir()
             digest = prepare_client(context, spec, version, wheelhouse)
             result["upstream"]["artifact_sha256"] = digest
+            if expected_artifact_sha256s is not None and digest not in expected_artifact_sha256s:
+                raise ValueError(
+                    "Selected wheel differs from the durably recorded upstream artifacts"
+                )
             result["suite_digest"] = suite_digest(integration, spec, root=context)
             candidate_image = f"docdb-compat-{run_id}"
             command(
@@ -452,7 +472,13 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--wheelhouse", type=Path)
     parser.add_argument("--run-url")
-    parser.add_argument("--trigger", choices=("manual", "push"), default="manual")
+    parser.add_argument(
+        "--trigger", choices=("manual", "push", "upstream_release"), default="manual"
+    )
+    parser.add_argument("--detection-id")
+    parser.add_argument(
+        "--expected-artifact-sha256", dest="expected_artifact_sha256s", action="append"
+    )
     parser.add_argument("--demonstration", action="store_true")
     args = parser.parse_args()
     try:
@@ -468,6 +494,8 @@ def main() -> int:
             demonstration=args.demonstration,
             run_url=args.run_url,
             trigger=args.trigger,
+            detection_id=args.detection_id,
+            expected_artifact_sha256s=args.expected_artifact_sha256s,
         )
     except KeyError:
         print("Unknown integration or DocumentDB release", file=sys.stderr)

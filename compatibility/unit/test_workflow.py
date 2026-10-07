@@ -37,7 +37,13 @@ def test_workflow_is_manual_and_read_only(workflow):
         for job in workflow["jobs"].values()
     )
     assert "secrets." not in WORKFLOW.read_text()
-    assert "github.token" not in WORKFLOW.read_text()
+    token_steps = [
+        (name, step)
+        for name, job in workflow["jobs"].items()
+        for step in job["steps"]
+        if "${{ github.token }}" in step.get("env", {}).values()
+    ]
+    assert [(name, step.get("id")) for name, step in token_steps] == [("plan", "select")]
     assert workflow["name"] == "Ecosystem compatibility"
     selector = workflow[True]["workflow_dispatch"]["inputs"]["integration"]
     assert selector["default"] == "all"
@@ -56,15 +62,16 @@ def test_actions_are_pinned_and_checkout_does_not_retain_credentials(workflow):
 
 # These synthetic values exercise argument transport, not the reviewed release policy.
 @pytest.mark.parametrize(
-    ("version", "database", "demonstration", "extra", "exit_code"),
+    ("version", "database", "demonstration", "extra", "exit_code", "watcher"),
     [
-        ("", "", "", [], 0),
+        ("", "", "", [], 0, False),
         (
             "",
             "0.999.0",
             "false",
             ["--documentdb-version", "0.999.0"],
             0,
+            False,
         ),
         (
             "4.99.1",
@@ -72,6 +79,7 @@ def test_actions_are_pinned_and_checkout_does_not_retain_credentials(workflow):
             "true",
             ["--documentdb-version", "0.999.0", "--version", "4.99.1", "--demonstration"],
             1,
+            False,
         ),
         (
             "4.99.0; echo unsafe",
@@ -79,6 +87,7 @@ def test_actions_are_pinned_and_checkout_does_not_retain_credentials(workflow):
             "false",
             ["--documentdb-version", "0.999.0", "--version", "4.99.0; echo unsafe"],
             0,
+            False,
         ),
         (
             "",
@@ -86,6 +95,15 @@ def test_actions_are_pinned_and_checkout_does_not_retain_credentials(workflow):
             "false",
             ["--documentdb-version", "0.999.0; echo unsafe"],
             0,
+            False,
+        ),
+        (
+            "4.99.2",
+            "0.999.0",
+            "false",
+            ["--documentdb-version", "0.999.0", "--version", "4.99.2"],
+            0,
+            True,
         ),
     ],
 )
@@ -94,7 +112,16 @@ def test_actions_are_pinned_and_checkout_does_not_retain_credentials(workflow):
 )
 @pytest.mark.parametrize("job", ["plan", "test", "report"])
 def test_actual_workflow_script_handles_defaults_and_dispatch_inputs(
-    workflow, tmp_path, version, database, demonstration, extra, exit_code, integration, job
+    workflow,
+    tmp_path,
+    version,
+    database,
+    demonstration,
+    extra,
+    exit_code,
+    watcher,
+    integration,
+    job,
 ):
     step = next(
         step
@@ -119,6 +146,9 @@ def test_actual_workflow_script_handles_defaults_and_dispatch_inputs(
             "INTEGRATION": integration,
             "DOCUMENTDB_VERSION": database,
             "DEMONSTRATION": demonstration,
+            "DETECTION_ID": "a" * 64 if watcher else "",
+            "DISPATCH_ID": "b" * 32 if watcher else "",
+            "EXPECTED_ARTIFACTS": ",".join(["c" * 64, "d" * 64]) if watcher else "",
             "GITHUB_SERVER_URL": "https://github.com",
             "GITHUB_REPOSITORY": "example/project",
             "GITHUB_RUN_ID": "42",
@@ -165,6 +195,20 @@ def test_actual_workflow_script_handles_defaults_and_dispatch_inputs(
                 run_url,
             ]
         expected += [*(["--integration", integration] if integration else []), *extra]
+    if watcher:
+        if job == "test":
+            expected += [
+                "--trigger",
+                "upstream_release",
+                "--detection-id",
+                "a" * 64,
+                "--expected-artifact-sha256",
+                "c" * 64,
+                "--expected-artifact-sha256",
+                "d" * 64,
+            ]
+        else:
+            expected += ["--detection-id", "a" * 64, "--dispatch-id", "b" * 32]
     assert captured.read_bytes().decode().split("\0")[:-1] == expected
     if job == "plan":
         if exit_code:
@@ -262,3 +306,29 @@ def test_infrastructure_is_checked_without_starting_an_integration():
     assert "compatibility/unit" in commands
     assert "test_freshness.cjs" in commands
     assert "compatibility.runner" not in commands
+
+
+def test_compiled_watcher_limits_writes_and_keeps_dispatch_independent_of_ai_success():
+    compiled = yaml.safe_load(
+        (ROOT / ".github/workflows/compatibility-watcher.lock.yml").read_text()
+    )
+    assert set(compiled[True]) == {"schedule", "workflow_dispatch"}
+    jobs = compiled["jobs"]
+    assert compiled["permissions"] == {}
+    assert all("issues" not in job.get("permissions", {}) for job in jobs.values())
+    assert {
+        name for name, job in jobs.items() if job.get("permissions", {}).get("contents") == "write"
+    } == {"discover", "assess_releases", "dispatch"}
+    assert {
+        name for name, job in jobs.items() if job.get("permissions", {}).get("actions") == "write"
+    } == {"dispatch"}
+    assert jobs["agent"]["permissions"]["contents"] == "read"
+    guard = jobs["activation"]["if"]
+    assert "COMPATIBILITY_WATCHER_ENABLED == 'true'" in guard
+    assert "COMPATIBILITY_WATCHER_MODEL != ''" in guard
+    assert "github.event.repository.default_branch" in guard
+    dispatch = jobs["dispatch"]
+    assert set(dispatch["needs"]) == {"discover", "agent", "assess_releases"}
+    assert "!cancelled()" in dispatch["if"]
+    assert "needs.discover.result == 'success'" in dispatch["if"]
+    assert "needs.agent.result" not in dispatch["if"]

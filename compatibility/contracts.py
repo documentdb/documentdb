@@ -19,6 +19,12 @@ from packaging.version import Version
 ROOT = Path(__file__).resolve().parent.parent
 DEMONSTRATION_TEST = "test_failure_demonstration"
 RUNTIME_PREFIXES = {"python": "3.12.", "nodejs": "24."}
+PYTHON_PLATFORMS = (
+    "manylinux_2_28_x86_64",
+    "manylinux_2_17_x86_64",
+    "manylinux2014_x86_64",
+    "manylinux1_x86_64",
+)
 
 
 def validate_schema(value: Any, name: str) -> None:
@@ -67,6 +73,10 @@ def expected_tests(spec: dict[str, Any], demonstration: bool) -> list[str]:
 def validate_result(result: dict[str, Any], spec: dict[str, Any] | None = None) -> None:
     """Validate raw records before either persistence or rendering."""
     validate_schema(result, "result")
+    if "detection_id" in result and (
+        result["trigger"] != "upstream_release" or result["demonstration"]
+    ):
+        raise ValueError("Detection provenance requires a normal upstream-release result")
     if timestamp(result["finished_at"]) < timestamp(result["started_at"]):
         raise ValueError("Result finishes before it starts")
     if timestamp(result["finished_at"]) > datetime.now(timezone.utc) + timedelta(minutes=5):

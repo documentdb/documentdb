@@ -7,9 +7,9 @@ scenario suite.
 
 Only the synchronous PyMongo profile is implemented here. A manual workflow
 selects enabled integrations and combines their validated results as Markdown,
-HTML, and JSON. Additional runtimes, durable Git publication, and release
-watching are separate additions. A registry entry alone does not implement a
-new runtime.
+HTML, and JSON. An opt-in upstream watcher can request that same profile for
+eligible PyMongo releases. Additional runtimes and durable result publication
+are separate additions. A registry entry alone does not implement a new runtime.
 
 ## Reviewed baseline
 
@@ -198,7 +198,134 @@ Place each record under `incoming/<integration>/result.json`. Use the same
 integration, version, database, and demonstration selection as the producing
 runs, and a fresh output directory. `--expected-run-url` binds a combined report
 to one workflow attempt; omit it for local results. `--summary` appends the
-Markdown report to a GitHub step-summary file.
+Markdown report to a GitHub step-summary file. Upstream-triggered reports also
+carry their detection ID and `upstream_release` trigger through JSON and the
+dashboard; the Markdown summary labels the trigger.
+
+## Opt-in upstream release watcher
+
+The reviewed source is
+[compatibility-watcher.md](../.github/workflows/compatibility-watcher.md).
+Its generated `.lock.yml` runs GitHub Agentic Workflows with the Copilot engine.
+It is disabled unless both repository or organization variables are configured:
+
+| Variable | Required value |
+| --- | --- |
+| `COMPATIBILITY_WATCHER_ENABLED` | The literal string `true` |
+| `COMPATIBILITY_WATCHER_MODEL` | An organization-approved Copilot model ID |
+
+Before enabling it, maintainers must approve the model and organization Copilot
+authentication, including the `copilot-requests: write` permission, Actions
+budgets, and the dedicated state branch. No PAT or new secret is required by
+the authored workflow. It does not configure subscriptions, credentials,
+variables, branch rules, or hosting.
+
+Merge both workflows onto the default branch before enabling them. The watcher
+accepts only scheduled or manual execution on that branch. It runs daily at
+08:23 UTC and can also be started with **Run workflow**. Its invocations are
+serialized. Disable the enablement variable to stop future work, and explicitly
+cancel an in-flight run when immediate suspension is needed.
+
+Deterministic discovery reads at most the latest 30 releases from the official
+`mongodb/mongo-python-driver` GitHub repository and verifies their PyPI metadata.
+Only stable releases at least as new as the reviewed baseline, within the
+registry's version policy, and with eligible non-yanked wheels are considered.
+The wheel tags match the runner's Python 3.12 Linux x64 download policy.
+`Requires-Python` must admit **3.12.0**, a conservative floor: a release requiring
+a newer 3.12 patch is not automatically selected even if a particular image
+could run it. Unpublished metadata is recorded and reconsidered on later scans.
+
+At most three new version pairs are recorded per invocation. Each detection
+includes the upstream artifacts and hashes, DocumentDB image and version,
+profile, execution-input digest, source revision, release evidence, and discovery
+run. The key covers the execution identity, not just the latest version string.
+
+The read-only AI agent receives at most three bounded public release excerpts
+and known scenario IDs. It provides an advisory summary and optional scenario
+references, not commands, eligibility decisions, or compatibility verdicts.
+It cannot reduce coverage. Its assessment retains the model, prompt hash, and
+run URL. The release-analysis agent has a four-turn, ten-minute inference limit;
+framework validation has separate bounded jobs. These limits are not a monetary
+budget.
+
+The trusted dispatcher runs the complete affected profile even if AI analysis
+fails or omits a release. Missing analysis is explicitly marked `unavailable`,
+with a warning; failed AI jobs are not turned green. Before dispatch, the code
+revalidates the reviewed execution inputs and official release artifacts.
+An unexpected downloaded artifact is rejected before Docker build or execution.
+Only the planning step reads watcher state. No GitHub or inference token is
+passed to the isolated test client.
+
+### State, retries, and recovery
+
+The orphan `compatibility-watcher-state` branch contains a single `ledger.json`.
+Non-force Git reference updates reject concurrent writers. Each reservation is
+persisted before contacting the dispatch API, and the resulting workflow receipt
+is saved afterward. Git history retains earlier scans and state transitions.
+Allow the workflow's GitHub token to create and update this data branch; a denied
+write stops the operation rather than falling back to ephemeral deduplication.
+
+There are at most three automatic dispatch requests per invocation and three
+automatic attempts per detection. Only definite rate-limit rejections are
+automatically retried on later invocations. Unknown outcomes are reconciled by
+receipt or the exact detection/dispatch nonce in the workflow title, never
+blindly resent. The bounded lookup covers up to seven days and 1,000 runs.
+Incomplete lookups and duplicate nonces require attention.
+
+| Ledger status | Meaning |
+| --- | --- |
+| `pending` | Durable eligible work waiting for dispatch, possibly after a rate limit |
+| `dispatching` | A reservation exists but its API outcome is not yet established |
+| `dispatched` | A validated workflow receipt is recorded |
+| `completed` | The associated workflow is terminal, not a compatibility pass |
+| `blocked` | Automatic processing stopped and requires maintainer investigation |
+| `superseded` | The reviewed execution inputs, policy, or upstream artifacts changed |
+
+For a known workflow receipt, use **Re-run all jobs** to repeat the full selected
+profile. If dispatch was rejected or its outcome is unknown, first inspect the
+recorded watcher run and search the compatibility workflow for the exact nonce.
+If no run was accepted, manually dispatch **Ecosystem compatibility** on the
+default branch with the recorded integration/version/database, `detection_id`,
+and last attempt's `dispatch_id`. Keep demonstration disabled and do not create
+a new nonce. The consumer validates these inputs against the ledger, and the next
+watcher invocation can associate the manual run. After execution inputs change,
+use a new discovery rather than overriding the identity checks. An ordinary
+manual run with both IDs blank remains available independently of the watcher.
+
+Inspect compatibility artifacts and use the reporting guidance above for
+conclusive scenario failures. `completed`, successful dispatch, or AI analysis
+does not establish Working. Watcher failures remain visible as failed Actions
+jobs and ledger errors; this version does not automatically create issues.
+
+The ledger is bounded to 1,000 entries and 2 MiB. Exhaustion stops new writes
+and requires a reviewed retention strategy preserving the audit and deduplication
+identities. Do not delete the state branch or old detection IDs to retry work.
+Watcher state is not the compatibility-result history or an automatically
+published dashboard.
+
+The initial watcher supports only the reviewed PyMongo path. Newer Node.js or
+Mongoose releases require a reviewed manifest/lockfile update and metadata
+adapter before automatic execution can be added. DocumentDB release/RC fan-out,
+public hosting, and automatic result publication remain separate follow-ups.
+
+### Regenerate the watcher
+
+Use the pinned `gh-aw` **v0.89.21** compiler and release action mode. The
+infrastructure workflow downloads its Linux x64 binary, verifies its SHA-256,
+validates the workflow, and rejects generated-file drift. Make authored changes
+in the Markdown file, then compile with that same binary:
+
+```bash
+gh-aw compile compatibility-watcher \
+  --action-mode release --strict --validate --no-check-update
+```
+
+Commit the Markdown, generated lock workflow, and `.github/aw/actions-lock.json`
+together. Do not hand-edit the generated YAML. The pinned compiler's schema
+validation understands the Copilot permission and queued-concurrency fields;
+older standalone Actions linters may not. Local unit tests simulate inference,
+GitHub receipts, interruptions, and real Git conflicts without production
+dispatches or live inference.
 
 ## Extend and maintain
 

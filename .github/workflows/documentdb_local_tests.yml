@@ -9,12 +9,16 @@ on:
   push:
     branches:
       - "main"
-    paths-ignore:
-      - "**/*.md"
+    paths:
+      - "**"
+      - "!**/*.md"
+      - ".github/workflows/compatibility-watcher.md"
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
-    paths-ignore:
-      - "**/*.md"
+    paths:
+      - "**"
+      - "!**/*.md"
+      - ".github/workflows/compatibility-watcher.md"
 
 jobs:
   documentdb-local-unit-tests:
@@ -60,6 +64,20 @@ jobs:
           python -m mypy --config-file compatibility/pyproject.toml compatibility
       - name: Run compatibility unit tests
         run: python -m pytest -c compatibility/pyproject.toml compatibility/unit
+      - name: Check the compiled compatibility watcher
+        run: |
+          compiler="$RUNNER_TEMP/gh-aw"
+          curl --fail --location --silent --show-error --max-time 120 \
+            https://github.com/github/gh-aw/releases/download/v0.89.21/linux-amd64 \
+            --output "$compiler"
+          printf '%s  %s\n' \
+            1c74ff5fc28b1891d32b67f4348a9b7f750946b6d4a721e909187a848868016b \
+            "$compiler" | sha256sum --check --status
+          chmod +x "$compiler"
+          "$compiler" compile compatibility-watcher \
+            --action-mode release --strict --validate --no-check-update
+          git diff --exit-code -- .github/workflows/compatibility-watcher.lock.yml \
+            .github/aw/actions-lock.json
       - name: Check dashboard freshness
         run: |
           image=node:24.21.0-bookworm-slim@sha256:5cbc7caba8c2c0f0bca675d1b61b9f2857e1cf1853c6164ee9dd409501a936e7

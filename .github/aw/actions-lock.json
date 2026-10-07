@@ -1,0 +1,19 @@
+{
+  "entries": {
+    "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803": {
+      "repo": "actions/checkout",
+      "version": "d23441a48e516b6c34aea4fa41551a30e30af803",
+      "sha": "d23441a48e516b6c34aea4fa41551a30e30af803"
+    },
+    "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1": {
+      "repo": "actions/setup-python",
+      "version": "ece7cb06caefa5fff74198d8649806c4678c61a1",
+      "sha": "ece7cb06caefa5fff74198d8649806c4678c61a1"
+    },
+    "github/gh-aw/actions/setup@v0.89.21": {
+      "repo": "github/gh-aw/actions/setup",
+      "version": "v0.89.21",
+      "sha": "c35393777e5604a63721d09512263b1383301d4f"
+    }
+  }
+}

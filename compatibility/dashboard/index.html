@@ -57,7 +57,8 @@
           {% if row.error %}<pre>{{ row.error }}</pre>{% endif %}
         </td>
         <td>Success: {{ row.last_success or "Never" }}<br>Attempt: {{ row.last_attempt or "Never" }}
-          <small>Trigger: {{ row.trigger or "None" }}</small></td>
+          <small>Trigger: {{ row.trigger or "None" }}</small>
+          {% if row.detection_id %}<small>Detection: <code>{{ row.detection_id }}</code></small>{% endif %}</td>
         <td>
           {% if row.run_url %}<a href="{{ row.run_url }}">Latest pipeline run</a>
           {% elif row.last_attempt %}Local run (not published){% else %}No run{% endif %}

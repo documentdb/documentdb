@@ -185,6 +185,7 @@ def dashboard_rows(
             "last_attempt": latest["finished_at"] if latest else None,
             "latest_attempt_state": compatibility_state(latest) if latest else "Not tested",
             "trigger": latest["trigger"] if latest else None,
+            "detection_id": latest.get("detection_id") if latest else None,
             "run_url": latest["run_url"] if latest else None,
             "error": error,
             "passed": sum(test["outcome"] == "passed" for test in tests),
