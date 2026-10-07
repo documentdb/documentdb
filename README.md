@@ -162,6 +162,13 @@ for eachDocument in results:
 
 ```
 
+## Ecosystem compatibility
+
+The [ecosystem compatibility runner](compatibility/README.md) exercises real
+integration APIs against a version-pinned released DocumentDB image. PyMongo is
+the first reference integration; execution, provenance, and result contracts
+are shared rather than specific to its scenario suite.
+
 ### Helpful Links
 
 - Check out our [website](https://documentdb.io) to stay up to date with the latest on the project.

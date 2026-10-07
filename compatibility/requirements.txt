@@ -1,0 +1,3 @@
+PyYAML>=6.0,<7
+jsonschema>=4.18,<5
+packaging>=24.2,<27
