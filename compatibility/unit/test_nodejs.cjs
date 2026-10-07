@@ -9,8 +9,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { test } = require("node:test");
-const { classify, collect, junit, runScenario } = require("../integrations/nodejs/report.cjs");
-const reporter = path.resolve(__dirname, "../integrations/nodejs/report.cjs");
+const { classify, collect, junit, runScenario } = require("../report.cjs");
+const reporter = path.resolve(__dirname, "../report.cjs");
 
 function execute(source) {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "compat-node-unit-"));
@@ -39,6 +39,10 @@ for (const [name, body, outcome] of [
     ["assertion", "require('node:assert/strict').fail('Mismatch')", "failed"],
     ["missing-exception", "await require('node:assert/strict').rejects(Promise.resolve())", "failed"],
     ["operation", "throw Object.assign(new Error('Unsupported'), {name:'MongoServerError', code:115})", "failed"],
+    ["model-validation", "throw Object.assign(new Error('Unexpected validation'), {name:'ValidationError'})", "failed"],
+    ["model-cast", "throw Object.assign(new Error('Unexpected cast'), {name:'CastError'})", "failed"],
+    ["model-version", "throw Object.assign(new Error('Version conflict'), {name:'VersionError'})", "failed"],
+    ["model-missing-document", "throw Object.assign(new Error('Missing document'), {name:'DocumentNotFoundError'})", "failed"],
     ["timeout", "throw Object.assign(new Error('Timed out'), {name:'MongoServerError', code:50})", "error"],
     ["network", "throw Object.assign(new Error('Unavailable'), {name:'MongoNetworkError'})", "error"],
     ["runtime", "throw new TypeError('Invalid execution')", "error"],
@@ -58,6 +62,24 @@ for (const option of ["skip", "todo"]) {
         const result = execute(`require("node:test").test("test_profile", {${option}:true}, () => {});`);
         assert.equal(result.status, 0, result.stderr);
         assert.equal(JSON.parse(result.stdout)[0].outcome, "skipped");
+    });
+}
+
+for (const [active, demonstration, demoScenario, outcome] of [
+    [false, false, false, "skipped"],
+    [true, false, false, "passed"],
+    [true, false, true, "skipped"],
+    [true, true, true, "passed"],
+]) {
+    test(`shared registration gates active=${active} demonstration=${demonstration} scenario=${demoScenario}`, () => {
+        const result = execute(`
+            process.env.COMPATIBILITY_ACTIVE = ${JSON.stringify(active ? "1" : "0")};
+            process.env.COMPATIBILITY_DEMONSTRATION = ${JSON.stringify(demonstration ? "1" : "0")};
+            const {register} = require(${JSON.stringify(reporter)});
+            register({ test_profile() {} }, () => ({ close() {} }), ${demoScenario});
+        `);
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(JSON.parse(result.stdout)[0].outcome, outcome);
     });
 }
 
@@ -146,7 +168,8 @@ test("JUnit preserves outcomes and escapes diagnostics", () => {
         { id: "test_failure", outcome: "failed", message: "<mismatch> & \"value\"" },
         { id: "test_error", outcome: "error", message: "Unavailable" },
         { id: "test_skip", outcome: "skipped", message: "Skipped" },
-    ]);
+    ], "mongoose & driver");
+    assert.match(output, /name="mongoose &amp; driver"/);
     assert.match(output, /tests="4" failures="1" errors="1" skipped="1"/);
     assert.match(output, /&lt;mismatch&gt; &amp; &quot;value&quot;/);
     assert.match(output, /<error>Unavailable<\/error>/);

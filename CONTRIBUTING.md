@@ -55,7 +55,7 @@ Commits of any form require a DCO, including revert commits.
 
 ## Ecosystem compatibility automation
 
-For the ecosystem compatibility pilot, currently covering Python and Node.js drivers, see the
+For the ecosystem compatibility pilot, covering PyMongo, the Node.js driver, and Mongoose, see the
 [scoped workflow and contribution guide](compatibility/README.md). Changes to
 that automation need its infrastructure checks and real version-pair runs;
 they do not require rebuilding unchanged database or gateway code.

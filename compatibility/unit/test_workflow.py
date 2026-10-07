@@ -89,7 +89,9 @@ def test_actions_are_pinned_and_checkout_does_not_retain_credentials(workflow):
         ),
     ],
 )
-@pytest.mark.parametrize("integration", ["", "pymongo", "nodejs", "nodejs; echo unsafe"])
+@pytest.mark.parametrize(
+    "integration", ["", *read_registry()["integrations"], "nodejs; echo unsafe"]
+)
 @pytest.mark.parametrize("job", ["plan", "test", "report"])
 def test_actual_workflow_script_handles_defaults_and_dispatch_inputs(
     workflow, tmp_path, version, database, demonstration, extra, exit_code, integration, job

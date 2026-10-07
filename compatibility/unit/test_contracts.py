@@ -180,10 +180,11 @@ def test_legacy_python_records_remain_unchanged_and_readable(record, registry):
     assert record == original
 
 
-def test_node_result_and_scoped_dependency_names_are_valid(record, registry):
-    spec = registry["integrations"]["nodejs"]
+@pytest.mark.parametrize("integration", ["nodejs", "mongoose"])
+def test_node_result_and_scoped_dependency_names_are_valid(record, registry, integration):
+    spec = registry["integrations"][integration]
     record.update(
-        integration="nodejs", **{key: spec[key] for key in ("repository", "owner", "profile")}
+        integration=integration, **{key: spec[key] for key in ("repository", "owner", "profile")}
     )
     record["expected_tests"] = list(spec["expected_tests"])
     record["tests"] = [
@@ -194,9 +195,10 @@ def test_node_result_and_scoped_dependency_names_are_valid(record, registry):
         actual_version=spec["default_version"],
         runtime={"name": "nodejs", "version": "24.0.0"},
     )
-    record["upstream"]["dependencies"].append(
-        {"name": "@example/dependency", "version": "1.0.0", "sha256": "d" * 64}
-    )
+    record["upstream"]["dependencies"] = [
+        {"name": spec["package"], "version": spec["default_version"], "sha256": "b" * 64},
+        {"name": "@example/dependency", "version": "1.0.0", "sha256": "d" * 64},
+    ]
     validate_result(record, spec)
     assert compatibility_state(record) == "Working"
 

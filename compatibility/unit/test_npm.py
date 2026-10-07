@@ -157,8 +157,9 @@ def test_weaker_or_malformed_integrity_is_rejected():
             npm.verify_integrity(b"archive", integrity)
 
 
-def test_reviewed_node_manifest_and_lock_match_the_registry():
-    spec = read_registry()["integrations"]["nodejs"]
+@pytest.mark.parametrize("integration", ["nodejs", "mongoose"])
+def test_reviewed_node_manifest_and_lock_match_the_registry(integration):
+    spec = read_registry()["integrations"][integration]
     adapter = ROOT / Path(spec["test_file"]).parent
     manifest = json.loads((adapter / "package.json").read_text())
     lock = json.loads((adapter / "package-lock.json").read_text())
@@ -167,14 +168,19 @@ def test_reviewed_node_manifest_and_lock_match_the_registry():
     assert lock["packages"][f"node_modules/{spec['package']}"]["version"] == spec["default_version"]
 
 
-def test_node_source_and_lock_are_part_of_provenance(tmp_path):
-    spec = read_registry()["integrations"]["nodejs"]
-    for source in suite_files("nodejs"):
+@pytest.mark.parametrize("integration", ["nodejs", "mongoose"])
+@pytest.mark.parametrize("filename", ["package-lock.json", "client.cjs", "report.cjs"])
+def test_node_source_and_lock_are_part_of_provenance(tmp_path, integration, filename):
+    spec = read_registry()["integrations"][integration]
+    for source in suite_files(integration):
         destination = tmp_path / source.relative_to(ROOT)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
-    original = suite_digest("nodejs", spec, tmp_path)
-    assert original == suite_digest("nodejs", spec)
-    lock = tmp_path / Path(spec["test_file"]).parent / "package-lock.json"
-    lock.write_text(lock.read_text() + "\n")
-    assert suite_digest("nodejs", spec, tmp_path) != original
+    original = suite_digest(integration, spec, tmp_path)
+    assert original == suite_digest(integration, spec)
+    directory = (
+        Path(spec["test_file"]).parent if filename == "package-lock.json" else Path("compatibility")
+    )
+    source = tmp_path / directory / filename
+    source.write_text(source.read_text() + "\n")
+    assert suite_digest(integration, spec, tmp_path) != original

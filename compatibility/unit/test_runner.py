@@ -89,7 +89,10 @@ def test_cleanup_uses_only_the_invocation_label(monkeypatch):
     assert all(f"label={runner.LABEL}=" + "a" * 32 in call for call in calls)
 
 
-def test_node_setup_failure_retains_a_runtime_neutral_envelope(tmp_path, registry, monkeypatch):
+@pytest.mark.parametrize("integration", ["nodejs", "mongoose"])
+def test_node_setup_failure_retains_a_runtime_neutral_envelope(
+    tmp_path, registry, monkeypatch, integration
+):
     def unavailable(*args):
         raise RuntimeError("npm archive unavailable")
 
@@ -97,8 +100,8 @@ def test_node_setup_failure_retains_a_runtime_neutral_envelope(tmp_path, registr
     monkeypatch.setattr(runner, "cleanup", lambda *args: [])
     result = runner.execute(
         registry,
-        "nodejs",
-        registry["integrations"]["nodejs"]["default_version"],
+        integration,
+        registry["integrations"][integration]["default_version"],
         next(iter(registry["documentdb"])),
         tmp_path / "result.json",
     )
@@ -108,20 +111,27 @@ def test_node_setup_failure_retains_a_runtime_neutral_envelope(tmp_path, registr
     assert "npm archive unavailable" in result["execution_error"]
 
 
-def test_cli_selects_the_node_registry_default(tmp_path, record, registry, monkeypatch):
+@pytest.mark.parametrize("integration", ["nodejs", "mongoose"])
+def test_cli_selects_the_node_registry_default(
+    tmp_path, record, registry, monkeypatch, integration
+):
     captured = []
     monkeypatch.setattr(runner, "execute", lambda *args, **kwargs: captured.append(args) or record)
     monkeypatch.setattr(
         sys,
         "argv",
-        ["runner", "--integration", "nodejs", "--output", str(tmp_path / "result.json")],
+        ["runner", "--integration", integration, "--output", str(tmp_path / "result.json")],
     )
     assert runner.main() == 0
-    assert captured[0][1:3] == ("nodejs", registry["integrations"]["nodejs"]["default_version"])
+    assert captured[0][1:3] == (
+        integration,
+        registry["integrations"][integration]["default_version"],
+    )
 
 
 @pytest.mark.parametrize(
-    ("integration", "option"), [("pymongo", "package_cache"), ("nodejs", "wheelhouse")]
+    ("integration", "option"),
+    [("pymongo", "package_cache"), ("nodejs", "wheelhouse"), ("mongoose", "wheelhouse")],
 )
 def test_cache_options_cannot_cross_runtimes(tmp_path, registry, integration, option):
     with pytest.raises(ValueError, match="only supported"):

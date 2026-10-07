@@ -36,6 +36,37 @@ integrations:
       - test_drop_index
       - test_duplicate_key_error
       - test_bson_round_trip
+  mongoose:
+    repository: https://github.com/Automattic/mongoose
+    owner: "@documentdb/documentdb-maintainers"
+    enabled: true
+    runtime: nodejs
+    package: mongoose
+    default_version: "9.11.0"
+    version_pattern: '^9\.11\.0$'
+    profile: node24-linux-x64-mongoose
+    test_file: compatibility/integrations/mongoose/test_mongoose.cjs
+    demonstration_file: compatibility/integrations/mongoose/test_demonstration.cjs
+    timeout_seconds: 300
+    freshness_days: 7
+    expected_tests:
+      - test_authenticated_ping
+      - test_model_create
+      - test_insert_many
+      - test_find_by_id
+      - test_find_filter_projection_sort_limit
+      - test_cursor_batches
+      - test_count_documents
+      - test_document_save
+      - test_update_one
+      - test_find_one_and_update
+      - test_delete_one
+      - test_delete_many
+      - test_aggregate
+      - test_schema_indexes
+      - test_duplicate_key_error
+      - test_schema_validation
+      - test_bson_round_trip
   nodejs:
     repository: https://github.com/mongodb/node-mongodb-native
     owner: "@documentdb/documentdb-maintainers"

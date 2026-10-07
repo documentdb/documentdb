@@ -175,6 +175,8 @@ def suite_files(integration: str, root: Path = ROOT) -> list[Path]:
     ]
     for pattern in ("*.py", "*.cjs", "package*.json", "requirements.txt"):
         files.extend(adapter.glob(pattern))
+    if any(path.suffix == ".cjs" for path in files):
+        files.extend([root / "compatibility" / name for name in ("client.cjs", "report.cjs")])
     for path in files:
         if path.is_symlink():
             raise ValueError("Suite files must not be symbolic links")

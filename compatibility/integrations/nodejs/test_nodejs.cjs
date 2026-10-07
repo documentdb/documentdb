@@ -5,7 +5,8 @@
 
 const assert = require("node:assert/strict");
 const { Decimal128, Long, ObjectId } = require("mongodb");
-const { register } = require("./profile.cjs");
+const { register } = require("../../report.cjs");
+const { createFixture } = require("./profile.cjs");
 
 async function test_authenticated_ping({ client }) {
     assert.equal((await client.db("admin").command({ ping: 1 })).ok, 1);
@@ -175,4 +176,4 @@ register({
     test_update_one, test_find_one_and_update, test_delete_one, test_delete_many,
     test_aggregate, test_create_indexes, test_list_indexes, test_drop_index,
     test_duplicate_key_error, test_bson_round_trip,
-});
+}, createFixture);

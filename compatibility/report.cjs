@@ -3,12 +3,17 @@
 
 "use strict";
 
+const { test } = require("node:test");
+
 function classify(error) {
     if (error?.code === "ERR_TEST_FAILURE") {
         if (error.failureType !== "testCodeFailure") return "error";
         return classify(error.cause);
     }
     if (error?.code === "ERR_ASSERTION" || error?.name === "AssertionError") return "failed";
+    if (["ValidationError", "CastError", "VersionError", "DocumentNotFoundError"].includes(error?.name)) {
+        return "failed";
+    }
     if (["MongoServerError", "MongoBulkWriteError", "MongoUnexpectedServerResponseError"].includes(error?.name)) {
         return [50, 262].includes(error.code) ? "error" : "failed";
     }
@@ -41,6 +46,14 @@ async function runScenario(createFixture, body) {
         }
     }
     if (failed) throw failure;
+}
+
+function register(scenarios, createFixture, demonstration = false) {
+    const skip = process.env.COMPATIBILITY_ACTIVE !== "1"
+        || (demonstration && process.env.COMPATIBILITY_DEMONSTRATION !== "1");
+    for (const [name, body] of Object.entries(scenarios)) {
+        test(name, { skip }, () => runScenario(createFixture, body));
+    }
 }
 
 function message(error) {
@@ -87,13 +100,13 @@ function xml(value) {
         })[character]);
 }
 
-function junit(tests) {
+function junit(tests, integration) {
     const count = outcome => tests.filter(test => test.outcome === outcome).length;
     const cases = tests.map(test => {
         const tag = { failed: "failure", error: "error", skipped: "skipped" }[test.outcome];
         return `<testcase name="${xml(test.id)}">${tag ? `<${tag}>${xml(test.message)}</${tag}>` : ""}</testcase>`;
     }).join("");
-    return `<testsuites><testsuite name="nodejs" tests="${tests.length}" failures="${count("failed")}" errors="${count("error")}" skipped="${count("skipped")}">${cases}</testsuite></testsuites>`;
+    return `<testsuites><testsuite name="${xml(integration)}" tests="${tests.length}" failures="${count("failed")}" errors="${count("error")}" skipped="${count("skipped")}">${cases}</testsuite></testsuites>`;
 }
 
-module.exports = { classify, collect, junit, runScenario };
+module.exports = { classify, collect, junit, register, runScenario };

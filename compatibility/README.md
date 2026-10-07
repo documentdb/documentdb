@@ -1,15 +1,15 @@
 # Ecosystem compatibility pilot
 
 This configuration-driven pilot tests ecosystem integrations against a released
-DocumentDB image. Its initial integrations are PyMongo and the Node.js driver;
+DocumentDB image. Its initial integrations are PyMongo, the Node.js driver, and Mongoose;
 the workflow and reporting are shared rather than specific to a driver.
-It exercises real driver methods and return objects, rather than
-substituting raw commands for driver APIs. It is self-contained: it does not
+It exercises real driver and model methods and return objects, rather than
+substituting raw commands for integration APIs. It is self-contained: it does not
 import the separate functional-test framework or build the database from this
 checkout.
 
-The profiles cover synchronous Python and asynchronous Node.js APIs. A result covers only its exact
-version pair, runtime profile, and listed scenarios, not every driver API or
+The profiles cover synchronous Python, asynchronous Node.js, and Mongoose model APIs.
+A result covers only its exact version pair, runtime profile, and listed scenarios, not every API or
 database feature. Python async APIs, optional native driver modules, vector search, scheduled
 discovery, and automatic release watching are outside this pilot.
 
@@ -17,10 +17,11 @@ discovery, and automatic release watching are outside this pilot.
 
 [`registry.yaml`](registry.yaml) selects DocumentDB **0.117.0** and PostgreSQL **17**:
 
-| Integration | Driver | Runtime | Profile |
+| Integration | Package version | Runtime | Profile |
 | --- | --- | --- | --- |
 | `pymongo` | 4.18.0 | Python 3.12 | `python312-linux-x64-sync` |
 | `nodejs` | 7.7.0 | Node.js 24 | `node24-linux-x64-async` |
+| `mongoose` | 9.11.0 | Node.js 24 | `node24-linux-x64-mongoose` |
 
 These are reviewed reproducible baselines, not a claim about the newest releases.
 The database and client base images are pinned by digest. Before running
@@ -28,8 +29,8 @@ tests, the controller verifies the installed extension and PostgreSQL major
 version. It verifies the selected wheel's filename and SHA-256 against non-yanked
 PyPI release metadata. For Node.js, every npm archive must match the SHA-512
 integrity in the reviewed `package-lock.json`; installation runs offline with
-lifecycle scripts and optional packages disabled. Both clients verify their
-installed driver version and retain the selected artifact's SHA-256.
+lifecycle scripts and optional packages disabled. All clients verify their
+installed integration version and retain the selected artifact's SHA-256.
 Dependency versions and hashes, the actual runtime version, the client image ID,
 and a digest of the execution inputs are retained in each result.
 
@@ -37,18 +38,22 @@ Stable PyMongo 4.9 and later 4.x versions can be selected explicitly. Specify th
 numeric components, for example `--version 4.9.0`; equivalent published versions
 such as `4.9` are matched using package-version semantics. A version without an
 eligible Python 3.12 Linux x64 wheel is **Not tested**, not Working.
-The Node.js profile accepts the version pinned in its manifest and lockfile.
-To select another Node.js driver version, update the manifest in
-`compatibility/integrations/nodejs`, regenerate its lockfile there using Node 24
+The Node.js driver and Mongoose profiles accept the version pinned in each
+integration's manifest and lockfile. To select another version, update the manifest in
+`compatibility/integrations/nodejs` or `compatibility/integrations/mongoose`,
+regenerate that integration's lockfile there using Node 24
 and `npm install --package-lock-only --ignore-scripts --engine-strict --omit=optional`,
 and update the registry default and version policy.
 Review the dependency changes and rerun the normal and demonstration profiles.
+Mongoose's transitive MongoDB driver version is pinned in its own lockfile and
+retained in dependency provenance; it is not substituted for the Mongoose package version.
 Other database releases must first be added to the reviewed registry with an
 immutable image reference and expected installed versions.
 
 ## Coverage
 
-Each integration declares the same 17 required scenarios in the registry:
+The PyMongo and Node.js driver profiles each declare the same 17 required scenarios
+in the registry:
 
 | Area | Driver behavior checked |
 | --- | --- |
@@ -72,6 +77,27 @@ The scenarios follow the kinds of driver operations demonstrated by the
 [`documentdb-playground` PyMongo example](https://github.com/documentdb/documentdb-playground/blob/1a36d28aea9f78a7ca833903e400a7cc4e842e55/playgrounds/pymongo/app/pymongo_crud_test.py).
 The example's mutable launcher defaults and vector-search steps are not used.
 
+### Mongoose model coverage
+
+Mongoose declares its own 17 required scenarios. They exercise model APIs rather
+than bypassing the ODM through raw driver collections:
+
+| Area | Mongoose behavior checked |
+| --- | --- |
+| Connection | Authenticated administrative ping over the model connection |
+| Creation and hydration | `Model.create`, `insertMany`, identifiers, casting, defaults, timestamps, hydrated documents, exact readback |
+| Reads and cursors | `findById` with string-ID casting, missing documents, filters, projection, sort, limit, counts, and observed `getMore` during model cursor iteration |
+| Writes | Document `save` and dirty tracking, `updateOne`, `findOneAndUpdate`, `deleteOne`, `deleteMany`, result counts and persisted changes |
+| Aggregation and indexes | Exact aggregation output, schema-driven `syncIndexes`, index listing, and duplicate-key rejection without an unintended insert |
+| Validation and BSON | Required/minimum validators on inserts and updates, ObjectId, BigInt, Decimal128, dates, buffers, arrays, booleans, and nested document round trips |
+
+These scenarios adapt the core model operations from the
+[`documentdb-playground` Mongoose example](https://github.com/documentdb/documentdb-playground/blob/1a36d28aea9f78a7ca833903e400a7cc4e842e55/playgrounds/mongoose/app/mongoose-crud-test.js).
+The example's historical known-failure exemption and vector-search steps are
+not carried over: every declared scenario must pass for the profile to be Working.
+Transactions, population, plugins, middleware, and unlisted Mongoose APIs are
+outside this initial profile.
+
 ## Run locally
 
 Use Python 3.12 and a Linux Docker daemon with Linux x64 image support. For local
@@ -88,6 +114,8 @@ python -m compatibility.runner \
   --output compatibility/.test-results/run-001/result.json
 python -m compatibility.runner --integration nodejs \
   --output compatibility/.test-results/node-001/result.json
+python -m compatibility.runner --integration mongoose \
+  --output compatibility/.test-results/mongoose-001/result.json
 ```
 
 The runner downloads verified package archives, builds the client without build-time network access,
@@ -97,7 +125,7 @@ for each invocation. `--wheelhouse /path/to/wheels` can reuse downloaded wheels;
 PyPI metadata verification still requires network access. Never disable TLS
 verification for package downloads.
 
-For Node.js, `--package-cache /path/to/cache` stores and reuses archives named
+For both JavaScript integrations, `--package-cache /path/to/cache` stores and reuses archives named
 `<sha256-of-the-lockfile-integrity-string>.tgz`. Cached bytes are verified against
 the reviewed lockfile on every run; a complete cache needs no registry access.
 `--wheelhouse` is Python-only and `--package-cache` is Node-only. Node.js itself
@@ -123,9 +151,11 @@ python -m compatibility.runner --demonstration \
   --output compatibility/.test-results/demo-001/result.json
 python -m compatibility.runner --integration nodejs --demonstration \
   --output compatibility/.test-results/node-demo-001/result.json
+python -m compatibility.runner --integration mongoose --demonstration \
+  --output compatibility/.test-results/mongoose-demo-001/result.json
 ```
 
-This executes the normal profile and one intentionally incorrect driver
+This executes the normal profile and one intentionally incorrect integration
 assertion. It must exit nonzero. The result is explicitly labeled as a
 demonstration and cannot replace a real compatibility verdict.
 
@@ -268,6 +298,11 @@ shellcheck compatibility/persist.sh
 Run the JavaScript checks with Node 24 in a tooling container. They use Node's
 built-in test runner and need neither a database nor installed driver packages.
 Python configuration is scoped to this directory.
+
+JavaScript integrations share `compatibility/client.cjs` and
+`compatibility/report.cjs` for dependency verification, scenario execution, and
+JSON/JUnit reporting. These files are copied into each JavaScript client and
+included in its execution-input digest.
 
 Infrastructure fixtures read selected versions and artifact metadata from the
 registry rather than duplicating the current release values. Assertions should

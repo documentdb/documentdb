@@ -18,8 +18,9 @@ async function main() {
         return { name: installed.name, version: installed.version, sha256: entry.sha256 };
     });
     const installed = dependencies.find(entry => entry.name === process.env.COMPATIBILITY_PACKAGE);
-    if (!installed) throw new Error("Selected driver is missing from the installation report");
+    if (!installed) throw new Error("Selected integration is missing from the installation report");
     const files = [process.env.COMPATIBILITY_TEST_FILE];
+    const integration = path.basename(path.dirname(files[0]));
     if (process.env.COMPATIBILITY_DEMONSTRATION === "1") {
         files.push(process.env.COMPATIBILITY_DEMONSTRATION_FILE);
     }
@@ -32,7 +33,7 @@ async function main() {
         dependencies,
         exit_code: exitCode,
         tests,
-        junit: junit(tests),
+        junit: junit(tests, integration),
     }) + "\n");
     process.exitCode = exitCode;
 }

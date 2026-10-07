@@ -4,8 +4,6 @@
 "use strict";
 
 const { randomUUID } = require("node:crypto");
-const { test } = require("node:test");
-const { runScenario } = require("./report.cjs");
 
 function createFixture() {
     const { MongoClient } = require("mongodb");
@@ -36,12 +34,4 @@ function createFixture() {
     };
 }
 
-function register(scenarios, demonstration = false) {
-    const skip = process.env.COMPATIBILITY_ACTIVE !== "1"
-        || (demonstration && process.env.COMPATIBILITY_DEMONSTRATION !== "1");
-    for (const [name, body] of Object.entries(scenarios)) {
-        test(name, { skip }, () => runScenario(createFixture, body));
-    }
-}
-
-module.exports = { register };
+module.exports = { createFixture };
