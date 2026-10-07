@@ -170,6 +170,8 @@ the first reference integration; execution, provenance, and result contracts
 are shared rather than specific to its scenario suite.
 The static renderer produces HTML and machine-readable history, with explicit
 coverage, freshness, diagnostics, and compatibility-report links.
+The manually dispatched **Ecosystem compatibility** workflow defaults to every
+enabled integration and retains per-attempt results and a combined report.
 
 ### Helpful Links
 

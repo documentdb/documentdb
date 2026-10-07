@@ -5,10 +5,11 @@ DocumentDB image. PyMongo is the first reference integration. Shared execution,
 artifact verification, and result contracts are separate from the integration's
 scenario suite.
 
-Only the synchronous PyMongo profile is implemented here. A credential-free
-renderer presents the validated results as HTML and JSON. Additional runtimes,
-workflow orchestration, durable Git publication, and release watching are
-separate additions. A registry entry alone does not implement a new runtime.
+Only the synchronous PyMongo profile is implemented here. A manual workflow
+selects enabled integrations and combines their validated results as Markdown,
+HTML, and JSON. Additional runtimes, durable Git publication, and release
+watching are separate additions. A registry entry alone does not implement a
+new runtime.
 
 ## Reviewed baseline
 
@@ -148,12 +149,64 @@ This renderer does not push Git history, deploy a site, create issues, or change
 repository settings. Public hosting and durable publication require a separately
 approved destination, publisher, operational owner, and reporting route.
 
+## GitHub Actions workflow
+
+**Ecosystem compatibility** runs through manual dispatch. Once the workflow
+exists on the repository's default branch, select it in the Actions tab and
+choose the branch and reviewed database release to exercise. The integration
+defaults to `all`: a planning job expands every enabled registry entry using its
+own reviewed default version. Select one integration for a focused run or version
+override. A version override with `all`, a disabled integration, a version outside
+its registry policy, or an unknown database release is rejected before test jobs
+start. Keep the failure demonstration disabled for real results.
+
+Each matrix job runs its complete scenario suite against its own disposable
+database. Matrix fail-fast is disabled. JSON and available JUnit/logs are retained
+in `compatibility-results-<integration>-<attempt>` artifacts even when the job
+fails. Results record the `manual` trigger and exact workflow-attempt URL.
+
+After the matrix finishes, reporting validates each selected result's identity,
+coverage, artifacts, suite digest, and workflow-attempt URL. The summary includes
+every selected integration. Missing or rejected results are **Not tested**, with
+a diagnostic, not fabricated envelopes or an earlier attempt's pass. Compatibility
+failures remain **Failing**, and failed or incomplete reports exit nonzero without
+suppressing matrix failures.
+
+The `compatibility-report-<attempt>` artifact contains `summary.md`, machine-readable
+`summary.json`, accepted envelopes in `results/`, and a combined preview in `site/`.
+Only selected profiles and versions appear, including explicit overrides and
+labeled demonstrations. All artifacts have 30-day retention.
+
+Use **Re-run all jobs** for a complete matrix rerun. Reporting deliberately
+collects only the current attempt's artifacts, so rerunning only failed jobs can
+leave other integrations without current-attempt evidence. Re-running an older
+workflow retains its original commit; dispatch a fresh run to test new code.
+
+All jobs have read-only repository permissions. The workflow does not publish
+Git history, deploy a site, create issues, or change repository settings.
+
+To inspect selection or combine locally produced records:
+
+```bash
+python -m compatibility.workflow matrix --integration all
+python -m compatibility.workflow report --integration all \
+  --input compatibility/.test-results/incoming \
+  --output compatibility/.test-results/combined-001
+```
+
+Place each record under `incoming/<integration>/result.json`. Use the same
+integration, version, database, and demonstration selection as the producing
+runs, and a fresh output directory. `--expected-run-url` binds a combined report
+to one workflow attempt; omit it for local results. `--summary` appends the
+Markdown report to a GitHub step-summary file.
+
 ## Extend and maintain
 
 Add a reviewed adapter directory, pinned image and package requirements, normal
 and deliberate-failure suites, and a registry entry naming every required
 scenario. Keep package preparation, runtime validation, and provenance support
 with any new runtime. Enable an integration only when its real adapter exists.
+Expose it in the workflow's integration selector as well as the registry.
 
 Run infrastructure checks in a prepared Python 3.12 tooling container:
 
