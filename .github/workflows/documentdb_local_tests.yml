@@ -64,6 +64,8 @@ jobs:
           python -m mypy --config-file compatibility/pyproject.toml compatibility
       - name: Run compatibility unit tests
         run: python -m pytest -c compatibility/pyproject.toml compatibility/unit
+      - name: Check the trusted Git history publisher
+        run: shellcheck compatibility/persist.sh
       - name: Check the compiled compatibility watcher
         run: |
           compiler="$RUNNER_TEMP/gh-aw"
