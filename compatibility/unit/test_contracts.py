@@ -180,7 +180,7 @@ def test_legacy_python_records_remain_unchanged_and_readable(record, registry):
     assert record == original
 
 
-@pytest.mark.parametrize("integration", ["nodejs"])
+@pytest.mark.parametrize("integration", ["nodejs", "mongoose"])
 def test_node_result_and_scoped_dependency_names_are_valid(record, registry, integration):
     spec = registry["integrations"][integration]
     record.update(

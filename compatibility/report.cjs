@@ -11,6 +11,9 @@ function classify(error) {
         return classify(error.cause);
     }
     if (error?.code === "ERR_ASSERTION" || error?.name === "AssertionError") return "failed";
+    if (["ValidationError", "CastError", "VersionError", "DocumentNotFoundError"].includes(error?.name)) {
+        return "failed";
+    }
     if (["MongoServerError", "MongoBulkWriteError", "MongoUnexpectedServerResponseError"].includes(error?.name)) {
         return [50, 262].includes(error.code) ? "error" : "failed";
     }

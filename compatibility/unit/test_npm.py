@@ -157,7 +157,7 @@ def test_weaker_or_malformed_integrity_is_rejected():
             npm.verify_integrity(b"archive", integrity)
 
 
-@pytest.mark.parametrize("integration", ["nodejs"])
+@pytest.mark.parametrize("integration", ["nodejs", "mongoose"])
 def test_reviewed_node_manifest_and_lock_match_the_registry(integration):
     spec = read_registry()["integrations"][integration]
     adapter = ROOT / Path(spec["test_file"]).parent
@@ -168,7 +168,7 @@ def test_reviewed_node_manifest_and_lock_match_the_registry(integration):
     assert lock["packages"][f"node_modules/{spec['package']}"]["version"] == spec["default_version"]
 
 
-@pytest.mark.parametrize("integration", ["nodejs"])
+@pytest.mark.parametrize("integration", ["nodejs", "mongoose"])
 @pytest.mark.parametrize("filename", ["package-lock.json", "client.cjs", "report.cjs"])
 def test_node_source_and_lock_are_part_of_provenance(tmp_path, integration, filename):
     spec = read_registry()["integrations"][integration]

@@ -1,15 +1,15 @@
 # Ecosystem compatibility
 
 This registry-driven runner tests ecosystem integrations against a released
-DocumentDB image. PyMongo and the native Node.js driver are reference integrations.
-Shared execution, artifact verification, and result contracts are separate from
-each integration's scenario suite.
+DocumentDB image. PyMongo, the native Node.js driver, and Mongoose are reference
+integrations. Shared execution, artifact verification, and result contracts are
+separate from each integration's scenario suite.
 
-The profiles exercise synchronous PyMongo and asynchronous Node.js APIs. A manual
-workflow selects enabled integrations and combines their validated results as
-Markdown, HTML, and JSON. Additional integrations, durable Git publication, and
-release watching are separate additions. A registry entry alone does not
-implement a new runtime.
+The profiles exercise synchronous PyMongo, asynchronous Node.js, and Mongoose
+model APIs. A manual workflow selects enabled integrations and combines their
+validated results as Markdown, HTML, and JSON. Additional integrations, durable
+Git publication, and release watching are separate additions. A registry entry
+alone does not implement a new runtime.
 
 ## Reviewed baseline
 
@@ -21,6 +21,7 @@ are pinned by digest.
 | --- | --- | --- | --- |
 | `pymongo` | 4.18.0 | Python 3.12 | `python312-linux-x64-sync` |
 | `nodejs` | 7.7.0 | Node.js 24 | `node24-linux-x64-async` |
+| `mongoose` | 9.11.0 | Node.js 24 | `node24-linux-x64-mongoose` |
 
 These are reproducible reviewed baselines, not claims about the newest releases.
 Stable PyMongo 4.9 and later 4.x versions can be selected explicitly. Use three
@@ -41,12 +42,14 @@ packages disabled. The client verifies installed dependency versions and records
 their SHA-256 hashes. Shared JavaScript execution and reporting live in
 `compatibility/client.cjs` and `compatibility/report.cjs`, separate from adapters.
 
-The Node.js profile accepts only its reviewed locked version. To select another,
-update the manifest in `compatibility/integrations/nodejs`, regenerate its lockfile
-using Node 24 and
+The Node.js and Mongoose profiles accept only their reviewed locked versions.
+To select another, update the manifest in `compatibility/integrations/nodejs` or
+`compatibility/integrations/mongoose`, regenerate that adapter's lockfile using Node 24 and
 `npm install --package-lock-only --ignore-scripts --engine-strict --omit=optional`,
 and update the registry default and version policy. Review dependency changes and
 rerun both the normal and demonstration profiles.
+Mongoose's transitive MongoDB driver is independently locked and recorded as a
+dependency, never substituted for the Mongoose package version.
 
 ## Coverage
 
@@ -72,6 +75,25 @@ checks native driver return shapes and BSON representations rather than replayin
 raw commands through another client. Python async APIs, optional native Node.js
 modules, transactions, vector search, and unlisted APIs remain out of scope.
 
+### Mongoose model coverage
+
+Mongoose declares its own 17 required scenarios, using real model and document
+APIs rather than bypassing the ODM through raw driver collections:
+
+| Area | Behavior checked |
+| --- | --- |
+| Connection | Authenticated administrative ping through the model connection |
+| Creation | `Model.create`, `insertMany`, identifiers, casting, defaults, timestamps, hydration, and exact readback |
+| Reads and cursors | `findById` with string-ID casting, missing documents, filters, projection, sorting, counts, and observed `getMore` |
+| Writes | Document `save` and dirty tracking, `updateOne`, `findOneAndUpdate`, deletes, result objects, and persisted effects |
+| Aggregation and indexes | Exact aggregation output, schema-driven indexes, index listing, and duplicate-key rejection |
+| Validation and BSON | Required/minimum validators on inserts and updates, ObjectId, BigInt, Decimal128, dates, buffers, arrays, booleans, and nested documents |
+
+Each scenario uses a fresh connection and database with automatic index and
+collection creation and command buffering disabled. Every declared scenario must
+pass; there are no historical known-failure exemptions. Transactions, population,
+plugins, middleware, vector search, and unlisted model APIs are outside this profile.
+
 ## Run locally
 
 Use the repository dev container or a prepared Python 3.12 tooling container,
@@ -86,6 +108,8 @@ python -m compatibility.runner --integration pymongo --version 4.9.0 \
   --output compatibility/.test-results/pymongo-4.9.0/result.json
 python -m compatibility.runner --integration nodejs \
   --output compatibility/.test-results/nodejs-001/result.json
+python -m compatibility.runner --integration mongoose \
+  --output compatibility/.test-results/mongoose-001/result.json
 ```
 
 Each invocation requires a fresh output path and creates fresh credentials,
@@ -98,7 +122,7 @@ verified wheels. `--wheelhouse /path/to/wheels` reuses downloaded wheels, but Py
 metadata verification still requires network access. Do not disable TLS
 verification for package downloads.
 
-For Node.js, `--package-cache /path/to/cache` reuses archives named
+For both JavaScript integrations, `--package-cache /path/to/cache` reuses archives named
 `<sha256-of-the-lockfile-integrity-string>.tgz`. Every cached archive is verified
 against the reviewed lockfile; a complete cache needs no registry access.
 `--wheelhouse` is Python-only and `--package-cache` is Node-only. Node.js is needed
@@ -116,6 +140,8 @@ python -m compatibility.runner --integration pymongo --demonstration \
   --output compatibility/.test-results/pymongo-demo-001/result.json
 python -m compatibility.runner --integration nodejs --demonstration \
   --output compatibility/.test-results/nodejs-demo-001/result.json
+python -m compatibility.runner --integration mongoose --demonstration \
+  --output compatibility/.test-results/mongoose-demo-001/result.json
 ```
 
 This runs the normal scenarios plus one labeled intentional assertion failure

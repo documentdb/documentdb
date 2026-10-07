@@ -165,9 +165,9 @@ for eachDocument in results:
 ## Ecosystem compatibility
 
 The [ecosystem compatibility runner](compatibility/README.md) exercises real
-integration APIs against a version-pinned released DocumentDB image. PyMongo and
-the native Node.js driver are reference integrations; execution, provenance, and
-result contracts are shared rather than specific to either scenario suite.
+integration APIs against a version-pinned released DocumentDB image. PyMongo,
+the native Node.js driver, and Mongoose are reference integrations; execution,
+provenance, and result contracts are shared rather than specific to a scenario suite.
 The static renderer produces HTML and machine-readable history, with explicit
 coverage, freshness, diagnostics, and compatibility-report links.
 The manually dispatched **Ecosystem compatibility** workflow defaults to every
