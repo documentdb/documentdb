@@ -162,6 +162,14 @@ for eachDocument in results:
 
 ```
 
+## Ecosystem compatibility
+
+The [ecosystem compatibility runner](compatibility/README.md) exercises registered
+integration profiles against version-pinned DocumentDB images. Execution,
+artifact verification, provenance, and result contracts are shared across
+adapters. The [registry](compatibility/registry.yaml) defines profiles, reviewed
+versions, and required scenarios.
+
 ### Helpful Links
 
 - Check out our [website](https://documentdb.io) to stay up to date with the latest on the project.
