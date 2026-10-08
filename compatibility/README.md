@@ -1,30 +1,23 @@
 # Ecosystem compatibility
 
-This registry-driven runner tests ecosystem integrations against a released
-DocumentDB image. PyMongo is the first reference integration. Shared execution,
-artifact verification, and result contracts are separate from the integration's
-scenario suite.
+This registry-driven runner tests ecosystem integration profiles against reviewed
+DocumentDB releases. Execution, artifact verification, and result contracts are
+shared; each integration adapter implements its own scenario suite.
 
-Only the synchronous PyMongo profile is implemented here. Additional runtimes,
-workflow orchestration, dashboard rendering, durable publication, and release
-watching are separate additions. A registry entry alone does not implement a
-new runtime.
+## Profiles and reviewed artifacts
 
-## Reviewed baseline
+[`registry.yaml`](registry.yaml) defines profiles, enablement, default package
+versions, version policies, required scenarios, and reviewed DocumentDB releases.
+Adapter directories under [`integrations/`](integrations/) contain runtime recipes
+and scenario suites. These definitions identify the package, runtime, and database
+combination for a run, not the newest upstream releases. Database and client base
+images are pinned by digest.
 
-[`registry.yaml`](registry.yaml) selects DocumentDB **0.117.0**, PostgreSQL
-major **17**, and extension version **0.117-0**. Database and client base images
-are pinned by digest.
-
-| Integration | Package version | Runtime | Profile |
-| --- | --- | --- | --- |
-| `pymongo` | 4.18.0 | Python 3.12 | `python312-linux-x64-sync` |
-
-These are reproducible reviewed baselines, not claims about the newest releases.
-Stable PyMongo 4.9 and later 4.x versions can be selected explicitly. Use three
-numeric components, such as `--version 4.9.0`; equivalent published versions
-such as `4.9` are matched using package-version semantics. A version without an
-eligible Python 3.12 Linux x64 wheel is Not tested, not Working.
+Version overrides must match the integration's registry policy and have eligible
+artifacts for its runtime. PyMongo versions use three numeric components, such as
+`--version 4.9.0`; equivalent published versions such as `4.9` are matched using
+package-version semantics. A version without an eligible Python 3.12 Linux x64
+wheel is Not tested, not Working.
 
 Before executing scenarios, the controller checks the actual extension and
 PostgreSQL major versions. It verifies the selected wheel's filename and SHA-256
@@ -35,7 +28,8 @@ recipe, including uncommitted local changes.
 
 ## Coverage
 
-The profile declares 17 required scenarios and calls real PyMongo APIs:
+The PyMongo profile exercises synchronous driver APIs. Its required scenarios are
+declared in the registry's `expected_tests` list and cover the following behavior:
 
 | Area | Behavior |
 | --- | --- |
@@ -104,8 +98,8 @@ readiness, or cleanup failure. Include a minimal synthetic reproduction, the
 integration and database versions, the profile, and sanitized result/log details.
 Never share credentials or customer data.
 
-New runs use runtime-neutral schema version 2. Historical schema-version-1 Python
-records remain readable without rewriting their immutable provenance.
+Runs emit runtime-neutral schema version 2. Schema-version-1 Python records remain
+readable without rewriting their immutable provenance.
 
 ## Extend and maintain
 
@@ -113,6 +107,7 @@ Add a reviewed adapter directory, pinned image and package requirements, normal
 and deliberate-failure suites, and a registry entry naming every required
 scenario. Keep package preparation, runtime validation, and provenance support
 with any new runtime. Enable an integration only when its real adapter exists.
+A registry entry alone does not implement runtime support.
 
 Run infrastructure checks in a prepared Python 3.12 tooling container:
 
