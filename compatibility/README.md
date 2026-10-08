@@ -1,32 +1,28 @@
 # Ecosystem compatibility
 
-This registry-driven runner tests ecosystem integrations against a released
-DocumentDB image. PyMongo is the first reference integration. Shared execution,
-artifact verification, and result contracts are separate from the integration's
-scenario suite.
+This registry-driven runner tests ecosystem integration profiles against reviewed
+DocumentDB releases. Execution, artifact verification, and result contracts are
+shared; each integration adapter implements its own scenario suite.
 
-Only the synchronous PyMongo profile is implemented here. A manual workflow
-selects enabled integrations and combines their validated results as Markdown,
-HTML, and JSON. An opt-in upstream watcher can request that same profile for
-eligible PyMongo releases. A separate trusted helper can append results to Git
-history. Additional runtimes and automatic result publication are separate
-additions. A registry entry alone does not implement a new runtime.
+The manual workflow selects enabled profiles and combines validated results as
+Markdown, HTML, and JSON. A trusted publisher can append results to Git history
+with the persistence helper. An opt-in release watcher requests compatibility
+runs for upstream artifacts that pass its eligibility checks.
 
-## Reviewed baseline
+## Profiles and reviewed artifacts
 
-[`registry.yaml`](registry.yaml) selects DocumentDB **0.117.0**, PostgreSQL
-major **17**, and extension version **0.117-0**. Database and client base images
-are pinned by digest.
+[`registry.yaml`](registry.yaml) defines profiles, enablement, default package
+versions, version policies, required scenarios, and reviewed DocumentDB releases.
+Adapter directories under [`integrations/`](integrations/) contain runtime recipes
+and scenario suites. These definitions identify the package, runtime, and database
+combination for a run, not the newest upstream releases. Database and client base
+images are pinned by digest.
 
-| Integration | Package version | Runtime | Profile |
-| --- | --- | --- | --- |
-| `pymongo` | 4.18.0 | Python 3.12 | `python312-linux-x64-sync` |
-
-These are reproducible reviewed baselines, not claims about the newest releases.
-Stable PyMongo 4.9 and later 4.x versions can be selected explicitly. Use three
-numeric components, such as `--version 4.9.0`; equivalent published versions
-such as `4.9` are matched using package-version semantics. A version without an
-eligible Python 3.12 Linux x64 wheel is Not tested, not Working.
+Version overrides must match the integration's registry policy and have eligible
+artifacts for its runtime. PyMongo versions use three numeric components, such as
+`--version 4.9.0`; equivalent published versions such as `4.9` are matched using
+package-version semantics. A version without an eligible Python 3.12 Linux x64
+wheel is Not tested, not Working.
 
 Before executing scenarios, the controller checks the actual extension and
 PostgreSQL major versions. It verifies the selected wheel's filename and SHA-256
@@ -37,7 +33,8 @@ recipe, including uncommitted local changes.
 
 ## Coverage
 
-The profile declares 17 required scenarios and calls real PyMongo APIs:
+The PyMongo profile exercises synchronous driver APIs. Its required scenarios are
+declared in the registry's `expected_tests` list and cover the following behavior:
 
 | Area | Behavior |
 | --- | --- |
@@ -106,8 +103,8 @@ readiness, or cleanup failure. Include a minimal synthetic reproduction, the
 integration and database versions, the profile, and sanitized result/log details.
 Never share credentials or customer data.
 
-New runs use runtime-neutral schema version 2. Historical schema-version-1 Python
-records remain readable without rewriting their immutable provenance.
+Runs emit runtime-neutral schema version 2. Schema-version-1 Python records remain
+readable without rewriting their immutable provenance.
 
 ## Results and dashboard preview
 
@@ -152,9 +149,9 @@ approved destination, publisher, operational owner, and reporting route.
 
 ## GitHub Actions workflow
 
-**Ecosystem compatibility** runs through manual dispatch. Once the workflow
-exists on the repository's default branch, select it in the Actions tab and
-choose the branch and reviewed database release to exercise. The integration
+Manual dispatch requires the workflow on the repository's default branch.
+Select **Ecosystem compatibility** in the Actions tab, then choose the branch
+and reviewed database release to exercise. The integration
 defaults to `all`: a planning job expands every enabled registry entry using its
 own reviewed default version. Select one integration for a focused run or version
 override. A version override with `all`, a disabled integration, a version outside
@@ -221,13 +218,13 @@ budgets, and the dedicated state branch. No PAT or new secret is required by
 the authored workflow. It does not configure subscriptions, credentials,
 variables, branch rules, or hosting.
 
-Merge both workflows onto the default branch before enabling them. The watcher
+The watcher and compatibility workflows must exist on the default branch. The watcher
 accepts only scheduled or manual execution on that branch. It runs daily at
 08:23 UTC and can also be started with **Run workflow**. Its invocations are
 serialized. Disable the enablement variable to stop future work, and explicitly
 cancel an in-flight run when immediate suspension is needed.
 
-Deterministic discovery reads at most the latest 30 releases from the official
+PyMongo release discovery reads at most the latest 30 releases from the official
 `mongodb/mongo-python-driver` GitHub repository and verifies their PyPI metadata.
 Only stable releases at least as new as the reviewed baseline, within the
 registry's version policy, and with eligible non-yanked wheels are considered.
@@ -296,7 +293,7 @@ manual run with both IDs blank remains available independently of the watcher.
 Inspect compatibility artifacts and use the reporting guidance above for
 conclusive scenario failures. `completed`, successful dispatch, or AI analysis
 does not establish Working. Watcher failures remain visible as failed Actions
-jobs and ledger errors; this version does not automatically create issues.
+jobs and ledger errors; automatic issue creation is disabled in the workflow.
 
 The ledger is bounded to 1,000 entries and 2 MiB. Exhaustion stops new writes
 and requires a reviewed retention strategy preserving the audit and deduplication
@@ -304,10 +301,14 @@ identities. Do not delete the state branch or old detection IDs to retry work.
 Watcher state is not the compatibility-result history or an automatically
 published dashboard.
 
-The initial watcher supports only the reviewed PyMongo path. Newer Node.js or
-Mongoose releases require a reviewed manifest/lockfile update and metadata
-adapter before automatic execution can be added. DocumentDB release/RC fan-out,
-public hosting, and automatic result publication remain separate follow-ups.
+Automatic dispatch uses the registry's reviewed DocumentDB target; release
+discovery does not select new database images. Compatibility results are retained
+as workflow artifacts, not deployed to a public site.
+
+Adding a package ecosystem to discovery requires a metadata adapter and a
+reviewed version-selection policy compatible with the runner's artifact checks.
+For npm profiles, version selection also requires reviewed manifest and lockfile
+updates.
 
 ### Regenerate the watcher
 
@@ -355,8 +356,9 @@ stored. Render complete history with `compatibility.publish`, using `--preview`
 for review prototypes. Deployment retries must not delete or rewrite history.
 Cancellation before persistence is not a compatibility verdict.
 
-This helper is not automatically invoked by CI. It does not configure hosting,
-GitHub Pages, credentials, repository permissions, or a release-watcher ledger.
+Invoke this helper explicitly from the trusted publisher; the compatibility
+workflow does not call it. It does not configure hosting, GitHub Pages,
+credentials, repository permissions, or a release-watcher ledger.
 
 ## Extend and maintain
 
@@ -364,6 +366,7 @@ Add a reviewed adapter directory, pinned image and package requirements, normal
 and deliberate-failure suites, and a registry entry naming every required
 scenario. Keep package preparation, runtime validation, and provenance support
 with any new runtime. Enable an integration only when its real adapter exists.
+A registry entry alone does not implement runtime support.
 Expose it in the workflow's integration selector as well as the registry.
 
 Run infrastructure checks in a prepared Python 3.12 tooling container:

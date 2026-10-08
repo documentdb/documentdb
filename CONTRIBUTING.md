@@ -55,7 +55,7 @@ Commits of any form require a DCO, including revert commits.
 
 ## Ecosystem compatibility automation
 
-For the shared compatibility runner and its PyMongo reference integration, see the
+For the ecosystem compatibility runner and integration adapters, see the
 [scoped contribution guide](compatibility/README.md). Changes to this automation
 need its infrastructure checks and real version-pair runs; they do not require
 rebuilding unchanged database or gateway code.
