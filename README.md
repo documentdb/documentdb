@@ -1,4 +1,5 @@
 # Introduction
+<!-- Temporary external CI smoke test from a fork; do not merge. -->
 
 `DocumentDB` is a MongoDB compatible open source document database built on PostgreSQL. It offers a native implementation of a document-oriented NoSQL database, enabling seamless CRUD (Create, Read, Update, Delete) operations on BSON(Binary JSON) data types within a PostgreSQL framework. Beyond basic operations, DocumentDB empowers users to execute complex workloads, including full-text searches, geospatial queries, and vector search, delivering robust functionality and flexibility for diverse data management needs.
 
