@@ -1,33 +1,27 @@
 # Ecosystem compatibility
 
-This registry-driven runner tests ecosystem integrations against a released
-DocumentDB image. PyMongo, the native Node.js driver, and Mongoose are reference
-integrations. Shared execution, artifact verification, and result contracts are
-separate from each integration's scenario suite.
+This registry-driven runner tests ecosystem integration profiles against reviewed
+DocumentDB releases. Execution, artifact verification, and result contracts are
+shared; each integration adapter implements its own scenario suite.
 
-The profiles exercise synchronous PyMongo, asynchronous Node.js, and Mongoose
-model APIs. A manual workflow selects enabled integrations and combines their
-validated results as Markdown, HTML, and JSON. A separate trusted helper can
-append results to Git history. Additional integrations and release watching are
-separate additions. A registry entry alone does not implement a new runtime.
+The manual workflow selects enabled profiles and combines validated results as
+Markdown, HTML, and JSON. A trusted publisher can append results to Git history
+with the persistence helper.
 
-## Reviewed baseline
+## Profiles and reviewed artifacts
 
-[`registry.yaml`](registry.yaml) selects DocumentDB **0.117.0**, PostgreSQL
-major **17**, and extension version **0.117-0**. Database and client base images
-are pinned by digest.
+[`registry.yaml`](registry.yaml) defines profiles, enablement, default package
+versions, version policies, required scenarios, and reviewed DocumentDB releases.
+Adapter directories under [`integrations/`](integrations/) contain runtime recipes
+and scenario suites. These definitions identify the package, runtime, and database
+combination for a run, not the newest upstream releases. Database and client base
+images are pinned by digest.
 
-| Integration | Package version | Runtime | Profile |
-| --- | --- | --- | --- |
-| `pymongo` | 4.18.0 | Python 3.12 | `python312-linux-x64-sync` |
-| `nodejs` | 7.7.0 | Node.js 24 | `node24-linux-x64-async` |
-| `mongoose` | 9.11.0 | Node.js 24 | `node24-linux-x64-mongoose` |
-
-These are reproducible reviewed baselines, not claims about the newest releases.
-Stable PyMongo 4.9 and later 4.x versions can be selected explicitly. Use three
-numeric components, such as `--version 4.9.0`; equivalent published versions
-such as `4.9` are matched using package-version semantics. A version without an
-eligible Python 3.12 Linux x64 wheel is Not tested, not Working.
+Version overrides must match the integration's registry policy and have eligible
+artifacts for its runtime. PyMongo versions use three numeric components, such as
+`--version 4.9.0`; equivalent published versions such as `4.9` are matched using
+package-version semantics. A version without an eligible Python 3.12 Linux x64
+wheel is Not tested, not Working.
 
 Before executing scenarios, the controller checks the actual extension and
 PostgreSQL major versions. It verifies the selected wheel's filename and SHA-256
@@ -53,7 +47,10 @@ dependency, never substituted for the Mongoose package version.
 
 ## Coverage
 
-Both driver profiles declare the same 17 required scenarios and call real driver APIs:
+The PyMongo and native Node.js profiles exercise synchronous Python and
+asynchronous JavaScript driver APIs, respectively. Each profile's required
+scenarios are declared in the registry's `expected_tests` list and cover the
+following behavior:
 
 | Area | Behavior |
 | --- | --- |
@@ -77,8 +74,9 @@ modules, transactions, vector search, and unlisted APIs remain out of scope.
 
 ### Mongoose model coverage
 
-Mongoose declares its own 17 required scenarios, using real model and document
-APIs rather than bypassing the ODM through raw driver collections:
+The Mongoose profile's `expected_tests` list names its required model and document
+scenarios. They exercise ODM behavior rather than bypassing it through raw driver
+collections:
 
 | Area | Behavior checked |
 | --- | --- |
@@ -91,7 +89,7 @@ APIs rather than bypassing the ODM through raw driver collections:
 
 Each scenario uses a fresh connection and database with automatic index and
 collection creation and command buffering disabled. Every declared scenario must
-pass; there are no historical known-failure exemptions. Transactions, population,
+pass; there are no known-failure exemptions. Transactions, population,
 plugins, middleware, vector search, and unlisted model APIs are outside this profile.
 
 ## Run locally
@@ -122,7 +120,7 @@ verified wheels. `--wheelhouse /path/to/wheels` reuses downloaded wheels, but Py
 metadata verification still requires network access. Do not disable TLS
 verification for package downloads.
 
-For both JavaScript integrations, `--package-cache /path/to/cache` reuses archives named
+For Node.js profiles, `--package-cache /path/to/cache` reuses archives named
 `<sha256-of-the-lockfile-integrity-string>.tgz`. Every cached archive is verified
 against the reviewed lockfile; a complete cache needs no registry access.
 `--wheelhouse` is Python-only and `--package-cache` is Node-only. Node.js is needed
@@ -161,8 +159,8 @@ readiness, or cleanup failure. Include a minimal synthetic reproduction, the
 integration and database versions, the profile, and sanitized result/log details.
 Never share credentials or customer data.
 
-New runs use runtime-neutral schema version 2. Historical schema-version-1 Python
-records remain readable without rewriting their immutable provenance.
+Runs emit runtime-neutral schema version 2. Schema-version-1 Python records remain
+readable without rewriting their immutable provenance.
 
 ## Results and dashboard preview
 
@@ -207,9 +205,9 @@ approved destination, publisher, operational owner, and reporting route.
 
 ## GitHub Actions workflow
 
-**Ecosystem compatibility** runs through manual dispatch. Once the workflow
-exists on the repository's default branch, select it in the Actions tab and
-choose the branch and reviewed database release to exercise. The integration
+Manual dispatch requires the workflow on the repository's default branch.
+Select **Ecosystem compatibility** in the Actions tab, then choose the branch
+and reviewed database release to exercise. The integration
 defaults to `all`: a planning job expands every enabled registry entry using its
 own reviewed default version. Select one integration for a focused run or version
 override. A version override with `all`, a disabled integration, a version outside
@@ -283,8 +281,9 @@ stored. Render complete history with `compatibility.publish`, using `--preview`
 for review prototypes. Deployment retries must not delete or rewrite history.
 Cancellation before persistence is not a compatibility verdict.
 
-This helper is not automatically invoked by CI. It does not configure hosting,
-GitHub Pages, credentials, repository permissions, or a release-watcher ledger.
+Invoke this helper explicitly from the trusted publisher; the compatibility
+workflow does not call it. It does not configure hosting, GitHub Pages,
+credentials, repository permissions, or a release-watcher ledger.
 
 ## Extend and maintain
 
@@ -292,6 +291,7 @@ Add a reviewed adapter directory, pinned image and package requirements, normal
 and deliberate-failure suites, and a registry entry naming every required
 scenario. Keep package preparation, runtime validation, and provenance support
 with any new runtime. Enable an integration only when its real adapter exists.
+A registry entry alone does not implement runtime support.
 Expose it in the workflow's integration selector as well as the registry.
 
 Run infrastructure checks in a prepared Python 3.12 tooling container:
