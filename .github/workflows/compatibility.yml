@@ -1,0 +1,180 @@
+name: Ecosystem compatibility
+run-name: ${{ inputs.detection_id != '' && format('Ecosystem compatibility [watch:{0}:{1}]', inputs.detection_id, inputs.dispatch_id) || 'Ecosystem compatibility' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      integration:
+        description: Integration, or all enabled registry entries
+        type: choice
+        options:
+          - all
+          - pymongo
+        default: all
+        required: true
+      version:
+        description: Upstream version override (single integration only; blank uses registry defaults)
+        type: string
+        required: false
+      documentdb_version:
+        description: Reviewed DocumentDB release from compatibility/registry.yaml
+        type: string
+        default: "0.117.0"
+        required: true
+      demonstration:
+        description: Add a separately labeled, intentionally failing assertion
+        type: boolean
+        default: false
+      detection_id:
+        description: Recorded upstream detection ID (leave blank for a manual run)
+        type: string
+        required: false
+      dispatch_id:
+        description: Recorded dispatch nonce (required with detection_id)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Select integrations
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Install trusted orchestration dependencies
+        run: python -m pip install -r compatibility/requirements.txt
+      - name: Resolve the reviewed integration matrix
+        id: select
+        env:
+          INTEGRATION: ${{ inputs.integration }}
+          VERSION: ${{ inputs.version }}
+          DOCUMENTDB_VERSION: ${{ inputs.documentdb_version }}
+          DEMONSTRATION: ${{ inputs.demonstration }}
+          DETECTION_ID: ${{ inputs.detection_id }}
+          DISPATCH_ID: ${{ inputs.dispatch_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+          COMPATIBILITY_WATCHER_ENABLED: ${{ vars.COMPATIBILITY_WATCHER_ENABLED }}
+          COMPATIBILITY_WATCHER_MODEL: ${{ vars.COMPATIBILITY_WATCHER_MODEL }}
+        run: |
+          args=()
+          if [ -n "$INTEGRATION" ]; then args+=(--integration "$INTEGRATION"); fi
+          if [ -n "$DOCUMENTDB_VERSION" ]; then args+=(--documentdb-version "$DOCUMENTDB_VERSION"); fi
+          if [ -n "$VERSION" ]; then args+=(--version "$VERSION"); fi
+          if [ "$DEMONSTRATION" = "true" ]; then args+=(--demonstration); fi
+          if [ -n "$DETECTION_ID" ] || [ -n "$DISPATCH_ID" ]; then
+            args+=(--detection-id "$DETECTION_ID" --dispatch-id "$DISPATCH_ID")
+          fi
+          matrix=$(python -m compatibility.workflow matrix "${args[@]}")
+          printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
+  test:
+    name: ${{ matrix.integration }} ${{ matrix.version }}
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Install trusted orchestration dependencies
+        run: python -m pip install -r compatibility/requirements.txt
+      - name: Run the isolated integration profile
+        id: suite
+        env:
+          INTEGRATION: ${{ matrix.integration }}
+          VERSION: ${{ matrix.version }}
+          DOCUMENTDB_VERSION: ${{ matrix.documentdb_version }}
+          DEMONSTRATION: ${{ matrix.demonstration }}
+          DETECTION_ID: ${{ matrix.detection_id }}
+          EXPECTED_ARTIFACTS: ${{ join(matrix.artifact_sha256s || fromJSON('[]'), ',') }}
+        run: |
+          args=(
+            --integration "$INTEGRATION"
+            --version "$VERSION"
+            --documentdb-version "$DOCUMENTDB_VERSION"
+            --output "results/$INTEGRATION/result.json"
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
+          )
+          if [ "$DEMONSTRATION" = "true" ]; then args+=(--demonstration); fi
+          if [ -n "$DETECTION_ID" ]; then
+            args+=(--trigger upstream_release --detection-id "$DETECTION_ID")
+            IFS=, read -r -a artifacts <<< "$EXPECTED_ARTIFACTS"
+            for artifact in "${artifacts[@]}"; do args+=(--expected-artifact-sha256 "$artifact"); done
+          fi
+          python -m compatibility.runner "${args[@]}"
+      - name: Retain integration results and sanitized diagnostics
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: compatibility-results-${{ matrix.integration }}-${{ github.run_attempt }}
+          path: results/
+          if-no-files-found: error
+          retention-days: 30
+  report:
+    name: Combined compatibility report
+    needs: [plan, test]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Install trusted reporting dependencies
+        run: python -m pip install -r compatibility/requirements.txt
+      - name: Collect this attempt's integration artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: compatibility-results-*-${{ github.run_attempt }}
+          path: incoming
+          merge-multiple: true
+      - name: Render combined results, including missing or failed integrations
+        if: always()
+        env:
+          INTEGRATION: ${{ inputs.integration }}
+          VERSION: ${{ inputs.version }}
+          DOCUMENTDB_VERSION: ${{ inputs.documentdb_version }}
+          DEMONSTRATION: ${{ inputs.demonstration }}
+          DETECTION_ID: ${{ inputs.detection_id }}
+          DISPATCH_ID: ${{ inputs.dispatch_id }}
+        run: |
+          args=(
+            --input incoming
+            --output report
+            --summary "$GITHUB_STEP_SUMMARY"
+            --expected-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
+          )
+          if [ -n "$INTEGRATION" ]; then args+=(--integration "$INTEGRATION"); fi
+          if [ -n "$DOCUMENTDB_VERSION" ]; then args+=(--documentdb-version "$DOCUMENTDB_VERSION"); fi
+          if [ -n "$VERSION" ]; then args+=(--version "$VERSION"); fi
+          if [ "$DEMONSTRATION" = "true" ]; then args+=(--demonstration); fi
+          if [ -n "$DETECTION_ID" ] || [ -n "$DISPATCH_ID" ]; then
+            args+=(--detection-id "$DETECTION_ID" --dispatch-id "$DISPATCH_ID")
+          fi
+          python -m compatibility.workflow report "${args[@]}"
+      - name: Retain the combined summary and dashboard preview
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: compatibility-report-${{ github.run_attempt }}
+          path: report/
+          if-no-files-found: error
+          retention-days: 30

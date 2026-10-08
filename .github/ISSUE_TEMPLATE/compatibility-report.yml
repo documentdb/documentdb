@@ -1,0 +1,48 @@
+name: Integration compatibility problem
+description: Report behavior that disagrees with a tested compatibility result.
+title: "[Compatibility] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Include a minimal reproduction with synthetic data. Do not include credentials,
+        connection strings containing secrets, or customer data. A passing dashboard
+        result covers only its listed scenarios and version pair.
+  - type: input
+    id: integration
+    attributes:
+      label: Integration
+    validations:
+      required: true
+  - type: input
+    id: documentdb_version
+    attributes:
+      label: DocumentDB version
+    validations:
+      required: true
+  - type: input
+    id: upstream_version
+    attributes:
+      label: Integration version
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Actual environment
+      description: Include operating system, runtime, topology, and relevant non-secret settings.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction and expected versus actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: dashboard_run
+    attributes:
+      label: Dashboard and pipeline run
+      description: Include the dashboard entry or run that led you to expect this scenario to work.
+    validations:
+      required: true
