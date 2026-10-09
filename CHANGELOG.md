@@ -45,6 +45,7 @@
 * Reduce lock-manager pressure for dynamic cursor queries on heavily indexed collections by releasing planner-acquired `AccessShareLock`s for indexes not referenced by the final streamable plan immediately after planning. Guarded by the default-off `documentdb.enable_dynamic_cursor_early_index_lock_release` setting. *[Perf]*
 
 ### documentdb v1.0-0 (October 19, 2026) ###
+* Add anonymous usage telemetry to the `documentdb-local` image, **on by default**. It reports only the image version, platform and CPU architecture at startup and hourly. Turn it off with `DOCUMENTDB_USAGE_TELEMETRY=false`, `NO_ANALYTICS=1`, `DO_NOT_TRACK=1` or `--disable-usage-telemetry`. Native packages are unaffected. See [documentdb-local/PRIVACY.md](documentdb-local/PRIVACY.md). *[Feature]*
 * Release executable memory allocated for PCRE2 JIT-compiled regular expressions when their memory context resets. *[Bugfix]* (work item 5530914)
 * Prevent RUM vacuum from processing internal entry-tree and posting-tree roots as leaf pages after concurrent root splits. *[Bugfix]*
 * Restore vacuum cost delays and interrupt handling between RUM posting-tree leaf pages. *[Bugfix]*

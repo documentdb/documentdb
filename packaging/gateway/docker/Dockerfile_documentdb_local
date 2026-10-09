@@ -128,6 +128,7 @@ ARG IMAGE_SOURCE="https://github.com/documentdb/documentdb"
 # Identity labels so tooling can discover the container by label alone, without
 # relying on its name/port or inspecting logs/env (which hold credentials).
 LABEL org.opencontainers.image.title="DocumentDB Local" \
+      org.opencontainers.image.description="DocumentDB with its MongoDB-compatible gateway. Sends anonymous usage telemetry by default; set DOCUMENTDB_USAGE_TELEMETRY=false to turn it off. See /home/documentdb/PRIVACY.md." \
       com.documentdb.documentdb.local="true" \
       org.opencontainers.image.version="${DOCUMENTDB_VERSION}" \
       org.opencontainers.image.revision="${GIT_COMMIT}" \

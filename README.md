@@ -73,6 +73,8 @@ Step 3. Setup DocumentDB using Docker
    > **Note:** Replace `<YOUR_USERNAME>` and `<YOUR_PASSWORD>` with your desired credentials. You must set these when creating the container for authentication to work.
    > 
    > **Port Note:** Port `10260` is used by default in these instructions to avoid conflicts with other local database services. You can use port `27017` (the standard MongoDB port) or any other available port if you prefer. If you do, be sure to update the port number in both your `docker run` command and your connection string accordingly.
+   >
+   > **Usage telemetry:** The image sends anonymous usage telemetry by default: its version, platform and CPU architecture, at startup and hourly. No database, collection or user names, queries, documents or credentials are sent. To turn it off, add `-e DOCUMENTDB_USAGE_TELEMETRY=false` (or `-e NO_ANALYTICS=1`) to `docker run`. See [PRIVACY.md](documentdb-local/PRIVACY.md) for details. The native packages send no usage telemetry.
 
 Step 4: Initialize the pymongo client with the credentials from the previous step
 
