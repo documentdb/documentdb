@@ -1,4 +1,6 @@
-# Technical Steering Committee (TSC)
+# Maintainers and Project Roles
+
+For role definitions and privileges, see [GOVERNANCE.md](./GOVERNANCE.md#8-roles-and-privileges).
 
 ## Current TSC Members
 
@@ -22,6 +24,18 @@
 | --- | --- |
 | Vinod Sridharan | Microsoft |
 | Santiago Fernandez Madero | Microsoft |
+
+## Current Coordinators
+
+| Member | Organization |
+| --- | --- |
+| German Eichberger | Microsoft |
+| Paul Cheng | Microsoft |
+| Andrew Khoma | Microsoft |
+| Pankaj Khattar | Microsoft |
+| Yogesh Kumar | Microsoft |
+
+Note: TSC members also serve coordination roles for escalation and planning; only non‑TSC coordinators are listed.
 
 ## Current Project Chair
 
