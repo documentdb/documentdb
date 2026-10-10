@@ -37,3 +37,36 @@ jobs:
 
       - name: Run internal CI trigger contract tests
         run: python3 -m unittest discover -s .github/workflows/tests -p 'test_internal_ci_trigger.py'
+
+  compatibility-unit-tests:
+    runs-on: ubuntu-24.04
+    name: Ecosystem compatibility infrastructure
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Install compatibility development dependencies
+        run: python -m pip install -r compatibility/requirements-dev.txt
+      - name: Check scoped Python formatting and types
+        run: |
+          python -m black --check --config compatibility/pyproject.toml compatibility
+          python -m isort --check-only --settings-path compatibility/pyproject.toml compatibility
+          python -m flake8 --max-line-length=100 --extend-ignore=E203 compatibility
+          python -m mypy --config-file compatibility/pyproject.toml compatibility
+      - name: Run compatibility unit tests
+        run: python -m pytest -c compatibility/pyproject.toml compatibility/unit
+      - name: Check the trusted Git history publisher
+        run: shellcheck compatibility/persist.sh
+      - name: Check dashboard freshness
+        run: |
+          image=node:24.21.0-bookworm-slim@sha256:5cbc7caba8c2c0f0bca675d1b61b9f2857e1cf1853c6164ee9dd409501a936e7
+          docker run --rm --read-only --network none --user 1000:1000 \
+            --tmpfs /tmp:size=64m --cap-drop=ALL --security-opt=no-new-privileges \
+            --mount "type=bind,source=$PWD,target=/workspace,readonly" \
+            --workdir /workspace "$image" \
+            node --test compatibility/unit/test_freshness.cjs
