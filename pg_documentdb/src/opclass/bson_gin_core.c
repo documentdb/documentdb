@@ -183,6 +183,8 @@ static int32_t GinBsonComparePartialBitsWiseOperator(BsonIndexTerm *queryValue,
 													 bitsCompareFunc);
 static void ProcessExtractQueryForRegex(pgbsonelement *element,
 										bool *partialmatch, Pointer *extra_data);
+static Datum GenerateRegexValueTerm(pgbsonelement *element,
+									const IndexTermCreateMetadata *metadata);
 static Datum GenerateEmptyArrayTerm(pgbsonelement *filterElement, const
 									IndexTermCreateMetadata *metadata);
 static inline Datum * GenerateNullEqualityIndexTerms(int32 *nentries, bool **partialmatch,
@@ -2500,6 +2502,11 @@ GinBsonExtractQueryIn(BsonExtractQueryArgs *args)
 
 		inArraySize++;
 		arrayHasNull = arrayHasNull || arrayValue->value_type == BSON_TYPE_NULL;
+		if (arrayValue->value_type == BSON_TYPE_REGEX)
+		{
+			/* A regex also gets an exact term for the regex itself. */
+			inArraySize++;
+		}
 	}
 
 	if (arrayHasNull)
@@ -2540,8 +2547,10 @@ GinBsonExtractQueryIn(BsonExtractQueryArgs *args)
 		element.pathLength = queryElement.pathLength;
 		element.bsonValue = *bson_iter_value(&arrayIter);
 
+		Datum regexValueTerm = (Datum) 0;
 		if (element.bsonValue.value_type == BSON_TYPE_REGEX)
 		{
+			regexValueTerm = GenerateRegexValueTerm(&element, &args->termMetadata);
 			ProcessExtractQueryForRegex(&element, &partialMatchArray[index],
 										&extraDataArray[index]);
 			inQueryData->arrayHasRegex = true;
@@ -2555,6 +2564,11 @@ GinBsonExtractQueryIn(BsonExtractQueryArgs *args)
 		inQueryData->arrayHasTruncation = inQueryData->arrayHasTruncation ||
 										  serializedTerm.isIndexTermTruncated;
 		index++;
+
+		if (regexValueTerm != (Datum) 0)
+		{
+			entries[index++] = regexValueTerm;
+		}
 	}
 
 	inQueryData->inTermCount = index;
@@ -2627,6 +2641,11 @@ GinBsonExtractQueryNotIn(BsonExtractQueryArgs *args)
 								"cannot nest $ under $in")));
 		}
 		termCount++;
+		if (arrayValue->value_type == BSON_TYPE_REGEX)
+		{
+			/* A regex also gets an exact term for the regex itself. */
+			termCount++;
+		}
 	}
 
 	/* we generate 5 more possible terms 1 for the root term, root exists term,
@@ -2663,9 +2682,11 @@ GinBsonExtractQueryNotIn(BsonExtractQueryArgs *args)
 		element.pathLength = queryElement.pathLength;
 		element.bsonValue = *bson_iter_value(&arrayIter);
 
+		Datum regexValueTerm = (Datum) 0;
 		if (element.bsonValue.value_type == BSON_TYPE_REGEX)
 		{
 			/* TODO(Truncation) */
+			regexValueTerm = GenerateRegexValueTerm(&element, &args->termMetadata);
 			ProcessExtractQueryForRegex(&element, &partialMatchArray[index],
 										&extraDataArray[index]);
 			queryData->arrayHasRegex = true;
@@ -2681,6 +2702,11 @@ GinBsonExtractQueryNotIn(BsonExtractQueryArgs *args)
 		queryData->arrayHasTruncation = serialized.isIndexTermTruncated;
 
 		index++;
+
+		if (regexValueTerm != (Datum) 0)
+		{
+			entries[index++] = regexValueTerm;
+		}
 	}
 
 	queryData->inTermCount = index;
@@ -4108,6 +4134,24 @@ ProcessExtractQueryForRegex(pgbsonelement *element, bool *partialmatch,
 	element->bsonValue.value_type = BSON_TYPE_UTF8;
 	element->bsonValue.value.v_utf8.str = "";
 	element->bsonValue.value.v_utf8.len = 0;
+}
+
+
+/*
+ * GenerateRegexValueTerm returns the index term of a regex element of a
+ * $in or $nin array as a value: the exact term of the regex itself.
+ * A regex in $in/$nin matches a string the pattern matches and also a value
+ * that is that same regex (same pattern and options), as $regex does
+ * (CompareRegexTextMatch); the partial match ProcessExtractQueryForRegex sets
+ * up only enumerates the path's strings, so the regex-valued terms need this
+ * exact term, as GinBsonExtractQueryRegex adds for a regex value.  Call it
+ * before ProcessExtractQueryForRegex, which turns the element into a string.
+ */
+static Datum
+GenerateRegexValueTerm(pgbsonelement *element, const IndexTermCreateMetadata *metadata)
+{
+	Assert(element->bsonValue.value_type == BSON_TYPE_REGEX);
+	return PointerGetDatum(SerializeBsonIndexTerm(element, metadata).indexTermVal);
 }
 
 

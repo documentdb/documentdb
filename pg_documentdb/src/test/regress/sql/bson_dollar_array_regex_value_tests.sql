@@ -1,0 +1,90 @@
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+
+SET documentdb.next_collection_id TO 9940;
+SET documentdb.next_collection_index_id TO 9940;
+
+-- A regex inside $in, $nin or $all matches a string the pattern matches and,
+-- as in MongoDB, a value that is itself that same regex (same pattern and
+-- options).  The runtime does both; an index scan must not drop the second.
+--
+-- Collection "single" has a single-path index on "a", "composite" a
+-- composite one, and "noindex" none: all three must return the same rows.
+SET documentdb.defaultUseCompositeOpClass TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('arrrx_db',
+  '{ "createIndexes": "single", "indexes": [ { "key": { "a": 1 }, "name": "a_1" } ] }', TRUE);
+SET documentdb.defaultUseCompositeOpClass TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('arrrx_db',
+  '{ "createIndexes": "composite", "indexes": [ { "key": { "a": 1 }, "name": "a_1" } ] }', TRUE);
+RESET documentdb.defaultUseCompositeOpClass;
+SELECT documentdb_api.create_collection('arrrx_db', 'noindex');
+
+SELECT COUNT(*) FROM (
+  SELECT documentdb_api.insert_one('arrrx_db', c, d::bson)
+  FROM unnest(ARRAY['single', 'composite', 'noindex']) c,
+       unnest(ARRAY[
+         '{ "_id": 1, "a": "abc" }',
+         '{ "_id": 2, "a": "abd" }',
+         '{ "_id": 3, "a": "xyz" }',
+         '{ "_id": 4, "a": { "$regularExpression": { "pattern": "^ab", "options": "" } } }',
+         '{ "_id": 5, "a": { "$regularExpression": { "pattern": "^ab", "options": "i" } } }',
+         '{ "_id": 6, "a": { "$regularExpression": { "pattern": "^xy", "options": "" } } }',
+         '{ "_id": 7, "a": [ "zzz", { "$regularExpression": { "pattern": "^ab", "options": "" } } ] }',
+         '{ "_id": 8, "a": 10 }',
+         '{ "_id": 9 }'
+       ]) d
+) i;
+
+-- The rows of a filter on each collection, an index forced where there is one.
+CREATE FUNCTION arrrx_ids(coll text, filter text) RETURNS text
+LANGUAGE plpgsql AS $$
+DECLARE r text;
+BEGIN
+  PERFORM set_config('documentdb.forceDisableSeqScan', (coll <> 'noindex')::text, true);
+  EXECUTE format($q$SELECT string_agg(bson_get_value_text(d.document, '_id'), ',' ORDER BY bson_get_value_text(d.document, '_id')::int)
+                    FROM (SELECT document FROM bson_aggregation_find('arrrx_db', '{ "find": "%s", "filter": %s }')) d$q$, coll, filter)
+    INTO r;
+  RETURN coalesce(r, '');
+END $$;
+
+CREATE TABLE arrrx_filters (f text);
+INSERT INTO arrrx_filters VALUES
+  ('{ "a": { "$in": [ { "$regularExpression": { "pattern": "^ab", "options": "" } } ] } }'),
+  ('{ "a": { "$in": [ { "$regularExpression": { "pattern": "^ab", "options": "i" } } ] } }'),
+  ('{ "a": { "$in": [ { "$regularExpression": { "pattern": "^ab", "options": "" } }, "xyz" ] } }'),
+  ('{ "a": { "$in": [ { "$regularExpression": { "pattern": "^ab", "options": "" } }, { "$regularExpression": { "pattern": "^xy", "options": "" } } ] } }'),
+  ('{ "a": { "$in": [ { "$regularExpression": { "pattern": "^ab", "options": "" } }, null ] } }'),
+  ('{ "a": { "$in": [ { "$regularExpression": { "pattern": "^q", "options": "" } } ] } }'),
+  ('{ "a": { "$nin": [ { "$regularExpression": { "pattern": "^ab", "options": "" } } ] } }'),
+  ('{ "a": { "$nin": [ { "$regularExpression": { "pattern": "^ab", "options": "" } }, 10 ] } }'),
+  ('{ "a": { "$all": [ { "$regularExpression": { "pattern": "^ab", "options": "" } } ] } }'),
+  ('{ "a": { "$all": [ { "$regularExpression": { "pattern": "^ab", "options": "" } }, "zzz" ] } }'),
+  ('{ "a": { "$regularExpression": { "pattern": "^ab", "options": "" } } }'),
+  ('{ "a": { "$regex": "^ab" } }'),
+  ('{ "a": { "$eq": { "$regularExpression": { "pattern": "^ab", "options": "" } } } }');
+
+-- The indexed collections are read through their index.
+SET documentdb.forceDisableSeqScan TO on;
+SELECT c AS collection, documentdb_test_helpers.explain_plan_contains(format(
+    $q$SELECT document FROM bson_aggregation_find('arrrx_db', '{ "find": "%s", "filter": { "a": { "$in": [ { "$regularExpression": { "pattern": "^ab", "options": "" } } ] } } }')$q$, c),
+    'Index Scan (on|using) a_1') AS uses_a_1
+FROM unnest(ARRAY['single', 'composite']) c;
+RESET documentdb.forceDisableSeqScan;
+
+-- Expected (MongoDB): $in [/^ab/] matches 1, 2 (strings), 4 and 7 (the regex
+-- /^ab/ itself, alone or in an array); not 5 (/^ab/i is a different regex).
+SELECT f AS filter,
+       arrrx_ids('noindex', f) AS noindex,
+       arrrx_ids('single', f) = arrrx_ids('noindex', f) AS single_ok,
+       arrrx_ids('composite', f) = arrrx_ids('noindex', f) AS composite_ok
+FROM arrrx_filters ORDER BY f;
+
+-- Every case with a mismatch, with the rows each index returned.
+SELECT f AS filter, arrrx_ids('single', f) AS single, arrrx_ids('composite', f) AS composite,
+       arrrx_ids('noindex', f) AS noindex
+FROM arrrx_filters
+WHERE arrrx_ids('single', f) <> arrrx_ids('noindex', f) OR arrrx_ids('composite', f) <> arrrx_ids('noindex', f)
+ORDER BY f;
+
+DROP TABLE arrrx_filters;
+DROP FUNCTION arrrx_ids(text, text);
+SELECT documentdb_api.drop_collection('arrrx_db', c) FROM unnest(ARRAY['single', 'composite', 'noindex']) c;
