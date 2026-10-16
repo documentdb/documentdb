@@ -4,3 +4,6 @@
 #include "udfs/schema_mgmt/create_collection_with_privs--1.2-0.sql"
 
 #include "udfs/rum/bson_rum_shard_exclusion_functions--1.2-0.sql"
+#include "udfs/query/bson_subattr_support--1.2-0.sql"
+#include "udfs/commands_crud/bson_update_document--1.2-0.sql"
+#include "udfs/vector/bson_extract_vector--1.2-0.sql"

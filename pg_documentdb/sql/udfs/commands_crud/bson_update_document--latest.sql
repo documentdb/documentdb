@@ -18,6 +18,7 @@ CREATE OR REPLACE FUNCTION __API_SCHEMA_INTERNAL_V2__.update_bson_document(
  RETURNS __CORE_SCHEMA__.bson
  LANGUAGE c
  IMMUTABLE PARALLEL SAFE
+ SUPPORT __API_SCHEMA_INTERNAL_V2__.bson_subattr_support
 AS 'MODULE_PATHNAME', $function$bson_update_document$function$;
 
 
@@ -37,4 +38,5 @@ CREATE OR REPLACE FUNCTION __API_SCHEMA_INTERNAL_V2__.update_bson_document(
  RETURNS __CORE_SCHEMA__.bson
  LANGUAGE c
  IMMUTABLE PARALLEL SAFE
+ SUPPORT __API_SCHEMA_INTERNAL_V2__.bson_subattr_support
 AS 'MODULE_PATHNAME', $function$bson_update_document$function$;
