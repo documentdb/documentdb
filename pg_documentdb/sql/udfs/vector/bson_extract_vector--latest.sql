@@ -3,6 +3,7 @@ CREATE OR REPLACE FUNCTION __API_SCHEMA_INTERNAL_V2__.bson_extract_vector(docume
  RETURNS public.vector
  LANGUAGE c
  IMMUTABLE PARALLEL SAFE RETURNS NULL ON NULL INPUT
+ SUPPORT __API_SCHEMA_INTERNAL_V2__.bson_subattr_support
 AS 'MODULE_PATHNAME', $function$command_bson_extract_vector$function$;
 
 CREATE OR REPLACE FUNCTION __API_SCHEMA_INTERNAL_V2__.bson_search_param(__CORE_SCHEMA__.bson, __CORE_SCHEMA__.bson)

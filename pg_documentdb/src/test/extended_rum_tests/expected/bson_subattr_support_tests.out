@@ -1,0 +1,186 @@
+SET search_path TO documentdb_api_catalog, documentdb_core, public;
+SET documentdb.next_collection_id TO 3300;
+SET documentdb.next_collection_index_id TO 3300;
+-- bson_subattr_support describes, to servers that ask
+-- (SupportRequestSubattr), which parts of a document update_bson_document
+-- may change and which part bson_extract_vector reads, so that an update
+-- can skip evaluating a vector index it cannot affect.  That never changes
+-- whether an update is HOT, only how much work deciding it takes; a wrong
+-- answer, though, would lose index entries.  Servers built with assertions
+-- evaluate the indexes anyway and fail the update if an answer was wrong.
+-- And on every server, after updates touching and not touching the paths
+-- the indexes use, every index must find what a sequential scan finds.
+--
+-- The collection has only expression indexes (vector and 2d); every other
+-- DocumentDB index has the document itself as a column, which the server
+-- never skips.  bson_validate_geometry (2d) is not described: it returns
+-- the whole document.
+-- the support function is attached where expected, and only there
+SELECT p.proname, s.proname AS support
+  FROM pg_proc p JOIN pg_proc s ON s.oid = p.prosupport
+ WHERE s.proname = 'bson_subattr_support'
+ ORDER BY 1, p.pronargs;
+       proname        |       support        
+----------------------+----------------------
+ bson_extract_vector  | bson_subattr_support
+ update_bson_document | bson_subattr_support
+ update_bson_document | bson_subattr_support
+(3 rows)
+
+SELECT documentdb_api.drop_collection('subattr_db', 'subattr');
+ drop_collection 
+-----------------
+ f
+(1 row)
+
+SELECT documentdb_api.create_collection('subattr_db', 'subattr');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT collection_id AS sa_col FROM documentdb_api_catalog.collections
+  WHERE database_name = 'subattr_db' AND collection_name = 'subattr' \gset
+SELECT FORMAT('ALTER TABLE documentdb_data.documents_%s SET (fillfactor = 10, autovacuum_enabled = off)', :sa_col) \gexec
+ALTER TABLE documentdb_data.documents_3301 SET (fillfactor = 10, autovacuum_enabled = off)
+SELECT COUNT(documentdb_api.insert_one('subattr_db', 'subattr',
+  FORMAT('{ "_id": %s, "v": [ %s, %s, 1.0 ], "loc": [ %s, %s ], "w": { "v": [ 1, 2, 3 ] }, "n": 0 }',
+         i, i % 7, i % 5 + 1, i % 90, i % 45)::bson))
+  FROM generate_series(1, 120) i;
+ count 
+-------
+   120
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('subattr_db',
+  '{ "createIndexes": "subattr", "indexes": [
+     { "key": { "v": "cosmosSearch" }, "name": "v_ivf",
+       "cosmosSearchOptions": { "kind": "vector-ivf", "numLists": 1, "similarity": "L2", "dimensions": 3 } },
+     { "key": { "loc": "2d" }, "name": "loc_2d" } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Not touching what the indexes read.  The server skips the vector index
+-- (it reads only "v"); it still evaluates the 2d index, whose datum is
+-- the whole document, so these updates are not HOT on any server.
+SELECT documentdb_api.update('subattr_db', '{ "update": "subattr", "updates": [
+  { "q": {}, "u": { "$inc": { "n": 1 }, "$set": { "w.v": [ 4, 5, 6 ] } }, "multi": true } ] }');
+                                                                 update                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""120"" }, ""n"" : { ""$numberInt"" : ""120"" } }",t)
+(1 row)
+
+-- Touching them: by name, by position, by renaming onto and away from them.
+-- The last fails (a fourth dimension): the vector index was evaluated.
+SELECT documentdb_api.update('subattr_db', '{ "update": "subattr", "updates": [
+  { "q": { "_id": { "$lte": 10 } }, "u": { "$set": { "v": [ 9, 9, 9 ] } }, "multi": true },
+  { "q": { "_id": { "$gt": 10, "$lte": 20 } }, "u": { "$set": { "v.1": 8 } }, "multi": true },
+  { "q": { "_id": { "$gt": 20, "$lte": 30 } }, "u": { "$unset": { "v": 1 } }, "multi": true },
+  { "q": { "_id": { "$gt": 30, "$lte": 40 } }, "u": { "$rename": { "w.v": "v" } }, "multi": true },
+  { "q": { "_id": { "$gt": 40, "$lte": 50 } }, "u": { "$rename": { "v": "vv" } }, "multi": true },
+  { "q": { "_id": { "$gt": 50, "$lte": 60 } }, "u": { "$set": { "loc": [ 1, 1 ] } }, "multi": true },
+  { "q": { "_id": { "$gt": 60, "$lte": 70 } }, "u": { "$set": { "loc.0": 2 } }, "multi": true },
+  { "q": { "_id": { "$gt": 70, "$lte": 80 } }, "u": { "$push": { "v": 1 } }, "multi": true } ] }');
+                                                                                                                                             update                                                                                                                                             
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""70"" }, ""n"" : { ""$numberInt"" : ""70"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""7"" }, ""code"" : { ""$numberInt"" : ""130"" }, ""errmsg"" : ""expected 3 dimensions, not 4"" } ] }",f)
+(1 row)
+
+-- one at a time (updateOne), not touching the indexes
+SELECT COUNT(documentdb_api.update('subattr_db', FORMAT('{ "update": "subattr", "updates": [
+  { "q": { "_id": %s }, "u": { "$set": { "n": %s } } } ] }', i, i)::bson))
+  FROM generate_series(101, 110) i;
+ count 
+-------
+    10
+(1 row)
+
+-- Each index's answer, then a sequential scan's: they must agree.
+-- The vector index through $search: with one list and one probe it
+-- returns every row it holds, nearest first; the documents that have a
+-- vector "v", from the table.
+CREATE TEMP TABLE via_index AS SELECT document FROM bson_aggregation_pipeline('subattr_db',
+  '{ "aggregate": "subattr", "pipeline": [
+    { "$search": { "cosmosSearch": { "vector": [ 0, 1, 1 ], "k": 200, "path": "v" } } } ], "cursor": {} }');
+SELECT COUNT(*) AS rows, md5(string_agg(document->>'_id', ',' ORDER BY (document->>'_id')::int)) AS ids
+  FROM via_index;
+ rows |               ids                
+------+----------------------------------
+  100 | c19b8f199318cb3d62203faa50450afb
+(1 row)
+
+SELECT COUNT(*) AS rows, md5(string_agg(document->>'_id', ',' ORDER BY (document->>'_id')::int)) AS ids
+  FROM documentdb_api.collection('subattr_db', 'subattr')
+ WHERE documentdb_api_internal.bson_extract_vector(document, 'v'::text) IS NOT NULL;
+ rows |               ids                
+------+----------------------------------
+  100 | c19b8f199318cb3d62203faa50450afb
+(1 row)
+
+DROP TABLE via_index;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('subattr_db', '{ "aggregate": "subattr", "pipeline": [
+    { "$search": { "cosmosSearch": { "vector": [ 0, 1, 1 ], "k": 200, "path": "v" } } } ], "cursor": {} }');
+                                                               QUERY PLAN                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_0
+   ->  Limit
+         ->  Custom Scan (DocumentDBApiQueryScan)
+               CosmosSearch Custom Params: { "nProbes" : 1 }
+               ->  Index Scan using v_ivf on documents_3301 collection
+                     Order By: (vector(documentdb_api_internal.bson_extract_vector(document, 'v'::text), 3, true) <-> '[0,1,1]'::vector)
+(6 rows)
+
+-- the 2d index through its own expression and predicate
+SELECT FORMAT($$SELECT COUNT(*) FROM documentdb_data.documents_%s
+  WHERE documentdb_api_catalog.bson_validate_geometry(document, 'loc'::text) IS NOT NULL
+    AND documentdb_api_catalog.bson_validate_geometry(document, 'loc'::text) OPERATOR(documentdb_api_catalog.@|-|)
+        '{ "loc": { "$box": [ [ 0, 0 ], [ 5, 5 ] ] } }'::documentdb_core.bson$$, :sa_col) AS gq \gset
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SELECT FORMAT('EXPLAIN (COSTS OFF) %s', :'gq') \gexec
+EXPLAIN (COSTS OFF) SELECT COUNT(*) FROM documentdb_data.documents_3301
+  WHERE documentdb_api_catalog.bson_validate_geometry(document, 'loc'::text) IS NOT NULL
+    AND documentdb_api_catalog.bson_validate_geometry(document, 'loc'::text) OPERATOR(documentdb_api_catalog.@|-|)
+        '{ "loc": { "$box": [ [ 0, 0 ], [ 5, 5 ] ] } }'::documentdb_core.bson
+                                                                                                         QUERY PLAN                                                                                                         
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   ->  Bitmap Heap Scan on documents_3301
+         Recheck Cond: (bson_validate_geometry(document, 'loc'::text) @|-| '{ "loc" : { "$box" : [ [ { "$numberInt" : "0" }, { "$numberInt" : "0" } ], [ { "$numberInt" : "5" }, { "$numberInt" : "5" } ] ] } }'::bson)
+         ->  Bitmap Index Scan on loc_2d
+               Index Cond: (bson_validate_geometry(document, 'loc'::text) @|-| '{ "loc" : { "$box" : [ [ { "$numberInt" : "0" }, { "$numberInt" : "0" } ], [ { "$numberInt" : "5" }, { "$numberInt" : "5" } ] ] } }'::bson)
+(5 rows)
+
+SELECT :'gq' \gexec
+SELECT COUNT(*) FROM documentdb_data.documents_3301
+  WHERE documentdb_api_catalog.bson_validate_geometry(document, 'loc'::text) IS NOT NULL
+    AND documentdb_api_catalog.bson_validate_geometry(document, 'loc'::text) OPERATOR(documentdb_api_catalog.@|-|)
+        '{ "loc": { "$box": [ [ 0, 0 ], [ 5, 5 ] ] } }'::documentdb_core.bson
+ count 
+-------
+    21
+(1 row)
+
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_indexscan TO off; SET LOCAL enable_bitmapscan TO off;
+SELECT :'gq' \gexec
+SELECT COUNT(*) FROM documentdb_data.documents_3301
+  WHERE documentdb_api_catalog.bson_validate_geometry(document, 'loc'::text) IS NOT NULL
+    AND documentdb_api_catalog.bson_validate_geometry(document, 'loc'::text) OPERATOR(documentdb_api_catalog.@|-|)
+        '{ "loc": { "$box": [ [ 0, 0 ], [ 5, 5 ] ] } }'::documentdb_core.bson
+ count 
+-------
+    21
+(1 row)
+
+ROLLBACK;
+SELECT documentdb_api.drop_collection('subattr_db', 'subattr');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
