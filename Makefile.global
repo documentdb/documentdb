@@ -12,6 +12,21 @@ PG_CONFIG ?= pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 
+# Detect PostgreSQL server APIs that may or may not be present in the server
+# being built against, by looking at its headers rather than at its version:
+# they are proposed for a future release.
+#   amcomparedatums: an index AM callback that lets an UPDATE stay HOT when
+#     the index entries for the new value would be the same as the old.
+#   SupportRequestSubattr: a planner support request describing which parts
+#     of a structured value a function reads or changes.
+PG_SERVER_INCLUDEDIR := $(shell $(PG_CONFIG) --includedir-server)
+ifneq ($(shell grep -l amcomparedatums_function $(PG_SERVER_INCLUDEDIR)/access/amapi.h 2>/dev/null),)
+override CPPFLAGS += -DDOCUMENTDB_HAVE_AMCOMPAREDATUMS
+endif
+ifneq ($(shell grep -l SupportRequestSubattr $(PG_SERVER_INCLUDEDIR)/nodes/supportnodes.h 2>/dev/null),)
+override CPPFLAGS += -DDOCUMENTDB_HAVE_SUBATTR_SUPPORT
+endif
+
 ifeq ($(ALLOW_DEFAULT_VISIBILITY),yes)
 override LDFLAGS_SL += -fvisibility=default
 override CFLAGS += -fvisibility=default
