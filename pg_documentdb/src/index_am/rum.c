@@ -24,7 +24,6 @@
 #include "math.h"
 #include <optimizer/optimizer.h>
 #include <commands/explain.h>
-#include <access/gin.h>
 #include <parser/parsetree.h>
 #include <optimizer/pathnode.h>
 
@@ -1104,11 +1103,18 @@ GetIndexBoundsForExplain(Relation index_rel, Datum compositeArgDatum,
 	/* Call extract_query to get the index details */
 	int32_t ginScanType = GetScanTypeForScanDirection(scanDirection);
 	LOCAL_FCINFO(fcinfo, 7);
-	fcinfo->flinfo = palloc(sizeof(FmgrInfo));
-	fmgr_info_copy(fcinfo->flinfo,
-				   index_getprocinfo(index_rel, 1,
-									 GIN_EXTRACTQUERY_PROC),
-				   CurrentMemoryContext);
+
+	/*
+	 * The composite extract_query is called directly below; it needs only
+	 * the column's operator class options from the call context.  Take them
+	 * from the index rather than from a support procedure: the procedure
+	 * number of extract_query is GIN's and RUM's, and an alternate index AM
+	 * registered with RegisterIndexAm may number its procedures otherwise.
+	 */
+	fcinfo->flinfo = palloc0(sizeof(FmgrInfo));
+	fcinfo->flinfo->fn_mcxt = CurrentMemoryContext;
+	set_fn_opclass_options(fcinfo->flinfo,
+						   RelationGetIndexAttOptions(index_rel, false)[0]);
 
 	fcinfo->args[0].value = compositeArgDatum;
 	fcinfo->args[1].value = PointerGetDatum(&nentries);
