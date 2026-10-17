@@ -85,7 +85,8 @@ SELECT FORMAT($$SELECT COUNT(*) FROM documentdb_data.documents_%s
     AND documentdb_api_catalog.bson_validate_geometry(document, 'loc'::text) OPERATOR(documentdb_api_catalog.@|-|)
         '{ "loc": { "$box": [ [ 0, 0 ], [ 5, 5 ] ] } }'::documentdb_core.bson$$, :sa_col) AS gq \gset
 BEGIN;
-SET LOCAL enable_seqscan TO off;
+-- a plain index scan: PostgreSQL 18 would otherwise choose a bitmap scan
+SET LOCAL enable_seqscan TO off; SET LOCAL enable_bitmapscan TO off;
 SELECT FORMAT('EXPLAIN (COSTS OFF) %s', :'gq') \gexec
 SELECT :'gq' \gexec
 ROLLBACK;
