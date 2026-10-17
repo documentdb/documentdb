@@ -139,7 +139,8 @@ SELECT FORMAT($$SELECT COUNT(*) FROM documentdb_data.documents_%s
     AND documentdb_api_catalog.bson_validate_geometry(document, 'loc'::text) OPERATOR(documentdb_api_catalog.@|-|)
         '{ "loc": { "$box": [ [ 0, 0 ], [ 5, 5 ] ] } }'::documentdb_core.bson$$, :sa_col) AS gq \gset
 BEGIN;
-SET LOCAL enable_seqscan TO off;
+-- a plain index scan: PostgreSQL 18 would otherwise choose a bitmap scan
+SET LOCAL enable_seqscan TO off; SET LOCAL enable_bitmapscan TO off;
 SELECT FORMAT('EXPLAIN (COSTS OFF) %s', :'gq') \gexec
 EXPLAIN (COSTS OFF) SELECT COUNT(*) FROM documentdb_data.documents_3301
   WHERE documentdb_api_catalog.bson_validate_geometry(document, 'loc'::text) IS NOT NULL
@@ -148,11 +149,9 @@ EXPLAIN (COSTS OFF) SELECT COUNT(*) FROM documentdb_data.documents_3301
                                                                                                          QUERY PLAN                                                                                                         
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate
-   ->  Bitmap Heap Scan on documents_3301
-         Recheck Cond: (bson_validate_geometry(document, 'loc'::text) @|-| '{ "loc" : { "$box" : [ [ { "$numberInt" : "0" }, { "$numberInt" : "0" } ], [ { "$numberInt" : "5" }, { "$numberInt" : "5" } ] ] } }'::bson)
-         ->  Bitmap Index Scan on loc_2d
-               Index Cond: (bson_validate_geometry(document, 'loc'::text) @|-| '{ "loc" : { "$box" : [ [ { "$numberInt" : "0" }, { "$numberInt" : "0" } ], [ { "$numberInt" : "5" }, { "$numberInt" : "5" } ] ] } }'::bson)
-(5 rows)
+   ->  Index Scan using loc_2d on documents_3301
+         Index Cond: (bson_validate_geometry(document, 'loc'::text) @|-| '{ "loc" : { "$box" : [ [ { "$numberInt" : "0" }, { "$numberInt" : "0" } ], [ { "$numberInt" : "5" }, { "$numberInt" : "5" } ] ] } }'::bson)
+(3 rows)
 
 SELECT :'gq' \gexec
 SELECT COUNT(*) FROM documentdb_data.documents_3301
