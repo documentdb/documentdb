@@ -1,7 +1,7 @@
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 
-SET documentdb.next_collection_id TO 9940;
-SET documentdb.next_collection_index_id TO 9940;
+SET documentdb.next_collection_id TO 10200;
+SET documentdb.next_collection_index_id TO 10200;
 
 -- A regex inside $in, $nin or $all matches a string the pattern matches and,
 -- as in MongoDB, a value that is itself that same regex (same pattern and
