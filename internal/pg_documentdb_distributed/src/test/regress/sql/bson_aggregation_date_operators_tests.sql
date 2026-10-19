@@ -1,3 +1,6 @@
+-- Copyright (c) Microsoft Corporation. All rights reserved.
+-- SPDX-License-Identifier: MIT
+
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
 SET citus.next_shard_id TO 5900000;
 SET documentdb.next_collection_id TO 5900;
@@ -535,6 +538,7 @@ select * from bson_dollar_project('{}', '{"result": {"$dateTrunc": {"date": {"$d
 -- select * from bson_dollar_project('{}', '{"result": {"$dateTrunc": {"date": {"$date" : {"$numberLong": "7498555381"}}, "unit": "hour" , "binSize": 450000000 }  }}');
 
 -- $dateTrunc cases with unit day
+SHOW documentdb.enable_date_trunc_day_with_pg_bin;
 select * from bson_dollar_project('{}', '{"result": {"$dateTrunc": {"date": {"$date" : {"$numberLong": "1707123355381"}}, "unit": "day", "binSize": 2 }  }}');
 select * from bson_dollar_project('{}', '{"result": {"$dateTrunc": {"date": {"$date" : {"$numberLong": "1707123355381"}}, "unit": "day" , "binSize": 200000 }  }}');
 select * from bson_dollar_project('{}', '{"result": {"$dateTrunc": {"date": {"$date" : {"$numberLong": "951850555381"}}, "unit": "day", "binSize": 2, "timezone": "America/Denver" }  }}');
@@ -542,6 +546,117 @@ select * from bson_dollar_project('{}', '{"result": {"$dateTrunc": {"date": {"$d
 select * from bson_dollar_project('{}', '{"result": {"$dateTrunc": {"date": {"$date" : {"$numberLong": "7498555381"}}, "unit": "day" , "binSize": 4500 }  }}');
 select * from bson_dollar_project('{}', '{"result": {"$dateTrunc": {"date": {"$date" : {"$numberLong": "7498555381"}}, "unit": "day" , "binSize": 450000000 }  }}');
 
+-- Day truncation must count actual calendar days, including during constant folding.
+SELECT bson_dollar_project('{"date": {"$date": "2026-10-14T22:27:13.528Z"}}', '{"inputDate": {"$dateToString": {"date": "$date"}}, "result": {"$dateToString": {"date": {"$dateTrunc": {"date": {"$date": "2026-10-14T22:27:13.528Z"}, "unit": "day"}}}}}');
+
+-- Exercise runtime dates, bins anchored at 2000-01-01, and local-day boundaries.
+SELECT label, bson_dollar_project(
+    jsonb_build_object('date', jsonb_build_object('$date', input_date), 'bin', bin_size, 'tz', timezone)::text::bson,
+    '{"inputDate": {"$dateToString": {"date": "$date"}}, "result": {"$dateToString": {"date": {"$dateTrunc": {"date": "$date", "unit": "day", "binSize": "$bin", "timezone": "$tz"}}}}}')
+FROM (VALUES
+    ('reported date', '2026-10-14T22:27:13.528Z', 1, 'UTC'),
+    ('leap day', '2024-02-29T23:59:59.999Z', 1, 'UTC'),
+    ('after leap day', '2024-03-01T00:00:00.000Z', 1, 'UTC'),
+    ('month boundary', '2000-03-01T12:00:00.000Z', 1, 'UTC'),
+    ('before reference', '1999-12-31T23:59:59.999Z', 1, 'UTC'),
+    ('before reference bin', '1999-12-31T23:59:59.999Z', 2, 'UTC'),
+    ('negative exact bin', '1999-12-30T00:00:00.000Z', 2, 'UTC'),
+    ('negative three-day bin', '1999-12-31T23:59:59.999Z', 3, 'UTC'),
+    ('pre-2000 leap day', '1996-02-29T23:59:59.999Z', 1, 'UTC'),
+    ('before Unix epoch', '1969-12-31T23:59:59.999Z', 1, 'UTC'),
+    ('pre-epoch ten-day bin', '1969-12-31T23:59:59.999Z', 10, 'UTC'),
+    ('non-leap century', '1900-03-01T12:00:00.000Z', 1, 'UTC'),
+    ('reference', '2000-01-01T00:00:00.000Z', 2, 'UTC'),
+    ('two-day bin', '2026-10-14T22:27:13.528Z', 2, 'UTC'),
+    ('ten-day bin', '2026-10-14T22:27:13.528Z', 10, 'UTC'),
+    ('positive offset', '2026-10-14T22:27:13.528Z', 1, '+05:30'),
+    ('negative offset', '2000-01-01T00:30:00.000Z', 1, '-04:30'),
+    ('spring DST before', '2024-03-10T06:59:59.999Z', 1, 'America/New_York'),
+    ('spring DST after', '2024-03-10T07:00:00.000Z', 1, 'America/New_York'),
+    ('after spring DST', '2024-03-11T04:00:00.000Z', 1, 'America/New_York'),
+    ('fall DST before', '2024-11-03T05:59:59.999Z', 1, 'America/New_York'),
+    ('fall DST after', '2024-11-03T06:00:00.000Z', 1, 'America/New_York'),
+    ('after fall DST', '2024-11-04T05:00:00.000Z', 1, 'America/New_York'),
+    ('midnight DST gap', '2018-11-04T12:00:00.000Z', 1, 'America/Sao_Paulo'),
+    ('midnight DST overlap', '2024-11-03T04:30:00.000Z', 1, 'America/Havana'),
+    ('skipped local day', '2011-12-30T12:00:00.000Z', 1, 'Pacific/Apia'),
+    ('maximum stride forward', '2024-02-05T06:15:55.381Z', 106751991, 'UTC'),
+    ('maximum New York forward', '2024-02-05T06:15:55.381Z', 106751991, 'America/New_York'),
+    ('maximum Paris forward', '2024-02-05T06:15:55.381Z', 106751991, 'Europe/Paris')
+) AS cases(label, input_date, bin_size, timezone);
+
+-- $dateToString only formats years 0-9999; use UTC text with an era for range limits.
+SELECT label,
+    to_char(DATE '1970-01-01' + (input_date_ms / 86400000)::integer
+            + (input_date_ms % 86400000) * INTERVAL '1 millisecond',
+            'YYYY-MM-DD"T"HH24:MI:SS.MS AD') AS input_date,
+    to_char(DATE '1970-01-01' + (result_ms / 86400000)::integer
+            + (result_ms % 86400000) * INTERVAL '1 millisecond',
+            'YYYY-MM-DD"T"HH24:MI:SS.MS AD') AS result
+FROM (
+    SELECT label, input_date_ms, bson_get_value_text(bson_dollar_project(
+        jsonb_build_object('date', jsonb_build_object('$date', jsonb_build_object('$numberLong', input_date_ms::text)), 'bin', bin_size, 'tz', timezone)::text::bson,
+        '{"result": {"$toLong": {"$dateTrunc": {"date": "$date", "unit": "day", "binSize": "$bin", "timezone": "$tz"}}}}'
+    ), 'result')::bigint AS result_ms
+    FROM (VALUES
+        ('1 BC day', -62160780304000::bigint, 1::bigint, 'UTC'), -- 0001-03-15 12:34:56 BC
+        ('1 BC two-day bin', -62160780304000, 2, 'UTC'),
+        ('BC/AD boundary', -62135596800001, 1, 'UTC'), -- One millisecond before 0001-01-01 AD
+        ('earliest UTC timestamp', -210866803200000, 1, 'UTC'),
+        ('earliest local day New York', -210866716800000, 1, 'America/New_York'),
+        ('latest year UTC', 9224317929600000, 1, 'UTC'),
+        ('latest year New York', 9224317929600000, 1, 'America/New_York')
+    ) AS cases(label, input_date_ms, bin_size, timezone)
+) AS results;
+
+-- Constant folding must accept the largest representable stride when its result fits.
+SELECT bson_dollar_project('{}', '{"result": {"$dateToString": {"date": {"$dateTrunc": {"date": {"$date": "2024-02-05T06:15:55.381Z"}, "unit": "day", "binSize": 106751991}}}}}');
+
+-- Reject oversized strides before interval construction, even if the boundary would fit.
+SELECT bson_dollar_project('{}', '{"result": {"$dateTrunc": {"date": {"$date": {"$numberLong": "1707123355381"}}, "unit": "day", "binSize": 106751992}}}');
+SELECT bson_dollar_project('{}', '{"result": {"$dateTrunc": {"date": {"$date": {"$numberLong": "-1"}}, "unit": "day", "binSize": 9223372036854775807}}}');
+SELECT bson_dollar_project('{"date": {"$date": {"$numberLong": "-1"}}, "bin": 106751992}', '{"result": {"$dateTrunc": {"date": "$date", "unit": "day", "binSize": "$bin"}}}');
+SELECT bson_dollar_project('{"date": {"$date": {"$numberLong": "1707123355381"}}, "bin": 9223372036854775807}', '{"result": {"$dateTrunc": {"date": "$date", "unit": "day", "binSize": "$bin"}}}');
+
+-- A representable stride can still produce an unrepresentable boundary or UTC result.
+SELECT bson_dollar_project('{}', '{"result": {"$dateTrunc": {"date": {"$date": {"$numberLong": "-1"}}, "unit": "day", "binSize": 106751991}}}');
+SELECT bson_dollar_project('{"date": {"$date": {"$numberLong": "-1"}}}', '{"result": {"$dateTrunc": {"date": "$date", "unit": "day", "binSize": 20000000}}}');
+SELECT bson_dollar_project('{}', '{"result": {"$dateTrunc": {"date": {"$date": {"$numberLong": "-210866803200000"}}, "unit": "day", "timezone": "Europe/Paris"}}}');
+SELECT bson_dollar_project('{"date": {"$date": {"$numberLong": "-210866803200000"}}}', '{"result": {"$dateTrunc": {"date": "$date", "unit": "day", "timezone": "+05:30"}}}');
+
+SELECT label, bson_dollar_project(document::bson,
+    '{"result": {"$dateToString": {"date": {"$dateTrunc": {"date": "$date", "unit": "day", "binSize": "$bin", "timezone": "$tz"}}}}}')
+FROM (VALUES
+    ('missing date', '{"bin": 100000000001, "tz": "UTC"}'),
+    ('null date', '{"date": null, "bin": 100000000001, "tz": "UTC"}'),
+    ('missing bin', '{"date": {"$date": {"$numberLong": "-1"}}, "tz": "UTC"}'),
+    ('null bin', '{"date": {"$date": {"$numberLong": "-1"}}, "bin": null, "tz": "UTC"}'),
+    ('missing timezone', '{"date": {"$date": {"$numberLong": "-1"}}, "bin": 100000000001}'),
+    ('null timezone', '{"date": {"$date": {"$numberLong": "-1"}}, "bin": 100000000001, "tz": null}'),
+    ('double maximum', '{"date": {"$date": {"$numberLong": "1707123355381"}}, "bin": {"$numberDouble": "106751991"}, "tz": "UTC"}'),
+    ('decimal maximum', '{"date": {"$date": {"$numberLong": "1707123355381"}}, "bin": {"$numberDecimal": "106751991"}, "tz": "UTC"}'),
+    ('double integral', '{"date": {"$date": {"$numberLong": "-1"}}, "bin": {"$numberDouble": "2"}, "tz": "UTC"}'),
+    ('decimal integral', '{"date": {"$date": {"$numberLong": "-1"}}, "bin": {"$numberDecimal": "2"}, "tz": "UTC"}')
+) AS cases(label, document);
+
+SELECT bson_dollar_project('{"date": {"$date": "2024-02-05T06:15:55.381Z"}, "bin": {"$numberDouble": "106751992"}}', '{"result": {"$dateTrunc": {"date": "$date", "unit": "day", "binSize": "$bin"}}}');
+SELECT bson_dollar_project('{"date": {"$date": "2024-02-05T06:15:55.381Z"}, "bin": {"$numberDecimal": "106751992"}}', '{"result": {"$dateTrunc": {"date": "$date", "unit": "day", "binSize": "$bin"}}}');
+
+-- The rollback switch preserves the original interval-based behavior.
+PREPARE date_trunc_day_flag_test(bson) AS
+SELECT bson_dollar_project($1, '{"result": {"$dateToString": {"date": {"$dateTrunc": {"date": "$date", "unit": "day"}}}}}');
+EXECUTE date_trunc_day_flag_test('{"date": {"$date": "2026-10-14T22:27:13.528Z"}}');
+SET documentdb.enable_date_trunc_day_with_pg_bin TO off;
+EXECUTE date_trunc_day_flag_test('{"date": {"$date": "2026-10-14T22:27:13.528Z"}}');
+-- Rollback must bin the original UTC input, even when local time crosses midnight.
+SELECT bson_dollar_project('{"date": {"$date": "1999-12-31T22:30:00.000Z"}}', '{"result": {"$dateToString": {"date": {"$dateTrunc": {"date": "$date", "unit": "day", "timezone": "+05:30"}}}}}');
+SELECT bson_dollar_project('{}', '{"result": {"$dateToString": {"date": {"$dateTrunc": {"date": {"$date": "1999-12-31T22:30:00.000Z"}, "unit": "day", "timezone": "+05:30"}}}}}');
+SELECT bson_dollar_project('{}', '{"result": {"$dateToString": {"date": {"$dateTrunc": {"date": {"$date": "2026-10-14T22:27:13.528Z"}, "unit": "day"}}}}}');
+SELECT bson_dollar_project('{}', '{"result": {"$dateToString": {"date": {"$dateTrunc": {"date": {"$date": "2024-02-29T23:59:59.999Z"}, "unit": "day", "binSize": 2, "timezone": "America/New_York"}}}}}');
+SELECT bson_dollar_project('{}', '{"result": {"$dateToString": {"date": {"$dateTrunc": {"date": {"$date": "2026-10-14T22:27:13.528Z"}, "unit": "day", "binSize": 106751992}}}}}');
+RESET documentdb.enable_date_trunc_day_with_pg_bin;
+EXECUTE date_trunc_day_flag_test('{"date": {"$date": "2026-10-14T22:27:13.528Z"}}');
+DEALLOCATE date_trunc_day_flag_test;
 
 -- $dateTrunc cases with unit week
 select * from bson_dollar_project('{}', '{"result": {"$dateTrunc": {"date": {"$date" : {"$numberLong": "1707123355381"}}, "unit": "week", "binSize": 2 }  }}');
@@ -1038,4 +1153,3 @@ select * from bson_dollar_project('{"dateString": "July 4th, 2017"}','{"result":
 select * from bson_dollar_project('{"dateString": "July 4th, 2017 12:39:30 BST"}','{"result": {"$dateFromString": {"dateString": "$dateString"} } }');
 select * from bson_dollar_project('{"dateString": "July 4th, 2017 11am"}','{"result": {"$dateFromString": {"dateString": "$dateString"} } }');
 select * from bson_dollar_project('{"dateString": "2017-Jul-04 noon"}','{"result": {"$dateFromString": {"dateString": "$dateString"} } }');
-

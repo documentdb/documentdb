@@ -430,6 +430,10 @@ bool EnableSupportObjectIdFunctionPfePushdown =
  * SECTION: Aggregation & Query feature flags
  */
 
+/* Added on v1.2, enabled on v1.2, remove after v1.4 */
+#define DEFAULT_ENABLE_DATE_TRUNC_DAY_WITH_PG_BIN true
+bool EnableDateTruncDayWithPgBin = DEFAULT_ENABLE_DATE_TRUNC_DAY_WITH_PG_BIN;
+
 /* Added on v1.1, enabled on v1.1, remove after v1.3 */
 #define DEFAULT_ENABLE_ADMIN_DATABASE_QUERIES true
 bool EnableAdminDatabaseQueries = DEFAULT_ENABLE_ADMIN_DATABASE_QUERIES;
@@ -837,6 +841,13 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether or not to enable primary key cursor scan for streaming cursors."),
 		NULL, &EnablePrimaryKeyCursorScan,
 		DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_date_trunc_day_with_pg_bin", newGucPrefix),
+		gettext_noop(
+			"Whether to use PostgreSQL date_bin for day truncation within its timestamp range. When off, use legacy interval-based day truncation."),
+		NULL, &EnableDateTruncDayWithPgBin, DEFAULT_ENABLE_DATE_TRUNC_DAY_WITH_PG_BIN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

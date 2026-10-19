@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * src/operators/bson_expression_date_operators.c
  *
@@ -55,6 +56,8 @@
 
 /* This flag is used to handle the case when onNull is specified*/
 #define FLAG_ON_NULL_SPECIFIED (1 << 3)
+
+extern bool EnableDateTruncDayWithPgBin;
 
 /* --------------------------------------------------------- */
 /* Type declaration */
@@ -594,8 +597,10 @@ static void SetResultValueForDateTruncFromDateBin(Datum pgTimestamp, Datum
 												  bson_value_t *result);
 static void SetResultValueForDayUnitDateTrunc(Datum pgTimestamp, ExtensionTimezone
 											  timezoneToApply, int64 binSize,
-											  DateTruncUnit dateTruncUnit,
 											  bson_value_t *result);
+static void SetResultValueForDayUnitDateTruncLegacy(Datum pgTimestamp,
+													ExtensionTimezone timezoneToApply,
+													int64 binSize, bson_value_t *result);
 static void SetResultValueForDollarDateTrunc(DateTruncUnit dateTruncUnit, WeekDay weekDay,
 											 ExtensionTimezone timezoneToApply,
 											 ExtensionTimezone resultTimezone,
@@ -4359,57 +4364,67 @@ SetResultValueForDateTruncFromDateBin(Datum pgTimestamp, Datum referenceTimestam
 }
 
 
-/* This function calculates the date bin for unit type day.
- * Firstly, this calculates interval difference between start and end timestamp.
- * Converts, that difference interval to number of days.
- * Adds the interval to source timestamp and then apply the timezone specified
- */
+/* Bin local wall-clock time, then convert the boundary back to UTC for DST. */
 static void
 SetResultValueForDayUnitDateTrunc(Datum pgTimestamp,
 								  ExtensionTimezone timezoneToApply, int64 binSize,
-								  DateTruncUnit dateTruncUnit,
 								  bson_value_t *result)
 {
-	/* Get timestamp for reference since epoch ms in UTC */
+	if (!EnableDateTruncDayWithPgBin)
+	{
+		SetResultValueForDayUnitDateTruncLegacy(pgTimestamp, timezoneToApply, binSize,
+												result);
+		return;
+	}
+
+	if (binSize > PG_INT64_MAX / USECS_PER_DAY)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_OVERFLOW),
+						errmsg("$dateTrunc day binSize is out of range for timestamps."),
+						errdetail_log(
+							"$dateTrunc day binSize is out of range for timestamps.")));
+	}
+
+	pgTimestamp = GetPgTimestampFromEpochWithTimezone(
+		TimestampTzToUnixMillis(DatumGetTimestamp(pgTimestamp)), timezoneToApply);
+	Datum interval = GetIntervalFromBinSize(binSize, DateTruncUnit_Day);
+	Datum referenceTimestamp = GetPgTimestampFromUnixEpoch(DATE_TRUNC_TIMESTAMP_MS);
+	Datum boundaryTimestamp = OidFunctionCall3(PostgresDateBinFunctionId(), interval,
+											   pgTimestamp, referenceTimestamp);
+	Datum utcTimestamp = GetPgTimestampFromEpochWithoutTimezone(
+		TimestampTzToUnixMillis(DatumGetTimestamp(boundaryTimestamp)), timezoneToApply);
+	result->value.v_datetime = TimestampTzToUnixMillis(DatumGetTimestamp(utcTimestamp));
+}
+
+
+static void
+SetResultValueForDayUnitDateTruncLegacy(Datum pgTimestamp,
+										ExtensionTimezone timezoneToApply, int64 binSize,
+										bson_value_t *result)
+{
 	Datum defaultReferenceTimestamp = GetPgTimestampFromUnixEpoch(
 		DATE_TRUNC_TIMESTAMP_MS);
-
-	/* Calls Age function to determine the interval between 2 timestamps. */
 	Datum intervalDifference = OidFunctionCall2(PostgresAgeBetweenTimestamp(),
 												pgTimestamp, defaultReferenceTimestamp);
-
-	/* calculates the total number of seconds between the target date and the reference date */
-	Datum datePartFromInverval = OidFunctionCall2(PostgresDatePartFromInterval(),
+	Datum datePartFromInterval = OidFunctionCall2(PostgresDatePartFromInterval(),
 												  CStringGetTextDatum("epoch"),
 												  intervalDifference);
-
-	float8 epochMsFromDatePart = DatumGetFloat8(datePartFromInverval);
-
-	/* elog(NOTICE, "epoch sm from date partt %f", epochMsFromDatePart); */
-	int64 dayInterval = floor(epochMsFromDatePart / (SECONDS_IN_DAY * binSize));
-
-	/* elog(NOTICE, "days interval %ld", dayInterval); */
-
-	/* Make intervals from int64 */
+	float8 intervalInSeconds = DatumGetFloat8(datePartFromInterval);
+	int64 dayInterval = floor(intervalInSeconds / (SECONDS_IN_DAY * binSize));
 	Datum intervalDaySinceRef = GetIntervalFromBinSize(dayInterval * binSize,
-													   dateTruncUnit);
-
-	/* Add interval to timestamp */
+													   DateTruncUnit_Day);
 	bool isResultOverflow = false;
 	Datum resultTimestamp = AddIntervalToTimestampWithPgTry(defaultReferenceTimestamp,
 															intervalDaySinceRef,
 															&isResultOverflow);
-
 	if (isResultOverflow)
 	{
 		result->value.v_datetime = INT64_MAX;
 		return;
 	}
 
-	/* Adjusting to timezone specified . This is required to handle DST, etc. */
 	Datum resultTimestampWithZoneAdjusted = GetPgTimestampAdjustedToTimezone(
 		resultTimestamp, timezoneToApply);
-
 	result->value.v_datetime = GetUnixEpochFromPgTimestamp(
 		resultTimestampWithZoneAdjusted);
 }
@@ -4442,7 +4457,7 @@ SetResultValueForDollarDateTrunc(DateTruncUnit dateTruncUnit, WeekDay weekDay,
 		SetResultValueForDayUnitDateTrunc(datePgTimestamp,
 										  timezoneToApply,
 										  binSize->value.v_int64,
-										  dateTruncUnit, result);
+										  result);
 	}
 	else if (dateTruncUnit == DateTruncUnit_Month ||
 			 dateTruncUnit == DateTruncUnit_Quarter)
