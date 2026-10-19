@@ -62,7 +62,7 @@ The default installs from the stable package repository. To test a release
 candidate on a clean, disposable host, select its tag explicitly:
 
 ```sh
-sh documentdb-install.sh --version 1.0-rc2
+sh documentdb-install.sh --version X.Y-rcN
 ```
 
 This selects the host's five packages from that release's `SHA256SUMS`,
@@ -254,6 +254,12 @@ each workflow.
 > `dnf repolist --all` lists. On EL8 replace `EL-9` with `EL-8` in the PGDG
 > URL, `crb` with `powertools`, and `rhel-9` / `latest-9` with `rhel-8` /
 > `latest-8`; on arm64 replace `x86_64` with `aarch64`.
+> PGDG publishes per-minor repositories only for current EL 9 minors, so on an
+> older minor (for example 9.3, or RHEL EUS) the `rhel-9.3-<arch>` path does
+> not exist and `dnf` fails. `packaging/install.sh` falls back to the `rhel-9`
+> path; for a hand install, do the same in `/etc/yum.repos.d/pgdg-redhat-all.repo`
+> (`sudo sed -i 's/rhel-\$releasever_major\.\$releasever_minor-/rhel-$releasever_major-/g' /etc/yum.repos.d/pgdg-redhat-all.repo`),
+> or update the OS.
 > Then the RHEL install commands mirror the Debian workflows above with `dnf`
 > (for example `sudo dnf install documentdb` for Workflow C). This guidance is
 > also embedded in the `%description` of the extension and meta RPMs, so it is
@@ -391,13 +397,13 @@ To build gateway packages, use the `build_gateway_packages.sh` script. This scri
 For example, to build a gateway package for Debian 12 and PostgreSQL 18, run:
 
 ```sh
-./packaging/gateway/build_gateway_packages.sh --os deb12 --pg 18 --version 0.114.0
+./packaging/gateway/build_gateway_packages.sh --os deb12 --pg 18 --version 1.0.0
 ```
 
 To build a gateway RPM package for RHEL 9, run:
 
 ```sh
-./packaging/gateway/build_gateway_packages.sh --os rhel9 --pg 18 --version 0.114.0
+./packaging/gateway/build_gateway_packages.sh --os rhel9 --pg 18 --version 1.0.0
 ```
 
 The `--version` argument is required: it pins the package version and the gateway
@@ -438,7 +444,7 @@ Pass `--test-clean-install` to build the package, clean-install it in a fresh
 container, and run an install smoke:
 
 ```sh
-./packaging/gateway/build_gateway_packages.sh --os rhel8 --pg 17 --version 0.114.0 --test-clean-install
+./packaging/gateway/build_gateway_packages.sh --os rhel8 --pg 17 --version 1.0.0 --test-clean-install
 ```
 
 > **Host build tooling:** `--test-clean-install` assembles the stand-alone
@@ -480,7 +486,7 @@ dry-run use.
 To build the DEB:
 
 ```sh
-./packaging/postgresql-tools/build-postgresql-tools-deb.sh --version 0.114.0 --output-dir packaging
+./packaging/postgresql-tools/build-postgresql-tools-deb.sh --version 1.0.0 --output-dir packaging
 ```
 
 `documentdb-register-gateway` checks at runtime that the

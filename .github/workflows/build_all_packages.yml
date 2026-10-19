@@ -267,12 +267,6 @@ jobs:
             mv -- "$f" "${f//\~/-}"
           done
 
-          # Reproducible, sorted checksum manifest over packages and the
-          # clean-host installer. Package category/total math below continues
-          # to count only .deb/.rpm files.
-          find . -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' -o -name 'install.sh' \) -printf '%f\0' \
-            | sort -z | xargs -0 sha256sum > SHA256SUMS
-
           count_glob() { find . -maxdepth 1 -type f -name "$1" | wc -l | tr -d ' '; }
 
           # Per-category counts. Meta packages are distinguished from the
@@ -368,6 +362,12 @@ jobs:
             echo "Installer:"
             echo "  install.sh"
           } >> manifest.txt
+
+          # Reproducible, sorted checksums over packages, the clean-host
+          # installer and the finished manifest. Package category/total math
+          # above counts only .deb/.rpm files.
+          find . -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' -o -name 'install.sh' -o -name 'manifest.txt' \) -printf '%f\0' \
+            | sort -z | xargs -0 sha256sum > SHA256SUMS
 
           echo "----- manifest.txt -----"
           cat manifest.txt

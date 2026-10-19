@@ -15,8 +15,8 @@ installed, and the DocumentDB gateway that accepts client connections on port
 is started with a command of this form:
 
 ```bash
-docker run -dt -p 10260:10260 --name documentdb-container documentdb \
-    --username <username> --password <password>
+docker run -dt -p 10260:10260 --name documentdb-container \
+    -e USERNAME=<username> -e PASSWORD=<password> documentdb
 ```
 
 It is sometimes called the emulator, and the two telemetry event names below
@@ -27,8 +27,9 @@ any other way of running DocumentDB; see [Section 1](#1-scope).
 
 ### What this statement covers
 
-The `documentdb-local` container image collects a small amount of anonymous
-usage data to help the DocumentDB project understand how the software is used
+The `documentdb-local` container image sends a small amount of usage data (its
+version, platform and CPU architecture) to Scarf; Scarf also sees the source IP
+address. This helps the DocumentDB project understand how the software is used
 and prioritize maintenance and compatibility work. This statement describes
 what is collected, why, who receives it, how long it is kept, and how to turn
 it off.
