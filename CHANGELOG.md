@@ -14,6 +14,7 @@
 * Preserve `admin.system.users` system-catalog permission checks while filtering memberships to catalog-backed custom roles. *[Bugfix]*
 * Return custom-role metadata from `admin.system.roles` in `rolesInfo` and from `admin.system.users` in `usersInfo` and `connectionStatus`. Admin- and root-role users can list or inspect every catalog role, while other users can list or inspect roles they inherit directly or transitively; built-in roles remain excluded. *[Bugfix]*
 * Derive `$merge` target permissions from its configured actions instead of unconditionally requiring read, insert, and update, and avoid requiring update permission for `$out`'s insert-only query. *[Bugfix]*
+* Report `n: 1` and `updatedExisting: true` from `findAndModify` when it matches a document that the update leaves unchanged, such as an upsert with only `$setOnInsert` or a `$set` to the current value, matching the regular update command (#648). *[Bugfix]*
 * Preserve UTF-8 string boundaries in trim expressions and string-to-binData conversions. *[Bugfix]*
 * Limit result string size for `$concat`. *[Bugfix]*
 * Reject non-string values resolved by `$meta` before accessing string data. *[Bugfix]*
