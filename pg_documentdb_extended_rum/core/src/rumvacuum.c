@@ -1837,6 +1837,7 @@ rumFindLeftMostLeafPage(Relation index, BlockNumber blkno,
 		IndexTuple itup;
 
 		LockBuffer(buffer, RUM_SHARE);
+		rumCheckTreePage(index, buffer);
 
 		Assert(!RumPageIsData(page));
 

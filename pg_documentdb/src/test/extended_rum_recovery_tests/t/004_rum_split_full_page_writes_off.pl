@@ -12,6 +12,10 @@
 #   1. no index block is left all-zero,
 #   2. inserts and index scans work, for both split code paths
 #      (documentdb_rum.track_incomplete_split on and off).
+#
+# It then zeroes the posting-tree leaf pages of one index on disk to check that
+# a tree descent that reaches a zero page fails with an index-corruption error
+# instead of looping forever.
 
 use strict;
 use warnings;
@@ -192,6 +196,63 @@ $search_path
 SET enable_seqscan = off;
 SELECT COUNT(*) FROM documentdb_api.collection('testdb', '$coll') WHERE document @@ '{"tags": "t0"}';
 }), $expected_t0 + 1, "$mode: index scan returns every t0 document");
+}
+
+# ============================================================================
+# A descent that reaches a zero page must error out, not spin forever.
+# Zero every posting-tree leaf page of one idx_tags on disk: the posting tree
+# roots stay intact, so both the insert and the scan descend into a zero page.
+# ============================================================================
+my $tags_idx = '';
+my $relpath = '';
+my @data_leaves;
+foreach my $idx (rum_indexes('split_track_on'))
+{
+    my $is_tags = $node->safe_psql('postgres', qq{
+SELECT count(*) > 0
+FROM generate_series(1, pg_relation_size('$idx') / current_setting('block_size')::int - 1) b
+WHERE ((public.documentdb_rum_page_get_stats(get_raw_page('$idx', b::int)) ->> 'flags')::int & 1) <> 0;
+});
+    next unless $is_tags eq 't';
+
+    $tags_idx = $idx;
+    $relpath = $node->safe_psql('postgres', "SELECT pg_relation_filepath('$idx')");
+    @data_leaves = split(/\n/, $node->safe_psql('postgres', qq{
+SELECT b
+FROM generate_series(1, pg_relation_size('$idx') / current_setting('block_size')::int - 1) b
+WHERE ((public.documentdb_rum_page_get_stats(get_raw_page('$idx', b::int)) ->> 'flags')::int & 3) = 3;
+}));
+}
+ok($relpath ne '', "found the posting-tree index $tags_idx");
+cmp_ok(scalar(@data_leaves), '>', 0, 'posting-tree index has leaf pages to zero');
+
+my $block_size = $node->safe_psql('postgres', 'SHOW block_size');
+$node->stop;
+
+open(my $fh, '+<', $node->data_dir . "/$relpath")
+  or die "could not open $relpath: $!";
+binmode $fh;
+foreach my $blkno (@data_leaves)
+{
+    sysseek($fh, $blkno * $block_size, 0) or die "seek failed: $!";
+    syswrite($fh, "\0" x $block_size) == $block_size or die "write failed: $!";
+}
+close($fh);
+
+$node->start;
+
+foreach my $case (
+    [ 'insert', qq{SELECT documentdb_core.bson_to_json_string(documentdb_api.insert_one('testdb', 'split_track_on', '{"_id": -2, "tags": ["t0"]}'));} ],
+    [ 'index scan', qq{SET enable_seqscan = off; SELECT COUNT(*) FROM documentdb_api.collection('testdb', 'split_track_on') WHERE document @@ '{"tags": "t0"}';} ])
+{
+    my ($name, $sql) = @$case;
+    my ($stdout, $stderr, $timed_out);
+    $node->psql('postgres', "$search_path\n$sql",
+        stdout => \$stdout, stderr => \$stderr,
+        timeout => 60, timed_out => \$timed_out);
+    ok(!$timed_out, "$name into a zero page does not hang");
+    like("$stdout\n$stderr", qr/contains unexpected zero page at block/,
+        "$name into a zero page reports index corruption");
 }
 
 $node->stop;

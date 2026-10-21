@@ -663,6 +663,7 @@ extern Buffer rumStep(Buffer buffer, Relation index, int lockmode,
 extern Buffer rumStepEntryForScans(Buffer buffer, Relation index,
 								   ScanDirection scanDirection);
 extern Buffer rumStepForInsert(Buffer buffer, Relation index, int lockmode);
+extern void rumCheckTreePage(Relation index, Buffer buffer);
 extern void freeRumBtreeStack(RumBtreeStack *stack);
 extern void rumInsertValue(Relation index, RumBtree btree, RumBtreeStack *stack,
 						   RumStatsData *buildStats);
