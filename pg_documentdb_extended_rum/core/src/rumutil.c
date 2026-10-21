@@ -543,6 +543,12 @@ rumtuple_get_key(RumState *rumstate, IndexTuple tuple,
  * Allocate a new page (either by recycling, or by extending the index file)
  * The returned buffer is already pinned and exclusive-locked
  * Caller is responsible for initializing the page by calling RumInitBuffer
+ *
+ * Outside of an index build, the caller must WAL-log the page as a full image
+ * (GENERIC_XLOG_FULL_IMAGE), never as a delta: a page that was just extended is
+ * all-zero on disk, and redo skips a delta against it, which with
+ * full_page_writes = off leaves an all-zero page in the tree after crash
+ * recovery.
  */
 Buffer
 RumNewBuffer(Relation index)

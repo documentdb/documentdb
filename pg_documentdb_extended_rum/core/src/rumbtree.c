@@ -757,7 +757,15 @@ rumPlaceToPage(RumBtree btree, RumBtreeStack *stack,
 				state = GenericXLogStart(btree->index);
 
 				lpage = GenericXLogRegisterBuffer(state, stack->buffer, 0);
-				rpage = GenericXLogRegisterBuffer(state, rbuffer, 0);
+
+				/*
+				 * rbuffer is a fresh page from RumNewBuffer(): log a full image
+				 * rather than a delta. A delta against a page that was never
+				 * written out is skipped by redo, and with full_page_writes = off
+				 * that leaves an all-zero page in the tree after crash recovery.
+				 */
+				rpage = GenericXLogRegisterBuffer(state, rbuffer,
+												  GENERIC_XLOG_FULL_IMAGE);
 			}
 
 			rightrightBlkno = RumPageGetOpaque(lpage)->rightlink;
@@ -1269,7 +1277,10 @@ rumInsertValueOld(Relation index, RumBtree btree, RumBtreeStack *stack,
 					state = GenericXLogStart(index);
 
 					lpage = GenericXLogRegisterBuffer(state, stack->buffer, 0);
-					rpage = GenericXLogRegisterBuffer(state, rbuffer, 0);
+
+					/* rbuffer is a fresh page: see rumPlaceToPage() */
+					rpage = GenericXLogRegisterBuffer(state, rbuffer,
+													  GENERIC_XLOG_FULL_IMAGE);
 				}
 
 				rightrightBlkno = RumPageGetOpaque(lpage)->rightlink;
