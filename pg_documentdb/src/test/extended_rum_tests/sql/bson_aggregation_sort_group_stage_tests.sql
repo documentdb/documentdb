@@ -15,12 +15,10 @@ set LOCAL enable_hashagg to off;
 ANALYZE documentdb_data.documents_1801;
 
 -- 2. Sort keys share the group prefix.
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "g": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "g": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
 
 -- 3. Sort on v (different from group key g).
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "v": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "v": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
 ROLLBACK;

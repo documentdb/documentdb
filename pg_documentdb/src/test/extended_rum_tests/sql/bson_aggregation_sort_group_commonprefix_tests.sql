@@ -12,8 +12,7 @@ SET documentdb.next_collection_index_id TO 9300;
 -- Note on what this test does NOT cover
 -- ================================================================
 -- This file validates plan shape (Section 2 EXPLAINs) and result correctness
--- (Section 1 / 3 SQL output) of the
--- documentdb.enableSortPushToAccumulatorWithPrefix optimization.
+-- (Section 1 / 3 SQL output) of prefix-based sort pushdown into accumulators.
 --
 -- The runtime *win* of that optimization for the (sort{a,b}, group{a},
 -- $first) shape on idx_a vs idx_a_b is NOT visible here, because the
@@ -31,10 +30,8 @@ SET documentdb.next_collection_index_id TO 9300;
 set documentdb.defaultUseCompositeOpClass to on;
 -- 'c' is unique per row (i) so tests with sort{a,b,c} have no ties on
 -- (a,b,c). This keeps the suffix push for tests 1.4-1.6 meaningful (c still
--- has many distinct values per (a,b) group) while making OFF/ON results
--- deterministic. Tests 1.1-1.3 (sort{a,b}, suffix=b) still see OFF/ON
--- divergence because b only takes two values; that is the expected behaviour
--- of $first on a tied prefix and is documented in the comment above.
+-- has many distinct values per (a,b) group). Tests 1.1-1.3 (sort{a,b},
+-- suffix=b) can choose any $first value among rows tied on the sort keys.
 SELECT COUNT(documentdb_api.insert_one('db', 'cpfx_test', bson_build_document(
     '_id', i,
     'a', chr(65 + (i % 3)),
@@ -82,21 +79,12 @@ ANALYZE documentdb_data.documents_9301;
 
 -- ================================================================
 -- SECTION 1: SQL result tests (data correctness)
--- Each test pair: first with enableSortPushToAccumulatorWithPrefix OFF, then ON
 -- ================================================================
 
 -- ----------------------------------------------------------------
 -- 1.1 Single-field group: sort{a,b}, group{a}, $first — hint _id_
 --     Forces _id_ index so planner cannot pick a useful index.
 -- ----------------------------------------------------------------
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "_id_" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
@@ -106,14 +94,6 @@ SELECT document FROM bson_aggregation_pipeline('db',
 -- ----------------------------------------------------------------
 -- 1.2 Single-field group: sort{a,b}, group{a}, $first — hint idx_a
 -- ----------------------------------------------------------------
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "idx_a" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
@@ -123,14 +103,6 @@ SELECT document FROM bson_aggregation_pipeline('db',
 -- ----------------------------------------------------------------
 -- 1.3 Single-field group: sort{a,b}, group{a}, $first — hint idx_a_b
 -- ----------------------------------------------------------------
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "idx_a_b" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
@@ -141,14 +113,6 @@ SELECT document FROM bson_aggregation_pipeline('db',
 -- 1.4 Multi-field group: sort{a,b,c}, group{a,b}, $first — hint _id_
 --     Forces _id_ index so planner cannot pick a useful index.
 -- ----------------------------------------------------------------
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1, "c": 1 } },
-        { "$group": { "_id": { "a": "$a", "b": "$b" }, "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "_id_" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1, "c": 1 } },
@@ -160,14 +124,6 @@ SELECT document FROM bson_aggregation_pipeline('db',
 --     (enableGroupByCompoundIdIndexPushdown required)
 -- ----------------------------------------------------------------
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1, "c": 1 } },
-        { "$group": { "_id": { "a": "$a", "b": "$b" }, "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "idx_a_b" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1, "c": 1 } },
@@ -178,14 +134,6 @@ SELECT document FROM bson_aggregation_pipeline('db',
 -- 1.6 Multi-field group: sort{a,b,c}, group{a,b}, $first — hint idx_a_b_c
 --     (enableGroupByCompoundIdIndexPushdown required)
 -- ----------------------------------------------------------------
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1, "c": 1 } },
-        { "$group": { "_id": { "a": "$a", "b": "$b" }, "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "idx_a_b_c" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1, "c": 1 } },
@@ -197,14 +145,6 @@ SELECT document FROM bson_aggregation_pipeline('db',
 --     Forces _id_ index so planner cannot pick a useful index.
 -- ----------------------------------------------------------------
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO off;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "_id_" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1 } },
@@ -214,14 +154,6 @@ SELECT document FROM bson_aggregation_pipeline('db',
 -- ----------------------------------------------------------------
 -- 1.8 Sort and group match exactly: sort{a}, group{a}, $first — hint idx_a
 -- ----------------------------------------------------------------
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "idx_a" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1 } },
@@ -232,14 +164,6 @@ SELECT document FROM bson_aggregation_pipeline('db',
 -- 1.9 Sort and group match exactly: sort{a,b}, group{a,b}, $first — hint _id_
 --     Forces _id_ index so planner cannot pick a useful index.
 -- ----------------------------------------------------------------
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": { "a": "$a", "b": "$b" }, "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "_id_" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
@@ -251,14 +175,6 @@ SELECT document FROM bson_aggregation_pipeline('db',
 --      (enableGroupByCompoundIdIndexPushdown required)
 -- ----------------------------------------------------------------
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": { "a": "$a", "b": "$b" }, "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "idx_a" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
@@ -269,19 +185,11 @@ SELECT document FROM bson_aggregation_pipeline('db',
 -- 1.11 Sort and group match exactly: sort{a,b}, group{a,b}, $first — hint idx_a_b
 --      (enableGroupByCompoundIdIndexPushdown required)
 --      Sort matches group exactly so the bsonfirstwithexpr ORDER BY clause is
---      empty (no suffix to push). The plan still changes when ON: the compound
+--      empty (no suffix to push). The compound
 --      group key is split into per-field expressions and the Subquery wrapper
 --      is removed (see 2.11). Results are unaffected.
 -- ----------------------------------------------------------------
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": { "a": "$a", "b": "$b" }, "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "idx_a_b" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
@@ -297,14 +205,6 @@ SELECT document FROM bson_aggregation_pipeline('db',
 --      Forces _id_ index so planner cannot pick a useful index.
 -- ----------------------------------------------------------------
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO off;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test_by", "pipeline": [
-        { "$sort": { "a": 1, "b.y": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "_id_" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test_by", "pipeline": [
         { "$sort": { "a": 1, "b.y": 1 } },
@@ -312,25 +212,12 @@ SELECT document FROM bson_aggregation_pipeline('db',
     ], "cursor": {}, "hint": "_id_" }');
 
 -- ----------------------------------------------------------------
--- 1.13 Single-field group: sort{a,b}, group{a}, $first — forces HashAgg.
---      Enables hashagg and disables sort/group-agg paths so the planner
---      picks a HashAgg node instead of the GroupAggregate that the rest of
---      this suite exercises. Validates the optimization still produces
---      correct results when the group is computed via hashing (which loses
---      the input ordering, so $first on the suffix relies on the
---      accumulator-internal ORDER BY).
+-- 1.13 Single-field group: sort{a,b}, group{a}, $first - prefer HashAgg.
+--      The accumulator ORDER BY still requires GroupAggregate even when
+--      hashing is enabled and sorting is discouraged.
 -- ----------------------------------------------------------------
 SET LOCAL enable_hashagg TO on;
 SET LOCAL enable_sort TO off;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } },
-        { "$sort": { "_id": 1 } }
-    ], "cursor": {}, "hint": "_id_" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
@@ -343,25 +230,13 @@ RESET enable_sort;
 SET LOCAL enable_hashagg TO off;
 
 -- ----------------------------------------------------------------
--- 1.14 Multi-field group: sort{a,b,c}, group{a,b}, $first — forces HashAgg.
---      Same HashAgg-forcing knobs as 1.13, but with a compound _id. When the
---      optimization is ON, the planner rewrites the compound _id into
---      per-field group keys (see 2.5 / 2.11 ON for the bson_repath_and_build
---      shape); this test confirms that rewrite still produces correct results
---      under hashed aggregation. Requires enableGroupByCompoundIdIndexPushdown.
+-- 1.14 Multi-field group: sort{a,b,c}, group{a,b}, $first - prefer HashAgg.
+--      The same preferences as 1.13 must preserve compound grouping and
+--      suffix ordering. Requires enableGroupByCompoundIdIndexPushdown.
 -- ----------------------------------------------------------------
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
 SET LOCAL enable_hashagg TO on;
 SET LOCAL enable_sort TO off;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1, "c": 1 } },
-        { "$group": { "_id": { "a": "$a", "b": "$b" }, "firstVal": { "$first": "$name" } } },
-        { "$sort": { "_id": 1 } }
-    ], "cursor": {}, "hint": "_id_" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1, "c": 1 } },
@@ -375,25 +250,13 @@ SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO off;
 SET LOCAL enable_hashagg TO off;
 
 -- ----------------------------------------------------------------
--- 1.15 Single-field group: sort{a,b}, group{a}, $first — forces HashAgg
+-- 1.15 Single-field group: sort{a,b}, group{a}, $first - prefer HashAgg
 --      with hint idx_a_b. Unlike 1.13 (hint _id_), the index already
---      provides the (a,b) order so OFF can feed HashAgg directly from the
---      Index Scan with no intermediate Sort. ON forces GroupAggregate (the
---      bsonfirstwithexpr ORDER BY disqualifies HashAgg), which is the
---      pessimization scenario — OFF would have used a cheaper HashAgg-on-
---      indexed-scan plan.
+--      provides the (a,b) order. The accumulator ORDER BY disqualifies
+--      HashAgg, so the planner must retain GroupAggregate.
 -- ----------------------------------------------------------------
 SET LOCAL enable_hashagg TO on;
 SET LOCAL enable_sort TO off;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } },
-        { "$sort": { "_id": 1 } }
-    ], "cursor": {}, "hint": "idx_a_b" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
@@ -408,7 +271,6 @@ SET LOCAL enable_hashagg TO off;
 
 -- ================================================================
 -- SECTION 2: EXPLAIN tests (plan shape validation)
--- Each test pair: first with enableSortPushToAccumulatorWithPrefix OFF, then ON
 -- ================================================================
 
 -- ----------------------------------------------------------------
@@ -416,14 +278,6 @@ SET LOCAL enable_hashagg TO off;
 --     Forces _id_ index so planner cannot pick a useful index.
 -- ----------------------------------------------------------------
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO off;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "_id_" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
@@ -433,14 +287,6 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- ----------------------------------------------------------------
 -- 2.2 Single-field group: sort{a,b}, group{a}, $first — hint idx_a
 -- ----------------------------------------------------------------
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "idx_a" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
@@ -450,14 +296,6 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- ----------------------------------------------------------------
 -- 2.3 Single-field group: sort{a,b}, group{a}, $first — hint idx_a_b
 -- ----------------------------------------------------------------
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "idx_a_b" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
@@ -468,14 +306,6 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- 2.4 Multi-field group: sort{a,b,c}, group{a,b}, $first — hint _id_
 --     Forces _id_ index so planner cannot pick a useful index.
 -- ----------------------------------------------------------------
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1, "c": 1 } },
-        { "$group": { "_id": { "a": "$a", "b": "$b" }, "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "_id_" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1, "c": 1 } },
@@ -487,14 +317,6 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 --     (enableGroupByCompoundIdIndexPushdown required)
 -- ----------------------------------------------------------------
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1, "c": 1 } },
-        { "$group": { "_id": { "a": "$a", "b": "$b" }, "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "idx_a_b" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1, "c": 1 } },
@@ -505,14 +327,6 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- 2.6 Multi-field group: sort{a,b,c}, group{a,b}, $first — hint idx_a_b_c
 --     (enableGroupByCompoundIdIndexPushdown required)
 -- ----------------------------------------------------------------
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1, "c": 1 } },
-        { "$group": { "_id": { "a": "$a", "b": "$b" }, "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "idx_a_b_c" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1, "c": 1 } },
@@ -524,14 +338,6 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 --     Forces _id_ index so planner cannot pick a useful index.
 -- ----------------------------------------------------------------
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO off;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "_id_" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1 } },
@@ -541,14 +347,6 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- ----------------------------------------------------------------
 -- 2.8 Sort and group match exactly: sort{a}, group{a}, $first — hint idx_a
 -- ----------------------------------------------------------------
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "idx_a" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1 } },
@@ -559,14 +357,6 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- 2.9 Sort and group match exactly: sort{a,b}, group{a,b}, $first — hint _id_
 --     Forces _id_ index so planner cannot pick a useful index.
 -- ----------------------------------------------------------------
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": { "a": "$a", "b": "$b" }, "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "_id_" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
@@ -578,14 +368,6 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 --      (enableGroupByCompoundIdIndexPushdown required)
 -- ----------------------------------------------------------------
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": { "a": "$a", "b": "$b" }, "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "idx_a" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
@@ -597,14 +379,6 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 --      (enableGroupByCompoundIdIndexPushdown required)
 -- ----------------------------------------------------------------
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": { "a": "$a", "b": "$b" }, "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "idx_a_b" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
@@ -618,14 +392,6 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 --      Forces _id_ index so planner cannot pick a useful index.
 -- ----------------------------------------------------------------
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO off;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test_by", "pipeline": [
-        { "$sort": { "a": 1, "b.y": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "_id_" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test_by", "pipeline": [
         { "$sort": { "a": 1, "b.y": 1 } },
@@ -633,24 +399,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ], "cursor": {}, "hint": "_id_" }');
 
 -- ----------------------------------------------------------------
--- 2.13 Single-field group: sort{a,b}, group{a}, $first — forces HashAgg.
---      Same setup as 1.13: enable hashagg and disable sort to force the
---      planner to choose a HashAgg over the GroupAggregate path. Validates
---      that the optimization plan still wires the suffix sort through the
---      $first accumulator under hashed aggregation.
+-- 2.13 Single-field group: sort{a,b}, group{a}, $first - prefer HashAgg.
+--      Companion EXPLAIN for 1.13: the accumulator ORDER BY must retain
+--      GroupAggregate despite the planner preferences.
 -- ----------------------------------------------------------------
 SET LOCAL enable_hashagg TO on;
 SET LOCAL enable_sort TO off;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "_id_" }')
-$cmd$);
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
@@ -664,27 +418,13 @@ RESET enable_sort;
 SET LOCAL enable_hashagg TO off;
 
 -- ----------------------------------------------------------------
--- 2.14 Multi-field group: sort{a,b,c}, group{a,b}, $first — forces HashAgg.
---      Companion EXPLAIN for 1.14. Validates the plan shape under hashed
---      aggregation with a compound _id: OFF should keep the original
---      compound group-key + bsonfirst(sortspec[]) shape feeding HashAgg; ON
---      should split _id into per-field keys and use bsonfirstwithexpr with
---      the suffix ORDER BY (which forces GroupAggregate rather than
---      HashAgg — see 2.13 commentary).
+-- 2.14 Multi-field group: sort{a,b,c}, group{a,b}, $first - prefer HashAgg.
+--      Companion EXPLAIN for 1.14: split the compound _id into per-field
+--      group keys and retain GroupAggregate for the suffix ORDER BY.
 -- ----------------------------------------------------------------
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
 SET LOCAL enable_hashagg TO on;
 SET LOCAL enable_sort TO off;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1, "c": 1 } },
-        { "$group": { "_id": { "a": "$a", "b": "$b" }, "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "_id_" }')
-$cmd$);
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
@@ -699,26 +439,14 @@ SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO off;
 SET LOCAL enable_hashagg TO off;
 
 -- ----------------------------------------------------------------
--- 2.15 Single-field group: sort{a,b}, group{a}, $first — forces HashAgg
+-- 2.15 Single-field group: sort{a,b}, group{a}, $first - prefer HashAgg
 --      with hint idx_a_b. Companion EXPLAIN for 1.15. Expected shape:
---        OFF: HashAggregate -> Subquery Scan -> Index Scan using idx_a_b
---             (no Sort — the index already provides (a,b) order).
---        ON : GroupAggregate -> Index Scan using idx_a_b
+--        GroupAggregate -> Index Scan using idx_a_b
 --             (HashAgg disqualified by the per-aggregate ORDER BY on the
 --             rewritten bsonfirstwithexpr; see 2.13 commentary).
---      This documents that the optimization is a pessimization here:
---      the OFF plan could have used HashAgg fed directly by the index.
 -- ----------------------------------------------------------------
 SET LOCAL enable_hashagg TO on;
 SET LOCAL enable_sort TO off;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
-    '{ "aggregate": "cpfx_test", "pipeline": [
-        { "$sort": { "a": 1, "b": 1 } },
-        { "$group": { "_id": "$a", "firstVal": { "$first": "$name" } } }
-    ], "cursor": {}, "hint": "idx_a_b" }');
-
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "cpfx_test", "pipeline": [
         { "$sort": { "a": 1, "b": 1 } },
@@ -732,11 +460,9 @@ SET LOCAL enable_hashagg TO off;
 
 -- ================================================================
 -- SECTION 3: Negative tests — optimization must NOT apply
--- All run with enableSortPushToAccumulatorWithPrefix ON to confirm
--- the optimization correctly does nothing in these cases.
+-- The optimization must leave these non-prefix shapes unchanged.
 -- ================================================================
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO off;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 
 -- ----------------------------------------------------------------
 -- 3.1 Group key is NOT a prefix of sort: sort{a,b}, group{b} — $first
@@ -855,6 +581,26 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
         { "$sort": { "a": 1, "b": 1 } },
         { "$group": { "_id": { "a": "$a", "r": "$$ROOT" }, "firstVal": { "$first": "$name" } } }
     ], "cursor": {}, "hint": "idx_a_b" }');
+
+-- Prefix grouping and the accumulator's suffix ordering must use collation.
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.insert_one('db', 'cpfx_test_by', '{ "_id": 100, "a": "group", "b": "B", "collated": true }');
+SELECT documentdb_api.insert_one('db', 'cpfx_test_by', '{ "_id": 101, "a": "GROUP", "b": "a", "collated": true }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "cpfx_test_by", "pipeline": [
+        { "$match": { "collated": true } },
+        { "$sort": { "a": 1, "b": 1 } },
+        { "$group": { "_id": "$a", "firstVal": { "$first": "$b" }, "minVal": { "$min": "$b" }, "maxVal": { "$max": "$b" }, "count": { "$sum": 1 } } },
+        { "$project": { "_id": 0 } }
+    ], "collation": { "locale": "en", "strength": 2 } }');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "cpfx_test_by", "pipeline": [
+        { "$match": { "collated": true } },
+        { "$sort": { "a": 1, "b": 1 } },
+        { "$group": { "_id": "$a", "firstVal": { "$first": "$b" }, "minVal": { "$min": "$b" }, "maxVal": { "$max": "$b" }, "count": { "$sum": 1 } } },
+        { "$project": { "_id": 0 } }
+    ], "collation": { "locale": "en", "strength": 2 } }');
 
 ROLLBACK;
 

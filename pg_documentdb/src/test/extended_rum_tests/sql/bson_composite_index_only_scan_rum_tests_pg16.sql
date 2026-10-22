@@ -213,13 +213,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$match" : {"city": {"$eq": "Seattle"} }}, { "$group" : { "_id" : 1, "avgSqft" : { "$avg" : "$sqft" } } }]}') $$, p_ignore_heap_fetches => true);
 
 -- SORT BEFORE GROUP
--- Pin the sort-prefix push optimization off so these plans exercise the
--- non-pushed shape regardless of the GUC default.
-set documentdb.enableSortPushToAccumulatorWithPrefix to off;
--- $sort on uncovered field (sqft) before $group should NOT use index only scan
+-- $sort on an uncovered suffix field (sqft) before $group.
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$sort": {"city": 1, "sqft": 1} }, { "$group" : { "_id" : "$city", "firstRent" : { "$first" : "$rent" } } }]}') $$, p_ignore_heap_fetches => true);
 
--- $sort on covered fields before $group with uncovered accumulator (sqft) should NOT use index only scan
+-- $sort on covered fields before $group with an uncovered accumulator (sqft).
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$sort": {"city": 1, "rent": 1} }, { "$group" : { "_id" : "$city", "firstSqft" : { "$first" : "$sqft" } } }]}') $$, p_ignore_heap_fetches => true);
 
 -- $sort on covered fields before $group with a covered sum should work, but doesn't yet
@@ -471,11 +468,11 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 -- no match + constant-group $avg on covered field: no IOS without a hint or filter
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$group" : { "_id" : 1, "avgRent" : { "$avg" : "$rent" } } }]}') $$, p_ignore_heap_fetches => true);
 
--- TODO: Explicit sorted $first/$last on covered fields should work, but don't yet,
--- because this path is lowered as bson_expression_get(bsonfirst/bsonlast(document,
--- sortArrayConst), ...) instead of the single-path accumulator shape
--- handled by the index only scan coverage walker today.
+-- Prefix sort pushdown lowers $first to a covered single-path accumulator.
+-- The resulting plan can use index only scan.
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$sort": {"city": 1, "rent": 1} }, { "$group" : { "_id" : "$city", "firstRent" : { "$first" : "$rent" } } }]}') $$, p_ignore_heap_fetches => true);
+-- TODO: Sorted $last still uses bson_expression_get(bsonlast(...), ...),
+-- which the index only scan coverage walker does not support.
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$sort": {"city": 1, "rent": 1} }, { "$group" : { "_id" : "$city", "lastRent" : { "$last" : "$rent" } } }]}') $$, p_ignore_heap_fetches => true);
 
 -- =============================================================================

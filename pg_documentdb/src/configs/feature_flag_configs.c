@@ -388,10 +388,6 @@ bool EnableCompositeParallelIndexScan = DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_
 bool EnableParallelSafeWithExprAccumulators =
 	DEFAULT_ENABLE_PARALLEL_SAFE_WITH_EXPR_ACCUMULATORS;
 
-/* Added on v0.115, enabled on v0.115, remove after v1.0 */
-#define DEFAULT_ENABLE_MIN_MAX_SKIP_NULL_VALUES true
-bool EnableMinMaxSkipNullValues = DEFAULT_ENABLE_MIN_MAX_SKIP_NULL_VALUES;
-
 /* Added in v0.113, pending stabilization, enable in v1.5 */
 #define DEFAULT_ENABLE_DYNAMIC_CURSORS false
 bool EnableDynamicCursors = DEFAULT_ENABLE_DYNAMIC_CURSORS;
@@ -503,11 +499,6 @@ bool EnableRumDynamicIndexScansSkipToTid =
 #define DEFAULT_ENABLE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP true
 bool EnableProjectPushUpBeforeUnwindWithGroup =
 	DEFAULT_ENABLE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP;
-
-/* Added in v0.113, enabled in v0.115, remove after v1.0 */
-#define DEFAULT_ENABLE_SORT_PUSH_TO_ACCUMULATOR_WITH_PREFIX true
-bool EnableSortPushToAccumulatorWithPrefix =
-	DEFAULT_ENABLE_SORT_PUSH_TO_ACCUMULATOR_WITH_PREFIX;
 
 /* Added in v0.116, Pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_MERGE_SORT_FOR_IN_PREFIX false
@@ -1356,14 +1347,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enableSortPushToAccumulatorWithPrefix", newGucPrefix),
-		gettext_noop(
-			"Whether to push suffix sort keys into accumulator when group keys are a prefix of sort keys in $sortGroup."),
-		NULL, &EnableSortPushToAccumulatorWithPrefix,
-		DEFAULT_ENABLE_SORT_PUSH_TO_ACCUMULATOR_WITH_PREFIX,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enable_merge_sort_for_in_prefix", newGucPrefix),
 		gettext_noop(
 			"Whether to push a composite index sort to a merge of per-value ordered index scans when an $in filter is an equality prefix of the sort key."),
@@ -1627,14 +1610,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"When disabled, the field is omitted for those indexes."),
 		NULL, &EmitEnableOrderedIndexFalseInResponse,
 		DEFAULT_EMIT_ENABLE_ORDERED_INDEX_FALSE_IN_RESPONSE,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enable_min_max_skip_null_values", newGucPrefix),
-		gettext_noop(
-			"Whether $min and $max accumulators skip null values, matching the documented wire-protocol semantics of only considering non-null, non-missing values."),
-		NULL, &EnableMinMaxSkipNullValues,
-		DEFAULT_ENABLE_MIN_MAX_SKIP_NULL_VALUES,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

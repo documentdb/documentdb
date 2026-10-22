@@ -122,8 +122,12 @@ SELECT count(*) * 0 AS reset_count FROM documentdb_api_internal.command_feature_
 -- vector index creation error
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "feature_counter_col", "indexes": [ { "key": { "a": "cosmosSearch"}, "name": "foo_1"  } ] }', true);
 ERROR:  Error in specification { "key" : { "a" : "cosmosSearch" }, "name" : "foo_1" }:Index type 'CosmosSearch' was requested, but the 'cosmosSearch' options were not provided.
+CONTEXT:  SQL statement "SELECT documentdb_api_internal.create_indexes_dispatch($1, $2, $3, $4)"
+SQL statement "SELECT documentdb_api_internal.create_indexes_dispatch($1, $2, $3, $4)"
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "feature_counter_col", "indexes": [ { "key": { "a": 1 }, "name": "foo_1", "cosmosSearchOptions": { } } ] }', true);
 ERROR:  Error in specification { "key" : { "a" : 1 }, "name" : "foo_1", "cosmosSearchOptions" : {  } }:cosmosSearch index kind must be specified
+CONTEXT:  SQL statement "SELECT documentdb_api_internal.create_indexes_dispatch($1, $2, $3, $4)"
+SQL statement "SELECT documentdb_api_internal.create_indexes_dispatch($1, $2, $3, $4)"
 -- create collection
 SELECT documentdb_api.create_collection_view('db', '{ "create": "feature_counter_col" }');
 NOTICE:  creating collection
@@ -352,14 +356,14 @@ SELECT documentdb_api.validate('db', '{ "validate" : "feature_counter_col2", "re
 
 -- Print without resetting the counters
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(false);
-                                                                                                                                                                                                                                                                                                                                                                                                                                                        get_feature_counter_pretty                                                                                                                                                                                                                                                                                                                                                                                                                                                         
+                                                                                                                                                                                                                                                                                                                                                                                                                                         get_feature_counter_pretty                                                                                                                                                                                                                                                                                                                                                                                                                                          
 ---------------------------------------------------------------------
  {"Feature_usage":[{"agg_operator_eq" : 1}, {"agg_operator_mod" : 7}, {"agg_operator_toint" : 7}, {"group_add_to_set" : 1}, {"group_count" : 4}, {"group_first" : 1}, {"group_first_n" : 2}, {"group_last" : 1}, {"group_last_n" : 2}, {"group_max" : 3}, {"group_scalar_agg_index_pushdown" : 1}, {"group_sum" : 2}, {"collation" : 3}, {"collation_unsupported_group_accumulator" : 1}, {"validate_repair" : 1}, {"create_index_composite_based_term" : 2}, {"create_index_ttl" : 2}, {"query_operator_eq" : 4}, {"query_operator_gt" : 4}, {"query_operator_or" : 2}, {"add_fields" : 5}, {"count" : 1}, {"group" : 10}, {"firstN_acc_GT10" : 1}, {"lastN_acc_GT10" : 1}, {"limit" : 3}, {"lookup" : 2}, {"match" : 6}, {"project" : 3}, {"replace_root" : 2}, {"replace_with" : 1}, {"skip" : 3}, {"sort" : 6}, {"sort_by_count" : 1}, {"sort_by_id" : 5}, {"unset" : 1}, {"vector_search_native" : 3}]}
 (1 row)
 
 -- print and reset the counters
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
-                                                                                                                                                                                                                                                                                                                                                                                                                                                        get_feature_counter_pretty                                                                                                                                                                                                                                                                                                                                                                                                                                                         
+                                                                                                                                                                                                                                                                                                                                                                                                                                         get_feature_counter_pretty                                                                                                                                                                                                                                                                                                                                                                                                                                          
 ---------------------------------------------------------------------
  {"Feature_usage":[{"agg_operator_eq" : 1}, {"agg_operator_mod" : 7}, {"agg_operator_toint" : 7}, {"group_add_to_set" : 1}, {"group_count" : 4}, {"group_first" : 1}, {"group_first_n" : 2}, {"group_last" : 1}, {"group_last_n" : 2}, {"group_max" : 3}, {"group_scalar_agg_index_pushdown" : 1}, {"group_sum" : 2}, {"collation" : 3}, {"collation_unsupported_group_accumulator" : 1}, {"validate_repair" : 1}, {"create_index_composite_based_term" : 2}, {"create_index_ttl" : 2}, {"query_operator_eq" : 4}, {"query_operator_gt" : 4}, {"query_operator_or" : 2}, {"add_fields" : 5}, {"count" : 1}, {"group" : 10}, {"firstN_acc_GT10" : 1}, {"lastN_acc_GT10" : 1}, {"limit" : 3}, {"lookup" : 2}, {"match" : 6}, {"project" : 3}, {"replace_root" : 2}, {"replace_with" : 1}, {"skip" : 3}, {"sort" : 6}, {"sort_by_count" : 1}, {"sort_by_id" : 5}, {"unset" : 1}, {"vector_search_native" : 3}]}
 (1 row)
@@ -1463,7 +1467,6 @@ SELECT count(*) * 0 AS count FROM documentdb_api_internal.command_feature_counte
 (1 row)
 
 SET documentdb.enable_distinct_scan_for_ordered_group_first TO off;
-SET documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SET enable_seqscan TO off;
 SET enable_bitmapscan TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "orderedFirstCandidate", "hint": "idx_x_y_desc", "pipeline": [ { "$sort": { "x": 1, "y": -1 } }, { "$group": { "_id": "$x", "f": { "$first": "$y" } } }, { "$sort": { "_id": 1 } } ] }');
@@ -1475,7 +1478,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "orderedFir
 
 RESET enable_bitmapscan;
 RESET enable_seqscan;
-RESET documentdb.enableSortPushToAccumulatorWithPrefix;
 RESET documentdb.enable_distinct_scan_for_ordered_group_first;
 RESET documentdb.defaultUseCompositeOpClass;
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
@@ -1500,13 +1502,13 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
     '{"createIndexes":"collatedTruncationCounter","indexes":[{"key":{"a":1},"name":"collated_a_1","collation":{"locale":"en","strength":1},"enableCompositeTerm":true}]}',
     true);
 NOTICE:  creating collection
-                                                                                                   create_indexes_non_concurrently
+                                                                                                   create_indexes_non_concurrently                                                                                                   
 ---------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
 SELECT count(*) * 0 AS count FROM documentdb_api_internal.command_feature_counter_stats(true);
- count
+ count 
 ---------------------------------------------------------------------
      0
 (1 row)
@@ -1514,13 +1516,13 @@ SELECT count(*) * 0 AS count FROM documentdb_api_internal.command_feature_counte
 SELECT documentdb_api.insert_one(
     'db', 'collatedTruncationCounter',
     format('{"_id":1,"a":"%s"}', repeat('a', 80))::documentdb_core.bson);
-                              insert_one
+                              insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
-                                           get_feature_counter_pretty
+                                           get_feature_counter_pretty                                            
 ---------------------------------------------------------------------
  {"Feature_usage":[{"collation_index_term_truncation" : 1}, {"command_insert" : 1}, {"command_insert_one" : 1}]}
 (1 row)
@@ -1530,7 +1532,7 @@ RESET documentdb.indexTermLimitOverride;
 RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
 RESET documentdb_core.enableCollation;
 SELECT documentdb_api.drop_collection('db', 'collatedTruncationCounter');
- drop_collection
+ drop_collection 
 ---------------------------------------------------------------------
  t
 (1 row)

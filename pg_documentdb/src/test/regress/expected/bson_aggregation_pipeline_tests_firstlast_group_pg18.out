@@ -756,15 +756,14 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 
 -- =============================================================================
 -- 29. $sort + $group with only $first operator.
---     When enableSortPushToAccumulatorWithPrefix is on and the group keys form
---     a non-dotted prefix of the sort keys, the
+--     When the group keys form a non-dotted prefix of the sort keys, the
 --     explicit Sort node is dropped and any suffix sort keys are pushed into
 --     the accumulator's ORDER BY.  When the sort spec is not a prefix of the
 --     group keys, the Sort node is preserved.
 -- =============================================================================
 -- Insert test data: 10 rows across 4 groups
 SELECT documentdb_api.insert_one('db','fl_sortgroup_test','{ "_id": 1, "g": "X", "seq": 30, "val": "third" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:252: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:251: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -825,7 +824,6 @@ SELECT documentdb_api.insert_one('db','fl_sortgroup_test','{ "_id": 10, "g": "W"
 (1 row)
 
 -- The Sort node for {g,seq} should disappear, with orderby pushed to aggregate.
-SET documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "g": 1, "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
                  document                 
 ------------------------------------------
@@ -1389,7 +1387,7 @@ RESET documentdb.enableOrderByIndexTerm;
 --     decomposition bails out (dotted paths) and Sort node remains.
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','fl_nested_sort','{ "_id": 1, "g": "A", "info": { "priority": 3 }, "val": "low-pri" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:395: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:393: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1455,7 +1453,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_nested_sort');
 --     while case-insensitive collation (strength=1) sorts alphabetically ("apple" < "Banana").
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','fl_collation_sortpush','{ "_id": 1, "g": "A", "name": "cherry", "seq": 2 }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:412: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:410: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1488,10 +1486,10 @@ SELECT documentdb_api.insert_one('db','fl_collation_sortpush','{ "_id": 5, "g": 
 SET documentdb_core.enableCollation TO on;
 -- 41a. With collation: rejected. 41c shows the binary answer it would return.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": 1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:421: ERROR:  collation is not supported with the $first accumulator in $group yet.
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:419: ERROR:  collation is not supported with the $first accumulator in $group yet.
 -- 41b. EXPLAIN is rejected for the same reason.
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": 1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:424: ERROR:  collation is not supported with the $first accumulator in $group yet.
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:422: ERROR:  collation is not supported with the $first accumulator in $group yet.
 -- 41c. Without a collation the same pipeline still works.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": 1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {} }');
                   document                   
@@ -1502,9 +1500,9 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collati
 
 -- 41d. A descending sort is rejected as well.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": -1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:430: ERROR:  collation is not supported with the $first accumulator in $group yet.
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:428: ERROR:  collation is not supported with the $first accumulator in $group yet.
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": -1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:431: ERROR:  collation is not supported with the $first accumulator in $group yet.
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:429: ERROR:  collation is not supported with the $first accumulator in $group yet.
 SET documentdb_core.enableCollation TO off;
 SELECT documentdb_api.drop_collection('db', 'fl_collation_sortpush');
  drop_collection 
@@ -1512,7 +1510,6 @@ SELECT documentdb_api.drop_collection('db', 'fl_collation_sortpush');
  t
 (1 row)
 
-RESET documentdb.enableSortPushToAccumulatorWithPrefix;
 SELECT documentdb_api.drop_collection('db', 'fl_sortgroup_test');
  drop_collection 
 -----------------

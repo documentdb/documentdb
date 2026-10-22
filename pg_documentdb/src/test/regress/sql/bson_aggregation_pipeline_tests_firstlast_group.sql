@@ -241,8 +241,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 
 -- =============================================================================
 -- 29. $sort + $group with only $first operator.
---     When enableSortPushToAccumulatorWithPrefix is on and the group keys form
---     a non-dotted prefix of the sort keys, the
+--     When the group keys form a non-dotted prefix of the sort keys, the
 --     explicit Sort node is dropped and any suffix sort keys are pushed into
 --     the accumulator's ORDER BY.  When the sort spec is not a prefix of the
 --     group keys, the Sort node is preserved.
@@ -261,7 +260,6 @@ SELECT documentdb_api.insert_one('db','fl_sortgroup_test','{ "_id": 9, "g": "W",
 SELECT documentdb_api.insert_one('db','fl_sortgroup_test','{ "_id": 10, "g": "W", "seq": 1, "val": "only-low" }', NULL);
 
 -- The Sort node for {g,seq} should disappear, with orderby pushed to aggregate.
-SET documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "g": 1, "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "g": 1, "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
 
@@ -434,7 +432,6 @@ SET documentdb_core.enableCollation TO off;
 
 SELECT documentdb_api.drop_collection('db', 'fl_collation_sortpush');
 
-RESET documentdb.enableSortPushToAccumulatorWithPrefix;
 SELECT documentdb_api.drop_collection('db', 'fl_sortgroup_test');
 
 -- Cleanup original test collection
