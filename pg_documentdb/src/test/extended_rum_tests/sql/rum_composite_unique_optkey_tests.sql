@@ -1,7 +1,11 @@
+-- Copyright (c) Microsoft Corporation.
+-- SPDX-License-Identifier: MIT
+
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 
-SET documentdb.next_collection_id TO 2900;
-SET documentdb.next_collection_index_id TO 2900;
+-- This test needs two ID blocks (30100-30299), including the unique-key matrices.
+SET documentdb.next_collection_id TO 30100;
+SET documentdb.next_collection_index_id TO 30100;
 
 SET documentdb.defaultUseCompositeOpClass TO on;
 SET documentdb.enableCompositeUniqueHash TO on;
@@ -24,40 +28,40 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
   '{ "createIndexes": "optkeyColl", "indexes": [ { "key": { "b": 1, "c": 1 }, "name": "b_c_1", "unique": true } ]}', TRUE);
 
 -- Collection ID layout:
---   2900: db metadata
---   2901: optkeyColl -> pk 2901, rum idx a_1 = 2902, rum idx b_c_1 = 2903
+--   30100: db metadata
+--   30101: optkeyColl -> pk 30101, rum idx a_1 = 30102, rum idx b_c_1 = 30103
 -- With optkey consumed during extraction, the unique index stores only the
--- path terms (cmp='true', optsk='2901' on the shard opclass).
-\d documentdb_data.documents_2901
+-- path terms (cmp='true', optsk='30101' on the shard opclass).
+\d documentdb_data.documents_30101
 
 SELECT COUNT(documentdb_api.insert_one('optkeydb', 'optkeyColl',
     bson_build_document('_id'::text, i, 'a'::text, i, 'b'::text, i, 'c'::text, i)))
 FROM generate_series(1, 10) i;
 
-VACUUM (FREEZE ON, INDEX_CLEANUP ON) documentdb_data.documents_2901;
+VACUUM (FREEZE ON, INDEX_CLEANUP ON) documentdb_data.documents_30101;
 
 -- Meta page: with optkey consumed, entries are 10 (path terms only, the shard
 -- exclusion terms are eliminated when shard_key_value matches optsk).
 -- Single-key index {a:1}: 10 entries
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(
-    public.get_raw_page('documentdb_data.documents_rum_index_2902', 0));
+    public.get_raw_page('documentdb_data.documents_rum_index_30102', 0));
 -- Compound-key index {b:1, c:1}: 10 entries
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(
-    public.get_raw_page('documentdb_data.documents_rum_index_2903', 0));
+    public.get_raw_page('documentdb_data.documents_rum_index_30103', 0));
 
 -- Entry layout: should only have attrNumber=1 path entries, no attrNumber=2 shard terms
 SELECT i, (entry->>'offset')::int8, (entry->>'attrNumber')::int8, (entry->>'firstEntry')
 FROM generate_series(1, 1) i JOIN LATERAL (
     SELECT entry FROM documentdb_api_internal.documentdb_rum_page_get_entries(
-        public.get_raw_page('documentdb_data.documents_rum_index_2902', i),
-        'documentdb_data.documents_rum_index_2902'::regclass) entry) q ON TRUE
+        public.get_raw_page('documentdb_data.documents_rum_index_30102', i),
+        'documentdb_data.documents_rum_index_30102'::regclass) entry) q ON TRUE
 ORDER BY i, (entry->>'offset')::int8;
 
 SELECT i, (entry->>'offset')::int8, (entry->>'attrNumber')::int8, (entry->>'firstEntry')
 FROM generate_series(1, 1) i JOIN LATERAL (
     SELECT entry FROM documentdb_api_internal.documentdb_rum_page_get_entries(
-        public.get_raw_page('documentdb_data.documents_rum_index_2903', i),
-        'documentdb_data.documents_rum_index_2903'::regclass) entry) q ON TRUE
+        public.get_raw_page('documentdb_data.documents_rum_index_30103', i),
+        'documentdb_data.documents_rum_index_30103'::regclass) entry) q ON TRUE
 ORDER BY i, (entry->>'offset')::int8;
 
 -- Validate: exactly 10 path entries (attrNumber=1) and 0 shard entries
@@ -65,17 +69,17 @@ ORDER BY i, (entry->>'offset')::int8;
 -- PASS.
 SELECT
     (SELECT count(*) FROM documentdb_api_internal.documentdb_rum_page_get_entries(
-        public.get_raw_page('documentdb_data.documents_rum_index_2902', 1),
-        'documentdb_data.documents_rum_index_2902'::regclass) e
+        public.get_raw_page('documentdb_data.documents_rum_index_30102', 1),
+        'documentdb_data.documents_rum_index_30102'::regclass) e
      WHERE (e->>'attrNumber')::int = 1) AS path_entries,
     (SELECT count(*) FROM documentdb_api_internal.documentdb_rum_page_get_entries(
-        public.get_raw_page('documentdb_data.documents_rum_index_2902', 1),
-        'documentdb_data.documents_rum_index_2902'::regclass) e
+        public.get_raw_page('documentdb_data.documents_rum_index_30102', 1),
+        'documentdb_data.documents_rum_index_30102'::regclass) e
      WHERE (e->>'attrNumber')::int = 2) AS shard_entries,
     CASE
         WHEN (SELECT count(*) FROM documentdb_api_internal.documentdb_rum_page_get_entries(
-                public.get_raw_page('documentdb_data.documents_rum_index_2902', 1),
-                'documentdb_data.documents_rum_index_2902'::regclass) e
+                public.get_raw_page('documentdb_data.documents_rum_index_30102', 1),
+                'documentdb_data.documents_rum_index_30102'::regclass) e
               WHERE (e->>'attrNumber')::int = 2) = 0
         THEN 'PASS: shard exclusion entries eliminated by optkey'
         ELSE 'FAIL: shard exclusion entries still present with optkey'
@@ -101,7 +105,7 @@ SELECT documentdb_api.insert_one('optkeydb', 'optkeyColl',
     '{ "_id": 103, "a": 103, "b": 1, "c": 998 }');
 
 -- Verify row count after the above (2 inserts should succeed, 2 should fail)
-SELECT count(*) as total_rows FROM documentdb_data.documents_2901;
+SELECT count(*) as total_rows FROM documentdb_data.documents_30101;
 
 -- ===== Section 3: Unique constraint with arrays =====
 -- Array values generate multiple index terms; uniqueness must be checked per element.
@@ -154,7 +158,7 @@ SELECT documentdb_api.insert_one('optkeydb', 'optkeyColl',
     '{ "_id": 400, "a": 1, "b": 400, "c": 400 }');
 
 -- Verify final count
-SELECT count(*) as final_rows FROM documentdb_data.documents_2901;
+SELECT count(*) as final_rows FROM documentdb_data.documents_30101;
 
 -- ===== Section 7: After sharding, shard exclusion terms for cross-shard uniqueness =====
 -- When a collection is sharded, documents can have different shard_key_values.
@@ -169,20 +173,20 @@ SELECT count(*) as final_rows FROM documentdb_data.documents_2901;
 SELECT documentdb_api.shard_collection('optkeydb', 'optkeyColl', '{ "b": "hashed" }', false);
 
 -- Show index definitions after sharding
-\d documentdb_data.documents_2901
+\d documentdb_data.documents_30101
 
 -- Insert more docs after sharding to populate multiple pages
 SELECT COUNT(documentdb_api.insert_one('optkeydb', 'optkeyColl',
     bson_build_document('_id'::text, i, 'a'::text, i, 'b'::text, i, 'c'::text, i)))
 FROM generate_series(500, 600) i;
 
-VACUUM (FREEZE ON, INDEX_CLEANUP ON) documentdb_data.documents_2901;
+VACUUM (FREEZE ON, INDEX_CLEANUP ON) documentdb_data.documents_30101;
 
 -- Show meta page info for the EXCLUDE index after sharding
 WITH idx AS (
     SELECT 'documentdb_data.' || indexname AS indexname_full
     FROM pg_indexes
-    WHERE schemaname = 'documentdb_data' AND tablename = 'documents_2901'
+    WHERE schemaname = 'documentdb_data' AND tablename = 'documents_30101'
     AND indexname LIKE '%rum%'
     AND indexdef LIKE '%generate_unique_shard%'
     ORDER BY indexname LIMIT 1
@@ -196,7 +200,7 @@ FROM idx;
 WITH idx AS (
     SELECT 'documentdb_data.' || indexname AS indexname_full
     FROM pg_indexes
-    WHERE schemaname = 'documentdb_data' AND tablename = 'documents_2901'
+    WHERE schemaname = 'documentdb_data' AND tablename = 'documents_30101'
     AND indexname LIKE '%rum%'
     AND indexdef LIKE '%generate_unique_shard%'
     ORDER BY indexname LIMIT 1
@@ -240,7 +244,7 @@ SELECT documentdb_api.insert_one('optkeydb', 'optkeyColl',
     '{ "_id": 601, "a": 1, "b": 400, "c": 1 }');
 
 -- Verify both shard-key-scoped uniqueness outcomes
-SELECT count(*) as final_rows FROM documentdb_data.documents_2901;
+SELECT count(*) as final_rows FROM documentdb_data.documents_30101;
 
 -- ===== Section 9: String value uniqueness =====
 -- Uniqueness on a string field. Without collation, comparison is exact and
@@ -589,6 +593,135 @@ SELECT documentdb_api.insert_one('optkeydb', 'null_missing_flag', '{ "_id": 4, "
 SELECT documentdb_api.insert_one('optkeydb', 'null_missing_flag', '{ "_id": 5, "x": 1, "y": null }');
 SELECT documentdb_api.insert_one('optkeydb', 'null_missing_flag', '{ "_id": 6, "x": 2 }');
 RESET documentdb.enable_unique_null_missing_equivalence;
+
+-- Section 18: null/missing conflict probes must start at the correct bound
+-- for either direction, including nullable leading and trailing compound keys.
+CREATE TEMP TABLE null_missing_order_results (
+    optional_key boolean, comparable_terms boolean, key_position text, direction integer,
+    missing_then_null_duplicate boolean, null_then_missing_duplicate boolean
+);
+
+DO $$
+DECLARE
+    optional_key boolean;
+    comparable_terms boolean;
+    key_position text;
+    direction integer;
+    collection_name text;
+    key_spec text;
+    missing_then_null_duplicate boolean;
+    null_then_missing_duplicate boolean;
+BEGIN
+    FOREACH optional_key IN ARRAY ARRAY[false, true] LOOP
+        PERFORM set_config('documentdb.enable_composite_unique_optional_key', optional_key::text, true);
+        FOREACH comparable_terms IN ARRAY ARRAY[false, true] LOOP
+            PERFORM set_config('documentdb.enableComparableTerms', comparable_terms::text, true);
+            FOREACH key_position IN ARRAY ARRAY['single', 'leading', 'trailing'] LOOP
+                FOREACH direction IN ARRAY ARRAY[1, -1] LOOP
+                    collection_name := format('null_order_%s_%s_%s_%s', optional_key, comparable_terms, key_position, direction);
+                    key_spec := CASE key_position
+                        WHEN 'single' THEN format('{"a":%s}', direction)
+                        WHEN 'leading' THEN format('{"a":%s,"b":1}', direction)
+                        ELSE format('{"b":1,"a":%s}', direction)
+                    END;
+                    PERFORM documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
+                        format('{"createIndexes":"%s","indexes":[{"key":%s,"name":"null_order","unique":true}]}',
+                            collection_name, key_spec)::bson, true);
+                    PERFORM documentdb_api.insert_one('optkeydb', collection_name, '{"_id":1,"b":1}');
+                    missing_then_null_duplicate := documentdb_api.insert_one('optkeydb', collection_name,
+                        '{"_id":2,"a":null,"b":1}') @? '{"writeErrors":1}';
+                    PERFORM documentdb_api.delete('optkeydb',
+                        format('{"delete":"%s","deletes":[{"q":{},"limit":0}]}', collection_name)::bson);
+                    PERFORM documentdb_api.insert_one('optkeydb', collection_name, '{"_id":1,"a":null,"b":1}');
+                    null_then_missing_duplicate := documentdb_api.insert_one('optkeydb', collection_name,
+                        '{"_id":2,"b":1}') @? '{"writeErrors":1}';
+                    INSERT INTO null_missing_order_results VALUES (
+                        optional_key, comparable_terms, key_position, direction,
+                        missing_then_null_duplicate, null_then_missing_duplicate
+                    );
+                END LOOP;
+            END LOOP;
+        END LOOP;
+    END LOOP;
+END;
+$$;
+
+SELECT * FROM null_missing_order_results
+ORDER BY optional_key, comparable_terms, key_position, direction;
+DROP TABLE null_missing_order_results;
+RESET documentdb.enableComparableTerms;
+
+-- The defensive flag applies to existing indexes without rebuilding them.
+SET documentdb.enable_unique_null_missing_semantics TO off;
+SELECT documentdb_api.insert_one('optkeydb', 'null_order_f_f_single_-1', '{"_id":2,"b":1}');
+SELECT documentdb_api.insert_one('optkeydb', 'null_order_t_f_single_-1', '{"_id":2,"b":1}');
+RESET documentdb.enable_unique_null_missing_semantics;
+SELECT documentdb_api.insert_one('optkeydb', 'null_order_f_f_single_-1', '{"_id":3,"b":1}');
+SELECT documentdb_api.insert_one('optkeydb', 'null_order_t_f_single_-1', '{"_id":3,"b":1}');
+
+-- Section 19: DocumentDB currently treats null and literal undefined as
+-- the same unique key. We accept this compatibility difference.
+-- Both cross-type and exact-type duplicate columns should be true, regardless
+-- of insertion order.
+CREATE TEMP TABLE null_undefined_order_results (
+    optional_key boolean, comparable_terms boolean, direction integer,
+    null_then_undefined_duplicate boolean, undefined_then_null_duplicate boolean,
+    null_duplicate boolean, undefined_duplicate boolean
+);
+
+DO $$
+DECLARE
+    optional_key boolean;
+    comparable_terms boolean;
+    direction integer;
+    collection_name text;
+    null_then_undefined_duplicate boolean;
+    undefined_then_null_duplicate boolean;
+    null_duplicate boolean;
+    undefined_duplicate boolean;
+BEGIN
+    FOREACH optional_key IN ARRAY ARRAY[false, true] LOOP
+        PERFORM set_config('documentdb.enable_composite_unique_optional_key', optional_key::text, true);
+        FOREACH comparable_terms IN ARRAY ARRAY[false, true] LOOP
+            PERFORM set_config('documentdb.enableComparableTerms', comparable_terms::text, true);
+            FOREACH direction IN ARRAY ARRAY[1, -1] LOOP
+                collection_name := format('undefined_order_%s_%s_%s', optional_key, comparable_terms, direction);
+                PERFORM documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
+                    format('{"createIndexes":"%s","indexes":[{"key":{"a":%s},"name":"undefined_order","unique":true}]}',
+                        collection_name, direction)::bson, true);
+                -- Accepted: the empty collection has no null key yet.
+                PERFORM documentdb_api.insert_one('optkeydb', collection_name, '{"_id":1,"a":null}');
+                -- Rejected: literal undefined is equivalent to _id:1's null.
+                null_then_undefined_duplicate := documentdb_api.insert_one('optkeydb', collection_name,
+                    '{"_id":2,"a":{"$undefined":true}}') @? '{"writeErrors":1}';
+                -- Rejected: the null key duplicates _id:1.
+                null_duplicate := documentdb_api.insert_one('optkeydb', collection_name,
+                    '{"_id":3,"a":null}') @? '{"writeErrors":1}';
+                PERFORM documentdb_api.delete('optkeydb',
+                    format('{"delete":"%s","deletes":[{"q":{},"limit":0}]}', collection_name)::bson);
+                -- Accepted: after deletion, no explicit undefined key exists.
+                PERFORM documentdb_api.insert_one('optkeydb', collection_name, '{"_id":1,"a":{"$undefined":true}}');
+                -- Rejected: null is equivalent to _id:1's literal undefined.
+                undefined_then_null_duplicate := documentdb_api.insert_one('optkeydb', collection_name,
+                    '{"_id":2,"a":null}') @? '{"writeErrors":1}';
+                -- Rejected: the explicit undefined key duplicates _id:1.
+                undefined_duplicate := documentdb_api.insert_one('optkeydb', collection_name,
+                    '{"_id":3,"a":{"$undefined":true}}') @? '{"writeErrors":1}';
+                INSERT INTO null_undefined_order_results VALUES (
+                    optional_key, comparable_terms, direction,
+                    null_then_undefined_duplicate, undefined_then_null_duplicate,
+                    null_duplicate, undefined_duplicate
+                );
+            END LOOP;
+        END LOOP;
+    END LOOP;
+END;
+$$;
+
+SELECT * FROM null_undefined_order_results
+ORDER BY optional_key, comparable_terms, direction;
+DROP TABLE null_undefined_order_results;
+RESET documentdb.enableComparableTerms;
 
 RESET documentdb.enable_composite_unique_optional_key;
 RESET documentdb.enableCompositeUniqueHash;

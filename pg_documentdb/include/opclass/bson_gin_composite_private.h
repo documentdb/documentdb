@@ -271,7 +271,8 @@ List * MergeSingleVariableBounds(List *variableBounds, const char **wildcardPath
 								 CompositeIndexBounds *mergedBounds,
 								 const char *indexCollation,
 								 bool hasArrayPaths, uint32_t multiKeyBitMask);
-List * MergeWildCardSingleVariableBounds(List *variableBounds);
+List * MergeWildCardSingleVariableBounds(List *variableBounds,
+										 const char *indexCollation);
 
 void TrimSecondaryVariableBounds(VariableIndexBounds *variableBounds,
 								 CompositeQueryRunData *runData,

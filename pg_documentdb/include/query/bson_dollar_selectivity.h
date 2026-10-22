@@ -33,6 +33,7 @@ bool EnablePlannerCostSelectivity(PlannerInfo *planner, List *args);
 void RegisterBsonStatisticsHooks(void);
 bool IsBtreeBsonSelectivityFromStatsEnabledForRelation(PlannerInfo *planner,
 													   RelOptInfo *rel);
+bool ShouldEnableOrderByIdOnCostFunction(PlannerInfo *root, RelOptInfo *rel);
 
 void GetCorrelationFromStatistics(PlannerInfo *root, IndexPath *path,
 								  double *indexCorrelation);

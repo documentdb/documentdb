@@ -1,4 +1,5 @@
 test: multinode/basic_crud
+test: multinode/bson_collation_collection_create_tests_mn
 test: multinode/roles_reference_table
 test: multinode/schema_validation_update_multi
 test: multinode/bson_collation_write_multinode
@@ -14,6 +15,7 @@ test: multinode/move_collection_local_execution
 test: multinode/nested_lookup_post_join_tests
 test: multinode/bson_composite_rct_planner_pruning_tests
 test: multinode/bson_collation_group_decomposed
+test: multinode/bson_collation_collection_write_multinode
 test: multinode/collstats_nested_distribution
 test: multinode/commands_update_remote!PG16_OR_LOWER!
 test: multinode/commands_collmod_hidden_no_placement

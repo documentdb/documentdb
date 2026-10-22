@@ -10,8 +10,7 @@
 # The test keeps the new index pages in shared buffers until a crash (no
 # bgwriter writes, no checkpoints), recovers, and checks that:
 #   1. no index block is left all-zero,
-#   2. inserts and index scans work, for both split code paths
-#      (documentdb_rum.track_incomplete_split on and off).
+#   2. inserts and index scans work.
 #
 # It then zeroes the posting-tree leaf pages of one index on disk to check that
 # a tree descent that reaches a zero page fails with an index-corruption error
@@ -58,16 +57,8 @@ AS '$libdir/pg_documentdb_extended_rum_core', 'documentdb_rum_page_get_stats';
 is($node->safe_psql('postgres', 'SHOW full_page_writes'), 'off',
     'full_page_writes is off');
 
-# One collection per split code path: rumPlaceToPage() is used when
-# track_incomplete_split is on (the default), rumInsertValueOld() when off.
-my %collections = (
-    split_track_on  => 'on',
-    split_track_off => 'off',
-);
-
-foreach my $coll (sort keys %collections)
-{
-    $node->safe_psql('postgres', qq{
+my $coll = 'split_test';
+$node->safe_psql('postgres', qq{
 $search_path
 SELECT documentdb_api.create_collection('testdb', '$coll');
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
@@ -76,12 +67,10 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
     true
 );
 });
-}
 
-# Returns the RUM indexes of a collection, as regclass text.
+# Returns the RUM indexes of the collection, as regclass text.
 sub rum_indexes
 {
-    my ($coll) = @_;
     my $out = $node->safe_psql('postgres', qq{
 SELECT i.indexrelid::regclass
 FROM pg_index i
@@ -104,11 +93,8 @@ $node->safe_psql('postgres', 'CHECKPOINT');
 # trees with many non-root splits; k is unique and padded, so idx_k gets an
 # entry tree with many non-root splits.
 my $batch_size = $num_docs / $num_batches;
-foreach my $coll (sort keys %collections)
-{
-    $node->safe_psql('postgres', qq{
+$node->safe_psql('postgres', qq{
 $search_path
-SET documentdb_rum.track_incomplete_split = '$collections{$coll}';
 DO \$\$
 BEGIN
     FOR b IN 0..$num_batches - 1 LOOP
@@ -120,24 +106,22 @@ BEGIN
 END;
 \$\$;
 });
-}
 
 # Make sure the workload split non-root pages. A root split leaves the new root
 # with 2 downlinks; an internal page with 3 or more got one from the split of a
 # page that was not the root. Checked before the crash, from shared buffers.
-foreach my $coll (sort keys %collections)
+my @indexes = rum_indexes();
+is(scalar(@indexes), 2, 'collection has two RUM indexes');
+foreach my $idx (@indexes)
 {
-    foreach my $idx (rum_indexes($coll))
-    {
-        my $downlinks = $node->safe_psql('postgres', qq{
+    my $downlinks = $node->safe_psql('postgres', qq{
 SELECT max((s ->> 'nEntries')::int)
 FROM generate_series(1, pg_relation_size('$idx') / current_setting('block_size')::int - 1) b,
     LATERAL public.documentdb_rum_page_get_stats(get_raw_page('$idx', b::int)) s
 WHERE ((s ->> 'flags')::int & (2 | 8)) = 0;
 });
-        cmp_ok($downlinks, '>=', 3,
-            "track_incomplete_split=$collections{$coll}: $idx has non-root splits ($downlinks downlinks on an internal page)");
-    }
+    cmp_ok($downlinks, '>=', 3,
+        "$idx has non-root splits ($downlinks downlinks on an internal page)");
 }
 
 # Crash, then crash recovery.
@@ -146,57 +130,50 @@ $node->start;
 
 my $expected_t0 = $num_docs * 2 / 5;
 
-foreach my $coll (sort keys %collections)
+foreach my $idx (@indexes)
 {
-    my $mode = "track_incomplete_split=$collections{$coll}";
-    my @indexes = rum_indexes($coll);
-    is(scalar(@indexes), 2, "$mode: collection has two RUM indexes");
-
-    foreach my $idx (@indexes)
-    {
-        my $zero_pages = $node->safe_psql('postgres', qq{
+    my $zero_pages = $node->safe_psql('postgres', qq{
 SELECT count(*)
 FROM generate_series(0, pg_relation_size('$idx') / current_setting('block_size')::int - 1) b
 WHERE (page_header(get_raw_page('$idx', b::int))).upper = 0;
 });
-        is($zero_pages, '0', "$mode: $idx has no all-zero pages after crash recovery");
-    }
+    is($zero_pages, '0', "$idx has no all-zero pages after crash recovery");
+}
 
-    # Before the fix, this insert never returned.
-    my ($stdout, $stderr, $timed_out);
-    $node->psql('postgres', qq{
+# Before the fix, this insert never returned.
+my ($stdout, $stderr, $timed_out);
+$node->psql('postgres', qq{
 $search_path
 SELECT documentdb_core.bson_to_json_string(
     documentdb_api.insert_one('testdb', '$coll', '{"_id": -1, "tags": ["t0"], "k": "key_new"}'));
 },
-        stdout => \$stdout, stderr => \$stderr,
-        timeout => 60, timed_out => \$timed_out);
-    ok(!$timed_out, "$mode: insert after crash recovery does not hang");
-    like($stdout, qr/"n" : \{ "\$numberInt" : "1" \}/, "$mode: insert after crash recovery succeeds");
-    unlike($stdout, qr/writeErrors/, "$mode: insert after crash recovery has no write errors");
+    stdout => \$stdout, stderr => \$stderr,
+    timeout => 60, timed_out => \$timed_out);
+ok(!$timed_out, "insert after crash recovery does not hang");
+like($stdout, qr/"n" : \{ "\$numberInt" : "1" \}/, "insert after crash recovery succeeds");
+unlike($stdout, qr/writeErrors/, "insert after crash recovery has no write errors");
 
-    foreach my $filter ('{"tags": "t0"}', '{"k": {"$gte": "key_00010000"}}')
-    {
-        my $seq = $node->safe_psql('postgres', qq{
+foreach my $filter ('{"tags": "t0"}', '{"k": {"$gte": "key_00010000"}}')
+{
+    my $seq = $node->safe_psql('postgres', qq{
 $search_path
 SET enable_indexscan = off;
 SET enable_bitmapscan = off;
 SELECT COUNT(*) FROM documentdb_api.collection('testdb', '$coll') WHERE document @@ '$filter';
 });
-        my $idx = $node->safe_psql('postgres', qq{
+    my $idx = $node->safe_psql('postgres', qq{
 $search_path
 SET enable_seqscan = off;
 SELECT COUNT(*) FROM documentdb_api.collection('testdb', '$coll') WHERE document @@ '$filter';
 });
-        is($idx, $seq, "$mode: index scan matches sequential scan for $filter");
-    }
+    is($idx, $seq, "index scan matches sequential scan for $filter");
+}
 
-    is($node->safe_psql('postgres', qq{
+is($node->safe_psql('postgres', qq{
 $search_path
 SET enable_seqscan = off;
 SELECT COUNT(*) FROM documentdb_api.collection('testdb', '$coll') WHERE document @@ '{"tags": "t0"}';
-}), $expected_t0 + 1, "$mode: index scan returns every t0 document");
-}
+}), $expected_t0 + 1, "index scan returns every t0 document");
 
 # ============================================================================
 # A descent that reaches a zero page must error out, not spin forever.
@@ -206,7 +183,7 @@ SELECT COUNT(*) FROM documentdb_api.collection('testdb', '$coll') WHERE document
 my $tags_idx = '';
 my $relpath = '';
 my @data_leaves;
-foreach my $idx (rum_indexes('split_track_on'))
+foreach my $idx (@indexes)
 {
     my $is_tags = $node->safe_psql('postgres', qq{
 SELECT count(*) > 0
@@ -242,8 +219,8 @@ close($fh);
 $node->start;
 
 foreach my $case (
-    [ 'insert', qq{SELECT documentdb_core.bson_to_json_string(documentdb_api.insert_one('testdb', 'split_track_on', '{"_id": -2, "tags": ["t0"]}'));} ],
-    [ 'index scan', qq{SET enable_seqscan = off; SELECT COUNT(*) FROM documentdb_api.collection('testdb', 'split_track_on') WHERE document @@ '{"tags": "t0"}';} ])
+    [ 'insert', qq{SELECT documentdb_core.bson_to_json_string(documentdb_api.insert_one('testdb', '$coll', '{"_id": -2, "tags": ["t0"]}'));} ],
+    [ 'index scan', qq{SET enable_seqscan = off; SELECT COUNT(*) FROM documentdb_api.collection('testdb', '$coll') WHERE document @@ '{"tags": "t0"}';} ])
 {
     my ($name, $sql) = @$case;
     my ($stdout, $stderr, $timed_out);

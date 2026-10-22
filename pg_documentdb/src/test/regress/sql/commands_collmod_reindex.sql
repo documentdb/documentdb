@@ -242,3 +242,81 @@ SELECT cmd_type, index_cmd FROM documentdb_api_catalog.documentdb_index_queue WH
 \d documentdb_data.documents_:skip_cleanup_collection_id
 
 RESET documentdb.skipIndexCleanupOnReindex;
+
+------------------------------------------------------------
+-- Test: reindex via create with planner statistics enabled moves the
+-- statistics dependency to the rebuilt index so the old index can be dropped
+-- concurrently.
+------------------------------------------------------------
+SET documentdb.enablePerCollectionPlannerStatistics TO on;
+SELECT documentdb_api.create_collection('reindex_db', 'reindex_with_stats');
+SELECT COUNT(documentdb_api.insert_one('reindex_db', 'reindex_with_stats', FORMAT('{"_id": %s, "a": %s}', i, i)::documentdb_core.bson)) FROM generate_series(1, 10) i;
+SELECT documentdb_api.coll_mod('reindex_db', 'reindex_with_stats', '{ "collMod": "reindex_with_stats", "enableStats": true }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('reindex_db',
+  '{ "createIndexes": "reindex_with_stats", "indexes": [ { "key": { "a": 1 }, "name": "a_1" } ] }', true);
+
+SELECT collection_id as stats_coll_id FROM documentdb_api_catalog.collections WHERE database_name = 'reindex_db' AND collection_name = 'reindex_with_stats' \gset
+
+-- The statistics object depends on the index
+SELECT s.stxname, d.refobjid::regclass AS depends_on_index, d.deptype
+FROM pg_statistic_ext s JOIN pg_depend d ON d.classid = 'pg_statistic_ext'::regclass AND d.objid = s.oid AND d.refclassid = 'pg_class'::regclass
+JOIN pg_class c ON c.oid = d.refobjid AND c.relkind = 'i'
+WHERE s.stxrelid = ('documentdb_data.documents_' || :stats_coll_id)::regclass ORDER BY 1;
+
+-- Reindex via create (updateOptions) renames the old index to _ccold and drops it concurrently
+SELECT documentdb_api.coll_mod('reindex_db', 'reindex_with_stats', '{ "collMod": "reindex_with_stats", "index": { "name": "a_1", "reindex": true, "updateOptions": true } }');
+SELECT cmd_type, index_cmd FROM documentdb_api_catalog.documentdb_index_queue WHERE index_id >= 25703000 AND index_id <= 25703100 ORDER BY index_id;
+CALL documentdb_api_internal.build_index_concurrently(1);
+CALL documentdb_api_internal.build_index_background(1);
+SELECT cmd_type, index_cmd FROM documentdb_api_catalog.documentdb_index_queue WHERE index_id >= 25703000 AND index_id <= 25703100 ORDER BY index_id;
+
+-- The old _ccold index is gone and the statistics object now depends on the rebuilt index
+\d documentdb_data.documents_:stats_coll_id
+SELECT s.stxname, d.refobjid::regclass AS depends_on_index, d.deptype
+FROM pg_statistic_ext s JOIN pg_depend d ON d.classid = 'pg_statistic_ext'::regclass AND d.objid = s.oid AND d.refclassid = 'pg_class'::regclass
+JOIN pg_class c ON c.oid = d.refobjid AND c.relkind = 'i'
+WHERE s.stxrelid = ('documentdb_data.documents_' || :stats_coll_id)::regclass ORDER BY 1;
+
+-- A plain reindex of a non-unique index uses REINDEX CONCURRENTLY and leaves no _ccold index
+SELECT documentdb_api.coll_mod('reindex_db', 'reindex_with_stats', '{ "collMod": "reindex_with_stats", "index": { "name": "a_1", "reindex": true } }');
+CALL documentdb_api_internal.build_index_concurrently(1);
+CALL documentdb_api_internal.build_index_background(1);
+SELECT COUNT(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE i.indrelid = ('documentdb_data.documents_' || :stats_coll_id)::regclass AND c.relname LIKE '%_ccold';
+SELECT s.stxname, d.refobjid::regclass AS depends_on_index, d.deptype
+FROM pg_statistic_ext s JOIN pg_depend d ON d.classid = 'pg_statistic_ext'::regclass AND d.objid = s.oid AND d.refclassid = 'pg_class'::regclass
+JOIN pg_class c ON c.oid = d.refobjid AND c.relkind = 'i'
+WHERE s.stxrelid = ('documentdb_data.documents_' || :stats_coll_id)::regclass ORDER BY 1;
+
+-- A plain reindex of a unique index rebuilds via create and drops the _ccold index
+SELECT documentdb_api_internal.create_indexes_non_concurrently('reindex_db',
+  '{ "createIndexes": "reindex_with_stats", "indexes": [ { "key": { "a": -1 }, "name": "a_-1_unique", "unique": true } ] }', true);
+SELECT documentdb_api.coll_mod('reindex_db', 'reindex_with_stats', '{ "collMod": "reindex_with_stats", "index": { "name": "a_-1_unique", "reindex": true } }');
+CALL documentdb_api_internal.build_index_concurrently(1);
+CALL documentdb_api_internal.build_index_background(1);
+SELECT COUNT(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE i.indrelid = ('documentdb_data.documents_' || :stats_coll_id)::regclass AND c.relname LIKE '%_ccold';
+SELECT s.stxname, d.refobjid::regclass AS depends_on_index, d.deptype
+FROM pg_statistic_ext s JOIN pg_depend d ON d.classid = 'pg_statistic_ext'::regclass AND d.objid = s.oid AND d.refclassid = 'pg_class'::regclass
+JOIN pg_class c ON c.oid = d.refobjid AND c.relkind = 'i'
+WHERE s.stxrelid = ('documentdb_data.documents_' || :stats_coll_id)::regclass ORDER BY 1;
+CALL documentdb_api.drop_indexes('reindex_db', '{ "dropIndexes": "reindex_with_stats", "index": "a_-1_unique" }');
+
+-- A _ccold index left behind by a reindex via create can be dropped concurrently by hand
+SET documentdb.skipIndexCleanupOnReindex TO true;
+SELECT documentdb_api.coll_mod('reindex_db', 'reindex_with_stats', '{ "collMod": "reindex_with_stats", "index": { "name": "a_1", "reindex": true, "updateOptions": true } }');
+CALL documentdb_api_internal.build_index_concurrently(1);
+CALL documentdb_api_internal.build_index_background(1);
+RESET documentdb.skipIndexCleanupOnReindex;
+SELECT 'documentdb_data.documents_rum_index_' || index_id || '_ccold' AS ccold_index_name
+FROM documentdb_api_catalog.collection_indexes WHERE collection_id = :stats_coll_id AND (index_spec).index_name = 'a_1' \gset
+SELECT COUNT(*) FROM pg_class WHERE oid = to_regclass(:'ccold_index_name');
+DROP INDEX CONCURRENTLY :ccold_index_name;
+\d documentdb_data.documents_:stats_coll_id
+SELECT s.stxname, d.refobjid::regclass AS depends_on_index, d.deptype
+FROM pg_statistic_ext s JOIN pg_depend d ON d.classid = 'pg_statistic_ext'::regclass AND d.objid = s.oid AND d.refclassid = 'pg_class'::regclass
+JOIN pg_class c ON c.oid = d.refobjid AND c.relkind = 'i'
+WHERE s.stxrelid = ('documentdb_data.documents_' || :stats_coll_id)::regclass ORDER BY 1;
+
+-- Dropping the rebuilt index still removes the statistics object
+CALL documentdb_api.drop_indexes('reindex_db', '{ "dropIndexes": "reindex_with_stats", "index": "a_1" }');
+SELECT COUNT(*) FROM pg_statistic_ext WHERE stxrelid = ('documentdb_data.documents_' || :stats_coll_id)::regclass;
+RESET documentdb.enablePerCollectionPlannerStatistics;

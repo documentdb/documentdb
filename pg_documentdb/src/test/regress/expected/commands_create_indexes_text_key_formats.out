@@ -1,0 +1,142 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+SET search_path TO documentdb_api, documentdb_api_catalog, documentdb_core;
+SET documentdb.next_collection_id TO 27200000;
+SET documentdb.next_collection_index_id TO 27200000;
+-- A text index can be specified with field names or with the key format that
+-- listIndexes returns. Both formats should build the same text index, including
+-- when ordered indexes are enabled by default.
+SET documentdb.defaultUseCompositeOpClass TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('text_key_formats',
+  '{"createIndexes":"field_names","indexes":[{"key":{"body":"text"},"name":"body_text"}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('text_key_formats',
+  '{"createIndexes":"listed_format","indexes":[{"key":{"_fts":"text","_ftsx":1},"weights":{"body":1},"name":"body_text"}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('text_key_formats', 'field_names', '{"_id":1,"body":"hello world"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('text_key_formats', 'listed_format', '{"_id":1,"body":"hello world"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Both indexes should be built as text indexes.
+SELECT c.collection_name,
+       d.index_def LIKE '%text_path_ops%' AS is_text_index,
+       d.index_def LIKE '%composite_path_ops%' AS is_composite_index
+FROM (VALUES ('field_names'), ('listed_format')) AS c(collection_name)
+CROSS JOIN LATERAL documentdb_test_helpers.documentdb_index_get_pg_def(
+    'text_key_formats', c.collection_name, 'body_text') AS d(index_def)
+ORDER BY c.collection_name;
+ collection_name | is_text_index | is_composite_index 
+-----------------+---------------+--------------------
+ field_names     | t             | f
+ listed_format   | t             | f
+(2 rows)
+
+-- Both collections should answer $text queries.
+SELECT document FROM bson_aggregation_find('text_key_formats',
+  '{"find":"field_names","filter":{"$text":{"$search":"hello"}}}');
+                          document                          
+------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "body" : "hello world" }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('text_key_formats',
+  '{"find":"listed_format","filter":{"$text":{"$search":"hello"}}}');
+                          document                          
+------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "body" : "hello world" }
+(1 row)
+
+-- The listIndexes format can also combine text with other keys, use wildcard
+-- weights, and carry language options. Each should build a text index that
+-- keeps the other keys and the text options.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('text_key_formats',
+  '{"createIndexes":"text_then_key","indexes":[{"key":{"_fts":"text","_ftsx":1,"c":1},"weights":{"a":1,"b":1},"name":"text_idx"}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('text_key_formats',
+  '{"createIndexes":"key_then_text","indexes":[{"key":{"a":1,"_fts":"text","_ftsx":1},"weights":{"b":1},"name":"text_idx"}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('text_key_formats',
+  '{"createIndexes":"wildcard_weights","indexes":[{"key":{"_fts":"text","_ftsx":1},"weights":{"$**":1},"name":"text_idx"}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('text_key_formats',
+  '{"createIndexes":"language_options","indexes":[{"key":{"_fts":"text","_ftsx":1},"weights":{"body":1},"default_language":"es","language_override":"idioma","name":"text_idx"}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Older builds stored the ordered default on text indexes in this format, and
+-- listIndexes reports that as storageEngine.enableOrderedIndex: true. Recreating
+-- such an index from listIndexes output should still build a text index.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('text_key_formats',
+  '{"createIndexes":"explicit_ordered","indexes":[{"key":{"_fts":"text","_ftsx":1},"weights":{"body":1},"storageEngine":{"enableOrderedIndex":true},"name":"text_idx"}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT c.collection_name,
+       substring(d.index_def FROM ' USING (.*)$') AS index_def
+FROM (VALUES ('text_then_key'), ('key_then_text'), ('wildcard_weights'), ('language_options'), ('explicit_ordered')) AS c(collection_name)
+CROSS JOIN LATERAL documentdb_test_helpers.documentdb_index_get_pg_def(
+    'text_key_formats', c.collection_name, 'text_idx') AS d(index_def)
+ORDER BY c.collection_name;
+ collection_name  |                                                                          index_def                                                                          
+------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------
+ explicit_ordered | documentdb_rum (document bson_rum_text_path_ops (weights='{ "body" : 1.0 }'))
+ key_then_text    | documentdb_rum (document bson_rum_single_path_ops (path=a), document bson_rum_text_path_ops (weights='{ "b" : 1.0 }', enabledottedterms='true'))
+ language_options | documentdb_rum (document bson_rum_text_path_ops (weights='{ "body" : 1.0 }', defaultlanguage=es, languageoverride=idioma))
+ text_then_key    | documentdb_rum (document bson_rum_single_path_ops (path=c), document bson_rum_text_path_ops (weights='{ "a" : 1.0, "b" : 1.0 }', enabledottedterms='true'))
+ wildcard_weights | documentdb_rum (document bson_rum_text_path_ops (weights='', iswildcard='true'))
+(5 rows)
+
+-- A compound text index should still answer $text queries.
+SELECT documentdb_api.insert_one('text_key_formats', 'text_then_key', '{"_id":1,"a":"hello world","c":1}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('text_key_formats',
+  '{"find":"text_then_key","filter":{"$text":{"$search":"hello"}}}');
+                                       document                                        
+---------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "hello world", "c" : { "$numberInt" : "1" } }
+(1 row)
+
+RESET documentdb.defaultUseCompositeOpClass;

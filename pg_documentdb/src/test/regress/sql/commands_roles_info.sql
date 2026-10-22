@@ -55,6 +55,10 @@ SELECT documentdb_api.roles_info('{"rolesInfo":null, "$db":"admin"}');
 -- which also doesn't require showBuiltInRoles since it's only an addon flag for rolesInfo:1
 SELECT documentdb_api.roles_info('{"rolesInfo":"clusterAdmin", "showPrivileges":true, "$db":"admin"}');
 SELECT documentdb_api.roles_info('{"rolesInfo":"readWriteAnyDatabase", "showPrivileges":true, "$db":"admin"}');
+SELECT documentdb_api.roles_info('{"rolesInfo":"root", "showPrivileges":true, "$db":"admin"}');
+-- Unsupported built-in role names are omitted.
+SELECT documentdb_api.roles_info('{"rolesInfo":"userAdminAnyDatabase", "$db":"admin"}');
+SELECT documentdb_api.roles_info('{"rolesInfo":"dbAdminAnyDatabase", "$db":"admin"}');
 
 -- Test rolesInfo with string value of custom role
 SELECT documentdb_api.roles_info('{"rolesInfo":"test_custom_role", "showPrivileges":true, "$db":"admin"}');
@@ -200,6 +204,9 @@ SELECT pg_has_role(current_user, 'documentdb_root_role', 'MEMBER')
 	pg_has_role(current_user, 'documentdb_admin_role', 'MEMBER')
 	AS is_admin_role_member;
 SELECT documentdb_api.roles_info('{"rolesInfo":"test_hidden_role", "$db":"admin"}');
+-- Admin-role membership can also view any built-in role, even one it does not
+-- otherwise hold, matching the view-all-roles behavior for custom roles.
+SELECT documentdb_api.roles_info('{"rolesInfo":"root", "$db":"admin"}');
 SELECT documentdb_core.bson_to_json_string(
 	documentdb_api.roles_info('{"rolesInfo":1, "$db":"admin"}'))::text
 		LIKE '%test_hidden_role%'
@@ -218,6 +225,13 @@ SELECT pg_has_role(current_user, 'documentdb_root_role', 'MEMBER')
 SELECT documentdb_api.roles_info('{"rolesInfo":["readAnyDatabase", "test_custom_role", "test_transitive_role"], "$db":"admin"}');
 SELECT documentdb_api.roles_info('{"rolesInfo":"test_hidden_role", "$db":"admin"}');
 SELECT documentdb_api.roles_info('{"rolesInfo":["test_custom_role", "test_hidden_role"], "$db":"admin"}');
+-- Built-in roles honor the same visibility rule: a held built-in role
+-- (readAnyDatabase via documentdb_readonly_role) is returned, while unheld
+-- built-in roles such as root and clusterAdmin are omitted rather than
+-- exposing their definition and privileges.
+SELECT documentdb_api.roles_info('{"rolesInfo":"readAnyDatabase", "showPrivileges":true, "$db":"admin"}');
+SELECT documentdb_api.roles_info('{"rolesInfo":"root", "showPrivileges":true, "$db":"admin"}');
+SELECT documentdb_api.roles_info('{"rolesInfo":["readAnyDatabase", "root", "clusterAdmin"], "showPrivileges":true, "$db":"admin"}');
 SELECT documentdb_api.roles_info('{"rolesInfo":1, "$db":"admin"}');
 RESET ROLE;
 
@@ -229,6 +243,102 @@ REVOKE documentdb_admin_role FROM test_roles_info_admin;
 DROP ROLE test_roles_info_admin;
 SELECT documentdb_api.drop_role('{"dropRole":"test_transitive_role", "$db":"admin"}');
 SELECT documentdb_api.drop_role('{"dropRole":"test_hidden_role", "$db":"admin"}');
+
+-- ********* Test rolesInfo built-in visibility for SET-only membership *********
+-- A caller can hold a built-in role through membership (it can assume the role
+-- via SET ROLE) without inheriting the role's privileges through USAGE. Built-in
+-- role visibility must mirror the custom-role predicate and treat such a caller
+-- as holding the role, so the definition stays viewable. The membership is
+-- established through a NOINHERIT intermediary, which blocks privilege
+-- inheritance while preserving the ability to assume the role. The reader draws
+-- its ability to run rolesInfo from documentdb_readonly_role, so the built-in
+-- role under test is readWriteAnyDatabase, whose backing role
+-- documentdb_rbac_readwrite_anydb_role is provisioned by the extension.
+CREATE ROLE test_roles_info_set_reader LOGIN;
+GRANT documentdb_readonly_role TO test_roles_info_set_reader;
+CREATE ROLE test_roles_info_set_only_parent NOINHERIT;
+GRANT documentdb_rbac_readwrite_anydb_role TO test_roles_info_set_only_parent;
+GRANT test_roles_info_set_only_parent TO test_roles_info_set_reader;
+SET ROLE test_roles_info_set_reader;
+-- The reader can assume readWriteAnyDatabase's backing role but does not hold its
+-- privileges via USAGE.
+SELECT pg_has_role(current_user, 'documentdb_rbac_readwrite_anydb_role', 'USAGE')
+	AS holds_via_usage,
+	pg_has_role(current_user, 'documentdb_rbac_readwrite_anydb_role', 'MEMBER')
+	AS is_member;
+SELECT documentdb_api.roles_info('{"rolesInfo":"readWriteAnyDatabase", "showPrivileges":true, "$db":"admin"}');
+RESET ROLE;
+REVOKE test_roles_info_set_only_parent FROM test_roles_info_set_reader;
+REVOKE documentdb_rbac_readwrite_anydb_role FROM test_roles_info_set_only_parent;
+DROP ROLE test_roles_info_set_only_parent;
+REVOKE documentdb_readonly_role FROM test_roles_info_set_reader;
+DROP ROLE test_roles_info_set_reader;
+
+-- ********* Test rolesInfo built-in visibility ignores the legacy backing role *
+-- rolesInfo visibility for readWriteAnyDatabase keys off the current backing
+-- role documentdb_rbac_readwrite_anydb_role only. The legacy
+-- documentdb_readwrite_role does not grant visibility, so a caller that holds
+-- only the legacy role cannot view the readWriteAnyDatabase definition. User
+-- reporting (connectionStatus and usersInfo) still recognizes the legacy role,
+-- so that surface and rolesInfo intentionally differ for legacy-only holders.
+-- The reader draws its ability to run rolesInfo from documentdb_readonly_role
+-- and is not a member of the admin or root roles, so visibility is decided
+-- solely by whether it holds the current backing role.
+CREATE ROLE test_roles_info_legacy_reader LOGIN;
+GRANT documentdb_readonly_role TO test_roles_info_legacy_reader;
+GRANT documentdb_readwrite_role TO test_roles_info_legacy_reader;
+SET ROLE test_roles_info_legacy_reader;
+-- The reader holds only the legacy backing role, not the current one, and is not
+-- an admin, so it cannot view the readWriteAnyDatabase definition.
+SELECT pg_has_role(current_user, 'documentdb_readwrite_role', 'USAGE')
+	AS holds_legacy_via_usage,
+	pg_has_role(current_user, 'documentdb_rbac_readwrite_anydb_role', 'MEMBER')
+	AS is_member_of_new_backing,
+	pg_has_role(current_user, 'documentdb_admin_role', 'USAGE')
+	AS holds_admin_via_usage;
+SELECT documentdb_api.roles_info('{"rolesInfo":"readWriteAnyDatabase", "showPrivileges":true, "$db":"admin"}');
+RESET ROLE;
+REVOKE documentdb_readwrite_role FROM test_roles_info_legacy_reader;
+REVOKE documentdb_readonly_role FROM test_roles_info_legacy_reader;
+DROP ROLE test_roles_info_legacy_reader;
+
+-- ***** Test rolesInfo view-all visibility for SET-only admin membership *****
+-- Membership in the admin role grants the ability to view every role, even ones
+-- the caller does not otherwise hold. That view-all predicate must mirror the
+-- custom-role predicate and treat a caller that can assume the admin role via
+-- SET ROLE (without inheriting its privileges through USAGE) as holding it. The
+-- membership is established through a NOINHERIT intermediary, which blocks
+-- privilege inheritance while preserving the ability to assume the role. The
+-- reader draws its ability to run rolesInfo from documentdb_readonly_role, and
+-- the roles under test are an unheld custom role and the unheld built-in root
+-- role, neither of which the reader could see without the view-all path.
+SELECT documentdb_api.create_role('{"createRole":"test_setadmin_hidden_role", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+CREATE ROLE test_roles_info_setadmin_reader LOGIN;
+GRANT documentdb_readonly_role TO test_roles_info_setadmin_reader;
+CREATE ROLE test_roles_info_setadmin_parent NOINHERIT;
+GRANT documentdb_admin_role TO test_roles_info_setadmin_parent;
+GRANT test_roles_info_setadmin_parent TO test_roles_info_setadmin_reader;
+SET ROLE test_roles_info_setadmin_reader;
+-- The reader can assume the admin role but does not hold its privileges via
+-- USAGE, and is not a member of the custom role under test.
+SELECT pg_has_role(current_user, 'documentdb_admin_role', 'USAGE')
+	AS holds_admin_via_usage,
+	pg_has_role(current_user, 'documentdb_admin_role', 'MEMBER')
+	AS is_admin_member,
+	pg_has_role(current_user, 'test_setadmin_hidden_role', 'MEMBER')
+	AS is_hidden_role_member;
+-- View-all lets the SET-only admin inspect roles it does not hold: the built-in
+-- root role flows through the view-all predicate in RolesInfoCallerCanViewAllRoles,
+-- and the unheld custom role through the equivalent system.roles view filter.
+SELECT documentdb_api.roles_info('{"rolesInfo":"test_setadmin_hidden_role", "$db":"admin"}');
+SELECT documentdb_api.roles_info('{"rolesInfo":"root", "showPrivileges":true, "$db":"admin"}');
+RESET ROLE;
+REVOKE test_roles_info_setadmin_parent FROM test_roles_info_setadmin_reader;
+REVOKE documentdb_admin_role FROM test_roles_info_setadmin_parent;
+DROP ROLE test_roles_info_setadmin_parent;
+REVOKE documentdb_readonly_role FROM test_roles_info_setadmin_reader;
+DROP ROLE test_roles_info_setadmin_reader;
+SELECT documentdb_api.drop_role('{"dropRole":"test_setadmin_hidden_role", "$db":"admin"}');
 
 -- Clean up test roles created for rolesInfo testing
 DROP ROLE IF EXISTS "test_custom_role";

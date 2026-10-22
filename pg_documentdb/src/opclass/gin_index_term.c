@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * src/opclass/gin_index_term.c
  *
@@ -19,8 +20,11 @@
 #include "utils/documentdb_errors.h"
 #include "types/decimal128.h"
 #include "io/bsonvalue_utils.h"
+#include "collation/collation.h"
+#include "utils/feature_counter.h"
 
 extern bool EnableCollationWithNonUniqueOrderedIndexes;
+extern bool FailOnCollatedIndexTermTruncation;
 extern bool EnableComparableTerms;
 
 
@@ -2361,6 +2365,25 @@ BuildSerializedIndexTerm(pgbsonelement *indexElement, const
 												 createMetadata,
 												 allowValueOnly,
 												 &isValueOnly);
+
+	if (isTermTruncated && IsCollationValid(createMetadata->collation) &&
+		IsBsonTypeCollationAware(indexElement->bsonValue.value_type))
+	{
+		ReportFeatureUsage(FEATURE_COLLATION_INDEX_TERM_TRUNCATION);
+		if (FailOnCollatedIndexTermTruncation)
+		{
+			char *indexTermTypeName = BsonTypeName(indexElement->bsonValue.value_type);
+
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTBUILDINDEXKEYS),
+							errmsg(
+								"Cannot generate an index term of type '%s' that requires truncation when the index has a non-simple collation",
+								indexTermTypeName),
+							errdetail_log(
+								"Index term of type %s exceeded the size limit %d",
+								indexTermTypeName,
+								createMetadata->indexTermSizeLimit)));
+		}
+	}
 
 	if (unlikely(forceSetMetadata))
 	{

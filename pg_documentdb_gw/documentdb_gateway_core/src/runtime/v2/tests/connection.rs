@@ -19,15 +19,10 @@ use nacelle::core::NacelleRequestMetricsConfig;
 use tokio::{io::AsyncWriteExt, task::JoinSet};
 use uuid::Uuid;
 
-use crate::{
-    error::Result,
-    runtime::v2::{
-        connection::gateway_request_metrics,
-        listener::{
-            create_unix_socket_listener, detect_tls_handshake, drain_completed_connections,
-        },
-        tests::support::connected_tcp_pair,
-    },
+use crate::runtime::v2::{
+    connection::gateway_request_metrics,
+    listener::{create_unix_socket_listener, detect_tls_handshake, drain_completed_connections},
+    tests::support::connected_tcp_pair,
 };
 
 #[test]
@@ -49,13 +44,12 @@ fn request_metrics_follow_gateway_telemetry_setting() {
 #[tokio::test]
 async fn completed_connection_tasks_are_eagerly_drained() {
     const TASK_COUNT: usize = 64;
-    let mut tasks = JoinSet::<Result<()>>::new();
+    let mut tasks = JoinSet::<()>::new();
     let completed = Arc::new(AtomicUsize::new(0));
     for _ in 0..TASK_COUNT {
         let completed = Arc::clone(&completed);
         tasks.spawn(async move {
             completed.fetch_add(1, Ordering::Release);
-            Ok(())
         });
     }
     while completed.load(Ordering::Acquire) != TASK_COUNT {

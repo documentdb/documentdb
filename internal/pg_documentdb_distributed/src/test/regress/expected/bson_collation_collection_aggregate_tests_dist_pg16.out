@@ -16,6 +16,13 @@ psql:sql/bson_collation_collection_aggregate_tests_dist.sql:14: NOTICE:  creatin
  t
 (1 row)
 
+SELECT documentdb_api.shard_collection(
+    'collation_aggregate_dist_db', 'source', '{ "_id": "hashed" }', false);
+ shard_collection
+---------------------------------------------------------------------
+
+(1 row)
+
 UPDATE documentdb_api_catalog.collections
 SET options = '{ "collation": { "locale": "en", "strength": 1, "numericOrdering": true } }'::documentdb_core.bson
 WHERE database_name = 'collation_aggregate_dist_db' AND collection_name = 'source';
@@ -55,13 +62,6 @@ SELECT documentdb_api.insert_one(
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
-(1 row)
-
-SELECT documentdb_api.shard_collection(
-    'collation_aggregate_dist_db', 'source', '{ "_id": "hashed" }', false);
- shard_collection 
----------------------------------------------------------------------
- 
 (1 row)
 
 BEGIN;
@@ -198,7 +198,7 @@ SELECT document FROM bson_aggregation_pipeline(
         { "$sort": { "firstId": 1 } }
     ] }')
 $cmd$, p_ignore_distributed_subplan_ids => true) AS plan(query_plan);
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             query_plan                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               query_plan
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
@@ -375,14 +375,6 @@ psql:sql/bson_collation_collection_aggregate_tests_dist.sql:189: NOTICE:  creati
  t
 (1 row)
 
-UPDATE documentdb_api_catalog.collections
-SET options = '{ "collation": {
-    "locale": "en",
-    "strength": 1,
-    "numericOrdering": true
-} }'::documentdb_core.bson
-WHERE database_name = 'collation_nested_dist_db'
-  AND collection_name = 'source';
 -- Foreign collection defaults must not replace the command-wide collation.
 UPDATE documentdb_api_catalog.collections
 SET options = '{ "collation": { "locale": "simple" } }'::documentdb_core.bson
@@ -558,6 +550,21 @@ SELECT documentdb_api.shard_collection(
  shard_collection 
 ---------------------------------------------------------------------
  
+(1 row)
+
+-- Set the source default after sharding to exercise inherited collation on reads.
+UPDATE documentdb_api_catalog.collections
+SET options = '{ "collation": {
+    "locale": "en",
+    "strength": 1,
+    "numericOrdering": true
+} }'::documentdb_core.bson
+WHERE database_name = 'collation_nested_dist_db'
+  AND collection_name = 'source';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+ invalidate_collection_cache
+---------------------------------------------------------------------
+
 (1 row)
 
 BEGIN;

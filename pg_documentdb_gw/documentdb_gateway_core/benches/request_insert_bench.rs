@@ -101,7 +101,7 @@ fn bench_insert(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("bufmut", count), &message, |b, msg| {
             b.iter(|| {
                 let mut requires_response = true;
-                reader::parse_request(msg, &mut requires_response).unwrap()
+                reader::parse_request(msg, &mut requires_response, true).unwrap()
             });
         });
 

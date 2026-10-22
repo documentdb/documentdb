@@ -1,3 +1,6 @@
+-- Copyright (c) Microsoft Corporation.
+-- SPDX-License-Identifier: MIT
+
 SET documentdb.next_collection_id TO 8100;
 SET documentdb.next_collection_index_id TO 8100;
 
@@ -510,6 +513,8 @@ FROM documentdb_api_internal.documentdb_rum_page_get_entries(
 
 
 -- ===== Section 14: Truncated long strings with numericOrdering=true ======
+SET documentdb.fail_on_collated_index_term_truncation TO off;
+
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
   'ord_coll_ordered_db',
   '{
@@ -540,6 +545,8 @@ FROM documentdb_api_internal.documentdb_rum_page_get_entries(
     public.get_raw_page('documentdb_data.documents_rum_index_8129', 1), 
     'documentdb_data.documents_rum_index_8129'::regclass
 ) entry;
+
+RESET documentdb.fail_on_collated_index_term_truncation;
 
 
 -- ===== Section 15: Ordered scans with collation — $not comparison operators ======
@@ -2547,6 +2554,363 @@ SELECT documentdb_api_internal.invalidate_collection_cache();
 
 RESET documentdb.enable_dynamic_cursor_with_skiplimit;
 RESET documentdb.enableDynamicCursors;
+
+-- Collated $in point bounds must follow index order without a command sort.
+-- The outer SQL ordering only stabilizes regression output.
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_membership', value::bson, NULL)
+FROM (VALUES
+    ('{ "_id": 40, "a": "short", "b": 0 }'),
+    ('{ "_id": 41, "a": "SHORT", "b": 1 }'),
+    ('{ "_id": 42, "a": "zzz", "b": 2 }'),
+    ('{ "_id": 43, "b": 3 }'),
+    ('{ "_id": 44, "a": ["short", "zzz"], "b": 4 }'),
+    ('{ "_id": 45, "a": "abc", "b": 5 }')
+) AS documents(value);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'ord_coll_ordered_db',
+    '{
+        "createIndexes": "ord_membership",
+        "indexes": [{
+            "key": { "a": 1, "b": 1 },
+            "name": "membership_ascending",
+            "collation": { "locale": "en", "strength": 1 },
+            "enableCompositeTerm": true
+        }, {
+            "key": { "a": -1, "b": 1 },
+            "name": "membership_descending",
+            "collation": { "locale": "en", "strength": 1 },
+            "enableCompositeTerm": true
+        }, {
+            "key": { "a": 1, "b": 1 },
+            "name": "membership_simple",
+            "collation": { "locale": "simple" },
+            "enableCompositeTerm": true
+        }]
+    }',
+    TRUE);
+
+SET enable_seqscan TO off;
+SET enable_indexscan TO on;
+SET enable_bitmapscan TO on;
+SET documentdb.enableExtendedExplainPlans TO on;
+SET documentdb.max_non_ordered_term_scan_threshold TO 500;
+
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership", "filter": { "a": { "$in": ["\u0301short", "zzz"] } }, "hint": "membership_ascending", "collation": { "locale": "en", "strength": 1 } }')
+) AS query_result
+ORDER BY document::text;
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership", "filter": { "a": { "$in": ["\u0301short", "zzz"] } }, "hint": "membership_descending", "collation": { "locale": "en", "strength": 1 } }')
+) AS query_result
+ORDER BY document::text;
+
+SET documentdb.max_non_ordered_term_scan_threshold TO 1;
+
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership", "filter": { "a": { "$in": ["\u0301short", "zzz"] } }, "hint": "membership_ascending", "collation": { "locale": "en", "strength": 1 } }')
+) AS query_result
+ORDER BY document::text;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership", "filter": { "a": { "$in": ["\u0301short", "zzz"] } }, "hint": "membership_ascending", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership", "filter": { "a": { "$in": ["\u0301short", "zzz"] } }, "hint": "membership_descending", "collation": { "locale": "en", "strength": 1 } }')
+) AS query_result
+ORDER BY document::text;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership", "filter": { "a": { "$in": ["\u0301short", "zzz"] } }, "hint": "membership_descending", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- The ordered simple-collation path must retain binary $in bound ordering.
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership", "filter": { "a": { "$in": ["\u0301short", "zzz"] } }, "hint": "membership_simple" }')
+) AS query_result
+ORDER BY document::text;
+
+-- Two absent values still select the ordered path without producing a match.
+SELECT count(*) AS matching_documents
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership", "filter": { "a": { "$in": ["no-match", "never"] } }, "hint": "membership_ascending", "collation": { "locale": "en", "strength": 1 } }')
+) AS query_result;
+SELECT count(*) AS matching_documents
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership", "filter": { "a": { "$in": ["no-match", "never"] } }, "hint": "membership_descending", "collation": { "locale": "en", "strength": 1 } }')
+) AS query_result;
+
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership", "filter": { "a": { "$in": "short" } }, "hint": "membership_ascending", "collation": { "locale": "en", "strength": 1 } }');
+
+-- Scalar-only data keeps the same-field range intersection on the index path.
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_membership_scalar', value::bson, NULL)
+FROM (VALUES
+    ('{ "_id": 40, "a": "short", "b": 0 }'),
+    ('{ "_id": 41, "a": "SHORT", "b": 1 }'),
+    ('{ "_id": 42, "a": "zzz", "b": 2 }'),
+    ('{ "_id": 43, "b": 3 }'),
+    ('{ "_id": 45, "a": "abc", "b": 5 }')
+) AS documents(value);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'ord_coll_ordered_db',
+    '{
+        "createIndexes": "ord_membership_scalar",
+        "indexes": [{
+            "key": { "a": 1, "b": 1 },
+            "name": "membership_scalar_ascending",
+            "collation": { "locale": "en", "strength": 1 },
+            "enableCompositeTerm": true
+        }, {
+            "key": { "a": -1, "b": 1 },
+            "name": "membership_scalar_descending",
+            "collation": { "locale": "en", "strength": 1 },
+            "enableCompositeTerm": true
+        }]
+    }',
+    TRUE);
+
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "$and": [{ "a": { "$in": ["\u0301short", "zzz"] } }, { "a": { "$lte": "w" } }] }, "hint": "membership_scalar_ascending", "collation": { "locale": "en", "strength": 1 } }')
+) AS query_result
+ORDER BY document::text;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "$and": [{ "a": { "$in": ["\u0301short", "zzz"] } }, { "a": { "$lte": "w" } }] }, "hint": "membership_scalar_ascending", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "$and": [{ "a": { "$in": ["\u0301short", "zzz"] } }, { "a": { "$lte": "w" } }] }, "hint": "membership_scalar_descending", "collation": { "locale": "en", "strength": 1 } }')
+) AS query_result
+ORDER BY document::text;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "$and": [{ "a": { "$in": ["\u0301short", "zzz"] } }, { "a": { "$lte": "w" } }] }, "hint": "membership_scalar_descending", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "$and": [{ "a": { "$in": ["\u0301short", "zzz"] } }, { "a": { "$gte": "w" } }] }, "hint": "membership_scalar_ascending", "collation": { "locale": "en", "strength": 1 } }')
+) AS query_result
+ORDER BY document::text;
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "$and": [{ "a": { "$in": ["\u0301short", "zzz"] } }, { "a": { "$gte": "w" } }] }, "hint": "membership_scalar_descending", "collation": { "locale": "en", "strength": 1 } }')
+) AS query_result
+ORDER BY document::text;
+
+-- Disabling multi-range skip advancement must preserve the same intersection.
+SET documentdb.enable_ordered_saop_multi_range_skip_advance TO off;
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "$and": [{ "a": { "$in": ["\u0301short", "zzz"] } }, { "a": { "$gte": "w" } }] }, "hint": "membership_scalar_ascending", "collation": { "locale": "en", "strength": 1 } }')
+) AS query_result
+ORDER BY document::text;
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "$and": [{ "a": { "$in": ["\u0301short", "zzz"] } }, { "a": { "$lte": "w" } }] }, "hint": "membership_scalar_descending", "collation": { "locale": "en", "strength": 1 } }')
+) AS query_result
+ORDER BY document::text;
+RESET documentdb.enable_ordered_saop_multi_range_skip_advance;
+
+-- Standard permutations must intersect the point and range in index order.
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_membership_scalar', value::bson, NULL)
+FROM (VALUES
+    ('{ "_id": 46, "a": "a", "b": 6 }'),
+    ('{ "_id": 47, "a": "b", "b": 7 }'),
+    ('{ "_id": 48, "a": "Z", "b": 8 }'),
+    ('{ "_id": 49, "a": "z", "b": 9 }')
+) AS documents(value);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'ord_coll_ordered_db',
+    '{
+        "createIndexes": "ord_membership_scalar",
+        "indexes": [{
+            "key": { "a": 1, "b": 1 },
+            "name": "raw_bounds_collated",
+            "collation": { "locale": "en", "strength": 2 },
+            "enableCompositeTerm": true
+        }, {
+            "key": { "a": 1, "b": 1 },
+            "name": "raw_bounds_simple",
+            "collation": { "locale": "simple" },
+            "enableCompositeTerm": true
+        }, {
+            "key": { "$**": 1 },
+            "name": "raw_bounds_wildcard",
+            "collation": { "locale": "en", "strength": 2 },
+            "enableOrderedIndex": true
+        }]
+    }',
+    TRUE);
+
+SET documentdb.max_non_ordered_term_scan_threshold TO 500;
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "$and": [{ "a": { "$in": ["Z", "b"] } }, { "a": { "$gte": "a" } }] }, "hint": "raw_bounds_collated", "collation": { "locale": "en", "strength": 2 } }')
+) AS query_result
+ORDER BY document::text;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "$and": [{ "a": { "$in": ["Z", "b"] } }, { "a": { "$gte": "a" } }] }, "hint": "raw_bounds_collated", "collation": { "locale": "en", "strength": 2 } }')
+$cmd$);
+
+-- A simple index keeps binary extrema for the same predicates.
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "$and": [{ "a": { "$in": ["Z", "b"] } }, { "a": { "$gte": "a" } }] }, "hint": "raw_bounds_simple" }')
+) AS query_result
+ORDER BY document::text;
+
+-- Distinct raw endpoints that compare equal form a collated point bound.
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "a": { "$gte": "Z", "$lte": "z" } }, "hint": "raw_bounds_collated", "collation": { "locale": "en", "strength": 2 } }')
+) AS query_result
+ORDER BY document::text;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "a": { "$gte": "Z", "$lte": "z" } }, "hint": "raw_bounds_collated", "collation": { "locale": "en", "strength": 2 } }')
+$cmd$);
+
+-- Advancing the second path reuses a collated-equal first-path prefix.
+SET documentdb.max_non_ordered_term_scan_threshold TO 1;
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "a": { "$gte": "Z", "$lte": "zzzz" }, "b": { "$in": [8, 9] } }, "hint": "raw_bounds_collated", "collation": { "locale": "en", "strength": 2 } }')
+) AS query_result
+ORDER BY document::text;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "a": { "$gte": "Z", "$lte": "zzzz" }, "b": { "$in": [8, 9] } }, "hint": "raw_bounds_collated", "collation": { "locale": "en", "strength": 2 } }')
+$cmd$);
+SET documentdb.max_non_ordered_term_scan_threshold TO 500;
+
+-- Wildcard bounds for the same path must keep the tighter collated lower bound.
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "$and": [{ "a": { "$gte": "a" } }, { "a": { "$gte": "Z" } }] }, "hint": "raw_bounds_wildcard", "collation": { "locale": "en", "strength": 2 } }')
+) AS query_result
+ORDER BY document::text;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "$and": [{ "a": { "$gte": "a" } }, { "a": { "$gte": "Z" } }] }, "hint": "raw_bounds_wildcard", "collation": { "locale": "en", "strength": 2 } }')
+$cmd$);
+
+-- Partial $elemMatch merges combine a single range with the remaining points.
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_membership_array', value::bson, NULL)
+FROM (VALUES
+    ('{ "_id": 50, "a": ["a", "Z"], "b": 0 }'),
+    ('{ "_id": 51, "a": ["b"], "b": 1 }'),
+    ('{ "_id": 52, "a": ["z"], "b": 2 }'),
+    ('{ "_id": 53, "a": ["a"], "b": 3 }')
+) AS documents(value);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'ord_coll_ordered_db',
+    '{
+        "createIndexes": "ord_membership_array",
+        "indexes": [{
+            "key": { "a": 1, "b": 1 },
+            "name": "raw_bounds_array",
+            "collation": { "locale": "en", "strength": 2 },
+            "enableCompositeTerm": true
+        }]
+    }',
+    TRUE);
+
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_array", "filter": { "a": { "$elemMatch": { "$in": ["Z", "b"], "$gte": "a" } } }, "hint": "raw_bounds_array", "collation": { "locale": "en", "strength": 2 } }')
+) AS query_result
+ORDER BY document::text;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_array", "filter": { "a": { "$elemMatch": { "$in": ["Z", "b"], "$gte": "a" } } }, "hint": "raw_bounds_array", "collation": { "locale": "en", "strength": 2 } }')
+$cmd$);
+
+SET documentdb.max_non_ordered_term_scan_threshold TO 1;
+
+-- Ordered variable bounds classify inclusive collated-equal endpoints as a point.
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_array", "filter": { "a": { "$elemMatch": { "$gte": "Z", "$lte": "z" } }, "b": { "$in": [0, 2] } }, "hint": "raw_bounds_array", "collation": { "locale": "en", "strength": 2 } }')
+) AS query_result
+ORDER BY document::text;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_array", "filter": { "a": { "$elemMatch": { "$gte": "Z", "$lte": "z" } }, "b": { "$in": [0, 2] } }, "hint": "raw_bounds_array", "collation": { "locale": "en", "strength": 2 } }')
+$cmd$);
+
+SET enable_seqscan TO on;
+SET enable_indexscan TO off;
+SET enable_bitmapscan TO off;
+
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership", "filter": { "a": { "$in": ["\u0301short", "zzz"] } }, "collation": { "locale": "en", "strength": 1 } }')
+) AS query_result
+ORDER BY document::text;
+
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership", "filter": { "a": { "$in": ["\u0301short", "zzz"] } } }')
+) AS query_result
+ORDER BY document::text;
+SELECT count(*) AS matching_documents
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership", "filter": { "a": { "$in": ["no-match", "never"] } }, "collation": { "locale": "en", "strength": 1 } }')
+) AS query_result;
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership", "filter": { "a": { "$in": "short" } }, "collation": { "locale": "en", "strength": 1 } }');
+
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "$and": [{ "a": { "$in": ["\u0301short", "zzz"] } }, { "a": { "$lte": "w" } }] }, "collation": { "locale": "en", "strength": 1 } }')
+) AS query_result
+ORDER BY document::text;
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "$and": [{ "a": { "$in": ["\u0301short", "zzz"] } }, { "a": { "$gte": "w" } }] }, "collation": { "locale": "en", "strength": 1 } }')
+) AS query_result
+ORDER BY document::text;
+
+-- Sequential scans must agree with all three collated index paths.
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "$and": [{ "a": { "$in": ["Z", "b"] } }, { "a": { "$gte": "a" } }] }, "collation": { "locale": "en", "strength": 2 } }')
+) AS query_result
+ORDER BY document::text;
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "$and": [{ "a": { "$gte": "a" } }, { "a": { "$gte": "Z" } }] }, "collation": { "locale": "en", "strength": 2 } }')
+) AS query_result
+ORDER BY document::text;
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_array", "filter": { "a": { "$elemMatch": { "$in": ["Z", "b"], "$gte": "a" } } }, "collation": { "locale": "en", "strength": 2 } }')
+) AS query_result
+ORDER BY document::text;
+
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "a": { "$gte": "Z", "$lte": "z" } }, "collation": { "locale": "en", "strength": 2 } }')
+) AS query_result
+ORDER BY document::text;
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_scalar", "filter": { "a": { "$gte": "Z", "$lte": "zzzz" }, "b": { "$in": [8, 9] } }, "collation": { "locale": "en", "strength": 2 } }')
+) AS query_result
+ORDER BY document::text;
+SELECT document::text AS document
+FROM (
+    SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_membership_array", "filter": { "a": { "$elemMatch": { "$gte": "Z", "$lte": "z" } }, "b": { "$in": [0, 2] } }, "collation": { "locale": "en", "strength": 2 } }')
+) AS query_result
+ORDER BY document::text;
+
+RESET enable_seqscan;
+RESET enable_indexscan;
+RESET enable_bitmapscan;
+RESET documentdb.enableExtendedExplainPlans;
+RESET documentdb.max_non_ordered_term_scan_threshold;
 
 RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
 RESET documentdb.defaultUseCompositeOpClass;

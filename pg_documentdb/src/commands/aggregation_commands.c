@@ -38,7 +38,6 @@
 
 extern bool UseFileBasedPersistedCursors;
 extern bool EnableDynamicCursors;
-extern bool EnableTailableCursorMaxAwaitTime;
 extern int DefaultTailableCursorMaxAwaitTimeMs;
 extern bool ReportParallelPlanInCursorContinuation;
 
@@ -722,9 +721,11 @@ DrainLocalCursorGetMorePage(text *database, pgbson *cursorSpec,
 			bool isDynamicStreaming = false;
 			bool allowOffsetLimitNode =
 				queryData.streamingLimit > 0 || queryData.streamingSkip > 0;
+			bool allowFastPlan = !queryData.requiresDynamicFetchAllCursor;
 			QueryCursorPlanResult *planResult =
 				PlanDynamicQueryAndDetermineCursorType(
 					query, allowOffsetLimitNode,
+					allowFastPlan,
 					&isDynamicStreaming);
 			if (!isDynamicStreaming)
 			{
@@ -935,28 +936,17 @@ aggregation_cursor_get_more(text *database, pgbson *getMoreSpec,
 			 * so the gateway knows how long to poll.
 			 * When data is present (numIterations > 0), we leave it at 0
 			 * so the gateway returns the response immediately.
-			 *
-			 * When EnableTailableCursorMaxAwaitTime is off, we force the hint to
-			 * 0 so the gateway polling loop never engages — even if a v2 caller
-			 * provided a column for it in the result tuple.
 			 */
-			if (!EnableTailableCursorMaxAwaitTime)
+			maxAwaitTimeMS = getMoreInfo.queryData.maxAwaitTimeMS;
+			if (numIterations > 0)
 			{
+				/* Data returned, so no need to wait */
 				maxAwaitTimeMS = NoMaxAwaitTimeMs;
 			}
-			else
+			else if (maxAwaitTimeMS <= 0)
 			{
-				maxAwaitTimeMS = getMoreInfo.queryData.maxAwaitTimeMS;
-				if (numIterations > 0)
-				{
-					/* Data returned, so no need to wait */
-					maxAwaitTimeMS = NoMaxAwaitTimeMs;
-				}
-				else if (maxAwaitTimeMS <= 0)
-				{
-					/* Empty batch, wait for default if not specified */
-					maxAwaitTimeMS = DefaultTailableCursorMaxAwaitTimeMs;
-				}
+				/* Empty batch, wait for default if not specified */
+				maxAwaitTimeMS = DefaultTailableCursorMaxAwaitTimeMs;
 			}
 			break;
 		}
@@ -1552,8 +1542,9 @@ HandleLocalFirstPageRequestCore(text *database, pgbson *querySpec, int64_t curso
 			bool isDynamicStreaming = false;
 			bool allowOffsetLimitNode =
 				queryData->streamingLimit > 0 || queryData->streamingSkip > 0;
+			bool allowFastPlan = !queryData->requiresDynamicFetchAllCursor;
 			QueryCursorPlanResult *planResult = PlanDynamicQueryAndDetermineCursorType(
-				query, allowOffsetLimitNode, &isDynamicStreaming);
+				query, allowOffsetLimitNode, allowFastPlan, &isDynamicStreaming);
 
 			if (isDynamicStreaming)
 			{

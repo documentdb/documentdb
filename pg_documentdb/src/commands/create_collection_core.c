@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * src/commands/create_collection_core.c
  *
@@ -27,20 +28,28 @@
 #include "api_hooks.h"
 #include "commands/retryable_writes.h"
 #include "rbac_hooks.h"
+#include "commands/create_indexes.h"
+#include "commands/parse_error.h"
+#include "collation/collation.h"
 
 extern bool EnableNativeColocation;
 extern bool EnableDataTableWithoutCreationTime;
 extern bool EnableRbacCompliantSchemas;
+extern bool EnableCollationWithCreateCollection;
 
 static bool CanColocateAtDatabaseLevel(text *databaseDatum);
 static const char * CreatePostgresDataTable(uint64_t collectionId,
 											const char *colocateWith,
-											const char *shardingColumn);
+											const char *shardingColumn,
+											bool registerIdIndex);
 static uint64_t InsertIntoCollectionTable(text *databaseDatum, text *collectionDatum,
 										  pgbson *initialOptions);
 
 static uint64_t InsertMetadataIntoCollections(text *databaseDatum, text *collectionDatum,
-											  bool *collectionExists);
+											  bool *collectionExists,
+											  const bson_value_t *collation);
+static bson_value_t * ParseCollectionCollationOptions(pgbson *options,
+													  bson_value_t *collationValue);
 
 static const char * GetOrCreateDatabaseConfigCollection(text *databaseDatum);
 
@@ -57,14 +66,27 @@ command_create_collection_core(PG_FUNCTION_ARGS)
 {
 	text *databaseDatum = PG_GETARG_TEXT_PP(0);
 	text *collectionDatum = PG_GETARG_TEXT_PP(1);
+	pgbson *options = PG_NARGS() > 2 ? PG_GETARG_PGBSON(2) : NULL;
+
 	if (!IsMetadataCoordinator())
 	{
 		StringInfo createCollectionQuery = makeStringInfo();
 		appendStringInfo(createCollectionQuery,
-						 "SELECT %s.create_collection(%s,%s)",
+						 "SELECT %s.%s(%s,%s",
 						 ApiSchemaName,
+						 options == NULL ? "create_collection" :
+						 "create_collection_with_options",
 						 quote_literal_cstr(text_to_cstring(databaseDatum)),
 						 quote_literal_cstr(text_to_cstring(collectionDatum)));
+
+		if (options != NULL)
+		{
+			appendStringInfo(createCollectionQuery, ",%s::%s",
+							 quote_literal_cstr(PgbsonToHexadecimalString(options)),
+							 FullBsonTypeName);
+		}
+		appendStringInfoChar(createCollectionQuery, ')');
+
 		DistributedRunCommandResult result = RunCommandOnMetadataCoordinator(
 			createCollectionQuery->data);
 
@@ -81,6 +103,15 @@ command_create_collection_core(PG_FUNCTION_ARGS)
 
 		PG_RETURN_BOOL(strcasecmp(text_to_cstring(result.response), "t") == 0);
 	}
+
+	bson_value_t collationValue = { 0 };
+	bson_value_t *collation = ParseCollectionCollationOptions(options, &collationValue);
+
+	/* Add collation-aware _id uniqueness while retaining the binary primary key. */
+	IndexSpec companionIdIndexSpec = { 0 };
+	IndexDef *companionIdIndexDef = collation == NULL ? NULL :
+									MakeCollatedBuiltinIdIndexDef(collation,
+																  &companionIdIndexSpec);
 
 	MongoCollection *collection = GetMongoCollectionByNameDatum(
 		PointerGetDatum(databaseDatum), PointerGetDatum(collectionDatum),
@@ -101,7 +132,7 @@ command_create_collection_core(PG_FUNCTION_ARGS)
 
 	bool collectionExists = false;
 	uint64_t collectionId = InsertMetadataIntoCollections(databaseDatum, collectionDatum,
-														  &collectionExists);
+														  &collectionExists, collation);
 
 	if (collectionExists)
 	{
@@ -109,9 +140,79 @@ command_create_collection_core(PG_FUNCTION_ARGS)
 	}
 
 	ereport(NOTICE, (errmsg("creating collection")));
-	CreatePostgresDataTable(collectionId, colocateWith, shardingColumn);
+
+	/*
+	 * create_builtin_id_index() creates the primary key on
+	 * (shard_key_value, object_id) even when _id_ registration is skipped.
+	 * Below, we record the collated _id_ entry and add its uniqueness check.
+	 */
+	bool registerIdIndex = companionIdIndexDef == NULL;
+	CreatePostgresDataTable(collectionId, colocateWith, shardingColumn, registerIdIndex);
+	if (companionIdIndexDef != NULL)
+	{
+		/* TODO_COLLATION: support statistics with collation */
+		bool updatePlannerStatistics = false;
+
+		bool isUnsharded = true;
+		CreatePostgresIndexWithMetadata(collectionId, companionIdIndexDef,
+										&companionIdIndexSpec, isUnsharded,
+										updatePlannerStatistics);
+	}
 
 	PG_RETURN_BOOL(true);
+}
+
+
+/*
+ * Validate options into caller-owned storage borrowing document bytes from options.
+ * Missing or simple collation returns NULL; malformed or duplicate options fail.
+ */
+static bson_value_t *
+ParseCollectionCollationOptions(pgbson *options, bson_value_t *collationValue)
+{
+	if (options == NULL)
+	{
+		return NULL;
+	}
+	if (!(EnableCollation && EnableCollationWithCreateCollection &&
+		  IsClusterVersionAtleast(DocDB_V1, 3, 0)))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+						errmsg("Collection collation is not supported yet")));
+	}
+
+	bson_iter_t iter;
+	PgbsonInitIterator(options, &iter);
+	bson_value_t *collation = NULL;
+	bool hasExplicitCollation = false;
+	while (bson_iter_next(&iter))
+	{
+		const char *key = bson_iter_key(&iter);
+		if (strcmp(key, "collation") != 0)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_UNKNOWNBSONFIELD),
+							errmsg("Unknown collection creation option '%s'", key)));
+		}
+		if (hasExplicitCollation)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg("Duplicate collection creation option 'collation'")));
+		}
+		hasExplicitCollation = true;
+		EnsureTopLevelFieldType("collation", &iter, BSON_TYPE_DOCUMENT);
+		char collationString[MAX_ICU_COLLATION_LENGTH] = { 0 };
+		ParseAndGetCollationString(bson_iter_value(&iter), collationString);
+		if (IsCollationValid(collationString))
+		{
+			/*
+			 * Copy the descriptor into caller-owned storage to outlive the iterator.
+			 * Document bytes remain borrowed from options.
+			 */
+			*collationValue = *bson_iter_value(&iter);
+			collation = collationValue;
+		}
+	}
+	return collation;
 }
 
 
@@ -145,20 +246,31 @@ SetUnshardedColocationData(text *databaseDatum, const char **shardingColumn, con
 
 static uint64_t
 InsertMetadataIntoCollections(text *databaseDatum, text *collectionDatum,
-							  bool *collectionExists)
+							  bool *collectionExists, const bson_value_t *collation)
 {
-	/* Build initial options with statsEnabled if the GUC is on.
-	 * This is set in the INSERT to avoid a separate UPDATE which would
-	 * take an ExclusiveLock on the Citus reference table shard.
+	/* Store initial options in the INSERT to avoid a separate UPDATE
+	 * and its ExclusiveLock on the metadata shard.
 	 */
-	pgbson *volatile initialOptions = NULL;
+	pgbson_writer optionsWriter;
+	PgbsonWriterInit(&optionsWriter);
 	if (ShouldEnablePlannerStatisticsNewCollections())
 	{
-		pgbson_writer optionWriter;
-		PgbsonWriterInit(&optionWriter);
-		PgbsonWriterAppendBool(&optionWriter, "statsEnabled",
+		PgbsonWriterAppendBool(&optionsWriter, "statsEnabled",
 							   strlen("statsEnabled"), true);
-		initialOptions = PgbsonWriterGetPgbson(&optionWriter);
+	}
+	if (collation != NULL)
+	{
+		PgbsonWriterAppendValue(&optionsWriter, "collation", 9, collation);
+	}
+
+	pgbson *volatile initialOptions = NULL;
+	if (!IsPgbsonWriterEmptyDocument(&optionsWriter))
+	{
+		initialOptions = PgbsonWriterGetPgbson(&optionsWriter);
+	}
+	else
+	{
+		PgbsonWriterFree(&optionsWriter);
 	}
 
 	/* Insert row into the collections table */
@@ -213,7 +325,7 @@ InsertMetadataIntoCollections(text *databaseDatum, text *collectionDatum,
  */
 static const char *
 CreatePostgresDataTable(uint64_t collectionId, const char *colocateWith, const
-						char *shardingColumn)
+						char *shardingColumn, bool registerIdIndex)
 {
 	StringInfo dataTableNameInfo = makeStringInfo();
 	appendStringInfo(dataTableNameInfo, "%s.documents_%lu",
@@ -286,11 +398,17 @@ CreatePostgresDataTable(uint64_t collectionId, const char *colocateWith, const
 	ExtensionExecuteQueryViaSPI(createTableStringInfo->data, readOnly,
 								SPI_OK_UTILITY, &isNull);
 
-	/* Create the _id_ index (corresponds to the primary key) */
+	/*
+	 * registerIdIndex controls whether create_builtin_id_index() records _id_
+	 * metadata. Collated collections pass false: command_create_collection_core
+	 * records the collated spec with RecordCollectionIndex, keeping one _id_ entry.
+	 * The primary key is created even when registerIdIndex is false.
+	 */
 	resetStringInfo(createTableStringInfo);
 	appendStringInfo(createTableStringInfo,
-					 "SELECT %s.create_builtin_id_index(%lu)",
-					 ApiInternalSchemaName, collectionId);
+					 "SELECT %s.create_builtin_id_index(%lu, %s)",
+					 ApiInternalSchemaName, collectionId,
+					 registerIdIndex ? "true" : "false");
 	ExtensionExecuteQueryViaSPI(createTableStringInfo->data, readOnly, SPI_OK_SELECT,
 								&isNull);
 
@@ -532,9 +650,10 @@ GetOrCreateDatabaseConfigCollection(text *databaseDatum)
 		return psprintf("%s.%s", ApiDataSchemaName, collection->tableName);
 	}
 
+	const bson_value_t *sentinelCollation = NULL;
 	uint64_t databaseCollectionId =
 		InsertMetadataIntoCollections(databaseDatum, systemCollectionsText,
-									  &dbCollectionExists);
+									  &dbCollectionExists, sentinelCollation);
 
 	if (dbCollectionExists)
 	{
@@ -557,8 +676,9 @@ GetOrCreateDatabaseConfigCollection(text *databaseDatum)
 
 	const char *colocateWith = "none";
 	const char *shardingColumn = NULL;
+	bool registerIdIndex = true;
 	const char *tableName = CreatePostgresDataTable(databaseCollectionId, colocateWith,
-													shardingColumn);
+													shardingColumn, registerIdIndex);
 	ereport(LOG, (errmsg("Creating and returning %s for the sentinel database %s",
 						 tableName, text_to_cstring(databaseDatum)), errhidestmt(true),
 				  errhidecontext(true)));

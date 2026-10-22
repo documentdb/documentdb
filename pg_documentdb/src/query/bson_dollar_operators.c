@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * src/query/bson_dollar_operators.c
  *
@@ -109,6 +110,13 @@ typedef struct BsonDollarInQueryState
 	/* ICU standard colation string. See AggregationPipelineBuildContext for more details. */
 	const char *collationString;
 } BsonDollarInQueryState;
+
+typedef struct BsonOrderByIndexQueryState
+{
+	BsonGinCompositePathOptions *options;
+	CompositeTermGenerationState *termGenerationState;
+	StringView collationString;
+} BsonOrderByIndexQueryState;
 
 /* State for comparison operations order by traversal */
 typedef struct TraverseOrderByValidateState
@@ -428,6 +436,8 @@ static bool DollarRangeVisitArrayField(pgbsonelement *element, const
 static Datum BsonOrderbyCore(pgbson *leftBson, pgbson *rightBson, const
 							 char *collationString, bool validateSort,
 							 const CustomOrderByOptions options);
+static void PopulateOrderByIndexState(BsonOrderByIndexQueryState *state,
+									  FunctionCallInfo fcinfo);
 static bool TraverseBsonAndProcessQueryResult(Datum documentDatum, const
 											  TraverseBsonExecutionFuncs *execFuncs,
 											  const char *filterPath,
@@ -1961,27 +1971,38 @@ static Datum
 RunOrderByOnIndexCore(PG_FUNCTION_ARGS, bool isReverse)
 {
 	pgbson *document = PG_GETARG_PGBSON_PACKED(0);
-	pgbson *sortSpec = PG_GETARG_PGBSON_PACKED(1);
-	StringView collationStringView = { 0 };
+	int argPositions[2] = { 1, 2 };
+	int numArgs = PG_NARGS() > 2 ? 2 : 1;
+	BsonOrderByIndexQueryState *queryState = NULL;
+	BsonOrderByIndexQueryState localState = { 0 };
 
-	if (EnableCollation && PG_NARGS() > 2 && !PG_ARGISNULL(2))
+	SetCachedFunctionStateMultiArgs(queryState, BsonOrderByIndexQueryState,
+									argPositions, numArgs, PopulateOrderByIndexState,
+									fcinfo);
+	if (queryState == NULL)
 	{
-		/* TODO: Remove alloc here */
-		text *collationText = PG_GETARG_TEXT_PP(2);
-		collationStringView.string = text_to_cstring(collationText);
-		collationStringView.length = VARSIZE_ANY_EXHDR(collationText);
+		PopulateOrderByIndexState(&localState, fcinfo);
+		queryState = &localState;
 	}
 
+	StringView collationStringView = queryState->collationString;
 	uint32_t numTerms = 0;
-	Datum *terms = GenerateCompositeTermsFromIndexSpec(document, sortSpec, &numTerms,
-													   &collationStringView);
-
-	PG_FREE_IF_COPY(document, 0);
-	PG_FREE_IF_COPY(sortSpec, 1);
+	Datum *terms = GenerateCompositeTermsFromOptions(document,
+													 queryState->termGenerationState,
+													 &numTerms);
 
 	if (numTerms == 0)
 	{
-		PG_RETURN_NULL();
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg(
+							"expected at least one index term for sort key generation")));
+	}
+
+	PG_FREE_IF_COPY(document, 0);
+	if (queryState == &localState)
+	{
+		pfree(localState.termGenerationState);
+		pfree(localState.options);
 	}
 
 	Datum selectedDatum = terms[0];
@@ -2014,13 +2035,22 @@ RunOrderByOnIndexCore(PG_FUNCTION_ARGS, bool isReverse)
 		}
 	}
 
-	pfree(terms);
+	if (terms != NULL)
+	{
+		pfree(terms);
+	}
+
 	if (collationStringView.string != NULL)
 	{
 		selectedDatum =
 			PointerGetDatum(FormCollatedIndexTerm(DatumGetByteaP(selectedDatum),
 												  collationStringView.string,
 												  collationStringView.length));
+	}
+
+	if (localState.collationString.string != NULL)
+	{
+		pfree((void *) localState.collationString.string);
 	}
 
 	PG_RETURN_DATUM(selectedDatum);
@@ -2955,6 +2985,24 @@ CompareModOperator(const bson_value_t *srcVal, const bson_value_t *modArrVal)
 /* --------------------------------------------------------- */
 /* Helpers */
 /* --------------------------------------------------------- */
+
+static void
+PopulateOrderByIndexState(BsonOrderByIndexQueryState *state, FunctionCallInfo fcinfo)
+{
+	pgbson *sortSpec = PG_GETARG_PGBSON_PACKED(1);
+	if (EnableCollation && PG_NARGS() > 2 && !PG_ARGISNULL(2))
+	{
+		text *collationText = PG_GETARG_TEXT_PP(2);
+		state->collationString.string = text_to_cstring(collationText);
+		state->collationString.length = VARSIZE_ANY_EXHDR(collationText);
+		PG_FREE_IF_COPY(collationText, 2);
+	}
+
+	state->options = BuildCompositeOptionsFromIndexSpec(sortSpec,
+														&state->collationString);
+	state->termGenerationState = PrepareCompositeTermGeneration(state->options);
+	PG_FREE_IF_COPY(sortSpec, 1);
+}
 
 
 /*

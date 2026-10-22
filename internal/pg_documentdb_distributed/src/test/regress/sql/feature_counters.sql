@@ -1,3 +1,6 @@
+-- Copyright (c) Microsoft Corporation. All rights reserved.
+-- SPDX-License-Identifier: MIT
+
 SET search_path TO documentdb_api_catalog, documentdb_core, documentdb_api, public;
 SET citus.next_shard_id TO 6750000;
 SET documentdb.next_collection_id TO 67500;
@@ -188,6 +191,19 @@ BEGIN;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SET local enable_seqscan = off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "vectorIndexCollFC", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0, 1.0 ], "k": 2, "path": "vector_hnsw", "efSearch": 5, "filter": { "elem": { "$gt": "some p" } }  }}} ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL documentdb.enableVectorPreFilter = on;
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold = 1.0;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "vectorIndexCollFC", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 2, "path": "vector_ivf", "nProbes": 10, "filter": { "elem": { "$gt": "some p" } }, "filterMode": "autoSelect" } } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL documentdb.enableVectorPreFilter = on;
+SET LOCAL default_statistics_target = 10000;
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold = 0;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "vectorIndexCollFC", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 2, "path": "vector_ivf", "nProbes": 10, "filter": { "elem": { "$gt": "some p" } }, "filterMode": "autoSelect" } } } ], "cursor": {} }');
 ROLLBACK;
 
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
@@ -433,11 +449,9 @@ SELECT documentdb_api.drop_database('topo_db');
 SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('feature_counter_hs_db', 'sampleHeapSkipColl', FORMAT('{ "_id": %s, "a": %s }', g, g)::documentdb_core.bson) FROM generate_series(1, 40) g) ig;
 -- Reset the counters by making a call to the counter and discarding the results
 SELECT count(*) * 0 AS count FROM documentdb_api_internal.command_feature_counter_stats(true);
-SET documentdb.enableDollarSampleReservoirScan TO on;
 SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
 SELECT document FROM bson_aggregation_pipeline('feature_counter_hs_db', '{ "aggregate": "sampleHeapSkipColl", "pipeline": [ { "$match": { "_id": { "$gte": 0 } } }, { "$sample": { "size": 40 } }, { "$sort": { "_id": 1 } }, { "$limit": 3 }, { "$project": { "_id": 1 } } ], "cursor": {} }');
 RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
-RESET documentdb.enableDollarSampleReservoirScan;
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 
 -- $sample heap skip eligibility counter: when the heap skip flag is off but the plan is
@@ -445,7 +459,6 @@ SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 -- sample_heap_skip_eligible records the query as a candidate for turning the flag on.
 -- Reset the counters by making a call to the counter and discarding the results
 SELECT count(*) * 0 AS count FROM documentdb_api_internal.command_feature_counter_stats(true);
-SET documentdb.enableDollarSampleReservoirScan TO on;
 SET documentdb.enableDollarSampleHeapSkipReservoirScan TO off;
 SET enable_seqscan TO off;
 SET enable_bitmapscan TO off;
@@ -453,7 +466,6 @@ SELECT document FROM bson_aggregation_pipeline('feature_counter_hs_db', '{ "aggr
 RESET enable_bitmapscan;
 RESET enable_seqscan;
 RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
-RESET documentdb.enableDollarSampleReservoirScan;
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 
 SELECT documentdb_api.drop_database('feature_counter_hs_db');
@@ -518,3 +530,23 @@ RESET documentdb.defaultUseCompositeOpClass;
 
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 SELECT documentdb_api.drop_collection('db', 'orderedFirstCandidate');
+
+-- Collated term truncation is counted even when rejection is disabled.
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET documentdb.indexTermLimitOverride TO 50;
+SET documentdb.fail_on_collated_index_term_truncation TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'db',
+    '{"createIndexes":"collatedTruncationCounter","indexes":[{"key":{"a":1},"name":"collated_a_1","collation":{"locale":"en","strength":1},"enableCompositeTerm":true}]}',
+    true);
+SELECT count(*) * 0 AS count FROM documentdb_api_internal.command_feature_counter_stats(true);
+SELECT documentdb_api.insert_one(
+    'db', 'collatedTruncationCounter',
+    format('{"_id":1,"a":"%s"}', repeat('a', 80))::documentdb_core.bson);
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+RESET documentdb.fail_on_collated_index_term_truncation;
+RESET documentdb.indexTermLimitOverride;
+RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
+RESET documentdb_core.enableCollation;
+SELECT documentdb_api.drop_collection('db', 'collatedTruncationCounter');

@@ -984,15 +984,15 @@ ROLLBACK;
 
 
 -- Check for index pushdown
-BEGIN;
+-- Keep fixture writes outside the transaction that changes execution mode.
 select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":1}]}');
 select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":2}]}');
+select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":3}]}');
 
+BEGIN;
 SET LOCAL citus.log_remote_commands TO ON;
 SET local client_min_messages TO ERROR;
 set LOCAL enable_seqscan TO OFF;
-select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":3}]}');
-
 SET LOCAL documentdb.useLocalExecutionShardQueries to off;
 
 -- explain plan should show index scan with delete pushdown
@@ -1016,17 +1016,18 @@ EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6514_650124 SET
 
 ROLLBACK;
 
+SELECT documentdb_api.drop_collection('db', 'updateIndex');
 
 select documentdb_api.shard_collection('db', 'updateIndex', '{"_id": "hashed"}', false);
 --6. Now shard collection and run explain plan again, it should still show index scan
-BEGIN;
 select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":1}]}');
 select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":2}]}');
+select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":3}]}');
 
+BEGIN;
 SET LOCAL citus.log_remote_commands TO ON;
 SET local client_min_messages TO ERROR;
 set LOCAL enable_seqscan TO OFF;
-select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":3}]}');
 SET LOCAL documentdb.useLocalExecutionShardQueries to off;
 
 --7. bson_query_match with all ops

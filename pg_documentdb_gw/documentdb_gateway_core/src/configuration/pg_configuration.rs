@@ -6,7 +6,12 @@
  *-------------------------------------------------------------------------
  */
 
-use std::{collections::HashMap, path::Path, sync::Arc, time::SystemTime};
+use std::{
+    collections::HashMap,
+    path::Path,
+    sync::{Arc, Weak},
+    time::SystemTime,
+};
 
 use arc_swap::ArcSwap;
 use bson::{rawbson, RawBson};
@@ -65,19 +70,12 @@ impl PgConfigurationInner {
             Err(e) => tracing::warn!("Host Config file not able to be loaded: {e}"),
         }
 
-        let pg_config_rows = match self.pool_manager.system_requests_connection().await {
-            Ok(conn) => conn
-                .query(self.pool_manager.query_catalog().pg_settings(), &[], &[])
-                .await
-                .unwrap_or_else(|e| {
-                    tracing::warn!("Failed to query pg_settings: {e}");
-                    Vec::new()
-                }),
-            Err(e) => {
-                tracing::warn!("Failed to get connection for pg_settings: {e}");
-                Vec::new()
-            }
-        };
+        // One connection for every query below: the system pool is small, and a
+        // failed acquisition now fails the whole load.
+        let conn = self.pool_manager.system_requests_connection().await?;
+        let pg_config_rows = conn
+            .query(self.pool_manager.query_catalog().pg_settings(), &[], &[])
+            .await?;
 
         // Fetch most up-to-date switch-related values from pg_file_settings for settings that are set there. pg_settings may have stale
         // values if pg_reload_conf() failed or if 030-user-supplied-server-parameters.conf was updated after the gateway started. Then
@@ -87,19 +85,7 @@ impl PgConfigurationInner {
             if !self.enable_pg_file_settings_refresh || pg_file_settings_query.is_empty() {
                 Vec::new()
             } else {
-                match self.pool_manager.system_requests_connection().await {
-                    Ok(conn) => conn
-                        .query(pg_file_settings_query, &[], &[])
-                        .await
-                        .unwrap_or_else(|e| {
-                            tracing::warn!("Failed to query pg_file_settings: {e}");
-                            Vec::new()
-                        }),
-                    Err(e) => {
-                        tracing::warn!("Failed to get connection for pg_file_settings: {e}");
-                        Vec::new()
-                    }
-                }
+                conn.query(pg_file_settings_query, &[], &[]).await?
             };
 
         let all_config_rows: Vec<_> = pg_config_rows
@@ -108,7 +94,7 @@ impl PgConfigurationInner {
             .collect();
 
         for pg_config in all_config_rows {
-            let mut key = pg_config.get::<_, String>(0);
+            let mut key: String = pg_config.try_get(0)?;
 
             for settings_prefix in &self.settings_prefixes {
                 if key.starts_with(settings_prefix) {
@@ -117,7 +103,7 @@ impl PgConfigurationInner {
                 }
             }
 
-            let mut value: String = pg_config.get(1);
+            let mut value: String = pg_config.try_get(1)?;
             if value == "on" || value.eq_ignore_ascii_case("true") {
                 "true".clone_into(&mut value);
             } else if value == "off" || value.eq_ignore_ascii_case("false") {
@@ -126,25 +112,17 @@ impl PgConfigurationInner {
             configs.insert(key.clone(), value);
         }
 
-        let pg_is_in_recovery_row = match self.pool_manager.system_requests_connection().await {
-            Ok(conn) => conn
-                .query(
-                    self.pool_manager.query_catalog().pg_is_in_recovery(),
-                    &[],
-                    &[],
-                )
-                .await
-                .unwrap_or_else(|e| {
-                    tracing::warn!("Failed to query pg_is_in_recovery: {e}");
-                    Vec::new()
-                }),
-            Err(e) => {
-                tracing::warn!("Failed to get connection for pg_is_in_recovery: {e}");
-                Vec::new()
-            }
-        };
-
-        let in_recovery: bool = pg_is_in_recovery_row.first().is_some_and(|row| row.get(0));
+        let pg_is_in_recovery_rows = conn
+            .query(
+                self.pool_manager.query_catalog().pg_is_in_recovery(),
+                &[],
+                &[],
+            )
+            .await?;
+        let pg_is_in_recovery_row = pg_is_in_recovery_rows.first().ok_or_else(|| {
+            DocumentDBError::internal_error("pg_is_in_recovery query returned no rows".to_owned())
+        })?;
+        let in_recovery: bool = pg_is_in_recovery_row.try_get(0)?;
         configs.insert(POSTGRES_RECOVERY_KEY.to_owned(), in_recovery.to_string());
 
         tracing::info!("Dynamic configurations loaded: {configs:?}");
@@ -180,7 +158,7 @@ struct WatchedFileState {
 
 impl PgConfiguration {
     fn start_dynamic_configuration_refresh_thread(
-        configuration: Arc<Self>,
+        configuration: Weak<Self>,
         refresh_interval: u32,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
@@ -191,6 +169,9 @@ impl PgConfiguration {
             loop {
                 interval.tick().await;
 
+                let Some(configuration) = configuration.upgrade() else {
+                    break;
+                };
                 Self::reload_configuration(&configuration).await;
             }
         })
@@ -237,35 +218,46 @@ impl PgConfiguration {
 
         let values = ArcSwap::from_pointee(inner.load_configurations().await?);
         let last_update_at = ArcSwap::from_pointee(Instant::now());
-        let topology_bson = ArcSwap::from_pointee(
-            Self::load_topology(&inner.pool_manager, &inner.instance_kind).await,
-        );
-        let cluster_version =
-            ArcSwap::from_pointee(parse_cluster_version(&topology_bson.load_full()));
-
-        let mut configuration = Arc::new(Self {
-            inner,
-            values,
-            last_update_at,
-            topology_bson,
-            cluster_version,
-            refresh_task: None,
-            watch_task: None,
-        });
+        // Startup tolerates a missing topology so the gateway can still serve while
+        // the extension catalog is unavailable; refresh does not, so a later failure
+        // cannot silently blank an already-known version.
+        let topology = Self::load_topology(&inner.pool_manager, &inner.instance_kind)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to load topology versions: {e}");
+                rawbson!({})
+            });
+        let cluster_version = ArcSwap::from_pointee(parse_cluster_version(&topology));
+        let topology_bson = ArcSwap::from_pointee(topology);
 
         let refresh_interval = setup_configuration.dynamic_configuration_refresh_interval_secs();
         let watch_interval_ms = setup_configuration.host_configuration_watch_interval_ms();
+        let dynamic_config_path = inner.dynamic_config_path.clone();
 
-        let refresh_task = Self::start_dynamic_configuration_refresh_thread(
-            Arc::clone(&configuration),
-            refresh_interval,
-        );
-        let watch_task = Self::start_config_watcher(Arc::clone(&configuration), watch_interval_ms);
+        // The tasks hold a `Weak` so they do not keep this alive: an owning handle
+        // would make `Drop` unreachable and leave them running after the last owner
+        // is gone.
+        let configuration = Arc::new_cyclic(|weak| {
+            let refresh_task = Self::start_dynamic_configuration_refresh_thread(
+                Weak::clone(weak),
+                refresh_interval,
+            );
+            let watch_task = Self::start_config_watcher(
+                Weak::clone(weak),
+                &dynamic_config_path,
+                watch_interval_ms,
+            );
 
-        if let Some(config) = Arc::get_mut(&mut configuration) {
-            config.refresh_task = Some(refresh_task);
-            config.watch_task = Some(watch_task);
-        }
+            Self {
+                inner,
+                values,
+                last_update_at,
+                topology_bson,
+                cluster_version,
+                refresh_task: Some(refresh_task),
+                watch_task: Some(watch_task),
+            }
+        });
 
         Ok(configuration)
     }
@@ -278,18 +270,19 @@ impl PgConfiguration {
     ///
     /// Returns an error if the operation fails.
     pub async fn refresh_configuration(&self) -> Result<()> {
-        let new_config = match self.inner.load_configurations().await {
-            Ok(config) => config,
-            Err(e) => {
-                tracing::error!("Failed to reload configuration: {e}");
-                return Err(e);
-            }
-        };
+        // Everything is loaded before anything is stored so a partial failure
+        // leaves the previous values, and the freshness timestamp, untouched.
+        let new_config = self.inner.load_configurations().await.inspect_err(|e| {
+            tracing::error!("Failed to reload configuration: {e}");
+        })?;
+        let new_topology = Self::load_topology(&self.inner.pool_manager, &self.inner.instance_kind)
+            .await
+            .inspect_err(|e| {
+                tracing::error!("Failed to reload topology versions: {e}");
+            })?;
+        let parsed_version = parse_cluster_version(&new_topology);
 
         self.values.store(Arc::new(new_config));
-        let new_topology =
-            Self::load_topology(&self.inner.pool_manager, &self.inner.instance_kind).await;
-        let parsed_version = parse_cluster_version(&new_topology);
         self.topology_bson.store(Arc::new(new_topology));
         self.cluster_version.store(Arc::new(parsed_version));
         self.last_update_at.store(Arc::new(Instant::now()));
@@ -297,9 +290,12 @@ impl PgConfiguration {
         Ok(())
     }
 
-    fn start_config_watcher(configuration: Arc<Self>, watch_interval_ms: u64) -> JoinHandle<()> {
-        let dynamic_config_path = configuration.inner.dynamic_config_path.clone();
-        let file_path = Path::new(&dynamic_config_path).to_path_buf();
+    fn start_config_watcher(
+        configuration: Weak<Self>,
+        dynamic_config_path: &str,
+        watch_interval_ms: u64,
+    ) -> JoinHandle<()> {
+        let file_path = Path::new(dynamic_config_path).to_path_buf();
         let poll_interval = Duration::from_millis(watch_interval_ms);
 
         tracing::info!(
@@ -321,6 +317,9 @@ impl PgConfiguration {
                         "Config file state changed for {}. Reloading dynamic configuration.",
                         file_path.display()
                     );
+                    let Some(configuration) = configuration.upgrade() else {
+                        break;
+                    };
                     Self::reload_configuration(&configuration).await;
                     previous_state = current_state;
                 }
@@ -328,48 +327,35 @@ impl PgConfiguration {
         })
     }
 
-    async fn load_topology(pool_manager: &PoolManager, instance_kind: &str) -> RawBson {
+    async fn load_topology(pool_manager: &PoolManager, instance_kind: &str) -> Result<RawBson> {
         let extension_versions_query = pool_manager.query_catalog().extension_versions();
         if extension_versions_query.is_empty() {
-            return rawbson!({});
+            return Ok(rawbson!({}));
         }
 
-        let results = match async {
-            let conn = pool_manager.system_requests_connection().await?;
-            conn.query(extension_versions_query, &[], &[])
-                .await
-                .map_err(DocumentDBError::from)
-        }
-        .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::error!("Failed to load topology versions: {e}");
-                return rawbson!({});
-            }
-        };
+        let conn = pool_manager.system_requests_connection().await?;
+        let results = conn.query(extension_versions_query, &[], &[]).await?;
 
         let Some(result) = results.first() else {
-            tracing::error!("No results returned for extension versions query");
-            return rawbson!({});
+            return Err(DocumentDBError::internal_error(
+                "No results returned for extension versions query".to_owned(),
+            ));
         };
 
-        let doc: std::result::Result<PgDocument, _> = result.try_get(0);
-        match doc {
-            Ok(doc) => {
-                tracing::info!("Topology acquired: {doc:?}");
-                match doc.0.get("internal") {
-                    Ok(Some(value)) => rawbson!({
-                        "documentdb_versions": value.to_raw_bson(),
-                        "kind": instance_kind
-                    }),
-                    _ => rawbson!({}),
-                }
-            }
-            Err(e) => {
-                tracing::error!("Failed to parse extension versions: {e}");
-                rawbson!({})
-            }
+        let doc: PgDocument = result.try_get(0).map_err(|e| {
+            DocumentDBError::internal_error(format!("Failed to parse extension versions: {e}"))
+        })?;
+
+        tracing::info!("Topology acquired: {doc:?}");
+
+        // An absent "internal" key is a shape the backend can legitimately
+        // return, unlike a failed query, so it stays a successful empty topology.
+        match doc.0.get("internal") {
+            Ok(Some(value)) => Ok(rawbson!({
+                "documentdb_versions": value.to_raw_bson(),
+                "kind": instance_kind
+            })),
+            _ => Ok(rawbson!({})),
         }
     }
 }

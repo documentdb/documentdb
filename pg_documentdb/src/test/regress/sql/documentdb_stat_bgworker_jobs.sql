@@ -102,6 +102,12 @@ WITH job_stats AS
         FROM documentdb_api_internal.documentdb_stat_bgworker_job_stats
 )
 SELECT job_id,
+       execution_attempts >= 0
+           AND successful_executions >= 0
+           AND failed_executions >= 0
+           AND timed_out_executions >= 0
+           AND unobserved_executions >= 0
+           AS counters_are_nonnegative,
        execution_attempts =
            successful_executions + failed_executions + timed_out_executions +
            unobserved_executions

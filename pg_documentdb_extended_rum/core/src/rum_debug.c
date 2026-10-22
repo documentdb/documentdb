@@ -50,11 +50,48 @@ static JsonbValue * RumPushJsonbValue(RumJsonbBuildState *state,
 static Page get_page_from_raw(bytea *raw_page);
 static Jsonb * RumPrintEntryToJsonB(RumPageGetEntriesContext *context, uint64 counter);
 static Jsonb * RumPrintDataPageLineToJsonB(Page page, uint64 counter);
+static Datum documentdb_rum_get_meta_page_info_core(PG_FUNCTION_ARGS, Page meta_page);
+static Datum documentdb_rum_page_get_stats_core(PG_FUNCTION_ARGS, Page page);
+static Datum documentdb_rum_page_get_entries_core(PG_FUNCTION_ARGS, Oid indexOid,
+												  Page (*getPageFunc)(FunctionCallInfo));
+static Datum documentdb_rum_page_get_data_items_core(PG_FUNCTION_ARGS,
+													 Page (*getPageFunc)(
+														 FunctionCallInfo));
 
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_get_meta_page_info);
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_page_get_stats);
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_page_get_entries);
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_page_get_data_items);
+
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_get_meta_page_info_index);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_page_get_stats_index);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_page_get_entries_index);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_page_get_data_items_index);
+
+
+static Page
+LoadPageFromIndex(Oid indexOid, BlockNumber blkno)
+{
+	Relation indrel = index_open(indexOid, AccessShareLock);
+	Buffer buffer = ReadBufferExtended(indrel, MAIN_FORKNUM, blkno,
+									   RBM_NORMAL, NULL);
+	LockBuffer(buffer, RUM_SHARE);
+	Page meta_page = BufferGetPage(buffer);
+	Page pageCopy = PageGetTempPageCopy(meta_page);
+
+	UnlockReleaseBuffer(buffer);
+	index_close(indrel, AccessShareLock);
+	return pageCopy;
+}
+
+
+RMGR_PG_FUNCTION_DEF(documentdb_rum_get_meta_page_info_index)
+{
+	Oid indexOid = PG_GETARG_OID(0);
+	Page meta_page = LoadPageFromIndex(indexOid, RUM_METAPAGE_BLKNO);
+
+	return documentdb_rum_get_meta_page_info_core(fcinfo, meta_page);
+}
 
 
 RMGR_PG_FUNCTION_DEF(documentdb_rum_get_meta_page_info)
@@ -62,7 +99,13 @@ RMGR_PG_FUNCTION_DEF(documentdb_rum_get_meta_page_info)
 	bytea *page = PG_GETARG_BYTEA_P(0);
 
 	Page meta_page = get_page_from_raw(page);
+	return documentdb_rum_get_meta_page_info_core(fcinfo, meta_page);
+}
 
+
+static Datum
+documentdb_rum_get_meta_page_info_core(PG_FUNCTION_ARGS, Page meta_page)
+{
 	RumMetaPageData *pageData = RumPageGetMeta(meta_page);
 	int nargs = 6;
 	char *args[6] = { 0 };
@@ -167,6 +210,24 @@ RMGR_PG_FUNCTION_DEF(documentdb_rum_page_get_stats)
 {
 	bytea *raw_page = PG_GETARG_BYTEA_P(0);
 	Page page = get_page_from_raw(raw_page);
+
+	return documentdb_rum_page_get_stats_core(fcinfo, page);
+}
+
+
+RMGR_PG_FUNCTION_DEF(documentdb_rum_page_get_stats_index)
+{
+	Oid indexOid = PG_GETARG_OID(0);
+	uint32_t blkno = PG_GETARG_UINT32(1);
+	Page statsPage = LoadPageFromIndex(indexOid, blkno);
+
+	return documentdb_rum_page_get_stats_core(fcinfo, statsPage);
+}
+
+
+static Datum
+documentdb_rum_page_get_stats_core(PG_FUNCTION_ARGS, Page page)
+{
 	char *flagsStr;
 	int nargs = 6;
 	char *args[6] = { 0 };
@@ -232,23 +293,54 @@ RMGR_PG_FUNCTION_DEF(documentdb_rum_page_get_stats)
 	PG_RETURN_POINTER(GetResultJsonB(nargs, args, values));
 }
 
+
+static Page
+get_page_from_args(FunctionCallInfo fcinfo)
+{
+	return get_page_from_raw(PG_GETARG_BYTEA_P(0));
+}
+
+
 RMGR_PG_FUNCTION_DEF(documentdb_rum_page_get_entries)
 {
 	Oid indexOid = PG_GETARG_OID(1);
+	return documentdb_rum_page_get_entries_core(fcinfo, indexOid, get_page_from_args);
+}
 
+
+static Page
+get_page_from_index_args(FunctionCallInfo fcinfo)
+{
+	Oid indexOid = PG_GETARG_OID(0);
+	uint32_t blockNumber = PG_GETARG_UINT32(1);
+	return LoadPageFromIndex(indexOid, blockNumber);
+}
+
+
+RMGR_PG_FUNCTION_DEF(documentdb_rum_page_get_entries_index)
+{
+	Oid indexOid = PG_GETARG_OID(0);
+	return documentdb_rum_page_get_entries_core(fcinfo, indexOid,
+												get_page_from_index_args);
+}
+
+
+static Datum
+documentdb_rum_page_get_entries_core(PG_FUNCTION_ARGS, Oid indexOid, Page (*getPageFunc)(
+										 FunctionCallInfo))
+{
 	FuncCallContext *fctx;
 	RumPageGetEntriesContext *context;
 	if (SRF_IS_FIRSTCALL())
 	{
 		Relation indexRelation;
-		bytea *raw_page = PG_GETARG_BYTEA_P(0);
 		MemoryContext mctx;
 
 		fctx = SRF_FIRSTCALL_INIT();
 
 		mctx = MemoryContextSwitchTo(fctx->multi_call_memory_ctx);
 		context = palloc0(sizeof(RumPageGetEntriesContext));
-		context->page = get_page_from_raw(raw_page);
+		context->page = getPageFunc(fcinfo);
 		indexRelation = index_open(indexOid, AccessShareLock);
 		initRumState(&context->rumState, indexRelation);
 		RelationClose(indexRelation);
@@ -278,19 +370,31 @@ RMGR_PG_FUNCTION_DEF(documentdb_rum_page_get_entries)
 }
 
 
+RMGR_PG_FUNCTION_DEF(documentdb_rum_page_get_data_items_index)
+{
+	return documentdb_rum_page_get_data_items_core(fcinfo, get_page_from_index_args);
+}
+
+
 RMGR_PG_FUNCTION_DEF(documentdb_rum_page_get_data_items)
+{
+	return documentdb_rum_page_get_data_items_core(fcinfo, get_page_from_args);
+}
+
+static Datum
+documentdb_rum_page_get_data_items_core(PG_FUNCTION_ARGS, Page (*getPageFunc)(
+											FunctionCallInfo))
 {
 	FuncCallContext *fctx;
 	Page page;
 	if (SRF_IS_FIRSTCALL())
 	{
-		bytea *raw_page = PG_GETARG_BYTEA_P(0);
 		MemoryContext mctx;
 
 		fctx = SRF_FIRSTCALL_INIT();
 
 		mctx = MemoryContextSwitchTo(fctx->multi_call_memory_ctx);
-		page = get_page_from_raw(raw_page);
+		page = getPageFunc(fcinfo);
 		MemoryContextSwitchTo(mctx);
 
 		if (!RumPageIsData(page) || RumPageIsDeleted(page))
@@ -383,9 +487,9 @@ static Jsonb *
 RumPrintEntryToJsonB(RumPageGetEntriesContext *context, uint64 counter)
 {
 	OffsetNumber offset = (OffsetNumber) (counter + 1);
-	int nargs = 9;
-	char *args[9] = { 0 };
-	JsonbValue values[9] = { 0 };
+	int nargs = 10;
+	char *args[10] = { 0 };
+	JsonbValue values[10] = { 0 };
 	IndexTuple tuple;
 	Datum indexDatum, entryCstringDatum;
 	RumNullCategory category;
@@ -417,8 +521,17 @@ RumPrintEntryToJsonB(RumPageGetEntriesContext *context, uint64 counter)
 
 	args[2] = "entryType";
 	values[2].type = jbvString;
-	values[2].val.string.val = RumIsPostingTree(tuple) ? "postingTree" : "postingList";
-	values[2].val.string.len = strlen(values[2].val.string.val);
+	if (RumPageIsLeaf(page))
+	{
+		values[2].val.string.val = RumIsPostingTree(tuple) ? "postingTree" :
+								   "postingList";
+		values[2].val.string.len = strlen(values[2].val.string.val);
+	}
+	else
+	{
+		values[2].val.string.val = "internal";
+		values[2].val.string.len = strlen(values[2].val.string.val);
+	}
 
 	args[3] = "numPostings";
 	values[3].type = jbvNumeric;
@@ -499,6 +612,18 @@ RumPrintEntryToJsonB(RumPageGetEntriesContext *context, uint64 counter)
 	args[8] = "attrNumber";
 	values[8].type = jbvNumeric;
 	values[8].val.numeric = int64_to_numeric(entryAttrNumber);
+
+	if (!RumPageIsLeaf(page))
+	{
+		args[9] = "childBlock";
+		values[9].type = jbvNumeric;
+		values[9].val.numeric = int64_to_numeric(RumGetDownlink(tuple));
+	}
+	else
+	{
+		args[9] = "childBlock";
+		values[9].type = jbvNull;
+	}
 
 	return GetResultJsonB(nargs, args, values);
 }

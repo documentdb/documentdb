@@ -1,5 +1,5 @@
 /^test: bson_aggregation_pipeline_tests_maxmin_group/d
-/^test: bson_aggregation_cursor_tests_pk_cursors$/d
+s/^test: bson_aggregation_cursor_tests_pk_cursors /test: /
 /^test: create_indexes_cosmos_vector /d
 /^test: bson_query_operator_geospatial_tests_explain_index$/d
 /^test: bson_query_operator_geospatial_tests_explain_runtime$/d

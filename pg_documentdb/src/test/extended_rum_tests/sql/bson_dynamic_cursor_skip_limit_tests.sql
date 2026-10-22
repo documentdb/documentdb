@@ -908,6 +908,155 @@ RESET documentdb.enable_merge_sort_for_in_prefix;
 RESET documentdb.forceDisableSeqScan;
 SET enable_seqscan TO off;
 
+-- A broad _id range with a deep skip can retain only the shard-key index bound.
+-- Two histogram endpoints make each broad _id predicate estimate 0.99.
+SET documentdb.enablePerCollectionPlannerStatistics TO on;
+SET default_statistics_target TO 1;
+SELECT COUNT(documentdb_api.insert_one('dyncur_slc_db', 'a',
+    bson_build_document('_id'::text, i)))
+FROM generate_series(10, 30009) AS i;
+SET documentdb_core.enableBsonSelectivityFromBtreeStats TO on;
+DO $$
+DECLARE
+    collection_id bigint;
+    predicate text;
+    plan jsonb;
+BEGIN
+    SELECT collections.collection_id INTO collection_id
+    FROM documentdb_api_catalog.collections
+    WHERE database_name = 'dyncur_slc_db' AND collection_name = 'a';
+    EXECUTE format(
+        'CREATE STATISTICS documentdb_test_helpers.id_skip_selectivity ON (documentdb_api_internal.bson_stats_project(document, ''_id'')) FROM documentdb_data.documents_%s',
+        collection_id);
+    EXECUTE format('ANALYZE documentdb_data.documents_%s', collection_id);
+    FOREACH predicate IN ARRAY ARRAY[
+        $p$document @>= '{"_id":5}'::bson$p$,
+        $p$object_id >= '{"":5}'::bson$p$,
+        $p$object_id <= '{"":{"$numberDouble":"Infinity"}}'::bson$p$
+    ]
+    LOOP
+        EXECUTE format(
+            'EXPLAIN (FORMAT JSON) SELECT document FROM documentdb_data.documents_%s WHERE %s',
+            collection_id, predicate) INTO plan;
+        IF (plan->0->'Plan'->>'Plan Rows')::bigint IS DISTINCT FROM 29700 THEN
+            RAISE EXCEPTION 'Expected 0.99 selectivity for %, estimated % rows',
+                predicate, plan->0->'Plan'->>'Plan Rows';
+        END IF;
+        RAISE NOTICE 'selectivity of %: %', predicate,
+            ((plan->0->'Plan'->>'Plan Rows')::numeric / 30000)::numeric(3, 2);
+    END LOOP;
+END;
+$$;
+
+SET enable_seqscan TO on;
+SET documentdb.enableExtendedExplainPlans TO on;
+SET documentdb.enableExplainScanIndexCosts TO off;
+SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
+SET documentdb.enableOrderByIdOnCostFunction TO off;
+SET documentdb.enable_order_by_id_on_cost_function_with_stats TO off;
+SET documentdb.enable_btree_order_by_with_filters TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('dyncur_slc_db',
+        '{ "find": "a", "filter": { "_id": { "$gte": 5 } }, "skip": 23000, "limit": 1, "sort": { "_id": 1 } }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('dyncur_slc_db',
+    '{ "find": "a", "filter": { "_id": { "$gte": 5 } }, "skip": 23000, "limit": 1, "sort": { "_id": 1 } }');
+SET documentdb.enable_btree_order_by_with_filters TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('dyncur_slc_db',
+        '{ "find": "a", "filter": { "_id": { "$gte": 5 } }, "skip": 23000, "limit": 1, "sort": { "_id": 1 } }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('dyncur_slc_db',
+    '{ "find": "a", "filter": { "_id": { "$gte": 5 } }, "skip": 23000, "limit": 1, "sort": { "_id": 1 } }');
+SET documentdb.enable_btree_order_by_with_filters TO off;
+SET documentdb.enable_order_by_id_on_cost_function_with_stats TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('dyncur_slc_db',
+        '{ "find": "a", "filter": { "_id": { "$gte": 5 } }, "skip": 23000, "limit": 1, "sort": { "_id": 1 } }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('dyncur_slc_db',
+    '{ "find": "a", "filter": { "_id": { "$gte": 5 } }, "skip": 23000, "limit": 1, "sort": { "_id": 1 } }');
+SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;
+SET documentdb.enable_order_by_id_on_cost_function_with_stats TO off;
+SET documentdb.enable_btree_order_by_with_filters TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('dyncur_slc_db',
+        '{ "find": "a", "filter": { "_id": { "$gte": 5 } }, "skip": 23000, "limit": 1, "sort": { "_id": 1 } }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('dyncur_slc_db',
+    '{ "find": "a", "filter": { "_id": { "$gte": 5 } }, "skip": 23000, "limit": 1, "sort": { "_id": 1 } }');
+SET documentdb.enable_btree_order_by_with_filters TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('dyncur_slc_db',
+        '{ "find": "a", "filter": { "_id": { "$gte": 5 } }, "skip": 23000, "limit": 1, "sort": { "_id": 1 } }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('dyncur_slc_db',
+    '{ "find": "a", "filter": { "_id": { "$gte": 5 } }, "skip": 23000, "limit": 1, "sort": { "_id": 1 } }');
+SET documentdb.enable_btree_order_by_with_filters TO off;
+SET documentdb.enable_order_by_id_on_cost_function_with_stats TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('dyncur_slc_db',
+        '{ "find": "a", "filter": { "_id": { "$gte": 5 } }, "skip": 23000, "limit": 1, "sort": { "_id": 1 } }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('dyncur_slc_db',
+    '{ "find": "a", "filter": { "_id": { "$gte": 5 } }, "skip": 23000, "limit": 1, "sort": { "_id": 1 } }');
+DROP STATISTICS documentdb_test_helpers.id_skip_selectivity;
+SET documentdb.enableCompositeIndexPlanner TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('dyncur_slc_db',
+        '{ "find": "a", "filter": { "_id": { "$gte": 5 } }, "skip": 23000, "limit": 1, "sort": { "_id": 1 } }')
+$cmd$);
+SET documentdb_core.enableBsonSelectivityFromBtreeStats TO off;
+SET documentdb.enableCompositeIndexPlanner TO on;
+SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;
+DO $$
+DECLARE
+    collection_oid oid;
+    plan_with_flag jsonb;
+    plan_without_flag jsonb;
+    query text := $query$
+        EXPLAIN (FORMAT JSON, COSTS OFF)
+        SELECT document FROM bson_aggregation_find('dyncur_slc_db',
+            '{ "find": "a", "filter": { "_id": { "$gte": 5 } }, "skip": 23000, "limit": 1, "sort": { "_id": 1 } }')
+    $query$;
+BEGIN
+    SELECT format('documentdb_data.documents_%s', collection_id)::regclass
+    INTO collection_oid
+    FROM documentdb_api_catalog.collections
+    WHERE database_name = 'dyncur_slc_db' AND collection_name = 'a';
+    IF EXISTS (SELECT FROM pg_statistic_ext WHERE stxrelid = collection_oid) THEN
+        RAISE EXCEPTION 'Expected no collection statistics';
+    END IF;
+    PERFORM set_config('documentdb.enable_order_by_id_on_cost_function_with_stats', 'off', true);
+    EXECUTE query INTO plan_without_flag;
+    PERFORM set_config('documentdb.enable_order_by_id_on_cost_function_with_stats', 'on', true);
+    EXECUTE query INTO plan_with_flag;
+    IF plan_with_flag IS DISTINCT FROM plan_without_flag THEN
+        RAISE EXCEPTION 'Statistics-only ordering changed the plan without statistics';
+    END IF;
+    RAISE NOTICE 'Composite planner alone does not enable statistics-only ordering';
+END;
+$$;
+RESET documentdb.enableCompositeIndexPlanner;
+RESET documentdb.enable_btree_order_by_with_filters;
+RESET documentdb.enable_order_by_id_on_cost_function_with_stats;
+RESET documentdb.enableOrderByIdOnCostFunction;
+RESET documentdb.enableCursorsOnAggregationQueryRewrite;
+RESET documentdb.enableExplainScanIndexCosts;
+RESET documentdb.enableExtendedExplainPlans;
+SET enable_seqscan TO off;
+RESET documentdb_core.enableBsonSelectivityFromBtreeStats;
+RESET default_statistics_target;
+RESET documentdb.enablePerCollectionPlannerStatistics;
+SELECT documentdb_api.drop_collection('dyncur_slc_db', 'a');
+
 -- ===========================================================================
 -- Cleanup
 -- ===========================================================================

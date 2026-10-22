@@ -19,7 +19,7 @@ use crate::{
     explain::Verbosity,
     postgres::{
         conn_mgmt::{Connection, ConnectionPool, PoolConnection, PullConnection, QueryOptions},
-        PgDataClient, PgDocument, ScopedTransaction,
+        privileged_connection_status_request, PgDataClient, PgDocument, ScopedTransaction,
     },
     requests::ExplainTarget,
     responses::{PgResponse, Response},
@@ -1289,6 +1289,34 @@ impl PgDataClient for DocumentDBDataClient {
             QueryOptions::builder()
                 .supports_backend_timeout(false)
                 .build(),
+        )
+        .await
+    }
+
+    async fn execute_privileged_connection_status(
+        &self,
+        request_context: &RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response> {
+        let request = privileged_connection_status_request();
+        let query = self.service_context.query_catalog().connection_status();
+
+        let run_privilege_query = |conn: Arc<Connection>| {
+            let request = PgDocument(&request);
+            async move {
+                let rows = conn.query(query, &[Type::BYTEA], &[&request]).await?;
+                Ok(Response::Pg(PgResponse::new(rows)))
+            }
+        };
+
+        self.run_query(
+            request_context,
+            connection_context,
+            PullConnection::PoolOrTransaction,
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+            run_privilege_query,
         )
         .await
     }

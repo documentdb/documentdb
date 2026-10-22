@@ -509,9 +509,10 @@ operator-only env knobs (`DOCUMENTDB_PG_READY_*`,
 `DOCUMENTDB_ALLOW_DEFAULT_PASSWORD`) are handled by the entrypoint and its
 data-directory claim helper. The Dockerfile `ENV` block mirrors the defaults.
 `emulator_entrypoint.sh` parses flags into the same env vars,
-applies defaults and validates from the table, then hands values on: ports and
-credentials to `scripts/start_oss_server.sh` as arguments, the resolved ports to
-a state file that `healthcheck.sh` reads, seed-data arguments to
+applies defaults and validates from the table, then hands values on: the
+PostgreSQL port and data directory to `scripts/start_oss_server.sh` as
+arguments (no credentials; the entrypoint creates the admin user), the resolved
+ports to a state file that `healthcheck.sh` reads, seed-data arguments to
 `init_documentdb_data.sh`, and the gateway port, PostgreSQL port, certificate
 paths and `EnforceTls` into a jq-edited copy of `SetupConfiguration.json` that
 the gateway binary reads. The image's PostgreSQL settings block is written by

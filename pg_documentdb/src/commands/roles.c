@@ -39,6 +39,18 @@
 	 strcmp(roleName, API_RBAC_READWRITE_ANYDB_ROLE) == 0 || \
 	 strcmp(roleName, ApiAdminRoleV2) == 0)
 
+/*
+ * Public built-in roles that rolesInfo returns a full definition for. This is
+ * the supported subset of IS_NATIVE_BUILTIN_ROLE: the customer-facing roles
+ * whose privileges, backing roles, and composition are modeled by the helpers
+ * below.
+ */
+#define IS_PUBLIC_BUILTIN_ROLE(roleName) \
+	(strcmp((roleName), "clusterAdmin") == 0 || \
+	 strcmp((roleName), "readAnyDatabase") == 0 || \
+	 strcmp((roleName), "readWriteAnyDatabase") == 0 || \
+	 strcmp((roleName), "root") == 0)
+
 /* GUC to enable user crud operations */
 extern bool EnableRoleCrud;
 
@@ -130,9 +142,18 @@ static void WriteRoles(pgbson_array_writer *rolesArrayWriter,
 static void WriteRoleResponse(const pgbson *roleDocument,
 							  pgbson_array_writer *rolesArrayWriter,
 							  RolesInfoSpec rolesInfoSpec);
+static const char * GetBuiltInDefinitionRoleName(const char *clientRoleName);
+static void WriteBuiltInRoleResponse(const char *clientRoleName,
+									 pgbson_array_writer *rolesArrayWriter,
+									 RolesInfoSpec rolesInfoSpec);
+static void WriteRoleReference(const char *clientRoleName,
+							   pgbson_array_writer *rolesArrayWriter);
 static bool RolesInfoCallerCanViewAllRoles(Oid callerRoleId);
-static const char * GetInternalRoleName(const char *nativeRoleName);
-static const char * GetNativeRoleName(const char *internalRoleName);
+static bool CallerHoldsRoleForVisibility(Oid callerRoleId, Oid roleId);
+static bool RolesInfoCallerCanViewBuiltInRole(Oid callerRoleId,
+											  const char *clientRoleName);
+static const char * GetBackingRoleName(const char *clientRoleName);
+static const char * GetClientRoleName(const char *backingRoleName);
 static void GrantRoleInheritance(const char *parentRole, const char *targetRole,
 								 bool allowCustomRoles);
 static void ParseGrantRolesToRoleSpec(pgbson *grantRolesBson,
@@ -1852,6 +1873,15 @@ static void
 ProcessAllRolesForRolesInfo(pgbson_array_writer *rolesArrayWriter, RolesInfoSpec
 							rolesInfoSpec)
 {
+	if (rolesInfoSpec.showBuiltInRoles)
+	{
+		WriteBuiltInRoleResponse("clusterAdmin", rolesArrayWriter, rolesInfoSpec);
+		WriteBuiltInRoleResponse("readAnyDatabase", rolesArrayWriter, rolesInfoSpec);
+		WriteBuiltInRoleResponse("readWriteAnyDatabase", rolesArrayWriter,
+								 rolesInfoSpec);
+		WriteBuiltInRoleResponse("root", rolesArrayWriter, rolesInfoSpec);
+	}
+
 	const char *roleName = NULL;
 	WriteRoles(rolesArrayWriter, rolesInfoSpec, roleName);
 }
@@ -1869,6 +1899,21 @@ ProcessSpecificRolesForRolesInfo(pgbson_array_writer *rolesArrayWriter, RolesInf
 	foreach(currentRoleName, rolesInfoSpec.roleNames)
 	{
 		const char *roleName = (const char *) lfirst(currentRoleName);
+		if (IS_PUBLIC_BUILTIN_ROLE(roleName))
+		{
+			/*
+			 * The built-in definition is fixed rather than sourced from the
+			 * caller-filtered system.roles query, so apply the same visibility
+			 * rule here: omit a role the caller neither holds nor is allowed to
+			 * view, matching how an unheld custom role is silently skipped.
+			 */
+			if (RolesInfoCallerCanViewBuiltInRole(GetUserId(), roleName))
+			{
+				WriteBuiltInRoleResponse(roleName, rolesArrayWriter,
+										 rolesInfoSpec);
+			}
+			continue;
+		}
 
 		if (IsReservedInternalRoleName(roleName))
 		{
@@ -1885,15 +1930,142 @@ ProcessSpecificRolesForRolesInfo(pgbson_array_writer *rolesArrayWriter, RolesInf
 }
 
 
+/*
+ * Writes a fixed built-in role definition in rolesInfo response format.
+ */
+static void
+WriteBuiltInRoleResponse(const char *clientRoleName,
+						 pgbson_array_writer *rolesArrayWriter,
+						 RolesInfoSpec rolesInfoSpec)
+{
+	pgbson_writer roleDocumentWriter;
+	PgbsonArrayWriterStartDocument(rolesArrayWriter, &roleDocumentWriter);
+
+	char *roleId = psprintf("admin.%s", clientRoleName);
+	PgbsonWriterAppendUtf8(&roleDocumentWriter, "_id", 3, roleId);
+	pfree(roleId);
+
+	PgbsonWriterAppendUtf8(&roleDocumentWriter, "role", 4,
+						   clientRoleName);
+	PgbsonWriterAppendUtf8(&roleDocumentWriter, "db", 2, "admin");
+	PgbsonWriterAppendBool(&roleDocumentWriter, "isBuiltIn", 9, true);
+
+	if (rolesInfoSpec.showPrivileges)
+	{
+		const char *backingRoleName = GetBuiltInDefinitionRoleName(clientRoleName);
+		StringView backingRoleNameView = CreateStringViewFromString(backingRoleName);
+		pgbson_array_writer privilegesArrayWriter;
+		PgbsonWriterStartArray(&roleDocumentWriter, "privileges", 10,
+							   &privilegesArrayWriter);
+		WritePrivileges(&backingRoleNameView, &privilegesArrayWriter);
+		PgbsonWriterEndArray(&roleDocumentWriter, &privilegesArrayWriter);
+	}
+
+	pgbson_array_writer parentRolesArrayWriter;
+	PgbsonWriterStartArray(&roleDocumentWriter, "roles", 5,
+						   &parentRolesArrayWriter);
+
+	/*
+	 * root is the only built-in role composed of other built-in roles; it
+	 * reports readWriteAnyDatabase and clusterAdmin as its sub-roles. Every
+	 * other built-in role reports an empty roles array.
+	 */
+	if (strcmp(clientRoleName, "root") == 0)
+	{
+		WriteRoleReference("readWriteAnyDatabase", &parentRolesArrayWriter);
+		WriteRoleReference("clusterAdmin", &parentRolesArrayWriter);
+	}
+	PgbsonWriterEndArray(&roleDocumentWriter, &parentRolesArrayWriter);
+
+	PgbsonArrayWriterEndDocument(rolesArrayWriter, &roleDocumentWriter);
+}
+
+
+static void
+WriteRoleReference(const char *clientRoleName, pgbson_array_writer *rolesArrayWriter)
+{
+	pgbson_writer roleWriter;
+	PgbsonArrayWriterStartDocument(rolesArrayWriter, &roleWriter);
+	PgbsonWriterAppendUtf8(&roleWriter, "role", 4, clientRoleName);
+	PgbsonWriterAppendUtf8(&roleWriter, "db", 2, "admin");
+	PgbsonArrayWriterEndDocument(rolesArrayWriter, &roleWriter);
+}
+
+
 static bool
 RolesInfoCallerCanViewAllRoles(Oid callerRoleId)
 {
-	bool missingOk = true;
 	Oid adminRoleId = ApiAdminV2RoleOid();
+	if (OidIsValid(adminRoleId) &&
+		CallerHoldsRoleForVisibility(callerRoleId, adminRoleId))
+	{
+		return true;
+	}
+
+	bool missingOk = true;
 	Oid rootRoleId = get_role_oid(ApiRootRole, missingOk);
-	return has_privs_of_role(callerRoleId, adminRoleId) ||
-		   (OidIsValid(rootRoleId) &&
-			is_member_of_role(callerRoleId, rootRoleId));
+	return OidIsValid(rootRoleId) &&
+		   CallerHoldsRoleForVisibility(callerRoleId, rootRoleId);
+}
+
+
+/*
+ * Returns whether the caller holds the given role for visibility purposes. This
+ * mirrors the version-specific predicate the system.roles query applies to
+ * custom roles: on PostgreSQL 16+ a caller holds a role when it has that role's
+ * privileges (USAGE, via inheritance) or may SET ROLE to it (SET); on
+ * PostgreSQL 15 membership (MEMBER) is used. MEMBER alone on PostgreSQL 16+
+ * would also accept creator memberships with neither INHERIT nor SET.
+ */
+static bool
+CallerHoldsRoleForVisibility(Oid callerRoleId, Oid roleId)
+{
+#if PG_VERSION_NUM >= 160000
+	return has_privs_of_role(callerRoleId, roleId) ||
+		   member_can_set_role(callerRoleId, roleId);
+#else
+	return is_member_of_role(callerRoleId, roleId);
+#endif
+}
+
+
+/*
+ * Returns the role whose privileges define the given built-in role in
+ * rolesInfo. Most built-in roles use the grant/revoke mapping. Root differs
+ * because its backing role must not define or confer root visibility.
+ */
+static const char *
+GetBuiltInDefinitionRoleName(const char *clientRoleName)
+{
+	if (strcmp(clientRoleName, "root") == 0)
+	{
+		return ApiRootRole;
+	}
+
+	return GetBackingRoleName(clientRoleName);
+}
+
+
+/*
+ * Returns whether the caller may view a specific built-in role definition. This
+ * mirrors the caller-visibility filtering the system.roles query applies to
+ * custom roles: a caller may view a role it holds, or any role when it can view
+ * all roles.
+ */
+static bool
+RolesInfoCallerCanViewBuiltInRole(Oid callerRoleId,
+								  const char *clientRoleName)
+{
+	if (RolesInfoCallerCanViewAllRoles(callerRoleId))
+	{
+		return true;
+	}
+
+	const char *backingRole = GetBuiltInDefinitionRoleName(clientRoleName);
+	bool missingOk = true;
+	Oid roleId = get_role_oid(backingRole, missingOk);
+	return OidIsValid(roleId) &&
+		   CallerHoldsRoleForVisibility(callerRoleId, roleId);
 }
 
 
@@ -2156,21 +2328,21 @@ ValidateAndGrantParentRoles(const char *targetRoleName, HTAB *parentRoles,
 	hash_seq_init(&status, parentRoles);
 	while ((entry = hash_seq_search(&status)) != NULL)
 	{
-		const char *nativeRoleName = CreateStringFromStringView(entry);
-		const char *internalRoleName = GetInternalRoleName(nativeRoleName);
+		const char *clientRoleName = CreateStringFromStringView(entry);
+		const char *backingRoleName = GetBackingRoleName(clientRoleName);
 
 		/*
 		 * Skip readWriteAnyDatabase and clusterAdmin if we already granted
 		 * ApiAdminRoleV2, which provides both capabilities.
 		 */
 		if (grantedApiAdminRole &&
-			(strcmp(internalRoleName, API_RBAC_READWRITE_ANYDB_ROLE) == 0 ||
-			 strcmp(internalRoleName, ApiClusterAdminRole) == 0))
+			(strcmp(backingRoleName, API_RBAC_READWRITE_ANYDB_ROLE) == 0 ||
+			 strcmp(backingRoleName, ApiClusterAdminRole) == 0))
 		{
 			continue;
 		}
 
-		GrantRoleInheritance(internalRoleName, targetRoleName, allowCustomRoles);
+		GrantRoleInheritance(backingRoleName, targetRoleName, allowCustomRoles);
 	}
 }
 
@@ -2249,85 +2421,83 @@ ValidateAndRevokeParentRoles(const char *targetRoleName, HTAB *parentRoles)
 	hash_seq_init(&status, parentRoles);
 	while ((entry = hash_seq_search(&status)) != NULL)
 	{
-		const char *nativeRoleName = CreateStringFromStringView(entry);
-		const char *internalRoleName = GetInternalRoleName(nativeRoleName);
+		const char *clientRoleName = CreateStringFromStringView(entry);
+		const char *backingRoleName = GetBackingRoleName(clientRoleName);
 
 		/* Even though we don't grant both roles for admin + readwrite pairing,
 		 * we still will see the readwrite any database role in the parent roles response.
 		 */
 		if (revokedApiAdminRole &&
-			strcmp(internalRoleName, ApiClusterAdminRole) == 0)
+			strcmp(backingRoleName, ApiClusterAdminRole) == 0)
 		{
 			continue;
 		}
 
 		if ((revokedReadWriteRole || revokedApiAdminRole) &&
-			strcmp(internalRoleName, API_RBAC_READWRITE_ANYDB_ROLE) == 0)
+			strcmp(backingRoleName, API_RBAC_READWRITE_ANYDB_ROLE) == 0)
 		{
 			continue;
 		}
 
-		RevokeRoleInheritance(internalRoleName, targetRoleName);
+		RevokeRoleInheritance(backingRoleName, targetRoleName);
 	}
 }
 
 
 /*
- * Maps user facing native role name to internal role name stored in pg_roles
- * table.
+ * Maps a client-facing role name to its backing role stored in pg_roles.
  */
 static const char *
-GetInternalRoleName(const char *nativeRoleName)
+GetBackingRoleName(const char *clientRoleName)
 {
-	if (strcmp(nativeRoleName, "clusterAdmin") == 0)
+	if (strcmp(clientRoleName, "clusterAdmin") == 0)
 	{
 		return ApiClusterAdminRole;
 	}
-	else if (strcmp(nativeRoleName, "readAnyDatabase") == 0)
+	else if (strcmp(clientRoleName, "readAnyDatabase") == 0)
 	{
 		return ApiReadOnlyRole;
 	}
-	else if (strcmp(nativeRoleName, "readWriteAnyDatabase") == 0)
+	else if (strcmp(clientRoleName, "readWriteAnyDatabase") == 0)
 	{
 		return API_RBAC_READWRITE_ANYDB_ROLE;
 	}
-	else if (strcmp(nativeRoleName, "root") == 0)
+	else if (strcmp(clientRoleName, "root") == 0)
 	{
 		return ApiRootInternalRole;
 	}
 
-	/* Customer facing native role name is the same as the role name stored in pg_roles table */
-	return nativeRoleName;
+	/* Other client-facing names match their backing roles. */
+	return clientRoleName;
 }
 
 
 /*
- * GetNativeRoleName maps internal role names to native
- * role names. This is the inverse of GetInternalRoleName.
+ * Maps a backing role name to its client-facing name.
  */
 static const char *
-GetNativeRoleName(const char *internalRoleName)
+GetClientRoleName(const char *backingRoleName)
 {
-	if (strcmp(internalRoleName, ApiClusterAdminRole) == 0)
+	if (strcmp(backingRoleName, ApiClusterAdminRole) == 0)
 	{
 		return "clusterAdmin";
 	}
-	else if (strcmp(internalRoleName, ApiReadOnlyRole) == 0)
+	else if (strcmp(backingRoleName, ApiReadOnlyRole) == 0)
 	{
 		return "readAnyDatabase";
 	}
-	else if (strcmp(internalRoleName, ApiReadWriteRole) == 0 ||
-			 strcmp(internalRoleName, API_RBAC_READWRITE_ANYDB_ROLE) == 0)
+	else if (strcmp(backingRoleName, ApiReadWriteRole) == 0 ||
+			 strcmp(backingRoleName, API_RBAC_READWRITE_ANYDB_ROLE) == 0)
 	{
 		return "readWriteAnyDatabase";
 	}
-	else if (strcmp(internalRoleName, ApiRootInternalRole) == 0)
+	else if (strcmp(backingRoleName, ApiRootInternalRole) == 0)
 	{
 		return "root";
 	}
 
-	/* Customer facing native role name is the same as the role name stored in pg_roles table */
-	return internalRoleName;
+	/* Other backing roles already use their client-facing names. */
+	return backingRoleName;
 }
 
 
@@ -2354,13 +2524,13 @@ GrantRoleInheritance(const char *parentRole, const char *targetRole,
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 							errmsg(
 								"Granting the role '%s' is not supported.",
-								GetNativeRoleName(parentRole))));
+								GetClientRoleName(parentRole))));
 		}
 
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 						errmsg(
 							"Creating custom roles that inherit from '%s' is not supported.",
-							GetNativeRoleName(parentRole))));
+							GetClientRoleName(parentRole))));
 	}
 
 	bool readOnly = false;
@@ -2392,7 +2562,7 @@ RevokeRoleInheritance(const char *parentRole, const char *targetRole)
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 						errmsg(
 							"Revoking the role '%s' is not supported.",
-							GetNativeRoleName(parentRole))));
+							GetClientRoleName(parentRole))));
 	}
 
 	bool readOnly = false;
@@ -2430,6 +2600,10 @@ GetPrivilegeAction(const char *action)
 	else if (strcmp(action, "remove") == 0)
 	{
 		return CustomPrivilegeAction_Remove;
+	}
+	else if (strcmp(action, "changeStream") == 0)
+	{
+		return CustomPrivilegeAction_ChangeStream;
 	}
 
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),

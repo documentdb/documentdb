@@ -6,7 +6,7 @@
  *-------------------------------------------------------------------------
  */
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use dashmap::DashMap;
 use tokio::time::Duration;
@@ -348,6 +348,80 @@ impl TransactionStore {
                     "No such transaction to abort".to_owned(),
                 )
             })
+    }
+
+    /// Aborts and removes every active transaction owned by `owner`, returning
+    /// the aborted transaction numbers.
+    ///
+    /// Matching is by owner identity, so this never aborts another principal's
+    /// transactions. It backs the caller-scoped form of `killAllSessions`.
+    pub async fn remove_transactions_by_owner(&self, owner: &Principal) -> Vec<TransactionNumber> {
+        self.remove_transactions_where(|transaction_owner| transaction_owner == owner)
+            .await
+    }
+
+    /// Aborts and removes every active transaction owned by a principal whose
+    /// name is in `user_names`, returning the aborted transaction numbers.
+    ///
+    /// This backs the privileged, user-scoped form of `killAllSessions`.
+    pub async fn remove_transactions_by_owner_names(
+        &self,
+        user_names: &HashSet<String>,
+    ) -> Vec<TransactionNumber> {
+        self.remove_transactions_where(|transaction_owner| {
+            user_names.contains(transaction_owner.name())
+        })
+        .await
+    }
+
+    /// Aborts and removes every active transaction, regardless of owner,
+    /// returning the aborted transaction numbers.
+    ///
+    /// This backs the privileged, unrestricted form of `killAllSessions`.
+    pub async fn remove_all_transactions(&self) -> Vec<TransactionNumber> {
+        self.remove_transactions_where(|_| true).await
+    }
+
+    /// Aborts and removes every active transaction whose owner satisfies
+    /// `should_remove_owner`, returning the aborted transaction numbers.
+    ///
+    /// Aborts are best effort: a failure is logged and the transaction is still
+    /// dropped so the session is terminated.
+    async fn remove_transactions_where(
+        &self,
+        should_remove_owner: impl Fn(&Principal) -> bool,
+    ) -> Vec<TransactionNumber> {
+        let matching_keys: Vec<SessionKey> = self
+            .transactions
+            .iter()
+            .filter(|entry| should_remove_owner(entry.key().owner()))
+            .map(|entry| entry.key().clone())
+            .collect();
+
+        let mut aborted = Vec::new();
+        for key in matching_keys {
+            let Some((_, (_, mut transaction))) = self.transactions.remove(&key) else {
+                continue;
+            };
+
+            let transaction_number = transaction.transaction_number();
+            if let Err(e) = transaction.abort().await {
+                tracing::warn!(
+                    "Failed to abort transaction {transaction_number} during killAllSessions: {e}"
+                );
+            } else {
+                self.metrics.transaction_aborted();
+            }
+
+            let _ = self
+                .last_seen_transactions
+                .upsert_async(key, LastSeenTransaction::aborted(transaction_number))
+                .await;
+
+            aborted.push(transaction_number);
+        }
+
+        aborted
     }
 
     /// Commits a transaction

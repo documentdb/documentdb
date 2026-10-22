@@ -566,13 +566,16 @@ SELECT bson_dollar_project(:'page'::bson, '{ "_id": 0, "batchCount": { "$size": 
 
 -- singleBatch owns cursor lifetime and must not create a dynamic continuation.
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('limtest', '{ "find": "coll", "limit": 5, "singleBatch": true }');
-                          QUERY PLAN                          
---------------------------------------------------------------
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
  Limit
    Output: document
-   ->  Seq Scan on documentdb_data.documents_26101 collection
+   ->  Bitmap Heap Scan on documentdb_data.documents_26101 collection
          Output: document
-(4 rows)
+         Recheck Cond: (collection.shard_key_value = '26101'::bigint)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (collection.shard_key_value = '26101'::bigint)
+(7 rows)
 
 SELECT cursorpage AS page, continuation IS NULL AS no_continuation, cursorid = 0 AS closed FROM find_cursor_first_page('limtest', '{ "find": "coll", "limit": 5, "singleBatch": true, "batchSize": 2 }') \gset
 SELECT bson_dollar_project(:'page'::bson, '{ "_id": 0, "ids": "$cursor.firstBatch._id" }'::bson) AS single_batch_limit, :'no_continuation'::bool AS no_continuation, :'closed'::bool AS closed;

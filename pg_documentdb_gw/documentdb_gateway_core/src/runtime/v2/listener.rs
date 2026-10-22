@@ -26,7 +26,10 @@ use crate::{
     context::ServiceContext,
     error::{DocumentDBError, Result},
     postgres::PgDataClient,
-    runtime::v2::{connection::GatewayRuntime, wire},
+    runtime::{
+        connection_log::ConnectionLog,
+        v2::{connection::GatewayRuntime, wire},
+    },
     service::{create_tcp_listeners, ListenerConfig, RequestRouter, TlsProvider},
     telemetry::{record_startup_metrics, TelemetryProvider},
     time::STARTUP_INSTANT,
@@ -111,13 +114,45 @@ async fn serve_tcp_connection<T, R>(
     peer_address: std::net::SocketAddr,
     listener: &'static str,
     _connection_permit: TrackedPermit,
+) where
+    T: PgDataClient + 'static,
+    R: RequestRouter<T> + Send + 'static,
+{
+    let connection_id = Uuid::new_v4();
+    let ip_address = match peer_address.ip() {
+        IpAddr::V6(ipv6) => ipv6.to_ipv4_mapped().map_or(IpAddr::V6(ipv6), IpAddr::V4),
+        ip_address @ IpAddr::V4(_) => ip_address,
+    };
+    let mut connection_log = ConnectionLog::new(connection_id, ip_address.to_string(), "TCP");
+    let result = serve_tcp_stream(
+        runtime,
+        tcp_stream,
+        peer_address,
+        listener,
+        connection_id,
+        &mut connection_log,
+    )
+    .await;
+    connection_log.finish(&result);
+}
+
+async fn serve_tcp_stream<T, R>(
+    runtime: GatewayRuntime<T, R>,
+    tcp_stream: TcpStream,
+    peer_address: std::net::SocketAddr,
+    listener: &'static str,
+    connection_id: Uuid,
+    connection_log: &mut ConnectionLog,
 ) -> Result<()>
 where
     T: PgDataClient + 'static,
     R: RequestRouter<T> + Send + 'static,
 {
-    let connection_id = Uuid::new_v4();
     let connection_activity_id = connection_id.to_string();
+    let ip_address = match peer_address.ip() {
+        IpAddr::V6(ipv6) => ipv6.to_ipv4_mapped().map_or(IpAddr::V6(ipv6), IpAddr::V4),
+        ip_address @ IpAddr::V4(_) => ip_address,
+    };
     apply_tcp_options(&tcp_stream)?;
     let local_address = tcp_stream.local_addr().ok();
     let use_tls = runtime
@@ -127,10 +162,6 @@ where
         || detect_tls_handshake(&tcp_stream, connection_id).await?;
     let connection =
         NacelleConnectionMeta::tcp(Some(peer_address), local_address).with_listener(listener);
-    let ip_address = match peer_address.ip() {
-        IpAddr::V6(ipv6) => ipv6.to_ipv4_mapped().map_or(IpAddr::V6(ipv6), IpAddr::V4),
-        ip_address @ IpAddr::V4(_) => ip_address,
-    };
     tracing::debug!(
         activity_id = connection_activity_id.as_str(),
         "Accepted new TCP connection - Connection Id {connection_id}, client IP {}",
@@ -141,12 +172,13 @@ where
         let acceptor = runtime.service_context().tls_provider().tls_acceptor();
         let ssl = Ssl::new(acceptor.context())?;
         let mut tls_stream = SslStream::new(ssl, tcp_stream)?;
-        tokio::time::timeout(
+        let handshake_result = tokio::time::timeout(
             Duration::from_secs(TLS_HANDSHAKE_TIMEOUT_SECS),
             SslStream::accept(Pin::new(&mut tls_stream)),
         )
-        .await
-        .map_err(|_elapsed| {
+        .await;
+        connection_log.record_tls(tls_stream.ssl());
+        handshake_result.map_err(|_elapsed| {
             tracing::error!(
                 activity_id = connection_activity_id.as_str(),
                 "Failed to create TLS connection: SSL handshake timed out. - Connection Id {connection_id}, client IP {ip_address}"
@@ -167,8 +199,9 @@ where
             .and_then(TlsProvider::certificate_thumbprint);
         tracing::info!(
             activity_id = connection_activity_id.as_str(),
-            "TLS TCP connection established - Connection Id {connection_id}, client IP {}",
-            ip_address
+            "TLS TCP connection established - Connection Id {connection_id}, client IP {}, HostNameFromSni {}",
+            ip_address,
+            TlsProvider::sni_host_name_for_logging(tls_stream.ssl())
         );
         runtime
             .serve(
@@ -191,10 +224,6 @@ where
             .map_err(|error| wire::error_to_documentdb(&error))?;
     }
 
-    tracing::debug!(
-        activity_id = connection_activity_id.as_str(),
-        "Connection closed."
-    );
     Ok(())
 }
 
@@ -222,13 +251,14 @@ async fn serve_unix_connection<T, R>(
     unix_stream: UnixStream,
     path: String,
     _connection_permit: TrackedPermit,
-) -> Result<()>
-where
+) where
     T: PgDataClient + 'static,
     R: RequestRouter<T> + Send + 'static,
 {
     let connection_id = Uuid::new_v4();
     let connection_activity_id = connection_id.to_string();
+    let mut connection_log =
+        ConnectionLog::new(connection_id, "localhost".to_owned(), "UnixSocket");
     tracing::debug!(
         activity_id = connection_activity_id.as_str(),
         "New Unix socket connection established"
@@ -239,19 +269,15 @@ where
         activity_id = connection_activity_id.as_str(),
         "Unix socket connection established - Connection Id {connection_id}"
     );
-    runtime
+    let result = runtime
         .serve(unix_stream, connection, connection_id, None)
         .await
-        .map_err(|error| wire::error_to_documentdb(&error))?;
-    tracing::debug!(
-        activity_id = connection_activity_id.as_str(),
-        "Connection closed."
-    );
-    Ok(())
+        .map_err(|error| wire::error_to_documentdb(&error));
+    connection_log.finish(&result);
 }
 
 fn spawn_tcp_connection<T, R>(
-    tasks: &mut JoinSet<Result<()>>,
+    tasks: &mut JoinSet<()>,
     runtime: &GatewayRuntime<T, R>,
     stream: TcpStream,
     peer: std::net::SocketAddr,
@@ -274,22 +300,20 @@ fn spawn_tcp_connection<T, R>(
     }
 }
 
-fn log_connection_result(result: std::result::Result<Result<()>, tokio::task::JoinError>) {
-    match result {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => tracing::error!("Gateway runtime connection failed: {error:?}."),
-        Err(error) => tracing::error!("Gateway runtime connection task failed: {error:?}."),
+fn log_connection_result(result: std::result::Result<(), tokio::task::JoinError>) {
+    if let Err(error) = result {
+        tracing::error!("Gateway runtime connection task failed: {error:?}.");
     }
 }
 
 /// Reaps every connection task that has already completed.
-pub(super) fn drain_completed_connections(tasks: &mut JoinSet<Result<()>>) {
+pub(super) fn drain_completed_connections(tasks: &mut JoinSet<()>) {
     while let Some(result) = tasks.try_join_next() {
         log_connection_result(result);
     }
 }
 
-async fn drain_connections(tasks: &mut JoinSet<Result<()>>) {
+async fn drain_connections(tasks: &mut JoinSet<()>) {
     let deadline = tokio::time::Instant::now() + SHUTDOWN_DRAIN_TIMEOUT;
     while !tasks.is_empty() {
         tokio::select! {
@@ -430,4 +454,110 @@ where
     drop(unix_listener);
     drain_connections(&mut connections).await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use openssl::ssl::{SslConnector, SslMethod};
+    use tokio::net::TcpListener;
+    use tracing_subscriber::prelude::*;
+
+    use super::*;
+    use crate::{
+        postgres::DocumentDBDataClient,
+        service::DefaultRequestRouter,
+        testing::{logs::LogCapture, test_connection_context, TestDynamicConfiguration},
+    };
+
+    #[tokio::test]
+    async fn connection_logs_cover_tcp_setup_failure_and_unix_eof() {
+        let context =
+            test_connection_context(false, Arc::new(TestDynamicConfiguration::default()), None)
+                .await;
+        let runtime = GatewayRuntime::<DocumentDBDataClient, _>::new(
+            context.service_context.as_ref().clone(),
+            None,
+            DefaultRequestRouter {},
+            CancellationToken::new(),
+        );
+        let capture = LogCapture::new("documentdb_gateway_core::runtime::connection_log");
+        let _guard =
+            tracing::subscriber::set_default(tracing_subscriber::registry().with(capture.clone()));
+        tracing::callsite::rebuild_interest_cache();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let client = TcpStream::connect(listener.local_addr().expect("local address"))
+            .await
+            .expect("connect");
+        let (stream, peer) = listener.accept().await.expect("accept");
+        let client_ssl = SslConnector::builder(SslMethod::tls_client())
+            .expect("client TLS builder")
+            .build()
+            .configure()
+            .expect("client TLS configuration")
+            .into_ssl("diagnostic.example.com")
+            .expect("client SSL");
+        let mut client = SslStream::new(client_ssl, client).expect("TLS client");
+        let (server_result, client_result) = tokio::join!(
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                serve_tcp_connection(
+                    runtime.clone(),
+                    stream,
+                    peer,
+                    "gateway-ipv4",
+                    runtime
+                        .acquire_connection(Some(peer.ip()))
+                        .expect("TCP permit"),
+                ),
+            ),
+            tokio::time::timeout(Duration::from_secs(5), Pin::new(&mut client).connect())
+        );
+        server_result.expect("failed TLS setup should terminate");
+        assert!(
+            client_result
+                .expect("client handshake should finish")
+                .is_err(),
+            "the client must reject the untrusted server certificate"
+        );
+
+        let (client, server) = UnixStream::pair().expect("socket pair");
+        drop(client);
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            serve_unix_connection(
+                runtime.clone(),
+                server,
+                "test.sock".to_owned(),
+                runtime.acquire_connection(None).expect("Unix permit"),
+            ),
+        )
+        .await
+        .expect("Unix EOF should terminate");
+
+        let events = capture.events();
+        assert_eq!(events.len(), 3, "{events:?}");
+        assert_eq!(events[0].level, tracing::Level::ERROR);
+        assert_eq!(events[1].level, tracing::Level::INFO);
+        assert_eq!(events[1].fields["close_reason"], "error");
+        assert_eq!(events[1].fields["transport"], "TCP");
+        assert_eq!(events[1].fields["client_ip"], "127.0.0.1");
+        assert_eq!(
+            events[1].fields["host_name_from_sni"],
+            "diagnostic.example.com"
+        );
+        assert_eq!(
+            events[0].fields["connection_id"],
+            events[1].fields["connection_id"]
+        );
+        assert_eq!(events[2].level, tracing::Level::INFO);
+        assert_eq!(events[2].fields["close_reason"], "completed");
+        assert_eq!(events[2].fields["transport"], "UnixSocket");
+        assert_ne!(
+            events[1].fields["connection_id"],
+            events[2].fields["connection_id"]
+        );
+    }
 }

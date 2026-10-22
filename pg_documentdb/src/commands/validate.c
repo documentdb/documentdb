@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * src/commands/validate.c
  *
@@ -336,6 +337,15 @@ validateCollection(MongoCollection *collection, ValidateResult *result)
 static void
 CheckIndisvalid(uint64 collectionId, ValidateResult *result)
 {
+	/*
+	 * A collated _id_ has a binary primary key and a collated unique RUM backing.
+	 * Require both to exist and be valid, and report one logical index.
+	 */
+	IndexDetails *idIndex = IndexNameGetReadyIndexDetails(collectionId, "_id_");
+	int collatedIdIndexId = idIndex != NULL &&
+							IsCollatedBuiltinIdIndex(&idIndex->indexSpec) ?
+							idIndex->indexId : INVALID_INDEX_ID;
+
 	StringInfo cmdStr = makeStringInfo();
 	appendStringInfo(cmdStr,
 					 "WITH collection_pg_indexes AS "
@@ -351,12 +361,17 @@ CheckIndisvalid(uint64 collectionId, ValidateResult *result)
 					 "JOIN pg_class as i ON i.oid = idx.indexrelid "
 					 "where indrelid::REGCLASS = '%s.documents_"UINT64_FORMAT
 					 "'::REGCLASS ORDER BY idx.indrelid) "
-					 "SELECT (index_spec).index_name, cpi.indisvalid "
-					 "FROM collection_pg_indexes cpi "
-					 "JOIN %s.collection_indexes ci ON ci.index_id = cpi.indexId "
-					 "ORDER BY cpi.indexId;",
+					 "SELECT (index_spec).index_name, "
+					 "COALESCE(bool_and(cpi.indisvalid), false) AND "
+					 "(ci.index_id <> %d OR count(cpi.relname) = 2) "
+					 "FROM %s.collection_indexes ci "
+					 "LEFT JOIN collection_pg_indexes cpi ON ci.index_id = cpi.indexId "
+					 "WHERE ci.collection_id = "UINT64_FORMAT
+					 " AND (cpi.indexId IS NOT NULL OR ci.index_id = %d) "
+					 "GROUP BY ci.index_id, (index_spec).index_name ORDER BY ci.index_id;",
 					 collectionId, ApiCatalogSchemaName, collectionId,
-					 ApiDataSchemaName, collectionId, ApiCatalogSchemaName);
+					 ApiDataSchemaName, collectionId, collatedIdIndexId,
+					 ApiCatalogSchemaName, collectionId, collatedIdIndexId);
 
 	pgbson_writer indexValidityWriter;
 	PgbsonWriterInit(&indexValidityWriter);

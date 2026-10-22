@@ -42,7 +42,11 @@ impl Request {
 
     /// # Errors
     /// Returns error if common field extraction fails.
-    pub(crate) fn extract_common(&self) -> Result<RequestInfo<'_>> {
-        common_fields::extract_info_from_document(self.document(), self.request_type())
+    pub(crate) fn extract_common(&self, read_concern_validation: bool) -> Result<RequestInfo<'_>> {
+        common_fields::extract_info_from_document(
+            self.document(),
+            self.request_type(),
+            read_concern_validation,
+        )
     }
 }

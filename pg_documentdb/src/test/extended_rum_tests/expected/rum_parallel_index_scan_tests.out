@@ -1,3 +1,5 @@
+-- Copyright (c) DocumentDB contributors
+-- SPDX-License-Identifier: MIT
 SET search_path TO documentdb_api_catalog, documentdb_core, public;
 SET documentdb.next_collection_id TO 900;
 SET documentdb.next_collection_index_id TO 900;
@@ -151,7 +153,22 @@ FROM documentdb_test_helpers.run_explain_and_trim(
                Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (17 rows)
 
+-- Page layout can change the sampled entry count and the leader's scan work.
 SELECT CASE
+    WHEN explain_line ~ 'innerScanLoops: [0-9]+ loops'
+         AND SUBSTRING(explain_line FROM 'innerScanLoops: ([0-9]+) loops')::int
+             BETWEEN 1 AND 1000
+    THEN REGEXP_REPLACE(
+        explain_line,
+        'innerScanLoops: [0-9]+ loops',
+        'innerScanLoops: 1-1000 loops')
+    WHEN explain_line ~ 'estimatedEntryCount: [0-9]+'
+         AND SUBSTRING(explain_line FROM 'estimatedEntryCount: ([0-9]+)')::int
+             BETWEEN 1 AND 1000
+    THEN REGEXP_REPLACE(
+        explain_line,
+        'estimatedEntryCount: [0-9]+',
+        'estimatedEntryCount: 1-1000')
     WHEN explain_line ~ 'parallelScanLoops: [0-9]+ loops'
          AND SUBSTRING(explain_line FROM 'parallelScanLoops: ([0-9]+) loops')::int
              BETWEEN 1 AND 1000
@@ -175,11 +192,11 @@ FROM documentdb_test_helpers.run_explain_and_trim(
          indexKey: {"a": 1}
          isMultiKey: false
          indexBounds: ["a": (MinKey, MaxKey)]
-         innerScanLoops: 263 loops
+         innerScanLoops: 1-1000 loops
          parallelScanLoops: 1-1000 loops
          parallelScanCapable: true
          scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 263)]
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1-1000)]
          ->  Parallel Index Scan using a_1 on documents_901 collection (actual rows=xyz loops=3)
                Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
                Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)

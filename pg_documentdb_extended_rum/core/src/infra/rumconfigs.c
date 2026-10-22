@@ -33,21 +33,16 @@ PGDLLEXPORT bool DocumentDBRumLoadCommonGUCs = true;
 PGDLLEXPORT bool RumThrowErrorOnInvalidDataPage =
 	RUM_DEFAULT_THROW_ERROR_ON_INVALID_DATA_PAGE;
 
-/* rumbtree.c */
-/* FeatureFlag: Added in v0.108, enabled in v0.108, remove after v1.3 */
-#define RUM_DEFAULT_TRACK_INCOMPLETE_SPLIT true
-PGDLLEXPORT bool RumTrackIncompleteSplit = RUM_DEFAULT_TRACK_INCOMPLETE_SPLIT;
-
 /* FeatureFlag: Added in v0.114, enabled in v0.114, remove after v1.7 */
 #define RUM_DEFAULT_ALLOW_REPLACE_ON_INSERT_TUPLE true
 PGDLLEXPORT bool RumAllowReplaceOnInsertTuple = RUM_DEFAULT_ALLOW_REPLACE_ON_INSERT_TUPLE;
 
 /* TestingConfig: This is not ready for real consumption */
-#define RUM_DEFAULT_ENABLE_XLOG_INSERT_ENTRY false
+#define RUM_DEFAULT_ENABLE_XLOG_INSERT_ENTRY true
 PGDLLEXPORT bool RumEnableXlogInsertEntry = RUM_DEFAULT_ENABLE_XLOG_INSERT_ENTRY;
 
 /* TestingConfig: This is not ready for real consumption */
-#define RUM_DEFAULT_ENABLE_CUSTOM_XLOG_RMRG false
+#define RUM_DEFAULT_ENABLE_CUSTOM_XLOG_RMRG true
 PGDLLEXPORT bool EnableCustomXlogRmgr = RUM_DEFAULT_ENABLE_CUSTOM_XLOG_RMRG;
 
 /* FeatureFlag: Added in v0.114, enabled in v0.114, remove after v1.0 */
@@ -57,6 +52,11 @@ PGDLLEXPORT bool EnableRumCompareFunctionFmgr = RUM_DEFAULT_ENABLE_COMPARE_FUNCT
 /* FeatureFlag: Added in v0.108, enabled in v0.108, remove after v1.3 */
 #define RUM_DEFAULT_FIX_INCOMPLETE_SPLIT true
 PGDLLEXPORT bool RumFixIncompleteSplit = RUM_DEFAULT_FIX_INCOMPLETE_SPLIT;
+
+/* FeatureFlag: Added in v1.2, enabled in v1.2, remove after v1.5 */
+#define RUM_DEFAULT_ENABLE_CLEAR_INVALID_INCOMPLETE_SPLIT true
+PGDLLEXPORT bool RumEnableClearInvalidIncompleteSplit =
+	RUM_DEFAULT_ENABLE_CLEAR_INVALID_INCOMPLETE_SPLIT;
 
 /* TestingConfig */
 #define RUM_DEFAULT_ENABLE_INJECT_PAGE_SPLIT_INCOMPLETE false
@@ -126,7 +126,7 @@ PGDLLEXPORT bool RumPruneEmptyPages = RUM_DEFAULT_PRUNE_EMPTY_PAGES;
 #define RUM_DEFAULT_ENABLE_NEW_BULK_DELETE true
 PGDLLEXPORT bool RumEnableNewBulkDelete = RUM_DEFAULT_ENABLE_NEW_BULK_DELETE;
 
-/* FeatureFlag: Added in v0.108, Pending stabilization, enable on v1.2 */
+/* FeatureFlag: Added in v0.108, Pending stabilization, enable on v1.3 */
 #define RUM_DEFAULT_ENABLE_NEW_BULK_DELETE_INLINE_DATA_PAGES false
 PGDLLEXPORT bool RumNewBulkDeleteInlineDataPages =
 	RUM_DEFAULT_ENABLE_NEW_BULK_DELETE_INLINE_DATA_PAGES;
@@ -164,7 +164,7 @@ PGDLLEXPORT bool RumEnableOverwriteEntryTupleOnVacuum =
 PGDLLEXPORT bool RumEnableTargetedPostingTreePruning =
 	RUM_DEFAULT_ENABLE_TARGETED_POSTING_TREE_PRUNING;
 
-/* FeatureFlag: Added in v0.115, Pending stabilization, enable on v1.1 */
+/* FeatureFlag: Added in v0.115, Pending stabilization, enable on v1.3 */
 #define RUM_DEFAULT_ENABLE_SINGLE_PASS_POSTING_TREE_VACUUM false
 PGDLLEXPORT bool RumEnableSinglePassPostingTreeVacuum =
 	RUM_DEFAULT_ENABLE_SINGLE_PASS_POSTING_TREE_VACUUM;
@@ -463,14 +463,6 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.track_incomplete_split", documentDBRumGucPrefix),
-		"Sets whether or not to track incomplete splits",
-		NULL,
-		&RumTrackIncompleteSplit,
-		RUM_DEFAULT_TRACK_INCOMPLETE_SPLIT,
-		PGC_USERSET, 0,
-		NULL, NULL, NULL);
-	DefineCustomBoolVariable(
 		psprintf("%s.allow_replace_on_insert_tuple", documentDBRumGucPrefix),
 		"Sets whether or not to allow replacing an existing tuple on insert",
 		NULL,
@@ -510,6 +502,15 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		NULL,
 		&RumFixIncompleteSplit,
 		RUM_DEFAULT_FIX_INCOMPLETE_SPLIT,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_clear_invalid_incomplete_split", documentDBRumGucPrefix),
+		"Clears an incomplete split flag that cannot describe a pending split instead of completing it",
+		NULL,
+		&RumEnableClearInvalidIncompleteSplit,
+		RUM_DEFAULT_ENABLE_CLEAR_INVALID_INCOMPLETE_SPLIT,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 

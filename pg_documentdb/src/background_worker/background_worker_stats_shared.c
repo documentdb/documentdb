@@ -183,11 +183,14 @@ FindBackgroundWorkerJobStatsIndex(int jobId,
 
 void
 PublishBackgroundWorkerJobCompletion(int jobId, BackgroundWorkerJobResult result,
+									 double *observedAttemptDurationMilliseconds,
 									 TimestampTz attemptStartTimestamp,
 									 instr_time attemptStartTime,
 									 bool hasAttemptObservationInterval,
 									 int64 attemptObservationIntervalMilliseconds)
 {
+	Assert(observedAttemptDurationMilliseconds != NULL);
+
 	if (result != JOB_RESULT_SUCCEEDED &&
 		result != JOB_RESULT_FAILED &&
 		result != JOB_RESULT_TIMED_OUT &&
@@ -215,12 +218,12 @@ PublishBackgroundWorkerJobCompletion(int jobId, BackgroundWorkerJobResult result
 	instr_time observedAttemptDuration;
 	INSTR_TIME_SET_CURRENT(observedAttemptDuration);
 	INSTR_TIME_SUBTRACT(observedAttemptDuration, attemptStartTime);
-	double observedAttemptDurationMilliseconds =
+	double attemptDurationMilliseconds =
 		INSTR_TIME_GET_MILLISEC(observedAttemptDuration);
 	TimestampTz observedResolutionTimestamp = GetCurrentTimestamp();
 
-	if (!isfinite(observedAttemptDurationMilliseconds) ||
-		observedAttemptDurationMilliseconds < 0)
+	if (!isfinite(attemptDurationMilliseconds) ||
+		attemptDurationMilliseconds < 0)
 	{
 		LWLockRelease(&SharedState->lock);
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -331,7 +334,7 @@ PublishBackgroundWorkerJobCompletion(int jobId, BackgroundWorkerJobResult result
 
 	double totalObservedAttemptDurationMilliseconds =
 		updatedStats.totalObservedAttemptDurationMilliseconds +
-		observedAttemptDurationMilliseconds;
+		attemptDurationMilliseconds;
 	if (!isfinite(totalObservedAttemptDurationMilliseconds))
 	{
 		LWLockRelease(&SharedState->lock);
@@ -344,25 +347,25 @@ PublishBackgroundWorkerJobCompletion(int jobId, BackgroundWorkerJobResult result
 	{
 		updatedStats.firstAttemptTimestamp = attemptStartTimestamp;
 		updatedStats.minObservedAttemptDurationMilliseconds =
-			observedAttemptDurationMilliseconds;
+			attemptDurationMilliseconds;
 		updatedStats.maxObservedAttemptDurationMilliseconds =
-			observedAttemptDurationMilliseconds;
+			attemptDurationMilliseconds;
 	}
 	else
 	{
 		updatedStats.minObservedAttemptDurationMilliseconds =
 			Min(updatedStats.minObservedAttemptDurationMilliseconds,
-				observedAttemptDurationMilliseconds);
+				attemptDurationMilliseconds);
 		updatedStats.maxObservedAttemptDurationMilliseconds =
 			Max(updatedStats.maxObservedAttemptDurationMilliseconds,
-				observedAttemptDurationMilliseconds);
+				attemptDurationMilliseconds);
 	}
 
 	updatedStats.lastAttemptTimestamp = attemptStartTimestamp;
 	updatedStats.lastObservedResolutionTimestamp = observedResolutionTimestamp;
 	updatedStats.lastResult = result;
 	updatedStats.lastObservedAttemptDurationMilliseconds =
-		observedAttemptDurationMilliseconds;
+		attemptDurationMilliseconds;
 	updatedStats.totalObservedAttemptDurationMilliseconds =
 		totalObservedAttemptDurationMilliseconds;
 	updatedStats.hasAttemptObservationInterval = hasAttemptObservationInterval;
@@ -372,6 +375,8 @@ PublishBackgroundWorkerJobCompletion(int jobId, BackgroundWorkerJobResult result
 	*jobStats = updatedStats;
 
 	LWLockRelease(&SharedState->lock);
+
+	*observedAttemptDurationMilliseconds = attemptDurationMilliseconds;
 }
 
 

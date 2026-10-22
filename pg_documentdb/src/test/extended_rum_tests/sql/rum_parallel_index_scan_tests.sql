@@ -1,3 +1,6 @@
+-- Copyright (c) DocumentDB contributors
+-- SPDX-License-Identifier: MIT
+
 SET search_path TO documentdb_api_catalog, documentdb_core, public;
 SET documentdb.next_collection_id TO 900;
 SET documentdb.next_collection_index_id TO 900;
@@ -64,7 +67,22 @@ FROM documentdb_test_helpers.run_explain_and_trim(
     $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
         '{ "find": "parallel_scan", "filter": { "a": { "$gt": 10, "$lt": 50 } }, "sort": { "a": 1 } }') $cmd$) AS explain_line;
 
+-- Page layout can change the sampled entry count and the leader's scan work.
 SELECT CASE
+    WHEN explain_line ~ 'innerScanLoops: [0-9]+ loops'
+         AND SUBSTRING(explain_line FROM 'innerScanLoops: ([0-9]+) loops')::int
+             BETWEEN 1 AND 1000
+    THEN REGEXP_REPLACE(
+        explain_line,
+        'innerScanLoops: [0-9]+ loops',
+        'innerScanLoops: 1-1000 loops')
+    WHEN explain_line ~ 'estimatedEntryCount: [0-9]+'
+         AND SUBSTRING(explain_line FROM 'estimatedEntryCount: ([0-9]+)')::int
+             BETWEEN 1 AND 1000
+    THEN REGEXP_REPLACE(
+        explain_line,
+        'estimatedEntryCount: [0-9]+',
+        'estimatedEntryCount: 1-1000')
     WHEN explain_line ~ 'parallelScanLoops: [0-9]+ loops'
          AND SUBSTRING(explain_line FROM 'parallelScanLoops: ([0-9]+) loops')::int
              BETWEEN 1 AND 1000

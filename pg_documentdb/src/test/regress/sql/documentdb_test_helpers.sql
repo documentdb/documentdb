@@ -32,7 +32,7 @@ CALL documentdb_test_helpers.wait_for_background_worker();
 SELECT application_name FROM pg_stat_activity WHERE application_name = 'documentdb_bg_worker_leader';
 
 
-CREATE OR REPLACE FUNCTION documentdb_test_helpers.run_explain_and_trim(p_query text, p_ignore_heap_fetches boolean DEFAULT false, p_normalize_window boolean DEFAULT false)
+CREATE OR REPLACE FUNCTION documentdb_test_helpers.run_explain_and_trim(p_query text, p_ignore_heap_fetches boolean DEFAULT false, p_normalize_window boolean DEFAULT false, p_ignore_group_key boolean DEFAULT false)
 RETURNS SETOF text
 AS $$
 DECLARE
@@ -43,6 +43,8 @@ BEGIN
     IF v_explain_row ~ '^\s+Disabled: true\s*$' THEN
       CONTINUE;
     ELSIF p_normalize_window AND v_explain_row ~ '^\s+Window: ' THEN
+      CONTINUE;
+    ELSIF p_ignore_group_key AND v_explain_row ~ '^\s+Group Key: ' THEN
       CONTINUE;
     ELSIF v_explain_row ~ '^\s+Index Searches: [0-9]+\s*$' THEN
       CONTINUE;

@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * SPDX-License-Identifier: MIT
  *
  * src/commands/cursors.c
  *
@@ -15,6 +16,8 @@
 #include <nodes/params.h>
 #include <utils/portal.h>
 #include <utils/varlena.h>
+#include <utils/builtins.h>
+#include <port/pg_bswap.h>
 #include <utils/typcache.h>
 #include <executor/spi.h>
 #include <tcop/dest.h>
@@ -57,6 +60,7 @@ extern bool EnablePrimaryKeyCursorScan;
 extern bool UseFileBasedPersistedCursors;
 extern bool EnableDebugQueryText;
 extern bool EnableDynamicCursorParallelPlans;
+extern bool EnableNonDynamicCursorParallelPlans;
 extern bool EnableDynamicCursorEarlyIndexLockRelease;
 
 
@@ -361,8 +365,10 @@ DrainSingleResultQuery(Query *query)
 {
 	int cursorOptions = CURSOR_OPT_NO_SCROLL | CURSOR_OPT_BINARY;
 
-	/* Allow the planner to consider parallel plans for the query. */
-	cursorOptions |= CURSOR_OPT_PARALLEL_OK;
+	if (EnableNonDynamicCursorParallelPlans)
+	{
+		cursorOptions |= CURSOR_OPT_PARALLEL_OK;
+	}
 	MemoryContext currentContext = CurrentMemoryContext;
 
 	/* Deparse query text before planning since the planner may modify the query tree */
@@ -516,14 +522,18 @@ PlanResultHasParallelPlan(QueryCursorPlanResult *planResult)
 
 
 int
-GetDynamicCursorCursorOptions(void)
+GetDynamicCursorCursorOptions(bool allowFastPlan)
 {
 	int cursorOptions = CURSOR_OPT_BINARY;
 
 	/* Turn on fast plan to consider statistics tupleFraction
 	 * for startup path.
 	 */
-	cursorOptions |= CURSOR_OPT_FAST_PLAN;
+	if (allowFastPlan)
+	{
+		cursorOptions |= CURSOR_OPT_FAST_PLAN;
+	}
+
 
 	if (EnableDynamicCursorParallelPlans)
 	{
@@ -538,12 +548,13 @@ GetDynamicCursorCursorOptions(void)
 QueryCursorPlanResult *
 PlanDynamicQueryAndDetermineCursorType(Query *query,
 									   bool allowOffsetLimitNode,
+									   bool allowFastPlan,
 									   bool *isDynamicStreamable)
 {
 	/* Deparse query text before planning since the planner may modify the query tree */
 	char *sourceText = "";
 
-	int cursorOptions = GetDynamicCursorCursorOptions();
+	int cursorOptions = GetDynamicCursorCursorOptions(allowFastPlan);
 	if (EnableDebugQueryText)
 	{
 		bool pretty = false;
@@ -993,7 +1004,8 @@ PlanForcedPersistentQuery(Query *query, bool isHoldCursor)
 	 * executor detects the row-count-bounded fetch and simply runs the
 	 * Gather leader-only — correct, just not parallel.
 	 */
-	if (isHoldCursor && UseFileBasedPersistedCursors &&
+	if (EnableNonDynamicCursorParallelPlans &&
+		isHoldCursor && UseFileBasedPersistedCursors &&
 		query->commandType == CMD_SELECT && !query->hasModifyingCTE)
 	{
 		cursorOptions |= CURSOR_OPT_PARALLEL_OK;
@@ -1044,7 +1056,8 @@ CreateAndDrainSingleBatchQuery(const char *cursorName, Query *query,
 	 *
 	 * Read-only queries only: a parallel plan cannot contain writes.
 	 */
-	if (query->commandType == CMD_SELECT && !query->hasModifyingCTE)
+	if (EnableNonDynamicCursorParallelPlans &&
+		query->commandType == CMD_SELECT && !query->hasModifyingCTE)
 	{
 		cursorOptions |= CURSOR_OPT_PARALLEL_OK;
 	}
@@ -2816,6 +2829,47 @@ FormFinalCursorResultTuple(pgbson *resultDocument, pgbson *continuation, bool
 
 
 /*
+ * Encodes a raw resume token, optionally embedding a cluster time ahead of the
+ * base64 body. When clusterTime is non-zero the result is prefixed with
+ * RESUME_TOKEN_PREFIX_HEX_LEN hex chars (a type marker + the 8 cluster-time
+ * bytes, network order) so clients can read the timestamp from the leading
+ * bytes; when zero it is the plain base64 body (legacy form). Returns a
+ * palloc'd string.
+ */
+char *
+EncodeResumeTokenWithClusterTime(const char *rawToken, uint64 clusterTime)
+{
+	Assert(rawToken != NULL);
+
+	size_t tokenLen = strlen(rawToken);
+	int base64Len = pg_b64_enc_len(tokenLen);
+	bool hasPrefix = clusterTime != 0;
+	int prefixLen = hasPrefix ? RESUME_TOKEN_PREFIX_HEX_LEN : 0;
+
+	char *encoded = palloc0(prefixLen + base64Len + 1);
+
+	if (hasPrefix)
+	{
+		uint64 networkClusterTime = pg_hton64(clusterTime);
+		uint8 prefixBytes[RESUME_TOKEN_PREFIX_BIN_LEN];
+		prefixBytes[0] = RESUME_TOKEN_TIMESTAMP_TYPE;
+		memcpy(&prefixBytes[1], &networkClusterTime, sizeof(networkClusterTime));
+
+		uint64 hexWritten PG_USED_FOR_ASSERTS_ONLY =
+			hex_encode((const char *) prefixBytes,
+					   RESUME_TOKEN_PREFIX_BIN_LEN, encoded);
+		Assert(hexWritten == (uint64) RESUME_TOKEN_PREFIX_HEX_LEN);
+	}
+
+	int base64Written = pg_b64_encode((char_uint8_compat *) rawToken, (int) tokenLen,
+									  encoded + prefixLen, base64Len);
+	encoded[prefixLen + base64Written] = '\0';
+
+	return encoded;
+}
+
+
+/*
  * Appends the last continuation token to the cursor document.
  */
 static void
@@ -2836,14 +2890,20 @@ AppendLastContinuationTokenToCursor(pgbson_writer *writer, pgbson *lastContinuat
 	{
 		const char *resumeToken = bson_iter_utf8(&continuationTokenIter, &length);
 
-		/* Encode resume token */
-		size_t tokenLen = strlen(resumeToken);
-		int encodedLen = pg_b64_enc_len(tokenLen);
-		char *encodedResumeToken = palloc0(encodedLen + 1);
+		/*
+		 * Optional "ct" cluster time gets embedded in the token prefix; absent
+		 * for non-change-stream cursors, where zero yields a plain token.
+		 */
+		uint64 clusterTime = 0;
+		bson_iter_t clusterTimeIter;
+		if (PgbsonInitIteratorAtPath(lastContinuationDoc, "ct", &clusterTimeIter) &&
+			BSON_ITER_HOLDS_INT64(&clusterTimeIter))
+		{
+			clusterTime = (uint64) bson_iter_int64(&clusterTimeIter);
+		}
 
-		encodedLen = pg_b64_encode((char_uint8_compat *) resumeToken, (int) tokenLen,
-								   encodedResumeToken, encodedLen);
-		encodedResumeToken[encodedLen] = '\0';
+		char *encodedResumeToken = EncodeResumeTokenWithClusterTime(resumeToken,
+																	clusterTime);
 
 		/* Write resume token */
 		pgbson_writer resumeTokenWriter;

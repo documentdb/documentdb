@@ -22,6 +22,14 @@
 use bson::{doc, Bson, Document};
 use mongodb::{error::Error, Database};
 
+fn assert_developer_explain_removed(result: &Document) {
+    assert!(!result.contains_key("internal"));
+    assert!(matches!(
+        result.get("explainVersion"),
+        Some(Bson::Double(version)) if (*version - 2.0).abs() < f64::EPSILON
+    ));
+}
+
 /// Extract an integer stat regardless of whether it was encoded as Int32,
 /// Int64, or Double (the gateway picks the smallest representation).
 fn stat_i64(stats: &bson::Document, key: &str) -> Option<i64> {
@@ -32,14 +40,6 @@ fn stat_i64(stats: &bson::Document, key: &str) -> Option<i64> {
         Some(Bson::Double(v)) => Some(*v as i64),
         _ => None,
     }
-}
-
-fn assert_developer_explain_removed(result: &Document) {
-    assert!(!result.contains_key("internal"));
-    assert!(matches!(
-        result.get("explainVersion"),
-        Some(Bson::Double(version)) if (*version - 2.0).abs() < f64::EPSILON
-    ));
 }
 
 pub async fn validate_explain(db: &Database) -> Result<(), Error> {

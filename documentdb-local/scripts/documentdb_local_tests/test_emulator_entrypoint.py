@@ -270,6 +270,8 @@ json.dump(data, sys.stdout)
         # Hermeticity: an ambient template override on the dev machine must
         # not leak into the entrypoint under test.
         env.pop("DOCUMENTDB_PGDATA_TEMPLATE", None)
+        env.pop("TLS_MODE", None)
+        env.pop("DOCUMENTDB_ALLOW_DEFAULT_PASSWORD", None)
         env.update(
             {
                 "PATH": f"{self.bin_dir}:{env['PATH']}",
@@ -302,6 +304,9 @@ json.dump(data, sys.stdout)
         )
         if extra_env:
             env.update(extra_env)
+        # None in extra_env means "unset this variable".
+        for key in [k for k, v in env.items() if v is None]:
+            del env[key]
         return env
 
     def _run_entrypoint(self, *args, extra_env=None):
@@ -2305,6 +2310,55 @@ exit 1
         self.assertEqual(args[args.index("-u") + 1], "")
         self.assertIn("stub-user-created", result.stdout)
 
+    @unittest.skipUnless(Path("/proc/self/exe").is_symlink(), "requires Linux procfs")
+    def test_password_flag_does_not_stay_in_any_process_argv(self):
+        secret = "argv" + secrets.token_hex(12)
+        pattern = self.root / "argv-pattern"
+        pattern.write_text(secret + "\n", encoding="utf-8")
+        report = self.root / "argv-report"
+        received = self.root / "argv-received"
+        # From the long-lived gateway, grep every argv; the pattern file keeps grep's own argv clean.
+        self._write_exec(
+            self.gateway_release_dir / "documentdb_gateway",
+            f"""#!/bin/sh
+grep -l -a -F -f "{pattern}" /proc/[0-9]*/cmdline > "{report}.matches" 2>/dev/null
+echo "$PPID" > "{report}.ppid"
+tr '\\0' ' ' < /proc/$PPID/cmdline > "{report}.parent"
+exit 0
+""",
+        )
+        self._write_exec(
+            self.gateway_scripts / "utils.sh",
+            f'#!/bin/sh\nSetupCustomAdminUser() {{ printf "%s" "$2" > "{received}"; }}\n',
+        )
+        proc = subprocess.Popen(
+            ["bash", str(ENTRYPOINT), "--username", "argvuser", "--password", secret,
+             "--documentdb-port", "10261"],
+            cwd=REPO_ROOT,
+            env=self._entrypoint_env({"PASSWORD": None, "CREATE_USER": "true"}),
+            text=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self.addCleanup(proc.wait)
+        self.addCleanup(proc.kill)
+        stdout, stderr = proc.communicate(timeout=30)
+        self.assertEqual(proc.returncode, 0, msg=stdout + stderr)
+        self.assertEqual(
+            (self.root / "argv-report.matches").read_text(encoding="utf-8"), "",
+            "the password is still in some process's argv",
+        )
+        # Re-exec, not a child: same PID.
+        self.assertEqual(int((self.root / "argv-report.ppid").read_text()), proc.pid)
+        parent = (self.root / "argv-report.parent").read_text(encoding="utf-8")
+        self.assertIn("emulator_entrypoint.sh", parent)
+        self.assertNotIn("--password", parent)
+        self.assertEqual(received.read_text(encoding="utf-8"), secret)
+        self.assertEqual(self._read_config()["GatewayListenPort"], 10261)
+        self.assertIn("Using username: argvuser", stdout)
+        self.assertEqual(stdout.count("DocumentDB container starting"), 1)
+
     def test_create_user_false_still_skips_child_user_step(self):
         self._configure_postgres_stubs()
         args_capture = self._configure_start_oss_args_capture()
@@ -2550,6 +2604,20 @@ exit 1
             result.stdout + result.stderr,
         )
 
+    def test_empty_tlsMode_env_var_fails_fast(self):
+        # Treated as unset, it would silently become allowTLS and accept plaintext.
+        result = self._run_entrypoint("--password", _TEST_PW, extra_env={"TLS_MODE": ""})
+        self.assertEqual(result.returncode, 1, msg=result.stdout + result.stderr)
+        self.assertIn("TLS_MODE is set but empty", result.stderr)
+        self.assertNotIn("gateway-daemon-stub-started", result.stdout)
+
+    def test_other_empty_settings_still_mean_unset(self):
+        result = self._run_entrypoint(
+            "--password", _TEST_PW,
+            extra_env={"INIT_DATA": "", "CERT_PATH": "", "KEY_FILE": ""},
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
     def test_enforce_tls_write_failure_aborts(self):
         failing_jq = """#!/usr/bin/env python3
 import json
@@ -2680,6 +2748,106 @@ json.dump(data, sys.stdout)
             result.stdout,
         )
         self.assertNotIn("CERT_SECRET", result.stdout)
+
+    def test_missing_password_refuses_to_start(self):
+        for password in (None, ""):
+            with self.subTest(password=password):
+                result = self._run_entrypoint(extra_env={"PASSWORD": password, "CREATE_USER": "true"})
+                self.assertEqual(result.returncode, 1, msg=result.stdout + result.stderr)
+                self.assertIn("no password was supplied", result.stderr)
+                self.assertIn("DOCUMENTDB_ALLOW_DEFAULT_PASSWORD=true", result.stderr)
+                self.assertNotIn("gateway-daemon-stub-started", result.stdout)
+
+    def test_default_password_opt_in_must_be_exactly_true(self):
+        for value in ("false", "1", "yes", "TRUE"):
+            with self.subTest(value=value):
+                result = self._run_entrypoint(extra_env={
+                    "PASSWORD": None, "CREATE_USER": "true",
+                    "DOCUMENTDB_ALLOW_DEFAULT_PASSWORD": value,
+                })
+                self.assertEqual(result.returncode, 1, msg=result.stdout + result.stderr)
+
+    def test_default_password_opt_in_starts_with_a_one_line_warning(self):
+        received = self.root / "received-password"
+        self._write_exec(
+            self.gateway_scripts / "utils.sh",
+            f'#!/bin/sh\nSetupCustomAdminUser() {{ printf "%s" "$2" > "{received}"; }}\n',
+        )
+        for create_user in ("false", "true"):
+            with self.subTest(create_user=create_user):
+                received.unlink(missing_ok=True)
+                result = self._run_entrypoint(extra_env={
+                    "PASSWORD": None, "USERNAME": "myadmin", "CREATE_USER": create_user,
+                    "DOCUMENTDB_ALLOW_DEFAULT_PASSWORD": "true",
+                })
+                self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+                warnings = [line for line in result.stderr.splitlines() if "built-in" in line]
+                self.assertEqual(len(warnings), 1, msg=result.stderr)
+                self.assertIn("is used to create user 'myadmin' (an existing user keeps its "
+                              "password; --create-user false creates none)", warnings[0])
+                self.assertIn("gateway-daemon-stub-started", result.stdout)
+                # Only a created user gets the password the warning names.
+                if create_user == "true":
+                    self.assertIn(f"password '{received.read_text()}'", warnings[0])
+                else:
+                    self.assertFalse(received.exists())
+
+    def test_explicit_password_prints_no_default_password_warning(self):
+        for extra_env in ({"USERNAME": "myadmin"}, {"USERNAME": None}):
+            with self.subTest(extra_env=extra_env):
+                result = self._run_entrypoint("--password", _TEST_PW, extra_env=extra_env)
+                self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+                self.assertNotIn("built-in", result.stderr.lower())
+
+    def test_help_says_password_is_required_and_names_the_opt_in(self):
+        result = self._run_entrypoint("--help")
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("Password for the DocumentDB user. REQUIRED.", result.stdout)
+        self.assertIn("DOCUMENTDB_ALLOW_DEFAULT_PASSWORD=true", result.stdout)
+
+    def test_create_user_false_needs_no_password(self):
+        result = self._run_entrypoint(extra_env={"PASSWORD": None, "CREATE_USER": "false"})
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn("no password was supplied", result.stderr)
+        self.assertNotIn("built-in", result.stderr)
+        self.assertIn("gateway-daemon-stub-started", result.stdout)
+
+    def test_create_user_false_loading_data_without_password_fails_fast(self):
+        (self.sample_data_dir / "01-sample.js").write_text("// sample\n", encoding="utf-8")
+        real_init = REPO_ROOT / "documentdb-local" / "scripts" / "init_documentdb_data.sh"
+        self._write_exec(self.gateway_scripts / "init_documentdb_data.sh",
+                         f'#!/bin/sh\nexec bash "{real_init}" "$@"\n')
+        result = self._run_entrypoint(extra_env={
+            "PASSWORD": None, "CREATE_USER": "false", "INIT_DATA": "true", "SKIP_INIT_DATA": "",
+        })
+        self.assertEqual(result.returncode, 1, msg=result.stdout + result.stderr)
+        self.assertIn("Error: Password is required.", result.stdout)
+        self.assertNotIn("Starting DocumentDB data initialization", result.stdout)
+        self.assertFalse((self.data_dir / ".documentdb-local" / "sample_data_initialized").exists())
+
+    def test_create_user_false_restart_after_seeding_needs_no_password(self):
+        init_dir = self.root / "custom_init"
+        init_dir.mkdir()
+        (init_dir / "00-custom.js").write_text("// custom\n", encoding="utf-8")
+        markers = self.data_dir / ".documentdb-local"
+        cases = (
+            ({"INIT_DATA": "true"}, ("sample_data_initialized",)),
+            ({"INIT_DATA": "false", "INIT_DATA_PATH": str(init_dir)},
+             ("custom_data_attempted", "custom_data_succeeded")),
+        )
+        for env, names in cases:
+            with self.subTest(markers=names):
+                shutil.rmtree(markers, ignore_errors=True)
+                markers.mkdir()
+                for name in names:
+                    (markers / name).touch()
+                counter = self._write_counting_init_stub(fail_always=True)
+                result = self._run_entrypoint(extra_env={
+                    "PASSWORD": None, "CREATE_USER": "false", "SKIP_INIT_DATA": "", **env,
+                })
+                self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+                self.assertIn("already initialized", result.stdout)
+                self.assertFalse(counter.exists(), "the seed must not run")
 
     def _write_counting_init_stub(self, fail_on_second=False, fail_always=False):
         """Replace the init-data stub with one that records each invocation.

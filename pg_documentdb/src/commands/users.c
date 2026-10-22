@@ -43,16 +43,11 @@
  * the user listings below count a membership only when the member actually has
  * the privileges of the role.
  *
- * pg_has_role answers that question directly, and is preferred over testing the
- * catalog columns: it does not confuse the automatic membership with an
- * explicit GRANT ... WITH ADMIN OPTION, which sets the same ADMIN OPTION flag
- * but does confer the role.
- *
- * A membership confers the role when its privileges are inherited, which
- * pg_has_role reports as USAGE, or when the member may assume the role with
- * SET ROLE, which it reports as SET. Testing both covers a grant made WITH
- * INHERIT FALSE, SET TRUE, which does confer the role. The automatic creator
- * membership has neither option, so it remains excluded.
+ * A membership confers the role when its privileges are inherited or when the
+ * member may assume the role with SET ROLE. PostgreSQL 16 and later record those
+ * properties directly on pg_auth_members, which avoids making the result
+ * depend on the privileges of the caller evaluating pg_has_role. The automatic
+ * creator membership has neither option, so it remains excluded.
  *
  * PostgreSQL 15 records no automatic membership, so every recorded membership
  * is an explicit grant that confers the role. It also has no SET privilege
@@ -62,8 +57,7 @@
  */
 #if PG_VERSION_NUM >= 160000
 #define MEMBERSHIP_CONFERS_ROLE_CLAUSE \
-	" AND (pg_has_role(child.rolname, parent.rolname, 'USAGE') " \
-	" OR pg_has_role(child.rolname, parent.rolname, 'SET')) "
+	" AND (am.inherit_option OR am.set_option) "
 #else
 #define MEMBERSHIP_CONFERS_ROLE_CLAUSE \
 	" AND pg_has_role(child.rolname, parent.rolname, 'MEMBER') "
@@ -211,12 +205,26 @@ static void WriteSingleUserDocument(UserRoleHashEntry *userEntry, bool showPrivi
 static void WriteMultipleRoles(HTAB *rolesTable,
 							   pgbson_array_writer *roleArrayWriter);
 static void WriteBuiltInRoles(const char *parentRole,
+							  bool *wroteReadWriteAnyDatabase,
 							  pgbson_array_writer *roleArrayWriter);
+static void WriteRoleReference(const char *clientRoleName,
+							   pgbson_array_writer *roleArrayWriter);
 static HTAB * BuildUserRoleEntryTable(Datum *userDatums, int userCount,
-									  bool queryAllUsers);
-static void AddCustomRolesFromUsersTable(HTAB *userRolesTable, bool queryAllUsers);
-static pgbson * UsersTableQuerySpec(HTAB *userRolesTable, bool queryAllUsers);
-static void ParseUserTableResponse(HTAB *userRolesTable, Datum responseDatum);
+									  bool queryAllUsers,
+									  bool includeMembershipCustomRoles);
+static void AddMembershipRoleToUserEntry(UserRoleHashEntry *userEntry,
+										 pgbson *membership,
+										 bool includeMembershipCustomRoles);
+static void AddCustomRolesFromUsersTable(HTAB *userRolesTable,
+										 UserRoleHashEntry *singleUserEntry,
+										 bool queryAllUsers);
+static bool IsClientVisibleCustomRole(const char *roleName);
+static pgbson * UsersTableQuerySpec(HTAB *userRolesTable,
+									UserRoleHashEntry *singleUserEntry,
+									bool queryAllUsers);
+static void ParseUserTableResponse(HTAB *userRolesTable,
+								   UserRoleHashEntry *singleUserEntry,
+								   Datum responseDatum);
 static UserRoleHashEntry * FindUserRoleEntry(HTAB *userRolesTable,
 											 const char *userName);
 static UserRoleHashEntry * FindOrCreateUserRoleEntry(HTAB *userRolesTable,
@@ -312,12 +320,12 @@ documentdb_extension_create_user(PG_FUNCTION_ARGS)
 		"JOIN pg_auth_members am ON parent.oid = am.roleid "
 		"JOIN pg_roles child ON am.member = child.oid "
 		"WHERE child.rolcanlogin = true "
-		"  AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s');",
+		"  AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s', '%s', '%s') "
+		"  AND NOT pg_catalog.starts_with(child.rolname, '%s');",
 		ApiAdminRole, ApiAdminRoleV2, ApiAdminRoleV3,
 		ApiBgWorkerRole, ApiBgWorkerRoleV3,
 		ApiReplicationRole, ApiSettingsManagerRole,
-		API_RBAC_API_COLLECTION_OWNER_ROLE,
-		API_RBAC_API_COLLECTION_CREATE_ROLE);
+		API_RBAC_API_ROLE_PREFIX);
 
 	bool readOnly = true;
 	bool isNull = false;
@@ -1100,7 +1108,9 @@ documentdb_extension_get_users(PG_FUNCTION_ARGS)
 					  TYPALIGN_INT, &userDatums, &userIsNullMarker,
 					  &userCount);
 
-	HTAB *userRolesTable = BuildUserRoleEntryTable(userDatums, userCount, showAllUsers);
+	bool includeMembershipCustomRoles = false;
+	HTAB *userRolesTable = BuildUserRoleEntryTable(userDatums, userCount, showAllUsers,
+												   includeMembershipCustomRoles);
 
 	pgbson_array_writer userArrayWriter;
 	PgbsonWriterStartArray(&finalWriter, "users", 5, &userArrayWriter);
@@ -1256,9 +1266,9 @@ connection_status(pgbson *showPrivilegesSpec)
 	}
 
 	bool noError = true;
-	const char *currentUser = GetUserNameFromId(GetUserId(), noError);
+	char *currentUser = GetUserNameFromId(GetUserId(), noError);
 
-	bool returnDocuments = false;
+	bool returnDocuments = true;
 	Datum userInfoDatum = GetSingleUserInfo(currentUser, returnDocuments);
 
 	if (userInfoDatum == (Datum) 0)
@@ -1268,12 +1278,31 @@ connection_status(pgbson *showPrivilegesSpec)
 							"Cannot find logged-in user")));
 	}
 
-	const char *parentRole = text_to_cstring(DatumGetTextP(userInfoDatum));
-	if (parentRole == NULL)
+	ArrayType *userArray = DatumGetArrayTypeP(userInfoDatum);
+	Datum *userDatums;
+	bool *userIsNullMarker;
+	int userCount;
+	bool arrayByVal = false;
+	int elementLength = -1;
+	Oid arrayElementType = ARR_ELEMTYPE(userArray);
+	deconstruct_array(userArray, arrayElementType, elementLength, arrayByVal,
+					  TYPALIGN_INT, &userDatums, &userIsNullMarker, &userCount);
+
+	UserRoleHashEntry userEntry = {
+		.user = currentUser
+	};
+	bool includeMembershipCustomRoles = true;
+	for (int i = 0; i < userCount; i++)
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-						errmsg(
-							"Unable to locate appropriate role for the specified user")));
+		AddMembershipRoleToUserEntry(&userEntry, DatumGetPgBson(userDatums[i]),
+									 includeMembershipCustomRoles);
+	}
+
+	if (IsClusterVersionAtleast(DocDB_V0, 117, 4))
+	{
+		HTAB *userRolesTable = NULL;
+		bool queryAllUsers = false;
+		AddCustomRolesFromUsersTable(userRolesTable, &userEntry, queryAllUsers);
 	}
 
 	/*
@@ -1307,39 +1336,15 @@ connection_status(pgbson *showPrivilegesSpec)
 	pgbson_array_writer roleArrayWriter;
 	PgbsonWriterStartArray(&authInfoWriter, "authenticatedUserRoles", 22,
 						   &roleArrayWriter);
-
-	/*
-	 * TODO: Build the complete role set so users with both custom and built-in
-	 * memberships report every role and the matching privileges.
-	 */
-	if (IS_BUILTIN_ROLE(parentRole))
-	{
-		WriteBuiltInRoles(parentRole, &roleArrayWriter);
-	}
-	else
-	{
-		HTAB *userRolesTable = CreateUserEntryHashSet();
-		FindOrCreateUserRoleEntry(userRolesTable, currentUser);
-		bool queryAllUsers = false;
-		AddCustomRolesFromUsersTable(userRolesTable, queryAllUsers);
-
-		UserRoleHashEntry *userEntry = FindUserRoleEntry(userRolesTable, currentUser);
-		if (userEntry != NULL)
-		{
-			WriteMultipleRoles(userEntry->roles, &roleArrayWriter);
-		}
-
-		FreeUserRoleEntryTable(userRolesTable);
-	}
+	WriteMultipleRoles(userEntry.roles, &roleArrayWriter);
 	PgbsonWriterEndArray(&authInfoWriter, &roleArrayWriter);
 
 	if (showPrivileges)
 	{
-		StringView parentRoleView = CreateStringViewFromString(parentRole);
 		pgbson_array_writer privilegesArrayWriter;
 		PgbsonWriterStartArray(&authInfoWriter, "authenticatedUserPrivileges", 27,
 							   &privilegesArrayWriter);
-		WritePrivileges(&parentRoleView, &privilegesArrayWriter);
+		WriteMultipleRolePrivileges(userEntry.roles, &privilegesArrayWriter);
 		PgbsonWriterEndArray(&authInfoWriter, &privilegesArrayWriter);
 	}
 
@@ -1347,6 +1352,13 @@ connection_status(pgbson *showPrivilegesSpec)
 
 	PgbsonWriterAppendInt32(&finalWriter, "ok", 2, 1);
 	pgbson *result = PgbsonWriterGetPgbson(&finalWriter);
+
+	if (userEntry.roles != NULL)
+	{
+		hash_destroy(userEntry.roles);
+	}
+	pfree(userDatums);
+	pfree(userIsNullMarker);
 	return PointerGetDatum(result);
 }
 
@@ -1989,6 +2001,8 @@ WriteMultipleRoles(HTAB *rolesTable, pgbson_array_writer *roleArrayWriter)
 		return;
 	}
 
+	bool wroteReadWriteAnyDatabase = false;
+
 	HASH_SEQ_STATUS status;
 	StringView *roleEntry;
 	hash_seq_init(&status, rolesTable);
@@ -1996,18 +2010,25 @@ WriteMultipleRoles(HTAB *rolesTable, pgbson_array_writer *roleArrayWriter)
 	{
 		if (IS_BUILTIN_ROLE(roleEntry->string))
 		{
-			WriteBuiltInRoles(roleEntry->string, roleArrayWriter);
+			WriteBuiltInRoles(roleEntry->string, &wroteReadWriteAnyDatabase,
+							  roleArrayWriter);
 		}
 		else
 		{
-			pgbson_writer roleWriter;
-			PgbsonWriterInit(&roleWriter);
-			PgbsonWriterAppendUtf8(&roleWriter, "role", 4, roleEntry->string);
-			PgbsonWriterAppendUtf8(&roleWriter, "db", 2, "admin");
-			PgbsonArrayWriterWriteDocument(
-				roleArrayWriter, PgbsonWriterGetPgbson(&roleWriter));
+			WriteRoleReference(roleEntry->string, roleArrayWriter);
 		}
 	}
+}
+
+
+static void
+WriteRoleReference(const char *clientRoleName, pgbson_array_writer *roleArrayWriter)
+{
+	pgbson_writer roleWriter;
+	PgbsonArrayWriterStartDocument(roleArrayWriter, &roleWriter);
+	PgbsonWriterAppendUtf8(&roleWriter, "role", 4, clientRoleName);
+	PgbsonWriterAppendUtf8(&roleWriter, "db", 2, "admin");
+	PgbsonArrayWriterEndDocument(roleArrayWriter, &roleWriter);
 }
 
 
@@ -2016,66 +2037,43 @@ WriteMultipleRoles(HTAB *rolesTable, pgbson_array_writer *roleArrayWriter)
  * This consolidates the role mapping logic used by both usersInfo and connectionStatus commands.
  */
 static void
-WriteBuiltInRoles(const char *parentRole, pgbson_array_writer *roleArrayWriter)
+WriteBuiltInRoles(const char *parentRole, bool *wroteReadWriteAnyDatabase,
+				  pgbson_array_writer *roleArrayWriter)
 {
 	if (parentRole == NULL)
 	{
 		return;
 	}
 
-	pgbson_writer roleWriter;
-	PgbsonWriterInit(&roleWriter);
 	if (strcmp(parentRole, ApiReadOnlyRole) == 0)
 	{
-		PgbsonWriterAppendUtf8(&roleWriter, "role", 4, "readAnyDatabase");
-		PgbsonWriterAppendUtf8(&roleWriter, "db", 2, "admin");
-		PgbsonArrayWriterWriteDocument(roleArrayWriter,
-									   PgbsonWriterGetPgbson(
-										   &roleWriter));
+		WriteRoleReference("readAnyDatabase", roleArrayWriter);
 	}
 	else if (strcmp(parentRole, ApiReadWriteRole) == 0 ||
 			 strcmp(parentRole, API_RBAC_READWRITE_ANYDB_ROLE) == 0)
 	{
-		PgbsonWriterAppendUtf8(&roleWriter, "role", 4,
-							   "readWriteAnyDatabase");
-		PgbsonWriterAppendUtf8(&roleWriter, "db", 2, "admin");
-		PgbsonArrayWriterWriteDocument(roleArrayWriter,
-									   PgbsonWriterGetPgbson(
-										   &roleWriter));
+		if (!*wroteReadWriteAnyDatabase)
+		{
+			WriteRoleReference("readWriteAnyDatabase", roleArrayWriter);
+			*wroteReadWriteAnyDatabase = true;
+		}
 	}
 	else if (strcmp(parentRole, ApiAdminRoleV2) == 0)
 	{
-		PgbsonWriterAppendUtf8(&roleWriter, "role", 4,
-							   "readWriteAnyDatabase");
-		PgbsonWriterAppendUtf8(&roleWriter, "db", 2, "admin");
-		PgbsonArrayWriterWriteDocument(roleArrayWriter,
-									   PgbsonWriterGetPgbson(
-										   &roleWriter));
-		PgbsonWriterInit(&roleWriter);
-		PgbsonWriterAppendUtf8(&roleWriter, "role", 4,
-							   "clusterAdmin");
-		PgbsonWriterAppendUtf8(&roleWriter, "db", 2, "admin");
-		PgbsonArrayWriterWriteDocument(roleArrayWriter,
-									   PgbsonWriterGetPgbson(
-										   &roleWriter));
+		if (!*wroteReadWriteAnyDatabase)
+		{
+			WriteRoleReference("readWriteAnyDatabase", roleArrayWriter);
+			*wroteReadWriteAnyDatabase = true;
+		}
+		WriteRoleReference("clusterAdmin", roleArrayWriter);
 	}
 	else if (strcmp(parentRole, ApiUserAdminRole) == 0)
 	{
-		PgbsonWriterAppendUtf8(&roleWriter, "role", 4,
-							   "userAdminAnyDatabase");
-		PgbsonWriterAppendUtf8(&roleWriter, "db", 2, "admin");
-		PgbsonArrayWriterWriteDocument(roleArrayWriter,
-									   PgbsonWriterGetPgbson(
-										   &roleWriter));
+		WriteRoleReference("userAdminAnyDatabase", roleArrayWriter);
 	}
 	else if (strcmp(parentRole, ApiRootRole) == 0)
 	{
-		PgbsonWriterAppendUtf8(&roleWriter, "role", 4,
-							   "root");
-		PgbsonWriterAppendUtf8(&roleWriter, "db", 2, "admin");
-		PgbsonArrayWriterWriteDocument(roleArrayWriter,
-									   PgbsonWriterGetPgbson(
-										   &roleWriter));
+		WriteRoleReference("root", roleArrayWriter);
 	}
 	else
 	{
@@ -2087,12 +2085,14 @@ WriteBuiltInRoles(const char *parentRole, pgbson_array_writer *roleArrayWriter)
 /*
  * BuildUserRoleEntryTable creates a hash table keyed by user name. Each value contains
  * the user's role-name hash set and whether the user has an external identity.
+ * Custom roles come from the caller-filtered catalog when available. Older
+ * versions may optionally use direct memberships for the current user.
  */
 static HTAB *
-BuildUserRoleEntryTable(Datum *userDatums, int userCount, bool queryAllUsers)
+BuildUserRoleEntryTable(Datum *userDatums, int userCount, bool queryAllUsers,
+						bool includeMembershipCustomRoles)
 {
 	HTAB *userRolesTable = CreateUserEntryHashSet();
-
 	for (int i = 0; i < userCount; i++)
 	{
 		/* Convert Datum to a bson_t object */
@@ -2116,31 +2116,67 @@ BuildUserRoleEntryTable(Datum *userDatums, int userCount, bool queryAllUsers)
 		UserRoleHashEntry *userEntry =
 			FindOrCreateUserRoleEntry(userRolesTable, user);
 
-		if (!bson_iter_find(&getIter, "parent_role"))
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-							errmsg("User role metadata is missing a parent role")));
-		}
-
-		if (!BSON_ITER_HOLDS_UTF8(&getIter))
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-							errmsg("User role metadata has an invalid parent role")));
-		}
-
-		const char *parentRole = bson_iter_utf8(&getIter, NULL);
-		if (!IS_BUILTIN_ROLE(parentRole))
-		{
-			/* Custom roles are added from the catalog-backed system.users view. */
-			continue;
-		}
-
-		AddRoleToUserEntry(userEntry, parentRole);
+		AddMembershipRoleToUserEntry(userEntry, bson_doc, includeMembershipCustomRoles);
 	}
 
-	AddCustomRolesFromUsersTable(userRolesTable, queryAllUsers);
+	if (IsClusterVersionAtleast(DocDB_V0, 117, 4))
+	{
+		AddCustomRolesFromUsersTable(userRolesTable, NULL, queryAllUsers);
+	}
 
 	return userRolesTable;
+}
+
+
+static void
+AddMembershipRoleToUserEntry(UserRoleHashEntry *userEntry, pgbson *membership,
+							 bool includeMembershipCustomRoles)
+{
+	bson_iter_t iter;
+	if (!PgbsonInitIteratorAtPath(membership, "parent_role", &iter))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg("User role metadata is missing a parent role")));
+	}
+	if (!BSON_ITER_HOLDS_UTF8(&iter))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg("User role metadata has an invalid parent role")));
+	}
+
+	const char *parentRole = bson_iter_utf8(&iter, NULL);
+	if (!IS_BUILTIN_ROLE(parentRole))
+	{
+		if (!IsClientVisibleCustomRole(parentRole) ||
+			IsClusterVersionAtleast(DocDB_V0, 117, 4) ||
+			!includeMembershipCustomRoles)
+		{
+			return;
+		}
+	}
+
+	AddRoleToUserEntry(userEntry, parentRole);
+}
+
+
+/*
+ * Filters PostgreSQL defaults and internal helper memberships when custom
+ * roles are read directly from pg_roles on older cluster versions.
+ */
+static bool
+IsClientVisibleCustomRole(const char *roleName)
+{
+	if (strncmp(roleName, "pg_", 3) == 0)
+	{
+		return false;
+	}
+
+	if (IS_SYSTEM_LOGIN_ROLE(roleName) || IS_CUSTOM_RBAC_ROLE(roleName))
+	{
+		return false;
+	}
+
+	return true;
 }
 
 
@@ -2148,23 +2184,26 @@ BuildUserRoleEntryTable(Datum *userDatums, int userCount, bool queryAllUsers)
  * Adds the caller-visible custom roles returned by admin.system.users.
  */
 static void
-AddCustomRolesFromUsersTable(HTAB *userRolesTable, bool queryAllUsers)
+AddCustomRolesFromUsersTable(HTAB *userRolesTable, UserRoleHashEntry *singleUserEntry,
+							 bool queryAllUsers)
 {
 	if (!IsClusterVersionAtleast(DocDB_V0, 116, 0))
 	{
 		return;
 	}
 
-	pgbson *usersTableQuerySpec = UsersTableQuerySpec(userRolesTable, queryAllUsers);
+	pgbson *usersTableQuerySpec = UsersTableQuerySpec(userRolesTable, singleUserEntry,
+													  queryAllUsers);
 	Datum responseDatum =
 		find_cursor_first_page(cstring_to_text("admin"), usersTableQuerySpec, 0);
 
-	ParseUserTableResponse(userRolesTable, responseDatum);
+	ParseUserTableResponse(userRolesTable, singleUserEntry, responseDatum);
 }
 
 
 static pgbson *
-UsersTableQuerySpec(HTAB *userRolesTable, bool queryAllUsers)
+UsersTableQuerySpec(HTAB *userRolesTable, UserRoleHashEntry *singleUserEntry,
+					bool queryAllUsers)
 {
 	pgbson_writer findSpecWriter;
 	PgbsonWriterInit(&findSpecWriter);
@@ -2180,12 +2219,19 @@ UsersTableQuerySpec(HTAB *userRolesTable, bool queryAllUsers)
 		pgbson_array_writer requestedUsersWriter;
 		PgbsonWriterStartArray(&userFilterWriter, "$in", 3, &requestedUsersWriter);
 
-		HASH_SEQ_STATUS userStatus;
-		UserRoleHashEntry *requestedUser;
-		hash_seq_init(&userStatus, userRolesTable);
-		while ((requestedUser = hash_seq_search(&userStatus)) != NULL)
+		if (singleUserEntry != NULL)
 		{
-			PgbsonArrayWriterWriteUtf8(&requestedUsersWriter, requestedUser->user);
+			PgbsonArrayWriterWriteUtf8(&requestedUsersWriter, singleUserEntry->user);
+		}
+		else
+		{
+			HASH_SEQ_STATUS userStatus;
+			UserRoleHashEntry *requestedUser;
+			hash_seq_init(&userStatus, userRolesTable);
+			while ((requestedUser = hash_seq_search(&userStatus)) != NULL)
+			{
+				PgbsonArrayWriterWriteUtf8(&requestedUsersWriter, requestedUser->user);
+			}
 		}
 
 		PgbsonWriterEndArray(&userFilterWriter, &requestedUsersWriter);
@@ -2198,7 +2244,8 @@ UsersTableQuerySpec(HTAB *userRolesTable, bool queryAllUsers)
 
 
 static void
-ParseUserTableResponse(HTAB *userRolesTable, Datum responseDatum)
+ParseUserTableResponse(HTAB *userRolesTable, UserRoleHashEntry *singleUserEntry,
+					   Datum responseDatum)
 {
 	HeapTupleHeader responseTuple = DatumGetHeapTupleHeader(responseDatum);
 	bool cursorPageIsNull = false;
@@ -2248,7 +2295,17 @@ ParseUserTableResponse(HTAB *userRolesTable, Datum responseDatum)
 		}
 
 		const char *documentUser = bson_iter_utf8(&documentIterator, NULL);
-		UserRoleHashEntry *userEntry = FindUserRoleEntry(userRolesTable, documentUser);
+		UserRoleHashEntry *userEntry;
+		if (singleUserEntry != NULL)
+		{
+			userEntry = strcmp(singleUserEntry->user, documentUser) == 0 ?
+						singleUserEntry : NULL;
+		}
+		else
+		{
+			userEntry = FindUserRoleEntry(userRolesTable, documentUser);
+		}
+
 		if (userEntry == NULL)
 		{
 			continue;

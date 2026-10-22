@@ -53,6 +53,21 @@ const fn collection_fields_for(request_type: RequestType) -> &'static [&'static 
     }
 }
 
+/// Legacy permissive mapping of a readConcern `level` string, used when readConcern
+/// validation is disabled. The match is case-insensitive and an unknown or empty value
+/// leaves the read concern unspecified, restoring the behavior that preceded strict
+/// readConcern validation.
+fn read_concern_from_level_legacy(level: &str) -> ReadConcern {
+    match level.to_lowercase().as_str() {
+        "local" => ReadConcern::Local,
+        "available" => ReadConcern::Available,
+        "majority" => ReadConcern::Majority,
+        "linearizable" => ReadConcern::Linearizable,
+        "snapshot" => ReadConcern::Snapshot,
+        _ => ReadConcern::Unspecified,
+    }
+}
+
 /// Extracts common metadata from a command document.
 ///
 /// # Errors
@@ -61,6 +76,7 @@ const fn collection_fields_for(request_type: RequestType) -> &'static [&'static 
 pub fn extract_info_from_document(
     document: &RawDocument,
     request_type: RequestType,
+    read_concern_validation: bool,
 ) -> Result<RequestInfo<'_>> {
     let mut request_info = RequestInfo::builder();
     let collection_field = collection_fields_for(request_type);
@@ -69,7 +85,13 @@ pub fn extract_info_from_document(
         let key = field.name_str().ok_or_else(|| {
             DocumentDBError::bad_value("BSON field name is not valid UTF-8".to_owned())
         })?;
-        extract_common_field(&mut request_info, key, &field, collection_field)
+        extract_common_field(
+            &mut request_info,
+            key,
+            &field,
+            collection_field,
+            read_concern_validation,
+        )
     })?;
 
     request_info.build()
@@ -83,6 +105,7 @@ pub fn extract_info_from_document(
 /// metadata has an invalid BSON type.
 pub fn extract_request_type_and_info_from_document(
     document: &RawDocument,
+    read_concern_validation: bool,
 ) -> Result<(RequestType, RequestInfo<'_>)> {
     let mut request_info = RequestInfo::builder();
     let mut request_type = None;
@@ -105,6 +128,7 @@ pub fn extract_request_type_and_info_from_document(
             key,
             &field,
             collection_fields_for(current_request_type),
+            read_concern_validation,
         )
     })?;
 
@@ -120,6 +144,7 @@ fn extract_common_field<'a>(
     key: &'a str,
     field: &RawField<'a>,
     collection_field: &[&str],
+    read_concern_validation: bool,
 ) -> Result<()> {
     match key {
         "$db" => {
@@ -208,23 +233,47 @@ fn extract_common_field<'a>(
             request_info.start_transaction(start_transaction);
         }
         "readConcern" => {
-            // A null readConcern is accepted and treated as unspecified (default).
-            const BSON_NULL: u8 = 0x0A;
-            if field.element_type() == BSON_NULL {
-                request_info.read_concern(ReadConcern::Unspecified);
+            if read_concern_validation {
+                // A null readConcern is accepted and treated as unspecified (default).
+                const BSON_NULL: u8 = 0x0A;
+                if field.element_type() == BSON_NULL {
+                    request_info.read_concern(ReadConcern::Unspecified);
+                } else {
+                    let doc_bytes = field.as_embedded_document_bytes().ok_or_else(|| {
+                        DocumentDBError::type_mismatch(format!(
+                            "Expected readConcern to be a document but got element type 0x{:02X}",
+                            field.element_type()
+                        ))
+                    })?;
+
+                    let parsed = read_concern::validate_and_extract_level(doc_bytes)?;
+                    if parsed == ReadConcern::Snapshot {
+                        request_info.isolation_level(IsolationLevel::RepeatableRead);
+                    }
+                    request_info.read_concern(parsed);
+                }
             } else {
+                // Legacy permissive parse, used when readConcern validation is disabled.
                 let doc_bytes = field.as_embedded_document_bytes().ok_or_else(|| {
-                    DocumentDBError::type_mismatch(format!(
+                    DocumentDBError::bad_value(format!(
                         "Expected readConcern to be a document but got element type 0x{:02X}",
                         field.element_type()
                     ))
                 })?;
 
-                let parsed = read_concern::validate_and_extract_level(doc_bytes)?;
-                if parsed == ReadConcern::Snapshot {
+                let mut level_str = "";
+                bson_scanner::scan_document(doc_bytes, |inner_field| {
+                    if inner_field.name() == b"level" {
+                        level_str = inner_field.as_str().unwrap_or("");
+                    }
+                    Ok(())
+                })?;
+
+                let read_concern = read_concern_from_level_legacy(level_str);
+                if read_concern == ReadConcern::Snapshot {
                     request_info.isolation_level(IsolationLevel::RepeatableRead);
                 }
-                request_info.read_concern(parsed);
+                request_info.read_concern(read_concern);
             }
         }
         "$readPreference" => {
@@ -283,7 +332,7 @@ mod tests {
         );
 
         let info = request
-            .extract_common()
+            .extract_common(true)
             .expect("common fields should extract from document with ignored fields");
 
         assert_eq!(info.db().expect("$db should be present"), "admin");
@@ -301,7 +350,7 @@ mod tests {
         );
 
         request
-            .extract_common()
+            .extract_common(true)
             .expect_err("non-binary lsid.id should be rejected");
     }
 
@@ -323,7 +372,7 @@ mod tests {
         );
 
         request
-            .extract_common()
+            .extract_common(true)
             .expect_err("first lsid.id field controls type validation");
     }
 
@@ -340,7 +389,7 @@ mod tests {
         );
 
         let error = request
-            .extract_common()
+            .extract_common(true)
             .expect_err("txnNumber without lsid should be rejected");
 
         assert_eq!(error.error_code(), ErrorCode::InvalidOptions);
@@ -364,7 +413,7 @@ mod tests {
         };
         let request = Request::RawBuf(RequestType::GetMore, build_raw(&doc));
         let info = request
-            .extract_common()
+            .extract_common(true)
             .expect("extract_common should succeed");
 
         assert_eq!(
@@ -382,7 +431,7 @@ mod tests {
         };
         let request = Request::RawBuf(RequestType::GetMore, build_raw(&doc));
         let info = request
-            .extract_common()
+            .extract_common(true)
             .expect("extract_common should succeed");
 
         assert!(
@@ -400,7 +449,7 @@ mod tests {
         };
         let request = Request::RawBuf(RequestType::Find, build_raw(&doc));
         let info = request
-            .extract_common()
+            .extract_common(true)
             .expect("extract_common should succeed");
 
         assert_eq!(
@@ -418,7 +467,7 @@ mod tests {
             "maxTimeMS": 500_i32,
         };
 
-        let (request_type, info) = extract_request_type_and_info_from_document(&doc)
+        let (request_type, info) = extract_request_type_and_info_from_document(&doc, true)
             .expect("request metadata should parse");
 
         assert_eq!(request_type, RequestType::Find);
@@ -434,7 +483,7 @@ mod tests {
     fn extract_request_type_and_info_rejects_empty_document() {
         let doc = rawdoc! {};
 
-        extract_request_type_and_info_from_document(&doc)
+        extract_request_type_and_info_from_document(&doc, true)
             .expect_err("empty command document should be rejected");
     }
 

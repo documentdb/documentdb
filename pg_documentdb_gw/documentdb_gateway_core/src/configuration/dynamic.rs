@@ -116,6 +116,26 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
         self.get_bool("enableConnectionStatus", true)
     }
 
+    fn enable_bson_type_argument_validation(&self) -> bool {
+        self.get_bool("enable_bson_type_argument_validation", true)
+    }
+
+    fn enable_read_concern_validation(&self) -> bool {
+        self.get_bool("enable_read_concern_validation", true)
+    }
+
+    fn enable_session_argument_validation(&self) -> bool {
+        self.get_bool("enable_session_argument_validation", true)
+    }
+
+    fn enable_getmore_argument_validation(&self) -> bool {
+        self.get_bool("enable_getmore_argument_validation", true)
+    }
+
+    fn enable_server_status_command(&self) -> bool {
+        self.get_bool("enable_server_status_command", true)
+    }
+
     fn enable_role_crud(&self) -> bool {
         self.get_bool("enableRoleCrud", false)
     }
@@ -255,10 +275,6 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
 
     fn tailable_cursor_await_time_slice_interval_ms(&self) -> i32 {
         self.get_i32("tailableCursorAwaitTimeSliceIntervalMs", 100)
-    }
-
-    fn enable_tailable_cursor_max_await_time(&self) -> bool {
-        self.get_bool("enableTailableCursorMaxAwaitTime", true)
     }
 
     /// Returns the parsed `ClusterVersion` of the deployed `documentdb` extension

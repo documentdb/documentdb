@@ -13,6 +13,9 @@ SELECT documentdb_api.compact('{"compact": ["coll"]}');
 
 SELECT documentdb_api.create_collection('commands_compact_db','compact_test');
 
+-- Keep background vacuum from changing the sizes sampled around compact.
+ALTER TABLE documentdb_data.documents_24321 SET (autovacuum_enabled = false, toast.autovacuum_enabled = false);
+
 SELECT documentdb_api.compact('{"compact": "compact_test", "dryRun": "invalid"}');
 SELECT documentdb_api.compact('{"compact": "compact_test", "comment": "test comment"}');
 SELECT documentdb_api.compact('{"compact": "compact_test", "force": false}');
@@ -59,6 +62,8 @@ SELECT documentdb_api.drop_collection('commands_compact_db','compact_test');
 -- sharded test
 SELECT documentdb_api.create_collection('commands_compact_db', 'compact_test_sharded');
 SELECT documentdb_api.shard_collection('commands_compact_db', 'compact_test_sharded', '{"_id": "hashed"}', false);
+
+ALTER TABLE documentdb_data.documents_24322 SET (autovacuum_enabled = false, toast.autovacuum_enabled = false);
 
 DO $$
 DECLARE i int;
@@ -107,6 +112,8 @@ SELECT documentdb_api.drop_collection('commands_compact_db','compact_test_sharde
 -- sharded test
 SELECT documentdb_api.create_collection('commands_compact_db', 'compact_test_sharded');
 SELECT documentdb_api.shard_collection('commands_compact_db', 'compact_test_sharded', '{"_id": "hashed"}', false);
+
+ALTER TABLE documentdb_data.documents_24323 SET (autovacuum_enabled = false, toast.autovacuum_enabled = false);
 
 DO $$
 DECLARE i int;

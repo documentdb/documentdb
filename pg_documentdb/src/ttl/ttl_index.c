@@ -45,6 +45,7 @@ extern bool EnableTTLDescSort;
 extern bool EnableTTLBatchObservability;
 extern bool SkipRepeatDeleteForUnOrderedIndex;
 extern int MaxTTLBatchSizeUnorderedIndex;
+extern bool EnableTTLCleanupBackground;
 
 /* --------------------------------------------------------- */
 /* Data-types */
@@ -564,6 +565,11 @@ end:
 Datum
 delete_expired_rows_background(PG_FUNCTION_ARGS)
 {
+	if (!EnableTTLCleanupBackground)
+	{
+		PG_RETURN_VOID();
+	}
+
 	PG_RETURN_VOID();
 }
 

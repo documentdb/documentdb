@@ -2166,3 +2166,45 @@ SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
 (1 row)
 
 reset enable_seqscan;
+-- A large $all on multi-key "a" with $in on "b" exceeds the default threshold and falls back to an ordered scan.
+RESET documentdb.max_non_ordered_term_scan_threshold;
+TRUNCATE documentdb_data.documents_1201;
+TRUNCATE documentdb_data.documents_1202;
+TRUNCATE documentdb_data.documents_1203;
+TRUNCATE documentdb_data.documents_1204;
+TRUNCATE documentdb_data.documents_1205;
+SELECT COUNT(documentdb_api.insert_one('ordered_saop_scan_test', 'ordered_saop_scan_coll',
+    bson_build_document('_id', i, 'a', ARRAY(SELECT generate_series(i % 4, i % 4 + 120)), 'b', i % 20, 'c', i)))
+FROM generate_series(1, 200) AS i;
+ count 
+-------
+   200
+(1 row)
+
+INSERT INTO documentdb_data.documents_1202 SELECT 1202, object_id, document FROM documentdb_data.documents_1201;
+INSERT INTO documentdb_data.documents_1203 SELECT 1203, object_id, document FROM documentdb_data.documents_1201;
+INSERT INTO documentdb_data.documents_1204 SELECT 1204, object_id, document FROM documentdb_data.documents_1201;
+INSERT INTO documentdb_data.documents_1205 SELECT 1205, object_id, document FROM documentdb_data.documents_1201;
+SELECT bson_build_document('filter', bson_build_document(
+    'a', bson_build_document('$all', ARRAY(SELECT generate_series(1, 120))),
+    'b', bson_build_document('$in', ARRAY(SELECT generate_series(1, 10))))) AS multikey_query_spec \gset
+set enable_seqscan to off;
+SELECT BOOL_OR(explain_line LIKE '%scanType: ordered%') AS uses_ordered_scan
+FROM documentdb_test_helpers.run_explain_and_trim(FORMAT(
+    'EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find(%L, %L::bson)',
+    'ordered_saop_scan_test',
+    bson_dollar_add_fields(:'multikey_query_spec'::bson, '{ "find": "ordered_saop_index_coll" }')::text)) explain_line;
+ uses_ordered_scan 
+-------------------
+ t
+(1 row)
+
+WITH r1 AS (SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
+    :'multikey_query_spec'
+)) SELECT COUNT(*) FROM r1;
+ count 
+-------
+    50
+(1 row)
+
+reset enable_seqscan;

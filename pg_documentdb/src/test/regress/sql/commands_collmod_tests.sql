@@ -67,7 +67,6 @@ SELECT document FROM bson_aggregation_find('collmod', '{ "find": "coll_mod_test_
 -- the other.
 -- ============================================================================
 SET documentdb.enablePerCollectionPlannerStatistics to on;
-SET documentdb.enablePreImages to on;
 
 SELECT documentdb_api.create_collection('collmod', 'multi_opts');
 

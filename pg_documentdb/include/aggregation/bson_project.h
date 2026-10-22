@@ -136,6 +136,8 @@ typedef struct ProjectDocumentState
 typedef BsonExpressionState BsonReplaceRootRedactState;
 
 
+void FreeProjectionStateTree(BsonProjectionQueryState *state);
+
 const BsonProjectionQueryState * GetProjectionStateForBsonProject(
 	bson_iter_t *projectionSpecIter, bool forceProjectId,
 	bool

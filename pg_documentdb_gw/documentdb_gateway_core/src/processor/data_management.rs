@@ -302,6 +302,10 @@ pub async fn process_get_parameter(
 ) -> Result<Response> {
     let request = request_context.request();
 
+    let enable_bson_type_argument_validation = connection_context
+        .dynamic_configuration()
+        .enable_bson_type_argument_validation();
+
     let mut all_parameters = false;
     let mut show_details = false;
     let mut star = false;
@@ -327,7 +331,10 @@ pub async fn process_get_parameter(
                                         "showDetails should be convertible to a bool".to_owned(),
                                     ))?;
                             }
-                            "setAt" if !matches!(v, RawBsonRef::String(_) | RawBsonRef::Null) => {
+                            "setAt"
+                                if enable_bson_type_argument_validation
+                                    && !matches!(v, RawBsonRef::String(_) | RawBsonRef::Null) =>
+                            {
                                 return Err(DocumentDBError::type_mismatch(
                                     "setAt should be a string".to_owned(),
                                 ));

@@ -14,6 +14,12 @@ SET documentdb_core.enableCollation TO on;
 SELECT create_collection(
     'sharded_find_collation_db', 'sharded_default');
 
+SELECT shard_collection(
+    'sharded_find_collation_db',
+    'sharded_default',
+    '{ "region": "hashed" }',
+    false);
+
 -- Seed the immutable default directly in the catalog because collection
 -- creation does not yet accept it.
 UPDATE documentdb_api_catalog.collections
@@ -21,12 +27,6 @@ SET options = '{ "collation": { "locale": "en", "strength": 1 } }'::bson
 WHERE database_name = 'sharded_find_collation_db'
   AND collection_name = 'sharded_default';
 SELECT documentdb_api_internal.invalidate_collection_cache();
-
-SELECT shard_collection(
-    'sharded_find_collation_db',
-    'sharded_default',
-    '{ "region": "hashed" }',
-    false);
 
 SELECT 1 FROM insert_one(
     'sharded_find_collation_db', 'sharded_default',

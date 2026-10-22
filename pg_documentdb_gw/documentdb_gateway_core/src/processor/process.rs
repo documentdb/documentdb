@@ -201,7 +201,9 @@ pub async fn process_request(
         | RequestType::RefreshSessions
         | RequestType::KillAllSessionsByPattern
         | RequestType::EnableSharding => Ok(constant::ok_response()),
-        RequestType::KillAllSessions => session::validate_kill_all_sessions(request_context),
+        RequestType::KillAllSessions => {
+            session::kill_all_sessions(request_context, connection_context, pg_data_client).await
+        }
         RequestType::PlanCacheListFilters => Ok(constant::plan_cache_list_filters_response()),
         RequestType::SaslContinue | RequestType::SaslStart | RequestType::Logout => Err(
             DocumentDBError::internal_error("Command should have been handled by Auth".to_owned()),
@@ -220,11 +222,23 @@ pub async fn process_request(
             data_management::process_validate(request_context, connection_context, pg_data_client)
                 .await
         }
-        RequestType::ServerStatus => Ok(server_status::process(
-            request_context,
-            connection_context,
-            &dynamic_config,
-        )),
+        RequestType::ServerStatus => {
+            if dynamic_config.enable_server_status_command() {
+                Ok(server_status::process(
+                    request_context,
+                    connection_context,
+                    &dynamic_config,
+                ))
+            } else {
+                Err(DocumentDBError::documentdb_error(
+                    ErrorCode::CommandNotSupported,
+                    format!(
+                        "Command '{}' not supported.",
+                        request_context.request_type().to_command_str()
+                    ),
+                ))
+            }
+        }
         RequestType::DropIndexes => {
             indexing::process_drop_indexes(request_context, connection_context, pg_data_client)
                 .await
@@ -446,4 +460,254 @@ pub async fn process_request(
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::Arc, time::Duration};
+
+    use bson::{rawdoc, spec::BinarySubtype, Binary, RawArrayBuf, RawDocumentBuf};
+
+    use super::*;
+    use crate::{
+        auth::UserAuthState,
+        context::{Cursor, CursorId},
+        postgres::DocumentDBDataClient,
+        protocol::reader,
+        requests::request_tracker::RequestTracker,
+        security::principal::Principal,
+        testing::{test_connection_context, TestDynamicConfiguration},
+    };
+
+    async fn connection(config: Arc<TestDynamicConfiguration>) -> ConnectionContext {
+        let mut context = test_connection_context(false, config, None).await;
+        context.set_user(UserAuthState::authenticated(
+            "TEST",
+            Principal::new("caller", 1),
+            None,
+            None,
+        ));
+        context
+    }
+
+    async fn execute(
+        connection: &mut ConnectionContext,
+        document: &RawDocumentBuf,
+    ) -> Result<Response> {
+        let config = connection.dynamic_configuration();
+        let request = reader::parse_cmd(document, None, config.enable_read_concern_validation())?;
+        let tracker = RequestTracker::new();
+        let context = RequestContext::new("validation-guards-test", &request, &tracker);
+        let client = DocumentDBDataClient::new_unauthorized(&connection.service_context)?;
+        process_request(&context, connection, &client).await
+    }
+
+    #[tokio::test]
+    async fn read_concern_flag_controls_request_parsing() {
+        let config = Arc::new(TestDynamicConfiguration::default());
+        let mut connection = connection(Arc::clone(&config)).await;
+        let command = rawdoc! {
+            "ping": 1, "$db": "admin", "readConcern": { "level": "UNKNOWN" },
+        };
+        assert_eq!(
+            execute(&mut connection, &command)
+                .await
+                .expect_err("invalid readConcern")
+                .error_code(),
+            ErrorCode::BadValue
+        );
+        config.set_bool("enable_read_concern_validation", false);
+        execute(&mut connection, &command)
+            .await
+            .expect("legacy readConcern");
+        config.set_bool("enable_read_concern_validation", true);
+        assert_eq!(
+            execute(&mut connection, &command)
+                .await
+                .expect_err("invalid readConcern")
+                .error_code(),
+            ErrorCode::BadValue
+        );
+    }
+
+    #[tokio::test]
+    async fn bson_type_flag_controls_get_parameter_validation() {
+        let config = Arc::new(TestDynamicConfiguration::default());
+        let mut connection = connection(Arc::clone(&config)).await;
+        let command = rawdoc! {
+            "getParameter": { "setAt": 42 }, "$db": "testdb",
+        };
+        for enabled in [true, false, true] {
+            config.set_bool("enable_bson_type_argument_validation", enabled);
+            let error = execute(&mut connection, &command)
+                .await
+                .expect_err("invalid request");
+            assert_eq!(
+                error.error_code(),
+                if enabled {
+                    ErrorCode::TypeMismatch
+                } else {
+                    ErrorCode::Unauthorized
+                }
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn get_more_flag_controls_argument_validation() {
+        let config = Arc::new(TestDynamicConfiguration::default());
+        let mut connection = connection(Arc::clone(&config)).await;
+        let command = rawdoc! {
+            "getMore": 1_i64, "collection": "items", "batchSize": -1, "$db": "testdb",
+        };
+        for enabled in [true, false, true] {
+            config.set_bool("enable_getmore_argument_validation", enabled);
+            let error = execute(&mut connection, &command)
+                .await
+                .expect_err("invalid request");
+            assert_eq!(
+                error.error_code(),
+                if enabled {
+                    ErrorCode::BadValue
+                } else {
+                    ErrorCode::CursorNotFound
+                }
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn session_flag_controls_end_and_kill_sessions_validation() {
+        let config = Arc::new(TestDynamicConfiguration::default());
+        let mut connection = connection(Arc::clone(&config)).await;
+        for name in ["endSessions", "killSessions"] {
+            let mut command = RawDocumentBuf::new();
+            let mut sessions = RawArrayBuf::new();
+            sessions.push(rawdoc! {
+                "id": Binary { subtype: BinarySubtype::Uuid, bytes: vec![0; 16] },
+                "extra": 1,
+            });
+            command.append(name, sessions);
+            command.append("$db", "admin");
+            for enabled in [true, false, true] {
+                config.set_bool("enable_session_argument_validation", enabled);
+                let result = execute(&mut connection, &command).await;
+                if enabled {
+                    assert_eq!(
+                        result.expect_err("unknown field").error_code(),
+                        ErrorCode::UnknownBsonField
+                    );
+                } else {
+                    result.expect("legacy session parsing");
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn server_status_flag_controls_dispatch() {
+        let config = Arc::new(TestDynamicConfiguration::default());
+        let mut connection = connection(Arc::clone(&config)).await;
+        let command = rawdoc! { "serverStatus": 1, "$db": "admin" };
+        for enabled in [true, false, true] {
+            config.set_bool("enable_server_status_command", enabled);
+            let result = execute(&mut connection, &command).await;
+            if enabled {
+                let document = result.expect("serverStatus").as_json().expect("response");
+                assert!(document.contains_key("uptime"));
+            } else {
+                assert_eq!(
+                    result.expect_err("disabled").error_code(),
+                    ErrorCode::CommandNotSupported
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn kill_all_sessions_executes_with_validation_enabled_or_disabled() {
+        let config = Arc::new(TestDynamicConfiguration::default());
+        let mut connection = connection(Arc::clone(&config)).await;
+        let caller = connection.user().principal().expect("caller").clone();
+        let other = Principal::new("other", 2);
+        for enabled in [true, false] {
+            config.set_bool("enable_session_argument_validation", enabled);
+            for (id, owner) in [(1, &caller), (2, &other)] {
+                connection.add_cursor(
+                    None,
+                    Cursor {
+                        cursor_id: CursorId::new(id),
+                        continuation: RawDocumentBuf::new(),
+                    },
+                    "testdb",
+                    "items",
+                    Duration::from_mins(10),
+                    None,
+                    None,
+                    owner,
+                );
+            }
+            let command = if enabled {
+                rawdoc! { "killAllSessions": [{ "user": "caller", "db": "admin" }], "$db": "admin" }
+            } else {
+                rawdoc! { "killAllSessions": [{ "user": "caller", "db": "admin", "extra": 1 }], "$db": "admin" }
+            };
+            // The data client has no backend pool; invalidation must still complete
+            // when best-effort backend cursor cleanup cannot run.
+            execute(&mut connection, &command)
+                .await
+                .expect("session termination");
+            assert!(connection.get_cursor_ref(1, &caller).is_none());
+            assert!(connection.get_cursor_ref(2, &other).is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn kill_all_sessions_strict_validation_rejects_unknown_fields() {
+        let config = Arc::new(TestDynamicConfiguration::default());
+        let mut connection = connection(config).await;
+        let command = rawdoc! {
+            "killAllSessions": [{ "user": "caller", "db": "admin", "extra": 1 }],
+            "$db": "admin",
+        };
+        assert_eq!(
+            execute(&mut connection, &command)
+                .await
+                .expect_err("unknown field")
+                .error_code(),
+            ErrorCode::UnknownBsonField
+        );
+    }
+
+    #[tokio::test]
+    async fn kill_all_sessions_disabled_validation_preserves_authorization() {
+        let config = Arc::new(TestDynamicConfiguration::default());
+        config.set_bool("enable_session_argument_validation", false);
+        let mut connection = connection(config).await;
+        let other = Principal::new("other", 2);
+        connection.add_cursor(
+            None,
+            Cursor {
+                cursor_id: CursorId::new(2),
+                continuation: RawDocumentBuf::new(),
+            },
+            "testdb",
+            "items",
+            Duration::from_mins(10),
+            None,
+            None,
+            &other,
+        );
+        for command in [
+            rawdoc! { "killAllSessions": [], "$db": "admin" },
+            rawdoc! { "killAllSessions": [{ "user": "other", "db": "admin" }], "$db": "admin" },
+        ] {
+            // Authorization cannot be established without a backend connection.
+            // It must fail before removing another principal's cursors.
+            execute(&mut connection, &command)
+                .await
+                .expect_err("authorization unavailable");
+            assert!(connection.get_cursor_ref(2, &other).is_some());
+        }
+    }
 }

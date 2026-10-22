@@ -34,6 +34,9 @@ s/documentdb_core.bson/bson/g
 /^(s[0-9]+: )?DEBUG:  executing "WITH r1 AS \(SELECT dn.groupid AS groupid, MIN\(sh.logicalrelid::regclass::text\) FILTER /d
 /^(s[0-9]+: )?DEBUG:  (Executing|Skipping) command_node_worker on table /d
 /^CONTEXT:  SQL statement "SELECT .*command_node_worker/ s/(documentdb_data\.documents_)[0-9]+(_[0-9]+)?/\1<ROUTE_TABLE>/g
+# The privilege-check wrapper adds an internal SPI frame to create-index errors.
+/^(CONTEXT:  )?SQL statement "SELECT .*create_indexes_dispatch\(/d
+/^(s[0-9]+: )?DEBUG:  executing "SELECT .*create_indexes_dispatch\(.*" via SPI$/d
 # PostgreSQL versions can report collection ACL failures against either the
 # coordinator table or its physical shard.
 s/^(ERROR:  permission denied for table )documents_[0-9]+(_[0-9]+)?$/\1documents_<COLLECTION>/g

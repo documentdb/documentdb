@@ -57,6 +57,7 @@ bool PlanResultHasParallelPlan(QueryCursorPlanResult *planResult);
 
 QueryCursorPlanResult * PlanDynamicQueryAndDetermineCursorType(Query *query,
 															   bool allowOffsetLimitNode,
+															   bool allowFastPlan,
 															   bool *isDynamicStreamable);
 pgbson * DrainDynamicStreamingCursor(QueryCursorPlanResult *planResult,
 									 int batchSize, pgbson *inputContinuation,

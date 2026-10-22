@@ -126,6 +126,8 @@ beyond SQL regression tests and gateway integration tests.
 
 ## Code Style
 
+Checker usage and recovery guidance are in the [tooling guide](scripts/README-copyright-checks.md).
+
 C code (extensions):
 - **PascalCase** for functions: `ExportedPublicFunction()`, `InternalHelper()`
 - **UPPERCASE** for macros: `BSON_MAX_ALLOWED_SIZE`

@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use bson::{rawdoc, spec::BinarySubtype};
+use uuid::Uuid;
 
 use crate::{
     auth::{AuthenticationResult, UserAuthState},
@@ -96,6 +97,7 @@ async fn handle_sasl_authentication(
         AuthenticationResult::Success(success) => {
             let (principal, payload, scheme, pool_secret, expires_at, metadata) =
                 success.into_parts();
+            let user_oid = principal.oid();
             let authenticated_user =
                 UserAuthState::authenticated(scheme, principal, metadata, expires_at);
             if let Err(error) =
@@ -107,8 +109,9 @@ async fn handle_sasl_authentication(
             connection_context.update_user_expiration_status();
             emit_authentication_audit_event(
                 request_context,
+                connection_context.connection_id,
                 &telemetry_scheme,
-                AuthenticationOutcome::Success,
+                AuthenticationOutcome::Success { user_oid },
             );
 
             build_sasl_response(&payload, true)
@@ -130,6 +133,7 @@ fn clear_failed_authentication(
     connection_context.clear_failed_authentication();
     emit_authentication_audit_event(
         request_context,
+        connection_context.connection_id,
         telemetry_scheme,
         AuthenticationOutcome::Failure,
     );
@@ -151,27 +155,34 @@ fn build_sasl_response(payload: &[u8], done: bool) -> Response {
 
 fn emit_authentication_audit_event(
     request_context: &RequestContext<'_>,
+    connection_id: Uuid,
     mechanism: &str,
     outcome: AuthenticationOutcome,
 ) {
     record_authentication_attempt(mechanism, outcome);
-
     match outcome {
-        AuthenticationOutcome::Success => tracing::info!(
-            target: "documentdb_gateway_core::auth::audit",
-            activity_id = request_context.activity_id,
-            event_id = EventId::Authentication.code(),
-            authentication_mechanism = mechanism,
-            authentication_outcome = "success",
-            "Authentication attempt completed"
-        ),
-        AuthenticationOutcome::Failure => tracing::warn!(
-            target: "documentdb_gateway_core::auth::audit",
-            activity_id = request_context.activity_id,
-            event_id = EventId::Authentication.code(),
-            authentication_mechanism = mechanism,
-            authentication_outcome = "failure",
-            "Authentication attempt completed"
-        ),
+        AuthenticationOutcome::Success { user_oid } => {
+            tracing::info!(
+                target: "documentdb_gateway_core::auth::audit",
+                activity_id = request_context.activity_id,
+                connection_id = %connection_id,
+                event_id = EventId::Authentication.code(),
+                authentication_mechanism = mechanism,
+                authentication_outcome = "success",
+                user_oid,
+                "Connection authenticated - User OID {user_oid}"
+            );
+        }
+        AuthenticationOutcome::Failure => {
+            tracing::warn!(
+                target: "documentdb_gateway_core::auth::audit",
+                activity_id = request_context.activity_id,
+                connection_id = %connection_id,
+                event_id = EventId::Authentication.code(),
+                authentication_mechanism = mechanism,
+                authentication_outcome = "failure",
+                "Authentication attempt completed"
+            );
+        }
     }
 }

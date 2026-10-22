@@ -426,6 +426,27 @@ SELECT documentdb_api.create_user('{"createUser":"gatingUserRwRo", "pwd":"test_p
 -- Case 3: the accepted clusterAdmin + readWriteAnyDatabase combination still succeeds.
 SELECT documentdb_api.create_user('{"createUser":"gatingUserAdmin", "pwd":"test_password", "roles":[{"role":"clusterAdmin","db":"admin"},{"role":"readWriteAnyDatabase","db":"admin"}], "$db":"admin"}');
 
+-- Add the standalone read-write backing membership so both it and the admin
+-- backing role expand to readWriteAnyDatabase.
+GRANT documentdb_rbac_readwrite_anydb_role TO "gatingUserAdmin";
+SELECT (LENGTH(gating_admin_info) -
+        LENGTH(REPLACE(gating_admin_info, '"role" : "readWriteAnyDatabase"', ''))) /
+       LENGTH('"role" : "readWriteAnyDatabase"')
+    AS read_write_any_database_role_count
+FROM (SELECT documentdb_core.bson_to_json_string(
+        documentdb_api.users_info('{"usersInfo":"gatingUserAdmin", "$db":"admin"}'))::text
+        AS gating_admin_info) gating_admin;
+
+SET ROLE "gatingUserAdmin";
+SELECT (LENGTH(gating_admin_conn) -
+        LENGTH(REPLACE(gating_admin_conn, '"role" : "readWriteAnyDatabase"', ''))) /
+       LENGTH('"role" : "readWriteAnyDatabase"')
+    AS connection_status_read_write_any_database_role_count
+FROM (SELECT documentdb_core.bson_to_json_string(
+        documentdb_api.connection_status('{"connectionStatus":1, "$db":"admin"}'))::text
+        AS gating_admin_conn) gating_admin_conn_row;
+RESET ROLE;
+
 -- Case 4: readWriteAnyDatabase on its own remains unavailable while the
 -- enforcement feature is disabled.
 SET documentdb.enable_readwrite_any_database_role_enforcement TO OFF;
@@ -467,6 +488,7 @@ SELECT documentdb_api.create_role('{"createRole":"customUserRole", "roles":["rea
 
 -- Granting the custom role to a new user succeeds.
 SELECT documentdb_api.create_user('{"createUser":"customRoleUser", "pwd":"test_password", "roles":[{"role":"customUserRole","db":"admin"}], "$db":"admin"}');
+SELECT documentdb_api.grant_roles_to_user('{"grantRolesToUser":"customRoleUser", "roles":["readAnyDatabase"], "$db":"admin"}');
 
 -- Combining the custom role with a built-in role is rejected: a user resolves
 -- to exactly one role.
@@ -523,10 +545,14 @@ SELECT documentdb_api.users_info(
         '{"usersInfo":"customRoleUser", "$db":"admin"}') AS custom_users_info \gset
 SELECT :'custom_users_info' LIKE '%"role" : "customUserRole"%'
     AS custom_role_reported_by_users_info;
+SELECT :'custom_users_info' LIKE '%"role" : "readAnyDatabase"%'
+    AS built_in_role_reported_by_users_info;
 SELECT documentdb_api.connection_status(
         '{"connectionStatus":1, "$db":"admin"}') AS custom_connection_status \gset
 SELECT :'custom_connection_status' LIKE '%"role" : "customUserRole"%'
     AS custom_role_reported_by_connection_status;
+SELECT :'custom_connection_status' LIKE '%"role" : "readAnyDatabase"%'
+    AS built_in_role_reported_by_connection_status;
 RESET ROLE;
 
 -- Cleanup
@@ -560,6 +586,7 @@ SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_rbac_api_a
 SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_rbac_baseline_read_role');
 SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_rbac_baseline_write_role');
 SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_rbac_readwrite_anydb_role');
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_rbac_privilege_reader_role');
 
 -- IS_SYSTEM_LOGIN_ROLE: system login roles should be reserved
 SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_bg_worker_role');
@@ -580,9 +607,8 @@ DROP FUNCTION documentdb_test_helpers.test_is_reserved_role_name(text);
 -- A role that a user merely created must not be reported as a role the user holds.
 -- PostgreSQL 16 and later records a membership for the role that runs CREATE ROLE
 -- carrying ADMIN OPTION but neither INHERIT nor SET, so it confers none of the new
--- role's privileges. connectionStatus resolves the caller's role by picking the
--- first membership in name order, so such a membership on a name that sorts early
--- would otherwise displace the role the user actually holds.
+-- role's privileges. connectionStatus must filter that membership while preserving
+-- every role the user actually holds.
 SET documentdb.enableRoleCrud TO ON;
 SET documentdb.enableRolesAdminDBCheck TO ON;
 

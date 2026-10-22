@@ -166,5 +166,24 @@ FROM documentdb_data.documents_27140005 ORDER BY object_id;
 
 SELECT document FROM bson_aggregation_find('doc_size_db', '{ "find": "doc_size_insert_many", "projection": { "f01abcdefghijkl": 1 }, "sort": { "_id": 1 } }');
 
+-- updateMany compresses modified documents and preserves no-op update counts.
+SELECT documentdb_api.update('doc_size_db', '{ "update": "doc_size_insert_many", "updates": [ { "q": {}, "u": { "$set": { "f01abcdefghijkl": "updmany" } }, "multi": true } ] }');
+
+SELECT document->>'_id' AS id, pg_column_size(document) AS column_size, length(document::bytea) AS bytea_length
+FROM documentdb_data.documents_27140005 ORDER BY object_id;
+
+SELECT documentdb_api.update('doc_size_db', '{ "update": "doc_size_insert_many", "updates": [ { "q": {}, "u": { "$set": { "f01abcdefghijkl": "updmany" } }, "multi": true } ] }');
+
+SELECT document FROM bson_aggregation_find('doc_size_db', '{ "find": "doc_size_insert_many", "projection": { "f01abcdefghijkl": 1 }, "sort": { "_id": 1 } }');
+
+-- Disabling compression leaves modified documents uncompressed.
+SET documentdb.document_toast_compression_threshold TO -1;
+SELECT documentdb_api.update('doc_size_db', '{ "update": "doc_size_insert_many", "updates": [ { "q": {}, "u": { "$set": { "f01abcdefghijkl": "nocompr" } }, "multi": true } ] }');
+
+SELECT document->>'_id' AS id, pg_column_size(document) AS column_size, length(document::bytea) AS bytea_length
+FROM documentdb_data.documents_27140005 ORDER BY object_id;
+
+SET documentdb.document_toast_compression_threshold TO 1024;
+
 SELECT documentdb_api.drop_collection('doc_size_db', 'doc_size_insert_many');
 RESET default_toast_compression;

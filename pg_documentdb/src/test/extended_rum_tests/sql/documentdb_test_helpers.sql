@@ -42,3 +42,22 @@ AS '$libdir/pg_documentdb_extended_rum', 'documentdb_extended_rum_test_set_incom
 
 -- Turn off cron jobs to avoid flakiness in tests.
 UPDATE cron.job set active = false;
+CREATE OR REPLACE FUNCTION documentdb_api_internal.documentdb_rum_get_meta_page_info_index(index_relid regclass)
+RETURNS jsonb
+LANGUAGE c STRICT
+AS '$libdir/pg_documentdb_extended_rum', 'documentdb_extended_rum_get_meta_page_info_index';
+
+CREATE OR REPLACE FUNCTION documentdb_api_internal.documentdb_rum_page_get_stats_index(index_relid regclass, block_number integer)
+RETURNS jsonb
+LANGUAGE c STRICT
+AS '$libdir/pg_documentdb_extended_rum', 'documentdb_extended_rum_page_get_stats_index';
+
+CREATE OR REPLACE FUNCTION documentdb_api_internal.documentdb_rum_page_get_entries_index(index_relid regclass, block_number integer)
+RETURNS SETOF jsonb
+LANGUAGE c STRICT
+AS '$libdir/pg_documentdb_extended_rum', 'documentdb_extended_rum_page_get_entries_index';
+
+CREATE OR REPLACE FUNCTION documentdb_api_internal.documentdb_rum_page_get_data_items_index(index_relid regclass, block_number integer)
+RETURNS SETOF jsonb
+LANGUAGE c STRICT
+AS '$libdir/pg_documentdb_extended_rum', 'documentdb_extended_rum_page_get_data_items_index';

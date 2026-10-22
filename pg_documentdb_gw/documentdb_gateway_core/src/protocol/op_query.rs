@@ -27,15 +27,19 @@ struct QueryCommand<'a> {
 ///
 /// # Errors
 /// Returns an error if the message is malformed or cannot be parsed.
-pub fn parse_query(message: &[u8]) -> Result<WireRequest<'_>> {
+pub fn parse_query(message: &[u8], read_concern_validation: bool) -> Result<WireRequest<'_>> {
     let command = parse_query_document(message)?;
 
     if command.collection_name == "$cmd" {
         if has_database_name(command.document) {
-            return reader::parse_cmd(command.document, None);
+            return reader::parse_cmd(command.document, None, read_concern_validation);
         }
 
-        return parse_cmd_with_db(command.document, command.database_name);
+        return parse_cmd_with_db(
+            command.document,
+            command.database_name,
+            read_concern_validation,
+        );
     }
 
     // A valid frame targeting a non-$cmd collection is a legacy query-style OP_QUERY,
@@ -128,8 +132,12 @@ fn has_database_name(query: &RawDocument) -> bool {
     matches!(query.get("$db"), Ok(Some(_)))
 }
 
-fn parse_cmd_with_db(query: &RawDocument, db: &str) -> Result<WireRequest<'static>> {
-    reader::parse_cmd_buf(build_command_with_db(query, db)?)
+fn parse_cmd_with_db(
+    query: &RawDocument,
+    db: &str,
+    read_concern_validation: bool,
+) -> Result<WireRequest<'static>> {
+    reader::parse_cmd_buf(build_command_with_db(query, db)?, read_concern_validation)
 }
 
 fn parse_cmd_payload_with_db(query: &RawDocument, db: &str) -> Result<RequestPreview<'static>> {
@@ -186,7 +194,7 @@ mod tests {
         let command = rawdoc! { "find": "myCollection", "filter": {} };
         let msg = build_op_query_message("testdb.$cmd", command.as_bytes());
 
-        let request = parse_query(&msg).expect("should parse OP_QUERY");
+        let request = parse_query(&msg, true).expect("should parse OP_QUERY");
         assert_eq!(request.db(), "testdb");
         assert_eq!(request.document().get_str("$db").unwrap(), "testdb");
         assert_eq!(request.request_type(), RequestType::Find);
@@ -197,7 +205,7 @@ mod tests {
         let command = rawdoc! { "find": "myCollection", "$db": "fromBody" };
         let msg = build_op_query_message("wiredb.$cmd", command.as_bytes());
 
-        let request = parse_query(&msg).expect("should parse OP_QUERY");
+        let request = parse_query(&msg, true).expect("should parse OP_QUERY");
         assert_eq!(request.db(), "fromBody");
     }
 
@@ -206,7 +214,7 @@ mod tests {
         let command = rawdoc! { "find": "myCollection" };
         let msg = build_op_query_message("testdb.regularCollection", command.as_bytes());
 
-        let error = parse_query(&msg).expect_err("non-$cmd OP_QUERY should fail");
+        let error = parse_query(&msg, true).expect_err("non-$cmd OP_QUERY should fail");
         assert_eq!(
             error.error_code(),
             crate::error::ErrorCode::CommandNotSupported
@@ -218,7 +226,7 @@ mod tests {
         let command = rawdoc! { "find": "myCollection", "$db": 42 };
         let msg = build_op_query_message("testdb.$cmd", command.as_bytes());
 
-        parse_query(&msg).expect_err("non-string $db should be rejected");
+        parse_query(&msg, true).expect_err("non-string $db should be rejected");
     }
 
     #[test]
@@ -226,7 +234,7 @@ mod tests {
         // Fewer than 4 bytes: too short to even hold the flags field.
         let msg = vec![0_u8; 2];
 
-        let error = parse_query(&msg).expect_err("truncated OP_QUERY frame should fail");
+        let error = parse_query(&msg, true).expect_err("truncated OP_QUERY frame should fail");
         assert_eq!(error.error_code(), crate::error::ErrorCode::InvalidLength);
     }
 

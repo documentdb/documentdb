@@ -1,0 +1,1506 @@
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+SET citus.next_shard_id TO 10000000;
+SET documentdb.next_collection_id TO 10000;
+SET documentdb.next_collection_index_id TO 10000;
+SET documentdb.enablePerCollectionPlannerStatistics TO on;
+SET documentdb.enablePlannerStatisticsNewCollections TO on;
+SET documentdb.enableVectorPreFilter TO on;
+SET documentdb.enableVectorPreFilterV2 TO off;
+SELECT vartype = 'real' AS real_guc,
+	   setting::float8 = 0.01 AS default_threshold,
+	   min_val::float8 = 0 AS minimum_threshold,
+	   max_val::float8 = 1 AS maximum_threshold
+FROM pg_settings WHERE name LIKE '%.vector_auto_filter_selectivity_threshold';
+ real_guc | default_threshold | minimum_threshold | maximum_threshold 
+---------------------------------------------------------------------
+ t        | t                 | t                 | t
+(1 row)
+
+-- Exercise filterMode with both vector index access methods available in OSS.
+-- IVF
+SELECT documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_ivf', '{ "_id": 1, "meta": { "b": 1 }, "v": [3.0, 5.0, 1.1] }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_ivf', '{ "_id": 2, "meta": { "b": 2 }, "v": [8.0, 5.0, 0.1] }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_ivf', '{ "_id": 3, "meta": { "b": 3 }, "v": [13.0, 5.0, 0.1] }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_ivf', '{ "_id": 4, "meta": { "b": 4 }, "v": [15.0, 5.0, 0.1] }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_ivf', '{ "_id": 5, "meta": { "b": 1 } }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key('filter_mode_db', 'vector_filter_mode_ivf');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('filter_mode_db', '{ "createIndexes": "vector_filter_mode_ivf", "indexes": [ { "key": { "meta.b": 1 }, "name": "filter_index" } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "0" }, "numIndexesAfter" : { "$numberInt" : "1" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('filter_mode_db', '{ "createIndexes": "vector_filter_mode_ivf", "indexes": [ { "key": { "v": "cosmosSearch" }, "name": "vector_index", "cosmosSearchOptions": { "kind": "vector-ivf", "numLists": 4, "similarity": "COS", "dimensions": 3 } } ] }', true);
+NOTICE:  ivfflat index created with little data
+DETAIL:  This will cause low recall.
+HINT:  Drop the index until the table has more data.
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+ANALYZE;
+SET documentdb.enableVectorPreFilter TO off;
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{"aggregate":"vector_filter_mode_ivf","pipeline":[{"$search":{"cosmosSearch":{"vector":[13,5,0.1],"k":4,"path":"v","filter":{"meta.b":1},"filterMode":"approximate"}}}],"cursor":{}}');
+ERROR:  $filter is not supported for vector search yet.
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{"aggregate":"vector_filter_mode_ivf","pipeline":[{"$search":{"cosmosSearch":{"vector":[13,5,0.1],"k":4,"path":"v","filter":{"meta.b":1},"filterMode":"exact"}}}],"cursor":{}}');
+ERROR:  $filter is not supported for vector search yet.
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{"aggregate":"vector_filter_mode_ivf","pipeline":[{"$search":{"cosmosSearch":{"vector":[13,5,0.1],"k":4,"path":"v","filterMode":"autoSelect","filter":{"meta.b":1}}}}],"cursor":{}}');
+ERROR:  $filter is not supported for vector search yet.
+SET documentdb.enableVectorPreFilter TO on;
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_ivf", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"meta.b": 1}, "nProbes": 4, "filterMode": "approximate" } } }, { "$project": {"rank": {"$round": [ {"$multiply": [{"$meta": "searchScore"}, 100000]}]} } } ], "cursor": {} }');
+                                   document                                   
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "rank" : { "$numberDouble" : "77568.0" } }
+(1 row)
+
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_ivf", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"meta.b": 1}, "nProbes": 4, "filterMode": "approximate" } } }, { "$project": {"rank": {"$round": [ {"$multiply": [{"$meta": "searchScore"}, 100000]}]} } } ], "cursor": {} }') $cmd$);
+                                                                                                                                                                      run_explain_and_trim                                                                                                                                                                      
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 28 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 28 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort (actual rows=1 loops=1)
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector) + '0'::double precision))
+               Sort Method: quicksort  Memory: xxxkB
+               ->  Subquery Scan on agg_stage_0_1 (actual rows=1 loops=1)
+                     ->  Limit (actual rows=1 loops=1)
+                           ->  Custom Scan (DocumentDBApiQueryScan) (actual rows=1 loops=1)
+                                 CosmosSearch Custom Params: { "nProbes" : 4, "iterativeScan" : "relaxed_order", "filterMode" : 1 }
+                                 ->  Index Scan using vector_index on documents_10001_10000002 collection (actual rows=1 loops=1)
+                                       Order By: (vector(documentdb_api_internal.bson_extract_vector(document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector)
+                                       Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "meta.b" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND documentdb_api_internal.bson_search_param(document, '{ "nProbes" : { "$numberInt" : "4" }, "iterativeScan" : "relaxed_order", "filterMode" : { "$numberInt" : "1" } }'::documentdb_core.bson))
+                                       Rows Removed by Filter: 3
+(18 rows)
+
+ROLLBACK;
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_ivf", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"meta.b": {"$gt": 1}}, "nProbes": 4, "filterMode": "exact" } } }, { "$project": {"rank": {"$round": [ {"$multiply": [{"$meta": "searchScore"}, 100000]}]} } } ], "cursor": {} }');
+                                   document                                    
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "rank" : { "$numberDouble" : "100000.0" } }
+ { "_id" : { "$numberInt" : "4" }, "rank" : { "$numberDouble" : "99897.0" } }
+ { "_id" : { "$numberInt" : "2" }, "rank" : { "$numberDouble" : "98173.0" } }
+(3 rows)
+
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_ivf", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"meta.b": {"$gt": 1}}, "nProbes": 4, "filterMode": "exact" } } }, { "$project": {"rank": {"$round": [ {"$multiply": [{"$meta": "searchScore"}, 100000]}]} } } ], "cursor": {} }') $cmd$);
+                                                                     run_explain_and_trim                                                                      
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 84 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 84 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Subquery Scan on agg_stage_0 (actual rows=3 loops=1)
+               ->  Limit (actual rows=3 loops=1)
+                     ->  Sort (actual rows=3 loops=1)
+                           Sort Key: ((vector(documentdb_api_internal.bson_extract_vector(collection.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector))
+                           Sort Method: quicksort  Memory: xxxkB
+                           ->  Index Scan using filter_index on documents_10001_10000002 collection (actual rows=3 loops=1)
+                                 Index Cond: (document OPERATOR(documentdb_api_catalog.@>) '{ "meta.b" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+                                 Filter: (documentdb_api_internal.bson_extract_vector(document, 'v'::text) IS NOT NULL)
+(15 rows)
+
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.enableExplainScanIndexCosts TO on;
+-- A selectivity threshold of 1 keeps this estimate on the filter path.
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold TO 1;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_ivf", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"meta.b": 1}, "nProbes": 4, "filterMode": "autoSelect" } } }, { "$project": {"rank": {"$round": [ {"$multiply": [{"$meta": "searchScore"}, 100000]}]} } } ], "cursor": {} }') $cmd$);
+                                                                                                                                                         run_explain_and_trim                                                                                                                                                          
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 28 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 28 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort (actual rows=1 loops=1)
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector) + '0'::double precision))
+               Sort Method: quicksort  Memory: xxxkB
+               ->  Subquery Scan on agg_stage_0_1 (actual rows=1 loops=1)
+                     ->  Limit (actual rows=1 loops=1)
+                           ->  Sort (actual rows=1 loops=1)
+                                 Sort Key: ((vector(documentdb_api_internal.bson_extract_vector(collection.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector))
+                                 Sort Method: quicksort  Memory: xxxkB
+                                 ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+                                       indexName: filter_index
+                                       innerScanLoops: 2 loops
+                                       scanType: regular
+                                       scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 2)]
+                                       filter_index: (indexKey='{ "meta.b" : { "$numberInt" : "1" } }', startup cost=4.258, total cost=8.528, selectivity=0.4, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=5, boundary selectivity=0.4, num boundaries=0, estimated data pages loaded=0.00%)
+                                       ->  Index Scan using filter_index on documents_10001_10000002 collection (actual rows=1 loops=1)
+                                             Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "meta.b" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+                                             Filter: (documentdb_api_internal.bson_extract_vector(document, 'v'::text) IS NOT NULL)
+                                             Rows Removed by Filter: 1
+(25 rows)
+
+-- A zero threshold sends this above-floor estimate to the vector index.
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold TO 0;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_ivf", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"meta.b": {"$gt": 1}}, "nProbes": 4, "filterMode": "autoSelect" } } }, { "$project": {"rank": {"$round": [ {"$multiply": [{"$meta": "searchScore"}, 100000]}]} } } ], "cursor": {} }') $cmd$);
+                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                         
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 84 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 84 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort (actual rows=3 loops=1)
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector) + '0'::double precision))
+               Sort Method: quicksort  Memory: xxxkB
+               ->  Subquery Scan on agg_stage_0_1 (actual rows=3 loops=1)
+                     ->  Limit (actual rows=3 loops=1)
+                           ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+                                 indexName: vector_index
+                                 filter_index: (indexKey='{ "meta.b" : { "$numberInt" : "1" } }', startup cost=8.383, total cost=12.782, selectivity=0.597, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=5, boundary selectivity=0.597, num boundaries=0, estimated data pages loaded=0.00%)
+                                 ->  Custom Scan (DocumentDBApiQueryScan) (actual rows=3 loops=1)
+                                       CosmosSearch Custom Params: { "nProbes" : 4, "iterativeScan" : "relaxed_order", "filterMode" : 3 }
+                                       ->  Index Scan using vector_index on documents_10001_10000002 collection (actual rows=3 loops=1)
+                                             Order By: (vector(documentdb_api_internal.bson_extract_vector(document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector)
+                                             Filter: ((document OPERATOR(documentdb_api_catalog.@>) '{ "meta.b" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND documentdb_api_internal.bson_search_param(document, '{ "nProbes" : { "$numberInt" : "4" }, "iterativeScan" : "relaxed_order", "filterMode" : { "$numberInt" : "3" } }'::documentdb_core.bson))
+                                             Rows Removed by Filter: 1
+(21 rows)
+
+ROLLBACK;
+-- exact must still exclude documents that lack the vector field even when
+-- the filter itself matches them: _id 5 has meta.b=1 but no 'v', so the retained
+-- bson_extract_vector(...) IS NOT NULL recheck must drop it and only _id 1 remains.
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_ivf", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 10, "path": "v", "filter": {"meta.b": 1}, "nProbes": 10, "filterMode": "exact" } } }, { "$project": {"_id": 1} } ], "cursor": {} }');
+              document              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" } }
+(1 row)
+
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_ivf", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 10, "path": "v", "filter": {"meta.b": 1}, "nProbes": 10, "filterMode": "exact" } } }, { "$project": {"_id": 1} } ], "cursor": {} }') $cmd$);
+                                                                     run_explain_and_trim                                                                      
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 14 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 14 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Subquery Scan on agg_stage_0 (actual rows=1 loops=1)
+               ->  Limit (actual rows=1 loops=1)
+                     ->  Sort (actual rows=1 loops=1)
+                           Sort Key: ((vector(documentdb_api_internal.bson_extract_vector(collection.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector))
+                           Sort Method: quicksort  Memory: xxxkB
+                           ->  Index Scan using filter_index on documents_10001_10000002 collection (actual rows=1 loops=1)
+                                 Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "meta.b" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+                                 Filter: (documentdb_api_internal.bson_extract_vector(document, 'v'::text) IS NOT NULL)
+                                 Rows Removed by Filter: 1
+(16 rows)
+
+ROLLBACK;
+-- exact and approximate differ only in access path, not in results: for the
+-- same filter, k, and query vector they must return the same documents in the
+-- same distance order. nProbes=4 with numLists=4 scans every list so the vector
+-- path is exact here, matching the filter path's explicit distance sort.
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_ivf", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"meta.b": {"$gt": 1}}, "filterMode": "approximate" } } }, { "$project": {"_id": 1} } ], "cursor": {} }');
+              document              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "2" } }
+(3 rows)
+
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_ivf", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"meta.b": {"$gt": 1}}, "filterMode": "exact" } } }, { "$project": {"_id": 1} } ], "cursor": {} }');
+              document              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "2" } }
+(3 rows)
+
+SELECT documentdb_api.drop_collection('filter_mode_db', 'vector_filter_mode_ivf');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- HNSW
+SET documentdb.enableVectorPreFilter TO off;
+SET documentdb.enableVectorPreFilterV2 TO on;
+SELECT documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_hnsw', '{ "_id": 1, "meta": { "b": 1 }, "v": [3.0, 5.0, 1.1] }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_hnsw', '{ "_id": 2, "meta": { "b": 2 }, "v": [8.0, 5.0, 0.1] }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_hnsw', '{ "_id": 3, "meta": { "b": 3 }, "v": [13.0, 5.0, 0.1] }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_hnsw', '{ "_id": 4, "meta": { "b": 4 }, "v": [15.0, 5.0, 0.1] }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_hnsw', '{ "_id": 5, "meta": { "b": 1 } }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key('filter_mode_db', 'vector_filter_mode_hnsw');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('filter_mode_db', '{ "createIndexes": "vector_filter_mode_hnsw", "indexes": [ { "key": { "meta.b": 1 }, "name": "filter_index" } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "0" }, "numIndexesAfter" : { "$numberInt" : "1" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('filter_mode_db', '{ "createIndexes": "vector_filter_mode_hnsw", "indexes": [ { "key": { "v": "cosmosSearch" }, "name": "vector_index", "cosmosSearchOptions": { "kind": "vector-hnsw", "m": 4, "efConstruction": 16, "similarity": "COS", "dimensions": 3 } } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+ANALYZE;
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_hnsw", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"meta.b": 1}, "efSearch": 16, "filterMode": "approximate" } } }, { "$project": {"rank": {"$round": [ {"$multiply": [{"$meta": "searchScore"}, 100000]}]} } } ], "cursor": {} }');
+                                   document                                   
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "rank" : { "$numberDouble" : "77568.0" } }
+(1 row)
+
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_hnsw", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"meta.b": 1}, "efSearch": 16, "filterMode": "approximate" } } }, { "$project": {"rank": {"$round": [ {"$multiply": [{"$meta": "searchScore"}, 100000]}]} } } ], "cursor": {} }') $cmd$);
+                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                       
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 28 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 28 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort (actual rows=1 loops=1)
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector) + '0'::double precision))
+               Sort Method: quicksort  Memory: xxxkB
+               ->  Subquery Scan on agg_stage_0_1 (actual rows=1 loops=1)
+                     ->  Limit (actual rows=1 loops=1)
+                           ->  Custom Scan (DocumentDBApiQueryScan) (actual rows=1 loops=1)
+                                 CosmosSearch Custom Params: { "efSearch" : 16, "iterativeScan" : "relaxed_order", "filterMode" : 1 }
+                                 ->  Index Scan using vector_index on documents_10002_10000004 collection (actual rows=1 loops=1)
+                                       Order By: (vector(documentdb_api_internal.bson_extract_vector(document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector)
+                                       Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "meta.b" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND documentdb_api_internal.bson_search_param(document, '{ "efSearch" : { "$numberInt" : "16" }, "iterativeScan" : "relaxed_order", "filterMode" : { "$numberInt" : "1" } }'::documentdb_core.bson))
+                                       Rows Removed by Filter: 3
+(18 rows)
+
+ROLLBACK;
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_hnsw", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 10, "path": "v", "filter": {"meta.b": {"$gte": 1}}, "efSearch": 16, "filterMode": "exact" } } }, { "$project": {"rank": {"$round": [ {"$multiply": [{"$meta": "searchScore"}, 100000]}]} } } ], "cursor": {} }');
+                                   document                                    
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "rank" : { "$numberDouble" : "100000.0" } }
+ { "_id" : { "$numberInt" : "4" }, "rank" : { "$numberDouble" : "99897.0" } }
+ { "_id" : { "$numberInt" : "2" }, "rank" : { "$numberDouble" : "98173.0" } }
+ { "_id" : { "$numberInt" : "1" }, "rank" : { "$numberDouble" : "77568.0" } }
+(4 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_hnsw", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 10, "path": "v", "filter": {"meta.b": {"$gte": 1}}, "efSearch": 16, "filterMode": "exact" } } }, { "$project": {"rank": {"$round": [ {"$multiply": [{"$meta": "searchScore"}, 100000]}]} } } ], "cursor": {} }') $cmd$);
+                                                                               run_explain_and_trim                                                                               
+---------------------------------------------------------------------
+ Subquery Scan on agg_stage_0
+   ->  Limit
+         ->  Sort
+               Sort Key: ((public.vector(documentdb_api_internal.bson_extract_vector(collection.document, 'v'::text), 3, true) OPERATOR(public.<=>) '[13,5,0.1]'::public.vector))
+               ->  Seq Scan on documents_10002_10000004 collection
+                     Filter: ((document @>= '{ "meta.b" : { "$numberInt" : "1" } }'::bson) AND (documentdb_api_internal.bson_extract_vector(document, 'v'::text) IS NOT NULL))
+(6 rows)
+
+-- Failed when seqscan was disabled and no non-vector path survived
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_hnsw", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"meta.b": {"$gt": 1}}, "efSearch": 16, "filterMode": "exact" } } }, { "$project": {"rank": {"$round": [ {"$multiply": [{"$meta": "searchScore"}, 100000]}]} } } ], "cursor": {} }') $cmd$);
+ERROR:  filterMode 'exact' requires an alternative index or scan path for the filter, but none was found.
+CONTEXT:  while executing command on localhost:58070
+PL/pgSQL function documentdb_distributed_test_helpers.run_explain_and_trim(text,boolean,boolean,boolean,boolean) line 5 at FOR over EXECUTE statement
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.enableExplainScanIndexCosts TO on;
+-- A selectivity threshold of 1 keeps this estimate on the filter path.
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold TO 1;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_hnsw", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"meta.b": 1}, "efSearch": 16, "filterMode": "autoSelect" } } }, { "$project": {"rank": {"$round": [ {"$multiply": [{"$meta": "searchScore"}, 100000]}]} } } ], "cursor": {} }') $cmd$);
+                                                                                                                                                         run_explain_and_trim                                                                                                                                                          
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 28 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 28 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort (actual rows=1 loops=1)
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector) + '0'::double precision))
+               Sort Method: quicksort  Memory: xxxkB
+               ->  Subquery Scan on agg_stage_0_1 (actual rows=1 loops=1)
+                     ->  Limit (actual rows=1 loops=1)
+                           ->  Sort (actual rows=1 loops=1)
+                                 Sort Key: ((vector(documentdb_api_internal.bson_extract_vector(collection.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector))
+                                 Sort Method: quicksort  Memory: xxxkB
+                                 ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+                                       indexName: filter_index
+                                       innerScanLoops: 2 loops
+                                       scanType: regular
+                                       scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 2)]
+                                       filter_index: (indexKey='{ "meta.b" : { "$numberInt" : "1" } }', startup cost=4.258, total cost=8.528, selectivity=0.4, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=5, boundary selectivity=0.4, num boundaries=0, estimated data pages loaded=0.00%)
+                                       ->  Index Scan using filter_index on documents_10002_10000004 collection (actual rows=1 loops=1)
+                                             Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "meta.b" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+                                             Filter: (documentdb_api_internal.bson_extract_vector(document, 'v'::text) IS NOT NULL)
+                                             Rows Removed by Filter: 1
+(25 rows)
+
+-- A zero threshold sends this above-floor estimate to the vector index.
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold TO 0;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_hnsw", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"meta.b": {"$gt": 1}}, "efSearch": 16, "filterMode": "autoSelect" } } }, { "$project": {"rank": {"$round": [ {"$multiply": [{"$meta": "searchScore"}, 100000]}]} } } ], "cursor": {} }') $cmd$);
+                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                          
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 84 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 84 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort (actual rows=3 loops=1)
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector) + '0'::double precision))
+               Sort Method: quicksort  Memory: xxxkB
+               ->  Subquery Scan on agg_stage_0_1 (actual rows=3 loops=1)
+                     ->  Limit (actual rows=3 loops=1)
+                           ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+                                 indexName: vector_index
+                                 filter_index: (indexKey='{ "meta.b" : { "$numberInt" : "1" } }', startup cost=8.383, total cost=12.782, selectivity=0.597, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=5, boundary selectivity=0.597, num boundaries=0, estimated data pages loaded=0.00%)
+                                 ->  Custom Scan (DocumentDBApiQueryScan) (actual rows=3 loops=1)
+                                       CosmosSearch Custom Params: { "efSearch" : 16, "iterativeScan" : "relaxed_order", "filterMode" : 3 }
+                                       ->  Index Scan using vector_index on documents_10002_10000004 collection (actual rows=3 loops=1)
+                                             Order By: (vector(documentdb_api_internal.bson_extract_vector(document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector)
+                                             Filter: ((document OPERATOR(documentdb_api_catalog.@>) '{ "meta.b" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND documentdb_api_internal.bson_search_param(document, '{ "efSearch" : { "$numberInt" : "16" }, "iterativeScan" : "relaxed_order", "filterMode" : { "$numberInt" : "3" } }'::documentdb_core.bson))
+                                             Rows Removed by Filter: 1
+(21 rows)
+
+ROLLBACK;
+SELECT documentdb_api.drop_collection('filter_mode_db', 'vector_filter_mode_hnsw');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- filterMode 'autoSelect' estimates the filter from per-path statistics, so the
+-- value kind a path holds and the number of conditions both feed the same
+-- estimate. Cover string, boolean, and integer paths and conjunctions over
+-- them, with compound indexes present so their two-expression statistics
+-- objects are available to the estimate.
+SELECT documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_types', '{ "_id": 1, "s": "alpha", "f": true, "n": 10, "v": [3.0, 5.0, 1.1], "v2": [3.0, 5.0, 1.1] }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_types', '{ "_id": 2, "s": "alpha", "f": false, "n": 20, "v": [8.0, 5.0, 0.1], "v2": [8.0, 5.0, 0.1] }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_types', '{ "_id": 3, "s": "beta", "f": true, "n": 30, "v": [13.0, 5.0, 0.1], "v2": [13.0, 5.0, 0.1] }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_types', '{ "_id": 4, "s": "beta", "f": false, "n": 40, "v": [15.0, 5.0, 0.1], "v2": [15.0, 5.0, 0.1] }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_types', '{ "_id": 5, "s": "gamma", "f": true, "n": 10, "v": [2.0, 1.0, 0.5], "v2": [2.0, 1.0, 0.5] }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_types', '{ "_id": 6, "s": "gamma", "f": false, "n": 20, "v": [4.0, 2.0, 0.5], "v2": [4.0, 2.0, 0.5] }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_types', '{ "_id": 7, "s": "alpha", "f": true, "n": 30, "v": [12.0, 4.0, 0.2], "v2": [12.0, 4.0, 0.2] }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- No vector field: must never match, whichever path is chosen.
+SELECT documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_types', '{ "_id": 8, "s": "beta", "f": true, "n": 40}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key('filter_mode_db', 'vector_filter_mode_types');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('filter_mode_db', '{ "createIndexes": "vector_filter_mode_types", "indexes": [ { "key": { "s": 1 }, "name": "string_index" } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "0" }, "numIndexesAfter" : { "$numberInt" : "1" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('filter_mode_db', '{ "createIndexes": "vector_filter_mode_types", "indexes": [ { "key": { "f": 1 }, "name": "bool_index" } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('filter_mode_db', '{ "createIndexes": "vector_filter_mode_types", "indexes": [ { "key": { "n": 1 }, "name": "int_index" } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('filter_mode_db', '{ "createIndexes": "vector_filter_mode_types", "indexes": [ { "key": { "n": 1, "s": 1, "f": 1 }, "name": "compound_nsf_index", "enableCompositeTerm": true } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "3" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('filter_mode_db', '{ "createIndexes": "vector_filter_mode_types", "indexes": [ { "key": { "v": "cosmosSearch" }, "name": "vector_index", "cosmosSearchOptions": { "kind": "vector-hnsw", "m": 4, "efConstruction": 16, "similarity": "COS", "dimensions": 3 } } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "4" }, "numIndexesAfter" : { "$numberInt" : "5" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('filter_mode_db', '{ "createIndexes": "vector_filter_mode_types", "indexes": [ { "key": { "v2": "cosmosSearch" }, "name": "vector_index_v2", "cosmosSearchOptions": { "kind": "vector-ivf", "numLists": 4, "similarity": "COS", "dimensions": 3 } } ] }', true);
+NOTICE:  ivfflat index created with little data
+DETAIL:  This will cause low recall.
+HINT:  Drop the index until the table has more data.
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "5" }, "numIndexesAfter" : { "$numberInt" : "6" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+ANALYZE;
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.enableExplainScanIndexCosts TO on;
+-- A selectivity threshold of 1 keeps each estimate on the filter path.
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold TO 1;
+-- Single condition on a string path.
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_types", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"s": "alpha"}, "efSearch": 16, "filterMode": "autoSelect" } } }, { "$project": {"_id": 1} } ], "cursor": {} }') $cmd$);
+                                                                                                                                                         run_explain_and_trim                                                                                                                                                         
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 42 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 42 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort (actual rows=3 loops=1)
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector) + '0'::double precision))
+               Sort Method: quicksort  Memory: xxxkB
+               ->  Subquery Scan on agg_stage_0_1 (actual rows=3 loops=1)
+                     ->  Limit (actual rows=3 loops=1)
+                           ->  Sort (actual rows=3 loops=1)
+                                 Sort Key: ((vector(documentdb_api_internal.bson_extract_vector(collection.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector))
+                                 Sort Method: quicksort  Memory: xxxkB
+                                 ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+                                       indexName: string_index
+                                       innerScanLoops: 3 loops
+                                       scanType: regular
+                                       scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 3)]
+                                       string_index: (indexKey='{ "s" : { "$numberInt" : "1" } }', startup cost=4.255, total cost=8.527, selectivity=0.375, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.375, num boundaries=0, estimated data pages loaded=0.00%)
+                                       ->  Index Scan using string_index on documents_10003_10000006 collection (actual rows=3 loops=1)
+                                             Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "s" : "alpha" }'::documentdb_core.bson)
+                                             Filter: (documentdb_api_internal.bson_extract_vector(document, 'v'::text) IS NOT NULL)
+(24 rows)
+
+-- Single condition on a boolean path.
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_types", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"f": true}, "efSearch": 16, "filterMode": "autoSelect" } } }, { "$project": {"_id": 1} } ], "cursor": {} }') $cmd$);
+                                                                                                                                                        run_explain_and_trim                                                                                                                                                        
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=4 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 56 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 56 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort (actual rows=4 loops=1)
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector) + '0'::double precision))
+               Sort Method: quicksort  Memory: xxxkB
+               ->  Subquery Scan on agg_stage_0_1 (actual rows=4 loops=1)
+                     ->  Limit (actual rows=4 loops=1)
+                           ->  Sort (actual rows=4 loops=1)
+                                 Sort Key: ((vector(documentdb_api_internal.bson_extract_vector(collection.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector))
+                                 Sort Method: quicksort  Memory: xxxkB
+                                 ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+                                       indexName: bool_index
+                                       innerScanLoops: 5 loops
+                                       scanType: regular
+                                       scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 5)]
+                                       bool_index: (indexKey='{ "f" : { "$numberInt" : "1" } }', startup cost=4.255, total cost=8.537, selectivity=0.625, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.625, num boundaries=0, estimated data pages loaded=0.00%)
+                                       ->  Index Scan using bool_index on documents_10003_10000006 collection (actual rows=4 loops=1)
+                                             Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "f" : true }'::documentdb_core.bson)
+                                             Filter: (documentdb_api_internal.bson_extract_vector(document, 'v'::text) IS NOT NULL)
+                                             Rows Removed by Filter: 1
+(25 rows)
+
+-- Two conditions on different paths.
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_types", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"s": "alpha", "f": true}, "efSearch": 16, "filterMode": "autoSelect" } } }, { "$project": {"_id": 1} } ], "cursor": {} }') $cmd$);
+                                                                                                                                                         run_explain_and_trim                                                                                                                                                         
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 28 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 28 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort (actual rows=2 loops=1)
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector) + '0'::double precision))
+               Sort Method: quicksort  Memory: xxxkB
+               ->  Subquery Scan on agg_stage_0_1 (actual rows=2 loops=1)
+                     ->  Limit (actual rows=2 loops=1)
+                           ->  Sort (actual rows=2 loops=1)
+                                 Sort Key: ((vector(documentdb_api_internal.bson_extract_vector(collection.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector))
+                                 Sort Method: quicksort  Memory: xxxkB
+                                 ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+                                       indexName: string_index
+                                       innerScanLoops: 3 loops
+                                       scanType: regular
+                                       scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 3)]
+                                       string_index: (indexKey='{ "s" : { "$numberInt" : "1" } }', startup cost=4.255, total cost=8.527, selectivity=0.375, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.375, num boundaries=0, estimated data pages loaded=0.00%)
+                                       bool_index: (indexKey='{ "f" : { "$numberInt" : "1" } }', startup cost=4.255, total cost=8.537, selectivity=0.625, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.625, num boundaries=0, estimated data pages loaded=0.00%)
+                                       ->  Index Scan using string_index on documents_10003_10000006 collection (actual rows=2 loops=1)
+                                             Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "s" : "alpha" }'::documentdb_core.bson)
+                                             Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "f" : true }'::documentdb_core.bson) AND (documentdb_api_internal.bson_extract_vector(document, 'v'::text) IS NOT NULL))
+                                             Rows Removed by Filter: 1
+(26 rows)
+
+-- Single condition on an integer path.
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_types", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"n": 30}, "efSearch": 16, "filterMode": "autoSelect" } } }, { "$project": {"_id": 1} } ], "cursor": {} }') $cmd$);
+                                                                                                                                                      run_explain_and_trim                                                                                                                                                       
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 28 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 28 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort (actual rows=2 loops=1)
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector) + '0'::double precision))
+               Sort Method: quicksort  Memory: xxxkB
+               ->  Subquery Scan on agg_stage_0_1 (actual rows=2 loops=1)
+                     ->  Limit (actual rows=2 loops=1)
+                           ->  Sort (actual rows=2 loops=1)
+                                 Sort Key: ((vector(documentdb_api_internal.bson_extract_vector(collection.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector))
+                                 Sort Method: quicksort  Memory: xxxkB
+                                 ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+                                       indexName: compound_nsf_index
+                                       indexKey: {"n": 1,"s": 1,"f": 1}
+                                       isMultiKey: false
+                                       indexBounds: ["n": [30, 30], "s": (MinKey, MaxKey), "f": (MinKey, MaxKey)]
+                                       innerScanLoops: 2 loops
+                                       scanType: regular
+                                       scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
+                                       compound_nsf_index: (indexKey='{"n": 1,"s": 1,"f": 1}', startup cost=0.007, total cost=4.022, selectivity=0.25, correlation=0.500, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.25, num boundaries=1, estimated data pages loaded=0.00%)
+                                       int_index: (indexKey='{ "n" : { "$numberInt" : "1" } }', startup cost=4.258, total cost=8.527, selectivity=0.25, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.25, num boundaries=0, estimated data pages loaded=0.00%)
+                                       ->  Index Scan using compound_nsf_index on documents_10003_10000006 collection (actual rows=2 loops=1)
+                                             Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "n" : { "$numberInt" : "30" } }'::documentdb_core.bson)
+                                             Filter: (documentdb_api_internal.bson_extract_vector(document, 'v'::text) IS NOT NULL)
+(28 rows)
+
+-- An integer and a string condition, both keys of one compound index.
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_types", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"n": 40, "s": "beta"}, "efSearch": 16, "filterMode": "autoSelect" } } }, { "$project": {"_id": 1} } ], "cursor": {} }') $cmd$);
+                                                                                                                                                         run_explain_and_trim                                                                                                                                                         
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 14 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 14 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort (actual rows=1 loops=1)
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector) + '0'::double precision))
+               Sort Method: quicksort  Memory: xxxkB
+               ->  Subquery Scan on agg_stage_0_1 (actual rows=1 loops=1)
+                     ->  Limit (actual rows=1 loops=1)
+                           ->  Sort (actual rows=1 loops=1)
+                                 Sort Key: ((vector(documentdb_api_internal.bson_extract_vector(collection.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector))
+                                 Sort Method: quicksort  Memory: xxxkB
+                                 ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+                                       indexName: compound_nsf_index
+                                       indexKey: {"n": 1,"s": 1,"f": 1}
+                                       isMultiKey: false
+                                       indexBounds: ["n": [40, 40], "s": ["beta", "beta"], "f": (MinKey, MaxKey)]
+                                       innerScanLoops: 2 loops
+                                       scanType: regular
+                                       scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
+                                       compound_nsf_index: (indexKey='{"n": 1,"s": 1,"f": 1}', startup cost=0.007, total cost=4.018, selectivity=0.09375, correlation=0.500, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.09375, num boundaries=2, estimated data pages loaded=0.00%)
+                                       int_index: (indexKey='{ "n" : { "$numberInt" : "1" } }', startup cost=4.258, total cost=8.527, selectivity=0.25, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.25, num boundaries=0, estimated data pages loaded=0.00%)
+                                       string_index: (indexKey='{ "s" : { "$numberInt" : "1" } }', startup cost=4.255, total cost=8.527, selectivity=0.375, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.375, num boundaries=0, estimated data pages loaded=0.00%)
+                                       ->  Index Scan using compound_nsf_index on documents_10003_10000006 collection (actual rows=1 loops=1)
+                                             Index Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "n" : { "$numberInt" : "40" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "s" : "beta" }'::documentdb_core.bson))
+                                             Filter: (documentdb_api_internal.bson_extract_vector(document, 'v'::text) IS NOT NULL)
+                                             Rows Removed by Filter: 1
+(30 rows)
+
+-- Three conditions spanning all three value kinds.
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_types", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"n": { "$gt": 20 }, "s": "beta", "f": true}, "efSearch": 16, "filterMode": "autoSelect" } } }, { "$project": {"_id": 1} } ], "cursor": {} }') $cmd$);
+                                                                                                                                                                   run_explain_and_trim                                                                                                                                                                   
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 14 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 14 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort (actual rows=1 loops=1)
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector) + '0'::double precision))
+               Sort Method: quicksort  Memory: xxxkB
+               ->  Subquery Scan on agg_stage_0_1 (actual rows=1 loops=1)
+                     ->  Limit (actual rows=1 loops=1)
+                           ->  Sort (actual rows=1 loops=1)
+                                 Sort Key: ((vector(documentdb_api_internal.bson_extract_vector(collection.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector))
+                                 Sort Method: quicksort  Memory: xxxkB
+                                 ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+                                       indexName: compound_nsf_index
+                                       indexKey: {"n": 1,"s": 1,"f": 1}
+                                       isMultiKey: false
+                                       indexBounds: ["n": (20, Infinity], "s": ["beta", "beta"], "f": [true, true]]
+                                       innerScanLoops: 2 loops
+                                       scanType: regular
+                                       scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
+                                       compound_nsf_index: (indexKey='{"n": 1,"s": 1,"f": 1}', startup cost=0.007, total cost=4.058, selectivity=0.117188, correlation=0.500, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.5, num boundaries=1, estimated data pages loaded=0.00%)
+                                       string_index: (indexKey='{ "s" : { "$numberInt" : "1" } }', startup cost=4.255, total cost=8.527, selectivity=0.375, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.375, num boundaries=0, estimated data pages loaded=0.00%)
+                                       bool_index: (indexKey='{ "f" : { "$numberInt" : "1" } }', startup cost=4.255, total cost=8.537, selectivity=0.625, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.625, num boundaries=0, estimated data pages loaded=0.00%)
+                                       int_index: (indexKey='{ "n" : { "$numberInt" : "1" } }', startup cost=8.383, total cost=12.787, selectivity=0.5, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.5, num boundaries=0, estimated data pages loaded=0.00%)
+                                       ->  Index Scan using compound_nsf_index on documents_10003_10000006 collection (actual rows=1 loops=1)
+                                             Index Cond: ((document OPERATOR(documentdb_api_catalog.@>) '{ "n" : { "$numberInt" : "20" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "s" : "beta" }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "f" : true }'::documentdb_core.bson))
+                                             Filter: (documentdb_api_internal.bson_extract_vector(document, 'v'::text) IS NOT NULL)
+                                             Rows Removed by Filter: 1
+(31 rows)
+
+-- A zero threshold sends the same conjunction to the vector index instead.
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold TO 0;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_types", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"s": "alpha", "f": true}, "efSearch": 16, "filterMode": "autoSelect" } } }, { "$project": {"_id": 1} } ], "cursor": {} }') $cmd$);
+                                                                                                                                                                                                             run_explain_and_trim                                                                                                                                                                                                             
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 28 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 28 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort (actual rows=2 loops=1)
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector) + '0'::double precision))
+               Sort Method: quicksort  Memory: xxxkB
+               ->  Subquery Scan on agg_stage_0_1 (actual rows=2 loops=1)
+                     ->  Limit (actual rows=2 loops=1)
+                           ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+                                 indexName: vector_index
+                                 string_index: (indexKey='{ "s" : { "$numberInt" : "1" } }', startup cost=4.255, total cost=8.527, selectivity=0.375, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.375, num boundaries=0, estimated data pages loaded=0.00%)
+                                 bool_index: (indexKey='{ "f" : { "$numberInt" : "1" } }', startup cost=4.255, total cost=8.537, selectivity=0.625, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.625, num boundaries=0, estimated data pages loaded=0.00%)
+                                 ->  Custom Scan (DocumentDBApiQueryScan) (actual rows=2 loops=1)
+                                       CosmosSearch Custom Params: { "efSearch" : 16, "iterativeScan" : "relaxed_order", "filterMode" : 3 }
+                                       ->  Index Scan using vector_index on documents_10003_10000006 collection (actual rows=2 loops=1)
+                                             Order By: (vector(documentdb_api_internal.bson_extract_vector(document, 'v'::text), 3, true) <=> '[13,5,0.1]'::vector)
+                                             Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "s" : "alpha" }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "f" : true }'::documentdb_core.bson) AND documentdb_api_internal.bson_search_param(document, '{ "efSearch" : { "$numberInt" : "16" }, "iterativeScan" : "relaxed_order", "filterMode" : { "$numberInt" : "3" } }'::documentdb_core.bson))
+                                             Rows Removed by Filter: 5
+(22 rows)
+
+ROLLBACK;
+-- ivf vector index
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.enableExplainScanIndexCosts TO on;
+-- A selectivity threshold of 1 keeps each estimate on the filter path.
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold TO 1;
+-- Single condition on a string path.
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_types", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v2", "filter": {"s": "alpha"}, "efSearch": 16, "filterMode": "autoSelect" } } }, { "$project": {"_id": 1} } ], "cursor": {} }') $cmd$);
+                                                                                                                                                         run_explain_and_trim                                                                                                                                                         
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 42 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 42 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort (actual rows=3 loops=1)
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v2'::text), 3, true) <=> '[13,5,0.1]'::vector) + '0'::double precision))
+               Sort Method: quicksort  Memory: xxxkB
+               ->  Subquery Scan on agg_stage_0_1 (actual rows=3 loops=1)
+                     ->  Limit (actual rows=3 loops=1)
+                           ->  Sort (actual rows=3 loops=1)
+                                 Sort Key: ((vector(documentdb_api_internal.bson_extract_vector(collection.document, 'v2'::text), 3, true) <=> '[13,5,0.1]'::vector))
+                                 Sort Method: quicksort  Memory: xxxkB
+                                 ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+                                       indexName: string_index
+                                       innerScanLoops: 3 loops
+                                       scanType: regular
+                                       scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 3)]
+                                       string_index: (indexKey='{ "s" : { "$numberInt" : "1" } }', startup cost=4.255, total cost=8.527, selectivity=0.375, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.375, num boundaries=0, estimated data pages loaded=0.00%)
+                                       ->  Index Scan using string_index on documents_10003_10000006 collection (actual rows=3 loops=1)
+                                             Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "s" : "alpha" }'::documentdb_core.bson)
+                                             Filter: (documentdb_api_internal.bson_extract_vector(document, 'v2'::text) IS NOT NULL)
+(24 rows)
+
+-- Single condition on a boolean path.
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_types", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v2", "filter": {"f": true}, "efSearch": 16, "filterMode": "autoSelect" } } }, { "$project": {"_id": 1} } ], "cursor": {} }') $cmd$);
+                                                                                                                                                        run_explain_and_trim                                                                                                                                                        
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=4 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 56 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 56 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort (actual rows=4 loops=1)
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v2'::text), 3, true) <=> '[13,5,0.1]'::vector) + '0'::double precision))
+               Sort Method: quicksort  Memory: xxxkB
+               ->  Subquery Scan on agg_stage_0_1 (actual rows=4 loops=1)
+                     ->  Limit (actual rows=4 loops=1)
+                           ->  Sort (actual rows=4 loops=1)
+                                 Sort Key: ((vector(documentdb_api_internal.bson_extract_vector(collection.document, 'v2'::text), 3, true) <=> '[13,5,0.1]'::vector))
+                                 Sort Method: quicksort  Memory: xxxkB
+                                 ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+                                       indexName: bool_index
+                                       innerScanLoops: 5 loops
+                                       scanType: regular
+                                       scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 5)]
+                                       bool_index: (indexKey='{ "f" : { "$numberInt" : "1" } }', startup cost=4.255, total cost=8.537, selectivity=0.625, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.625, num boundaries=0, estimated data pages loaded=0.00%)
+                                       ->  Index Scan using bool_index on documents_10003_10000006 collection (actual rows=4 loops=1)
+                                             Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "f" : true }'::documentdb_core.bson)
+                                             Filter: (documentdb_api_internal.bson_extract_vector(document, 'v2'::text) IS NOT NULL)
+                                             Rows Removed by Filter: 1
+(25 rows)
+
+-- Two conditions on different paths.
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_types", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v2", "filter": {"s": "alpha", "f": true}, "efSearch": 16, "filterMode": "autoSelect" } } }, { "$project": {"_id": 1} } ], "cursor": {} }') $cmd$);
+                                                                                                                                                         run_explain_and_trim                                                                                                                                                         
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 28 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 28 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort (actual rows=2 loops=1)
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v2'::text), 3, true) <=> '[13,5,0.1]'::vector) + '0'::double precision))
+               Sort Method: quicksort  Memory: xxxkB
+               ->  Subquery Scan on agg_stage_0_1 (actual rows=2 loops=1)
+                     ->  Limit (actual rows=2 loops=1)
+                           ->  Sort (actual rows=2 loops=1)
+                                 Sort Key: ((vector(documentdb_api_internal.bson_extract_vector(collection.document, 'v2'::text), 3, true) <=> '[13,5,0.1]'::vector))
+                                 Sort Method: quicksort  Memory: xxxkB
+                                 ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+                                       indexName: string_index
+                                       innerScanLoops: 3 loops
+                                       scanType: regular
+                                       scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 3)]
+                                       string_index: (indexKey='{ "s" : { "$numberInt" : "1" } }', startup cost=4.255, total cost=8.527, selectivity=0.375, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.375, num boundaries=0, estimated data pages loaded=0.00%)
+                                       bool_index: (indexKey='{ "f" : { "$numberInt" : "1" } }', startup cost=4.255, total cost=8.537, selectivity=0.625, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.625, num boundaries=0, estimated data pages loaded=0.00%)
+                                       ->  Index Scan using string_index on documents_10003_10000006 collection (actual rows=2 loops=1)
+                                             Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "s" : "alpha" }'::documentdb_core.bson)
+                                             Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "f" : true }'::documentdb_core.bson) AND (documentdb_api_internal.bson_extract_vector(document, 'v2'::text) IS NOT NULL))
+                                             Rows Removed by Filter: 1
+(26 rows)
+
+-- Single condition on an integer path.
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_types", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v2", "filter": {"n": 30}, "efSearch": 16, "filterMode": "autoSelect" } } }, { "$project": {"_id": 1} } ], "cursor": {} }') $cmd$);
+                                                                                                                                                      run_explain_and_trim                                                                                                                                                       
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 28 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 28 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort (actual rows=2 loops=1)
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v2'::text), 3, true) <=> '[13,5,0.1]'::vector) + '0'::double precision))
+               Sort Method: quicksort  Memory: xxxkB
+               ->  Subquery Scan on agg_stage_0_1 (actual rows=2 loops=1)
+                     ->  Limit (actual rows=2 loops=1)
+                           ->  Sort (actual rows=2 loops=1)
+                                 Sort Key: ((vector(documentdb_api_internal.bson_extract_vector(collection.document, 'v2'::text), 3, true) <=> '[13,5,0.1]'::vector))
+                                 Sort Method: quicksort  Memory: xxxkB
+                                 ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+                                       indexName: compound_nsf_index
+                                       indexKey: {"n": 1,"s": 1,"f": 1}
+                                       isMultiKey: false
+                                       indexBounds: ["n": [30, 30], "s": (MinKey, MaxKey), "f": (MinKey, MaxKey)]
+                                       innerScanLoops: 2 loops
+                                       scanType: regular
+                                       scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
+                                       compound_nsf_index: (indexKey='{"n": 1,"s": 1,"f": 1}', startup cost=0.007, total cost=4.022, selectivity=0.25, correlation=0.500, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.25, num boundaries=1, estimated data pages loaded=0.00%)
+                                       int_index: (indexKey='{ "n" : { "$numberInt" : "1" } }', startup cost=4.258, total cost=8.527, selectivity=0.25, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.25, num boundaries=0, estimated data pages loaded=0.00%)
+                                       ->  Index Scan using compound_nsf_index on documents_10003_10000006 collection (actual rows=2 loops=1)
+                                             Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "n" : { "$numberInt" : "30" } }'::documentdb_core.bson)
+                                             Filter: (documentdb_api_internal.bson_extract_vector(document, 'v2'::text) IS NOT NULL)
+(28 rows)
+
+-- A zero threshold sends the same conjunction to the vector index instead.
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold TO 0;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_types", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v2", "filter": {"s": "alpha", "f": true}, "nProbes": 4, "filterMode": "autoSelect" } } }, { "$project": {"_id": 1} } ], "cursor": {} }') $cmd$);
+                                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                                            
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 28 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 28 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort (actual rows=2 loops=1)
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v2'::text), 3, true) <=> '[13,5,0.1]'::vector) + '0'::double precision))
+               Sort Method: quicksort  Memory: xxxkB
+               ->  Subquery Scan on agg_stage_0_1 (actual rows=2 loops=1)
+                     ->  Limit (actual rows=2 loops=1)
+                           ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+                                 indexName: vector_index_v2
+                                 string_index: (indexKey='{ "s" : { "$numberInt" : "1" } }', startup cost=4.255, total cost=8.527, selectivity=0.375, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.375, num boundaries=0, estimated data pages loaded=0.00%)
+                                 bool_index: (indexKey='{ "f" : { "$numberInt" : "1" } }', startup cost=4.255, total cost=8.537, selectivity=0.625, correlation=0.000, estimated index pages loaded=50.00%, estimated total index entries=8, boundary selectivity=0.625, num boundaries=0, estimated data pages loaded=0.00%)
+                                 ->  Custom Scan (DocumentDBApiQueryScan) (actual rows=2 loops=1)
+                                       CosmosSearch Custom Params: { "nProbes" : 4, "iterativeScan" : "relaxed_order", "filterMode" : 3 }
+                                       ->  Index Scan using vector_index_v2 on documents_10003_10000006 collection (actual rows=2 loops=1)
+                                             Order By: (vector(documentdb_api_internal.bson_extract_vector(document, 'v2'::text), 3, true) <=> '[13,5,0.1]'::vector)
+                                             Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "s" : "alpha" }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "f" : true }'::documentdb_core.bson) AND documentdb_api_internal.bson_search_param(document, '{ "nProbes" : { "$numberInt" : "4" }, "iterativeScan" : "relaxed_order", "filterMode" : { "$numberInt" : "3" } }'::documentdb_core.bson))
+                                             Rows Removed by Filter: 5
+(22 rows)
+
+ROLLBACK;
+-- three 'autoSelect' modes, the results must match exactly
+-- check for a string and boolean condition, which is a compound index key
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_types", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"s": "beta", "f": true}, "efSearch": 16, "filterMode": "exact" } } }, { "$project": {"_id": 1} } ], "cursor": {} }');
+              document              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_types", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"s": "beta", "f": true}, "efSearch": 16, "filterMode": "approximate" } } }, { "$project": {"_id": 1} } ], "cursor": {} }');
+              document              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_types", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"s": "beta", "f": true}, "efSearch": 16, "filterMode": "autoSelect" } } }, { "$project": {"_id": 1} } ], "cursor": {} }');
+              document              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" } }
+(1 row)
+
+-- check for a single boolean condition.
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_types", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"f": false}, "efSearch": 16, "filterMode": "exact" } } }, { "$project": {"_id": 1} } ], "cursor": {} }');
+              document              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "6" } }
+ { "_id" : { "$numberInt" : "2" } }
+(3 rows)
+
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_types", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"f": false}, "efSearch": 16, "filterMode": "approximate" } } }, { "$project": {"_id": 1} } ], "cursor": {} }');
+              document              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "6" } }
+ { "_id" : { "$numberInt" : "2" } }
+(3 rows)
+
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_types", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"f": false}, "efSearch": 16, "filterMode": "autoSelect" } } }, { "$project": {"_id": 1} } ], "cursor": {} }');
+              document              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "6" } }
+ { "_id" : { "$numberInt" : "2" } }
+(3 rows)
+
+-- check for an integer condition combined with a string one.
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_types", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"n": 40, "s": "beta"}, "efSearch": 16, "filterMode": "exact" } } }, { "$project": {"_id": 1} } ], "cursor": {} }');
+              document              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "4" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_types", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"n": 40, "s": "beta"}, "efSearch": 16, "filterMode": "approximate" } } }, { "$project": {"_id": 1} } ], "cursor": {} }');
+              document              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "4" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_types", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0, 5.0, 0.1], "k": 4, "path": "v", "filter": {"n": 40, "s": "beta"}, "efSearch": 16, "filterMode": "autoSelect" } } }, { "$project": {"_id": 1} } ], "cursor": {} }');
+              document              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "4" } }
+(1 row)
+
+SELECT documentdb_api.drop_collection('filter_mode_db', 'vector_filter_mode_types');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- Test for vector filter mode with n = entry_id % 4, selectivity is 1/4 = 0.25
+SELECT count(documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_threshold',
+	format('{"_id":%s,"n":%s,"v":[%s,1,1],"v6":[%s,1,1,1,1,1]}',
+		   entry_id, entry_id % 4, entry_id, entry_id)::bson))
+FROM generate_series(1, 512) AS entries(entry_id);
+NOTICE:  creating collection
+ count 
+---------------------------------------------------------------------
+   512
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key('filter_mode_db', 'vector_filter_mode_threshold');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('filter_mode_db', '{"createIndexes":"vector_filter_mode_threshold","indexes":[{"key":{"n":1},"name":"filter_index"}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "0" }, "numIndexesAfter" : { "$numberInt" : "1" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('filter_mode_db', '{"createIndexes":"vector_filter_mode_threshold","indexes":[{"key":{"v":"cosmosSearch"},"name":"vector_index","cosmosSearchOptions":{"kind":"vector-ivf","numLists":4,"similarity":"COS","dimensions":3}}]}', true);
+NOTICE:  ivfflat index created with little data
+DETAIL:  This will cause low recall.
+HINT:  Drop the index until the table has more data.
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('filter_mode_db', '{"createIndexes":"vector_filter_mode_threshold","indexes":[{"key":{"v6":"cosmosSearch"},"name":"vector_index_6d","cosmosSearchOptions":{"kind":"vector-ivf","numLists":4,"similarity":"COS","dimensions":6}}]}', true);
+NOTICE:  ivfflat index created with little data
+DETAIL:  This will cause low recall.
+HINT:  Drop the index until the table has more data.
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+ANALYZE;
+-- Test for different values of the vector_auto_filter_selectivity_threshold
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold TO 0.01;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{"aggregate":"vector_filter_mode_threshold","pipeline":[{"$search":{"cosmosSearch":{"vector":[13,1,1],"path":"v","k":4,"filter":{"n":1},"filterMode":"autoSelect"}}}],"cursor":{}}') $cmd$);
+                                                                                                                                                 run_explain_and_trim                                                                                                                                                  
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v'::text), 3, true) <=> '[13,1,1]'::vector) + '0'::double precision))
+               ->  Subquery Scan on agg_stage_0_1
+                     ->  Limit
+                           ->  Custom Scan (DocumentDBApiQueryScan)
+                                 CosmosSearch Custom Params: { "nProbes" : 4, "iterativeScan" : "relaxed_order", "filterMode" : 3 }
+                                 ->  Index Scan using vector_index on documents_10004_10000008 collection
+                                       Order By: (vector(documentdb_api_internal.bson_extract_vector(document, 'v'::text), 3, true) <=> '[13,1,1]'::vector)
+                                       Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "n" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND documentdb_api_internal.bson_search_param(document, '{ "iterativeScan" : "relaxed_order", "filterMode" : { "$numberInt" : "3" } }'::documentdb_core.bson))
+(14 rows)
+
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold TO 0.2;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{"aggregate":"vector_filter_mode_threshold","pipeline":[{"$search":{"cosmosSearch":{"vector":[13,1,1],"path":"v","k":4,"filter":{"n":1},"filterMode":"autoSelect"}}}],"cursor":{}}') $cmd$);
+                                                                                                                                                 run_explain_and_trim                                                                                                                                                  
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v'::text), 3, true) <=> '[13,1,1]'::vector) + '0'::double precision))
+               ->  Subquery Scan on agg_stage_0_1
+                     ->  Limit
+                           ->  Custom Scan (DocumentDBApiQueryScan)
+                                 CosmosSearch Custom Params: { "nProbes" : 4, "iterativeScan" : "relaxed_order", "filterMode" : 3 }
+                                 ->  Index Scan using vector_index on documents_10004_10000008 collection
+                                       Order By: (vector(documentdb_api_internal.bson_extract_vector(document, 'v'::text), 3, true) <=> '[13,1,1]'::vector)
+                                       Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "n" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND documentdb_api_internal.bson_search_param(document, '{ "iterativeScan" : "relaxed_order", "filterMode" : { "$numberInt" : "3" } }'::documentdb_core.bson))
+(14 rows)
+
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold TO 0.3;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{"aggregate":"vector_filter_mode_threshold","pipeline":[{"$search":{"cosmosSearch":{"vector":[13,1,1,1,1,1],"path":"v6","k":4,"filter":{"n":1},"filterMode":"autoSelect"}}}],"cursor":{}}') $cmd$);
+                                                                                run_explain_and_trim                                                                                 
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v6'::text), 6, true) <=> '[13,1,1,1,1,1]'::vector) + '0'::double precision))
+               ->  Subquery Scan on agg_stage_0_1
+                     ->  Limit
+                           ->  Sort
+                                 Sort Key: ((vector(documentdb_api_internal.bson_extract_vector(collection.document, 'v6'::text), 6, true) <=> '[13,1,1,1,1,1]'::vector))
+                                 ->  Bitmap Heap Scan on documents_10004_10000008 collection
+                                       Recheck Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "n" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+                                       Filter: (documentdb_api_internal.bson_extract_vector(document, 'v6'::text) IS NOT NULL)
+                                       ->  Bitmap Index Scan on filter_index
+                                             Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "n" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+(16 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{"aggregate":"vector_filter_mode_threshold","pipeline":[{"$search":{"cosmosSearch":{"vector":[13,1,1,1,1,1],"path":"v6","k":40,"filter":{"n":1},"filterMode":"autoSelect"}}}],"cursor":{}}') $cmd$);
+                                                                                run_explain_and_trim                                                                                 
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v6'::text), 6, true) <=> '[13,1,1,1,1,1]'::vector) + '0'::double precision))
+               ->  Subquery Scan on agg_stage_0_1
+                     ->  Limit
+                           ->  Sort
+                                 Sort Key: ((vector(documentdb_api_internal.bson_extract_vector(collection.document, 'v6'::text), 6, true) <=> '[13,1,1,1,1,1]'::vector))
+                                 ->  Bitmap Heap Scan on documents_10004_10000008 collection
+                                       Recheck Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "n" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+                                       Filter: (documentdb_api_internal.bson_extract_vector(document, 'v6'::text) IS NOT NULL)
+                                       ->  Bitmap Index Scan on filter_index
+                                             Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "n" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+(16 rows)
+
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold TO 1;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{"aggregate":"vector_filter_mode_threshold","pipeline":[{"$search":{"cosmosSearch":{"vector":[13,1,1],"path":"v","k":4,"filter":{"n":1},"filterMode":"autoSelect"}}}],"cursor":{}}') $cmd$);
+                                                                             run_explain_and_trim                                                                             
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v'::text), 3, true) <=> '[13,1,1]'::vector) + '0'::double precision))
+               ->  Subquery Scan on agg_stage_0_1
+                     ->  Limit
+                           ->  Sort
+                                 Sort Key: ((vector(documentdb_api_internal.bson_extract_vector(collection.document, 'v'::text), 3, true) <=> '[13,1,1]'::vector))
+                                 ->  Bitmap Heap Scan on documents_10004_10000008 collection
+                                       Recheck Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "n" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+                                       Filter: (documentdb_api_internal.bson_extract_vector(document, 'v'::text) IS NOT NULL)
+                                       ->  Bitmap Index Scan on filter_index
+                                             Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "n" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+(16 rows)
+
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold TO 0;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{"aggregate":"vector_filter_mode_threshold","pipeline":[{"$search":{"cosmosSearch":{"vector":[13,1,1],"path":"v","k":4,"filter":{"n":5},"filterMode":"autoSelect"}}}],"cursor":{}}') $cmd$);
+                                                                             run_explain_and_trim                                                                             
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(agg_stage_0_1.document, 'v'::text), 3, true) <=> '[13,1,1]'::vector) + '0'::double precision))
+               ->  Subquery Scan on agg_stage_0_1
+                     ->  Limit
+                           ->  Sort
+                                 Sort Key: ((vector(documentdb_api_internal.bson_extract_vector(collection.document, 'v'::text), 3, true) <=> '[13,1,1]'::vector))
+                                 ->  Index Scan using filter_index on documents_10004_10000008 collection
+                                       Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "n" : { "$numberInt" : "5" } }'::documentdb_core.bson)
+                                       Filter: (documentdb_api_internal.bson_extract_vector(document, 'v'::text) IS NOT NULL)
+(14 rows)
+
+ROLLBACK;
+-- Test for vector filter mode with different statistics targets
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+-- estimated selectivity floor = 0.5
+SET LOCAL default_statistics_target TO 2;
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold TO 0.01;
+SELECT bool_or(plan LIKE '%filter_index%') AS below_statistics_floor_uses_filter
+FROM documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{"aggregate":"vector_filter_mode_threshold","pipeline":[{"$search":{"cosmosSearch":{"vector":[13,1,1],"path":"v","k":4,"filter":{"n":1},"filterMode":"autoSelect"}}}],"cursor":{}}') $cmd$) AS plan;
+ below_statistics_floor_uses_filter 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold TO 0;
+SELECT bool_or(plan LIKE '%filter_index%') AS zero_threshold_preserves_floor
+FROM documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{"aggregate":"vector_filter_mode_threshold","pipeline":[{"$search":{"cosmosSearch":{"vector":[13,1,1],"path":"v","k":4,"filter":{"n":1},"filterMode":"autoSelect"}}}],"cursor":{}}') $cmd$) AS plan;
+ zero_threshold_preserves_floor 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- estimated selectivity floor = 0.2
+SET LOCAL default_statistics_target TO 5;
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold TO 0.01;
+SELECT bool_or(plan LIKE '%Index Scan using vector_index%') AS changed_statistics_target_uses_vector
+FROM documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{"aggregate":"vector_filter_mode_threshold","pipeline":[{"$search":{"cosmosSearch":{"vector":[13,1,1],"path":"v","k":4,"filter":{"n":1},"filterMode":"autoSelect"}}}],"cursor":{}}') $cmd$) AS plan;
+ changed_statistics_target_uses_vector 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold TO 0.75;
+SELECT bool_or(plan LIKE '%filter_index%') AS configured_threshold_above_floor_uses_filter
+FROM documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{"aggregate":"vector_filter_mode_threshold","pipeline":[{"$search":{"cosmosSearch":{"vector":[13,1,1],"path":"v","k":4,"filter":{"n":1},"filterMode":"autoSelect"}}}],"cursor":{}}') $cmd$) AS plan;
+ configured_threshold_above_floor_uses_filter 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- estimated selectivity floor = 1
+SET LOCAL default_statistics_target TO 1;
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold TO 0;
+SELECT bool_or(plan LIKE '%filter_index%') AS unit_statistics_floor_uses_filter
+FROM documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{"aggregate":"vector_filter_mode_threshold","pipeline":[{"$search":{"cosmosSearch":{"vector":[13,1,1],"path":"v","k":4,"filterMode":"autoSelect","filter":{"n":1}}}}],"cursor":{}}') $cmd$) AS plan;
+ unit_statistics_floor_uses_filter 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT bool_or(plan LIKE '%Index Scan using vector_index%') AS explicit_vector_ignores_auto_floor
+FROM documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{"aggregate":"vector_filter_mode_threshold","pipeline":[{"$search":{"cosmosSearch":{"vector":[13,1,1],"path":"v","k":4,"filterMode":"approximate","filter":{"n":1}}}}],"cursor":{}}') $cmd$) AS plan;
+ explicit_vector_ignores_auto_floor 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+-- estimated selectivity < threshold
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold TO 0.26;
+SELECT bool_or(plan LIKE '%filter_index%') AS below_threshold_uses_filter
+FROM documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{"aggregate":"vector_filter_mode_threshold","pipeline":[{"$search":{"cosmosSearch":{"vector":[13,1,1],"path":"v","k":4,"filter":{"n":1},"filterMode":"autoSelect"}}}],"cursor":{}}') $cmd$) AS plan;
+ below_threshold_uses_filter 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- estimated selectivity > threshold
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold TO 0.24;
+SELECT bool_or(plan LIKE '%Index Scan using vector_index%') AS above_threshold_uses_vector
+FROM documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{"aggregate":"vector_filter_mode_threshold","pipeline":[{"$search":{"cosmosSearch":{"vector":[13,1,1],"path":"v","k":4,"filter":{"n":1},"filterMode":"autoSelect"}}}],"cursor":{}}') $cmd$) AS plan;
+ above_threshold_uses_vector 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- estimated selectivity = threshold
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold TO 0.25;
+SELECT bool_or(plan LIKE '%filter_index%') AS equal_threshold_uses_filter
+FROM documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{"aggregate":"vector_filter_mode_threshold","pipeline":[{"$search":{"cosmosSearch":{"vector":[13,1,1],"path":"v","k":4,"filter":{"n":1},"filterMode":"autoSelect"}}}],"cursor":{}}') $cmd$) AS plan;
+ equal_threshold_uses_filter 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+ROLLBACK;
+SELECT documentdb_api.drop_collection('filter_mode_db', 'vector_filter_mode_threshold');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- Each shard plans autoSelect from its local per-path statistics. 
+-- Overall selectivity for n=1 is 36/1200 = 0.03
+SELECT count(documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_multishard',
+	format('{"_id":%s,"n":%s,"v":[%s], "padding":"%s"}',
+		   entry_id, CASE WHEN entry_id <= 36 THEN 1 ELSE 2 END,
+		   entry_id || repeat(',1', 15),
+		   repeat('x', 8000)
+		   )::bson))
+FROM generate_series(1, 1200) AS entries(entry_id);
+NOTICE:  creating collection
+ count 
+---------------------------------------------------------------------
+  1200
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key('filter_mode_db', 'vector_filter_mode_multishard');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('filter_mode_db', '{"createIndexes":"vector_filter_mode_multishard","indexes":[{"key":{"n":1},"name":"filter_index"}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "0" }, "numIndexesAfter" : { "$numberInt" : "1" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('filter_mode_db', '{"createIndexes":"vector_filter_mode_multishard","indexes":[{"key":{"v":"cosmosSearch"},"name":"vector_index","cosmosSearchOptions":{"kind":"vector-hnsw","similarity":"COS","dimensions":16}}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection('{"shardCollection":"filter_mode_db.vector_filter_mode_multishard","key":{"_id":"hashed"},"numInitialChunks":3}');
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+ANALYZE;
+-- force filter path
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL citus.explain_analyze_sort_method TO 'taskId';
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', ('{"aggregate":"vector_filter_mode_multishard","pipeline":[{"$search":{"cosmosSearch":{"vector":[500' || repeat(',1', 15) || '],"path":"v","k":4,"nProbes":4,"filter":{"n":1},"filterMode":"exact"}}}, { "$project":{"_id":1, "score": {"$meta": "searchScore"}}}],"cursor":{}}')::bson) $cmd$);
+                                                                                      run_explain_and_trim                                                                                      
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   ->  Distributed Subplan 278_1
+         ->  Limit
+               ->  Sort
+                     Sort Key: remote_scan."?sort?"
+                     ->  Custom Scan (Citus Adaptive)
+                           Task Count: 3
+                           Tasks Shown: One of 3
+                           ->  Task
+                                 Node: host=localhost port=58070 dbname=regression
+                                 ->  Limit
+                                       ->  Sort
+                                             Sort Key: ((vector(documentdb_api_internal.bson_extract_vector(document, 'v'::text), 16, true) <=> '[500,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]'::vector))
+                                             ->  Index Scan using filter_index on documents_10005_10000012 collection
+                                                   Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "n" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+                                                   Filter: (documentdb_api_internal.bson_extract_vector(document, 'v'::text) IS NOT NULL)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Function Scan on read_intermediate_result intermediate_result
+(21 rows)
+
+END;
+-- the result of exact and approximate, they should be same when we have only few matching entries
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', ('{"aggregate":"vector_filter_mode_multishard","pipeline":[{"$search":{"cosmosSearch":{"vector":[500' || repeat(',1', 15) || '],"path":"v","k":4,"filter":{"n":1},"filterMode":"exact"}}}, {"$project":{"_id":1, "score": {"$meta": "searchScore"} } }],"cursor":{}}')::bson);
+                                           document                                            
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "36" }, "score" : { "$numberDouble" : "0.99506141886919086126" } }
+ { "_id" : { "$numberInt" : "35" }, "score" : { "$numberDouble" : "0.99475531047204623913" } }
+ { "_id" : { "$numberInt" : "34" }, "score" : { "$numberDouble" : "0.99442142597054328235" } }
+ { "_id" : { "$numberInt" : "33" }, "score" : { "$numberDouble" : "0.99405636061223279221" } }
+(4 rows)
+
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', ('{"aggregate":"vector_filter_mode_multishard","pipeline":[{"$search":{"cosmosSearch":{"vector":[500' || repeat(',1', 15) || '],"path":"v","k":4,"filter":{"n":1},"filterMode":"approximate"}}}, {"$project":{"_id":1, "score": {"$meta": "searchScore"} } }],"cursor":{}}')::bson);
+                                           document                                            
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "36" }, "score" : { "$numberDouble" : "0.99506141886919086126" } }
+ { "_id" : { "$numberInt" : "35" }, "score" : { "$numberDouble" : "0.99475531047204623913" } }
+ { "_id" : { "$numberInt" : "34" }, "score" : { "$numberDouble" : "0.99442142597054328235" } }
+ { "_id" : { "$numberInt" : "33" }, "score" : { "$numberDouble" : "0.99405636061223279221" } }
+(4 rows)
+
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL citus.explain_analyze_sort_method TO 'taskId';
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', ('{"aggregate":"vector_filter_mode_multishard","pipeline":[{"$search":{"cosmosSearch":{"vector":[500' || repeat(',1', 15) || '],"path":"v","k":4,"nProbes":4,"filter":{"n":2},"filterMode":"approximate"}}}, {"$project":{"_id":1, "score": {"$meta": "searchScore"} } }],"cursor":{}}')::bson) $cmd$);
+                                                                                                                                                       run_explain_and_trim                                                                                                                                                        
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   ->  Distributed Subplan 284_1
+         ->  Limit
+               ->  Sort
+                     Sort Key: remote_scan."?sort?"
+                     ->  Custom Scan (Citus Adaptive)
+                           Task Count: 3
+                           Tasks Shown: One of 3
+                           ->  Task
+                                 Node: host=localhost port=58070 dbname=regression
+                                 ->  Limit
+                                       ->  Custom Scan (DocumentDBApiQueryScan)
+                                             CosmosSearch Custom Params: { "efSearch" : 64, "iterativeScan" : "relaxed_order", "filterMode" : 1 }
+                                             ->  Index Scan using vector_index on documents_10005_10000012 collection
+                                                   Order By: (vector(documentdb_api_internal.bson_extract_vector(document, 'v'::text), 16, true) <=> '[500,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]'::vector)
+                                                   Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "n" : { "$numberInt" : "2" } }'::documentdb_core.bson) AND documentdb_api_internal.bson_search_param(document, '{ "iterativeScan" : "relaxed_order", "filterMode" : { "$numberInt" : "1" } }'::documentdb_core.bson))
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort
+               Sort Key: (((vector(documentdb_api_internal.bson_extract_vector(intermediate_result.document, 'v'::text), 16, true) <=> '[500,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]'::vector) + '0'::double precision))
+               ->  Function Scan on read_intermediate_result intermediate_result
+(23 rows)
+
+END;
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL citus.explain_all_tasks TO on;
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold TO 0.05;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.enableExplainScanIndexCosts TO on;
+-- n = 1, selectivity < threshold
+SELECT count(*) = 3 AS low_selectivity_uses_filter_on_all_shards
+FROM documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', ('{"aggregate":"vector_filter_mode_multishard","pipeline":[{"$search":{"cosmosSearch":{"vector":[500' || repeat(',1', 15) || '],"path":"v","k":4,"filter":{"n":1},"filterMode":"autoSelect"}}}],"cursor":{}}')::bson) $cmd$) AS plan
+WHERE plan LIKE '%Index Scan using filter_index%';
+ low_selectivity_uses_filter_on_all_shards 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- n = 2, selectivity > threshold
+SELECT count(*) = 3 AS high_selectivity_uses_vector_on_all_shards
+FROM documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('filter_mode_db', ('{"aggregate":"vector_filter_mode_multishard","pipeline":[{"$search":{"cosmosSearch":{"vector":[500' || repeat(',1', 15) || '],"path":"v","k":4,"filter":{"n":2},"filterMode":"autoSelect"}}}],"cursor":{}}')::bson) $cmd$) AS plan
+WHERE plan LIKE '%Index Scan using vector_index%';
+ high_selectivity_uses_vector_on_all_shards 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+ROLLBACK;
+SELECT documentdb_api.drop_collection('filter_mode_db', 'vector_filter_mode_multishard');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT coalesce(bool_or(feature_name = 'search_vector_pre_filter_autoselect_filter' AND usage_count > 0), false) AS filter_counter_recorded,
+	   coalesce(bool_or(feature_name = 'search_vector_pre_filter_autoselect_vector' AND usage_count > 0), false) AS vector_counter_recorded
+FROM documentdb_api_internal.command_feature_counter_stats(false);
+ filter_counter_recorded | vector_counter_recorded 
+---------------------------------------------------------------------
+ t                       | t
+(1 row)
+
+RESET documentdb.enablePerCollectionPlannerStatistics;
+RESET documentdb.enablePlannerStatisticsNewCollections;
+RESET documentdb.enableVectorPreFilter;
+RESET documentdb.enableVectorPreFilterV2;
+-- filter mode is not supported for compressed indexes.
+SELECT documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_half', '{ "_id": 1, "meta": { "b": 1 }, "v": [3.0001, 5.0001, 1.1001] }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_half', '{ "_id": 2, "meta": { "b": 1 }, "v": [8.0001, 5.0001, 0.1001] }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('filter_mode_db', 'vector_filter_mode_half', '{ "_id": 3, "meta": { "b": 2 }, "v": [13.0001, 5.0001, 0.1001] }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key('filter_mode_db', 'vector_filter_mode_half');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('filter_mode_db', '{ "createIndexes": "vector_filter_mode_half", "indexes": [ { "key": { "meta.b": 1 }, "name": "filter_index" } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "0" }, "numIndexesAfter" : { "$numberInt" : "1" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('filter_mode_db', '{ "createIndexes": "vector_filter_mode_half", "indexes": [ { "key": { "v": "cosmosSearch" }, "name": "vector_index", "cosmosSearchOptions": { "kind": "vector-hnsw", "m": 4, "efConstruction": 16, "similarity": "COS", "dimensions": 3, "compression": "half" } } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+ANALYZE;
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_half", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0001, 5.0001, 0.1001], "k": 2, "path": "v", "filter": {"meta.b": 1}, "efSearch": 16, "filterMode": "exact" } } }, { "$project": {"_id": 1} } ], "cursor": {} }');
+ERROR:  $filterMode is not supported for compressed vector indexes.
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_half", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0001, 5.0001, 0.1001], "k": 2, "path": "v", "filter": {"meta.b": 1}, "efSearch": 16, "filterMode": "autoSelect" } } } ], "cursor": {} }');
+ERROR:  $filterMode is not supported for compressed vector indexes.
+SELECT document FROM bson_aggregation_pipeline('filter_mode_db', '{ "aggregate": "vector_filter_mode_half", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [13.0001, 5.0001, 0.1001], "k": 2, "path": "v", "filter": {"meta.b": 1}, "efSearch": 16, "filterMode": "approximate" } } } ], "cursor": {} }');
+ERROR:  $filterMode is not supported for compressed vector indexes.
+SELECT documentdb_api.drop_collection('filter_mode_db', 'vector_filter_mode_half');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+

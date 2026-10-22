@@ -124,80 +124,7 @@ SELECT documentdb_api.insert_one('reservoirdb','reservoirTest',' { "_id" : 20, "
 (1 row)
 
 -- =============================================================================
--- BASELINE TESTS (Reservoir Sampling DISABLED - default ORDER BY random() LIMIT)
--- =============================================================================
-SET documentdb.enableDollarSampleReservoirScan TO off;
--- Plan: $sample alone - should show Limit + Sort(random()) over TABLESAMPLE
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$sample": { "size": 3 } } ] }');
-                                QUERY PLAN                                
---------------------------------------------------------------------------
- Limit
-   Output: document, (random())
-   ->  Sort
-         Output: document, (random())
-         Sort Key: (random())
-         ->  Sample Scan on documentdb_data.documents_25712001 collection
-               Output: document, random()
-               Sampling: system_rows ('3'::bigint)
-(8 rows)
-
--- Plan: $match + $sample + $project + $sort (typical Spark partitioner shape)
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 3 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
-                                                                                                                                                                                              QUERY PLAN                                                                                                                                                                                              
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort
-   Output: (bson_dollar_project(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(bson_dollar_project(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson))
-   Sort Key: (bson_orderby(bson_dollar_project(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   ->  Subquery Scan on agg_stage_2
-         Output: bson_dollar_project(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_orderby(bson_dollar_project(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)
-         ->  Limit
-               Output: collection.document, (random())
-               ->  Sort
-                     Output: collection.document, (random())
-                     Sort Key: (random())
-                     ->  Bitmap Heap Scan on documentdb_data.documents_25712001 collection
-                           Output: collection.document, random()
-                           Recheck Cond: (collection.shard_key_value = '25712001'::bigint)
-                           Filter: (collection.document @= '{ "category" : "A" }'::bson)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25712001'::bigint)
-(16 rows)
-
--- Plan: empty $match + $sample
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 5 } } ] }');
-                                QUERY PLAN                                
---------------------------------------------------------------------------
- Limit
-   Output: document, (random())
-   ->  Sort
-         Output: document, (random())
-         Sort Key: (random())
-         ->  Sample Scan on documentdb_data.documents_25712001 collection
-               Output: document, random()
-               Sampling: system_rows ('5'::bigint)
-(8 rows)
-
--- Plan: $sample + $match (filter after sampling)
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$sample": { "size": 10 } }, { "$match": { "value": { "$gt": 100 } } } ] }');
-                                       QUERY PLAN                                        
------------------------------------------------------------------------------------------
- Subquery Scan on agg_stage_1
-   Output: agg_stage_1.document
-   Filter: (agg_stage_1.document #> '{ "value" : { "$numberInt" : "100" } }'::bsonquery)
-   ->  Limit
-         Output: collection.document, (random())
-         ->  Sort
-               Output: collection.document, (random())
-               Sort Key: (random())
-               ->  Sample Scan on documentdb_data.documents_25712001 collection
-                     Output: collection.document, random()
-                     Sampling: system_rows ('10'::bigint)
-(11 rows)
-
-RESET documentdb.enableDollarSampleReservoirScan;
--- =============================================================================
 -- RESERVOIR SAMPLING ENABLED TESTS (CustomScan ReservoirSample)
--- These tests run with the default (ON) setting.
 -- =============================================================================
 -- Plan: $sample alone - uses TABLESAMPLE path (no filter = efficient already), no ReservoirSample needed
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$sample": { "size": 3 } } ] }');
@@ -528,44 +455,6 @@ SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "s
 (10 rows)
 
 -- =============================================================================
--- TOGGLING GUC MID-SESSION
--- =============================================================================
--- Disable reservoir, verify fallback to Limit+Sort(random()) for $match + $sample
-SET documentdb.enableDollarSampleReservoirScan TO off;
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 3 } } ] }');
-                                    QUERY PLAN                                     
------------------------------------------------------------------------------------
- Limit
-   Output: document, (random())
-   ->  Sort
-         Output: document, (random())
-         Sort Key: (random())
-         ->  Bitmap Heap Scan on documentdb_data.documents_25712001 collection
-               Output: document, random()
-               Recheck Cond: (collection.shard_key_value = '25712001'::bigint)
-               Filter: (collection.document @= '{ "category" : "A" }'::bson)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '25712001'::bigint)
-(11 rows)
-
--- Re-enable reservoir (back to default), verify CustomScan returns for $match + $sample
-SET documentdb.enableDollarSampleReservoirScan TO on;
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 3 } } ] }');
-                                 QUERY PLAN                                  
------------------------------------------------------------------------------
- Custom Scan (DocumentDBApiReservoirSample)
-   Output: document
-   Sample Size: 3
-   Sample Reservoir Method: Materialize
-   ->  Bitmap Heap Scan on documentdb_data.documents_25712001 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '25712001'::bigint)
-         Filter: (collection.document @= '{ "category" : "A" }'::bson)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '25712001'::bigint)
-(10 rows)
-
--- =============================================================================
 -- ALTERNATE INDEX PATH TESTS (wildcard, single-field, compound, sparse, partial)
 -- Verify reservoir sampling works correctly with various index types.
 -- =============================================================================
@@ -818,6 +707,20 @@ SELECT count(*) AS fallback_count FROM (SELECT document FROM bson_aggregation_pi
 ----------------
               8
 (1 row)
+
+-- Plan: oversized size on an unsharded collection shows Limit + Sort(random()) with no ReservoirSample
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 200000000 } } ] }');
+                                 QUERY PLAN                                  
+-----------------------------------------------------------------------------
+ Limit
+   Output: document, (random())
+   ->  Sort
+         Output: document, (random())
+         Sort Key: (random())
+         ->  Seq Scan on documentdb_data.documents_25712001 collection
+               Output: document, random()
+               Filter: (collection.document @= '{ "category" : "A" }'::bson)
+(8 rows)
 
 -- Sample size beyond INT32_MAX is not routed to the reservoir; it falls back to
 -- order-by-random, where a size >= population returns every matching document.
@@ -1145,7 +1048,6 @@ NOTICE:  creating collection
 SELECT collection_id AS reservoir_col FROM documentdb_api_catalog.collections WHERE database_name = 'reservoirdb' AND collection_name = 'indexSkipSample' \gset
 SELECT FORMAT('VACUUM (FREEZE ON) documentdb_data.documents_%s', :reservoir_col) \gexec
 VACUUM (FREEZE ON) documentdb_data.documents_25712006
-SET documentdb.enableDollarSampleReservoirScan TO on;
 SET enable_seqscan TO off;
 SET documentdb.forceUseIndexIfAvailable TO on;
 -- Plan: $match on _id (pushed into the _id btree index) + $sample.
@@ -1247,7 +1149,6 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{
 SELECT collection_id AS reservoir_col FROM documentdb_api_catalog.collections WHERE database_name = 'reservoirdb' AND collection_name = 'rumHeapSkipSample' \gset
 SELECT FORMAT('VACUUM (FREEZE ON) documentdb_data.documents_%s', :reservoir_col) \gexec
 VACUUM (FREEZE ON) documentdb_data.documents_25712007
-SET documentdb.enableDollarSampleReservoirScan TO on;
 SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
 SET enable_seqscan TO off;
 SET documentdb.forceUseIndexIfAvailable TO on;
@@ -1337,7 +1238,6 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{
 SELECT collection_id AS reservoir_col FROM documentdb_api_catalog.collections WHERE database_name = 'reservoirdb' AND collection_name = 'rumVariety' \gset
 SELECT FORMAT('VACUUM (FREEZE ON) documentdb_data.documents_%s', :reservoir_col) \gexec
 VACUUM (FREEZE ON) documentdb_data.documents_25712008
-SET documentdb.enableDollarSampleReservoirScan TO on;
 SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
 SET enable_seqscan TO off;
 SET documentdb.forceUseIndexIfAvailable TO on;
@@ -1527,7 +1427,6 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{
 SELECT collection_id AS reservoir_col FROM documentdb_api_catalog.collections WHERE database_name = 'reservoirdb' AND collection_name = 'matSample' \gset
 SELECT FORMAT('VACUUM (FREEZE ON) documentdb_data.documents_%s', :reservoir_col) \gexec
 VACUUM (FREEZE ON) documentdb_data.documents_25712009
-SET documentdb.enableDollarSampleReservoirScan TO on;
 SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
 -- Seq Scan child: $match on the unindexed field b. Expect Materialize.
 SET enable_seqscan TO on;
@@ -1604,7 +1503,6 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{
 SELECT collection_id AS reservoir_col FROM documentdb_api_catalog.collections WHERE database_name = 'reservoirdb' AND collection_name = 'extraHS' \gset
 SELECT FORMAT('VACUUM (FREEZE ON) documentdb_data.documents_%s', :reservoir_col) \gexec
 VACUUM (FREEZE ON) documentdb_data.documents_25712010
-SET documentdb.enableDollarSampleReservoirScan TO on;
 SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
 SET enable_seqscan TO off;
 SET documentdb.forceUseIndexIfAvailable TO on;
@@ -1694,7 +1592,6 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{
 SELECT collection_id AS reservoir_col FROM documentdb_api_catalog.collections WHERE database_name = 'reservoirdb' AND collection_name = 'descHS' \gset
 SELECT FORMAT('VACUUM (FREEZE ON) documentdb_data.documents_%s', :reservoir_col) \gexec
 VACUUM (FREEZE ON) documentdb_data.documents_25712011
-SET documentdb.enableDollarSampleReservoirScan TO on;
 SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
 SET enable_seqscan TO off;
 SET documentdb.forceUseIndexIfAvailable TO on;
@@ -1753,7 +1650,6 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
-SET documentdb.enableDollarSampleReservoirScan TO on;
 SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
 SET enable_seqscan TO off;
 SET documentdb.forceUseIndexIfAvailable TO on;
@@ -1810,7 +1706,6 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{
 SELECT collection_id AS reservoir_col FROM documentdb_api_catalog.collections WHERE database_name = 'reservoirdb' AND collection_name = 'vecSample' \gset
 SELECT FORMAT('VACUUM (FREEZE ON) documentdb_data.documents_%s', :reservoir_col) \gexec
 VACUUM (FREEZE ON) documentdb_data.documents_25712013
-SET documentdb.enableDollarSampleReservoirScan TO on;
 SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
 SET enable_seqscan TO off;
 SET documentdb.forceUseIndexIfAvailable TO on;
@@ -1882,7 +1777,6 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{
 SELECT collection_id AS reservoir_col FROM documentdb_api_catalog.collections WHERE database_name = 'reservoirdb' AND collection_name = 'bitmapConv' \gset
 SELECT FORMAT('VACUUM (FREEZE ON) documentdb_data.documents_%s', :reservoir_col) \gexec
 VACUUM (FREEZE ON) documentdb_data.documents_25712014
-SET documentdb.enableDollarSampleReservoirScan TO on;
 SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
 SET enable_seqscan TO off;
 SET enable_indexscan TO off;
@@ -2021,7 +1915,6 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{
 SELECT collection_id AS reservoir_col FROM documentdb_api_catalog.collections WHERE database_name = 'reservoirdb' AND collection_name = 'stageHS' \gset
 SELECT FORMAT('VACUUM (FREEZE ON) documentdb_data.documents_%s', :reservoir_col) \gexec
 VACUUM (FREEZE ON) documentdb_data.documents_25712015
-SET documentdb.enableDollarSampleReservoirScan TO on;
 SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
 SET enable_seqscan TO off;
 SET documentdb.forceUseIndexIfAvailable TO on;
@@ -2198,7 +2091,6 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{
 SELECT collection_id AS reservoir_col FROM documentdb_api_catalog.collections WHERE database_name = 'reservoirdb' AND collection_name = 'bitmapPartial' \gset
 SELECT FORMAT('VACUUM (FREEZE ON) documentdb_data.documents_%s', :reservoir_col) \gexec
 VACUUM (FREEZE ON) documentdb_data.documents_25712016
-SET documentdb.enableDollarSampleReservoirScan TO on;
 SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
 SET enable_seqscan TO off;
 SET documentdb.forceUseIndexIfAvailable TO on;
@@ -2308,4 +2200,3 @@ RESET documentdb.forceUseIndexIfAvailable;
 -- =============================================================================
 -- CLEANUP
 -- =============================================================================
-RESET documentdb.enableDollarSampleReservoirScan;

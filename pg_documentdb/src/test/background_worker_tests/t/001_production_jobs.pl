@@ -68,7 +68,7 @@ sub wait_for_job_log_success
 {
 	my ($node, $job_id) = @_;
 	my $deadline = time() + 30;
-	my $pattern = qr/Background worker job with id \Q$job_id\E succeeded/;
+	my $pattern = qr/BGW_JOB_ATTEMPT_SUCCEEDED [^\n]*job_id=\Q$job_id\E\b/;
 
 	while (time() < $deadline)
 	{

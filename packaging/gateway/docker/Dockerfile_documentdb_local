@@ -139,11 +139,9 @@ ENV LANGUAGE=en_US.UTF-8 \
 
 # Mirror of documentdb-local/scripts/documentdb_local_settings.sh, the table
 # the in-image scripts read. Kept as ENV because the bake step below reads
-# DATA_PATH and POSTGRESQL_PORT at build time, because a USERNAME set here is
-# what keeps `docker run -e PASSWORD=...` from tripping the default-credentials
-# warning, and so `docker inspect` shows the defaults. ImageDefaultPinTests
-# holds it equal to the table. OWNER, PG_VERSION_USED and PATH are image
-# facts, not table rows.
+# DATA_PATH and POSTGRESQL_PORT at build time, and so `docker inspect` shows
+# the defaults. ImageDefaultPinTests holds it equal to the table. OWNER,
+# PG_VERSION_USED and PATH are image facts, not table rows.
 ENV CERT_PATH="" \
     KEY_FILE="" \
     DATA_PATH="/data" \
@@ -292,4 +290,6 @@ RUN v="$(dpkg-query -W -f='${Version}' "postgresql-${POSTGRES_VERSION}-documentd
 # the `docker run` / compose level.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=600s --retries=3 \
     CMD ["/usr/local/bin/documentdb-healthcheck"]
+# The default port only; --documentdb-port / DOCUMENTDB_PORT can move it.
+EXPOSE ${DOCUMENTDB_PORT}
 ENTRYPOINT ["/bin/bash", "-c", "/home/documentdb/gateway/scripts/emulator_entrypoint.sh \"$@\"", "--"]

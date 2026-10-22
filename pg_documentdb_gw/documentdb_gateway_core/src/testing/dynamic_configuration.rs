@@ -8,7 +8,13 @@
  *-------------------------------------------------------------------------
  */
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        RwLock,
+    },
+};
 
 use bson::{rawbson, RawBson};
 
@@ -24,6 +30,7 @@ const UNSET_U64: u64 = u64::MAX;
 
 #[derive(Debug)]
 pub struct TestDynamicConfiguration {
+    bool_overrides: RwLock<HashMap<&'static str, bool>>,
     send_shutdown_responses: AtomicBool,
     allow_transaction_snapshot: AtomicBool,
     enable_role_crud: AtomicBool,
@@ -35,6 +42,7 @@ pub struct TestDynamicConfiguration {
 impl Default for TestDynamicConfiguration {
     fn default() -> Self {
         Self {
+            bool_overrides: RwLock::new(HashMap::new()),
             send_shutdown_responses: AtomicBool::new(false),
             allow_transaction_snapshot: AtomicBool::new(false),
             enable_role_crud: AtomicBool::new(false),
@@ -46,6 +54,13 @@ impl Default for TestDynamicConfiguration {
 }
 
 impl TestDynamicConfiguration {
+    pub fn set_bool(&self, key: &'static str, value: bool) {
+        self.bool_overrides
+            .write()
+            .expect("test configuration lock")
+            .insert(key, value);
+    }
+
     pub fn set_send_shutdown_responses(&self, value: bool) {
         self.send_shutdown_responses.store(value, Ordering::Relaxed);
     }
@@ -76,6 +91,14 @@ impl DynamicConfiguration for TestDynamicConfiguration {
     }
 
     fn get_bool(&self, key: &str, default: bool) -> bool {
+        if let Some(value) = self
+            .bool_overrides
+            .read()
+            .expect("test configuration lock")
+            .get(key)
+        {
+            return *value;
+        }
         match key {
             "enableRoleCrud" => self.enable_role_crud.load(Ordering::Relaxed),
             "SendShutdownResponses" => self.send_shutdown_responses.load(Ordering::Relaxed),

@@ -543,6 +543,14 @@ GetProjectionStateForBsonProject(bson_iter_t *projectionSpecIter,
 }
 
 
+void
+FreeProjectionStateTree(BsonProjectionQueryState *state)
+{
+	FreeTree((BsonIntermediatePathNode *) state->root);
+	state->root = NULL;
+}
+
+
 /*
  * Given a projection spec for a find-style operation (find, findAndModify),
  * builds a BsonProjectionQueryState that supports find projection operators

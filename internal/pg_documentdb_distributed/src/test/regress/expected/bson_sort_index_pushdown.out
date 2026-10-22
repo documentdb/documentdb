@@ -1,3 +1,5 @@
+-- Copyright (c) Microsoft Corporation.
+-- SPDX-License-Identifier: MIT
 -- tests specific to pushing down to the right index the $sort
 -- at the moment $sort is not pushed down to index unless it is a $sort on the _id field
 -- on an unsharded collection or we have a shard key filter and all the filters can be pushed to the _id index.
@@ -224,6 +226,166 @@ $cmd$);
          Rows Removed by Filter: 39
 (5 rows)
 
+-- Exercise ordered paths without either cost-time ordering shortcut.
+SET citus.propagate_set_commands TO 'local';
+BEGIN;
+SET LOCAL documentdb.enableOrderByIdOnCostFunction TO off;
+SET LOCAL documentdb.enable_order_by_id_on_cost_function_with_stats TO off;
+SET LOCAL documentdb.enable_btree_order_by_with_filters TO on;
+SET LOCAL documentdb.enable_support_function_id_pushdown TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.enableExplainScanIndexCosts TO off;
+-- No-filter sorts must not rely on cost-time ordering.
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {}, "sort": {"_id": 1}, "limit": 3 }')
+$cmd$);
+                                             run_explain_and_trim                                             
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 63 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 63 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Limit (actual rows=3 loops=1)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+                     indexName: _id_
+                     ->  Index Scan using _id_ on documents_964001_9640002 collection (actual rows=3 loops=1)
+                           Index Cond: (shard_key_value = '964001'::bigint)
+(12 rows)
+
+SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {}, "sort": {"_id": 1}, "limit": 3 }');
+                             document                              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "14" } }
+ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "22" } }
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "12" } }
+(3 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {}, "sort": {"_id": -1}, "limit": 3 }')
+$cmd$);
+                                                 run_explain_and_trim                                                  
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 63 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 63 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Limit (actual rows=3 loops=1)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+                     indexName: _id_
+                     ->  Index Scan Backward using _id_ on documents_964001_9640002 collection (actual rows=3 loops=1)
+                           Index Cond: (shard_key_value = '964001'::bigint)
+(12 rows)
+
+SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {}, "sort": {"_id": -1}, "limit": 3 }');
+                               document                                
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "10000" }, "a" : { "$numberInt" : "14" } }
+ { "_id" : { "$numberInt" : "9999" }, "a" : { "$numberInt" : "12" } }
+ { "_id" : { "$numberInt" : "9998" }, "a" : { "$numberInt" : "22" } }
+(3 rows)
+
+-- A residual-only filter leaves no indexable bounds to regenerate.
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": 22}, "sort": {"_id": 1}, "limit": 3 }')
+$cmd$);
+                                                            run_explain_and_trim                                                            
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 63 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 63 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Limit (actual rows=3 loops=1)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+                     indexName: _id_
+                     ->  Index Scan using _id_ on documents_964001_9640002 collection (actual rows=3 loops=1)
+                           Index Cond: (shard_key_value = '964001'::bigint)
+                           Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "22" } }'::documentdb_core.bson)
+                           Rows Removed by Filter: 5
+(14 rows)
+
+SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": 22}, "sort": {"_id": 1}, "limit": 3 }');
+                             document                              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "22" } }
+ { "_id" : { "$numberInt" : "5" }, "a" : { "$numberInt" : "22" } }
+ { "_id" : { "$numberInt" : "8" }, "a" : { "$numberInt" : "22" } }
+(3 rows)
+
+-- Support-function bounds must survive while the residual filter is applied.
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"_id": {"$gte": 100, "$lt": 120}, "a": 22}, "sort": {"_id": 1}, "limit": 3 }')
+$cmd$);
+                                                                                                                                                                                                                                                   run_explain_and_trim                                                                                                                                                                                                                                                   
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 63 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 63 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Limit (actual rows=3 loops=1)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+                     indexName: _id_
+                     ->  Index Scan using _id_ on documents_964001_9640002 collection (actual rows=3 loops=1)
+                           Index Cond: ((shard_key_value = '964001'::bigint) AND (object_id OPERATOR(documentdb_core.>=) '{ "" : { "$numberInt" : "100" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberDouble" : "Infinity" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<) '{ "" : { "$numberInt" : "120" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.>=) '{ "" : { "$numberDouble" : "-Infinity" } }'::documentdb_core.bson))
+                           Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "22" } }'::documentdb_core.bson)
+                           Rows Removed by Filter: 5
+(14 rows)
+
+SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"_id": {"$gte": 100, "$lt": 120}, "a": 22}, "sort": {"_id": 1}, "limit": 3 }');
+                              document                               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "101" }, "a" : { "$numberInt" : "22" } }
+ { "_id" : { "$numberInt" : "104" }, "a" : { "$numberInt" : "22" } }
+ { "_id" : { "$numberInt" : "107" }, "a" : { "$numberInt" : "22" } }
+(3 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"_id": {"$gte": 100, "$lt": 120}, "a": 22}, "sort": {"_id": -1}, "limit": 3 }')
+$cmd$);
+                                                                                                                                                                                                                                                   run_explain_and_trim                                                                                                                                                                                                                                                   
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 63 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 63 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Limit (actual rows=3 loops=1)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+                     indexName: _id_
+                     ->  Index Scan Backward using _id_ on documents_964001_9640002 collection (actual rows=3 loops=1)
+                           Index Cond: ((shard_key_value = '964001'::bigint) AND (object_id OPERATOR(documentdb_core.>=) '{ "" : { "$numberInt" : "100" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberDouble" : "Infinity" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<) '{ "" : { "$numberInt" : "120" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.>=) '{ "" : { "$numberDouble" : "-Infinity" } }'::documentdb_core.bson))
+                           Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "22" } }'::documentdb_core.bson)
+                           Rows Removed by Filter: 4
+(14 rows)
+
+SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"_id": {"$gte": 100, "$lt": 120}, "a": 22}, "sort": {"_id": -1}, "limit": 3 }');
+                              document                               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "119" }, "a" : { "$numberInt" : "22" } }
+ { "_id" : { "$numberInt" : "116" }, "a" : { "$numberInt" : "22" } }
+ { "_id" : { "$numberInt" : "113" }, "a" : { "$numberInt" : "22" } }
+(3 rows)
+
+ROLLBACK;
+RESET citus.propagate_set_commands;
 -- create compound index on a and _id and filter on a and on _id
 SELECT documentdb_api_internal.create_indexes_non_concurrently('sort_pushdown', '{ "createIndexes": "coll", "indexes": [ { "key": { "a": 1, "_id": 1 }, "name": "a_id" }]}', true);
                                                                                                    create_indexes_non_concurrently                                                                                                    
@@ -316,9 +478,9 @@ $cmd$);
 
 reset documentdb.enableOrderByIdOnCostFunction;
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
-                                                                       get_feature_counter_pretty                                                                       
+                                                                                                   get_feature_counter_pretty                                                                                                   
 ---------------------------------------------------------------------
- {"Feature_usage":[{"query_operator_eq" : 5}, {"query_operator_gt" : 4}, {"query_operator_in" : 2}, {"limit" : 9}, {"match" : 11}, {"sort" : 11}, {"sort_by_id" : 11}]}
+ {"Feature_usage":[{"query_operator_eq" : 5}, {"query_operator_gt" : 4}, {"query_operator_gte" : 4}, {"query_operator_in" : 2}, {"query_operator_lt" : 4}, {"limit" : 19}, {"match" : 21}, {"sort" : 21}, {"sort_by_id" : 21}]}
 (1 row)
 
 BEGIN;

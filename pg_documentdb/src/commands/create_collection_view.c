@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * src/commands/create_collection_view.c
  *
@@ -27,6 +28,7 @@
 #include "utils/error_utils.h"
 #include "utils/feature_counter.h"
 #include "utils/version_utils.h"
+#include "collation/collation.h"
 
 /*
  * The parsed/processed specification for a
@@ -66,6 +68,9 @@ typedef struct CreateSpec
 
 	/* Whether or not the collection has stats enabled */
 	bool statsEnabled;
+
+	/* Non-simple collation document to store as the collection default. */
+	bson_value_t collation;
 } CreateSpec;
 
 static const StringView SystemPrefix = { .string = "system.", .length = 7 };
@@ -90,6 +95,7 @@ PG_FUNCTION_INFO_V1(command_create_collection_view);
 extern bool EnableSchemaValidation;
 extern bool EnablePreImages;
 extern bool SkipFailOnCollation;
+extern bool EnableCollationWithCreateCollection;
 
 /*
  * command_create_collection_view represents the wire
@@ -133,7 +139,32 @@ command_create_collection_view(PG_FUNCTION_ARGS)
 		/* It's a collection: create it */
 		ReportFeatureUsage(FEATURE_COMMAND_CREATE_COLLECTION);
 		bool canUseLibPq = false;
-		CreateCollection(databaseDatum, createDatum, canUseLibPq);
+		bool created;
+		if (createDefinition->collation.value_type != BSON_TYPE_EOD)
+		{
+			pgbson_writer writer;
+			PgbsonWriterInit(&writer);
+			PgbsonWriterAppendValue(&writer, "collation", 9,
+									&createDefinition->collation);
+			created = CreateCollectionWithOptions(databaseDatum, createDatum,
+												  PgbsonWriterGetPgbson(&writer));
+		}
+		else
+		{
+			created = CreateCollection(databaseDatum, createDatum, canUseLibPq);
+		}
+		if (!created)
+		{
+			/* Recheck a concurrent winner's options before accepting a no-op. */
+			collection = GetMongoCollectionOrViewByNameDatum(databaseDatum, createDatum,
+															 AccessShareLock);
+			if (collection == NULL)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+								errmsg("Collection not found after creation")));
+			}
+			ValidateCollectionOptionsEquivalent(createDefinition, collection);
+		}
 
 		if (hasSchemaValidationSpec)
 		{
@@ -312,6 +343,7 @@ ParseCreateSpec(Datum *databaseDatum, pgbson *createSpec, bool *hasSchemaValidat
 	PgbsonInitIterator(createSpec, &createIter);
 
 	CreateSpec *spec = palloc0(sizeof(CreateSpec));
+	bool hasExplicitCollation = false;
 	while (bson_iter_next(&createIter))
 	{
 		const char *key = bson_iter_key(&createIter);
@@ -457,7 +489,21 @@ ParseCreateSpec(Datum *databaseDatum, pgbson *createSpec, bool *hasSchemaValidat
 		else if (strcmp(key, "collation") == 0)
 		{
 			ReportFeatureUsage(FEATURE_COLLATION_CREATE_COLLECTION);
-			if (!SkipFailOnCollation)
+			if (EnableCollation && EnableCollationWithCreateCollection &&
+				IsClusterVersionAtleast(DocDB_V1, 3, 0))
+			{
+				EnsureTopLevelFieldType("collation", &createIter, BSON_TYPE_DOCUMENT);
+				const bson_value_t *value = bson_iter_value(&createIter);
+				char collationString[MAX_ICU_COLLATION_LENGTH] = { 0 };
+				ParseAndGetCollationString(value, collationString);
+				hasExplicitCollation = true;
+				spec->collation.value_type = BSON_TYPE_EOD;
+				if (IsCollationValid(collationString))
+				{
+					spec->collation = *value;
+				}
+			}
+			else if (!SkipFailOnCollation)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
 								errmsg(
@@ -513,6 +559,11 @@ ParseCreateSpec(Datum *databaseDatum, pgbson *createSpec, bool *hasSchemaValidat
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
 						errmsg("'viewOn' and 'idIndex' cannot both be specified")));
+	}
+	if (spec->viewOn != NULL && hasExplicitCollation)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+						errmsg("Collation is not supported for views")));
 	}
 
 	if (*hasSchemaValidationSpec)
@@ -700,6 +751,23 @@ ValidateCollectionOptionsEquivalent(CreateSpec *createDefinition,
 								collection->name.databaseName,
 								collection->name.collectionName,
 								PgbsonToJsonForLogging(collection->viewDefinition))));
+		}
+	}
+
+	if (EnableCollation)
+	{
+		char collationString[MAX_ICU_COLLATION_LENGTH] = { 0 };
+		if (createDefinition->collation.value_type != BSON_TYPE_EOD)
+		{
+			ParseAndGetCollationString(&createDefinition->collation, collationString);
+		}
+		if (strcmp(collationString, collection->options.collationString) != 0)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_NAMESPACEEXISTS),
+							errmsg(
+								"Namespace %s.%s already exists with a different collation",
+								collection->name.databaseName,
+								collection->name.collectionName)));
 		}
 	}
 
@@ -1043,7 +1111,12 @@ CheckForViewCyclesAndDepth(Datum databaseDatum, const char *viewName, const
 		}
 		else
 		{
-			/* Found a base collection - stop */
+			if (collection->options.collationString[0] != '\0')
+			{
+				ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+								errmsg(
+									"Views referencing a collection with a non-simple default collation are not supported")));
+			}
 			break;
 		}
 	}

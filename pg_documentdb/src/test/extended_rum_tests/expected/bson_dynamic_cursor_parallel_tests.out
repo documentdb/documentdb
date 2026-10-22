@@ -1,3 +1,5 @@
+-- Copyright (c) DocumentDB contributors
+-- SPDX-License-Identifier: MIT
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documentdb_api_internal;
 SET documentdb.next_collection_id TO 92000;
 SET documentdb.next_collection_index_id TO 92000;
@@ -5,6 +7,8 @@ SET documentdb.next_collection_index_id TO 92000;
 -- decision this test exercises.
 SET documentdb.enableDynamicCursors TO on;
 SET documentdb.enable_dynamic_cursor_parallel_plans TO on;
+SET documentdb.enablePerCollectionPlannerStatistics TO on;
+SET documentdb.enablePlannerStatisticsNewCollections TO on;
 -- Report whether the drained persisted cursor plan used a parallel scan in the
 -- continuation document (test-only signal; avoids relying on EXPLAIN).
 SET documentdb.reportParallelPlanInCursorContinuation TO on;
@@ -179,6 +183,9 @@ SET documentdb.enable_dynamic_cursor_parallel_plans TO on;
 -- scan, producing a Gather Merge costed with zero workers that crashed the
 -- backend during planning.
 -- ===========================================================================
+-- Keep text-query parallel-path rejection independent of the statistics guard.
+SET documentdb.enablePerCollectionPlannerStatistics TO off;
+SET documentdb.enable_skip_parallel_plans_without_stats TO off;
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'parallel_cursor_db',
     '{ "createIndexes": "pcoll", "indexes": [ { "key": { "t": "text" }, "name": "t_text" } ] }', TRUE);

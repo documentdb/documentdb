@@ -5,21 +5,48 @@ SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 SET documentdb.next_collection_id TO 3100;
 SET documentdb.next_collection_index_id TO 3100;
 SET documentdb_core.enableCollation TO on;
+SET documentdb.enable_collation_with_create_collection TO on;
 SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET documentdb.enable_collated_unique_indexes TO on;
+SET documentdb.enable_composite_unique_optional_key TO on;
 SET documentdb.defaultUseCompositeOpClass TO on;
 SET documentdb.enableExtendedExplainPlans TO on;
-SELECT documentdb_api.create_collection(
-    'collation_collection_ordering_db', 'count_values');
+SET documentdb.use_pg_stats_live_tuples_for_count TO off;
+SELECT documentdb_api.create_collection_with_options(
+    'collation_collection_ordering_db', 'count_values',
+    '{"collation":{"locale":"fr","strength":1}}');
 NOTICE:  creating collection
- create_collection 
--------------------
+ create_collection_with_options 
+--------------------------------
  t
 (1 row)
 
-UPDATE documentdb_api_catalog.collections
-SET options = '{ "collation": { "locale": "fr", "strength": 1 } }'::bson
+SELECT 'documentdb_data.documents_' || collection_id AS ordering_table
+FROM documentdb_api_catalog.collections
 WHERE database_name = 'collation_collection_ordering_db'
-  AND collection_name = 'count_values';
+  AND collection_name = 'count_values' \gset
+\d :ordering_table
+          Table "documentdb_data.documents_3101"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_3101" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_3101" EXCLUDE USING documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "_id" ]', tl='2691', cl='fr-u-ks-level1') WITH =?=, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "_id" : { "$numberInt" : "1" } }'::bson, false, true, 'fr-u-ks-level1'::text) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops (cmp='true', optsk='3101') WITH OPERATOR(documentdb_api_internal.=#=))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '3101'::bigint)
+
+-- The binary primary key and collated backing are one logical _id_ index.
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_collection_ordering_db',
+    '{"aggregate":"count_values","pipeline":[{"$collStats":{"count":{},"storageStats":{}}},{"$project":{"_id":0,"count":1,"logical_indexes":"$storageStats.nindexes","index_size_entries":{"$size":{"$objectToArray":"$storageStats.indexSizes"}}}}]}');
+                                                            document                                                             
+---------------------------------------------------------------------------------------------------------------------------------
+ { "count" : { "$numberInt" : "0" }, "logical_indexes" : { "$numberInt" : "1" }, "index_size_entries" : { "$numberInt" : "1" } }
+(1 row)
+
 SELECT COUNT(documentdb_api.insert_one(
     'collation_collection_ordering_db',
     'count_values',
@@ -33,6 +60,14 @@ FROM (VALUES
  count 
 -------
      4
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_collection_ordering_db',
+    '{"aggregate":"count_values","pipeline":[{"$collStats":{"count":{},"storageStats":{}}},{"$project":{"_id":0,"count":1,"logical_indexes":"$storageStats.nindexes","index_size_entries":{"$size":{"$objectToArray":"$storageStats.indexSizes"}},"id_index_has_storage":{"$gt":["$storageStats.indexSizes._id_",0]}}}]}');
+                                                                            document                                                                            
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "count" : { "$numberInt" : "4" }, "logical_indexes" : { "$numberInt" : "1" }, "index_size_entries" : { "$numberInt" : "1" }, "id_index_has_storage" : true }
 (1 row)
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
@@ -64,6 +99,30 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
                                                                                                    create_indexes_non_concurrently                                                                                                    
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+\d :ordering_table
+          Table "documentdb_data.documents_3101"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_3101" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_3101" EXCLUDE USING documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "_id" ]', tl='2691', cl='fr-u-ks-level1') WITH =?=, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "_id" : { "$numberInt" : "1" } }'::bson, false, true, 'fr-u-ks-level1'::text) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops (cmp='true', optsk='3101') WITH OPERATOR(documentdb_api_internal.=#=))
+    "documents_rum_index_3102" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "value" ]', tl='2691', cl='fr-u-ks-level1'))
+    "documents_rum_index_3103" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "value" ]', tl='2691', cl='fr-u-ks-level2'))
+    "documents_rum_index_3104" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "value" ]', tl='2691'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '3101'::bigint)
+
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_collection_ordering_db',
+    '{"aggregate":"count_values","pipeline":[{"$collStats":{"count":{},"storageStats":{}}},{"$project":{"_id":0,"count":1,"logical_indexes":"$storageStats.nindexes","index_size_entries":{"$size":{"$objectToArray":"$storageStats.indexSizes"}},"id_index_has_storage":{"$gt":["$storageStats.indexSizes._id_",0]}}}]}');
+                                                                            document                                                                            
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "count" : { "$numberInt" : "4" }, "logical_indexes" : { "$numberInt" : "4" }, "index_size_entries" : { "$numberInt" : "4" }, "id_index_has_storage" : true }
 (1 row)
 
 SET enable_seqscan TO off;
@@ -210,11 +269,64 @@ SELECT document FROM documentdb_api.count_query(
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
+CALL documentdb_api.drop_indexes('collation_collection_ordering_db',
+    '{"dropIndexes":"count_values","index":"idx_value_simple"}');
+                          retval                          
+----------------------------------------------------------
+ { "ok" : true, "nIndexesWas" : { "$numberLong" : "4" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_collection_ordering_db',
+    '{"aggregate":"count_values","pipeline":[{"$collStats":{"count":{},"storageStats":{}}},{"$project":{"_id":0,"count":1,"logical_indexes":"$storageStats.nindexes","index_size_entries":{"$size":{"$objectToArray":"$storageStats.indexSizes"}}}}]}');
+                                                            document                                                             
+---------------------------------------------------------------------------------------------------------------------------------
+ { "count" : { "$numberInt" : "4" }, "logical_indexes" : { "$numberInt" : "3" }, "index_size_entries" : { "$numberInt" : "3" } }
+(1 row)
+
+-- A simple-collation control needs only the binary primary key.
+SELECT documentdb_api.create_collection_with_options(
+    'collation_collection_ordering_db', 'simple_control',
+    '{"collation":{"locale":"simple"}}');
+NOTICE:  creating collection
+ create_collection_with_options 
+--------------------------------
+ t
+(1 row)
+
+SELECT 'documentdb_data.documents_' || collection_id AS simple_table
+FROM documentdb_api_catalog.collections
+WHERE database_name = 'collation_collection_ordering_db'
+  AND collection_name = 'simple_control' \gset
+\d :simple_table
+          Table "documentdb_data.documents_3102"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_3102" PRIMARY KEY, btree (shard_key_value, object_id)
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '3102'::bigint)
+
+SELECT document FROM bson_aggregation_pipeline(
+    'collation_collection_ordering_db',
+    '{"aggregate":"simple_control","pipeline":[{"$collStats":{"count":{},"storageStats":{}}},{"$project":{"_id":0,"count":1,"logical_indexes":"$storageStats.nindexes","index_size_entries":{"$size":{"$objectToArray":"$storageStats.indexSizes"}}}}]}');
+                                                            document                                                             
+---------------------------------------------------------------------------------------------------------------------------------
+ { "count" : { "$numberInt" : "0" }, "logical_indexes" : { "$numberInt" : "1" }, "index_size_entries" : { "$numberInt" : "1" } }
+(1 row)
+
+RESET documentdb.use_pg_stats_live_tuples_for_count;
 RESET documentdb.forceIndexOnlyScanIfAvailable;
 RESET enable_bitmapscan;
 RESET enable_seqscan;
 RESET documentdb.enableExtendedExplainPlans;
 RESET documentdb.defaultUseCompositeOpClass;
+RESET documentdb.enable_composite_unique_optional_key;
+RESET documentdb.enable_collated_unique_indexes;
 RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
+RESET documentdb.enable_collation_with_create_collection;
 RESET documentdb_core.enableCollation;
 RESET search_path;

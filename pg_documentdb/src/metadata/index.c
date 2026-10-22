@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * src/metadata/index.c
  *
@@ -47,11 +48,11 @@
 #include "utils/error_utils.h"
 #include "index_am/index_am_extend_create.h"
 #include "metadata/collection.h"
+#include "collation/collation.h"
 
 extern int MaxNumActiveUsersIndexBuilds;
 extern int IndexBuildScheduleInSec;
 extern bool EmitEnableOrderedIndexFalseInResponse;
-extern bool SkipLegacyIdIndexStatsCheck;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -1295,6 +1296,33 @@ MakeIndexSpecForBuiltinIdIndex(void)
 	};
 
 	return idIndexSpec;
+}
+
+
+/*
+ * Identify _id_ with a stored non-simple collation, regardless of runtime flags.
+ * Existing collated backings must remain recognizable when those flags are off.
+ */
+bool
+IsCollatedBuiltinIdIndex(const IndexSpec *indexSpec)
+{
+	if (strcmp(indexSpec->indexName, ID_INDEX_NAME) != 0 ||
+		indexSpec->indexOptions == NULL)
+	{
+		return false;
+	}
+
+	bson_iter_t iter;
+	PgbsonInitIterator(indexSpec->indexOptions, &iter);
+	if (!bson_iter_find(&iter, "collation"))
+	{
+		return false;
+	}
+
+	char collationString[MAX_ICU_COLLATION_LENGTH] = { 0 };
+	ParseAndGetCollationString(bson_iter_value(&iter), collationString);
+
+	return IsCollationValid(collationString);
 }
 
 
@@ -2762,6 +2790,12 @@ SerializeIndexSpec(const IndexSpec *indexSpec, bool isGetIndexes,
 				}
 				else if (IsOptionsKeyOrderedIndex(keyView.string))
 				{
+					if (IsCollatedBuiltinIdIndex(indexSpec))
+					{
+						/* Ordered storage is a backing detail, not a public _id_ option. */
+						continue;
+					}
+
 					/* TODO: We should just write this if the value is != ShouldUseCompositeOpClassByDefault
 					 * but we're leaving it here during the transition period of this being enabled by default in
 					 * some cases.*/
@@ -3090,61 +3124,19 @@ GetOptionsEquivalencyFromIndexOptions(HTAB *bsonElementHash,
 
 
 /*
- * Checks if a collection has extended stats enabled. We do this by checking the index option
- * for the primary key index in the index catalog.
+ * Checks whether planner statistics are enabled in the collection options.
  */
 bool
 CollectionHasStatisticsEnabled(uint64 collectionId)
 {
-	/* Check the cached collection options, which are the source of truth for
-	 * whether planner statistics are enabled for a collection.
-	 */
 	MongoCollection *collection = GetMongoCollectionByColId(collectionId, NoLock);
 
-	/* Return false if the collection is not found, let the caller handle non existent collections. */
 	if (collection == NULL)
 	{
 		return false;
 	}
 
-	if (collection->options.statsEnabled)
-	{
-		return true;
-	}
-
-	/*
-	 * Legacy fallback: older collections tracked stats via the _id_ index
-	 * options before the collections.options column was used. Skipping this
-	 * check is the default because querying the index catalog here runs
-	 * index_build_is_in_progress against the index queue, which cannot be
-	 * executed from within a nested distributed context (e.g. shard_collection).
-	 * This fallback is retained only for backward compatibility and will be
-	 * retired.
-	 */
-	if (SkipLegacyIdIndexStatsCheck)
-	{
-		return false;
-	}
-
-	IndexDetails *details = IndexNameGetIndexDetails(collectionId, "_id_");
-	if (details == NULL)
-	{
-		return false;
-	}
-
-	pgbson *indexOptions = details->indexSpec.indexOptions;
-	if (indexOptions == NULL)
-	{
-		return false;
-	}
-
-	bson_iter_t iter;
-	if (!PgbsonInitIteratorAtPath(indexOptions, "statsEnabled", &iter))
-	{
-		return false;
-	}
-
-	return bson_iter_as_bool(&iter);
+	return collection->options.statsEnabled;
 }
 
 

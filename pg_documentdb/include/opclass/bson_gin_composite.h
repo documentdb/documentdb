@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * include/opclass/bson_gin_composite.h
  *
@@ -13,9 +14,18 @@
 
 #include <nodes/primnodes.h>
 
-Datum * GenerateCompositeTermsFromIndexSpec(pgbson *document, pgbson *keySpec,
-											uint32_t *numTerms,
-											const StringView *collationStringView);
+#include "opclass/bson_gin_index_mgmt.h"
+
+typedef struct CompositeTermGenerationState CompositeTermGenerationState;
+
+BsonGinCompositePathOptions * BuildCompositeOptionsFromIndexSpec(pgbson *keySpec, const
+																 StringView *
+																 collationStringView);
+CompositeTermGenerationState * PrepareCompositeTermGeneration(
+	BsonGinCompositePathOptions *options);
+Datum * GenerateCompositeTermsFromOptions(pgbson *document,
+										  CompositeTermGenerationState *state,
+										  uint32_t *numTerms);
 
 bool CompositeIndexExprCanRequireRuntimeRecheck(Expr *expr);
 

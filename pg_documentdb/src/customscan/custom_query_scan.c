@@ -11,6 +11,8 @@
  */
 
 #include <postgres.h>
+#include <commands/vacuum.h>
+#include <math.h>
 #include <fmgr.h>
 #include <utils/lsyscache.h>
 #include <nodes/extensible.h>
@@ -41,6 +43,7 @@
 #include "vector/vector_common.h"
 #include "vector/vector_spec.h"
 #include "utils/documentdb_errors.h"
+#include "utils/feature_counter.h"
 #include "customscan/bson_custom_scan_private.h"
 
 
@@ -135,6 +138,15 @@ static List * AddCustomPathForVectorCore(PlannerInfo *info, List *pathList,
 										 RelOptInfo *rel,
 										 InputQueryState *queryState, bool
 										 failIfNotFound);
+
+static VectorSearchFilterMode GetSearchParamFilterMode(pgbson *searchParamBson);
+static bool IsBsonSearchParamRestrictInfo(RestrictInfo *rinfo);
+static List * FilterOutBsonSearchParamRestrictInfo(List *restrictInfoList);
+static List * GetBaseRestrictInfoExcludingSearchParam(RelOptInfo *rel);
+static void StripSearchParamFromRestrictInfoSources(RelOptInfo *rel, List *
+													survivingPaths);
+static double GetVectorPreFilterSelectivity(PlannerInfo *root, RelOptInfo *rel);
+static VectorSearchFilterMode ResolveAutoSelectFilterMode(double filterSelectivity);
 
 /* --------------------------------------------------------- */
 /* Top level exports */
@@ -341,6 +353,7 @@ AddCustomPathForVectorCore(PlannerInfo *planner, List *pathList, RelOptInfo *rel
 	ListCell *cell;
 
 	Path *vectorSearchPath = NULL;
+	List *nonVectorPaths = NIL;
 
 	/* Find the vector search path */
 	foreach(cell, pathList)
@@ -355,9 +368,20 @@ AddCustomPathForVectorCore(PlannerInfo *planner, List *pathList, RelOptInfo *rel
 				indexPath->indexinfo->relam);
 			if (indexDef != NULL)
 			{
-				vectorSearchPath = inputPath;
-				break;
+				/* Choose the first vector search path */
+				if (vectorSearchPath == NULL)
+				{
+					vectorSearchPath = inputPath;
+				}
 			}
+			else
+			{
+				nonVectorPaths = lappend(nonVectorPaths, inputPath);
+			}
+		}
+		else
+		{
+			nonVectorPaths = lappend(nonVectorPaths, inputPath);
 		}
 	}
 
@@ -380,7 +404,61 @@ AddCustomPathForVectorCore(PlannerInfo *planner, List *pathList, RelOptInfo *rel
 		searchBson = DatumGetPgBson(queryState->querySearchData.SearchParamBson);
 	}
 
-	/* For normal vector search, if the search param is not specified, searchBson will be NULL
+	/*
+	 * The resolved filterMode for this query, the 'filterMode' key in the
+	 * searchParamBson is set in the parsing stage.
+	 * Defaults to Approximate (the legacy, always-force-the-vector-index behavior) whenever the user did not
+	 * explicitly request a planning-relevant mode - i.e. searchBson has no
+	 * 'filterMode' key.
+	 */
+	VectorSearchFilterMode filterMode = GetSearchParamFilterMode(searchBson);
+
+	if (filterMode == VectorSearchFilterMode_AutoSelect)
+	{
+		/*
+		 * Compare the filter selectivity directly with the configured threshold.
+		 */
+		double filterSelectivity = GetVectorPreFilterSelectivity(planner, rel);
+		filterMode = ResolveAutoSelectFilterMode(filterSelectivity);
+	}
+
+	if (filterMode == VectorSearchFilterMode_Exact)
+	{
+		/*
+		 * Exclude the vector index candidate entirely. The ORDER BY vector
+		 * distance expression is still evaluated (via the plain similarity
+		 * operator, outside of the vector opclass), so the upper planner
+		 * adds an explicit Sort + Limit over whichever remaining candidate
+		 * path (a regular filter index scan, or a plain SeqScan) it picks.
+		 */
+		if (nonVectorPaths == NIL)
+		{
+			if (!failIfNotFound)
+			{
+				return NIL;
+			}
+
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"filterMode 'exact' requires an alternative index or scan path for the filter, but none was found.")));
+		}
+
+		/*
+		 * bson_search_param() only exists to carry index search parameters
+		 * (e.g. efSearch/nProbes) to the vector custom scan's executor hook
+		 * (see ExtensionQueryScanBeginCustomScan), which we're not building
+		 * in this mode.
+		 * The vector-null-check clause (bson_extract_vector(...) IS NOT NULL) is intentionally left in
+		 * place
+		 */
+		StripSearchParamFromRestrictInfoSources(rel, nonVectorPaths);
+
+		return nonVectorPaths;
+	}
+
+	/* For normal vector search, always-force-the-vector-index
+	 * Or for filterMode == VectorSearchFilterMode_Approximate
+	 * if the search param is not specified, searchBson will be NULL
 	 * For filtering vector search, if the search param is not specified, searchBson contains the iterative param
 	 * We let index specific handler to decide if the default search param is needed or not
 	 */
@@ -440,6 +518,239 @@ AddCustomPathForVectorCore(PlannerInfo *planner, List *pathList, RelOptInfo *rel
 	customPath->custom_private = list_make1(queryState);
 
 	return list_make1(customPath);
+}
+
+
+/*
+ * Returns the resolved VectorSearchFilterMode stamped onto the given search
+ * param bson (see SetPreFilterSearchParams in bson_aggregation_search.c).
+ * Returns VectorSearchFilterMode_Approximate (the legacy, always-force-the-
+ * vector-index default) if searchParamBson is NULL, or doesn't carry a
+ * recognized 'filterMode' key - the key is stamped whenever the user
+ * explicitly requested any mode ('approximate', 'exact', or
+ * 'autoSelect'); it is absent only when 'filterMode' was omitted.
+ */
+static VectorSearchFilterMode
+GetSearchParamFilterMode(pgbson *searchParamBson)
+{
+	if (searchParamBson == NULL)
+	{
+		return VectorSearchFilterMode_Approximate;
+	}
+
+	bson_iter_t iter;
+	PgbsonInitIterator(searchParamBson, &iter);
+	if (!bson_iter_find(&iter, VECTOR_PARAMETER_NAME_FILTER_MODE) ||
+		!BSON_ITER_HOLDS_INT32(&iter))
+	{
+		return VectorSearchFilterMode_Approximate;
+	}
+
+	switch (bson_iter_int32(&iter))
+	{
+		case VectorSearchFilterMode_Exact:
+		{
+			return VectorSearchFilterMode_Exact;
+		}
+
+		case VectorSearchFilterMode_AutoSelect:
+		{
+			return VectorSearchFilterMode_AutoSelect;
+		}
+
+		case VectorSearchFilterMode_Approximate:
+		default:
+		{
+			return VectorSearchFilterMode_Approximate;
+		}
+	}
+}
+
+
+/*
+ * Returns true if the given RestrictInfo's clause is the synthetic
+ * bson_search_param() marker added by the query builder (see
+ * AddSearchParamFunctionToQuery in bson_aggregation_search.c). It always
+ * evaluates to true at runtime - it exists only to carry index search
+ * parameters (e.g. efSearch/nProbes) across the query-build/plan boundary,
+ * not to filter anything.
+ */
+static bool
+IsBsonSearchParamRestrictInfo(RestrictInfo *rinfo)
+{
+	/* bson_search_param() marker */
+	if (IsA(rinfo->clause, FuncExpr))
+	{
+		if (((FuncExpr *) rinfo->clause)->funcid == ApiBsonSearchParamFunctionId())
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+
+static bool
+IsBsonExtractVectorRestrictInfo(RestrictInfo *rinfo)
+{
+	/* bson_extract_vector(document, 'path') IS NOT NULL */
+	if (IsA(rinfo->clause, NullTest))
+	{
+		Expr *testFunc = ((NullTest *) rinfo->clause)->arg;
+		if (IsA(testFunc, FuncExpr) &&
+			((FuncExpr *) testFunc)->funcid == ApiCatalogBsonExtractVectorFunctionId())
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+
+/*
+ * Returns a copy of the given RestrictInfo list with the synthetic
+ * bson_search_param() marker clause (see IsBsonSearchParamRestrictInfo)
+ * excluded.
+ */
+static List *
+FilterOutBsonSearchParamRestrictInfo(List *restrictInfoList)
+{
+	List *filteredQuals = NIL;
+	ListCell *cell;
+	foreach(cell, restrictInfoList)
+	{
+		RestrictInfo *rinfo = lfirst_node(RestrictInfo, cell);
+		if (!IsBsonSearchParamRestrictInfo(rinfo))
+		{
+			filteredQuals = lappend(filteredQuals, rinfo);
+		}
+	}
+
+	return filteredQuals;
+}
+
+
+/*
+ * Returns a copy of rel->baserestrictinfo excluding the
+ * bson_search_param() marker clause and the bson_extract_vector() NULL-test clause
+ */
+static List *
+GetBaseRestrictInfoExcludingSearchParam(RelOptInfo *rel)
+{
+	List *restrictInfoList = rel->baserestrictinfo;
+	List *filteredQuals = NIL;
+	ListCell *cell;
+	foreach(cell, restrictInfoList)
+	{
+		RestrictInfo *rinfo = lfirst_node(RestrictInfo, cell);
+		if (!IsBsonSearchParamRestrictInfo(rinfo) &&
+			!IsBsonExtractVectorRestrictInfo(rinfo))
+		{
+			filteredQuals = lappend(filteredQuals, rinfo);
+		}
+	}
+
+	return filteredQuals;
+}
+
+
+/*
+ * Strips the synthetic bson_search_param() marker clause (see
+ * IsBsonSearchParamRestrictInfo) from both rel->baserestrictinfo and, for
+ * every surviving IndexPath, IndexOptInfo->indrestrictinfo.
+ *
+ * indrestrictinfo is a separate, earlier-computed cache of the relation's
+ * restriction clauses (populated once per index at get_relation_info /
+ * check_index_predicates time, well before this pathlist hook runs) that
+ * create_indexscan_plan() actually consults to derive an IndexScan's
+ * residual Filter list - it is not re-derived from rel->baserestrictinfo at
+ * plan-creation time. Mutating only rel->baserestrictinfo is therefore not
+ * enough to keep bson_search_param() out of the final plan's Filter; both
+ * copies need to be kept in sync once the vector custom scan that would
+ * have consumed the marker is no longer being built.
+ */
+static void
+StripSearchParamFromRestrictInfoSources(RelOptInfo *rel, List *survivingPaths)
+{
+	rel->baserestrictinfo = FilterOutBsonSearchParamRestrictInfo(
+		rel->baserestrictinfo);
+
+	ListCell *pathCell;
+	foreach(pathCell, survivingPaths)
+	{
+		Path *survivingPath = lfirst(pathCell);
+		if (IsA(survivingPath, IndexPath))
+		{
+			IndexOptInfo *indexInfo = ((IndexPath *) survivingPath)->indexinfo;
+			indexInfo->indrestrictinfo = FilterOutBsonSearchParamRestrictInfo(
+				indexInfo->indrestrictinfo);
+		}
+	}
+}
+
+
+/*
+ * Computes the selectivity of the relation's filter quals to decide between
+ * the vector-index and filter-index paths for filterMode 'autoSelect'.
+ * Excludes the synthetic bson_search_param()
+ * marker clause, whose generic default selectivity guess would distort the
+ * estimate.
+ *
+ * Without per-collection statistics the estimate falls back to Postgres's
+ * default selectivity guesses, so the 'autoSelect' path choice can vary by
+ * environment.
+ */
+static double
+GetVectorPreFilterSelectivity(PlannerInfo *root, RelOptInfo *rel)
+{
+	List *filterQuals = GetBaseRestrictInfoExcludingSearchParam(rel);
+
+	if (filterQuals == NIL)
+	{
+		return 1.0;
+	}
+
+	return clauselist_selectivity(root, filterQuals, 0, JOIN_INNER, NULL);
+}
+
+
+/*
+ * Resolves filterMode 'autoSelect' using only the estimated filter selectivity.
+ * Equality stays on the exact filter path.
+ */
+static VectorSearchFilterMode
+ResolveAutoSelectFilterMode(double filterSelectivity)
+{
+	/* Below one estimated histogram bucket, highly selective filters cannot be
+	 * reliably distinguished. Allowing a lower GUC to bypass this floor would
+	 * route unresolved estimates to the vector path. This is a resolution proxy,
+	 * not the actual histogram size or a guarantee for every predicate.
+	 */
+	double estimatedSelectivityFloor = 1.0 / Max(default_statistics_target, 1);
+	double effectiveSelectivityThreshold = Max(estimatedSelectivityFloor,
+											   VectorAutoFilterSelectivityThreshold);
+	bool useApproximate = filterSelectivity > effectiveSelectivityThreshold;
+
+	/* Log the decision for the autoSelect mode */
+	ereport(LOG, (errmsg(
+					  "filterMode 'autoSelect' chose %s: filterSelectivity=%g "
+					  "filterSelectivityThreshold=%g estimatedSelectivityFloor=%g",
+					  useApproximate ? "approximate" : "exact",
+					  filterSelectivity, VectorAutoFilterSelectivityThreshold,
+					  estimatedSelectivityFloor)));
+
+	if (useApproximate)
+	{
+		ReportFeatureUsage(FEATURE_STAGE_SEARCH_VECTOR_PRE_FILTER_AUTOSELECT_VECTOR);
+		return VectorSearchFilterMode_Approximate;
+	}
+	else
+	{
+		ReportFeatureUsage(FEATURE_STAGE_SEARCH_VECTOR_PRE_FILTER_AUTOSELECT_FILTER);
+		return VectorSearchFilterMode_Exact;
+	}
 }
 
 

@@ -114,6 +114,8 @@ SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM
 ROLLBACK;
 
 -- Test 6: Truncated index terms preserve two collation equivalence classes.
+SET documentdb.fail_on_collated_index_term_truncation TO off;
+
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
   'db',
   '{ "createIndexes": "dist_collation_truncated", "indexes": [ { "key": { "value": 1 }, "name": "idx_value_en_s1_truncated", "collation": { "locale": "en", "strength": 1 } } ] }',
@@ -144,6 +146,8 @@ WITH result AS (
 )
 SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
 ROLLBACK;
+
+RESET documentdb.fail_on_collated_index_term_truncation;
 
 -- Test 7: A multikey collated index falls back to sorting unwound array values.
 SELECT documentdb_api_internal.create_indexes_non_concurrently(

@@ -1,3 +1,6 @@
+-- Copyright (c) Microsoft Corporation.
+-- SPDX-License-Identifier: MIT
+
 -- tests specific to pushing down to the right index the $sort
 -- at the moment $sort is not pushed down to index unless it is a $sort on the _id field
 -- on an unsharded collection or we have a shard key filter and all the filters can be pushed to the _id index.
@@ -64,6 +67,49 @@ SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$eq": 22}}, "sort": {"_id": 1}, "limit": 20 }')
 $cmd$);
+
+-- Exercise ordered paths without either cost-time ordering shortcut.
+SET citus.propagate_set_commands TO 'local';
+BEGIN;
+SET LOCAL documentdb.enableOrderByIdOnCostFunction TO off;
+SET LOCAL documentdb.enable_order_by_id_on_cost_function_with_stats TO off;
+SET LOCAL documentdb.enable_btree_order_by_with_filters TO on;
+SET LOCAL documentdb.enable_support_function_id_pushdown TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.enableExplainScanIndexCosts TO off;
+
+-- No-filter sorts must not rely on cost-time ordering.
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {}, "sort": {"_id": 1}, "limit": 3 }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {}, "sort": {"_id": 1}, "limit": 3 }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {}, "sort": {"_id": -1}, "limit": 3 }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {}, "sort": {"_id": -1}, "limit": 3 }');
+
+-- A residual-only filter leaves no indexable bounds to regenerate.
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": 22}, "sort": {"_id": 1}, "limit": 3 }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": 22}, "sort": {"_id": 1}, "limit": 3 }');
+
+-- Support-function bounds must survive while the residual filter is applied.
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"_id": {"$gte": 100, "$lt": 120}, "a": 22}, "sort": {"_id": 1}, "limit": 3 }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"_id": {"$gte": 100, "$lt": 120}, "a": 22}, "sort": {"_id": 1}, "limit": 3 }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"_id": {"$gte": 100, "$lt": 120}, "a": 22}, "sort": {"_id": -1}, "limit": 3 }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"_id": {"$gte": 100, "$lt": 120}, "a": 22}, "sort": {"_id": -1}, "limit": 3 }');
+ROLLBACK;
+RESET citus.propagate_set_commands;
 
 -- create compound index on a and _id and filter on a and on _id
 SELECT documentdb_api_internal.create_indexes_non_concurrently('sort_pushdown', '{ "createIndexes": "coll", "indexes": [ { "key": { "a": 1, "_id": 1 }, "name": "a_id" }]}', true);

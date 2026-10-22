@@ -426,13 +426,14 @@ class WiringTests(unittest.TestCase):
         message proves the value was accepted."""
         for value in ("false", "0", "no", "FALSE", "off"):
             with self.subTest(value=value):
-                env = dict(os.environ, CERT_PATH="/nope",
+                env = dict(os.environ, CERT_PATH="/nope", PASSWORD="test-pw",
                            DOCUMENTDB_USAGE_TELEMETRY=value)
                 env.pop("KEY_FILE", None)
                 r = subprocess.run(["bash", str(ENTRYPOINT)], env=env,
                                    stdin=subprocess.DEVNULL, capture_output=True,
                                    text=True, timeout=60)
                 self.assertNotIn("Invalid usage-telemetry", r.stdout + r.stderr)
+                self.assertIn("Both CERT_PATH and KEY_FILE must be set together", r.stderr)
 
 
 if __name__ == "__main__":

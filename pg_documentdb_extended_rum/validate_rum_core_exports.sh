@@ -23,9 +23,13 @@ expectedExports=(
 
 expectedPgExports=(
     documentdb_rum_get_meta_page_info
+    documentdb_rum_get_meta_page_info_index
     documentdb_rum_page_get_data_items
+    documentdb_rum_page_get_data_items_index
     documentdb_rum_page_get_entries
+    documentdb_rum_page_get_entries_index
     documentdb_rum_page_get_stats
+    documentdb_rum_page_get_stats_index
     documentdb_rum_prune_empty_entries_on_index
     documentdb_rum_repair_incomplete_split_on_index
     documentdb_rum_repair_revive_all_pages_and_tuples

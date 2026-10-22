@@ -18,6 +18,7 @@
 #include <utils/selfuncs.h>
 #include <parser/parsetree.h>
 #include <optimizer/pathnode.h>
+#include <optimizer/optimizer.h>
 #include <metadata/metadata_cache.h>
 #include <planner/mongo_query_operator.h>
 #include <query/bson_compare.h>
@@ -31,8 +32,11 @@
 #include "planner/selectivity.h"
 #include "opclass/bson_gin_composite_scan.h"
 #include "opclass/bson_gin_index_mgmt.h"
+#include "opclass/bson_gin_index_types_core.h"
 #include "aggregation/bson_query_common.h"
+#include "query/query_operator.h"
 #include "utils/docdb_make_funcs.h"
+#include "utils/hashset_utils.h"
 #include "utils/version_utils.h"
 #include "io/bson_traversal.h"
 #include "api_hooks.h"
@@ -41,8 +45,14 @@ extern bool EnablePerCollectionPlannerStatistics;
 extern bool EnableCompositeIndexPlanner;
 extern bool EnableIndexCorrelationFromStatistics;
 extern bool EnableLookupJoinSelectivityFromStats;
+extern bool EnableElemMatchSelectivityFromStats;
+extern bool EnableElemMatchSelectivityLowerBound;
 extern bool EnableArrayBsonStatsWithPlannerStatistics;
+extern bool EnableInGranularSelectivity;
 extern bool BsonStatsEnableArrayValueUnpack;
+extern int MaxInGranularSelectivityInputSizeBytes;
+extern bool EnableOrderByIdOnCostFunction;
+extern bool EnableOrderByIdOnCostFunctionWithStats;
 
 /* CODESYNC with system_configs.c */
 #define ARRAY_STATISTICS_MAX_SAMPLE_COUNT 128
@@ -66,6 +76,27 @@ static double GetStatisticsNoStatsData(List *args, Oid selectivityOpExpr, double
 
 static double GetDisableStatisticSelectivity(List *args, double
 											 defaultDisabledSelectivity);
+
+static Oid GetNativeStatsBtreeOperatorForIndexStrategy(BsonIndexStrategy strategy);
+
+static bool TryBuildElemMatchStatsClauses(List *clauses,
+										  const pgbsonelement *elemMatchElement,
+										  Node *documentExpr,
+										  Oid collation,
+										  List **statsClauses);
+
+static bool TryGetElemMatchSelectivity(PlannerInfo *planner,
+									   Node *documentExpr,
+									   const pgbsonelement *elemMatchElement,
+									   int varRelId, Oid collation,
+									   double *selectivity);
+
+static bool TryGetElemMatchIndexSelectivity(PlannerInfo *planner,
+											Node *documentExpr,
+											const pgbsonelement *elemMatchElement,
+											const DollarRangeParams *rangeParams,
+											int varRelId,
+											double *selectivity);
 
 static bool StatsProjectVisitTopLevelField(pgbsonelement *element, const
 										   StringView *traversePath,
@@ -202,6 +233,24 @@ IsBtreeBsonSelectivityFromStatsEnabledForRelation(PlannerInfo *planner,
 												   &isPerCollectionStatsEnabled);
 	return isPerCollectionStatsEnabled ||
 		   IsBtreeBsonSelectivityFromStatsEnabled();
+}
+
+
+bool
+ShouldEnableOrderByIdOnCostFunction(PlannerInfo *root, RelOptInfo *rel)
+{
+	if (EnableOrderByIdOnCostFunction)
+	{
+		return true;
+	}
+
+	if (EnableOrderByIdOnCostFunctionWithStats &&
+		IsBtreeBsonSelectivityFromStatsEnabledForRelation(root, rel))
+	{
+		return true;
+	}
+
+	return false;
 }
 
 
@@ -383,6 +432,150 @@ GetCustomStatisticsSelectivityForLookup(Oid funcExpr, List *funcArgs,
 }
 
 
+/*
+ * Estimate $in by combining the selectivity of each distinct array element.
+ * This follows PostgreSQL's scalararraysel() approach for "= ANY": maintain
+ * both an independence estimate and, for distinct equality values, a
+ * disjoint-probability sum. Prefer the disjoint sum when it is in [0, 1],
+ * otherwise retain the independence estimate. Regex elements use the regex
+ * operator's generic estimator and disable the disjoint assumption because
+ * regex matches can overlap literals or other regexes. $nin is the complement
+ * of the resulting $in estimate.
+ */
+static double
+GetDollarInCustomSelectivity(PlannerInfo *planner,
+							 Node *leftOperand,
+							 const bson_value_t *rightValue,
+							 Oid selectivityOpExpr,
+							 Oid collation,
+							 int varRelId,
+							 double defaultInputSelectivity,
+							 bool isNotIn)
+{
+	if (rightValue->value_type != BSON_TYPE_ARRAY)
+	{
+		ereport(ERROR, errmsg(
+					"Unexpected non-array value for $in/$nin during selectivity estimation."));
+	}
+
+	if (EnableInGranularSelectivity && ShouldEnableBsonStatsArrayValueUnpack() &&
+		rightValue->value.v_doc.data_len <=
+		(uint32_t) MaxInGranularSelectivityInputSizeBytes)
+	{
+		double selectivity = 0.0;
+
+		bson_iter_t arrayIter;
+		BsonValueInitIterator(rightValue, &arrayIter);
+
+		double disjointSelectivity = 0.0;
+		double perItemSelectivity = 0.0;
+		bool hasRegex = false;
+		Oid regexOperatorOid = InvalidOid;
+		int i = 0;
+		Const *inValueConst = NULL;
+
+		/* TODO: Collation needs to handle deduplication of values. */
+		HTAB *seenValues = CreateBsonValueHashSet();
+		List *args = NIL;
+		while (bson_iter_next(&arrayIter))
+		{
+			CHECK_FOR_INTERRUPTS();
+
+			const bson_value_t *inElement = bson_iter_value(&arrayIter);
+
+			bool found = false;
+			hash_search(seenValues, inElement, HASH_ENTER, &found);
+
+			if (found)
+			{
+				continue;
+			}
+
+			if (i == 0)
+			{
+				inValueConst = MakeBsonConst(BsonValueToDocumentPgbson(inElement));
+				args = list_make2(leftOperand, inValueConst);
+			}
+			else
+			{
+				inValueConst = lsecond(args);
+				pfree(DatumGetPointer(inValueConst->constvalue));
+				inValueConst->constvalue = PointerGetDatum(BsonValueToDocumentPgbson(
+															   inElement));
+			}
+
+			if (inElement->value_type == BSON_TYPE_REGEX)
+			{
+				if (!OidIsValid(regexOperatorOid))
+				{
+					const MongoIndexOperatorInfo *regexOperator =
+						GetMongoIndexOperatorInfoByOperatorType(QUERY_OPERATOR_REGEX);
+					regexOperatorOid = GetMongoQueryOperatorOid(regexOperator);
+				}
+
+				const double defaultPerItemRegexSelectivity = 0.0;
+				perItemSelectivity = generic_restriction_selectivity(
+					planner, regexOperatorOid, collation, args, varRelId,
+					defaultPerItemRegexSelectivity);
+				hasRegex = true;
+			}
+			else
+			{
+				perItemSelectivity = DatumGetFloat8(DirectFunctionCall4(eqsel,
+																		PointerGetDatum(
+																			planner),
+																		ObjectIdGetDatum(
+																			BsonEqualOperatorId()),
+																		PointerGetDatum(
+																			args),
+																		Int32GetDatum(
+																			varRelId)));
+			}
+
+			selectivity = selectivity + perItemSelectivity - selectivity *
+						  perItemSelectivity;
+			disjointSelectivity += perItemSelectivity;
+
+			i++;
+		}
+
+		if (!hasRegex &&
+			disjointSelectivity >= 0.0 && disjointSelectivity <= 1.0)
+		{
+			selectivity = disjointSelectivity;
+		}
+
+		if (isNotIn)
+		{
+			CLAMP_PROBABILITY(selectivity);
+			selectivity = 1.0 - selectivity;
+		}
+
+		if (inValueConst != NULL)
+		{
+			pfree(DatumGetPointer(inValueConst->constvalue));
+			pfree(inValueConst);
+		}
+
+		if (seenValues != NULL)
+		{
+			hash_destroy(seenValues);
+		}
+
+		list_free(args);
+		return selectivity;
+	}
+
+	List *args = list_make2(leftOperand, MakeBsonConst(BsonValueToDocumentPgbson(
+														   rightValue)));
+	double selectivity = generic_restriction_selectivity(planner, selectivityOpExpr,
+														 collation, args, varRelId,
+														 defaultInputSelectivity);
+	list_free(args);
+	return selectivity;
+}
+
+
 static double
 GetCustomStatisticsSelectivity(PlannerInfo *planner, BsonIndexStrategy
 							   indexStrategy, Oid selectivityOpExpr,
@@ -393,8 +586,6 @@ GetCustomStatisticsSelectivity(PlannerInfo *planner, BsonIndexStrategy
 	/*
 	 * TODO Selectivity:
 	 * REGEX: for regex with anchored prefix, we should use range selectivity. Calculate the gte and lte boundaries selectivity.
-	 * $IN/$NIN: for $in and $nin with small set of elements (i.e <= 20) we should consider using scalararray selectivity functions
-	 * (scalararraysel/scalararraynesel), or exploring what btree does for SAOP to have the best selectivity estimate.
 	 */
 
 	List *args = NIL;
@@ -499,6 +690,26 @@ GetCustomStatisticsSelectivity(PlannerInfo *planner, BsonIndexStrategy
 			break;
 		}
 
+		case BSON_INDEX_STRATEGY_DOLLAR_IN:
+		{
+			bool isNotIn = false;
+			selectivity = GetDollarInCustomSelectivity(planner, leftOperand, rightValue,
+													   selectivityOpExpr, collation,
+													   varRelId, defaultInputSelectivity,
+													   isNotIn);
+			break;
+		}
+
+		case BSON_INDEX_STRATEGY_DOLLAR_NOT_IN:
+		{
+			bool isNotIn = true;
+			selectivity = GetDollarInCustomSelectivity(planner, leftOperand, rightValue,
+													   selectivityOpExpr, collation,
+													   varRelId, defaultInputSelectivity,
+													   isNotIn);
+			break;
+		}
+
 		/* For all other cases use the default generic selectivity which clamps at 0.0001 selectivity. */
 		default:
 		{
@@ -519,6 +730,373 @@ GetCustomStatisticsSelectivity(PlannerInfo *planner, BsonIndexStrategy
 }
 
 
+/*
+ * TODO: Include query collation when native statistics comparisons support
+ * collation-aware values. Callers intentionally omit collation metadata.
+ */
+static Oid
+GetNativeStatsBtreeOperatorForIndexStrategy(BsonIndexStrategy strategy)
+{
+	switch (strategy)
+	{
+		case BSON_INDEX_STRATEGY_DOLLAR_EQUAL:
+		{
+			return BsonNativeStatsBtreeEqualOperatorId();
+		}
+
+		case BSON_INDEX_STRATEGY_DOLLAR_GREATER:
+		{
+			return BsonNativeStatsBtreeGreaterThanOperatorId();
+		}
+
+		case BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL:
+		{
+			return BsonNativeStatsBtreeGreaterThanEqualOperatorId();
+		}
+
+		case BSON_INDEX_STRATEGY_DOLLAR_LESS:
+		{
+			return BsonNativeStatsBtreeLessThanOperatorId();
+		}
+
+		case BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL:
+		{
+			return BsonNativeStatsBtreeLessThanEqualOperatorId();
+		}
+
+		default:
+		{
+			return InvalidOid;
+		}
+	}
+}
+
+
+/*
+ * Convert the query AST generated for an $elemMatch expression into clauses
+ * over bson_stats_project. Reject the whole estimate when any child cannot be
+ * represented so unsupported predicates continue to use the legacy fallback.
+ */
+static bool
+TryBuildElemMatchStatsClauses(List *clauses,
+							  const pgbsonelement *elemMatchElement,
+							  Node *documentExpr, Oid collation,
+							  List **statsClauses)
+{
+	CHECK_FOR_INTERRUPTS();
+	check_stack_depth();
+
+	ListCell *clauseCell;
+	foreach(clauseCell, clauses)
+	{
+		Node *clause = lfirst(clauseCell);
+		if (IsA(clause, BoolExpr))
+		{
+			BoolExpr *boolExpr = (BoolExpr *) clause;
+			if (boolExpr->boolop != AND_EXPR ||
+				!TryBuildElemMatchStatsClauses(boolExpr->args, elemMatchElement,
+											   documentExpr,
+											   collation, statsClauses))
+			{
+				return false;
+			}
+			continue;
+		}
+
+		List *operatorArgs = NIL;
+		const MongoQueryOperator *queryOperator =
+			GetMongoQueryOperatorFromExpr(clause, &operatorArgs);
+		if (!((queryOperator->operatorType >= QUERY_OPERATOR_EQ &&
+			   queryOperator->operatorType <= QUERY_OPERATOR_LTE) ||
+			  queryOperator->operatorType == QUERY_OPERATOR_REGEX) ||
+			list_length(operatorArgs) != 2 ||
+			!IsA(lsecond(operatorArgs), Const))
+		{
+			return false;
+		}
+
+		Const *queryConst = lsecond(operatorArgs);
+		if (queryConst->constisnull)
+		{
+			return false;
+		}
+
+		pgbsonelement queryElement;
+		PgbsonToSinglePgbsonElementWithCollation(
+			DatumGetPgBson(queryConst->constvalue), &queryElement);
+		if (queryElement.pathLength == elemMatchElement->pathLength &&
+			strncmp(queryElement.path, elemMatchElement->path,
+					queryElement.pathLength) == 0 &&
+			!ShouldEnableBsonStatsArrayValueUnpack())
+		{
+			/*
+			 * Whole-array statistics do not model same-element semantics for a
+			 * scalar-array $elemMatch. Retain the legacy estimate until ANALYZE
+			 * collects statistics over individual array elements.
+			 */
+			return false;
+		}
+
+		Const *pathValue = MakeTextConst(queryElement.path,
+										 queryElement.pathLength);
+		List *pathArgs = list_make2(documentExpr, pathValue);
+		Expr *statsExpr = (Expr *) makeFuncExpr(BsonStatsProjectFuncOid(),
+												BsonTypeId(), pathArgs,
+												InvalidOid,
+												DEFAULT_COLLATION_OID,
+												COERCE_EXPLICIT_CALL);
+		Const *valueConst = MakeBsonConst(
+			BsonValueToDocumentPgbson(&queryElement.bsonValue));
+		Oid statsOperator = InvalidOid;
+		if (queryOperator->operatorType == QUERY_OPERATOR_REGEX)
+		{
+			if (queryElement.bsonValue.value_type != BSON_TYPE_REGEX)
+			{
+				return false;
+			}
+
+			const MongoIndexOperatorInfo *regexOperator =
+				GetMongoIndexOperatorInfoByOperatorType(QUERY_OPERATOR_REGEX);
+			statsOperator = GetMongoQueryOperatorOid(regexOperator);
+		}
+		else
+		{
+			if (queryOperator->operatorType == QUERY_OPERATOR_EQ &&
+				(queryElement.bsonValue.value_type == BSON_TYPE_NULL ||
+				 queryElement.bsonValue.value_type == BSON_TYPE_BOOL))
+			{
+				return false;
+			}
+
+			const MongoIndexOperatorInfo *indexOperator =
+				GetMongoIndexOperatorInfoByOperatorType(queryOperator->operatorType);
+			statsOperator = GetNativeStatsBtreeOperatorForIndexStrategy(
+				indexOperator->indexStrategy);
+			valueConst->consttype = BsonQueryTypeId();
+		}
+
+		if (!OidIsValid(statsOperator))
+		{
+			return false;
+		}
+
+		bool operatorReturnsSet = false;
+		*statsClauses = lappend(*statsClauses,
+								make_opclause(statsOperator, BOOLOID,
+											  operatorReturnsSet,
+											  statsExpr,
+											  (Expr *) valueConst,
+											  InvalidOid, collation));
+	}
+
+	return true;
+}
+
+
+/*
+ * Estimate direct comparison and regex children together so Postgres can
+ * combine their selectivities using its standard conjunction handling.
+ */
+static bool
+TryGetElemMatchSelectivity(PlannerInfo *planner, Node *documentExpr,
+						   const pgbsonelement *elemMatchElement,
+						   int varRelId, Oid collation,
+						   double *selectivity)
+{
+	if (elemMatchElement->bsonValue.value_type != BSON_TYPE_DOCUMENT)
+	{
+		return false;
+	}
+
+	MemoryContext oldContext = CurrentMemoryContext;
+	MemoryContext tempContext = AllocSetContextCreate(oldContext,
+													  "ElemMatch selectivity",
+													  ALLOCSET_DEFAULT_SIZES);
+	MemoryContextSwitchTo(tempContext);
+	bool foundSelectivity = false;
+
+	BsonQueryOperatorContext context = { 0 };
+	BsonQueryOperatorContextCommonBuilder(&context);
+	context.documentExpr = (Expr *) documentExpr;
+	context.skipObjectArrayFilter = true;
+
+	Expr *elemMatchExpr = CreateQualForBsonExpression(
+		&elemMatchElement->bsonValue, elemMatchElement->path, &context);
+	List *clauses = make_ands_implicit(elemMatchExpr);
+	List *statsClauses = NIL;
+	if (TryBuildElemMatchStatsClauses(clauses, elemMatchElement,
+									  documentExpr, collation,
+									  &statsClauses) &&
+		statsClauses != NIL)
+	{
+		*selectivity = clauselist_selectivity(planner, statsClauses, varRelId,
+											  JOIN_INNER, NULL);
+		CLAMP_PROBABILITY(*selectivity);
+		if (EnableElemMatchSelectivityLowerBound)
+		{
+			*selectivity = Max(*selectivity, LowSelectivity);
+		}
+		foundSelectivity = true;
+	}
+
+	MemoryContextSwitchTo(oldContext);
+	MemoryContextDelete(tempContext);
+	return foundSelectivity;
+}
+
+
+/*
+ * Estimate the operations applied by a range-encoded elemMatch index qual.
+ * This is separate from the residual elemMatch estimate because only
+ * operations kept in elemMatchIndexOp constrain the index scan.
+ */
+static bool
+TryGetElemMatchIndexSelectivity(PlannerInfo *planner, Node *documentExpr,
+								const pgbsonelement *elemMatchElement,
+								const DollarRangeParams *rangeParams,
+								int varRelId, double *selectivity)
+{
+	if (rangeParams->elemMatchValue.value_type != BSON_TYPE_ARRAY)
+	{
+		return false;
+	}
+
+	Const *pathValue = MakeTextConst(elemMatchElement->path,
+									 elemMatchElement->pathLength);
+	List *pathArgs = list_make2(documentExpr, pathValue);
+	Expr *statsExpr = (Expr *) makeFuncExpr(BsonStatsProjectFuncOid(),
+											BsonTypeId(), pathArgs,
+											InvalidOid,
+											DEFAULT_COLLATION_OID,
+											COERCE_EXPLICIT_CALL);
+	List *operationClauses = NIL;
+	bool foundOperation = false;
+	bool operatorReturnsSet = false;
+
+	bson_iter_t elemMatchIter;
+	BsonValueInitIterator(&rangeParams->elemMatchValue, &elemMatchIter);
+	while (bson_iter_next(&elemMatchIter))
+	{
+		bson_iter_t operationIter;
+		if (!bson_iter_recurse(&elemMatchIter, &operationIter))
+		{
+			foundOperation = false;
+			break;
+		}
+
+		BsonIndexStrategy strategy = BSON_INDEX_STRATEGY_INVALID;
+		const bson_value_t *operationValue = NULL;
+		while (bson_iter_next(&operationIter))
+		{
+			const char *key = bson_iter_key(&operationIter);
+			if (strcmp(key, "op") == 0)
+			{
+				strategy = (BsonIndexStrategy) BsonValueAsInt32(
+					bson_iter_value(&operationIter));
+			}
+			else if (strcmp(key, "value") == 0)
+			{
+				operationValue = bson_iter_value(&operationIter);
+			}
+		}
+
+		if (operationValue == NULL)
+		{
+			foundOperation = false;
+			break;
+		}
+
+		if (strategy == BSON_INDEX_STRATEGY_DOLLAR_REGEX)
+		{
+			if (operationValue->value_type != BSON_TYPE_REGEX)
+			{
+				foundOperation = false;
+				break;
+			}
+
+			bson_value_t lowerBound = { 0 };
+			bson_value_t upperBound = { 0 };
+			bool lowerBoundInclusive = false;
+			bool upperBoundInclusive = false;
+			GetBoundsForRegex(operationValue->value.v_regex.regex,
+							  operationValue->value.v_regex.options,
+							  &lowerBound, &lowerBoundInclusive,
+							  &upperBound, &upperBoundInclusive);
+
+			BsonIndexStrategy lowerStrategy = lowerBoundInclusive ?
+											  BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL :
+											  BSON_INDEX_STRATEGY_DOLLAR_GREATER;
+			BsonIndexStrategy upperStrategy = upperBoundInclusive ?
+											  BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL :
+											  BSON_INDEX_STRATEGY_DOLLAR_LESS;
+			Oid lowerOperator = GetNativeStatsBtreeOperatorForIndexStrategy(
+				lowerStrategy);
+			Oid upperOperator = GetNativeStatsBtreeOperatorForIndexStrategy(
+				upperStrategy);
+			if (!OidIsValid(lowerOperator) || !OidIsValid(upperOperator))
+			{
+				foundOperation = false;
+				break;
+			}
+
+			Const *lowerConst = MakeBsonConst(
+				BsonValueToDocumentPgbson(&lowerBound));
+			Const *upperConst = MakeBsonConst(
+				BsonValueToDocumentPgbson(&upperBound));
+			lowerConst->consttype = BsonQueryTypeId();
+			upperConst->consttype = BsonQueryTypeId();
+			operationClauses = lappend(operationClauses,
+									   make_opclause(lowerOperator, BOOLOID,
+													 operatorReturnsSet,
+													 statsExpr,
+													 (Expr *) lowerConst,
+													 InvalidOid, InvalidOid));
+			operationClauses = lappend(operationClauses,
+									   make_opclause(upperOperator, BOOLOID,
+													 operatorReturnsSet,
+													 statsExpr,
+													 (Expr *) upperConst,
+													 InvalidOid, InvalidOid));
+			foundOperation = true;
+			continue;
+		}
+
+		Oid operationOperator = GetNativeStatsBtreeOperatorForIndexStrategy(strategy);
+		if (!OidIsValid(operationOperator))
+		{
+			foundOperation = false;
+			break;
+		}
+
+		Const *operationConst = MakeBsonConst(
+			BsonValueToDocumentPgbson(operationValue));
+		operationConst->consttype = BsonQueryTypeId();
+		operationClauses = lappend(operationClauses,
+								   make_opclause(operationOperator, BOOLOID,
+												 operatorReturnsSet,
+												 statsExpr, (Expr *) operationConst,
+												 InvalidOid, InvalidOid));
+		foundOperation = true;
+	}
+
+	if (foundOperation)
+	{
+		*selectivity = clauselist_selectivity(planner, operationClauses, varRelId,
+											  JOIN_INNER, NULL);
+		CLAMP_PROBABILITY(*selectivity);
+		if (EnableElemMatchSelectivityLowerBound)
+		{
+			*selectivity = Max(*selectivity, LowSelectivity);
+		}
+	}
+
+	list_free(operationClauses);
+	list_free(pathArgs);
+	pfree(pathValue);
+	return foundOperation;
+}
+
+
 double
 GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
 							 List *args, Oid collation, int varRelId,
@@ -533,25 +1111,21 @@ GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
 		{
 			return 1.0;
 		}
-
-		if (params.isElemMatch)
-		{
-			/* Since elemMatch runtime evaluation is not implemented yet, the generic_restriction_selectivity
-			 * yields a selectivity of 1.0 for small docs.
-			 * TODO: Once elemMatch runtime selectivity is enabled - remove this logic.
-			 */
-			pgbsonelement elemMatchElement;
-			BsonIndexStrategy indexStrategyIgnore = BSON_INDEX_STRATEGY_INVALID;
-			return GetStatisticsNoStatsData(args, selectivityOpExpr,
-											defaultExprSelectivity, &elemMatchElement,
-											&indexStrategyIgnore);
-		}
 	}
 
 	bool isPerCollectionStatsEnabled = false;
 	if (!EnablePlannerCostSelectivityExtended(planner, args,
 											  &isPerCollectionStatsEnabled))
 	{
+		if (params.isElemMatch)
+		{
+			pgbsonelement elemMatchElement;
+			BsonIndexStrategy indexStrategyIgnore = BSON_INDEX_STRATEGY_INVALID;
+			return GetStatisticsNoStatsData(args, selectivityOpExpr,
+											defaultExprSelectivity, &elemMatchElement,
+											&indexStrategyIgnore);
+		}
+
 		return GetDisableStatisticSelectivity(args, defaultExprSelectivity);
 	}
 
@@ -562,14 +1136,53 @@ GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
 															  &dollarElement,
 															  &indexStrategy);
 
+	if (!isPerCollectionStatsEnabled)
+	{
+		if (params.isElemMatch)
+		{
+			return defaultInputSelectivity;
+		}
+
+		return generic_restriction_selectivity(
+			planner, selectivityOpExpr, collation, args, varRelId,
+			defaultInputSelectivity);
+	}
+
+	if (params.isElemMatch)
+	{
+		double elemMatchSelectivity;
+		if (EnableElemMatchSelectivityFromStats &&
+			TryGetElemMatchIndexSelectivity(planner, linitial(args),
+											&dollarElement, &params,
+											varRelId,
+											&elemMatchSelectivity))
+		{
+			return elemMatchSelectivity;
+		}
+
+		return defaultInputSelectivity;
+	}
+
+	if (EnableElemMatchSelectivityFromStats &&
+		indexStrategy == BSON_INDEX_STRATEGY_DOLLAR_ELEMMATCH)
+	{
+		double elemMatchSelectivity;
+		if (TryGetElemMatchSelectivity(planner, linitial(args), &dollarElement,
+									   varRelId, collation,
+									   &elemMatchSelectivity))
+		{
+			return elemMatchSelectivity;
+		}
+	}
+
 	/*
 	 * This is Postgres's default selectivity implementation that looks at statistics
 	 * and gets the Most common values/ histograms and gets the overall selectivity
 	 * from the raw table.
 	 */
 	double selectivity;
-	if (isPerCollectionStatsEnabled &&
-		list_length(args) == 2 && dollarElement.bsonValue.value_type != BSON_TYPE_EOD)
+	if (list_length(args) == 2 &&
+		dollarElement.bsonValue.value_type != BSON_TYPE_EOD)
 	{
 		/* update the args to contain the right value for the LHS to pick up the selectivity */
 		Const *pathValue = MakeTextConst(dollarElement.path,
@@ -862,7 +1475,7 @@ CompareBsonValuesSortWithArg(const void *a, const void *b, void *arg)
 
 
 /*
- * This is the projection function that managed statistics for filters in the documents table.
+ * This is the projection function that manages statistics for filters in the documents table.
  * This provides a similar functionality to expression indexes against documentdb indexes for stats collections.
  * Note: This varies from the projection function since allocations here must be managed extremely carefully
  * and must be freed agressively to prevent OOMs in Analyze.

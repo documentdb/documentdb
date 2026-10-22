@@ -17,9 +17,10 @@
 
 extern bool EnableBackgroundWorker;
 extern bool EnableBackgroundWorkerJobs;
+extern bool EnableBgWorkerPromotionBarrier;
+extern bool StartBackgroundWorkerInRecovery;
 extern bool EnableBackgroundWorkerJobsInRecovery;
 extern bool EnableBackgroundWorkerInitJobs;
-extern bool StartBackgroundWorkerInRecovery;
 extern bool IndexBuildsScheduledOnBgWorker;
 
 /* index build tasks */

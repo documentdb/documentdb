@@ -293,7 +293,14 @@ async fn process_message<T, W, R>(
         return;
     }
     let format_request_start = Instant::now();
-    let wire_request = match protocol::reader::parse_request(message, &mut requires_response) {
+    let read_concern_validation = connection_context
+        .dynamic_configuration()
+        .enable_read_concern_validation();
+    let wire_request = match protocol::reader::parse_request(
+        message,
+        &mut requires_response,
+        read_concern_validation,
+    ) {
         Ok(request) => request,
         Err(error) => {
             let span = tracing::Span::current();

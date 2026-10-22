@@ -197,6 +197,11 @@ pub fn create_tls_acceptor(
     // otherwise serialize TLS handshakes under concurrent load.
     ssl_acceptor.set_session_cache_mode(SslSessionCacheMode::OFF);
 
+    // Accept the client's Server Name Indication so OpenSSL records it in the
+    // session. Without a callback, a resumed TLS 1.2 session reports no host
+    // name even though the client sent one.
+    ssl_acceptor.set_servername_callback(|_, _| Ok(()));
+
     // Send only 1 TLS 1.3 NewSessionTicket (default is 2). One ticket is sufficient
     // for session resumption and halves the post-handshake overhead per new connection.
     ssl_acceptor.set_num_tickets(1)?;

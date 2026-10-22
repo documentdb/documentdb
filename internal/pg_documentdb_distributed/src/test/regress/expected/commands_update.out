@@ -2713,7 +2713,7 @@ SELECT documentdb_api.update('db', '{ "update": "coll_update", "updates": [ { "q
 
 ROLLBACK;
 -- Check for index pushdown
-BEGIN;
+-- Keep fixture writes outside the transaction that changes execution mode.
 select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":1}]}');
 NOTICE:  creating collection
                                          insert                                         
@@ -2727,15 +2727,16 @@ select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
-SET LOCAL citus.log_remote_commands TO ON;
-SET local client_min_messages TO ERROR;
-set LOCAL enable_seqscan TO OFF;
 select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":3}]}');
                                          insert                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
+BEGIN;
+SET LOCAL citus.log_remote_commands TO ON;
+SET local client_min_messages TO ERROR;
+set LOCAL enable_seqscan TO OFF;
 SET LOCAL documentdb.useLocalExecutionShardQueries to off;
 -- explain plan should show index scan with delete pushdown
 --1. bson_query_match with all ops
@@ -2833,6 +2834,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6514_650124 SET
 (4 rows)
 
 ROLLBACK;
+SELECT documentdb_api.drop_collection('db', 'updateIndex');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
 select documentdb_api.shard_collection('db', 'updateIndex', '{"_id": "hashed"}', false);
 NOTICE:  creating collection
  shard_collection 
@@ -2841,7 +2848,6 @@ NOTICE:  creating collection
 (1 row)
 
 --6. Now shard collection and run explain plan again, it should still show index scan
-BEGIN;
 select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":1}]}');
                                          insert                                         
 ---------------------------------------------------------------------
@@ -2854,15 +2860,16 @@ select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
-SET LOCAL citus.log_remote_commands TO ON;
-SET local client_min_messages TO ERROR;
-set LOCAL enable_seqscan TO OFF;
 select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":3}]}');
                                          insert                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
+BEGIN;
+SET LOCAL citus.log_remote_commands TO ON;
+SET local client_min_messages TO ERROR;
+set LOCAL enable_seqscan TO OFF;
 SET LOCAL documentdb.useLocalExecutionShardQueries to off;
 --7. bson_query_match with all ops
 EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6515 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : 1}', NULL, NULL);

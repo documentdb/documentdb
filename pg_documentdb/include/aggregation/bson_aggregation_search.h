@@ -101,6 +101,9 @@ typedef struct DocumentDBSearchOptions
 	/* Options for the count field in the metadata results */
 	DocumentDBSearchCountOptions countOptions;
 
+	/* The optional sort specification for the search results */
+	bson_value_t sortSpecBson;
+
 	bool scoreDetailsRequested;
 
 	bool returnStoredSource;

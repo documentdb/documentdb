@@ -127,6 +127,11 @@ typedef struct
 	 */
 	CursorTopology cursorTopology;
 
+	/* Whether or not the dynamic cursor requires to fetch all rows first
+	 * (false negatives are fine)
+	 */
+	bool requiresDynamicFetchAllCursor;
+
 	/*
 	 * The requested batchSize in the query request.
 	 */

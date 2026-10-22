@@ -16,6 +16,16 @@ NOTICE:  creating collection
  t
 (1 row)
 
+SELECT shard_collection(
+    'sharded_find_collation_db',
+    'sharded_default',
+    '{ "region": "hashed" }',
+    false);
+ shard_collection
+---------------------------------------------------------------------
+
+(1 row)
+
 -- Seed the immutable default directly in the catalog because collection
 -- creation does not yet accept it.
 UPDATE documentdb_api_catalog.collections
@@ -24,16 +34,6 @@ WHERE database_name = 'sharded_find_collation_db'
   AND collection_name = 'sharded_default';
 SELECT documentdb_api_internal.invalidate_collection_cache();
  invalidate_collection_cache 
----------------------------------------------------------------------
- 
-(1 row)
-
-SELECT shard_collection(
-    'sharded_find_collation_db',
-    'sharded_default',
-    '{ "region": "hashed" }',
-    false);
- shard_collection 
 ---------------------------------------------------------------------
  
 (1 row)

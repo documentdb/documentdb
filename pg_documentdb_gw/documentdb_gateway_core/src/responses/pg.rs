@@ -194,12 +194,14 @@ fn map_pg_db_error_fallback<'a>(
     activity_id: &str,
 ) -> PostgresErrorMappedResult<'a> {
     if let Some(known) = from_known_external_error_code(sql_state) {
-        let message = "This may be due to the database disk being full";
         if known == ErrorCode::NotWritablePrimary as i32 {
             return PostgresErrorMappedResult {
                 error_code: ErrorCode::NotWritablePrimary,
-                error_message: message,
-                internal_note: Some(message),
+                // Hedged because this sqlstate alone cannot confirm the cause,
+                // but a forced read-only cluster is most often disk exhaustion.
+                error_message:
+                    "The server is not currently writable. This may be due to the database disk being full.",
+                internal_note: Some(msg),
             };
         }
 
@@ -451,6 +453,8 @@ fn map_pg_db_error_fallback<'a>(
             internal_note: Some("invalid argument for nth value error."),
         },
         SqlState::READ_ONLY_SQL_TRANSACTION if is_replica_cluster => {
+            // Terminal: a replica cluster has no writable primary to fail over to,
+            // so a retryable code would loop the driver against the same server.
             let error_message = "Cannot execute the operation on this replica cluster";
             tracing::error!(activity_id = activity_id, "{error_message}");
             PostgresErrorMappedResult {
@@ -1178,6 +1182,42 @@ mod tests {
             result.error_message(),
             "Cannot execute the operation on this replica cluster"
         );
+    }
+
+    #[test]
+    fn test_known_not_writable_primary_keeps_backend_message_as_internal_note() {
+        let sql_state = SqlState::from_code("M00E8");
+        let result = map_pg_db_error(
+            false,
+            false,
+            &sql_state,
+            "cannot execute write operations when default_transaction_read_only is set to true",
+            "test-activity",
+        );
+
+        assert_eq!(result.error_code(), ErrorCode::NotWritablePrimary);
+        assert_eq!(
+            result.error_message(),
+            "The server is not currently writable. This may be due to the database disk being full."
+        );
+        assert_eq!(
+            result.internal_note(),
+            Some(
+                "cannot execute write operations when default_transaction_read_only is set to true"
+            )
+        );
+    }
+
+    // Only the NotWritablePrimary arm substitutes a fixed message; every other
+    // known external code still forwards the backend message to the client.
+    #[test]
+    fn test_known_external_code_other_than_not_writable_primary_forwards_message() {
+        let sql_state = SqlState::from_code("M0001");
+        let result = map_pg_db_error(false, false, &sql_state, "backend detail", "test-activity");
+
+        assert_eq!(result.error_code(), ErrorCode::BadValue);
+        assert_eq!(result.error_message(), "backend detail");
+        assert_eq!(result.internal_note(), None);
     }
 
     #[test]

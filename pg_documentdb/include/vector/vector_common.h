@@ -52,6 +52,24 @@
 #define VECTOR_PARAMETER_NAME_ITERATIVE_SCAN "iterativeScan"
 #define VECTOR_PARAMETER_NAME_ITERATIVE_SCAN_STR_LEN 13
 
+/*
+ * Marker/value key stamped onto the vector search param bson whenever
+ * an explicit filterMode embeds a user filter directly into the vector
+ * search query's WHERE clause. Its value is the resolved
+ * VectorSearchFilterMode enum stored as an int32, which the planner (see
+ * custom_query_scan.c) honors for this query. This lets the value survive
+ * across the query-build/plan boundary as part of the bson_search_param()
+ * argument. Mirrors the user-facing 'filterMode' vector search option (see
+ * VectorSearchFilterMode in vector_spec.h), which is parsed from the string
+ * VECTOR_FILTER_MODE_VALUE_* constants below.
+ */
+#define VECTOR_PARAMETER_NAME_FILTER_MODE "filterMode"
+#define VECTOR_PARAMETER_NAME_FILTER_MODE_STR_LEN 10
+
+#define VECTOR_FILTER_MODE_VALUE_APPROXIMATE "approximate"
+#define VECTOR_FILTER_MODE_VALUE_EXACT "exact"
+#define VECTOR_FILTER_MODE_VALUE_AUTO_SELECT "autoSelect"
+
 /* dynamic calculation of nprobes or efSearch depending on collection size */
 #define VECTOR_SEARCH_SMALL_COLLECTION_ROWS 10000
 
@@ -72,6 +90,14 @@ extern bool EnableVectorPreFilterV2;
  * GUC to set the iterative scan mode for pre-filtering
  */
 extern int VectorPreFilterIterativeScanMode;
+
+/*
+ * Selectivity threshold for filterMode 'autoSelect'. Estimates at or below
+ * max(this fraction, 1/default_statistics_target) use the filter path;
+ * larger estimates use the vector path. The default is 0.01 (1 percent),
+ * with a range of 0 to 1. Zero does not bypass the statistics floor.
+ */
+extern double VectorAutoFilterSelectivityThreshold;
 
 /*
  * GUC to enable vector compression feature for vector search.

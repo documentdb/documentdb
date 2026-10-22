@@ -358,7 +358,8 @@ fn bench_request_parse(c: &mut Criterion) {
             b.iter(|| {
                 let mut requires_response = true;
                 let request =
-                    reader::parse_request(black_box(message), &mut requires_response).unwrap();
+                    reader::parse_request(black_box(message), &mut requires_response, true)
+                        .unwrap();
                 black_box(request.request_type());
                 black_box(requires_response);
             });
@@ -662,7 +663,7 @@ fn bench_request_extract_common(c: &mut Criterion) {
 
     group.bench_function("no_callback_hot_path", |b| {
         b.iter(|| {
-            let wire_request = reader::parse_cmd(request.as_ref(), None).unwrap();
+            let wire_request = reader::parse_cmd(request.as_ref(), None, true).unwrap();
             std::hint::black_box(wire_request.max_time_ms());
             std::hint::black_box(wire_request.transaction_info());
             std::hint::black_box(wire_request.db());
@@ -673,7 +674,7 @@ fn bench_request_extract_common(c: &mut Criterion) {
 
     group.bench_function("wire_request_parse_build", |b| {
         b.iter(|| {
-            let wire_request = reader::parse_cmd(request.as_ref(), None).unwrap();
+            let wire_request = reader::parse_cmd(request.as_ref(), None, true).unwrap();
             std::hint::black_box(wire_request.request_type());
             std::hint::black_box(wire_request.execution_mode());
             std::hint::black_box(wire_request.max_time_ms());

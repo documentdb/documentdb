@@ -386,8 +386,7 @@ SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_update_worker_one
 SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_unsharded_d', '{ "_id": 1, "name": "cat" }');
 SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_unsharded_d', '{ "_id": 2, "name": "CAT" }');
 
--- The non-transactional unsharded batch path serializes the client-shaped
--- collation document and reparses it on the worker.
+-- The unsharded batch path parses collation before constructing the worker request.
 SET documentdb_core.enableCollation TO on;
 SET documentdb.useLocalExecutionShardQueries TO off;
 CALL documentdb_api.update_bulk(
@@ -395,12 +394,11 @@ CALL documentdb_api.update_bulk(
     '{ "update": "coll_update_unsharded_d", "updates": [ { "q": { "name": "CaT" }, "u": { "$set": { "selected": true } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }');
 SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_unsharded_d') ORDER BY object_id;
 
--- Semantic collation errors from the worker are indexed write errors, and an
--- unordered batch preserves valid writes before and after them.
+-- Invalid collation fails the entire unordered command without applying
+-- either the preceding or following updates.
 CALL documentdb_api.update_bulk(
     'coll_q_dist_db',
     '{ "update": "coll_update_unsharded_d", "ordered": false, "updates": [ { "q": { "_id": 1 }, "u": { "$set": { "beforeError": true } }, "multi": false }, { "q": { "_id": 1 }, "u": { "$set": { "invalidLocale": true } }, "multi": false, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "_id": 2 }, "u": { "$set": { "afterError": true } }, "multi": false } ] }');
-SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_unsharded_d') ORDER BY object_id;
 RESET documentdb.useLocalExecutionShardQueries;
 RESET documentdb_core.enableCollation;
 
@@ -440,15 +438,11 @@ SELECT documentdb_api.update(
 SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d') ORDER BY object_id;
 ROLLBACK;
 
--- The update-many worker path pushes down the parsed collation string, which
--- the coordinator produces inside the per-update error boundary. An invalid
--- collation therefore stays an indexed write error here as well, instead of
--- failing the whole command before any update runs.
+-- Invalid collation aborts this update-many transaction.
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
 SET LOCAL documentdb.enable_update_many_worker_pushdown TO on;
 SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_d", "ordered": false, "updates": [ { "q": { "name": "CaT" }, "u": { "$set": { "workerBeforeError": true } }, "multi": true, "collation": { "locale": "en", "strength": 1 } }, { "q": { "name": "CaT" }, "u": { "$set": { "workerInvalidLocale": true } }, "multi": true, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "name": "cat" }, "u": { "$set": { "workerAfterError": true } }, "multi": true } ] }');
-SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d') ORDER BY object_id;
 ROLLBACK;
 
 -- The global _id lookup applies the requested sort before choosing a shard.

@@ -1,7 +1,7 @@
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
-SET citus.next_shard_id TO 17770000;
-SET documentdb.next_collection_id TO 177700;
-SET documentdb.next_collection_index_id TO 177700;
+SET citus.next_shard_id TO 17780000;
+SET documentdb.next_collection_id TO 177800;
+SET documentdb.next_collection_index_id TO 177800;
 
 -- create a collection and insert a document
 set documentdb.enableSchemaValidation = off;
@@ -105,4 +105,3 @@ SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "
 RESET client_min_messages;
 
    
-

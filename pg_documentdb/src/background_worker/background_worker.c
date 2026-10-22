@@ -116,11 +116,20 @@ typedef enum BackgroundWorkerBoolOption
  */
 typedef struct
 {
+	/* Process-local identity of the active attempt for diagnostic correlation. */
+	uint64 attemptId;
+
 	/* Wall-clock start of the active attempt for SQL timestamps. */
 	TimestampTz attemptStartTimestamp;
 
 	/* Monotonic start of the active attempt for elapsed duration. */
 	instr_time attemptStartTime;
+
+	/* Server role captured at the attempt boundary. */
+	bool attemptInRecovery;
+
+	/* Whether promotion was observed before the attempt started. */
+	bool promotionObserved;
 
 	/* Whether an attempt has started but has not reached a terminal outcome. */
 	bool attemptInProgress;
@@ -149,6 +158,9 @@ typedef struct
 
 	/* Job state. */
 	BackgroundWorkerJobState state;
+
+	/* Recovery role captured by the scheduling pass that dispatched this job. */
+	bool dispatchedInRecovery;
 
 	/* Per-attempt state used to publish execution statistics. */
 	BackgroundWorkerJobExecutionStatsState statsState;
@@ -182,24 +194,30 @@ static void ValidateRoleExecutionProfile(const char *jobName,
 										 BackgroundWorkerJobRoleExecutionProfile
 										 roleExecutionProfile);
 static void ManageJobsLifeCycle(List *jobExecutions, char *userName, char *databaseName,
-								bool inRecovery);
+								bool inRecovery, bool allowDispatch,
+								bool promotionObserved);
 static void SetActiveAttemptObservationInterval(List *jobExecutions,
 												int64
 												attemptObservationIntervalMilliseconds);
 static void ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName,
-					   char *databaseName, TimestampTz currentTime);
+					   char *databaseName, TimestampTz currentTime,
+					   bool inRecovery, bool promotionObserved);
 static void CheckJobCompletion(BackgroundWorkerJobExecution *jobExec);
 static BackgroundWorkerJobResult ConsumeJobResults(BackgroundWorkerJobExecution *jobExec);
 static BackgroundWorkerJobResult ClassifyJobResults(bool receivedResult, bool succeeded,
 													bool observedAuthoritativeFailure,
 													bool transportLost);
-static inline void BeginJobAttempt(BackgroundWorkerJobExecution *jobExec);
+static inline void BeginJobAttempt(BackgroundWorkerJobExecution *jobExec,
+								   bool inRecovery, bool promotionObserved);
 static void CompleteJobAttempt(BackgroundWorkerJobExecution *jobExec,
 							   BackgroundWorkerJobResult result);
 static void RecordJobAttemptDiagnostics(BackgroundWorkerJobExecution *jobExec,
-										BackgroundWorkerJobResult result);
+										BackgroundWorkerJobResult result,
+										double observedAttemptDurationMilliseconds);
+static uint64 NextJobAttemptId(int jobId);
 static inline bool IsSuccessfulCommandResult(ExecStatusType resultStatus);
 static void FreeJobExecutions(List *jobExecutions);
+static int CountRunningRecoveryJobExecutions(List *jobExecutions);
 static bool CheckIfMetadataCoordinator(void);
 static bool CheckIfJobCommandIsAllowed(BackgroundWorkerJobCommand command);
 static bool CanExecuteJob(BackgroundWorkerJobExecution *jobExec, TimestampTz currentTime,
@@ -212,24 +230,18 @@ static char * GenerateCommandQuery(BackgroundWorkerJob job, MemoryContext stable
 static void CancelJobIfTimeIsUp(BackgroundWorkerJobExecution *jobExec,
 								TimestampTz currentTime);
 static void WaitForBackgroundWorkerDependencies(void);
-static void WaitForInitJobsCompletion(void);
+static bool WaitForInitJobsCompletion(void);
 static bool BackgroundWorkerJobsEnabledForRole(bool inRecovery);
 static bool JobCanExecuteForRole(BackgroundWorkerJobRoleExecutionProfile
 								 roleExecutionProfile, bool inRecovery);
+static bool CompleteDeferredInitJobs(void);
+static List * RegenerateJobExecutionsAfterPromotion(List *jobExecutions);
 
 /*
- * The scheduler initializes initJobsPending once at startup. It is true only
- * when the server is in recovery, where init jobs are deferred because they
- * may require writes; otherwise, the init jobs run immediately and the flag
- * is false.
- *
- * Promotion does not restart the postmaster or this worker, so
- * initJobsPending retains its startup value. Each scheduling cycle separately
- * refreshes inRecovery by calling RecoveryInProgress(). After promotion,
- * inRecovery becomes false while initJobsPending is still true. The helper
- * returns true in this state, telling the caller to run the deferred init jobs
- * before primary job scheduling. The caller clears initJobsPending after the
- * init jobs complete.
+ * WaitForInitJobsCompletion owns the enablement and registration checks. A
+ * false result means that runnable initialization work was deferred by
+ * recovery. Because promotion does not restart this worker, retry that work
+ * on writable scheduling passes before admitting primary jobs.
  */
 static inline bool
 ShouldRunDeferredInitJobs(bool initJobsPending, bool inRecovery)
@@ -241,7 +253,7 @@ ShouldRunDeferredInitJobs(bool initJobsPending, bool inRecovery)
 /*
  * The allowed commands registry should not be exposed outside this c file to avoid unpredictable behavior.
  */
-#define MAX_BACKGROUND_WORKER_ALLOWED_COMMANDS 5
+#define MAX_BACKGROUND_WORKER_ALLOWED_COMMANDS 10
 static BackgroundWorkerJobCommand
 	AllowedCommandRegistry[MAX_BACKGROUND_WORKER_ALLOWED_COMMANDS];
 static int AllowedCommandEntries = 0;
@@ -256,6 +268,7 @@ static int AllowedCommandEntries = 0;
  */
 static BackgroundWorkerJob JobRegistry[MAX_BACKGROUND_WORKER_JOBS];
 static int JobEntries = 0;
+static uint64 JobAttemptIds[MAX_BACKGROUND_WORKER_JOBS] = { 0 };
 
 #define MAX_INIT_JOBS 5
 static InitJobState InitJobs[MAX_INIT_JOBS];
@@ -279,6 +292,7 @@ void
 DocumentDBBackgroundWorkerMain(Datum main_arg)
 {
 	char *databaseName = BackgroundWorkerDatabaseName;
+	TimestampTz leaderStartTimestamp = GetCurrentTimestamp();
 
 	/* Establish signal handlers before unblocking signals. */
 #if PG_VERSION_NUM >= 190000
@@ -324,13 +338,19 @@ DocumentDBBackgroundWorkerMain(Datum main_arg)
 
 	/*
 	 * Run init jobs before waiting for dependencies, but defer them until
-	 * recovery ends. The wait helper handles enableBackgroundWorkerInitJobs feature flag.
+	 * recovery ends.
+	 *
+	 * Promotion does not restart this leader, so initialization deferred at
+	 * startup must remain pending across scheduling passes. The current server
+	 * role is observed separately on each pass to detect when that same process
+	 * needs to reconcile the transition to writable operation.
+	 *
+	 * initJobsPending gates completion of the promotion barrier, so it records
+	 * only deferred work that can actually run: initialization must be enabled
+	 * and at least one initialization job must be registered.
 	 */
-	bool initJobsPending = RecoveryInProgress();
-	if (!initJobsPending)
-	{
-		WaitForInitJobsCompletion();
-	}
+	bool previousPassInRecovery = RecoveryInProgress();
+	bool initJobsPending = !WaitForInitJobsCompletion();
 
 	/*
 	 * After init jobs complete, mark all subsequent transactions as read-only.
@@ -360,6 +380,16 @@ DocumentDBBackgroundWorkerMain(Datum main_arg)
 
 	/* Create list of job executions */
 	List *jobExecutions = NIL;
+	bool promotionInProgress =
+		EnableBgWorkerPromotionBarrier &&
+		ShouldRunDeferredInitJobs(initJobsPending, RecoveryInProgress());
+	bool promotionObserved = false;
+	bool primarySchedulingResumePending = false;
+
+	/* Diagnostic state; these values do not affect scheduling decisions. */
+	uint64 promotionTransitionPassCount = 0;
+	bool primarySchedulingResumeBarrierApplied = false;
+	uint64 primarySchedulingResumePassCount = 0;
 
 	/*
 	 * Create a dedicated memory context for the background worker.
@@ -394,7 +424,8 @@ DocumentDBBackgroundWorkerMain(Datum main_arg)
 		 * jobs can drain. Role eligibility is checked before each dispatch.
 		 */
 		if (jobExecutions == NIL &&
-			(EnableBackgroundWorkerJobs || EnableBackgroundWorkerJobsInRecovery))
+			(EnableBackgroundWorkerJobs || EnableBackgroundWorkerJobsInRecovery) &&
+			!promotionInProgress)
 		{
 			jobExecutions = GenerateJobExecutions();
 		}
@@ -449,37 +480,131 @@ DocumentDBBackgroundWorkerMain(Datum main_arg)
 		{
 			/* Event received for schedules */
 			bool inRecovery = RecoveryInProgress();
+			bool promotionDetected = previousPassInRecovery && !inRecovery;
 
-			if (ShouldRunDeferredInitJobs(initJobsPending, inRecovery))
+			if (promotionDetected)
 			{
+				promotionObserved = true;
+				bool promotionBarrierApplied = EnableBgWorkerPromotionBarrier;
 				if (BgWorkerEnableDiagnosticsLog)
 				{
-					ereport(LOG, (errmsg(
-									  "Recovery ended; running deferred background worker init jobs")));
+					elog_unredacted(
+						"BGW_ROLE_TRANSITION leader_pid=%d leader_start_pg_us="
+						INT64_FORMAT " promotion_observed=%d"
+									 " previous_in_recovery=1 current_in_recovery=0 "
+									 "promotion_barrier_enabled=%d promotion_barrier_applied=%d",
+						MyProcPid, leaderStartTimestamp, promotionObserved,
+						EnableBgWorkerPromotionBarrier, promotionBarrierApplied);
 				}
 
-				PopActiveSnapshot();
-				CommitTransactionCommand();
-
-				set_config_option("default_transaction_read_only", "false",
-								  PGC_USERSET, PGC_S_SESSION,
-								  GUC_ACTION_SET, true, 0, false);
-				WaitForInitJobsCompletion();
-				set_config_option("default_transaction_read_only", "true",
-								  PGC_USERSET, PGC_S_SESSION,
-								  GUC_ACTION_SET, true, 0, false);
-				initJobsPending = false;
-
-				SetCurrentStatementStartTimestamp();
-				StartTransactionCommand();
-				PushActiveSnapshot(GetTransactionSnapshot());
-				MemoryContextSwitchTo(bgWorkerContext);
+				if (promotionBarrierApplied)
+				{
+					promotionInProgress = true;
+					promotionTransitionPassCount = 0;
+					if (BgWorkerEnableDiagnosticsLog)
+					{
+						elog_unredacted(
+							"BGW_PROMOTION_BARRIER_ENTERED leader_pid=%d "
+							"promotion_observed=%d",
+							MyProcPid, promotionObserved);
+					}
+				}
+				else
+				{
+					primarySchedulingResumePending = true;
+					primarySchedulingResumeBarrierApplied = false;
+					primarySchedulingResumePassCount = 0;
+				}
 			}
+			previousPassInRecovery = inRecovery;
 
 			SetActiveAttemptObservationInterval(jobExecutions,
 												latchTimeOut * ONE_SEC_IN_MS);
-			ManageJobsLifeCycle(jobExecutions, ApiBgWorkerRole, databaseName,
-								inRecovery);
+			if (promotionInProgress)
+			{
+				/* Drain existing work without admitting jobs in the new role. */
+				promotionTransitionPassCount++;
+				int runningRecoveryJobsBefore = 0;
+				if (BgWorkerEnableDiagnosticsLog)
+				{
+					runningRecoveryJobsBefore =
+						CountRunningRecoveryJobExecutions(jobExecutions);
+				}
+
+				bool allowDispatch = false;
+				ManageJobsLifeCycle(jobExecutions, ApiBgWorkerRole, databaseName,
+									inRecovery, allowDispatch, promotionObserved);
+
+				int runningRecoveryJobsAfter =
+					CountRunningRecoveryJobExecutions(jobExecutions);
+				if (BgWorkerEnableDiagnosticsLog)
+				{
+					elog_unredacted(
+						"BGW_PROMOTION_BARRIER_PASS promotion_observed=%d"
+						" transition_pass_count=" UINT64_FORMAT
+						" running_recovery_jobs_before=%d "
+						"running_recovery_jobs_after=%d",
+						promotionObserved, promotionTransitionPassCount,
+						runningRecoveryJobsBefore,
+						runningRecoveryJobsAfter);
+				}
+
+				if (runningRecoveryJobsAfter == 0)
+				{
+					if (ShouldRunDeferredInitJobs(initJobsPending, inRecovery))
+					{
+						initJobsPending = !CompleteDeferredInitJobs();
+					}
+
+					if (!initJobsPending)
+					{
+						jobExecutions = RegenerateJobExecutionsAfterPromotion(
+							jobExecutions);
+						promotionInProgress = false;
+						primarySchedulingResumePending = true;
+						primarySchedulingResumeBarrierApplied = true;
+						primarySchedulingResumePassCount =
+							promotionTransitionPassCount;
+						if (BgWorkerEnableDiagnosticsLog)
+						{
+							elog_unredacted(
+								"BGW_PROMOTION_BARRIER_COMPLETED leader_pid=%d "
+								"promotion_observed=%d"
+								" transition_pass_count=" UINT64_FORMAT,
+								MyProcPid, promotionObserved,
+								promotionTransitionPassCount);
+						}
+					}
+				}
+			}
+			else
+			{
+				if (ShouldRunDeferredInitJobs(initJobsPending, inRecovery))
+				{
+					initJobsPending = !CompleteDeferredInitJobs();
+				}
+
+				if (primarySchedulingResumePending && !initJobsPending &&
+					BackgroundWorkerJobsEnabledForRole(inRecovery))
+				{
+					if (BgWorkerEnableDiagnosticsLog)
+					{
+						elog_unredacted(
+							"BGW_PRIMARY_SCHEDULING_RESUMED leader_pid=%d "
+							"promotion_observed=%d"
+							" promotion_barrier_applied=%d transition_pass_count="
+							UINT64_FORMAT,
+							MyProcPid, promotionObserved,
+							primarySchedulingResumeBarrierApplied,
+							primarySchedulingResumePassCount);
+					}
+					primarySchedulingResumePending = false;
+				}
+
+				bool allowDispatch = true;
+				ManageJobsLifeCycle(jobExecutions, ApiBgWorkerRole, databaseName,
+									inRecovery, allowDispatch, promotionObserved);
+			}
 		}
 
 		latchTimeOut = LatchTimeOutSec;
@@ -586,11 +711,93 @@ GetBackgroundWorkerJob(int index)
 
 
 /*
+ * CompleteDeferredInitJobs runs all background worker jobs that were deferred
+ * until after recovery has ended. It temporarily sets the transaction to
+ * read-write mode, waits for all init jobs to complete, and then restores
+ * the transaction to read-only mode.
+ */
+static bool
+CompleteDeferredInitJobs(void)
+{
+	MemoryContext stableContext = CurrentMemoryContext;
+	bool initJobsCompleted;
+
+	if (BgWorkerEnableDiagnosticsLog)
+	{
+		ereport(LOG, (errmsg(
+						  "Recovery ended; running deferred background worker init jobs")));
+	}
+
+	PopActiveSnapshot();
+	CommitTransactionCommand();
+
+	set_config_option("default_transaction_read_only", "false",
+					  PGC_USERSET, PGC_S_SESSION,
+					  GUC_ACTION_SET, true, 0, false);
+	initJobsCompleted = WaitForInitJobsCompletion();
+	set_config_option("default_transaction_read_only", "true",
+					  PGC_USERSET, PGC_S_SESSION,
+					  GUC_ACTION_SET, true, 0, false);
+
+	if (BgWorkerEnableDiagnosticsLog)
+	{
+		elog_unredacted(
+			"BGW_DEFERRED_INITIALIZATION_RESULT completed=%d",
+			initJobsCompleted);
+	}
+
+	SetCurrentStatementStartTimestamp();
+	StartTransactionCommand();
+	PushActiveSnapshot(GetTransactionSnapshot());
+	MemoryContextSwitchTo(stableContext);
+
+	return initJobsCompleted;
+}
+
+
+/*
+ * RegenerateJobExecutionsAfterPromotion frees the existing job executions and generates fresh ones if background worker jobs are enabled.
+ */
+static List *
+RegenerateJobExecutionsAfterPromotion(List *jobExecutions)
+{
+	int previousExecutionCount = list_length(jobExecutions);
+
+	/*
+	 * Fresh execution objects prevent recovery dispatch
+	 * attribution from carrying into primary admission.
+	 */
+	if (jobExecutions != NIL)
+	{
+		FreeJobExecutions(jobExecutions);
+		jobExecutions = NIL;
+	}
+
+	if (EnableBackgroundWorkerJobs)
+	{
+		jobExecutions = GenerateJobExecutions();
+	}
+
+	if (BgWorkerEnableDiagnosticsLog)
+	{
+		elog_unredacted(
+			"BGW_JOB_EXECUTIONS_REGENERATED previous_execution_count=%d "
+			"regenerated_execution_count=%d",
+			previousExecutionCount, list_length(jobExecutions));
+	}
+
+	return jobExecutions;
+}
+
+
+/*
  * ManageJobsLifeCycle walks through the list of jobs and takes action based on their state.
+ * It always observes completion and enforces timeouts for running executions.
+ * allowDispatch controls only whether idle executions may start new work.
  */
 static void
 ManageJobsLifeCycle(List *jobExecutions, char *userName, char *databaseName,
-					bool inRecovery)
+					bool inRecovery, bool allowDispatch, bool promotionObserved)
 {
 	TimestampTz currentTime = GetCurrentTimestamp();
 	ListCell *jobExecCell = NULL;
@@ -611,9 +818,10 @@ ManageJobsLifeCycle(List *jobExecutions, char *userName, char *databaseName,
 		CancelJobIfTimeIsUp(jobExec, currentTime);
 
 		/* Executes job if it hasn't started and the scheduled interval was reached. */
-		if (CanExecuteJob(jobExec, currentTime, inRecovery))
+		if (allowDispatch && CanExecuteJob(jobExec, currentTime, inRecovery))
 		{
-			ExecuteJob(jobExec, userName, databaseName, currentTime);
+			ExecuteJob(jobExec, userName, databaseName, currentTime,
+					   inRecovery, promotionObserved);
 		}
 	}
 }
@@ -718,8 +926,8 @@ CanExecuteJob(BackgroundWorkerJobExecution *jobExec, TimestampTz currentTime,
 static bool
 BackgroundWorkerJobsEnabledForRole(bool inRecovery)
 {
-	return inRecovery ? EnableBackgroundWorkerJobsInRecovery :
-		   EnableBackgroundWorkerJobs;
+	return EnableBackgroundWorkerJobs &&
+		   (!inRecovery || EnableBackgroundWorkerJobsInRecovery);
 }
 
 
@@ -850,7 +1058,8 @@ ClassifyJobResults(bool receivedResult, bool succeeded,
 
 
 static inline void
-BeginJobAttempt(BackgroundWorkerJobExecution *jobExec)
+BeginJobAttempt(BackgroundWorkerJobExecution *jobExec, bool inRecovery,
+				bool promotionObserved)
 {
 	BackgroundWorkerJobExecutionStatsState *statsState = &jobExec->statsState;
 	if (statsState->attemptInProgress)
@@ -861,11 +1070,25 @@ BeginJobAttempt(BackgroundWorkerJobExecution *jobExec)
 							jobExec->job.jobId)));
 	}
 
+	statsState->attemptId = NextJobAttemptId(jobExec->job.jobId);
 	statsState->attemptStartTimestamp = GetCurrentTimestamp();
 	INSTR_TIME_SET_CURRENT(statsState->attemptStartTime);
+	statsState->attemptInRecovery = inRecovery;
+	statsState->promotionObserved = promotionObserved;
 	statsState->attemptInProgress = true;
 	statsState->hasAttemptObservationInterval = false;
 	statsState->attemptObservationIntervalMilliseconds = 0;
+
+	if (BgWorkerEnableDiagnosticsLog)
+	{
+		elog_unredacted(
+			"BGW_JOB_ATTEMPT_STARTED leader_pid=%d job_id=%d attempt_id=" UINT64_FORMAT
+			" execution_in_recovery=%d attempt_start_pg_us=" INT64_FORMAT
+			" promotion_observed=%d",
+			MyProcPid, jobExec->job.jobId, statsState->attemptId,
+			statsState->attemptInRecovery, statsState->attemptStartTimestamp,
+			statsState->promotionObserved);
+	}
 }
 
 
@@ -889,6 +1112,7 @@ CompleteJobAttempt(BackgroundWorkerJobExecution *jobExec,
 		statsState->hasAttemptObservationInterval;
 	int64 attemptObservationIntervalMilliseconds =
 		statsState->attemptObservationIntervalMilliseconds;
+	double observedAttemptDurationMilliseconds;
 
 	/*
 	 * Statistics failures must not abort the scheduler transaction or prevent
@@ -898,12 +1122,12 @@ CompleteJobAttempt(BackgroundWorkerJobExecution *jobExec,
 
 	PG_TRY();
 	{
-		PublishBackgroundWorkerJobCompletion(jobExec->job.jobId,
-											 result,
-											 statsState->attemptStartTimestamp,
-											 statsState->attemptStartTime,
-											 hasAttemptObservationInterval,
-											 attemptObservationIntervalMilliseconds);
+		PublishBackgroundWorkerJobCompletion(
+			jobExec->job.jobId, result,
+			&observedAttemptDurationMilliseconds,
+			statsState->attemptStartTimestamp,
+			statsState->attemptStartTime, hasAttemptObservationInterval,
+			attemptObservationIntervalMilliseconds);
 
 		ReleaseCurrentSubTransaction();
 		MemoryContextSwitchTo(savedContext);
@@ -930,21 +1154,31 @@ CompleteJobAttempt(BackgroundWorkerJobExecution *jobExec,
 							  jobExec->job.jobName, jobExec->job.jobId),
 						  errdetail_internal("%s", errorData->message)));
 		FreeErrorData(errorData);
+
+		instr_time observedAttemptDuration;
+		INSTR_TIME_SET_CURRENT(observedAttemptDuration);
+		INSTR_TIME_SUBTRACT(observedAttemptDuration, statsState->attemptStartTime);
+		observedAttemptDurationMilliseconds =
+			INSTR_TIME_GET_MILLISEC(observedAttemptDuration);
 	}
 	PG_END_TRY();
 
 	statsState->attemptInProgress = false;
 	jobExec->state = JOB_IDLE;
 
-	RecordJobAttemptDiagnostics(jobExec, result);
+	RecordJobAttemptDiagnostics(jobExec, result,
+								observedAttemptDurationMilliseconds);
 }
 
 
 /* Updates process-local outcome counters and emits diagnostic completion logs. */
 static void
 RecordJobAttemptDiagnostics(BackgroundWorkerJobExecution *jobExec,
-							BackgroundWorkerJobResult result)
+							BackgroundWorkerJobResult result,
+							double observedAttemptDurationMilliseconds)
 {
+	BackgroundWorkerJobExecutionStatsState *statsState = &jobExec->statsState;
+
 	switch (result)
 	{
 		case JOB_RESULT_SUCCEEDED:
@@ -953,12 +1187,19 @@ RecordJobAttemptDiagnostics(BackgroundWorkerJobExecution *jobExec,
 			if (BgWorkerEnableDiagnosticsLog)
 			{
 				elog_unredacted(
-					"Background worker job with id %d succeeded (successful executions: "
-					UINT64_FORMAT ", failed executions: " UINT64_FORMAT
-					", timed out executions: "
-					UINT64_FORMAT ", unobserved executions: "
-					UINT64_FORMAT ")",
-					jobExec->job.jobId,
+					"BGW_JOB_ATTEMPT_SUCCEEDED leader_pid=%d job_id=%d attempt_id="
+					UINT64_FORMAT
+					" execution_in_recovery=%d attempt_start_pg_us=" INT64_FORMAT
+					" observed_duration_ms=%.3f promotion_observed=%d"
+					" successful_executions=" UINT64_FORMAT
+					" failed_executions=" UINT64_FORMAT
+					" timed_out_executions=" UINT64_FORMAT
+					" unobserved_executions=" UINT64_FORMAT,
+					MyProcPid, jobExec->job.jobId, statsState->attemptId,
+					statsState->attemptInRecovery,
+					statsState->attemptStartTimestamp,
+					observedAttemptDurationMilliseconds,
+					statsState->promotionObserved,
 					jobExec->successfulExecutionCount,
 					jobExec->failedExecutionCount,
 					jobExec->timedOutExecutionCount,
@@ -971,12 +1212,18 @@ RecordJobAttemptDiagnostics(BackgroundWorkerJobExecution *jobExec,
 		{
 			jobExec->failedExecutionCount++;
 			elog_unredacted(
-				"Background worker job with id %d failed (successful executions: "
-				UINT64_FORMAT ", failed executions: " UINT64_FORMAT
-				", timed out executions: "
-				UINT64_FORMAT ", unobserved executions: "
-				UINT64_FORMAT ")",
-				jobExec->job.jobId,
+				"BGW_JOB_ATTEMPT_FAILED leader_pid=%d job_id=%d attempt_id=" UINT64_FORMAT
+				" execution_in_recovery=%d attempt_start_pg_us=" INT64_FORMAT
+				" observed_duration_ms=%.3f promotion_observed=%d"
+				" successful_executions=" UINT64_FORMAT
+				" failed_executions=" UINT64_FORMAT
+				" timed_out_executions=" UINT64_FORMAT
+				" unobserved_executions=" UINT64_FORMAT,
+				MyProcPid, jobExec->job.jobId, statsState->attemptId,
+				statsState->attemptInRecovery,
+				statsState->attemptStartTimestamp,
+				observedAttemptDurationMilliseconds,
+				statsState->promotionObserved,
 				jobExec->successfulExecutionCount,
 				jobExec->failedExecutionCount,
 				jobExec->timedOutExecutionCount,
@@ -988,12 +1235,19 @@ RecordJobAttemptDiagnostics(BackgroundWorkerJobExecution *jobExec,
 		{
 			jobExec->timedOutExecutionCount++;
 			elog_unredacted(
-				"Background worker job with id %d timed out (configured timeout: %d seconds, successful executions: "
-				UINT64_FORMAT ", failed executions: " UINT64_FORMAT
-				", timed out executions: "
-				UINT64_FORMAT ", unobserved executions: "
-				UINT64_FORMAT ")",
-				jobExec->job.jobId,
+				"BGW_JOB_ATTEMPT_TIMED_OUT leader_pid=%d job_id=%d attempt_id="
+				UINT64_FORMAT
+				" execution_in_recovery=%d attempt_start_pg_us=" INT64_FORMAT
+				" observed_duration_ms=%.3f promotion_observed=%d"
+				" configured_timeout_sec=%d successful_executions=" UINT64_FORMAT
+				" failed_executions=" UINT64_FORMAT
+				" timed_out_executions=" UINT64_FORMAT
+				" unobserved_executions=" UINT64_FORMAT,
+				MyProcPid, jobExec->job.jobId, statsState->attemptId,
+				statsState->attemptInRecovery,
+				statsState->attemptStartTimestamp,
+				observedAttemptDurationMilliseconds,
+				statsState->promotionObserved,
 				jobExec->job.timeoutInSeconds,
 				jobExec->successfulExecutionCount,
 				jobExec->failedExecutionCount,
@@ -1006,12 +1260,19 @@ RecordJobAttemptDiagnostics(BackgroundWorkerJobExecution *jobExec,
 		{
 			jobExec->unobservedExecutionCount++;
 			elog_unredacted(
-				"Background worker job with id %d resolved as unobserved (successful executions: "
-				UINT64_FORMAT ", failed executions: " UINT64_FORMAT
-				", timed out executions: "
-				UINT64_FORMAT ", unobserved executions: "
-				UINT64_FORMAT ")",
-				jobExec->job.jobId,
+				"BGW_JOB_ATTEMPT_UNOBSERVED leader_pid=%d job_id=%d attempt_id="
+				UINT64_FORMAT
+				" execution_in_recovery=%d attempt_start_pg_us=" INT64_FORMAT
+				" observed_duration_ms=%.3f promotion_observed=%d"
+				" successful_executions=" UINT64_FORMAT
+				" failed_executions=" UINT64_FORMAT
+				" timed_out_executions=" UINT64_FORMAT
+				" unobserved_executions=" UINT64_FORMAT,
+				MyProcPid, jobExec->job.jobId, statsState->attemptId,
+				statsState->attemptInRecovery,
+				statsState->attemptStartTimestamp,
+				observedAttemptDurationMilliseconds,
+				statsState->promotionObserved,
 				jobExec->successfulExecutionCount,
 				jobExec->failedExecutionCount,
 				jobExec->timedOutExecutionCount,
@@ -1026,6 +1287,33 @@ RecordJobAttemptDiagnostics(BackgroundWorkerJobExecution *jobExec,
 			break;
 		}
 	}
+}
+
+
+static uint64
+NextJobAttemptId(int jobId)
+{
+	for (int i = 0; i < JobEntries; i++)
+	{
+		if (JobRegistry[i].jobId != jobId)
+		{
+			continue;
+		}
+
+		if (JobAttemptIds[i] == PG_INT64_MAX)
+		{
+			ereport(ERROR, (errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+							errmsg(
+								"Background worker job %d attempt identity exceeds bigint",
+								jobId)));
+		}
+
+		return ++JobAttemptIds[i];
+	}
+
+	ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
+					errmsg("Background worker job id %d is not registered", jobId)));
+	pg_unreachable();
 }
 
 
@@ -1112,18 +1400,23 @@ WaitForBackgroundWorkerDependencies(void)
  * Init jobs are one time initialization tasks (e.g. extension creation)
  * that use C callbacks rather than SQL UDFs.
  */
-static void
+static bool
 WaitForInitJobsCompletion(void)
 {
 	if (!EnableBackgroundWorkerInitJobs)
 	{
-		return;
+		return true;
 	}
 
 	if (NumInitJobs == 0)
 	{
 		ereport(LOG, (errmsg("Init jobs enabled but none registered, skipping")));
-		return;
+		return true;
+	}
+
+	if (RecoveryInProgress())
+	{
+		return false;
 	}
 
 	ereport(LOG, (errmsg("Starting %d registered init job(s)", NumInitJobs)));
@@ -1158,6 +1451,8 @@ WaitForInitJobsCompletion(void)
 			RunInitJobs();
 		}
 	}
+
+	return AreAllInitJobsDone();
 }
 
 
@@ -1166,7 +1461,7 @@ WaitForInitJobsCompletion(void)
  */
 static void
 ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName, char *databaseName,
-		   TimestampTz currentTime)
+		   TimestampTz currentTime, bool inRecovery, bool promotionObserved)
 {
 	if (!IsJobEnabled(jobExec))
 	{
@@ -1200,7 +1495,7 @@ ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName, char *database
 	 * heap-allocated struct, avoiding the need for a volatile local variable
 	 * to survive longjmp.
 	 */
-	BeginJobAttempt(jobExec);
+	BeginJobAttempt(jobExec, inRecovery, promotionObserved);
 
 	PG_TRY();
 	{
@@ -1249,7 +1544,20 @@ ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName, char *database
 
 		/* Query was sent successfully. */
 		jobExec->state = JOB_RUNNING;
+		jobExec->dispatchedInRecovery = inRecovery;
 		jobExec->lastStartTime = currentTime;
+		if (BgWorkerEnableDiagnosticsLog)
+		{
+			elog_unredacted(
+				"BGW_JOB_ATTEMPT_DISPATCHED leader_pid=%d job_id=%d attempt_id="
+				UINT64_FORMAT
+				" execution_in_recovery=%d attempt_start_pg_us=" INT64_FORMAT
+				" promotion_observed=%d",
+				MyProcPid, jobExec->job.jobId, jobExec->statsState.attemptId,
+				jobExec->statsState.attemptInRecovery,
+				jobExec->statsState.attemptStartTimestamp,
+				jobExec->statsState.promotionObserved);
+		}
 	}
 	PG_CATCH();
 	{
@@ -1518,8 +1826,12 @@ CreateJobExecutionObj(BackgroundWorkerJob job)
 	jobExec->connection = NULL;
 	jobExec->commandQuery = commandQuery;
 	jobExec->state = JOB_IDLE;
+	jobExec->dispatchedInRecovery = false;
+	jobExec->statsState.attemptId = 0;
 	jobExec->statsState.attemptStartTimestamp = 0;
 	INSTR_TIME_SET_ZERO(jobExec->statsState.attemptStartTime);
+	jobExec->statsState.attemptInRecovery = false;
+	jobExec->statsState.promotionObserved = false;
 	jobExec->statsState.attemptInProgress = false;
 	jobExec->statsState.hasAttemptObservationInterval = false;
 	jobExec->statsState.attemptObservationIntervalMilliseconds = 0;
@@ -1529,6 +1841,30 @@ CreateJobExecutionObj(BackgroundWorkerJob job)
 	jobExec->unobservedExecutionCount = 0;
 
 	return jobExec;
+}
+
+
+/*
+ * Use this narrower check only to gate the promotion transition. The barrier
+ * must drain work admitted by recovery-classified scheduling passes before
+ * deferred initialization may write or primary jobs may be admitted.
+ */
+static int
+CountRunningRecoveryJobExecutions(List *jobExecutions)
+{
+	int runningRecoveryJobCount = 0;
+	ListCell *jobExecCell = NULL;
+	foreach(jobExecCell, jobExecutions)
+	{
+		BackgroundWorkerJobExecution *jobExec =
+			(BackgroundWorkerJobExecution *) lfirst(jobExecCell);
+		if (jobExec->state == JOB_RUNNING && jobExec->dispatchedInRecovery)
+		{
+			runningRecoveryJobCount++;
+		}
+	}
+
+	return runningRecoveryJobCount;
 }
 
 

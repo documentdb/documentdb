@@ -18,6 +18,25 @@
 typedef struct VectorIndexDefinition VectorIndexDefinition;
 
 /*
+ * Controls which index access path a pre-filtered vector search prefers.
+ * See the 'filterMode' vector search option
+ */
+typedef enum VectorSearchFilterMode
+{
+	/* 'filterMode' was not specified by the user. */
+	VectorSearchFilterMode_Unspecified = 0,
+
+	/* Always use the vector index for ordering; the filter is applied as a runtime check */
+	VectorSearchFilterMode_Approximate,
+
+	/* Always prefer a regular filter-index (or seq) scan, plus an explicit sort on vector distance. */
+	VectorSearchFilterMode_Exact,
+
+	/* Choose the filter path at or below the larger of the statistics floor and configured threshold. */
+	VectorSearchFilterMode_AutoSelect,
+} VectorSearchFilterMode;
+
+/*
  * The distance metric for a vector based index.
  */
 typedef enum VectorIndexDistanceMetric
@@ -112,6 +131,9 @@ typedef struct VectorSearchOptions
 
 	/* filter bson */
 	bson_value_t filterBson;
+
+	/* Which index access path this (pre-filtered) vector search prefers. */
+	VectorSearchFilterMode filterMode;
 
 	/* score bson */
 	bson_value_t scoreBson;

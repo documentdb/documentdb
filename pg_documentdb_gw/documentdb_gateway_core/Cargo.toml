@@ -57,6 +57,7 @@ criterion.workspace = true
 proc-macro2.workspace = true
 quote.workspace = true
 syn.workspace = true
+tracing-subscriber.workspace = true
 
 [[bench]]
 name = "runtime_hot_path"

@@ -6,7 +6,7 @@
  *-------------------------------------------------------------------------
  */
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use dashmap::DashMap;
 use tokio::{task::JoinHandle, time::Duration};
@@ -151,6 +151,54 @@ impl CursorStore {
         let mut invalidated_cursor_ids = Vec::new();
         self.cursors.retain(|key, v| {
             let should_remove = v.lsid.as_ref() == Some(lsid);
+            if should_remove {
+                invalidated_cursor_ids.push(key.id().into());
+            }
+            !should_remove
+        });
+
+        self.metrics
+            .cursors_invalidated(invalidated_cursor_ids.len());
+
+        invalidated_cursor_ids
+    }
+
+    /// Removes every cursor owned by `owner` and returns their ids.
+    ///
+    /// Matching is by owner identity, so this never invalidates another
+    /// principal's cursors. It backs the caller-scoped form of
+    /// `killAllSessions`.
+    #[must_use]
+    pub fn invalidate_cursors_by_owner(&self, owner: &Principal) -> Vec<i64> {
+        self.invalidate_cursors_where(|cursor_owner| cursor_owner == owner)
+    }
+
+    /// Removes every cursor owned by a principal whose name is in `user_names`
+    /// and returns their ids.
+    ///
+    /// This backs the privileged, user-scoped form of `killAllSessions`.
+    #[must_use]
+    pub fn invalidate_cursors_by_owner_names(&self, user_names: &HashSet<String>) -> Vec<i64> {
+        self.invalidate_cursors_where(|cursor_owner| user_names.contains(cursor_owner.name()))
+    }
+
+    /// Removes every cursor, regardless of owner, and returns their ids.
+    ///
+    /// This backs the privileged, unrestricted form of `killAllSessions`.
+    #[must_use]
+    pub fn invalidate_all_cursors(&self) -> Vec<i64> {
+        self.invalidate_cursors_where(|_| true)
+    }
+
+    /// Removes every cursor whose owner satisfies `should_remove_owner` and
+    /// returns their ids.
+    fn invalidate_cursors_where(
+        &self,
+        should_remove_owner: impl Fn(&Principal) -> bool,
+    ) -> Vec<i64> {
+        let mut invalidated_cursor_ids = Vec::new();
+        self.cursors.retain(|key, _| {
+            let should_remove = should_remove_owner(key.owner());
             if should_remove {
                 invalidated_cursor_ids.push(key.id().into());
             }
@@ -311,6 +359,32 @@ mod tests {
         assert_eq!(invalidated, vec![1_i64]);
         assert!(store.get_cursor(&key(1, &principal!("alice", 1))).is_none());
         assert!(store.get_cursor(&key(2, &principal!("alice", 1))).is_some());
+    }
+
+    #[test]
+    fn store_invalidate_by_owner_filters() {
+        let store = make_store();
+        store.add_cursor(key(1, &principal!("alice", 1)), make_entry(None));
+        store.add_cursor(key(2, &principal!("bob", 2)), make_entry(None));
+
+        let invalidated = store.invalidate_cursors_by_owner(&principal!("alice", 1));
+
+        assert_eq!(invalidated, vec![1_i64]);
+        assert!(store.get_cursor(&key(1, &principal!("alice", 1))).is_none());
+        assert!(store.get_cursor(&key(2, &principal!("bob", 2))).is_some());
+    }
+
+    #[test]
+    fn store_invalidate_by_owner_ignores_other_principals() {
+        let store = make_store();
+        store.add_cursor(key(1, &principal!("alice", 1)), make_entry(None));
+        store.add_cursor(key(2, &principal!("bob", 2)), make_entry(None));
+
+        let invalidated = store.invalidate_cursors_by_owner(&principal!("carol", 3));
+
+        assert!(invalidated.is_empty());
+        assert!(store.get_cursor(&key(1, &principal!("alice", 1))).is_some());
+        assert!(store.get_cursor(&key(2, &principal!("bob", 2))).is_some());
     }
 
     #[test]

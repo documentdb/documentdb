@@ -1,5 +1,7 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
  *
  * include/bson/bson_expr_eval.h
  *
@@ -68,7 +70,8 @@ ExprEvalState * GetExpressionEvalStateFromFuncExpr(const FuncExpr *expression,
 
 ExprEvalState * GetExpressionEvalStateForBsonInput(const bson_value_t *expression,
 												   MemoryContext memoryContext, bool
-												   hasOperatorRestrictions);
+												   hasOperatorRestrictions, const char
+												   *collationString);
 
 ExprEvalState * GetExpressionEvalStateForArrayFilter(const bson_value_t *expression,
 													 MemoryContext memoryContext,

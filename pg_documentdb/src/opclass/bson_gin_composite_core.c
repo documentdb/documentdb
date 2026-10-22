@@ -1,7 +1,8 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
- * src/opclass/bson_gin_composite_entrypoint.c
+ * src/opclass/bson_gin_composite_core.c
  *
  *
  * Gin operator implementations of BSON for a composite index
@@ -212,6 +213,7 @@ BuildLowerBoundTermFromIndexBounds(CompositeQueryRunData *runData,
 								   uint32_t *indexPathLengths, int8_t *sortOrders)
 {
 	bytea *lowerBoundDatums[INDEX_MAX_KEYS] = { 0 };
+	const char *indexCollation = runData->metaInfo->collation;
 
 	for (int i = 0; i < runData->metaInfo->numIndexPaths; i++)
 	{
@@ -230,8 +232,9 @@ BuildLowerBoundTermFromIndexBounds(CompositeQueryRunData *runData,
 			runData->indexBounds[i].upperBound.bound.value_type != BSON_TYPE_EOD &&
 			runData->indexBounds[i].lowerBound.isBoundInclusive &&
 			runData->indexBounds[i].upperBound.isBoundInclusive &&
-			BsonValueEquals(&runData->indexBounds[i].lowerBound.bound,
-							&runData->indexBounds[i].upperBound.bound))
+			BsonValueEqualsWithCollation(&runData->indexBounds[i].lowerBound.bound,
+										 &runData->indexBounds[i].upperBound.bound,
+										 indexCollation))
 		{
 			runData->indexBounds[i].isEqualityBound = true;
 		}
@@ -340,10 +343,9 @@ BuildLowerBoundTermFromIndexBounds(CompositeQueryRunData *runData,
 
 static void
 MergeSingleCompositeIndexBounds(CompositeIndexBounds *sourceBound,
-								CompositeIndexBounds *targetBound)
+								CompositeIndexBounds *targetBound,
+								const char *indexCollation)
 {
-	const char *indexCollation = NULL;
-
 	if (sourceBound->lowerBound.bound.value_type != BSON_TYPE_EOD)
 	{
 		SetLowerBound(&targetBound->lowerBound,
@@ -434,7 +436,7 @@ UpdateRunDataForVariableBounds(CompositeQueryRunData *runData,
 
 		/* Update the runData with the selected bounds for this index attribute */
 		CompositeIndexBounds *bound = &set->bounds[index];
-		const char *indexCollation = NULL;
+		const char *indexCollation = runData->metaInfo->collation;
 		if (bound->lowerBound.bound.value_type != BSON_TYPE_EOD)
 		{
 			SetLowerBound(&runData->indexBounds[set->indexAttribute].lowerBound,
@@ -527,7 +529,7 @@ UpdateRunDataForOrderedBounds(CompositeQueryRunData *runData,
 
 		ListCell *cell;
 		bool checkForUnsatisfiability = true;
-		const char *indexCollation = NULL;
+		const char *indexCollation = runData->metaInfo->collation;
 		foreach(cell, entriesForPath)
 		{
 			CompositeProcessedPerPathEntry *entry =
@@ -619,10 +621,10 @@ UpdateRunDataForOrderedBounds(CompositeQueryRunData *runData,
 			runData->indexBounds[i].upperBound.bound.value_type != BSON_TYPE_EOD)
 		{
 			bool isComparisonValidIgnore = false;
-			int boundsCompare = CompareBsonValueAndType(
+			int boundsCompare = CompareBsonValueAndTypeWithCollation(
 				&runData->indexBounds[i].lowerBound.bound,
 				&runData->indexBounds[i].upperBound.bound,
-				&isComparisonValidIgnore);
+				&isComparisonValidIgnore, indexCollation);
 
 			/* lower bound is greater than upperbound (this is unsatisfiable) */
 			if (checkForUnsatisfiability && boundsCompare > 0 &&
@@ -702,7 +704,7 @@ MergeBoundsForBoundsSet(CompositeIndexBoundsSet *set, CompositeIndexBounds *merg
 
 
 List *
-MergeWildCardSingleVariableBounds(List *boundsList)
+MergeWildCardSingleVariableBounds(List *boundsList, const char *indexCollation)
 {
 	/* No array paths, in this case, we merge bounds based off of the wildcard path */
 
@@ -743,7 +745,6 @@ MergeWildCardSingleVariableBounds(List *boundsList)
 															v_int32);
 
 			/* Merge the current set into the target */
-			const char *indexCollation = NULL;
 			MergeBoundsForBoundsSet(set, &(existingSet->bounds[0]), indexCollation);
 		}
 	}
@@ -3705,7 +3706,8 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 					for (int i = 0; i < set->numBounds; i++)
 					{
 						MergeSingleCompositeIndexBounds(singleBounds->bounds,
-														&set->bounds[i]);
+														&set->bounds[i],
+														indexCollation);
 					}
 				}
 

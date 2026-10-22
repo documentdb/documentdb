@@ -1,5 +1,7 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
  *
  * src/bson/bson_expr_eval.c
  *
@@ -322,12 +324,14 @@ GetExpressionEvalState(const bson_value_t *expression, MemoryContext memoryConte
  */
 ExprEvalState *
 GetExpressionEvalStateForBsonInput(const bson_value_t *expression, MemoryContext
-								   memoryContext, bool hasOperatorRestrictions)
+								   memoryContext, bool hasOperatorRestrictions,
+								   const char *collationString)
 {
 	MemoryContext originalMemoryContext = MemoryContextSwitchTo(memoryContext);
 	BsonQueryOperatorContext context = { 0 };
 	BsonQueryOperatorContextCommonBuilder(&context);
 	context.hasOperatorRestrictions = hasOperatorRestrictions;
+	context.collationString = collationString;
 	Expr *expr = CreateQualForBsonExpression(expression, NULL, &context);
 	ExprEvalState *evalState = CreateEvalStateFromExpr(expr, BsonTypeId());
 	MemoryContextSwitchTo(originalMemoryContext);

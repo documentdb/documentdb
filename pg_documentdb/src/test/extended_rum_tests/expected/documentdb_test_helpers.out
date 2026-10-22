@@ -46,7 +46,7 @@ SELECT application_name FROM pg_stat_activity WHERE application_name = 'document
  documentdb_bg_worker_leader
 (1 row)
 
-CREATE OR REPLACE FUNCTION documentdb_test_helpers.run_explain_and_trim(p_query text, p_ignore_heap_fetches boolean DEFAULT false, p_normalize_window boolean DEFAULT false)
+CREATE OR REPLACE FUNCTION documentdb_test_helpers.run_explain_and_trim(p_query text, p_ignore_heap_fetches boolean DEFAULT false, p_normalize_window boolean DEFAULT false, p_ignore_group_key boolean DEFAULT false)
 RETURNS SETOF text
 AS $$
 DECLARE
@@ -57,6 +57,8 @@ BEGIN
     IF v_explain_row ~ '^\s+Disabled: true\s*$' THEN
       CONTINUE;
     ELSIF p_normalize_window AND v_explain_row ~ '^\s+Window: ' THEN
+      CONTINUE;
+    ELSIF p_ignore_group_key AND v_explain_row ~ '^\s+Group Key: ' THEN
       CONTINUE;
     ELSIF v_explain_row ~ '^\s+Index Searches: [0-9]+\s*$' THEN
       CONTINUE;
@@ -479,3 +481,19 @@ LANGUAGE c
 AS '$libdir/pg_documentdb_extended_rum', 'documentdb_extended_rum_test_set_incomplete_split_on_page';
 -- Turn off cron jobs to avoid flakiness in tests.
 UPDATE cron.job set active = false;
+CREATE OR REPLACE FUNCTION documentdb_api_internal.documentdb_rum_get_meta_page_info_index(index_relid regclass)
+RETURNS jsonb
+LANGUAGE c STRICT
+AS '$libdir/pg_documentdb_extended_rum', 'documentdb_extended_rum_get_meta_page_info_index';
+CREATE OR REPLACE FUNCTION documentdb_api_internal.documentdb_rum_page_get_stats_index(index_relid regclass, block_number integer)
+RETURNS jsonb
+LANGUAGE c STRICT
+AS '$libdir/pg_documentdb_extended_rum', 'documentdb_extended_rum_page_get_stats_index';
+CREATE OR REPLACE FUNCTION documentdb_api_internal.documentdb_rum_page_get_entries_index(index_relid regclass, block_number integer)
+RETURNS SETOF jsonb
+LANGUAGE c STRICT
+AS '$libdir/pg_documentdb_extended_rum', 'documentdb_extended_rum_page_get_entries_index';
+CREATE OR REPLACE FUNCTION documentdb_api_internal.documentdb_rum_page_get_data_items_index(index_relid regclass, block_number integer)
+RETURNS SETOF jsonb
+LANGUAGE c STRICT
+AS '$libdir/pg_documentdb_extended_rum', 'documentdb_extended_rum_page_get_data_items_index';

@@ -155,7 +155,7 @@ mod tests {
         let document = doc! { "hello": 1_i32, "$db": "admin" };
         let request = Request::RawBuf(RequestType::Hello, build_raw_document(&document));
         let request_info = request
-            .extract_common()
+            .extract_common(true)
             .expect("hello request should have valid common fields");
         let wire_request = WireRequest::from_request_and_info(&request, request_info);
         let request_tracker = RequestTracker::new();

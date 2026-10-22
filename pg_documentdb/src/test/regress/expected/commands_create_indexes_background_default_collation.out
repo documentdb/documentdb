@@ -1,0 +1,326 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+SET documentdb.next_collection_id TO 782500;
+SET documentdb.next_collection_index_id TO 782500;
+SET search_path TO documentdb_core, documentdb_api, documentdb_api_catalog;
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET documentdb.defaultUseCompositeOpClass TO on;
+SELECT documentdb_test_helpers.change_index_jobs_status(false);
+NOTICE:  Processing job_id: 2
+NOTICE:  Processing job_id: 3
+ change_index_jobs_status 
+--------------------------
+ 
+(1 row)
+
+DELETE FROM documentdb_api_catalog.documentdb_index_queue;
+SELECT documentdb_api.create_collection('collation_index_db', 'background_default');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+UPDATE documentdb_api_catalog.collections
+SET options = '{ "collation": { "locale": "fr", "strength": 1 } }'::documentdb_core.bson
+WHERE database_name = 'collation_index_db' AND collection_name = 'background_default';
+SELECT documentdb_api.create_indexes_background(
+  'collation_index_db',
+  '{
+     "createIndexes": "background_default",
+     "indexes": [
+       {"key": {"a": 1}, "name": "a_1"}
+     ]
+   }'
+);
+                                                                                                                                                                        create_indexes_background                                                                                                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""raw"" : { ""defaultShard"" : { ""numIndexesBefore"" : { ""$numberInt"" : ""1"" }, ""numIndexesAfter"" : { ""$numberInt"" : ""2"" }, ""createdCollectionAutomatically"" : false, ""ok"" : { ""$numberInt"" : ""1"" } } }, ""ok"" : { ""$numberInt"" : ""1"" } }",t,"{ ""indexRequest"" : { ""cmdType"" : ""C"", ""ids"" : [ { ""$numberInt"" : ""782502"" } ] } }")
+(1 row)
+
+SELECT index_cmd LIKE '%cl=''fr-u-ks-level1''%' AS has_default_collation,
+       cmd_type,
+       index_cmd_status
+FROM documentdb_api_catalog.documentdb_index_queue
+WHERE collection_id = (
+  SELECT collection_id
+  FROM documentdb_api_catalog.collections
+  WHERE database_name = 'collation_index_db' AND collection_name = 'background_default'
+);
+ has_default_collation | cmd_type | index_cmd_status 
+-----------------------+----------+------------------
+ t                     | C        |                1
+(1 row)
+
+SELECT documentdb_api_internal.index_spec_as_bson(index_spec, true) AS index_spec,
+       index_is_valid
+FROM documentdb_api_catalog.collection_indexes
+WHERE collection_id = (
+  SELECT collection_id
+  FROM documentdb_api_catalog.collections
+  WHERE database_name = 'collation_index_db' AND collection_name = 'background_default'
+)
+AND (index_spec).index_name = 'a_1';
+                                                                                                      index_spec                                                                                                       | index_is_valid 
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------
+ { "v" : { "$numberInt" : "2" }, "key" : { "a" : { "$numberInt" : "1" } }, "name" : "a_1", "collation" : { "locale" : "fr", "strength" : { "$numberInt" : "1" } }, "storageEngine" : { "enableOrderedIndex" : true } } | f
+(1 row)
+
+CALL documentdb_api_internal.build_index_concurrently(1);
+CALL documentdb_api_internal.build_index_background(1);
+SELECT index_cmd LIKE '%cl=''fr-u-ks-level1''%' AS has_default_collation,
+       cmd_type,
+       index_cmd_status
+FROM documentdb_api_catalog.documentdb_index_queue
+WHERE collection_id = (
+  SELECT collection_id
+  FROM documentdb_api_catalog.collections
+  WHERE database_name = 'collation_index_db' AND collection_name = 'background_default'
+);
+ has_default_collation | cmd_type | index_cmd_status 
+-----------------------+----------+------------------
+(0 rows)
+
+SELECT documentdb_api_internal.index_spec_as_bson(index_spec, true) AS index_spec,
+       index_is_valid
+FROM documentdb_api_catalog.collection_indexes
+WHERE collection_id = (
+  SELECT collection_id
+  FROM documentdb_api_catalog.collections
+  WHERE database_name = 'collation_index_db' AND collection_name = 'background_default'
+)
+AND (index_spec).index_name = 'a_1';
+                                                                                                      index_spec                                                                                                       | index_is_valid 
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------
+ { "v" : { "$numberInt" : "2" }, "key" : { "a" : { "$numberInt" : "1" } }, "name" : "a_1", "collation" : { "locale" : "fr", "strength" : { "$numberInt" : "1" } }, "storageEngine" : { "enableOrderedIndex" : true } } | t
+(1 row)
+
+SELECT documentdb_api.create_indexes_background(
+  'collation_index_db',
+  '{
+     "createIndexes": "background_default",
+     "indexes": [
+       {
+         "key": {"b": 1, "c": -1},
+         "name": "b_1_c_-1",
+         "collation": {"locale": "en", "strength": 2}
+       }
+     ]
+   }'
+);
+                                                                                                                                                                        create_indexes_background                                                                                                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""raw"" : { ""defaultShard"" : { ""numIndexesBefore"" : { ""$numberInt"" : ""2"" }, ""numIndexesAfter"" : { ""$numberInt"" : ""3"" }, ""createdCollectionAutomatically"" : false, ""ok"" : { ""$numberInt"" : ""1"" } } }, ""ok"" : { ""$numberInt"" : ""1"" } }",t,"{ ""indexRequest"" : { ""cmdType"" : ""C"", ""ids"" : [ { ""$numberInt"" : ""782503"" } ] } }")
+(1 row)
+
+SELECT index_cmd LIKE '%cl=''en-u-ks-level2''%' AS has_index_collation,
+       index_cmd NOT LIKE '%cl=''fr-u-ks-level1''%' AS excludes_default_collation,
+       cmd_type,
+       index_cmd_status
+FROM documentdb_api_catalog.documentdb_index_queue
+WHERE collection_id = (
+  SELECT collection_id
+  FROM documentdb_api_catalog.collections
+  WHERE database_name = 'collation_index_db' AND collection_name = 'background_default'
+);
+ has_index_collation | excludes_default_collation | cmd_type | index_cmd_status 
+---------------------+----------------------------+----------+------------------
+ t                   | t                          | C        |                1
+(1 row)
+
+SELECT documentdb_api_internal.index_spec_as_bson(index_spec, true) AS index_spec,
+       index_is_valid
+FROM documentdb_api_catalog.collection_indexes
+WHERE collection_id = (
+  SELECT collection_id
+  FROM documentdb_api_catalog.collections
+  WHERE database_name = 'collation_index_db' AND collection_name = 'background_default'
+)
+AND (index_spec).index_name = 'b_1_c_-1';
+                                                                                                                        index_spec                                                                                                                         | index_is_valid 
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------
+ { "v" : { "$numberInt" : "2" }, "key" : { "b" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "-1" } }, "name" : "b_1_c_-1", "collation" : { "locale" : "en", "strength" : { "$numberInt" : "2" } }, "storageEngine" : { "enableOrderedIndex" : true } } | f
+(1 row)
+
+CALL documentdb_api_internal.build_index_concurrently(1);
+CALL documentdb_api_internal.build_index_background(1);
+SELECT documentdb_api_internal.index_spec_as_bson(index_spec, true) AS index_spec,
+       index_is_valid
+FROM documentdb_api_catalog.collection_indexes
+WHERE collection_id = (
+  SELECT collection_id
+  FROM documentdb_api_catalog.collections
+  WHERE database_name = 'collation_index_db' AND collection_name = 'background_default'
+)
+AND (index_spec).index_name = 'b_1_c_-1';
+                                                                                                                        index_spec                                                                                                                         | index_is_valid 
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------
+ { "v" : { "$numberInt" : "2" }, "key" : { "b" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "-1" } }, "name" : "b_1_c_-1", "collation" : { "locale" : "en", "strength" : { "$numberInt" : "2" } }, "storageEngine" : { "enableOrderedIndex" : true } } | t
+(1 row)
+
+SELECT documentdb_api.create_indexes_background(
+  'collation_index_db',
+  '{
+     "createIndexes": "background_default",
+     "indexes": [
+       {
+         "key": {"binary_key": 1},
+         "name": "binary_key_1",
+         "collation": {"locale": "simple"}
+       }
+     ]
+   }'
+);
+                                                                                                                                                                        create_indexes_background                                                                                                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""raw"" : { ""defaultShard"" : { ""numIndexesBefore"" : { ""$numberInt"" : ""3"" }, ""numIndexesAfter"" : { ""$numberInt"" : ""4"" }, ""createdCollectionAutomatically"" : false, ""ok"" : { ""$numberInt"" : ""1"" } } }, ""ok"" : { ""$numberInt"" : ""1"" } }",t,"{ ""indexRequest"" : { ""cmdType"" : ""C"", ""ids"" : [ { ""$numberInt"" : ""782504"" } ] } }")
+(1 row)
+
+SELECT index_cmd NOT LIKE '%cl=%' AS uses_binary_comparison,
+       cmd_type,
+       index_cmd_status
+FROM documentdb_api_catalog.documentdb_index_queue
+WHERE collection_id = (
+  SELECT collection_id
+  FROM documentdb_api_catalog.collections
+  WHERE database_name = 'collation_index_db' AND collection_name = 'background_default'
+);
+ uses_binary_comparison | cmd_type | index_cmd_status 
+------------------------+----------+------------------
+ t                      | C        |                1
+(1 row)
+
+SELECT documentdb_api_internal.index_spec_as_bson(index_spec, true) AS index_spec,
+       index_is_valid
+FROM documentdb_api_catalog.collection_indexes
+WHERE collection_id = (
+  SELECT collection_id
+  FROM documentdb_api_catalog.collections
+  WHERE database_name = 'collation_index_db' AND collection_name = 'background_default'
+)
+AND (index_spec).index_name = 'binary_key_1';
+                                                                           index_spec                                                                            | index_is_valid 
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------
+ { "v" : { "$numberInt" : "2" }, "key" : { "binary_key" : { "$numberInt" : "1" } }, "name" : "binary_key_1", "storageEngine" : { "enableOrderedIndex" : true } } | f
+(1 row)
+
+CALL documentdb_api_internal.build_index_concurrently(1);
+CALL documentdb_api_internal.build_index_background(1);
+SELECT documentdb_api_internal.index_spec_as_bson(index_spec, true) AS index_spec,
+       index_is_valid
+FROM documentdb_api_catalog.collection_indexes
+WHERE collection_id = (
+  SELECT collection_id
+  FROM documentdb_api_catalog.collections
+  WHERE database_name = 'collation_index_db' AND collection_name = 'background_default'
+)
+AND (index_spec).index_name = 'binary_key_1';
+                                                                           index_spec                                                                            | index_is_valid 
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------
+ { "v" : { "$numberInt" : "2" }, "key" : { "binary_key" : { "$numberInt" : "1" } }, "name" : "binary_key_1", "storageEngine" : { "enableOrderedIndex" : true } } | t
+(1 row)
+
+SELECT documentdb_api.create_indexes_background(
+  'collation_index_db',
+  '{"createIndexes": "background_default", "indexes": [{"key": {"geo": "2d"}, "name": "geo_2d"}]}'
+);
+                                                                                                                                                           create_indexes_background                                                                                                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""raw"" : { ""defaultShard"" : { ""ok"" : { ""$numberInt"" : ""0"" }, ""errmsg"" : ""Error in specification { \\""key\\"" : { \\""geo\\"" : \\""2d\\"" }, \\""name\\"" : \\""geo_2d\\"" }:Index type '2d' does not support collation"", ""code"" : { ""$numberInt"" : ""503316509"" } } }, ""ok"" : { ""$numberInt"" : ""0"" } }",f,"{ }")
+(1 row)
+
+SELECT documentdb_api.create_indexes_background(
+  'collation_index_db',
+  '{"createIndexes": "background_default", "indexes": [{"key": {"geo": "2dsphere"}, "name": "geo_2dsphere"}]}'
+);
+                                                                                                                                                                    create_indexes_background                                                                                                                                                                     
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""raw"" : { ""defaultShard"" : { ""ok"" : { ""$numberInt"" : ""0"" }, ""errmsg"" : ""Error in specification { \\""key\\"" : { \\""geo\\"" : \\""2dsphere\\"" }, \\""name\\"" : \\""geo_2dsphere\\"" }:Index type '2dsphere' does not support collation"", ""code"" : { ""$numberInt"" : ""503316509"" } } }, ""ok"" : { ""$numberInt"" : ""0"" } }",f,"{ }")
+(1 row)
+
+SELECT documentdb_api.create_indexes_background(
+  'collation_index_db',
+  '{"createIndexes": "background_default", "indexes": [{"key": {"description": "text"}, "name": "description_text"}]}'
+);
+                                                                                                                                                                      create_indexes_background                                                                                                                                                                       
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""raw"" : { ""defaultShard"" : { ""ok"" : { ""$numberInt"" : ""0"" }, ""errmsg"" : ""Error in specification { \\""key\\"" : { \\""description\\"" : \\""text\\"" }, \\""name\\"" : \\""description_text\\"" }:Index type 'text' does not support collation"", ""code"" : { ""$numberInt"" : ""503316509"" } } }, ""ok"" : { ""$numberInt"" : ""0"" } }",f,"{ }")
+(1 row)
+
+SELECT documentdb_api.create_indexes_background(
+  'collation_index_db',
+  '{"createIndexes": "background_default", "indexes": [{"key": {"hashed_key": "hashed"}, "name": "hashed_key_hashed"}]}'
+);
+                                                                                                                                                                        create_indexes_background                                                                                                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""raw"" : { ""defaultShard"" : { ""ok"" : { ""$numberInt"" : ""0"" }, ""errmsg"" : ""Error in specification { \\""key\\"" : { \\""hashed_key\\"" : \\""hashed\\"" }, \\""name\\"" : \\""hashed_key_hashed\\"" }:Index type 'hashed' does not support collation"", ""code"" : { ""$numberInt"" : ""503316509"" } } }, ""ok"" : { ""$numberInt"" : ""0"" } }",f,"{ }")
+(1 row)
+
+SELECT documentdb_api.create_indexes_background(
+  'collation_index_db',
+  '{
+     "createIndexes": "background_default",
+     "indexes": [
+       {
+         "key": {"embedding": "cosmosSearch"},
+         "name": "embedding_vector",
+         "cosmosSearchOptions": {
+           "kind": "vector-ivf",
+           "numLists": 1,
+           "similarity": "COS",
+           "dimensions": 3
+         }
+       }
+     ]
+   }'
+);
+                                                                                                                                                                                                                                                        create_indexes_background                                                                                                                                                                                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""raw"" : { ""defaultShard"" : { ""ok"" : { ""$numberInt"" : ""0"" }, ""errmsg"" : ""Error in specification { \\""key\\"" : { \\""embedding\\"" : \\""cosmosSearch\\"" }, \\""name\\"" : \\""embedding_vector\\"", \\""cosmosSearchOptions\\"" : { \\""kind\\"" : \\""vector-ivf\\"", \\""numLists\\"" : 1, \\""similarity\\"" : \\""COS\\"", \\""dimensions\\"" : 3 } }:Index type 'cosmosSearch' does not support collation"", ""code"" : { ""$numberInt"" : ""503316509"" } } }, ""ok"" : { ""$numberInt"" : ""0"" } }",f,"{ }")
+(1 row)
+
+SELECT documentdb_api.create_indexes_background(
+  'collation_index_db',
+  '{"createIndexes": "background_default", "indexes": [{"key": {"unique_key": 1}, "name": "unique_key_1", "unique": true}]}'
+);
+                                                                                                          create_indexes_background                                                                                                          
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""raw"" : { ""defaultShard"" : { ""ok"" : { ""$numberInt"" : ""0"" }, ""errmsg"" : ""Collation is not yet supported for unique indexes"", ""code"" : { ""$numberInt"" : ""1088"" } } }, ""ok"" : { ""$numberInt"" : ""0"" } }",f,"{ }")
+(1 row)
+
+SET documentdb.defaultUseCompositeOpClass TO off;
+SELECT documentdb_api.create_indexes_background(
+  'collation_index_db',
+  '{"createIndexes": "background_default", "indexes": [{"key": {"scalar_key": 1}, "name": "scalar_key_1", "enableOrderedIndex": false}]}'
+);
+                                                                                                                                                                                          create_indexes_background                                                                                                                                                                                          
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""raw"" : { ""defaultShard"" : { ""ok"" : { ""$numberInt"" : ""0"" }, ""errmsg"" : ""Error in specification { \\""key\\"" : { \\""scalar_key\\"" : 1 }, \\""name\\"" : \\""scalar_key_1\\"", \\""enableOrderedIndex\\"" : false }:Collation is only supported with ordered (or composite) indexes"", ""code"" : { ""$numberInt"" : ""503316509"" } } }, ""ok"" : { ""$numberInt"" : ""0"" } }",f,"{ }")
+(1 row)
+
+SET documentdb.defaultUseCompositeOpClass TO on;
+SELECT count(*) AS queued_failure_count
+FROM documentdb_api_catalog.documentdb_index_queue
+WHERE collection_id = (
+  SELECT collection_id
+  FROM documentdb_api_catalog.collections
+  WHERE database_name = 'collation_index_db' AND collection_name = 'background_default'
+);
+ queued_failure_count 
+----------------------
+                    0
+(1 row)
+
+SELECT documentdb_test_helpers.change_index_jobs_status(true);
+NOTICE:  Processing job_id: 2
+NOTICE:  Processing job_id: 3
+ change_index_jobs_status 
+--------------------------
+ 
+(1 row)
+
+RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
+RESET documentdb_core.enableCollation;
+RESET documentdb.defaultUseCompositeOpClass;

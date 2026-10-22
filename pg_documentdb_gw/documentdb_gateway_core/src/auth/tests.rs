@@ -16,6 +16,8 @@ use std::sync::{
 use async_trait::async_trait;
 use bson::{doc, spec::BinarySubtype, Binary};
 use serde_json::Value;
+use tracing_subscriber::prelude::*;
+use uuid::Uuid;
 
 use crate::{
     auth::{
@@ -29,8 +31,10 @@ use crate::{
     requests::{request_tracker::RequestTracker, Request, RequestType, WireRequest},
     security::principal::Principal,
     testing::{
-        build_raw_document, test_connection_context,
-        test_connection_context_with_authentication_manager, TestDynamicConfiguration,
+        build_raw_document,
+        logs::{CapturedEvent, LogCapture},
+        test_connection_context, test_connection_context_with_authentication_manager,
+        TestDynamicConfiguration,
     },
 };
 
@@ -192,7 +196,7 @@ async fn sasl_start_clears_authenticated_user_and_pool_settings() {
         .expect("test scheme should register");
     let request = authentication_request();
     let request_info = request
-        .extract_common()
+        .extract_common(true)
         .expect("saslStart request should have valid common fields");
     let wire_request = WireRequest::from_request_and_info(&request, request_info);
     let request_tracker = RequestTracker::new();
@@ -259,7 +263,7 @@ async fn authentication_can_switch_principal() {
 
     let request = authentication_request();
     let request_info = request
-        .extract_common()
+        .extract_common(true)
         .expect("saslStart request should have valid common fields");
     let wire_request = WireRequest::from_request_and_info(&request, request_info);
     let request_tracker = RequestTracker::new();
@@ -317,7 +321,7 @@ async fn reauthentication_requires_the_same_principal() {
         .expect("test scheme should register");
     let request = authentication_request();
     let request_info = request
-        .extract_common()
+        .extract_common(true)
         .expect("saslStart request should have valid common fields");
     let wire_request = WireRequest::from_request_and_info(&request, request_info);
     let request_tracker = RequestTracker::new();
@@ -366,7 +370,7 @@ async fn reauthentication_accepts_the_same_principal() {
         .expect("test scheme should register");
     let request = authentication_request();
     let request_info = request
-        .extract_common()
+        .extract_common(true)
         .expect("saslStart request should have valid common fields");
     let wire_request = WireRequest::from_request_and_info(&request, request_info);
     let request_tracker = RequestTracker::new();
@@ -412,7 +416,7 @@ async fn terminal_failure_clears_mechanism_state() {
     .await;
     let request = authentication_request();
     let request_info = request
-        .extract_common()
+        .extract_common(true)
         .expect("saslStart request should have valid common fields");
     let wire_request = WireRequest::from_request_and_info(&request, request_info);
     let request_tracker = RequestTracker::new();
@@ -512,7 +516,7 @@ async fn authentication_rejects_a_disabled_handler() {
         .expect("test scheme should register");
     let request = authentication_request();
     let request_info = request
-        .extract_common()
+        .extract_common(true)
         .expect("saslStart request should have valid common fields");
     let wire_request = WireRequest::from_request_and_info(&request, request_info);
     let request_tracker = RequestTracker::new();
@@ -590,7 +594,7 @@ async fn disabled_reauthentication_scheme_preserves_expired_principal() {
     ));
     let request = authentication_request();
     let request_info = request
-        .extract_common()
+        .extract_common(true)
         .expect("saslStart request should have valid common fields");
     let wire_request = WireRequest::from_request_and_info(&request, request_info);
     let request_tracker = RequestTracker::new();
@@ -635,4 +639,92 @@ fn expiration_clears_data_pool_settings() {
     assert!(user.is_expired());
     user.data_pool_settings()
         .expect_err("expired authentication must not retain data pool settings");
+}
+
+async fn authenticate_and_capture_audit_events(
+    handler: Box<dyn AuthenticationHandler>,
+) -> (Uuid, Vec<CapturedEvent>) {
+    let mut authentication_manager = AuthenticationManager::default();
+    authentication_manager
+        .register_scheme("TEST", handler)
+        .expect("test scheme should register");
+    let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+    let mut connection_context = test_connection_context_with_authentication_manager(
+        false,
+        dynamic_configuration,
+        None,
+        authentication_manager,
+    )
+    .await;
+
+    let request = authentication_request();
+    let request_info = request
+        .extract_common(true)
+        .expect("saslStart request should have valid common fields");
+    let wire_request = WireRequest::from_request_and_info(&request, request_info);
+    let request_tracker = RequestTracker::new();
+    let request_context = RequestContext::new("activity-audit", &wire_request, &request_tracker);
+
+    let capture = LogCapture::new("documentdb_gateway_core::auth::audit");
+    let _guard =
+        tracing::subscriber::set_default(tracing_subscriber::registry().with(capture.clone()));
+    // Other tests may have cached these callsites as disabled before this
+    // scoped subscriber was installed.
+    tracing::callsite::rebuild_interest_cache();
+    handle_authentication(&mut connection_context, &request_context)
+        .await
+        .expect("authentication should complete")
+        .expect("authentication command should be handled");
+
+    (connection_context.connection_id, capture.events())
+}
+
+#[tokio::test]
+async fn successful_authentication_audit_event_includes_user_oid() {
+    let (connection_id, events) = authenticate_and_capture_audit_events(Box::new(SuccessHandler {
+        principal: Principal::new("audited-user", 4242),
+    }))
+    .await;
+
+    assert_eq!(events.len(), 1, "expected one audit event: {events:?}");
+    assert_eq!(events[0].level, tracing::Level::INFO);
+    let event = &events[0].fields;
+    assert_eq!(event.get("connection_id"), Some(&connection_id.to_string()));
+    assert_eq!(
+        event.get("activity_id").map(String::as_str),
+        Some("activity-audit")
+    );
+    assert_eq!(
+        event.get("message").map(String::as_str),
+        Some("Connection authenticated - User OID 4242")
+    );
+    assert_eq!(
+        event.get("authentication_outcome").map(String::as_str),
+        Some("success")
+    );
+    assert_eq!(event.get("user_oid").map(String::as_str), Some("4242"));
+    assert!(
+        event.values().all(|value| !value.contains("audited-user")),
+        "the audit event must not include the user name: {event:?}"
+    );
+}
+
+#[tokio::test]
+async fn failed_authentication_audit_event_omits_user_oid() {
+    let (connection_id, events) =
+        authenticate_and_capture_audit_events(Box::new(FailedHandler)).await;
+
+    assert_eq!(events.len(), 1, "expected one audit event: {events:?}");
+    assert_eq!(events[0].level, tracing::Level::WARN);
+    let event = &events[0].fields;
+    assert_eq!(event.get("connection_id"), Some(&connection_id.to_string()));
+    assert_eq!(
+        event.get("message").map(String::as_str),
+        Some("Authentication attempt completed")
+    );
+    assert_eq!(
+        event.get("authentication_outcome").map(String::as_str),
+        Some("failure")
+    );
+    assert!(!event.contains_key("user_oid"));
 }

@@ -65,6 +65,7 @@ static SchemaNode * BuildSchemaTreeCore(bson_iter_t *schemaIter,
 static void BuildSchemaTreeCoreOnNode(bson_iter_t *schemaIter, SchemaNode *node);
 
 extern bool EnableSchemaEnforcementForCSFLE;
+extern bool EnableBsonTypeArgumentValidation;
 
 /* -------------------------------------------------------- */
 /*              Exported Functions                          */
@@ -199,6 +200,11 @@ BuildSchemaTreeCoreOnNode(bson_iter_t *schemaIter, SchemaNode *node)
 		}
 		else if (strcmp(key, "title") == 0)
 		{
+			if (!EnableBsonTypeArgumentValidation)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
+								errmsg("Unknown $jsonSchema keyword: %s", key)));
+			}
 			if (value->value_type != BSON_TYPE_UTF8)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
@@ -242,7 +248,8 @@ BuildSchemaTreeCoreOnNode(bson_iter_t *schemaIter, SchemaNode *node)
 								errmsg("Division by an infinite value is not allowed")));
 			}
 			if ((value->value_type == BSON_TYPE_DECIMAL128 && IsDecimal128Zero(value)) ||
-				(BsonValueAsDouble(value) <= 0.0))
+				(BsonValueAsDouble(value) == 0.0) ||
+				(EnableBsonTypeArgumentValidation && BsonValueAsDouble(value) < 0.0))
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
 								errmsg(

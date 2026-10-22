@@ -1,3 +1,7 @@
+-- Copyright (c) Microsoft Corporation. All rights reserved.
+-- Licensed under the MIT License. See LICENSE in the project root for license information.
+-- SPDX-License-Identifier: MIT
+
 SET search_path TO documentdb_api, documentdb_api_catalog,documentdb_core;
 SET documentdb.next_collection_id TO 5000;
 SET documentdb.next_collection_index_id TO 5000;
@@ -242,3 +246,71 @@ SELECT documentdb_api.shard_collection('db', 'nonShardedCollection', '{ "a.b": "
 SET documentdb.next_collection_id TO 5000;
 SELECT documentdb_api.shard_collection('db', 'shard_462_crash_test', '{ "_id": "hashed" }', false);
 
+-- Rebuilding a collection must preserve its options and pre-image storage.
+SET documentdb.next_collection_id TO 99010300;
+SET documentdb.next_collection_index_id TO 99010300;
+SET documentdb.enablePreImages TO on;
+
+DO $$
+DECLARE
+    target_collection text;
+    operation text;
+    original_options documentdb_core.bson;
+    current_options documentdb_core.bson;
+    expected_identity "char";
+    current_identity "char";
+    document_count bigint;
+BEGIN
+    FOREACH target_collection IN ARRAY ARRAY['preimages', 'update_only', 'disabled']
+    LOOP
+        PERFORM documentdb_api.create_collection_view('sharding_options',
+            format('{"create": "%s", "enableUpdateDescription": true,
+                     "changeStreamPreAndPostImages": {"enabled": %s}}',
+                   target_collection, (target_collection != 'update_only')::text)::documentdb_core.bson);
+        IF target_collection = 'disabled' THEN
+            PERFORM documentdb_api.coll_mod('sharding_options', target_collection,
+                format('{"collMod": "%s", "changeStreamPreAndPostImages": {"enabled": false},
+                         "enableUpdateDescription": false}', target_collection)::documentdb_core.bson);
+        END IF;
+        PERFORM documentdb_api.insert_one('sharding_options', target_collection,
+            '{"_id": 1, "a": 1, "b": 2}'::documentdb_core.bson);
+        SELECT c.options INTO STRICT original_options
+        FROM documentdb_api_catalog.collections c
+        WHERE c.database_name = 'sharding_options' AND c.collection_name = target_collection;
+        expected_identity := CASE WHEN target_collection = 'preimages' THEN 'f' ELSE 'd' END;
+
+        FOREACH operation IN ARRAY ARRAY['shard', 'reshard', 'redistribute', 'unshard']
+        LOOP
+            IF operation = 'shard' THEN
+                PERFORM documentdb_api.shard_collection(
+                    format('{"shardCollection": "sharding_options.%s", "key": {"a": "hashed"}}',
+                           target_collection)::documentdb_core.bson);
+            ELSIF operation = 'unshard' THEN
+                PERFORM documentdb_api.unshard_collection(
+                    format('{"unshardCollection": "sharding_options.%s"}',
+                           target_collection)::documentdb_core.bson);
+            ELSE
+                PERFORM documentdb_api.reshard_collection(
+                    format('{"reshardCollection": "sharding_options.%s", "key": {"b": "hashed"},
+                             "forceRedistribution": %s}', target_collection,
+                           (operation = 'redistribute')::text)::documentdb_core.bson);
+            END IF;
+
+            SELECT c.options, p.relreplident INTO STRICT current_options, current_identity
+            FROM documentdb_api_catalog.collections c
+            JOIN pg_class p ON p.oid =
+                format('documentdb_data.documents_%s', c.collection_id)::regclass
+            WHERE c.database_name = 'sharding_options' AND c.collection_name = target_collection;
+            SELECT count(*) INTO document_count
+            FROM documentdb_api.collection('sharding_options', target_collection)
+            WHERE document = '{"_id": 1, "a": 1, "b": 2}'::documentdb_core.bson;
+            RAISE NOTICE '% %: options preserved %, replica identity preserved %, document preserved %',
+                target_collection, operation, current_options IS NOT DISTINCT FROM original_options,
+                current_identity = expected_identity, document_count = 1;
+        END LOOP;
+        PERFORM documentdb_api.drop_collection('sharding_options', target_collection);
+    END LOOP;
+END;
+$$;
+
+RESET documentdb.enablePreImages;

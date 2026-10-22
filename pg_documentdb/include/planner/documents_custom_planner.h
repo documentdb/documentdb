@@ -13,5 +13,5 @@
 
 PlannedStmt * TryCreatePointReadPlan(Query *query);
 
-int GetDynamicCursorCursorOptions(void);
+int GetDynamicCursorCursorOptions(bool allowFastPlan);
 #endif

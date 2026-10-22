@@ -142,15 +142,16 @@ where
 pub fn parse_request<'a>(
     message: &'a RequestMessage,
     requires_response: &mut bool,
+    read_concern_validation: bool,
 ) -> Result<WireRequest<'a>> {
     // Parse the specific message based on OpCode
     let request = match message.op_code() {
-        OpCode::Msg => parse_msg(message, requires_response)?,
+        OpCode::Msg => parse_msg(message, requires_response, read_concern_validation)?,
         #[expect(
             deprecated,
             reason = "OP_QUERY is still supported for legacy clients and testing"
         )]
-        OpCode::Query => op_query::parse_query(message.request())?,
+        OpCode::Query => op_query::parse_query(message.request(), read_concern_validation)?,
         #[expect(
             deprecated,
             reason = "OP_INSERT is still supported for legacy clients and testing"
@@ -244,6 +245,7 @@ pub fn str_from_u8_nul_utf8(utf8_src: &[u8]) -> Result<(&str, usize)> {
 fn parse_msg<'a>(
     message: &'a RequestMessage,
     requires_response: &mut bool,
+    read_concern_validation: bool,
 ) -> Result<WireRequest<'a>> {
     let reader = Cursor::new(message.request_as_u8());
     let msg: Message = Message::read_from_op_msg(reader, message.response_to())?;
@@ -258,7 +260,7 @@ fn parse_msg<'a>(
         .command
         .ok_or_else(|| DocumentDBError::bad_value("Message had no command document".to_owned()))?;
 
-    parse_cmd_from_message(command, msg.extra.as_ref())
+    parse_cmd_from_message(command, msg.extra.as_ref(), read_concern_validation)
 }
 
 fn parse_msg_payload<'a>(
@@ -311,17 +313,23 @@ fn validate_sequence_identifier(
 ///
 /// # Errors
 /// Returns an error if the command document is empty or contains an unrecognized command.
-pub fn parse_cmd<'a>(command: &'a RawDocument, extra: Option<&'a [u8]>) -> Result<WireRequest<'a>> {
-    parse_cmd_core(command, extra, |_| Ok(()))
+pub fn parse_cmd<'a>(
+    command: &'a RawDocument,
+    extra: Option<&'a [u8]>,
+    read_concern_validation: bool,
+) -> Result<WireRequest<'a>> {
+    parse_cmd_core(command, extra, read_concern_validation, |_| Ok(()))
 }
 
 fn parse_cmd_from_message<'a>(
     command: &'a RawDocument,
     extra: Option<&MessageSection<'a>>,
+    read_concern_validation: bool,
 ) -> Result<WireRequest<'a>> {
     parse_cmd_core(
         command,
         extra.map(MessageSection::as_bytes),
+        read_concern_validation,
         |request_type| validate_sequence_identifier(request_type, extra),
     )
 }
@@ -338,12 +346,14 @@ fn parse_cmd_payload_from_message<'a>(
 fn parse_cmd_core<'a, F>(
     command: &'a RawDocument,
     extra: Option<&'a [u8]>,
+    read_concern_validation: bool,
     validate_extra: F,
 ) -> Result<WireRequest<'a>>
 where
     F: FnOnce(RequestType) -> Result<()>,
 {
-    let (request_type, common) = extract_request_type_and_info_from_document(command)?;
+    let (request_type, common) =
+        extract_request_type_and_info_from_document(command, read_concern_validation)?;
     let common = StrictRequestInfo::try_from_info(common)?;
     validate_extra(request_type)?;
     let execution = execution_for(request_type, command, &common);
@@ -410,8 +420,12 @@ pub(crate) fn parse_cmd_payload_with_db<'a>(
 /// # Errors
 /// Returns an error if the command document is empty, contains an unrecognized command, or has
 /// invalid common metadata.
-pub(crate) fn parse_cmd_buf(command: RawDocumentBuf) -> Result<WireRequest<'static>> {
-    let (request_type, common) = extract_request_type_and_info_from_document(command.as_ref())?;
+pub(crate) fn parse_cmd_buf(
+    command: RawDocumentBuf,
+    read_concern_validation: bool,
+) -> Result<WireRequest<'static>> {
+    let (request_type, common) =
+        extract_request_type_and_info_from_document(command.as_ref(), read_concern_validation)?;
     let common = StrictRequestInfo::try_from_info(common)?;
     let (execution_mode, target_collection) = {
         let execution = execution_for(request_type, command.as_ref(), &common);
@@ -550,7 +564,7 @@ mod tests {
         let msg = make_op_msg(&doc);
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true).unwrap();
         assert_eq!(request.request_type(), RequestType::Find);
         let frame = request
             .frame()
@@ -568,7 +582,7 @@ mod tests {
         let msg = make_op_msg(&doc);
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true).unwrap();
         assert_eq!(request.request_type(), RequestType::Aggregate);
     }
 
@@ -602,7 +616,7 @@ mod tests {
         let msg = make_op_msg_from_body(body, header.request_id());
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true).unwrap();
 
         assert_eq!(request.request_type(), RequestType::Insert);
         assert_eq!(request.extra().unwrap(), raw_documents_bytes(&documents));
@@ -620,7 +634,7 @@ mod tests {
         let msg = make_op_msg_from_body(body, header.request_id());
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true).unwrap();
 
         assert_eq!(request.request_type(), RequestType::Update);
         assert_eq!(request.extra().unwrap(), raw_documents_bytes(&updates));
@@ -637,7 +651,7 @@ mod tests {
         let msg = make_op_msg_from_body(body, header.request_id());
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true).unwrap();
 
         assert_eq!(request.request_type(), RequestType::Delete);
         assert_eq!(request.extra().unwrap(), raw_documents_bytes(&deletes));
@@ -654,7 +668,7 @@ mod tests {
         let msg = make_op_msg_from_body(body, header.request_id());
         let mut requires_response = true;
 
-        parse_request(&msg, &mut requires_response)
+        parse_request(&msg, &mut requires_response, true)
             .expect_err("insert must reject non-documents sequence identifier");
     }
 
@@ -683,7 +697,7 @@ mod tests {
         let msg = make_op_msg_from_body(body, header.request_id());
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true).unwrap();
 
         assert_eq!(request.request_type(), RequestType::Find);
         assert_eq!(
@@ -707,7 +721,7 @@ mod tests {
         let msg = make_op_msg_from_body(body, header.request_id());
         let mut requires_response = true;
 
-        parse_request(&msg, &mut requires_response)
+        parse_request(&msg, &mut requires_response, true)
             .expect_err("too many OP_MSG sections should be rejected");
         assert!(requires_response);
     }
@@ -720,7 +734,7 @@ mod tests {
         let msg = make_op_msg_from_body(body, header.request_id());
         let mut requires_response = true;
 
-        parse_request(&msg, &mut requires_response).unwrap_err();
+        parse_request(&msg, &mut requires_response, true).unwrap_err();
     }
 
     #[test]
@@ -733,7 +747,7 @@ mod tests {
         let msg = make_op_msg_from_body(body, header.request_id());
         let mut requires_response = true;
 
-        parse_request(&msg, &mut requires_response).unwrap_err();
+        parse_request(&msg, &mut requires_response, true).unwrap_err();
     }
 
     #[test]
@@ -749,7 +763,7 @@ mod tests {
         let msg = make_op_msg_from_body(body, header.request_id());
         let mut requires_response = true;
 
-        parse_request(&msg, &mut requires_response).unwrap_err();
+        parse_request(&msg, &mut requires_response, true).unwrap_err();
     }
 
     #[test]
@@ -764,7 +778,7 @@ mod tests {
         let msg = make_op_msg_from_body(body, header.request_id());
         let mut requires_response = true;
 
-        parse_request(&msg, &mut requires_response).unwrap_err();
+        parse_request(&msg, &mut requires_response, true).unwrap_err();
     }
 
     #[test]
@@ -777,7 +791,7 @@ mod tests {
         let msg = make_op_msg(&doc);
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true).unwrap();
         assert_eq!(request.request_type(), RequestType::Explain);
     }
 
@@ -790,7 +804,7 @@ mod tests {
         let msg = make_op_msg(&doc);
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true).unwrap();
         let target = request.explain_target().unwrap();
 
         assert_eq!(target.request_type(), RequestType::Find);
@@ -806,7 +820,7 @@ mod tests {
         let msg = make_op_msg(&doc);
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true).unwrap();
         let target = request.explain_target().unwrap();
 
         assert_eq!(target.request_type(), RequestType::Aggregate);
@@ -822,7 +836,7 @@ mod tests {
         let msg = make_op_msg(&doc);
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true).unwrap();
 
         assert_eq!(request.request_type(), RequestType::Explain);
         assert_eq!(request.execution_mode(), RequestExecutionMode::Normal);
@@ -848,7 +862,7 @@ mod tests {
         let msg = make_op_msg(&doc);
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true).unwrap();
         // parse_request returns Find (first element determines type)
         assert_eq!(request.request_type(), RequestType::Find);
 
@@ -869,7 +883,7 @@ mod tests {
         let msg = make_op_msg(&doc);
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true).unwrap();
         assert!(!request.is_explain());
         assert_eq!(request.execution_request_type(), RequestType::Find);
         assert_eq!(request.db(), "testdb");
@@ -885,7 +899,7 @@ mod tests {
         let msg = make_op_msg(&doc);
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true).unwrap();
         assert!(!request.is_explain());
         assert_eq!(request.execution_request_type(), RequestType::Aggregate);
     }
@@ -907,7 +921,7 @@ mod tests {
         let mut requires_response = true;
 
         // This must NOT panic (previously hit unreachable!())
-        let request = parse_request(&msg, &mut requires_response).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true).unwrap();
         assert_eq!(request.request_type(), RequestType::Insert);
         let frame = request
             .frame()
@@ -926,7 +940,7 @@ mod tests {
         let msg = make_op_msg(&doc);
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true).unwrap();
         assert_eq!(request.db(), "myapp");
         assert_eq!(request.max_time_ms(), Some(3000));
         assert!(!request.is_explain());
@@ -935,13 +949,13 @@ mod tests {
     #[test]
     fn parse_cmd_empty_document_returns_error() {
         let doc = rawdoc! {};
-        parse_cmd(&doc, None).unwrap_err();
+        parse_cmd(&doc, None, true).unwrap_err();
     }
 
     #[test]
     fn parse_cmd_unknown_command_returns_error() {
         let doc = rawdoc! { "unknownCommand": 1 };
-        parse_cmd(&doc, None).unwrap_err();
+        parse_cmd(&doc, None, true).unwrap_err();
     }
 
     #[test]
@@ -952,7 +966,7 @@ mod tests {
             "maxTimeMS": "not a number",
         };
 
-        parse_cmd(&doc, None).expect_err("strict parsing should reject invalid maxTimeMS");
+        parse_cmd(&doc, None, true).expect_err("strict parsing should reject invalid maxTimeMS");
         let request =
             parse_cmd_payload(&doc, None).expect("payload parsing should preserve identity");
 

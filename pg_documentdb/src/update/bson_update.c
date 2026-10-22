@@ -1,5 +1,7 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
  *
  * src/bson/bson_update.c
  *
@@ -29,6 +31,7 @@
 #include "aggregation/bson_query.h"
 #include "commands/commands_common.h"
 #include "collation/collation.h"
+#include "commands/insert.h"
 
 #include "api_hooks.h"
 #include "api_hooks_def.h"
@@ -272,9 +275,12 @@ bson_update_document(PG_FUNCTION_ARGS)
 
 	if (document != NULL)
 	{
+		Datum documentDatum = PointerGetDatum(document);
+		documentDatum = CompressBsonIfNeeded(documentDatum);
+
 		NumBsonDocumentsUpdated++;
 		LastBsonUpdateReturnedNewValue = true;
-		PG_RETURN_POINTER(document);
+		PG_RETURN_DATUM(documentDatum);
 	}
 	else
 	{

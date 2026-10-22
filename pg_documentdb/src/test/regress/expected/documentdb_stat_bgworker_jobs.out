@@ -121,6 +121,12 @@ WITH job_stats AS
         FROM documentdb_api_internal.documentdb_stat_bgworker_job_stats
 )
 SELECT job_id,
+       execution_attempts >= 0
+           AND successful_executions >= 0
+           AND failed_executions >= 0
+           AND timed_out_executions >= 0
+           AND unobserved_executions >= 0
+           AS counters_are_nonnegative,
        execution_attempts =
            successful_executions + failed_executions + timed_out_executions +
            unobserved_executions
@@ -176,11 +182,11 @@ SELECT job_id,
            '{"": null}'::documentdb_core.bson AS reset_ts_is_set
     FROM job_stats
     ORDER BY job_id;
- job_id | counter_invariant_holds | failure_streak_is_valid | cumulative_state_is_coherent | event_driven_durations_are_null | reset_ts_is_set
---------+-------------------------+-------------------------+------------------------------+---------------------------------+-----------------
-     90 | t                       | t                       | t                            | t                               | t
-     91 | t                       | t                       | t                            | t                               | t
-     92 | t                       | t                       | t                            | t                               | t
+ job_id | counters_are_nonnegative | counter_invariant_holds | failure_streak_is_valid | cumulative_state_is_coherent | event_driven_durations_are_null | reset_ts_is_set
+--------+--------------------------+-------------------------+-------------------------+------------------------------+---------------------------------+-----------------
+     90 | t                        | t                       | t                       | t                            | t                               | t
+     91 | t                        | t                       | t                       | t                            | t                               | t
+     92 | t                        | t                       | t                       | t                            | t                               | t
 (3 rows)
 
 SELECT count(*) AS job_count,

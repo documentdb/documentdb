@@ -212,9 +212,10 @@ Optional arguments:
   --username            Specify the username for the DocumentDB.
                         Defaults to ${d_user}
                         Overrides USERNAME environment variable.
-  --password            Specify the password for the DocumentDB.
-                        REQUIRED.
-                        Overrides PASSWORD environment variable.
+  --password            Password for the DocumentDB user. REQUIRED.
+                        Overrides PASSWORD environment variable; both are visible to docker inspect.
+                        DOCUMENTDB_ALLOW_DEFAULT_PASSWORD=true gives a newly created user the public default (evaluation only).
+                        Not needed with --create-user false unless data is loaded.
   --create-user         Specify whether to create a user. 
                         Defaults to $(documentdb_local_setting_default CREATE_USER).
   --start-pg            Start PostgreSQL (default: $(documentdb_local_setting_default START_POSTGRESQL)).
@@ -313,17 +314,10 @@ sanitize_uint() {
     esac
 }
 
-if [[ -f "/version.txt" ]]; then
-  DocumentDB_RELEASE_VERSION=$(cat /version.txt)
-  echo "Release Version: $DocumentDB_RELEASE_VERSION"
-fi
-
-echo "[ENTRYPOINT] DocumentDB container starting..."
-echo "[ENTRYPOINT] Log streaming will be enabled for PostgreSQL logs"
-
 # Handle arguments. Every value flag is looked up in the settings table and
 # exported as its environment variable, so child processes see CLI values as
 # env. Only the flags that are not "one flag, one value" are spelled here.
+_argc=$#
 while [ $# -gt 0 ]; do
     case "$1" in
         -h|--help)
@@ -366,13 +360,28 @@ while [ $# -gt 0 ]; do
 done
 unset _setting_row _setting_var _setting_allowed
 
+# Re-exec without arguments so values like --password leave PID 1's argv; every flag is exported.
+[ "$_argc" -eq 0 ] || exec "$BASH" "${BASH_SOURCE[0]}"
+
+if [[ -f "/version.txt" ]]; then
+  DocumentDB_RELEASE_VERSION=$(cat /version.txt)
+  echo "Release Version: $DocumentDB_RELEASE_VERSION"
+fi
+
+echo "[ENTRYPOINT] DocumentDB container starting..."
+echo "[ENTRYPOINT] Log streaming will be enabled for PostgreSQL logs"
+
+# Empty would silently become allowTLS and accept plaintext; other settings may be empty.
+if [[ -v TLS_MODE && -z $TLS_MODE ]]; then
+    echo "Error: TLS_MODE is set but empty; use one of $(documentdb_local_setting_allowed TLS_MODE), or unset it." >&2
+    exit 1
+fi
+
 # Record which settings the operator supplied (CLI flag or non-empty
 # environment variable) BEFORE any default is applied. Two things read this:
-# the default-credentials warning, and the TOAST resolution, which fails
+# the default-password refusal, and the TOAST resolution, which fails
 # loudly on an explicit request the build cannot honour but degrades quietly
-# for the built-in default. The built-in credential defaults exist for
-# legacy / evaluation use; a future major version will refuse to start
-# without --password / PASSWORD set explicitly.
+# for the built-in default.
 DOCUMENTDB_LOCAL_EXPLICIT=" "
 for _setting_row in "${DOCUMENTDB_LOCAL_SETTINGS[@]}"; do
     IFS='|' read -r _f _setting_var _setting_default _setting_type _setting_label <<< "${_setting_row}"
@@ -390,10 +399,24 @@ setting_is_explicit() {
         *) return 1 ;;
     esac
 }
-USING_DEFAULT_CREDS=false
-if ! setting_is_explicit USERNAME || ! setting_is_explicit PASSWORD; then
-    USING_DEFAULT_CREDS=true
+
+# The built-in password is public; a defaulted username behind a real one is harmless.
+if ! setting_is_explicit PASSWORD; then
+    if [ "${DOCUMENTDB_ALLOW_DEFAULT_PASSWORD:-false}" = "true" ]; then
+        echo "WARNING: DOCUMENTDB_ALLOW_DEFAULT_PASSWORD=true: no password supplied, so the public built-in password '${PASSWORD}' is used to create user '${USERNAME}' (an existing user keeps its password; --create-user false creates none). Anyone who knows it can log in; use this only for short-lived local evaluation." >&2
+    elif [ "${CREATE_USER}" = "false" ]; then
+        # No user is created, so nothing gets the public password; loading data still needs the real one.
+        export PASSWORD=""
+    else
+        cat >&2 <<'EOF'
+Error: no password was supplied. Set PASSWORD (docker run -e PASSWORD=<password> ...) or pass --password <password>.
+On an existing data volume, the user keeps the password it was created with.
+For short-lived local evaluation only, DOCUMENTDB_ALLOW_DEFAULT_PASSWORD=true gives a newly created user the public built-in password.
+EOF
+        exit 1
+    fi
 fi
+
 # The one computed default: the user this process runs as.
 export OWNER=${OWNER:-$(whoami)}
 
@@ -546,49 +569,6 @@ echo "  $DOCUMENTDB_LOG_DIR/gateway_entrypoint.log"
 echo "  $DOCUMENTDB_LOG_DIR/gateway.log"
 echo "  $DOCUMENTDB_LOG_DIR/oss_server.log"
 echo "  $DOCUMENTDB_LOG_DIR/postgres/pglog.log (will be symlinked)"
-
-# Validate required parameters
-if [ -z "${PASSWORD:-}" ]; then
-    echo "Error: PASSWORD is required. Please provide a password using --password argument or PASSWORD environment variable."
-    exit 1
-fi
-
-# Loud, unmissable warning when the operator did NOT supply an explicit
-# username / password and we fell back to the built-in defaults. These
-# defaults are well-known, public, and not safe outside short-lived
-# evaluation. Refusing to start by default is the eventual goal; for now
-# we keep the legacy compatibility but make the noise hard to miss.
-# Operators who knowingly want the defaults (for example CI smoke tests
-# that depend on the historical defaults) can suppress with
-# DOCUMENTDB_ALLOW_DEFAULT_PASSWORD=true.
-if [ "${USING_DEFAULT_CREDS}" = "true" ]; then
-    if [ "${DOCUMENTDB_ALLOW_DEFAULT_PASSWORD:-false}" != "true" ]; then
-        cat >&2 <<WARN
-========================================================================
-WARNING: DocumentDB is starting with the BUILT-IN DEFAULT CREDENTIALS.
-========================================================================
-
-  Username: $(documentdb_local_setting_default USERNAME)   (because --username / USERNAME was not set)
-  Password: $(documentdb_local_setting_default PASSWORD)       (because --password / PASSWORD was not set)
-
-These credentials are PUBLIC and well-known. Any client that can reach
-the gateway port can authenticate as the admin user. Do NOT use this
-configuration outside short-lived local evaluation.
-
-To suppress this warning intentionally (for example in evaluation
-scripts), set DOCUMENTDB_ALLOW_DEFAULT_PASSWORD=true. To fix:
-
-  docker run ... --env USERNAME=<your-user> --env PASSWORD=<your-pw> ...
-
-(--password <your-pw> also works, but stays visible in the container's
-process list for its whole lifetime; prefer the environment variable.)
-
-In a future release the emulator will REFUSE to start when --password
-and --username are not provided, so please migrate now.
-========================================================================
-WARN
-    fi
-fi
 
 echo "Using username: $USERNAME"
 echo "Using owner: $OWNER"

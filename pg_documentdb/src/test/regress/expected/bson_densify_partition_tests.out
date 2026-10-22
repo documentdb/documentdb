@@ -94,6 +94,143 @@ SELECT document FROM bson_aggregation_pipeline('db',
  { "a" : "def", "cost" : { "$numberInt" : "10" } }
 (16 rows)
 
+-- Full mode must initialize fresh state when a correlated lookup rescans its pipeline.
+SELECT insert_one('db','densify_rescan_outer','{ "_id": 1, "k": 0 }', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT insert_one('db','densify_rescan_outer','{ "_id": 2, "k": 0 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT insert_one('db','densify_rescan_inner','{ "_id": 1, "v": 0 }', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT insert_one('db','densify_rescan_inner','{ "_id": 2, "v": 5 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline(
+        'db',
+        $pipeline$
+        {
+            "aggregate": "densify_rescan_outer",
+            "pipeline": [
+                {
+                    "$lookup": {
+                        "from": "densify_rescan_inner",
+                        "let": { "kk": "$k" },
+                        "pipeline": [
+                            { "$match": { "$expr": { "$gte": [ "$v", "$$kk" ] } } },
+                            { "$densify": { "field": "v", "range": { "bounds": "full", "step": 1 } } }
+                        ],
+                        "as": "values"
+                    }
+                },
+                { "$project": { "_id": 1, "count": { "$size": "$values" } } },
+                { "$sort": { "_id": 1 } }
+            ]
+        }
+        $pipeline$
+);
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "count" : { "$numberInt" : "6" } }
+ { "_id" : { "$numberInt" : "2" }, "count" : { "$numberInt" : "6" } }
+(2 rows)
+
+SELECT insert_one('db','densify_rescan_inner','{ "_id": 3, "v": 10 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline(
+        'db',
+        $pipeline$
+        {
+            "aggregate": "densify_rescan_outer",
+            "pipeline": [
+                {
+                    "$lookup": {
+                        "from": "densify_rescan_inner",
+                        "let": { "kk": "$k" },
+                        "pipeline": [
+                            { "$match": { "$expr": { "$gte": [ "$v", "$$kk" ] } } },
+                            { "$densify": { "field": "v", "range": { "bounds": "full", "step": 1 } } },
+                            { "$limit": 2 }
+                        ],
+                        "as": "values"
+                    }
+                },
+                { "$project": { "_id": 1, "values": "$values.v" } },
+                { "$sort": { "_id": 1 } }
+            ]
+        }
+        $pipeline$
+);
+                                             document                                              
+---------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "values" : [ { "$numberInt" : "0" }, { "$numberInt" : "1" } ] }
+ { "_id" : { "$numberInt" : "2" }, "values" : [ { "$numberInt" : "0" }, { "$numberInt" : "1" } ] }
+(2 rows)
+
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "densify_rescan_outer", "pipeline": [
+        { "$lookup": { "from": "densify_rescan_inner", "let": { "kk": "$k" }, "pipeline": [
+            { "$match": { "$expr": { "$gte": [ "$v", "$$kk" ] } } },
+            { "$addFields": { "group.kind": "$_id", "v": { "$toDate": { "$multiply": ["$v", { "$numberLong": "86400000" }] } } } },
+            { "$densify": { "field": "v", "partitionByFields": ["group.kind"], "range": { "bounds": "full", "step": 1, "unit": "day" } } }
+        ], "as": "values" } },
+        { "$project": { "_id": 1, "count": { "$size": "$values" } } },
+        { "$sort": { "_id": 1 } }
+    ] }');
+                               document                                
+-----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "count" : { "$numberInt" : "33" } }
+ { "_id" : { "$numberInt" : "2" }, "count" : { "$numberInt" : "33" } }
+(2 rows)
+
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "densify_rescan_outer", "pipeline": [
+        { "$lookup": { "from": "densify_rescan_inner", "let": { "kk": "$k" }, "pipeline": [
+            { "$match": { "$expr": { "$gte": [ "$v", "$$kk" ] } } },
+            { "$addFields": { "group.kind": "$_id", "v": { "$toDate": { "$multiply": ["$v", { "$numberLong": "86400000" }] } } } },
+            { "$densify": { "field": "v", "partitionByFields": ["group.kind"], "range": { "bounds": "full", "step": 1, "unit": "day" } } },
+            { "$limit": 2 }
+        ], "as": "values" } },
+        { "$project": { "_id": 1, "values": "$values.v", "groups": "$values.group.kind" } },
+        { "$sort": { "_id": 1 } }
+    ] }');
+                                                                                            document                                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "values" : [ { "$date" : { "$numberLong" : "0" } }, { "$date" : { "$numberLong" : "0" } } ], "groups" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }
+ { "_id" : { "$numberInt" : "2" }, "values" : [ { "$date" : { "$numberLong" : "0" } }, { "$date" : { "$numberLong" : "0" } } ], "groups" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }
+(2 rows)
+
+SELECT drop_collection('db', 'densify_rescan_outer');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT drop_collection('db', 'densify_rescan_inner');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
 -- Test: $setWindowFields with partitionBy on shard key should not crash
 -- Same root cause as $densify: INT8 shard_key_value used as partition expression
 -- with BSON sort operators causes a segfault.
@@ -114,3 +251,8 @@ SELECT drop_collection('db', 'densify_shard_test');
  t
 (1 row)
 
+WITH specs AS MATERIALIZED (
+    SELECT '{ "field": "v", "range": { "bounds": "full", "step": 1 } }'::bson AS spec
+)
+SELECT bson_densify_full('{ "v": 0 }'::bson, spec) OVER () FROM specs;
+ERROR:  $densify requires a constant specification or an external parameter

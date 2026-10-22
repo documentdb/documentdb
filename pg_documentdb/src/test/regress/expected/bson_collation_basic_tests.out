@@ -256,11 +256,7 @@ ERROR:  The BSON field 'update.updates.collation' has an incorrect type 'string'
 SELECT documentdb_api.update('collation_basic_db', '{ "update": "coll_null_empty", "updates": [ { "q": { "s": "a" }, "u": { "$set": { "selected": 1 } }, "collation": [] } ] }');
 ERROR:  The BSON field 'update.updates.collation' has an incorrect type 'array'; it should be of type 'object'.
 SELECT documentdb_api.update('collation_basic_db', '{ "update": "coll_null_empty", "updates": [ { "q": { "s": "a" }, "u": { "$set": { "selected": 1 } }, "collation": { "strength": 1 } } ] }');
-                                                                                                                                                                update                                                                                                                                                                 
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""119537693"" }, ""errmsg"" : ""Collation specification is missing the required 'locale' field."" } ] }",f)
-(1 row)
-
+ERROR:  Collation specification is missing the required 'locale' field.
 -- Omitted forms do not bypass the update collation feature gate.
 SET documentdb_core.enableCollation TO off;
 SELECT documentdb_api.update('collation_basic_db', '{ "update": "coll_null_empty", "updates": [ { "q": { "s": "a" }, "u": { "$set": { "selected": 1 } }, "collation": null } ] }');

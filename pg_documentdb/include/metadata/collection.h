@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * include/metadata/collection.h
  *
@@ -228,6 +229,13 @@ bool IsDataTableCreatedWithinCurrentXact(const MongoCollection *collection);
 /* make a copy of given MongoCollection */
 MongoCollection * CopyMongoCollection(const MongoCollection *collection);
 
+/*
+ * Fetches and clones the raw default collation for a non-NULL collection.
+ * Returns NULL for an absent or simple default collation.
+ * Do not use on hot paths: non-simple defaults require a catalog query.
+ */
+bson_value_t * FetchAndCloneCollationSpecForCollection(const MongoCollection *collection);
+
 
 /* Copies collection metadata by ID and reports whether the collection exists. */
 bool TryCopyMongoCollectionByCollectionId(MongoCollection *collection,
@@ -255,6 +263,8 @@ Oid GetRelationIdForCollectionId(uint64 collectionId, LOCKMODE lockMode);
  * Only a caller that can tolerate that may pass true.
  */
 bool CreateCollection(Datum dbNameDatum, Datum collectionNameDatum, bool canUseLibPq);
+bool CreateCollectionWithOptions(Datum dbNameDatum, Datum collectionNameDatum,
+								 pgbson *options);
 
 /* c-wrapper for rename_collection() */
 void RenameCollection(Datum dbNameDatum, Datum srcCollectionNameDatum, Datum

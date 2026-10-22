@@ -11,6 +11,7 @@
 mod connection_context;
 mod dynamic_configuration;
 mod env_guard;
+pub mod logs;
 mod op_msg;
 mod pool;
 mod request_documents;

@@ -195,8 +195,28 @@ typedef struct AggregationPipelineBuildContext
 	 * *********************************************************************
 	 */
 
-	/* Whether or not the query requires a persisted cursor */
+	/* Whether or not the query requires a persisted cursor.
+	 *
+	 * This is accumulated as the pipeline is mutated: each stage ORs in its own
+	 * persistence requirement, so during mutation a stage only sees the stages
+	 * before it. In addition, when EnableSubqueryPushdownForMatchOnPersistedCursors
+	 * is on, the final optimized stage list is scanned in the extract/optimize
+	 * phase and this is raised to true up front if any stage forces persistence.
+	 * That lets a stage consult the final cursor kind before the stages that
+	 * follow it have been mutated, so it can avoid transformations that would
+	 * force a streaming-eligible pipeline onto a persistent cursor. The value is
+	 * monotonic (only ever raised from false to true), so the extract-phase scan
+	 * and the per-stage accumulation (including sub-pipeline extracts such as
+	 * resolved views) can only raise it, never clobber an earlier true. The
+	 * final value is the same either way; the early raise only makes it
+	 * available sooner.
+	 */
 	bool requiresPersistentCursor;
+
+	/* whether or not the query will end up with a dynamic persistent cursor
+	 * false negatives are fine (reporting false when it could be true is acceptable)
+	 */
+	bool requiresDynamicFetchAllCursor;
 
 	/* Whether or not the stage can handle a single batch cursor */
 	bool isSingleRowResult;

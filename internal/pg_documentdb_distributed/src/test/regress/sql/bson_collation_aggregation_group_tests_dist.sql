@@ -34,6 +34,58 @@ SELECT document FROM bson_aggregation_pipeline('db',
         { "$sort": { "firstId": 1 } }
     ], "collation": { "locale": "en", "strength": 1 } }');
 
+-- A collated constant comparison keeps the group key document-dependent.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": {
+            "_id": { "$cond": [ { "$eq": ["ALPHA", "alpha"] }, "$category", null ] },
+            "firstId": { "$min": "$_id" },
+            "count": { "$sum": 1 }
+        } },
+        { "$sort": { "firstId": 1 } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": {
+            "_id": { "$cond": [ { "$eq": ["ALPHA", "alpha"] }, "$category", null ] },
+            "firstId": { "$min": "$_id" },
+            "count": { "$sum": 1 }
+        } },
+        { "$sort": { "firstId": 1 } }
+    ], "collation": { "locale": "simple" } }');
+
+-- A collated constant condition must preserve the document for accumulator input.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": {
+            "_id": null,
+            "average": { "$avg": { "$cond": [ { "$eq": ["ALPHA", "alpha"] }, "$value", 0 ] } }
+        } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": {
+            "_id": null,
+            "average": { "$avg": { "$cond": [ { "$eq": ["ALPHA", "alpha"] }, "$value", 0 ] } }
+        } }
+    ], "collation": { "locale": "simple" } }');
+
+-- The same classification applies to accumulators that evaluate their input expression.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": {
+            "_id": null,
+            "deviation": { "$stdDevPop": { "$cond": [ { "$eq": ["ALPHA", "alpha"] }, { "$mod": ["$value", 20] }, 0 ] } }
+        } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": {
+            "_id": null,
+            "deviation": { "$stdDevPop": { "$cond": [ { "$eq": ["ALPHA", "alpha"] }, { "$mod": ["$value", 20] }, 0 ] } }
+        } }
+    ], "collation": { "locale": "simple" } }');
+
 -- Each string value in the compound key uses the command collation.
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "group_collation_dist_test", "pipeline": [

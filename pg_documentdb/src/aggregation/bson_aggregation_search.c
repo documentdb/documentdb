@@ -70,7 +70,7 @@ typedef struct
 /* --------------------------------------------------------- */
 static bool IsPgvectorIterativeScanAvailable(void);
 
-static pgbson * SetIterativeScanToSearchParam(pgbson *searchParamPgbson);
+static pgbson * SetPreFilterSearchParams(VectorSearchOptions *vectorSearchOptions);
 
 static char * GetVectorIterativeScanModeName(VectorIterativeScanMode iterativeScanMode);
 
@@ -330,6 +330,19 @@ HandleSearch(const bson_value_t *existingValue, Query *query,
 				}
 			}
 		}
+		else if (strcmp(key, "sort") == 0)
+		{
+			EnsureTopLevelFieldValueType("$search.sort", value,
+										 BSON_TYPE_DOCUMENT);
+			if (IsBsonValueEmptyDocument(value))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"The option 'sort' must specify at least one field.")));
+			}
+
+			searchOptions.sortSpecBson = *value;
+		}
 		else if (strcmp(key, "returnStoredSource") == 0)
 		{
 			/* We ignore these options */
@@ -377,6 +390,14 @@ HandleSearch(const bson_value_t *existingValue, Query *query,
 						errmsg(
 							"$search operator not supported: %s",
 							searchOptions.searchOperator->operatorName)));
+	}
+
+	if (searchOptions.sortSpecBson.value_type != BSON_TYPE_EOD &&
+		searchOptions.searchOperator->operatorType != SEARCH_OPERATOR_EXTENDED)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+						errmsg(
+							"The option 'sort' is not supported for the specified search operator.")));
 	}
 
 	if (searchOptions.searchOperator->featureType != INVALID_SEARCH_OPERATOR_FEATURE_TYPE)
@@ -482,10 +503,30 @@ IsPgvectorIterativeScanAvailable(void)
 }
 
 
+/*
+ * Stamps the pre-filter search params onto the search param bson in a single
+ * writer pass, so the (potentially large) incoming searchParamPgbson is only
+ * concatenated once:
+ *   - the pgvector iterative scan mode, when iterative scan is available, and
+ *   - when the query specifies filterMode, the requested mode. The
+ *     planner (custom_query_scan.c) reads this value, which
+ *     survives across the query-build/plan boundary as part of the
+ *     bson_search_param() argument, to decide which index access path to use.
+ *     The VectorSearchFilterMode enum value is stored directly as an int32 -
+ *     this is an internal marker, not the user-facing string 'filterMode'
+ *     option.
+ *
+ * Returns searchParamPgbson unchanged when there is nothing to append.
+ */
 static pgbson *
-SetIterativeScanToSearchParam(pgbson *searchParamPgbson)
+SetPreFilterSearchParams(VectorSearchOptions *vectorSearchOptions)
 {
-	if (!IsPgvectorIterativeScanAvailable())
+	pgbson *searchParamPgbson = vectorSearchOptions->searchParamPgbson;
+	bool includeIterativeScan = IsPgvectorIterativeScanAvailable();
+	bool includeFilterMode =
+		vectorSearchOptions->filterMode != VectorSearchFilterMode_Unspecified;
+
+	if (!includeIterativeScan && !includeFilterMode)
 	{
 		return searchParamPgbson;
 	}
@@ -498,11 +539,22 @@ SetIterativeScanToSearchParam(pgbson *searchParamPgbson)
 		PgbsonWriterConcat(&docWriter, searchParamPgbson);
 	}
 
-	PgbsonWriterAppendUtf8(&docWriter,
-						   VECTOR_PARAMETER_NAME_ITERATIVE_SCAN,
-						   VECTOR_PARAMETER_NAME_ITERATIVE_SCAN_STR_LEN,
-						   GetVectorIterativeScanModeName(
-							   VectorPreFilterIterativeScanMode));
+	if (includeIterativeScan)
+	{
+		PgbsonWriterAppendUtf8(&docWriter,
+							   VECTOR_PARAMETER_NAME_ITERATIVE_SCAN,
+							   VECTOR_PARAMETER_NAME_ITERATIVE_SCAN_STR_LEN,
+							   GetVectorIterativeScanModeName(
+								   VectorPreFilterIterativeScanMode));
+	}
+
+	if (includeFilterMode)
+	{
+		PgbsonWriterAppendInt32(&docWriter,
+								VECTOR_PARAMETER_NAME_FILTER_MODE,
+								VECTOR_PARAMETER_NAME_FILTER_MODE_STR_LEN,
+								(int32) vectorSearchOptions->filterMode);
+	}
 
 	return PgbsonWriterGetPgbson(&docWriter);
 }
@@ -1668,6 +1720,14 @@ HandleVectorSearchCore(Query *query, VectorSearchOptions *vectorSearchOptions,
 																  vectorSearchOptions,
 																  context);
 
+	if (vectorSearchOptions->filterMode != VectorSearchFilterMode_Unspecified &&
+		vectorSearchOptions->compressionType != VectorIndexCompressionType_None)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+						errmsg(
+							"$filterMode is not supported for compressed vector indexes.")));
+	}
+
 	/* Parse and validate the index specific options */
 	ParseAndValidateIndexSpecificOptions(vectorSearchOptions);
 
@@ -1681,8 +1741,8 @@ HandleVectorSearchCore(Query *query, VectorSearchOptions *vectorSearchOptions,
 		if (filterBson.value_type != BSON_TYPE_EOD &&
 			!IsBsonValueEmptyDocument(&filterBson))
 		{
-			vectorSearchOptions->searchParamPgbson = SetIterativeScanToSearchParam(
-				vectorSearchOptions->searchParamPgbson);
+			vectorSearchOptions->searchParamPgbson = SetPreFilterSearchParams(
+				vectorSearchOptions);
 		}
 
 		AddSearchParamFunctionToQuery(query, vectorSearchOptions->searchParamPgbson);
@@ -1738,7 +1798,8 @@ HandleVectorSearchCore(Query *query, VectorSearchOptions *vectorSearchOptions,
 	Expr *sortExpr = NULL;
 
 	/* If there's a filter, add it to the query */
-	if (EnableVectorPreFilterV2 &&
+	if ((vectorSearchOptions->filterMode != VectorSearchFilterMode_Unspecified ||
+		 EnableVectorPreFilterV2) &&
 		vectorSearchOptions->filterBson.value_type != BSON_TYPE_EOD &&
 		!IsBsonValueEmptyDocument(&vectorSearchOptions->filterBson))
 	{
@@ -1746,7 +1807,8 @@ HandleVectorSearchCore(Query *query, VectorSearchOptions *vectorSearchOptions,
 
 		/* Validate whether the collection is sharded or not */
 		if (context->mongoCollection != NULL &&
-			context->mongoCollection->shardKey != NULL)
+			context->mongoCollection->shardKey != NULL &&
+			vectorSearchOptions->filterMode == VectorSearchFilterMode_Unspecified)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
 							errmsg(
@@ -1770,11 +1832,28 @@ HandleVectorSearchCore(Query *query, VectorSearchOptions *vectorSearchOptions,
 		sortExpr = AddScoreFieldToDocumentEntry(documentEntry, sortEntry->expr,
 												vectorSearchOptions->distanceMetric);
 
-		TargetEntry *scoreEntry = makeTargetEntry(sortExpr, 2, "sortVal", false);
-		query->targetList = lappend(query->targetList, scoreEntry);
+		/*
+		 * exact never uses the vector path - the planner
+		 * adds an exact Sort + Limit over the filter scan - so the reorder is skipped.
+		 *
+		 * NOTE: autoSelect deliberately keeps the reorder. The filter-vs-vector
+		 * decision for autoSelect is only made during planning (see
+		 * AddCustomPathForVectorCore), which is well after this query has been
+		 * built, so the query shape has to stay valid for either outcome and
+		 * the reorder is the conservative choice. When autoSelect does resolve
+		 * to the filter path, the reorder subquery becomes a redundant second
+		 * sort over the (already distance-ordered, k-limited) inner result -
+		 * correct, but a known extra sort that a statically requested
+		 * exact avoids.
+		 */
+		if (vectorSearchOptions->filterMode != VectorSearchFilterMode_Exact)
+		{
+			TargetEntry *scoreEntry = makeTargetEntry(sortExpr, 2, "sortVal", false);
+			query->targetList = lappend(query->targetList, scoreEntry);
 
-		/* now reorder to ensure it matches the score order by */
-		query = ReorderResultsForFilter(query, context);
+			/* now reorder to ensure it matches the score order by */
+			query = ReorderResultsForFilter(query, context);
+		}
 	}
 	else if (EnableVectorPreFilter &&
 			 vectorSearchOptions->filterBson.value_type != BSON_TYPE_EOD &&
@@ -1943,6 +2022,42 @@ ParseAndValidateVectorQuerySpecCore(const pgbson *vectorSearchSpecPgbson,
 
 			vectorSearchOptions->filterBson = *value;
 		}
+		else if (strcmp(key, "filterMode") == 0)
+		{
+			if (!BSON_ITER_HOLDS_UTF8(&specIter))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"$filterMode must be a string value.")));
+			}
+
+			StringView filterModeView = {
+				.string = value->value.v_utf8.str,
+				.length = value->value.v_utf8.len
+			};
+
+			if (StringViewEqualsCString(&filterModeView,
+										VECTOR_FILTER_MODE_VALUE_APPROXIMATE))
+			{
+				vectorSearchOptions->filterMode = VectorSearchFilterMode_Approximate;
+			}
+			else if (StringViewEqualsCString(&filterModeView,
+											 VECTOR_FILTER_MODE_VALUE_EXACT))
+			{
+				vectorSearchOptions->filterMode = VectorSearchFilterMode_Exact;
+			}
+			else if (StringViewEqualsCString(&filterModeView,
+											 VECTOR_FILTER_MODE_VALUE_AUTO_SELECT))
+			{
+				vectorSearchOptions->filterMode = VectorSearchFilterMode_AutoSelect;
+			}
+			else
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"$filterMode must be one of 'approximate', 'exact', or 'autoSelect'.")));
+			}
+		}
 		else if (strcmp(key, "exact") == 0)
 		{
 			if (!BSON_ITER_HOLDS_BOOL(&specIter))
@@ -2030,6 +2145,10 @@ ParseAndValidateVectorQuerySpecCore(const pgbson *vectorSearchSpecPgbson,
  *  5. efSearch: an integer denoting the number of efSearch to use for the hnsw search.
  *  6. filter: match expression that compares an indexed field with a boolean, number (not decimals), or string to use as a prefilter, which can help narrow down the scope of vector search.
  *  7. exact: a boolean denoting whether to use exact search or ann search.
+ *  8. filterMode: one of 'approximate', 'exact', or 'autoSelect', denoting which
+ *     index access path a filtered query prefers.
+ *     Requires $filter to also be specified, and is not compatible with
+ *     'exact'.
  *
  *  "cosmosSearch": {
  *    "vector": [<array-of-numbers>],
@@ -2055,6 +2174,25 @@ ParseAndValidateCosmosSearchQuerySpec(const pgbson *vectorSearchSpecPgbson,
 {
 	ParseAndValidateVectorQuerySpecCore(vectorSearchSpecPgbson,
 										vectorSearchOptions);
+
+	if (vectorSearchOptions->filterMode != VectorSearchFilterMode_Unspecified)
+	{
+		bson_value_t filterBson = vectorSearchOptions->filterBson;
+		if (filterBson.value_type == BSON_TYPE_EOD || IsBsonValueEmptyDocument(
+				&filterBson))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"$filterMode requires $filter to be specified.")));
+		}
+
+		if (vectorSearchOptions->exactSearch)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"$filterMode is not allowed for exact search.")));
+		}
+	}
 }
 
 
@@ -2094,6 +2232,13 @@ ParseAndValidateKnnBetaQuerySpec(const pgbson *vectorSearchSpecPgbson,
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
 						errmsg(
 							"$filter is not supported for knnBeta queries.")));
+	}
+
+	if (vectorSearchOptions->filterMode != VectorSearchFilterMode_Unspecified)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+						errmsg(
+							"$filterMode is not supported for knnBeta queries.")));
 	}
 
 	bson_value_t scoreBson = vectorSearchOptions->scoreBson;

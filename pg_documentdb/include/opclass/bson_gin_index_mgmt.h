@@ -274,7 +274,8 @@ bool TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct
 										PlannerInfo *root,
 										bool *canSupportIndexOnlyScan);
 List * ExtractBoundaryQualsForOrderedIndexPath(struct IndexPath *indexPath,
-											   int *num_sa_scans);
+											   int *num_sa_scans,
+											   List **itemsToFree);
 List * GetModifiedClauseListForOrderedIndexPath(struct IndexPath *indexPath,
 												List **itemsToFree);
 OpExpr * CreateFullScanOpExpr(Expr *documentExpr, const char *sourcePath, uint32_t

@@ -357,7 +357,7 @@ mod tests {
         let logout_document = logout_document();
         let request = Request::RawBuf(RequestType::Logout, build_raw_document(&logout_document));
         let request_info = request
-            .extract_common()
+            .extract_common(true)
             .expect("logout request should have valid common fields");
         let wire_request = WireRequest::from_request_and_info(&request, request_info);
         let request_tracker = RequestTracker::new();

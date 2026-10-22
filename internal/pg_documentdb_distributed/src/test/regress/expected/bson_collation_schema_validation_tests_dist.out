@@ -1,0 +1,88 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,pg_catalog;
+SET citus.next_shard_id TO 271301000;
+SET documentdb.next_collection_id TO 27130100;
+SET documentdb.next_collection_index_id TO 27130100;
+SET documentdb_core.enableCollation TO on;
+SET documentdb.useLocalExecutionShardQueries TO off;
+SET citus.enable_local_execution TO off;
+SELECT documentdb_api.create_collection_view(
+    'collation_schema_validation_dist_db',
+    '{"create":"validator_update","validator":{"$expr":{"$eq":["$value","cafe"]}},"validationAction":"error"}');
+NOTICE:  creating collection
+         create_collection_view
+---------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection(
+    'collation_schema_validation_dist_db', 'validator_update', '{ "_id": "hashed" }', false);
+ shard_collection
+---------------------------------------------------------------------
+
+(1 row)
+
+UPDATE documentdb_api_catalog.collections
+SET options = '{"collation":{"locale":"fr","strength":1}}'::documentdb_core.bson
+WHERE database_name = 'collation_schema_validation_dist_db' AND collection_name = 'validator_update';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+ invalidate_collection_cache
+---------------------------------------------------------------------
+
+(1 row)
+
+SELECT documentdb_api.insert(
+    'collation_schema_validation_dist_db',
+    '{"insert":"validator_update","documents":[{"_id":1,"value":"cafe"},{"_id":2,"value":"cafe"}]}');
+                                         insert
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""2"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enable_collation_with_schema_validation TO off;
+SELECT documentdb_api.update(
+    'collation_schema_validation_dist_db',
+    '{"update":"validator_update","updates":[{"q":{"_id":{"$in":[1,2]}},"u":{"$set":{"value":"CAFÉ"}},"multi":true}]}');
+                                                                                                                                              update
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""525074461"" }, ""errmsg"" : ""Document failed validation"" } ] }",f)
+(1 row)
+
+END;
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enable_collation_with_schema_validation TO on;
+SELECT documentdb_api.update(
+    'collation_schema_validation_dist_db',
+    '{"update":"validator_update","updates":[{"q":{"_id":{"$in":[1,2]}},"u":{"$set":{"value":"CAFÉ"}},"multi":true,"collation":{"locale":"simple"}}]}');
+                                                               update
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""2"" }, ""n"" : { ""$numberInt"" : ""2"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update(
+    'collation_schema_validation_dist_db',
+    '{"update":"validator_update","updates":[{"q":{"_id":{"$in":[1,2]}},"u":{"$set":{"value":"different"}},"multi":true}]}');
+                                                                                                                                              update
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""525074461"" }, ""errmsg"" : ""Document failed validation"" } ] }",f)
+(1 row)
+
+SELECT document FROM bson_aggregation_find(
+    'collation_schema_validation_dist_db',
+    '{"find":"validator_update","sort":{"_id":1}}');
+                       document
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : "CAFÉ" }
+ { "_id" : { "$numberInt" : "2" }, "value" : "CAFÉ" }
+(2 rows)
+
+END;
+RESET citus.enable_local_execution;
+RESET documentdb.useLocalExecutionShardQueries;
+RESET documentdb_core.enableCollation;
+RESET search_path;

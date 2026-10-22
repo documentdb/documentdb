@@ -1,5 +1,5 @@
 
-SELECT name, setting, reset_val, boot_val FROM pg_settings WHERE name in ('documentdb_rum.track_incomplete_split', 'documentdb_rum.fix_incomplete_split');
+SELECT name, setting, reset_val, boot_val FROM pg_settings WHERE name in ('documentdb_rum.fix_incomplete_split');
 
 SELECT documentdb_api.drop_collection('pvacuum_db', 'pclean');
 SELECT documentdb_api.create_collection('pvacuum_db', 'pclean');

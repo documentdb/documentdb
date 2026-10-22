@@ -1,0 +1,464 @@
+Parsed test spec with 2 sessions
+
+starting permutation: create-with-default upsert-inherited commit-create check-upsert-rows
+step create-with-default: 
+    BEGIN;
+    SELECT documentdb_api.create_collection('collation_race_db', 'upsert_creation');
+    UPDATE documentdb_api_catalog.collections
+    SET options = documentdb_core.bson_build_document(
+        'collation', documentdb_core.bson_build_document(
+            'locale', 'en'::text, 'strength', 1))
+    WHERE database_name = 'collation_race_db'
+      AND collection_name = 'upsert_creation';
+    SELECT 1 FROM documentdb_api.insert_one('collation_race_db', 'upsert_creation',
+        documentdb_core.bson_build_document('_id', 1, 'value', U&'caf\00e9'::text));
+
+writer: NOTICE:  creating collection
+create_collection
+-----------------
+t                
+(1 row)
+
+?column?
+--------
+       1
+(1 row)
+
+step upsert-inherited: 
+    SELECT documentdb_api.update('collation_race_db',
+        documentdb_core.bson_build_document(
+            'update', 'upsert_creation'::text,
+            'updates', ARRAY[
+                documentdb_core.bson_build_document(
+                    'q', documentdb_core.bson_build_document('value', 'CAFE'::text),
+                    'u', documentdb_core.bson_build_document(
+                        '$set', documentdb_core.bson_build_document('regular_hit', true))),
+                documentdb_core.bson_build_document(
+                    'q', documentdb_core.bson_build_document('value', 'CAFE'::text),
+                    'u', documentdb_core.bson_build_document(
+                        '$set', documentdb_core.bson_build_document('hit', true),
+                        '$setOnInsert', documentdb_core.bson_build_document('_id', 2)),
+                    'upsert', true)
+            ]));
+ <waiting ...>
+step commit-create: 
+    COMMIT;
+
+step upsert-inherited: <... completed>
+update                                                                                                                            
+----------------------------------------------------------------------------------------------------------------------------------
+("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""2"" }, ""n"" : { ""$numberInt"" : ""2"" } }",t)
+(1 row)
+
+step check-upsert-rows: 
+    SELECT count(*) AS total_rows,
+        count(*) FILTER (WHERE document OPERATOR(documentdb_api_catalog.@@)
+            documentdb_core.bson_build_document('hit', true)) AS modified_rows,
+        count(*) FILTER (WHERE document OPERATOR(documentdb_api_catalog.@@)
+            documentdb_core.bson_build_document('regular_hit', true)) AS regular_modified_rows
+    FROM documentdb_api.collection('collation_race_db', 'upsert_creation');
+    SELECT document FROM documentdb_api.collection('collation_race_db', 'upsert_creation')
+    ORDER BY object_id;
+
+total_rows|modified_rows|regular_modified_rows
+----------+-------------+---------------------
+         1|            1|                    1
+(1 row)
+
+document                                                                                 
+-----------------------------------------------------------------------------------------
+{ "_id" : { "$numberInt" : "1" }, "value" : "café", "regular_hit" : true, "hit" : true }
+(1 row)
+
+drop_collection
+---------------
+f              
+(1 row)
+
+
+starting permutation: create-with-default upsert-simple commit-create check-upsert-rows
+step create-with-default: 
+    BEGIN;
+    SELECT documentdb_api.create_collection('collation_race_db', 'upsert_creation');
+    UPDATE documentdb_api_catalog.collections
+    SET options = documentdb_core.bson_build_document(
+        'collation', documentdb_core.bson_build_document(
+            'locale', 'en'::text, 'strength', 1))
+    WHERE database_name = 'collation_race_db'
+      AND collection_name = 'upsert_creation';
+    SELECT 1 FROM documentdb_api.insert_one('collation_race_db', 'upsert_creation',
+        documentdb_core.bson_build_document('_id', 1, 'value', U&'caf\00e9'::text));
+
+writer: NOTICE:  creating collection
+create_collection
+-----------------
+t                
+(1 row)
+
+?column?
+--------
+       1
+(1 row)
+
+step upsert-simple: 
+    SELECT documentdb_api.update('collation_race_db',
+        documentdb_core.bson_build_document(
+            'update', 'upsert_creation'::text,
+            'updates', ARRAY[
+                documentdb_core.bson_build_document(
+                    'q', documentdb_core.bson_build_document('value', 'CAFE'::text),
+                    'u', documentdb_core.bson_build_document(
+                        '$set', documentdb_core.bson_build_document('regular_hit', true)),
+                    'collation', documentdb_core.bson_build_document(
+                        'locale', 'simple'::text)),
+                documentdb_core.bson_build_document(
+                    'q', documentdb_core.bson_build_document('value', 'CAFE'::text),
+                    'u', documentdb_core.bson_build_document(
+                        '$set', documentdb_core.bson_build_document('hit', true),
+                        '$setOnInsert', documentdb_core.bson_build_document('_id', 2)),
+                    'upsert', true,
+                    'collation', documentdb_core.bson_build_document(
+                        'locale', 'simple'::text))
+            ]));
+ <waiting ...>
+step commit-create: 
+    COMMIT;
+
+step upsert-simple: <... completed>
+update                                                                                                                                                                                                                                 
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""1"" }, ""upserted"" : [ { ""index"" : { ""$numberInt"" : ""1"" }, ""_id"" : { ""$numberInt"" : ""2"" } } ] }",t)
+(1 row)
+
+step check-upsert-rows: 
+    SELECT count(*) AS total_rows,
+        count(*) FILTER (WHERE document OPERATOR(documentdb_api_catalog.@@)
+            documentdb_core.bson_build_document('hit', true)) AS modified_rows,
+        count(*) FILTER (WHERE document OPERATOR(documentdb_api_catalog.@@)
+            documentdb_core.bson_build_document('regular_hit', true)) AS regular_modified_rows
+    FROM documentdb_api.collection('collation_race_db', 'upsert_creation');
+    SELECT document FROM documentdb_api.collection('collation_race_db', 'upsert_creation')
+    ORDER BY object_id;
+
+total_rows|modified_rows|regular_modified_rows
+----------+-------------+---------------------
+         2|            1|                    0
+(1 row)
+
+document                                                          
+------------------------------------------------------------------
+{ "_id" : { "$numberInt" : "1" }, "value" : "café" }             
+{ "_id" : { "$numberInt" : "2" }, "value" : "CAFE", "hit" : true }
+(2 rows)
+
+drop_collection
+---------------
+f              
+(1 row)
+
+
+starting permutation: prepare-delete lock-delete-rows delete-one-inherited release-delete-locks check-delete-rows
+writer: NOTICE:  creating collection
+step prepare-delete: 
+    SELECT documentdb_api.create_collection('collation_race_db', 'delete_recheck');
+    UPDATE documentdb_api_catalog.collections
+    SET options = documentdb_core.bson_build_document(
+        'collation', documentdb_core.bson_build_document(
+            'locale', 'en'::text, 'strength', 1))
+    WHERE database_name = 'collation_race_db'
+      AND collection_name = 'delete_recheck';
+    SELECT 1 FROM documentdb_api.insert_one('collation_race_db', 'delete_recheck',
+        documentdb_core.bson_build_document('_id', 1, 'value', U&'caf\00e9'::text));
+    SELECT 1 FROM documentdb_api.insert_one('collation_race_db', 'delete_recheck',
+        documentdb_core.bson_build_document('_id', 2, 'value', U&'caf\00e9'::text));
+
+create_collection
+-----------------
+t                
+(1 row)
+
+?column?
+--------
+       1
+(1 row)
+
+?column?
+--------
+       1
+(1 row)
+
+step lock-delete-rows: 
+    BEGIN;
+    DO $$
+    DECLARE cid bigint;
+    BEGIN
+        SELECT collection_id INTO STRICT cid FROM documentdb_api_catalog.collections
+            WHERE database_name = 'collation_race_db' AND collection_name = 'delete_recheck';
+        EXECUTE format('SELECT 1 FROM documentdb_data.documents_%s FOR UPDATE', cid);
+    END $$;
+
+step delete-one-inherited: 
+    SELECT documentdb_api.delete('collation_race_db',
+        documentdb_core.bson_build_document(
+            'delete', 'delete_recheck'::text,
+            'deletes', ARRAY[
+                documentdb_core.bson_build_document(
+                    'q', documentdb_core.bson_build_document('value', 'cafe'::text),
+                    'limit', 1)
+            ]));
+ <waiting ...>
+step release-delete-locks: 
+    COMMIT;
+
+step delete-one-inherited: <... completed>
+delete                                                                                
+--------------------------------------------------------------------------------------
+("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+step check-delete-rows: 
+    SELECT count(*) AS remaining_rows,
+        count(*) FILTER (WHERE document OPERATOR(documentdb_api_catalog.@@)
+            documentdb_core.bson_build_document('value', U&'caf\00e9'::text)) AS accented_rows
+    FROM documentdb_api.collection('collation_race_db', 'delete_recheck');
+
+remaining_rows|accented_rows
+--------------+-------------
+             1|            1
+(1 row)
+
+drop_collection
+---------------
+t              
+(1 row)
+
+
+starting permutation: prepare-delete lock-delete-rows delete-many-inherited release-delete-locks check-delete-rows
+writer: NOTICE:  creating collection
+step prepare-delete: 
+    SELECT documentdb_api.create_collection('collation_race_db', 'delete_recheck');
+    UPDATE documentdb_api_catalog.collections
+    SET options = documentdb_core.bson_build_document(
+        'collation', documentdb_core.bson_build_document(
+            'locale', 'en'::text, 'strength', 1))
+    WHERE database_name = 'collation_race_db'
+      AND collection_name = 'delete_recheck';
+    SELECT 1 FROM documentdb_api.insert_one('collation_race_db', 'delete_recheck',
+        documentdb_core.bson_build_document('_id', 1, 'value', U&'caf\00e9'::text));
+    SELECT 1 FROM documentdb_api.insert_one('collation_race_db', 'delete_recheck',
+        documentdb_core.bson_build_document('_id', 2, 'value', U&'caf\00e9'::text));
+
+create_collection
+-----------------
+t                
+(1 row)
+
+?column?
+--------
+       1
+(1 row)
+
+?column?
+--------
+       1
+(1 row)
+
+step lock-delete-rows: 
+    BEGIN;
+    DO $$
+    DECLARE cid bigint;
+    BEGIN
+        SELECT collection_id INTO STRICT cid FROM documentdb_api_catalog.collections
+            WHERE database_name = 'collation_race_db' AND collection_name = 'delete_recheck';
+        EXECUTE format('SELECT 1 FROM documentdb_data.documents_%s FOR UPDATE', cid);
+    END $$;
+
+step delete-many-inherited: 
+    SELECT documentdb_api.delete('collation_race_db',
+        documentdb_core.bson_build_document(
+            'delete', 'delete_recheck'::text,
+            'deletes', ARRAY[
+                documentdb_core.bson_build_document(
+                    'q', documentdb_core.bson_build_document('value', 'cafe'::text),
+                    'limit', 0)
+            ]));
+ <waiting ...>
+step release-delete-locks: 
+    COMMIT;
+
+step delete-many-inherited: <... completed>
+delete                                                                                
+--------------------------------------------------------------------------------------
+("{ ""n"" : { ""$numberInt"" : ""2"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+step check-delete-rows: 
+    SELECT count(*) AS remaining_rows,
+        count(*) FILTER (WHERE document OPERATOR(documentdb_api_catalog.@@)
+            documentdb_core.bson_build_document('value', U&'caf\00e9'::text)) AS accented_rows
+    FROM documentdb_api.collection('collation_race_db', 'delete_recheck');
+
+remaining_rows|accented_rows
+--------------+-------------
+             0|            0
+(1 row)
+
+drop_collection
+---------------
+t              
+(1 row)
+
+
+starting permutation: prepare-delete lock-delete-rows delete-one-simple release-delete-locks check-delete-rows
+writer: NOTICE:  creating collection
+step prepare-delete: 
+    SELECT documentdb_api.create_collection('collation_race_db', 'delete_recheck');
+    UPDATE documentdb_api_catalog.collections
+    SET options = documentdb_core.bson_build_document(
+        'collation', documentdb_core.bson_build_document(
+            'locale', 'en'::text, 'strength', 1))
+    WHERE database_name = 'collation_race_db'
+      AND collection_name = 'delete_recheck';
+    SELECT 1 FROM documentdb_api.insert_one('collation_race_db', 'delete_recheck',
+        documentdb_core.bson_build_document('_id', 1, 'value', U&'caf\00e9'::text));
+    SELECT 1 FROM documentdb_api.insert_one('collation_race_db', 'delete_recheck',
+        documentdb_core.bson_build_document('_id', 2, 'value', U&'caf\00e9'::text));
+
+create_collection
+-----------------
+t                
+(1 row)
+
+?column?
+--------
+       1
+(1 row)
+
+?column?
+--------
+       1
+(1 row)
+
+step lock-delete-rows: 
+    BEGIN;
+    DO $$
+    DECLARE cid bigint;
+    BEGIN
+        SELECT collection_id INTO STRICT cid FROM documentdb_api_catalog.collections
+            WHERE database_name = 'collation_race_db' AND collection_name = 'delete_recheck';
+        EXECUTE format('SELECT 1 FROM documentdb_data.documents_%s FOR UPDATE', cid);
+    END $$;
+
+step delete-one-simple: 
+    SELECT documentdb_api.delete('collation_race_db',
+        documentdb_core.bson_build_document(
+            'delete', 'delete_recheck'::text,
+            'deletes', ARRAY[
+                documentdb_core.bson_build_document(
+                    'q', documentdb_core.bson_build_document('value', 'cafe'::text),
+                    'limit', 1,
+                    'collation', documentdb_core.bson_build_document(
+                        'locale', 'simple'::text))
+            ]));
+
+delete                                                                                
+--------------------------------------------------------------------------------------
+("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+step release-delete-locks: 
+    COMMIT;
+
+step check-delete-rows: 
+    SELECT count(*) AS remaining_rows,
+        count(*) FILTER (WHERE document OPERATOR(documentdb_api_catalog.@@)
+            documentdb_core.bson_build_document('value', U&'caf\00e9'::text)) AS accented_rows
+    FROM documentdb_api.collection('collation_race_db', 'delete_recheck');
+
+remaining_rows|accented_rows
+--------------+-------------
+             2|            2
+(1 row)
+
+drop_collection
+---------------
+t              
+(1 row)
+
+
+starting permutation: prepare-delete lock-delete-rows delete-many-simple release-delete-locks check-delete-rows
+writer: NOTICE:  creating collection
+step prepare-delete: 
+    SELECT documentdb_api.create_collection('collation_race_db', 'delete_recheck');
+    UPDATE documentdb_api_catalog.collections
+    SET options = documentdb_core.bson_build_document(
+        'collation', documentdb_core.bson_build_document(
+            'locale', 'en'::text, 'strength', 1))
+    WHERE database_name = 'collation_race_db'
+      AND collection_name = 'delete_recheck';
+    SELECT 1 FROM documentdb_api.insert_one('collation_race_db', 'delete_recheck',
+        documentdb_core.bson_build_document('_id', 1, 'value', U&'caf\00e9'::text));
+    SELECT 1 FROM documentdb_api.insert_one('collation_race_db', 'delete_recheck',
+        documentdb_core.bson_build_document('_id', 2, 'value', U&'caf\00e9'::text));
+
+create_collection
+-----------------
+t                
+(1 row)
+
+?column?
+--------
+       1
+(1 row)
+
+?column?
+--------
+       1
+(1 row)
+
+step lock-delete-rows: 
+    BEGIN;
+    DO $$
+    DECLARE cid bigint;
+    BEGIN
+        SELECT collection_id INTO STRICT cid FROM documentdb_api_catalog.collections
+            WHERE database_name = 'collation_race_db' AND collection_name = 'delete_recheck';
+        EXECUTE format('SELECT 1 FROM documentdb_data.documents_%s FOR UPDATE', cid);
+    END $$;
+
+step delete-many-simple: 
+    SELECT documentdb_api.delete('collation_race_db',
+        documentdb_core.bson_build_document(
+            'delete', 'delete_recheck'::text,
+            'deletes', ARRAY[
+                documentdb_core.bson_build_document(
+                    'q', documentdb_core.bson_build_document('value', 'cafe'::text),
+                    'limit', 0,
+                    'collation', documentdb_core.bson_build_document(
+                        'locale', 'simple'::text))
+            ]));
+
+delete                                                                                
+--------------------------------------------------------------------------------------
+("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+step release-delete-locks: 
+    COMMIT;
+
+step check-delete-rows: 
+    SELECT count(*) AS remaining_rows,
+        count(*) FILTER (WHERE document OPERATOR(documentdb_api_catalog.@@)
+            documentdb_core.bson_build_document('value', U&'caf\00e9'::text)) AS accented_rows
+    FROM documentdb_api.collection('collation_race_db', 'delete_recheck');
+
+remaining_rows|accented_rows
+--------------+-------------
+             2|            2
+(1 row)
+
+drop_collection
+---------------
+t              
+(1 row)
+

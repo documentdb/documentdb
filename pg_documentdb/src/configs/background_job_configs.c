@@ -75,6 +75,10 @@ bool EnableBackgroundWorkerJobsInRecovery =
 #define DEFAULT_START_BG_WORKER_IN_RECOVERY false
 bool StartBackgroundWorkerInRecovery = DEFAULT_START_BG_WORKER_IN_RECOVERY;
 
+#define DEFAULT_ENABLE_BG_WORKER_PROMOTION_BARRIER false
+bool EnableBgWorkerPromotionBarrier =
+	DEFAULT_ENABLE_BG_WORKER_PROMOTION_BARRIER;
+
 /* Added in v0.111, pending stabilization */
 #define DEFAULT_ENABLE_BG_WORKER_INIT_JOBS false
 bool EnableBackgroundWorkerInitJobs = DEFAULT_ENABLE_BG_WORKER_INIT_JOBS;
@@ -320,6 +324,14 @@ InitializeBackgroundJobConfigurations(const char *prefix, const char *newGucPref
 		NULL, &StartBackgroundWorkerInRecovery,
 		DEFAULT_START_BG_WORKER_IN_RECOVERY,
 		PGC_POSTMASTER, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_bgworker_promotion_barrier", newGucPrefix),
+		gettext_noop(
+			"Whether to drain recovery-dispatched background worker jobs before writable initialization and primary dispatch."),
+		NULL, &EnableBgWorkerPromotionBarrier,
+		DEFAULT_ENABLE_BG_WORKER_PROMOTION_BARRIER,
+		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.enableBackgroundWorkerInitJobs", newGucPrefix),

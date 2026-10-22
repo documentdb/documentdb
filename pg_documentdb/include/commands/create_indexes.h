@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * include/commands/create_indexes.h
  *
@@ -243,6 +244,12 @@ typedef struct
 	SubmittedIndexRequests *request;
 } CreateIndexesResult;
 
+typedef enum CreateIndexesPrivilegeMode
+{
+	CreateIndexesPrivilegeMode_Background = 1,
+	CreateIndexesPrivilegeMode_NonConcurrent = 2,
+} CreateIndexesPrivilegeMode;
+
 
 /* Represents whole "arg" document passed to dbcommand/createIndexes */
 typedef struct
@@ -254,7 +261,7 @@ typedef struct
 	 * Represents value of "indexes" field.
 	 * Contains IndexDef objects for each document in "indexes" array.
 	 */
-	List *indexDefList;
+	bson_value_t indexesValue;
 
 	/* For unknown index options, ignore or throw error */
 	bool ignoreUnknownIndexOptions;
@@ -270,15 +277,20 @@ typedef struct
 
 bool IsCallCreateIndexesStmt(const Node *node);
 bool IsCallReIndexStmt(const Node *node);
-CreateIndexesArg ParseCreateIndexesArg(Datum *dbNameDatum, pgbson *arg,
-									   bool buildAsUniqueForPrepareUnique);
+CreateIndexesArg ParseCreateIndexesArg(Datum *dbNameDatum, pgbson *arg);
+List * GetIndexesDefList(const bson_value_t *indexesValue, bool ignoreUnknownIndexOptions,
+						 bool buildAsUniqueForPrepareUnique, const
+						 bson_value_t *collationSpec);
 CreateIndexesResult create_indexes_non_concurrently(Datum dbNameDatum,
 													CreateIndexesArg createIndexesArg,
 													bool skipCheckCollectionCreate,
-													bool uniqueIndexOnly);
+													bool uniqueIndexOnly,
+													bool buildAsUniqueForPrepareUnique,
+													List *optionalIndexDefList);
 CreateIndexesResult create_indexes_concurrently(Datum dbNameDatum,
 												CreateIndexesArg createIndexesArg,
-												bool uniqueIndexOnly);
+												bool uniqueIndexOnly, bool
+												buildAsUniqueForPrepareUnique);
 void command_create_indexes(const CallStmt *callStmt,
 							ProcessUtilityContext context,
 							const ParamListInfo params,
@@ -300,6 +312,9 @@ bool CheckIndexSpecConflictWithExistingIndexes(uint64 collectionId,
 											   const IndexSpec *indexSpec,
 											   int *inBuildIndexId,
 											   int excludedIndexId);
+void CreatePostgresIndexWithMetadata(uint64 collectionId, IndexDef *indexDef,
+									 const IndexSpec *indexSpec, bool isUnsharded,
+									 bool updatePlannerStatistics);
 char * CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int
 									  indexId,
 									  bool concurrently, bool isTempCollection,
@@ -308,6 +323,8 @@ char * CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, i
 void ExecuteCreatePostgresIndexCmd(char *cmd, bool concurrently, const Oid userOid,
 								   bool useSerialExecution);
 void UpdateIndexStatsForPostgresIndex(uint64 collectionId, List *indexIdList);
+IndexDef * MakeCollatedBuiltinIdIndexDef(const bson_value_t *collation,
+										 IndexSpec *indexSpec);
 void AcquireAdvisoryExclusiveLockForCreateIndexes(uint64 collectionId);
 IndexSpec MakeIndexSpecForIndexDef(IndexDef *indexDef);
 pgbson * MakeCreateIndexesMsg(CreateIndexesResult *result);
@@ -317,7 +334,13 @@ void ValidateIndexName(const bson_value_t *nameValue);
 
 CreateIndexesResult SubmitCreateIndexesRequest(Datum dbNameDatum,
 											   CreateIndexesArg createIndexesArg,
-											   bool *volatile snapshotSet);
+											   bool *volatile snapshotSet,
+											   List *optionalIndexDefList);
+pgbson * RunCreateIndexesWithPrivilegeChecks(Datum databaseName,
+											 const char *collectionName,
+											 const pgbson *indexSpec,
+											 CreateIndexesPrivilegeMode mode,
+											 bool skipCollectionCreateCheck);
 
 Datum ReindexOrCreateCommandCore(PG_FUNCTION_ARGS, char *internalQuery);
 
@@ -326,6 +349,7 @@ IndexDef * ParseIndexDefDocumentInternal(const bson_iter_t *indexesDocIter,
 										 const char *indexSpecRepr,
 										 bool ignoreUnknownIndexOptions,
 										 bool buildAsUniqueForPrepareUnique,
-										 bool useTTLIndexInvalidOptionsError);
+										 bool useTTLIndexInvalidOptionsError,
+										 const bson_value_t *defaultCollation);
 
 #endif

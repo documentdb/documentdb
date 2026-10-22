@@ -10,7 +10,6 @@ SET citus.next_shard_id TO 72000;
 SET documentdb.next_collection_id TO 7200;
 SET documentdb.next_collection_index_id TO 7200;
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal,public;
-SET documentdb.enableDollarSampleReservoirScan TO on;
 SET citus.propagate_set_commands TO 'local';
 
 -- Drop the database first so the pinned next_collection_id is deterministic: the
@@ -129,7 +128,6 @@ SELECT COUNT(*) AS cnt, COUNT(DISTINCT document) AS distinct_cnt
 FROM (SELECT document FROM bson_aggregation_pipeline('rsampledb', '{ "aggregate": "heapskip_sharded", "pipeline": [ { "$sample": { "size": 10 } } ] }')) t;
 RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
 
-RESET documentdb.enableDollarSampleReservoirScan;
 SELECT documentdb_api.drop_collection('rsampledb', 'heapskip_unsharded');
 SELECT documentdb_api.drop_collection('rsampledb', 'heapskip_bmp');
 SELECT documentdb_api.drop_collection('rsampledb', 'heapskip_sharded');

@@ -26,14 +26,17 @@ use crate::{
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AuthenticationOutcome {
-    Success,
+    /// Successful authentication identified by the backend role OID.
+    Success {
+        user_oid: u32,
+    },
     Failure,
 }
 
 impl AuthenticationOutcome {
     const fn as_str(self) -> &'static str {
         match self {
-            Self::Success => "success",
+            Self::Success { .. } => "success",
             Self::Failure => "failure",
         }
     }
@@ -328,6 +331,17 @@ pub fn record_startup_metrics(duration: Duration) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn authentication_outcome_labels_do_not_include_user_oid() {
+        for user_oid in [1, 4242, u32::MAX] {
+            assert_eq!(
+                AuthenticationOutcome::Success { user_oid }.as_str(),
+                "success"
+            );
+        }
+        assert_eq!(AuthenticationOutcome::Failure.as_str(), "failure");
+    }
 
     #[test]
     fn test_record_startup_metrics_callable_without_provider() {

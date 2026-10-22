@@ -1,5 +1,7 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
  *
  * src/schema_validation.h
  *
@@ -24,8 +26,9 @@ typedef struct SchemaValidationCache
 	ExprEvalState *evalState;
 } SchemaValidationCache;
 
-ExprEvalState * PrepareForSchemaValidation(pgbson *schemaValidationInfo, MemoryContext
-										   memoryContext);
+ExprEvalState * PrepareForSchemaValidation(pgbson *schemaValidationInfo,
+										   MemoryContext memoryContext,
+										   const char *collationString);
 void ValidateSchemaOnDocumentInsert(ExprEvalState *evalState, const
 									bson_value_t *document, const char *errMsg);
 

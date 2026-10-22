@@ -1766,43 +1766,25 @@ SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "up
 SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
 ROLLBACK;
 
--- Semantic collation errors are write errors. An unordered batch continues
--- after each invalid operation.
-BEGIN;
+-- Invalid collation fails the entire unordered command without applying
+-- either the preceding or following updates.
 SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": false, "updates": [ { "q": { "_id": "dog" }, "u": { "$set": { "beforeErrors": true } }, "multi": false }, { "q": { "_id": "cat" }, "u": { "$set": { "invalidLocale": true } }, "multi": false, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "_id": "CAT" }, "u": { "$set": { "missingLocale": true } }, "multi": false, "collation": { "strength": 1 } }, { "q": { "_id": "DOG" }, "u": { "$set": { "afterErrors": true } }, "multi": false } ] }');
-SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
-ROLLBACK;
 
--- An ordered batch preserves earlier writes and stops after the first
--- semantic collation error.
-BEGIN;
+-- An invalid collation also fails the entire ordered command.
 SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": true, "updates": [ { "q": { "_id": "dog" }, "u": { "$set": { "beforeError": true } }, "multi": false }, { "q": { "_id": "cat" }, "u": { "$set": { "invalidLocale": true } }, "multi": false, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "_id": "DOG" }, "u": { "$set": { "afterError": true } }, "multi": false } ] }');
-SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
-ROLLBACK;
 
 -- A non-document collation remains a command-level type error, so no write
 -- operation starts.
 SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": false, "updates": [ { "q": { "_id": "dog" }, "u": { "$set": { "shouldNotRun": true } }, "multi": false }, { "q": { "_id": "cat" }, "u": { "$set": { "invalidType": true } }, "multi": false, "collation": "en" } ] }');
-SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
 
--- Semantic errors remain write errors when the collection does not exist.
+-- Collation parsing fails the command even when the collection does not exist.
 SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_missing", "ordered": false, "updates": [ { "q": { "_id": "cat" }, "u": { "$set": { "invalidLocale": true } }, "multi": false, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "_id": "dog" }, "u": { "$set": { "validNoop": true } }, "multi": false } ] }');
 
--- An update's collation is parsed inside the per-update error boundary rather
--- than when the command is parsed, so update-many also reports an invalid
--- collation as a write error indexed to that update while the rest of an
--- unordered batch still applies.
-BEGIN;
+-- Update-many also fails the entire unordered command on invalid collation.
 SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": false, "updates": [ { "q": { "group": "PeT" }, "u": { "$set": { "multiBeforeError": true } }, "multi": true, "collation": { "locale": "en", "strength": 1 } }, { "q": { "group": "PeT" }, "u": { "$set": { "multiInvalidLocale": true } }, "multi": true, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "group": "PeT" }, "u": { "$set": { "multiMissingLocale": true } }, "multi": true, "collation": { "strength": 1 } }, { "q": { "group": "pet" }, "u": { "$set": { "multiAfterErrors": true } }, "multi": true } ] }');
-SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
-ROLLBACK;
 
--- An ordered update-many batch stops at the first invalid collation and keeps
--- the writes that preceded it.
-BEGIN;
+-- An invalid collation also fails the entire ordered update-many command.
 SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": true, "updates": [ { "q": { "group": "PeT" }, "u": { "$set": { "multiBeforeError": true } }, "multi": true, "collation": { "locale": "en", "strength": 1 } }, { "q": { "group": "PeT" }, "u": { "$set": { "multiInvalidLocale": true } }, "multi": true, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "group": "pet" }, "u": { "$set": { "multiAfterError": true } }, "multi": true } ] }');
-SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
-ROLLBACK;
 
 -- ==============================================================================
 -- SECTION 28: shard-key targeting under explicit simple

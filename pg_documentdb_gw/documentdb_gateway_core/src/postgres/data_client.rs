@@ -9,7 +9,7 @@
 use std::{future::Future, sync::Arc};
 
 use async_trait::async_trait;
-use bson::RawDocument;
+use bson::{rawdoc, RawBsonRef, RawDocument};
 use tokio::time::{Duration, Instant};
 use tokio_postgres::Row;
 
@@ -30,6 +30,49 @@ use crate::{
     requests::ExplainTarget,
     responses::{PgResponse, Response},
 };
+
+/// Returns whether a backend `connectionStatus` response reports the
+/// cluster-wide `killAnySession` privilege for the authenticated caller.
+///
+/// The response is parsed minimally: only the
+/// `authInfo.authenticatedUserPrivileges` actions are inspected, and any
+/// missing or unexpected shape is treated as "privilege absent".
+#[must_use]
+fn response_grants_kill_any_session(response: &RawDocument) -> bool {
+    let Ok(Some(RawBsonRef::Document(auth_info))) = response.get("authInfo") else {
+        return false;
+    };
+    let Ok(Some(RawBsonRef::Array(privileges))) = auth_info.get("authenticatedUserPrivileges")
+    else {
+        return false;
+    };
+
+    privileges.into_iter().any(|privilege| {
+        let Ok(RawBsonRef::Document(privilege)) = privilege else {
+            return false;
+        };
+        let Ok(Some(RawBsonRef::Array(actions))) = privilege.get("actions") else {
+            return false;
+        };
+        actions
+            .into_iter()
+            .any(|action| matches!(action, Ok(RawBsonRef::String("killAnySession"))))
+    })
+}
+
+/// Builds the privileged `connectionStatus` request used to resolve the
+/// caller's privileges.
+///
+/// Enables `showPrivileges` and targets the `admin` authentication database so
+/// the backend admin-database check is satisfied.
+#[must_use]
+pub fn privileged_connection_status_request() -> bson::RawDocumentBuf {
+    rawdoc! {
+        "connectionStatus": 1_i32,
+        "showPrivileges": true,
+        "$db": "admin",
+    }
+}
 
 #[async_trait]
 pub trait PgDataClient: Send + Sync {
@@ -553,6 +596,49 @@ pub trait PgDataClient: Send + Sync {
         )
         .await
     }
+
+    /// Returns whether the authenticated caller holds the cluster-wide
+    /// `killAnySession` privilege, which authorizes terminating sessions the
+    /// caller does not own.
+    ///
+    /// The privilege is resolved from the backend `connectionStatus` response
+    /// so that the gateway does not maintain its own copy of the role model.
+    /// The backend round-trip is delegated to
+    /// [`PgDataClient::execute_privileged_connection_status`] so each data
+    /// client uses its own connection-status dispatcher.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the backend privilege lookup fails.
+    async fn caller_holds_kill_any_session(
+        &self,
+        request_context: &RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<bool> {
+        let response = self
+            .execute_privileged_connection_status(request_context, connection_context)
+            .await?;
+        Ok(response_grants_kill_any_session(
+            response.as_raw_document()?,
+        ))
+    }
+
+    /// Runs `connectionStatus` with `showPrivileges` enabled and returns the
+    /// backend response, so the caller's authenticated privileges can be
+    /// inspected.
+    ///
+    /// Implementations must dispatch the request through their own
+    /// connection-status query so the correct bind parameters and
+    /// authentication database are supplied.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the backend query fails.
+    async fn execute_privileged_connection_status(
+        &self,
+        request_context: &RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response>;
 
     /// Runs a cursor-returning query: executes the closure, wraps in
     /// `PgResponse`, and saves cursor state if a continuation is present.

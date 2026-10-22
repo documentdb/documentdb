@@ -303,10 +303,13 @@ async fn run_request_with_retries_returns_exceeded_time_limit_when_command_timeo
     };
 
     assert_eq!(error.error_code(), ErrorCode::ExceededTimeLimit);
+    // Pool acquisition timeouts now share this code, so the kind is what proves
+    // the command-timeout check is the branch that fired.
+    assert_ne!(error.kind(), &ErrorKind::Pool);
 }
 
 #[tokio::test]
-async fn run_request_with_retries_returns_original_error_when_no_command_timeout() {
+async fn run_request_with_retries_returns_pool_timeout_when_no_command_timeout() {
     let setup_config = setup_configuration();
     let pool = build_connection_pool_with_command_timeout(
         &setup_config,
@@ -319,8 +322,8 @@ async fn run_request_with_retries_returns_original_error_when_no_command_timeout
     let _held = pool.acquire_connection().await.unwrap();
     let _ = pool.report_status();
 
-    // command_timeout_ms is None (auth-related flow), so ExceededTimeLimit is
-    // never returned — the original pool error propagates instead.
+    // command_timeout_ms is None for auth-related flows, but the pool's own
+    // acquisition timeout must still surface as ExceededTimeLimit.
     let error = {
         let tracker = RequestTracker::new();
         let ping = ping_request();
@@ -340,6 +343,7 @@ async fn run_request_with_retries_returns_original_error_when_no_command_timeout
     };
 
     assert_eq!(error.kind(), &ErrorKind::Pool);
+    assert_eq!(error.error_code(), ErrorCode::ExceededTimeLimit);
 }
 
 #[tokio::test]

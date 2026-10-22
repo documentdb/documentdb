@@ -1,3 +1,7 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+
 SET search_path TO documentdb_api_catalog, documentdb_core, public;
 SET documentdb.next_collection_id TO 22000;
 SET documentdb.next_collection_index_id TO 22000;
@@ -456,3 +460,240 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
     SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "compound_key", "filter": { "a": { "$lte": 5000 } }, "sort": { "a": -1 } }'::bson) $cmd$);
 
 reset enable_bitmapscan;
+
+-- An equality suffix is not monotonic after the timestamp range. Crossing a
+-- page must not turn a nonmatching suffix into the end of the entire scan.
+BEGIN;
+SET LOCAL max_parallel_workers_per_gather TO 0;
+SET LOCAL enable_bitmapscan TO off;
+
+SELECT documentdb_api.create_collection('highkeydb', 'equality_range_suffix');
+SELECT COUNT(documentdb_api.insert_one(
+    'highkeydb',
+    'equality_range_suffix',
+    format(
+        '{ "_id": %s, "store": { "$binary": { "base64": "AQIDBAUGBwgJCgsMDQ4PEA==", "subType": "03" } }, "timestamp": { "$date": { "$numberLong": "%s" } }, "type": %s, "kind": "%s" }',
+        i, 1792123200000::bigint + i * 1000,
+        CASE WHEN i % 3 = 0 THEN 10 ELSE 20 END,
+        CASE WHEN i % 3 = 0 THEN 'SALE' ELSE 'void' END)::bson))
+FROM generate_series(1, 900) i;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'highkeydb',
+    '{ "createIndexes": "equality_range_suffix", "indexes": [
+        { "key": { "store": 1, "timestamp": 1, "type": 1 },
+          "name": "store_timestamp_type", "enableCompositeTerm": true }
+    ] }'::bson,
+    TRUE);
+
+SET LOCAL documentdb.enable_high_key_optimization TO off;
+CREATE TEMP TABLE high_key_range_suffix_off AS
+SELECT document
+FROM bson_aggregation_pipeline(
+    'highkeydb',
+    '{
+        "aggregate": "equality_range_suffix",
+        "pipeline": [
+            { "$match": {
+                "store": { "$binary": { "base64": "AQIDBAUGBwgJCgsMDQ4PEA==", "subType": "03" } },
+                "timestamp": { "$gte": { "$date": "2026-10-16T04:00:00Z" } },
+                "type": 10
+            } },
+            { "$group": { "_id": 1, "n": { "$sum": 1 } } }
+        ],
+        "cursor": {},
+        "hint": "store_timestamp_type"
+    }'::bson);
+
+SET LOCAL documentdb.enable_high_key_optimization TO on;
+CREATE TEMP TABLE high_key_range_suffix_on AS
+SELECT document
+FROM bson_aggregation_pipeline(
+    'highkeydb',
+    '{
+        "aggregate": "equality_range_suffix",
+        "pipeline": [
+            { "$match": {
+                "store": { "$binary": { "base64": "AQIDBAUGBwgJCgsMDQ4PEA==", "subType": "03" } },
+                "timestamp": { "$gte": { "$date": "2026-10-16T04:00:00Z" } },
+                "type": 10
+            } },
+            { "$group": { "_id": 1, "n": { "$sum": 1 } } }
+        ],
+        "cursor": {},
+        "hint": "store_timestamp_type"
+    }'::bson);
+
+SELECT 'high_key_off' AS mode, document FROM high_key_range_suffix_off
+UNION ALL
+SELECT 'high_key_on' AS mode, document FROM high_key_range_suffix_on
+ORDER BY mode;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_pipeline(
+        'highkeydb',
+        '{
+            "aggregate": "equality_range_suffix",
+            "pipeline": [
+                { "$match": {
+                    "store": { "$binary": { "base64": "AQIDBAUGBwgJCgsMDQ4PEA==", "subType": "03" } },
+                    "timestamp": { "$gte": { "$date": "2026-10-16T04:00:00Z" } },
+                    "type": 10
+                } },
+                { "$group": { "_id": 1, "n": { "$sum": 1 } } }
+            ],
+            "cursor": {},
+            "hint": "store_timestamp_type"
+        }'::bson)
+$cmd$, p_ignore_group_key => true);
+
+-- A backward scan must also continue past nonmatching suffix values.
+SELECT '{
+    "find": "equality_range_suffix",
+    "filter": {
+        "store": { "$binary": { "base64": "AQIDBAUGBwgJCgsMDQ4PEA==", "subType": "03" } },
+        "timestamp": { "$gte": { "$date": "2026-10-16T04:00:00Z" } },
+        "type": 20
+    },
+    "sort": { "timestamp": -1 },
+    "hint": "store_timestamp_type"
+}'::bson AS range_suffix_backward_command \gset
+SET LOCAL documentdb.enable_high_key_optimization TO off;
+CREATE TEMP TABLE high_key_range_suffix_backward_off AS
+SELECT document FROM bson_aggregation_find('highkeydb', :'range_suffix_backward_command'::bson);
+SET LOCAL documentdb.enable_high_key_optimization TO on;
+CREATE TEMP TABLE high_key_range_suffix_backward_on AS
+SELECT document FROM bson_aggregation_find('highkeydb', :'range_suffix_backward_command'::bson);
+SELECT (SELECT count(*) FROM high_key_range_suffix_backward_off) AS backward_off,
+       (SELECT count(*) FROM high_key_range_suffix_backward_on) AS backward_on;
+SELECT bool_or(explain_line LIKE '%isBackwardScan: true%') AS uses_backward_scan,
+       bool_or(explain_line ~ 'highKeyEligiblePages: [1-9][0-9]* pages') AS uses_high_key
+FROM documentdb_test_helpers.run_explain_and_trim(format(
+    'EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+     SELECT document FROM bson_aggregation_find(''highkeydb'', %L::bson)',
+    :'range_suffix_backward_command')) explain_line;
+
+-- Case-insensitive suffix equality must retain the same range-prefix state.
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'highkeydb',
+    '{ "createIndexes": "equality_range_suffix", "indexes": [
+        { "key": { "store": 1, "timestamp": 1, "kind": 1 },
+          "name": "store_timestamp_kind", "enableCompositeTerm": true,
+          "collation": { "locale": "en", "strength": 2 } }
+    ] }'::bson,
+    TRUE);
+SELECT '{
+    "aggregate": "equality_range_suffix",
+    "pipeline": [
+        { "$match": {
+            "store": { "$binary": { "base64": "AQIDBAUGBwgJCgsMDQ4PEA==", "subType": "03" } },
+            "timestamp": { "$gte": { "$date": "2026-10-16T04:00:00Z" } },
+            "kind": "sale"
+        } },
+        { "$group": { "_id": 1, "n": { "$sum": 1 } } }
+    ],
+    "cursor": {},
+    "hint": "store_timestamp_kind",
+    "collation": { "locale": "en", "strength": 2 }
+}'::bson AS range_suffix_collated_command \gset
+SET LOCAL documentdb.enable_high_key_optimization TO off;
+CREATE TEMP TABLE high_key_range_suffix_collated_off AS
+SELECT document FROM bson_aggregation_pipeline('highkeydb', :'range_suffix_collated_command'::bson);
+SET LOCAL documentdb.enable_high_key_optimization TO on;
+CREATE TEMP TABLE high_key_range_suffix_collated_on AS
+SELECT document FROM bson_aggregation_pipeline('highkeydb', :'range_suffix_collated_command'::bson);
+SELECT 'collated_off' AS mode, document FROM high_key_range_suffix_collated_off
+UNION ALL
+SELECT 'collated_on' AS mode, document FROM high_key_range_suffix_collated_on
+ORDER BY mode;
+SELECT bool_or(explain_line ~ 'highKeyEligiblePages: [1-9][0-9]* pages') AS uses_high_key
+FROM documentdb_test_helpers.run_explain_and_trim(format(
+    'EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+     SELECT document FROM bson_aggregation_pipeline(''highkeydb'', %L::bson)',
+    :'range_suffix_collated_command')) explain_line;
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM (
+            SELECT document FROM high_key_range_suffix_off
+            UNION ALL
+            SELECT document FROM high_key_range_suffix_on
+            UNION ALL
+            SELECT document FROM high_key_range_suffix_collated_off
+            UNION ALL
+            SELECT document FROM high_key_range_suffix_collated_on
+        ) results
+        WHERE document != '{ "_id": 1, "n": 300 }'::bson)
+       OR (SELECT count(*) FROM high_key_range_suffix_off) != 1
+       OR (SELECT count(*) FROM high_key_range_suffix_on) != 1
+       OR (SELECT count(*) FROM high_key_range_suffix_collated_off) != 1
+       OR (SELECT count(*) FROM high_key_range_suffix_collated_on) != 1 THEN
+        RAISE EXCEPTION 'High-key on and off must both count all 300 matching documents';
+    END IF;
+
+    IF (SELECT count(*) FROM high_key_range_suffix_backward_off) != 600
+       OR (SELECT count(*) FROM high_key_range_suffix_backward_on) != 600
+       OR EXISTS (
+           (SELECT document FROM high_key_range_suffix_backward_off
+            EXCEPT ALL SELECT document FROM high_key_range_suffix_backward_on)
+           UNION ALL
+           (SELECT document FROM high_key_range_suffix_backward_on
+            EXCEPT ALL SELECT document FROM high_key_range_suffix_backward_off)
+       ) THEN
+        RAISE EXCEPTION 'Backward high-key on and off must return the same 600 documents';
+    END IF;
+END;
+$$;
+ROLLBACK;
+
+-- An $exists recheck on a path must not make later non-monotonic rechecks on
+-- the same path (such as $mod) eligible for high-key page skipping.
+SET max_parallel_workers_per_gather TO 0;
+SET enable_bitmapscan TO off;
+
+SELECT documentdb_api.create_collection('highkeydb', 'exists_mod_recheck');
+SELECT COUNT(documentdb_api.insert_one(
+    'highkeydb',
+    'exists_mod_recheck',
+    bson_build_document(
+        '_id', i, 'p', (i - 1) / 2000, 'a', (i - 1) % 2000, 'b', (i * 37) % 11)))
+FROM generate_series(1, 6000) i;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'highkeydb',
+    '{ "createIndexes": "exists_mod_recheck", "indexes": [
+        { "key": { "p": 1, "a": -1, "b": 1 }, "name": "p_a_b", "enableCompositeTerm": true }
+    ] }'::bson,
+    TRUE);
+SELECT format('VACUUM (FREEZE, ANALYZE) documentdb_data.documents_%s', collection_id)
+FROM documentdb_api_catalog.collections
+WHERE database_name = 'highkeydb' AND collection_name = 'exists_mod_recheck'
+\gexec
+
+SELECT '{
+    "aggregate": "exists_mod_recheck",
+    "pipeline": [
+        { "$match": { "p": 1, "a": { "$exists": true, "$mod": [ 2, 0 ] } } },
+        { "$group": { "_id": 1, "n": { "$sum": 1 } } }
+    ],
+    "cursor": {},
+    "hint": "p_a_b"
+}' AS exists_mod_command \gset
+
+SET documentdb.enable_high_key_optimization TO off;
+SELECT document
+FROM bson_aggregation_pipeline('highkeydb', :'exists_mod_command'::bson);
+
+SET documentdb.enable_high_key_optimization TO on;
+SELECT document
+FROM bson_aggregation_pipeline('highkeydb', :'exists_mod_command'::bson);
+SELECT documentdb_test_helpers.run_explain_and_trim(format(
+    'EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+     SELECT document FROM bson_aggregation_pipeline(''highkeydb'', %L::bson)',
+    :'exists_mod_command'),
+    p_ignore_heap_fetches => true, p_ignore_group_key => true);
+RESET documentdb.enable_high_key_optimization;
+RESET max_parallel_workers_per_gather;
+RESET enable_bitmapscan;
+SELECT documentdb_api.drop_collection('highkeydb', 'exists_mod_recheck');

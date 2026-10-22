@@ -18,7 +18,6 @@ NOTICE:  creating collection
 (1 row)
 
 -- SET options here, any new option included in the collection should be added here.
-SET documentdb.enablePreImages to on;
 SELECT documentdb_api.coll_mod('db', 'cache_test_collection','{"collMod": "cache_test_collection", "changeStreamPreAndPostImages": { "enabled": true }}'::documentdb_core.bson);
              coll_mod              
 ---------------------------------------------------------------------

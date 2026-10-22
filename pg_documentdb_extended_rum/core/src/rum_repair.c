@@ -187,19 +187,34 @@ CheckLeafEntryPageForSplits(RumState *rumState, Buffer buffer, bool dryrunMode)
 	Page page = BufferGetPage(buffer);
 	OffsetNumber off;
 
+	List *postingTreeList = NIL;
+	ListCell *cell;
+
 	/* Now walk all the entries at this level */
 	for (off = FirstOffsetNumber; off <= PageGetMaxOffsetNumber(page); off++)
 	{
 		IndexTuple pageTuple = (IndexTuple) PageGetItem(page, PageGetItemId(page, off));
 		if (RumIsPostingTree(pageTuple))
 		{
-			int level = 0;
-			BlockNumber postingTreeRoot = RumGetDownlink(pageTuple);
-			bool trackDataPages = true;
-			CheckTreeAtLevel(rumState, postingTreeRoot, level, trackDataPages,
-							 dryrunMode);
+			postingTreeList = lappend_oid(postingTreeList, RumGetDownlink(pageTuple));
 		}
 	}
+
+	/* Now unlock buffer the entry page: Don't release it so vacuum can't prune the page */
+	LockBuffer(buffer, RUM_UNLOCK);
+	foreach(cell, postingTreeList)
+	{
+		BlockNumber postingTreeRoot = (BlockNumber) lfirst_oid(cell);
+		bool trackDataPages = true;
+		int level = 0;
+		CheckTreeAtLevel(rumState, postingTreeRoot, level, trackDataPages,
+						 dryrunMode);
+	}
+
+	list_free(postingTreeList);
+
+	/* Release the entry page buffer */
+	ReleaseBuffer(buffer);
 }
 
 
@@ -228,16 +243,19 @@ GetChildBlockNumberForPage(Page page, OffsetNumber off)
 
 
 static void
-CheckTreeAtLevel(RumState *rumState, BlockNumber blockNumber, int level,
-				 bool trackDataPages, bool dryrunMode)
+CheckPageAtLevel(RumState *rumState, BlockNumber blockNumber, int level,
+				 bool trackDataPages, bool dryrunMode,
+				 BlockNumber *leftMostChild, BlockNumber *rightSibling,
+				 bool *isNextLevelIntermediate)
 {
 	Buffer buffer, childBuffer = InvalidBuffer;
 	Page page;
 	BlockNumber childRightBlock = InvalidBlockNumber;
-	BlockNumber leftMostChild = InvalidBlockNumber;
-	bool isNextLevelIntermediate = false;
 	bool childBufferHasIncompleteSplit = false;
 	OffsetNumber off;
+
+	*leftMostChild = InvalidBlockNumber;
+	*isNextLevelIntermediate = false;
 	elog(LOG, "Starting check at level %d", level);
 
 	CHECK_FOR_INTERRUPTS();
@@ -246,15 +264,20 @@ CheckTreeAtLevel(RumState *rumState, BlockNumber blockNumber, int level,
 	LockBuffer(buffer, RUM_SHARE);
 
 	page = BufferGetPage(buffer);
+	*rightSibling = RumPageGetOpaque(page)->rightlink;
 	if (RumPageIsLeaf(page))
 	{
 		/* We reached a leaf level - we're done */
 		if (trackDataPages && !RumPageIsData(page))
 		{
+			/* Releases the buffer after reading */
 			CheckLeafEntryPageForSplits(rumState, buffer, dryrunMode);
 		}
+		else
+		{
+			UnlockReleaseBuffer(buffer);
+		}
 
-		UnlockReleaseBuffer(buffer);
 		return;
 	}
 
@@ -265,6 +288,7 @@ CheckTreeAtLevel(RumState *rumState, BlockNumber blockNumber, int level,
 		bool isRightMost = off == GetMaxOffsetNumberForPage(page);
 		BlockNumber nextSibling;
 		bool shouldFixPage = false;
+		bool canCheckRightLink = true;
 		if (!isRightMost)
 		{
 			nextSibling = GetChildBlockNumberForPage(page, off + 1);
@@ -282,14 +306,16 @@ CheckTreeAtLevel(RumState *rumState, BlockNumber blockNumber, int level,
 			LockBuffer(rightBuffer, RUM_SHARE);
 			rightPage = BufferGetPage(rightBuffer);
 			rightMaxOffset = GetMaxOffsetNumberForPage(rightPage);
-			if (rightMaxOffset > InvalidOffsetNumber)
+			if (!RumPageIsDeleted(rightPage) && rightMaxOffset > InvalidOffsetNumber)
 			{
 				nextSibling = GetChildBlockNumberForPage(rightPage, FirstOffsetNumber);
 			}
 			else
 			{
-				/* TODO: Is this the right thing to do (technically this shouldn't be possible) */
+				/* This is technically possible for JUST deleted pages during posting tree cleanup */
 				nextSibling = InvalidBlockNumber;
+				canCheckRightLink = false;
+				elog(WARNING, "Next sibling is invalid for page %u", blockNumber);
 			}
 
 			UnlockReleaseBuffer(rightBuffer);
@@ -299,9 +325,9 @@ CheckTreeAtLevel(RumState *rumState, BlockNumber blockNumber, int level,
 			nextSibling = InvalidBlockNumber;
 		}
 
-		if (leftMostChild == InvalidBlockNumber)
+		if (*leftMostChild == InvalidBlockNumber)
 		{
-			leftMostChild = childBlock;
+			*leftMostChild = childBlock;
 		}
 
 		/* Check that the right link of this page is the next entry of the tree */
@@ -311,13 +337,13 @@ CheckTreeAtLevel(RumState *rumState, BlockNumber blockNumber, int level,
 		childRightBlock = RumPageGetOpaque(BufferGetPage(childBuffer))->rightlink;
 		childBufferHasIncompleteSplit = RumPageIsIncompleteSplit(BufferGetPage(
 																	 childBuffer));
-		isNextLevelIntermediate = isNextLevelIntermediate || !RumPageIsLeaf(BufferGetPage(
-																				childBuffer));
+		*isNextLevelIntermediate = *isNextLevelIntermediate ||
+								   !RumPageIsLeaf(BufferGetPage(childBuffer));
 
 		/* Don't yet release pin since we may need to relock it */
 		LockBuffer(childBuffer, RUM_UNLOCK);
 
-		if (childRightBlock != nextSibling)
+		if (canCheckRightLink && childRightBlock != nextSibling)
 		{
 			if (childBufferHasIncompleteSplit)
 			{
@@ -336,19 +362,19 @@ CheckTreeAtLevel(RumState *rumState, BlockNumber blockNumber, int level,
 			}
 			else
 			{
+				shouldFixPage = !dryrunMode;
 				if (message_level_is_interesting(NOTICE))
 				{
 					elog(INFO, "Rum tree is in an inconsistent state. "
-							   "parentPage %u has child %u with rightLink %u, but parent right link is %u",
-						 blockNumber, childBlock, childRightBlock, nextSibling);
+							   "parentPage %u has child %u with rightLink %u, but parent right link is %u."
+							   " will be fixed: %d",
+						 blockNumber, childBlock, childRightBlock, nextSibling,
+						 shouldFixPage);
 				}
 				else
 				{
 					elog(WARNING, "Rum tree is in an inconsistent state.");
 				}
-
-
-				shouldFixPage = RumTrackIncompleteSplit && !dryrunMode;
 			}
 		}
 
@@ -365,9 +391,34 @@ CheckTreeAtLevel(RumState *rumState, BlockNumber blockNumber, int level,
 	}
 
 	UnlockReleaseBuffer(buffer);
+}
 
-	if (leftMostChild != InvalidBlockNumber && (isNextLevelIntermediate ||
-												trackDataPages))
+
+static void
+CheckTreeAtLevel(RumState *rumState, BlockNumber blockNumber, int level,
+				 bool trackDataPages, bool dryrunMode)
+{
+	BlockNumber leftMostChild = InvalidBlockNumber;
+	check_stack_depth();
+	while (blockNumber != InvalidBlockNumber)
+	{
+		BlockNumber pageLeftMostChild = InvalidBlockNumber;
+		BlockNumber rightSibling = InvalidBlockNumber;
+		bool isNextLevelIntermediate = false;
+
+		CHECK_FOR_INTERRUPTS();
+		CheckPageAtLevel(rumState, blockNumber, level, trackDataPages, dryrunMode,
+						 &pageLeftMostChild, &rightSibling, &isNextLevelIntermediate);
+		if (leftMostChild == InvalidBlockNumber &&
+			(isNextLevelIntermediate || trackDataPages))
+		{
+			leftMostChild = pageLeftMostChild;
+		}
+
+		blockNumber = rightSibling;
+	}
+
+	if (leftMostChild != InvalidBlockNumber)
 	{
 		CheckTreeAtLevel(rumState, leftMostChild, level + 1, trackDataPages, dryrunMode);
 	}

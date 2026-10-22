@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * SPDX-License-Identifier: MIT
  *
  * src/customscan/dynamic_cursor_scan.c
  *
@@ -228,10 +229,11 @@ PG_FUNCTION_INFO_V1(command_cursor_tracker_support);
 
 extern bool EnableRumCursorDynamicIndexScans;
 extern bool EnableRumDynamicIndexScansSkipToTid;
-extern bool EnableOrderByIdOnCostFunction;
 extern bool EnableMergeSortForInPrefix;
 extern bool EnableGroupByDynamicStreaming;
 extern bool EnableDynamicCursorMultiKeyBitmap;
+extern bool EnableSkipParallelPlansWithoutStats;
+extern bool EnablePerCollectionPlannerStatistics;
 
 /* Declaration of extensibility paths for query processing (See extensible.h) */
 static const struct CustomPathMethods DynamicExtensionCursorScanMethods = {
@@ -978,7 +980,7 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 					/* By default we don't add orderby for _id indexes until after the query is fully optimized.
 					 * We need to attempt that here before deciding to bail on the _id index.
 					 */
-					if (!EnableOrderByIdOnCostFunction &&
+					if (!ShouldEnableOrderByIdOnCostFunction(root, rel) &&
 						list_length(root->query_pathkeys) == 1)
 					{
 						ConsiderBtreeOrderByPushdown(root, ipath);
@@ -1164,6 +1166,7 @@ IsPlannerInfoValidForDynamicCursorPlans(PlannerInfo *root,
 	bool allowGroupByPushdown = IsGroupByFullyPushableForStreaming(root);
 
 	if (root->hasJoinRTEs || root->hasRecursion || root->hasLateralRTEs ||
+		root->parse->setOperations != NULL ||
 		(root->group_pathkeys != NIL && !allowGroupByPushdown) ||
 		root->distinct_pathkeys != NIL ||
 		(root->agginfos != NIL && !allowGroupByPushdown) ||
@@ -1172,6 +1175,19 @@ IsPlannerInfoValidForDynamicCursorPlans(PlannerInfo *root,
 	{
 		/* Use persisted cursors for these scenarios */
 		return false;
+	}
+
+	ListCell *cell;
+	foreach(cell, root->append_rel_list)
+	{
+		CHECK_FOR_INTERRUPTS();
+		AppendRelInfo *appendRelInfo = lfirst_node(AppendRelInfo, cell);
+
+		/* Flattened UNION ALL has no parent table, unlike inheritance. */
+		if (!OidIsValid(appendRelInfo->parent_reloid))
+		{
+			return false;
+		}
 	}
 
 	if (root->parse->commandType == CMD_MERGE)
@@ -1359,6 +1375,13 @@ UpdatePathsWithDynamicStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 
 	bool allowOffsetLimitNode = bson_iter_bool(
 		&offsetLimitNodeAuthorizationIter);
+
+	/* Apply before falling back to a persistent cursor, including unsupported query shapes. */
+	if (EnableSkipParallelPlansWithoutStats &&
+		(!EnablePerCollectionPlannerStatistics || rel->statlist == NIL))
+	{
+		rel->partial_pathlist = NIL;
+	}
 
 	if (!IsPlannerInfoValidForDynamicCursorPlans(
 			root, allowOffsetLimitNode))

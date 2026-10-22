@@ -158,6 +158,10 @@ bool EnableExplainScanSeqScan = DEFAULT_ENABLE_EXPLAIN_SCAN_SEQ_SCAN;
 bool EnableDistinctUnwindRowsFromStatistics =
 	DEFAULT_ENABLE_DISTINCT_UNWIND_ROWS_FROM_STATISTICS;
 
+#define DEFAULT_ENABLE_ELEM_MATCH_SELECTIVITY_LOWER_BOUND true
+bool EnableElemMatchSelectivityLowerBound =
+	DEFAULT_ENABLE_ELEM_MATCH_SELECTIVITY_LOWER_BOUND;
+
 #define DEFAULT_ENABLE_DYNAMIC_CURSOR_MULTIKEY_BITMAP false
 bool EnableDynamicCursorMultiKeyBitmap = DEFAULT_ENABLE_DYNAMIC_CURSOR_MULTIKEY_BITMAP;
 
@@ -556,6 +560,14 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		NULL, &EnableDistinctUnwindRowsFromStatistics,
 		DEFAULT_ENABLE_DISTINCT_UNWIND_ROWS_FROM_STATISTICS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_elem_match_selectivity_lower_bound", newGucPrefix),
+		gettext_noop(
+			"Whether statistics-derived $elemMatch selectivity is bounded by the legacy low selectivity. For testing only."),
+		NULL, &EnableElemMatchSelectivityLowerBound,
+		DEFAULT_ENABLE_ELEM_MATCH_SELECTIVITY_LOWER_BOUND,
+		PGC_USERSET, GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.enable_dynamic_cursor_multikey_bitmap", newGucPrefix),

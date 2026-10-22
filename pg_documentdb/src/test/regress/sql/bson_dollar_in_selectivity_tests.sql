@@ -1,0 +1,519 @@
+/*-------------------------------------------------------------------------
+ * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
+ *-------------------------------------------------------------------------
+ */
+
+-- Regression coverage for $in/$nin selectivity against real per-collection
+-- statistics (MCV/histogram), the same statistics used for $eq/$gt/$gte/
+-- $lt/$lte/$ne/$exists. GetCustomStatisticsSelectivity() now has a dedicated
+-- BSON_INDEX_STRATEGY_DOLLAR_IN case that, when
+-- documentdb.enable_in_granular_selectivity and array value unpacking are enabled,
+-- estimates each distinct $in element's selectivity (eqsel() against the real
+-- stats) and combines them via an independence formula, falling back to a
+-- disjoint sum when that sum is a valid probability (i.e. in [0, 1]).
+-- This mirrors PostgreSQL's own native scalararraysel() estimator for
+-- "col = ANY(array)"/IN-lists (selfuncs.c), down to the same disjoint-sum
+-- fallback rule, rather than the flat
+-- Min(numberOfInElements * LowSelectivity, HighSelectivity) heuristic that
+-- ignores how common or rare the actual values are.
+--
+-- Because it is per-element, this approach inherits a known, accepted
+-- characteristic of PostgreSQL's own IN-list estimation: eqsel() cannot
+-- distinguish "this literal is a real but rare value" from "this literal
+-- does not exist in the table at all" -- both fall back to the same
+-- ~1/ndistinct default when the literal is not itself an MCV. An $in list
+-- padded with many nonexistent values can therefore inflate the estimate
+-- roughly in proportion to the list length, even though only a handful of
+-- the listed values actually occur. This is not a regression to chase
+-- further here: it is the same tradeoff upstream Postgres accepts for
+-- native IN-lists, in exchange for estimates that otherwise track the
+-- real distribution far more closely than a flat heuristic. The cases
+-- below cover a scalar path ("value"), a multikey/array path ("tags"), full
+-- list coverage (true selectivity near 100%), and sparse lists over a
+-- low-cardinality column (where the ~1/ndistinct fallback is large enough
+-- to make the inflation especially visible). They also cover large $in
+-- lists with 1000 distinct values and 1000 values containing duplicates,
+-- exercising both hash-table growth and duplicate elimination.
+
+SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog;
+SET documentdb.next_collection_id TO 8910000;
+SET documentdb.next_collection_index_id TO 8910000;
+
+-- Per-collection planner statistics must be enabled for the comparison to be
+-- meaningful: without them, every operator already falls back to a generic
+-- default, so there would be nothing to contrast $in against. Array value
+-- unpacking must also be enabled so that the "tags" multikey path collects
+-- per-element statistics (rather than whole-array statistics), which is what
+-- the $in selectivity fix under test consults.
+SET documentdb.enablePerCollectionPlannerStatistics TO on;
+SET documentdb.enablePlannerStatisticsNewCollections TO on;
+SET documentdb.enable_array_bson_stats_with_planner_statistics TO on;
+SET documentdb.enable_in_granular_selectivity TO on;
+SHOW documentdb.max_in_granular_selectivity_input_size_bytes;
+SET documentdb.max_in_granular_selectivity_input_size_bytes TO 30001;
+
+SELECT documentdb_api.create_collection('in_selectivity_db', 'planner_rows');
+
+-- Per-collection statistics are collected per indexed path, so an index on
+-- each filtered path is required for either $eq or $in to be able to consult
+-- real stats. "tags" is indexed as a multikey (array) path, matching the
+-- production shape that exposed this bug (an array field combined with a
+-- large $in list).
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'in_selectivity_db',
+    '{ "createIndexes": "planner_rows", "indexes": [
+        { "key": { "value": 1 }, "name": "value_1" },
+        { "key": { "tags": 1 }, "name": "tags_1" }
+    ] }',
+    TRUE);
+
+-- 1000 rows, unique "value" per row and a single-element "tags" array that
+-- mirrors "value": true selectivity of a single $eq match on either path is
+-- 1/1000, and the true selectivity of an $in list that only contains one
+-- real value (plus 39 values that do not exist in the table) is also 1/1000.
+SELECT COUNT(documentdb_api.insert_one(
+    'in_selectivity_db',
+    'planner_rows',
+    format('{ "_id": %1$s, "value": %1$s, "tags": [%1$s] }', value)::bson))
+FROM generate_series(1, 1000) AS value;
+
+ANALYZE documentdb_data.documents_8910001;
+
+CREATE SCHEMA bson_dollar_in_selectivity_tests;
+
+-- Returns the planner's row estimate for the base table scan, pulled out of
+-- the EXPLAIN (FORMAT JSON) plan tree, alongside the true matching row count
+-- from a real count(*) of the same filter, and the ratio between the two.
+CREATE FUNCTION bson_dollar_in_selectivity_tests.get_filter_plan_rows(filter_doc text)
+RETURNS TABLE(estimated_rows bigint, actual_rows bigint, overestimate_ratio numeric)
+LANGUAGE plpgsql AS $fn$
+DECLARE
+    explain_plan jsonb;
+    v_estimated_rows bigint;
+    v_actual_rows bigint;
+BEGIN
+    EXECUTE format(
+        $query$EXPLAIN (FORMAT JSON) SELECT document FROM documentdb_api_catalog.bson_aggregation_find(
+            'in_selectivity_db',
+            '{ "find": "planner_rows", "filter": %s }')$query$,
+        filter_doc)
+    INTO explain_plan;
+
+    SELECT (node->>'Plan Rows')::bigint
+    INTO v_estimated_rows
+    FROM (
+        WITH RECURSIVE plan_nodes(node) AS
+        (
+            SELECT explain_plan->0->'Plan'
+            UNION ALL
+            SELECT child
+            FROM plan_nodes
+            CROSS JOIN LATERAL jsonb_array_elements(
+                COALESCE(plan_nodes.node->'Plans', '[]'::jsonb)) AS child
+        )
+        SELECT node FROM plan_nodes
+        WHERE node->>'Relation Name' = 'documents_8910001'
+    ) matched_plan_nodes;
+
+    -- bson_aggregation_find must be the direct target of a simple SELECT, so
+    -- the actual row count is captured as a standalone statement rather than
+    -- nested inside the CTE above.
+    EXECUTE format(
+        $query$SELECT count(*) FROM (SELECT document FROM documentdb_api_catalog.bson_aggregation_find(
+            'in_selectivity_db',
+            '{ "find": "planner_rows", "filter": %s }')) matched_docs$query$,
+        filter_doc)
+    INTO v_actual_rows;
+
+    RETURN QUERY
+    SELECT v_estimated_rows,
+           v_actual_rows,
+           round(v_estimated_rows::numeric / GREATEST(v_actual_rows, 1), 2);
+END;
+$fn$;
+
+-- Baseline: $eq on a unique value. GetCustomStatisticsSelectivity() routes
+-- this to eqsel() against the real per-collection MCV/histogram stats, so the
+-- estimate should track the true single-row match closely.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_filter_plan_rows(
+    '{ "value": { "$eq": 500 } }');
+
+-- $in with 40 candidates, only one of which (500) actually exists in the
+-- table. True matching rows = 1, same as the $eq case above. With array
+-- value unpacking enabled, GetCustomStatisticsSelectivity() sums a per-item
+-- eqsel() estimate for all 40 literals. The 39 nonexistent literals each
+-- still contribute the ~1/ndistinct = 0.001 non-MCV default (eqsel() cannot
+-- tell "absent" from "rare"), so the disjoint sum lands at 40 * 0.001 = 0.04,
+-- i.e. an estimate of 40 rows out of 1000: a 40x overestimate versus the
+-- true single-row match. This matches the behavior of PostgreSQL's own
+-- native IN-list estimator (scalararraysel()) for an equally sparse list.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_filter_plan_rows(
+    '{ "value": { "$in": [500, 100001, 100002, 100003, 100004, 100005, 100006, 100007, 100008, 100009, 100010, 100011, 100012, 100013, 100014, 100015, 100016, 100017, 100018, 100019, 100020, 100021, 100022, 100023, 100024, 100025, 100026, 100027, 100028, 100029, 100030, 100031, 100032, 100033, 100034, 100035, 100036, 100037, 100038, 100039] } }');
+
+-- Baseline (array/multikey field): $eq on "tags", a single-element array
+-- path. This should route through the same real-stats eqsel() path as the
+-- scalar "value" baseline above and track the true single-row match closely.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_filter_plan_rows(
+    '{ "tags": { "$eq": 500 } }');
+
+-- $in with 40 candidates on "tags", only one of which (500) actually exists.
+-- True matching rows = 1, same as the $eq case above. The same per-element
+-- summation applies regardless of whether the path is a scalar or a
+-- multikey (array) index, since array value unpacking also decomposes
+-- "tags" into per-element statistics, so the estimate is inflated the same
+-- way as the scalar "value" case above (40x overestimate).
+SELECT * FROM bson_dollar_in_selectivity_tests.get_filter_plan_rows(
+    '{ "tags": { "$in": [500, 100001, 100002, 100003, 100004, 100005, 100006, 100007, 100008, 100009, 100010, 100011, 100012, 100013, 100014, 100015, 100016, 100017, 100018, 100019, 100020, 100021, 100022, 100023, 100024, 100025, 100026, 100027, 100028, 100029, 100030, 100031, 100032, 100033, 100034, 100035, 100036, 100037, 100038, 100039] } }');
+
+-- Large multikey $in with 1000 distinct values, all of which exist. This
+-- inserts 1000 entries into the planner's seen-values hash table and
+-- exercises its growth path. Each value has an eqsel() estimate of 0.001,
+-- but floating-point accumulation puts the disjoint sum narrowly above
+-- 1.0. The range guard therefore rejects it and uses the independence
+-- estimate, 1 - (1 - 0.001)^1000, or about 0.632. This mirrors the native
+-- scalararraysel() fallback behavior. Generate the filter at execution time
+-- so the test does not need a 1000-element literal in source or output.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_filter_plan_rows(
+    (SELECT format(
+        '{ "tags": { "$in": [%s] } }',
+        string_agg(value::text, ', ' ORDER BY value))
+     FROM generate_series(1, 1000) AS value));
+
+-- Large multikey $in with 1000 input elements but only 10 distinct values.
+-- Each value from 1 through 10 is repeated 100 times. This exercises the
+-- hash table's duplicate lookup path and verifies duplicates do not inflate
+-- the estimate: the result must match the same 10 rows as a 10-element list.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_filter_plan_rows(
+    (SELECT format(
+        '{ "tags": { "$in": [%s] } }',
+        string_agg(((value % 10) + 1)::text, ', ' ORDER BY value))
+     FROM generate_series(0, 999) AS value));
+
+-- $nin is estimated as the complement of the per-element $in estimate.
+-- Excluding one unique scalar value should therefore estimate 999 rows.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_filter_plan_rows(
+    '{ "value": { "$nin": [500] } }');
+
+-- Sparse scalar $nin with one existing value and 39 absent values. The
+-- matching $in estimate is 40 rows, so its complement estimates 960 rows.
+-- The true result is 999 because absent literals exclude no rows.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_filter_plan_rows(
+    '{ "value": { "$nin": [500, 100001, 100002, 100003, 100004, 100005, 100006, 100007, 100008, 100009, 100010, 100011, 100012, 100013, 100014, 100015, 100016, 100017, 100018, 100019, 100020, 100021, 100022, 100023, 100024, 100025, 100026, 100027, 100028, 100029, 100030, 100031, 100032, 100033, 100034, 100035, 100036, 100037, 100038, 100039] } }');
+
+-- The same single-value complement on the multikey path should also estimate
+-- 999 rows.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_filter_plan_rows(
+    '{ "tags": { "$nin": [500] } }');
+
+-- Large multikey $nin with 1000 duplicate-heavy input elements. The hash
+-- table reduces the list to the 10 distinct values 1 through 10, whose $in
+-- estimate is 10 rows, so $nin should estimate and return the other 990.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_filter_plan_rows(
+    (SELECT format(
+        '{ "tags": { "$nin": [%s] } }',
+        string_agg(((value % 10) + 1)::text, ', ' ORDER BY value))
+     FROM generate_series(0, 999) AS value));
+
+-- Empty $nin matches the full collection and exercises the 100% boundary.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_filter_plan_rows(
+    '{ "tags": { "$nin": [] } }');
+
+-- With array-statistics selectivity disabled, $nin must retain the generic
+-- restriction estimator's result. That estimator already invokes the $nin
+-- operator, so the custom path must not complement it a second time.
+SET documentdb.enable_array_bson_stats_with_planner_statistics TO off;
+SELECT * FROM bson_dollar_in_selectivity_tests.get_filter_plan_rows(
+    '{ "value": { "$nin": [500] } }');
+SET documentdb.enable_array_bson_stats_with_planner_statistics TO on;
+
+-- The dedicated feature flag disables only the $in/$nin custom estimator.
+-- Array statistics remain enabled and available to other operators.
+SET documentdb.enable_in_granular_selectivity TO off;
+SELECT * FROM bson_dollar_in_selectivity_tests.get_filter_plan_rows(
+    (SELECT format(
+        '{ "value": { "$in": [500, %s] } }',
+        string_agg(value::text, ', ' ORDER BY value))
+     FROM generate_series(100001, 100039) AS value));
+SELECT * FROM bson_dollar_in_selectivity_tests.get_filter_plan_rows(
+    (SELECT format(
+        '{ "value": { "$nin": [500, %s] } }',
+        string_agg(value::text, ', ' ORDER BY value))
+     FROM generate_series(100001, 100039) AS value));
+SET documentdb.enable_in_granular_selectivity TO on;
+
+-- The size limit independently protects planning time while leaving the
+-- estimator and array statistics enabled.
+SET documentdb.max_in_granular_selectivity_input_size_bytes TO 1;
+SELECT * FROM bson_dollar_in_selectivity_tests.get_filter_plan_rows(
+    (SELECT format(
+        '{ "value": { "$in": [500, %s] } }',
+        string_agg(value::text, ', ' ORDER BY value))
+     FROM generate_series(100001, 100039) AS value));
+RESET documentdb.max_in_granular_selectivity_input_size_bytes;
+
+RESET documentdb.enablePerCollectionPlannerStatistics;
+RESET documentdb.enablePlannerStatisticsNewCollections;
+RESET documentdb.enable_array_bson_stats_with_planner_statistics;
+RESET documentdb.enable_in_granular_selectivity;
+SELECT documentdb_api.drop_collection('in_selectivity_db', 'planner_rows');
+DROP SCHEMA bson_dollar_in_selectivity_tests CASCADE;
+
+-- Second collection: only 10 rows/distinct values, used to cover the
+-- opposite ends of the $in selectivity spectrum -- full list coverage
+-- (true selectivity 100%) and a sparse list over a *low*-cardinality
+-- column, where the ~1/ndistinct non-MCV default is large (1/10 instead of
+-- 1/1000) and so the per-element summation's inflation is much more
+-- pronounced.
+SET documentdb.enablePerCollectionPlannerStatistics TO on;
+SET documentdb.enablePlannerStatisticsNewCollections TO on;
+SET documentdb.enable_array_bson_stats_with_planner_statistics TO on;
+
+SELECT documentdb_api.create_collection('in_selectivity_db', 'small_planner_rows');
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'in_selectivity_db',
+    '{ "createIndexes": "small_planner_rows", "indexes": [
+        { "key": { "value": 1 }, "name": "value_1" },
+        { "key": { "tags": 1 }, "name": "tags_1" }
+    ] }',
+    TRUE);
+
+-- 10 rows, unique "value"/"tags" per row (1..10).
+SELECT COUNT(documentdb_api.insert_one(
+    'in_selectivity_db',
+    'small_planner_rows',
+    format('{ "_id": %1$s, "value": %1$s, "tags": [%1$s] }', value)::bson))
+FROM generate_series(1, 10) AS value;
+
+ANALYZE documentdb_data.documents_8910002;
+
+CREATE SCHEMA bson_dollar_in_selectivity_tests;
+
+CREATE FUNCTION bson_dollar_in_selectivity_tests.get_small_filter_plan_rows(filter_doc text)
+RETURNS TABLE(estimated_rows bigint, actual_rows bigint, overestimate_ratio numeric)
+LANGUAGE plpgsql AS $fn$
+DECLARE
+    explain_plan jsonb;
+    v_estimated_rows bigint;
+    v_actual_rows bigint;
+BEGIN
+    EXECUTE format(
+        $query$EXPLAIN (FORMAT JSON) SELECT document FROM documentdb_api_catalog.bson_aggregation_find(
+            'in_selectivity_db',
+            '{ "find": "small_planner_rows", "filter": %s }')$query$,
+        filter_doc)
+    INTO explain_plan;
+
+    SELECT (node->>'Plan Rows')::bigint
+    INTO v_estimated_rows
+    FROM (
+        WITH RECURSIVE plan_nodes(node) AS
+        (
+            SELECT explain_plan->0->'Plan'
+            UNION ALL
+            SELECT child
+            FROM plan_nodes
+            CROSS JOIN LATERAL jsonb_array_elements(
+                COALESCE(plan_nodes.node->'Plans', '[]'::jsonb)) AS child
+        )
+        SELECT node FROM plan_nodes
+        WHERE node->>'Relation Name' = 'documents_8910002'
+    ) matched_plan_nodes;
+
+    EXECUTE format(
+        $query$SELECT count(*) FROM (SELECT document FROM documentdb_api_catalog.bson_aggregation_find(
+            'in_selectivity_db',
+            '{ "find": "small_planner_rows", "filter": %s }')) matched_docs$query$,
+        filter_doc)
+    INTO v_actual_rows;
+
+    RETURN QUERY
+    SELECT v_estimated_rows,
+           v_actual_rows,
+           round(v_estimated_rows::numeric / GREATEST(v_actual_rows, 1), 2);
+END;
+$fn$;
+
+-- Full coverage: $in lists all 10 existing values. True matching rows = 10
+-- (every row). All 10 literals are real MCV entries (at a 10-row table,
+-- ANALYZE captures every distinct value as an MCV), so the per-element
+-- summation should track the true 100% selectivity closely instead of
+-- being inflated by any non-MCV fallback.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_small_filter_plan_rows(
+    '{ "value": { "$in": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] } }');
+
+-- Sparse list over a low-cardinality column: $in with 10 candidates, only
+-- one of which (5) actually exists; the other 9 are absent. True matching
+-- rows = 1. Because ndistinct is only 10 here, each absent literal's
+-- non-MCV fallback is ~1/10 (vs. ~1/1000 in the larger collection above),
+-- so the disjoint sum reaches 10 * 0.1 = 1.0 and every row in the table is
+-- estimated to match: a 10x overestimate, worse in relative terms than the
+-- 1000-row/40-value case above because the fallback probability itself is
+-- much larger on a low-cardinality column.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_small_filter_plan_rows(
+    '{ "value": { "$in": [5, 100001, 100002, 100003, 100004, 100005, 100006, 100007, 100008, 100009] } }');
+
+-- Same sparse-list shape on the multikey/array path ("tags"): $in with 10
+-- candidates, only one of which (5) actually exists. Confirms the
+-- low-cardinality inflation above is not specific to the scalar path.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_small_filter_plan_rows(
+    '{ "tags": { "$in": [5, 100001, 100002, 100003, 100004, 100005, 100006, 100007, 100008, 100009] } }');
+
+-- Complement of the full-coverage list: every row is excluded. The computed
+-- selectivity is zero, while PostgreSQL reports a minimum base-scan estimate
+-- of one row.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_small_filter_plan_rows(
+    '{ "value": { "$nin": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] } }');
+
+-- Complement of the sparse low-cardinality list above. Its $in estimate is
+-- 100%, so the computed $nin selectivity is zero and PostgreSQL reports its
+-- one-row minimum even though only value 5 is truly excluded and the other
+-- nine rows match.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_small_filter_plan_rows(
+    '{ "value": { "$nin": [5, 100001, 100002, 100003, 100004, 100005, 100006, 100007, 100008, 100009] } }');
+
+-- The same sparse complement on the multikey path.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_small_filter_plan_rows(
+    '{ "tags": { "$nin": [5, 100001, 100002, 100003, 100004, 100005, 100006, 100007, 100008, 100009] } }');
+
+RESET documentdb.enablePerCollectionPlannerStatistics;
+RESET documentdb.enablePlannerStatisticsNewCollections;
+RESET documentdb.enable_array_bson_stats_with_planner_statistics;
+SELECT documentdb_api.drop_collection('in_selectivity_db', 'small_planner_rows');
+DROP SCHEMA bson_dollar_in_selectivity_tests CASCADE;
+
+-- Third collection: a genuinely multikey "tags" field (two elements per
+-- array, not one), arranged as two mutually exclusive tag-pairs so that the
+-- per-element disjoint sum lands exactly on an accurate answer rather than
+-- being inflated by a non-MCV fallback. Half the rows carry ["A", "C"], the
+-- other half carry ["B", "D"]; this is the same two-group tag shape as the
+-- original production repro that surfaced the $in multikey selectivity gap.
+-- Because "A"/"B"/"C"/"D" are each real MCV entries at an exact 0.5
+-- per-element frequency (array value unpacking records per-element, not
+-- whole-array, frequencies), $in lists built entirely from these four
+-- values hit the MCV path for every literal, with no non-MCV fallback noise
+-- to inflate the estimate: the cases below are accurate at both 50% and
+-- 100% true selectivity.
+SET documentdb.enablePerCollectionPlannerStatistics TO on;
+SET documentdb.enablePlannerStatisticsNewCollections TO on;
+SET documentdb.enable_array_bson_stats_with_planner_statistics TO on;
+
+SELECT documentdb_api.create_collection('in_selectivity_db', 'multikey_accuracy_rows');
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'in_selectivity_db',
+    '{ "createIndexes": "multikey_accuracy_rows", "indexes": [
+        { "key": { "tags": 1 }, "name": "tags_1" }
+    ] }',
+    TRUE);
+
+-- 1000 rows: the first half tagged ["A", "C"], the second half tagged
+-- ["B", "D"]. Each of "A"/"B"/"C"/"D" therefore has a true per-element
+-- frequency of exactly 0.5 (500 rows out of 1000).
+SELECT COUNT(documentdb_api.insert_one(
+    'in_selectivity_db',
+    'multikey_accuracy_rows',
+    CASE WHEN value <= 500
+        THEN format('{ "_id": %1$s, "tags": ["A", "C"] }', value)
+        ELSE format('{ "_id": %1$s, "tags": ["B", "D"] }', value)
+    END::bson))
+FROM generate_series(1, 1000) AS value;
+
+ANALYZE documentdb_data.documents_8910003;
+
+CREATE SCHEMA bson_dollar_in_selectivity_tests;
+
+CREATE FUNCTION bson_dollar_in_selectivity_tests.get_multikey_filter_plan_rows(filter_doc text)
+RETURNS TABLE(estimated_rows bigint, actual_rows bigint, overestimate_ratio numeric)
+LANGUAGE plpgsql AS $fn$
+DECLARE
+    explain_plan jsonb;
+    v_estimated_rows bigint;
+    v_actual_rows bigint;
+BEGIN
+    EXECUTE format(
+        $query$EXPLAIN (FORMAT JSON) SELECT document FROM documentdb_api_catalog.bson_aggregation_find(
+            'in_selectivity_db',
+            '{ "find": "multikey_accuracy_rows", "filter": %s }')$query$,
+        filter_doc)
+    INTO explain_plan;
+
+    SELECT (node->>'Plan Rows')::bigint
+    INTO v_estimated_rows
+    FROM (
+        WITH RECURSIVE plan_nodes(node) AS
+        (
+            SELECT explain_plan->0->'Plan'
+            UNION ALL
+            SELECT child
+            FROM plan_nodes
+            CROSS JOIN LATERAL jsonb_array_elements(
+                COALESCE(plan_nodes.node->'Plans', '[]'::jsonb)) AS child
+        )
+        SELECT node FROM plan_nodes
+        WHERE node->>'Relation Name' = 'documents_8910003'
+    ) matched_plan_nodes;
+
+    EXECUTE format(
+        $query$SELECT count(*) FROM (SELECT document FROM documentdb_api_catalog.bson_aggregation_find(
+            'in_selectivity_db',
+            '{ "find": "multikey_accuracy_rows", "filter": %s }')) matched_docs$query$,
+        filter_doc)
+    INTO v_actual_rows;
+
+    RETURN QUERY
+    SELECT v_estimated_rows,
+           v_actual_rows,
+           round(v_estimated_rows::numeric / GREATEST(v_actual_rows, 1), 2);
+END;
+$fn$;
+
+-- Accurate 50%: $in with a single real value ("A") that only the first
+-- tag-group carries. True matching rows = 500 (50%). eqsel("A") reads the
+-- exact 0.5 MCV frequency, so the single-element disjoint sum is exactly
+-- 0.5: an accurate estimate, not an inflated one.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_multikey_filter_plan_rows(
+    '{ "tags": { "$in": ["A"] } }');
+
+-- Accurate 100%: $in with one value from each mutually exclusive tag-group
+-- ("A" from the first group, "D" from the second). Every row carries either
+-- "A" or "D", so true matching rows = 1000 (100%). eqsel("A") = eqsel("D")
+-- = 0.5 exactly, so the disjoint sum lands exactly on 1.0 (the boundary of
+-- the valid-probability range) and is accepted as-is: an exact match for
+-- the true 100% selectivity.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_multikey_filter_plan_rows(
+    '{ "tags": { "$in": ["A", "D"] } }');
+
+-- Accurate 50% complement of the single-value $in case.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_multikey_filter_plan_rows(
+    '{ "tags": { "$nin": ["A"] } }');
+
+-- Accurate 0% selectivity complement of the full-coverage $in case.
+-- PostgreSQL reports its minimum one-row base-scan estimate.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_multikey_filter_plan_rows(
+    '{ "tags": { "$nin": ["A", "D"] } }');
+
+-- A regex nested in $in uses the regex operator's generic estimator rather
+-- than eqsel(). "^A$" matches exactly the first tag-group.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_multikey_filter_plan_rows(
+    '{ "tags": { "$in": [{ "$regularExpression": { "pattern": "^A$", "options": "" } }] } }');
+
+-- Mixed literal/regex $in. "A" covers the first tag-group and "^D$" covers
+-- the second. Regex matches can overlap literals or other regexes, so arrays
+-- containing regex use the independence formula instead of the equality-only
+-- disjoint sum.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_multikey_filter_plan_rows(
+    '{ "tags": { "$in": ["A", { "$regularExpression": { "pattern": "^D$", "options": "" } }] } }');
+
+-- $nin complements the same regex-aware per-element estimate.
+SELECT * FROM bson_dollar_in_selectivity_tests.get_multikey_filter_plan_rows(
+    '{ "tags": { "$nin": [{ "$regularExpression": { "pattern": "^A$", "options": "" } }] } }');
+SELECT * FROM bson_dollar_in_selectivity_tests.get_multikey_filter_plan_rows(
+    '{ "tags": { "$nin": ["A", { "$regularExpression": { "pattern": "^D$", "options": "" } }] } }');
+
+RESET documentdb.enablePerCollectionPlannerStatistics;
+RESET documentdb.enablePlannerStatisticsNewCollections;
+RESET documentdb.enable_array_bson_stats_with_planner_statistics;
+SELECT documentdb_api.drop_collection('in_selectivity_db', 'multikey_accuracy_rows');
+DROP SCHEMA bson_dollar_in_selectivity_tests CASCADE;

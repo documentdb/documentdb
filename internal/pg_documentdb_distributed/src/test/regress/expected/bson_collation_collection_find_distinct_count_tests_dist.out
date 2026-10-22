@@ -17,6 +17,13 @@ NOTICE:  creating collection
  t
 (1 row)
 
+SELECT documentdb_api.shard_collection(
+    'collation_default_dist_db', 'default_match', '{ "_id": "hashed" }', false);
+ shard_collection
+---------------------------------------------------------------------
+
+(1 row)
+
 UPDATE documentdb_api_catalog.collections
 SET options = '{ "collation": { "locale": "fr", "strength": 1 } }'::documentdb_core.bson
 WHERE database_name = 'collation_default_dist_db' AND collection_name = 'default_match';
@@ -39,13 +46,6 @@ SELECT documentdb_api.insert_one(
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
-(1 row)
-
-SELECT documentdb_api.shard_collection(
-    'collation_default_dist_db', 'default_match', '{ "_id": "hashed" }', false);
- shard_collection 
----------------------------------------------------------------------
- 
 (1 row)
 
 BEGIN;

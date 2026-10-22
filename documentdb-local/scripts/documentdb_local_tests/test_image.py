@@ -234,7 +234,8 @@ def _cleanup_container(container: str | None) -> None:
     if not container:
         return
     _persist_container_logs(container)
-    _docker("rm", "-f", container, check=False)
+    # -v drops the anonymous /data volume from the image's VOLUME; named volumes stay.
+    _docker("rm", "-fv", container, check=False)
 
 
 def _stop_then_cleanup_container(container: str | None) -> None:
@@ -481,6 +482,12 @@ class DefaultContainerTests(_ContainerTestBase):
             + "\n".join(combined.splitlines()[-40:]),
         )
 
+    def test_password_flag_is_not_in_any_process_argv(self):
+        # Covers the Dockerfile's `bash -c` wrapper, which the unit test bypasses.
+        result = _docker("exec", self.container, "sh", "-c",
+                         "cat /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' ' '")
+        self.assertNotIn(self.password, result.stdout)
+
     def test_first_boot_adopts_baked_data_template(self):
         """Startup-time contract (issue #480): the image ships a
         pre-initialized PostgreSQL data directory, and a default first boot
@@ -520,6 +527,10 @@ class DefaultContainerTests(_ContainerTestBase):
             whoami.stdout.strip(), "root",
             "in-container `whoami` reports root; expected a non-root user.",
         )
+
+    def test_image_exposes_default_gateway_port(self):
+        ports = _docker("inspect", "-f", "{{json .Config.ExposedPorts}}", self.image)
+        self.assertIn(f'"{DEFAULT_PORT}/tcp"', ports.stdout)
 
     def test_image_reports_build_provenance(self):
         """Provenance contract (issue #687): the image must self-identify.
@@ -1288,6 +1299,84 @@ print('init-data marker placed');
             f"last mongosh stdout:\n{getattr(last_result, 'stdout', '')}\n"
             f"last mongosh stderr:\n{getattr(last_result, 'stderr', '')}"
         )
+
+
+@_SKIP_UNLESS_IMAGE
+class NoPasswordTests(unittest.TestCase):
+    """Run the image as built, so a PASSWORD baked into its ENV fails this."""
+
+    def test_image_refuses_to_start_without_a_password(self):
+        name = _random_container_name()
+        try:
+            # A regression starts the server and hangs here until the timeout.
+            result = _docker("run", "--name", name, os.environ["DOCUMENTDB_LOCAL_IMAGE"],
+                             check=False, timeout=120)
+        finally:
+            _cleanup_container(name)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("no password was supplied", result.stderr)
+
+
+@_SKIP_UNLESS_IMAGE
+class FailingCustomInitDataTests(unittest.TestCase):
+    """A seed that throws or does not parse must fail the container (#759)."""
+
+    def _run_seed(self, script: str, seed_error: str) -> None:
+        image = os.environ["DOCUMENTDB_LOCAL_IMAGE"]
+        init_dir = tempfile.mkdtemp(prefix="docdb-image-bad-init-")
+        # Named up front so a launch that fails after `docker run` is still removed.
+        container = _random_container_name()
+        try:
+            seed = pathlib.Path(init_dir) / "00-seed.js"
+            seed.write_text(script, encoding="utf-8")
+            os.chmod(init_dir, 0o755)
+            os.chmod(seed, 0o644)
+            _start_container(
+                image,
+                name=container,
+                extra_run_args=["-v", f"{init_dir}:/init_doc_db.d:ro"],
+                entrypoint_flags=[
+                    "--username", DEFAULT_USERNAME,
+                    "--password", _random_password(),
+                    "--init-data-path", "/init_doc_db.d",
+                ],
+            )
+            # Stop waiting once it exits or, on a regression, reports ready.
+            deadline = time.monotonic() + DEFAULT_READY_TIMEOUT
+            while time.monotonic() < deadline:
+                running = _docker("inspect", "-f", "{{.State.Running}}",
+                                  container, check=False, timeout=30)
+                logs = _docker("logs", container, check=False)
+                if (running.stdout.strip() == "false"
+                        or READY_LOG in logs.stdout + logs.stderr):
+                    break
+                time.sleep(2)
+            state = json.loads(_docker("inspect", "-f", "{{json .State}}",
+                                       container, timeout=30).stdout)
+            logs = _docker("logs", container, check=False)
+            output = logs.stdout + logs.stderr
+            self.assertFalse(state["Running"],
+                             f"container still running after a failing seed:\n{output[-3000:]}")
+            self.assertNotEqual(state["ExitCode"], 0, output[-3000:])
+            self.assertNotIn(READY_LOG, output)
+            self.assertIn("Custom data initialization failed", output)
+            # The seed's own error, so a connection or auth failure cannot pass.
+            self.assertIn(seed_error, output)
+            self.assertNotEqual((state.get("Health") or {}).get("Status"), "healthy")
+        finally:
+            _cleanup_container(container)
+            shutil.rmtree(init_dir, ignore_errors=True)
+
+    def test_seed_that_throws_after_a_write_fails_the_container(self):
+        self._run_seed(
+            "db.getSiblingDB('image_smoke_failing_seed').t.insertOne({_id: 1});\n"
+            "throw new Error('seed failed on purpose');\n",
+            "seed failed on purpose",
+        )
+
+    def test_seed_with_a_syntax_error_fails_the_container(self):
+        self._run_seed("db.getSiblingDB('image_smoke_failing_seed').t.insertOne({_id: 1\n",
+                       "SyntaxError")
 
 
 # ---------------------------------------------------------------------------

@@ -1342,6 +1342,11 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the ApiSchemaName.create_collection function */
 	Oid ApiCreateCollectionFunctionId;
 
+	Oid ApiCreateCollectionWithOptionsFunctionId;
+
+	/* OID of the ApiInternalSchemaName.create_indexes_dispatch function */
+	Oid ApiCreateIndexesDispatchFunctionId;
+
 	/* OID of ApiInternalSchemaName.{ExtensionObjectPrefix}_core_bson_to_bson*/
 	Oid DocumentDBCoreBsonToBsonFunctionOId;
 
@@ -1388,6 +1393,9 @@ typedef struct DocumentDBApiOidCacheData
 
 		/* OID of the CollectionRbacReadWriteAnyDatabaseRole */
 		Oid CollectionRbacReadWriteAnyDatabaseRoleOid;
+
+		/* OID of the CreateIndexesRole */
+		Oid CreateIndexesRoleOid;
 	} RoleOids;
 } DocumentDBApiOidCacheData;
 
@@ -3635,6 +3643,43 @@ ApiCreateCollectionFunctionId(void)
 
 	return GetSchemaFunctionIdWithNargs(&Cache.ApiCreateCollectionFunctionId,
 										ApiSchemaName, "create_collection", nargs,
+										argTypes, missingOk);
+}
+
+
+Oid
+ApiCreateCollectionWithOptionsFunctionId(void)
+{
+	int nargs = 3;
+	Oid argTypes[3] = { TEXTOID, TEXTOID, BsonTypeId() };
+
+	/* Legacy dispatch must also work before this function is installed. */
+	bool missingOk = true;
+
+	return GetSchemaFunctionIdWithNargs(&Cache.ApiCreateCollectionWithOptionsFunctionId,
+										ApiSchemaName, "create_collection_with_options",
+										nargs, argTypes, missingOk);
+}
+
+
+/*
+ * Returns the OID of the ordinary create-index dispatch function.
+ */
+Oid
+ApiCreateIndexesDispatchFunctionId(void)
+{
+	int nargs = 4;
+	Oid argTypes[4] = {
+		TEXTOID,
+		TEXTOID,
+		BsonTypeId(),
+		BsonTypeId()
+	};
+	bool missingOk = true;
+
+	return GetSchemaFunctionIdWithNargs(&Cache.ApiCreateIndexesDispatchFunctionId,
+										ApiInternalSchemaName,
+										"create_indexes_dispatch", nargs,
 										argTypes, missingOk);
 }
 
@@ -8165,6 +8210,23 @@ CollectionRbacReadWriteAnyDatabaseRoleOid(void)
 	}
 
 	return Cache.RoleOids.CollectionRbacReadWriteAnyDatabaseRoleOid;
+}
+
+
+Oid
+CreateIndexesRoleOid(void)
+{
+	InitializeDocumentDBApiExtensionCache();
+
+	if (!OidIsValid(Cache.RoleOids.CreateIndexesRoleOid))
+	{
+		bool missingOk = true;
+
+		Cache.RoleOids.CreateIndexesRoleOid =
+			get_role_oid(API_RBAC_API_INDEX_CREATE_ROLE, missingOk);
+	}
+
+	return Cache.RoleOids.CreateIndexesRoleOid;
 }
 
 

@@ -607,15 +607,20 @@ fn commands_list_core() -> RawDocumentBuf {
 
 fn commands_list_dynamic(dynamic_config: &dyn DynamicConfiguration) -> RawDocumentBuf {
     let mut enabled_commands = Vec::new();
+    let enable_server_status = dynamic_config.enable_server_status_command();
 
     if dynamic_config.enable_role_crud() {
         enabled_commands.push(&CREATE_ROLE_COMMAND);
     }
 
-    let commands_doc = if enabled_commands.is_empty() {
+    let commands_doc = if enabled_commands.is_empty() && enable_server_status {
         CORE_COMMANDS_DOCUMENT.clone()
     } else {
-        enabled_commands.extend(&CORE_COMMANDS);
+        enabled_commands.extend(
+            CORE_COMMANDS
+                .iter()
+                .filter(|command| enable_server_status || command.command_name != "serverStatus"),
+        );
         enabled_commands.sort_unstable_by(|left, right| left.command_name.cmp(right.command_name));
 
         let mut commands_doc = RawDocumentBuf::new();
@@ -652,6 +657,28 @@ mod tests {
 
     use super::*;
     use crate::testing::TestDynamicConfiguration;
+
+    #[test]
+    fn list_commands_tracks_server_status_flag_with_role_crud_enabled_or_disabled() {
+        let config = TestDynamicConfiguration::default();
+        for enable_role_crud in [false, true] {
+            config.set_enable_role_crud(enable_role_crud);
+            for enable_server_status in [true, false, true] {
+                config.set_bool("enable_server_status_command", enable_server_status);
+                let response = process(&config).as_json().expect("valid response");
+                let commands = response.get_document("commands").expect("commands");
+                assert_eq!(commands.contains_key("serverStatus"), enable_server_status);
+                assert_eq!(commands.contains_key("createRole"), enable_role_crud);
+                assert_eq!(
+                    commands.len(),
+                    CORE_COMMANDS.len() + usize::from(enable_role_crud)
+                        - usize::from(!enable_server_status)
+                );
+                let names: Vec<_> = commands.keys().collect();
+                assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
+            }
+        }
+    }
 
     /// Verifies that the disabled configuration returns exactly the core command
     /// set, preserving each command's order and advertised metadata.

@@ -419,6 +419,19 @@ RunUpgradeActions(ExtensionVersion installedVersion, ExtensionVersion lastUpgrad
 		GrantRolesReadToRbacApiAccessRole();
 	}
 
+	if (ShouldRunSetupForVersion(&versions, DocDB_V1, 2, 0))
+	{
+		bool isNull = false;
+		bool readOnly = false;
+		ExtensionExecuteQueryViaSPI(
+			FormatSqlQuery(
+				"GRANT INSERT ON TABLE %s TO %s",
+				quote_qualified_identifier(ApiCatalogSchemaNameV2,
+										   GetIndexQueueTableName()),
+				quote_identifier(API_RBAC_API_INDEX_CREATE_ROLE)),
+			readOnly, SPI_OK_UTILITY, &isNull);
+	}
+
 	/* we call the post setup cluster hook to allow the extension to do any additional setup */
 	PostSetupClusterHook(&ShouldRunSetupForVersionForHook, &versions);
 

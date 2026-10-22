@@ -1,0 +1,853 @@
+-- Tests for subquery pushdown of $match on computed fields when the query uses
+-- persisted cursors (i.e. dynamic cursors are disabled). Gated by the
+-- enable_subquery_pushdown_for_match_on_persisted_cursors GUC. Verifies explain plan
+-- shapes (subquery boundary) and result correctness.
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documentdb_api_internal;
+SET documentdb.next_collection_id TO 25860100;
+SET documentdb.next_collection_index_id TO 25860100;
+-- Persisted cursors: dynamic cursors are explicitly disabled for these tests.
+SET documentdb.enableDynamicCursors TO off;
+-- Rewrite the aggregation function inline so EXPLAIN exposes the underlying
+-- query plan (and thus the Subquery Scan boundary) rather than an opaque
+-- Function Scan on bson_aggregation_pipeline.
+SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
+SET documentdb.enablePrimaryKeyCursorScan TO on;
+SET enable_seqscan TO off;
+-- ===========================================================================
+-- Data setup
+-- ===========================================================================
+SELECT documentdb_api.drop_collection('pcsub_pushdown_db', 'flights');
+ drop_collection 
+-----------------
+ f
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one('pcsub_pushdown_db', 'flights',
+    FORMAT('{ "_id": %s, "routeId": %s, "carrier": "%s", "legs": [
+        { "code": "A", "dist": %s },
+        { "code": "B", "dist": %s }
+    ]}',
+        i,
+        (i % 5) + 1,
+        CASE WHEN i % 10 = 0 THEN 'ALPHA' ELSE 'alpha' END,
+        i,
+        i + 1
+    )::documentdb_core.bson))
+FROM generate_series(1, 20) AS i;
+NOTICE:  creating collection
+ count 
+-------
+    20
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('pcsub_pushdown_db',
+    '{"createIndexes": "flights", "indexes": [{"key": {"routeId": 1}, "name": "idx_routeId"}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Refresh planner statistics scoped to this collection only (compact in
+-- updateStats mode runs ANALYZE on the collection's backing table) so the plan
+-- shapes below are stable without mutating shared statistics across tests.
+SELECT documentdb_api.compact('{"compact": "flights", "$db": "pcsub_pushdown_db", "mode": "updateStats"}');
+                                    compact                                     
+--------------------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" }, "bytesFreed" : { "$numberLong" : "0" } }
+(1 row)
+
+-- ===========================================================================
+-- SECTION A: $project computing a field + $match on the computed field.
+-- With enable_subquery_pushdown_for_match_on_persisted_cursors=on, the second $match
+-- must trigger a subquery boundary (projection runs before the filter) even
+-- though dynamic cursors are disabled.
+-- ===========================================================================
+-- ---------------------------------------------------------------------------
+-- Test A1: Result correctness with the persisted pushdown GUC on
+-- ---------------------------------------------------------------------------
+SET documentdb.enable_subquery_pushdown_for_match_on_persisted_cursors TO on;
+SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db',
+    '{ "aggregate": "flights", "pipeline": [
+        { "$match": { "routeId": 1 } },
+        { "$project": {
+            "_id": 1,
+            "routeId": 1,
+            "legCount": { "$size": "$legs" }
+        }},
+        { "$match": { "legCount": { "$gt": 0 } } },
+        { "$sort": { "_id": 1 } }
+    ], "cursor": {} }');
+                                                   document                                                   
+--------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "10" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "15" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "20" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$numberInt" : "2" } }
+(4 rows)
+
+-- ---------------------------------------------------------------------------
+-- Test A2: EXPLAIN — verify a Subquery Scan boundary appears in the plan.
+-- ---------------------------------------------------------------------------
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db',
+    '{ "aggregate": "flights", "pipeline": [
+        { "$match": { "routeId": 1 } },
+        { "$project": {
+            "_id": 1,
+            "routeId": 1,
+            "legCount": { "$size": "$legs" }
+        }},
+        { "$match": { "legCount": { "$gt": 0 } } },
+        { "$sort": { "_id": 1 } }
+    ], "cursor": {} }');
+$cmd$);
+                                                                                                                   run_explain_and_trim                                                                                                                    
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Output: agg_stage_2.document, (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Subquery Scan on agg_stage_2
+         Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         Filter: (agg_stage_2.document #> '{ "legCount" : { "$numberInt" : "0" } }'::bsonquery)
+         ->  Index Scan using "idx_routeId" on documentdb_data.documents_25860101 collection
+               Output: bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$size" : "$legs" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Index Cond: (collection.document @= '{ "routeId" : { "$numberInt" : "1" } }'::bson)
+(9 rows)
+
+-- ---------------------------------------------------------------------------
+-- Test A3: With the persisted pushdown GUC off, the pushdown must NOT happen
+-- (persisted cursors remain gated). No Subquery Scan boundary should appear.
+-- ---------------------------------------------------------------------------
+SET documentdb.enable_subquery_pushdown_for_match_on_persisted_cursors TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db',
+    '{ "aggregate": "flights", "pipeline": [
+        { "$match": { "routeId": 1 } },
+        { "$project": {
+            "_id": 1,
+            "routeId": 1,
+            "legCount": { "$size": "$legs" }
+        }},
+        { "$match": { "legCount": { "$gt": 0 } } },
+        { "$sort": { "_id": 1 } }
+    ], "cursor": {} }');
+$cmd$);
+                                                                                                                                                                                                                                                     run_explain_and_trim                                                                                                                                                                                                                                                     
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Output: (bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$size" : "$legs" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$size" : "$legs" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$size" : "$legs" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Index Scan using "idx_routeId" on documentdb_data.documents_25860101 collection
+         Output: bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$size" : "$legs" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_orderby(bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$size" : "$legs" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         Index Cond: (collection.document @= '{ "routeId" : { "$numberInt" : "1" } }'::bson)
+         Filter: (bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$size" : "$legs" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson) @> '{ "legCount" : { "$numberInt" : "0" } }'::bson)
+(7 rows)
+
+-- Results should still be correct with the GUC off.
+SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db',
+    '{ "aggregate": "flights", "pipeline": [
+        { "$match": { "routeId": 1 } },
+        { "$project": {
+            "_id": 1,
+            "routeId": 1,
+            "legCount": { "$size": "$legs" }
+        }},
+        { "$match": { "legCount": { "$gt": 0 } } },
+        { "$sort": { "_id": 1 } }
+    ], "cursor": {} }');
+                                                   document                                                   
+--------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "10" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "15" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "20" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$numberInt" : "2" } }
+(4 rows)
+
+SET documentdb.enable_subquery_pushdown_for_match_on_persisted_cursors TO on;
+-- ===========================================================================
+-- SECTION B: Portal-backed persisted cursor variant.
+-- With file-based cursors disabled, persistConnection must be true because
+-- getMore must resume the portal on the same backend connection.
+-- routeId:1 matches 4 documents, so batchSize:2 forces a first page + getMore.
+-- ===========================================================================
+SET documentdb.useFileBasedPersistedCursors TO off;
+-- ---------------------------------------------------------------------------
+-- Test B1: First page (batchSize 2) over the portal-backed persisted cursor.
+-- ---------------------------------------------------------------------------
+CREATE TEMP TABLE pcsub_portal_first_page AS
+SELECT cursorPage, continuation, persistConnection
+FROM documentdb_api.aggregate_cursor_first_page(
+    database => 'pcsub_pushdown_db',
+    commandSpec => '{ "aggregate": "flights", "pipeline": [
+        { "$match": { "routeId": 1 } },
+        { "$project": {
+            "_id": 1,
+            "routeId": 1,
+            "legCount": { "$size": "$legs" }
+        }},
+        { "$match": { "legCount": { "$gt": 0 } } },
+        { "$sort": { "_id": 1 } }
+    ], "cursor": { "batchSize": 2 } }',
+    cursorId => 4294967294);
+SELECT documentdb_api_catalog.bson_dollar_project(cursorPage,
+    '{ "ok": 1, "cursor.id": 1,
+       "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } },
+       "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }'::documentdb_core.bson),
+       persistConnection
+FROM pcsub_portal_first_page;
+                                                                                        bson_dollar_project                                                                                         | persistconnection 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------
+ { "cursor" : { "id" : { "$numberLong" : "4294967294" } }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "5" }, { "$numberInt" : "10" } ] } | t
+(1 row)
+
+SELECT continuation AS pcsub_portal_cont FROM pcsub_portal_first_page \gset
+-- ---------------------------------------------------------------------------
+-- Test B2: getMore drains the remaining documents from the portal.
+-- The full 4-document result set must be returned correctly across pages.
+-- ---------------------------------------------------------------------------
+SELECT documentdb_api_catalog.bson_dollar_project(cursorPage,
+    '{ "ok": 1, "cursor.id": 1,
+       "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } },
+       "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }'::documentdb_core.bson)
+FROM documentdb_api.cursor_get_more(
+    database => 'pcsub_pushdown_db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967294" }, "collection": "flights", "batchSize": 2 }'::documentdb_core.bson,
+    continuationSpec => :'pcsub_portal_cont');
+                                                                                    bson_dollar_project                                                                                     
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" } }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "15" }, { "$numberInt" : "20" } ] }
+(1 row)
+
+DROP TABLE pcsub_portal_first_page;
+-- ===========================================================================
+-- SECTION C: File-based persisted cursor variant.
+-- This section drives the file-based drain path across multiple getMore pages.
+-- ===========================================================================
+SET documentdb.useFileBasedPersistedCursors TO on;
+CREATE TEMP TABLE pcsub_file_first_page AS
+SELECT cursorPage, continuation, persistConnection
+FROM documentdb_api.aggregate_cursor_first_page(
+    database => 'pcsub_pushdown_db',
+    commandSpec => '{ "aggregate": "flights", "pipeline": [
+        { "$match": { "routeId": 1 } },
+        { "$project": {
+            "_id": 1,
+            "routeId": 1,
+            "legCount": { "$size": "$legs" }
+        }},
+        { "$match": { "legCount": { "$gt": 0 } } },
+        { "$sort": { "_id": 1 } }
+    ], "cursor": { "batchSize": 2 } }',
+    cursorId => 4294967294);
+SELECT documentdb_api_catalog.bson_dollar_project(cursorPage,
+    '{ "ok": 1, "cursor.id": 1,
+       "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } },
+       "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }'::documentdb_core.bson),
+       persistConnection
+FROM pcsub_file_first_page;
+                                                                                        bson_dollar_project                                                                                         | persistconnection 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------
+ { "cursor" : { "id" : { "$numberLong" : "4294967294" } }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "5" }, { "$numberInt" : "10" } ] } | f
+(1 row)
+
+SELECT continuation AS pcsub_file_cont FROM pcsub_file_first_page \gset
+SELECT documentdb_api_catalog.bson_dollar_project(cursorPage,
+    '{ "ok": 1, "cursor.id": 1,
+       "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } },
+       "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }'::documentdb_core.bson)
+FROM documentdb_api.cursor_get_more(
+    database => 'pcsub_pushdown_db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967294" }, "collection": "flights", "batchSize": 2 }'::documentdb_core.bson,
+    continuationSpec => :'pcsub_file_cont');
+                                                                                    bson_dollar_project                                                                                     
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" } }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "15" }, { "$numberInt" : "20" } ] }
+(1 row)
+
+SET documentdb.useFileBasedPersistedCursors TO off;
+DROP TABLE pcsub_file_first_page;
+-- ===========================================================================
+-- SECTION D: No-$sort streaming candidate must STAY on a streaming cursor.
+-- Sections A-C append a trailing $sort, which forces a persistent cursor, so
+-- the computed-field $match pushes the projection into a subquery. This section
+-- drops the $sort, so nothing in the pipeline independently requires a
+-- persistent cursor and it remains a streaming candidate. The persisted-cursor
+-- pushdown must NOT fire here: the added SubqueryScan cannot be streamed over,
+-- so pushing it down would force this streaming-eligible pipeline onto a
+-- persistent cursor (a regression). This guards that the pushdown is skipped
+-- and streaming is preserved: no Subquery Scan boundary in the plan,
+-- persistConnection must be false (streaming cursors do not pin the backend),
+-- and the two-page getMore must still return the full result set correctly (no
+-- duplicated or skipped documents). routeId:1 matches 4 documents (_id 5, 10,
+-- 15, 20), so batchSize:2 forces a first page + one getMore.
+-- ===========================================================================
+-- ---------------------------------------------------------------------------
+-- Test D0: EXPLAIN — with the GUC on but no persistence-forcing stage, NO
+-- Subquery Scan boundary should appear (the pushdown must be skipped).
+-- ---------------------------------------------------------------------------
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db',
+    '{ "aggregate": "flights", "pipeline": [
+        { "$match": { "routeId": 1 } },
+        { "$project": {
+            "_id": 1,
+            "routeId": 1,
+            "legCount": { "$size": "$legs" }
+        }},
+        { "$match": { "legCount": { "$gt": 0 } } }
+    ], "cursor": {} }');
+$cmd$);
+                                                                                                                                                                     run_explain_and_trim                                                                                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiScan)
+   Output: bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$size" : "$legs" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), current_cursor_state(document)
+   cursorScanType: streaming
+   ->  Bitmap Heap Scan on documentdb_data.documents_25860101 collection
+         Output: shard_key_value, object_id, document
+         Recheck Cond: (collection.document @= '{ "routeId" : { "$numberInt" : "1" } }'::bson)
+         Filter: (cursor_state(collection.document, '{ }'::bson) AND (bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$size" : "$legs" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson) @> '{ "legCount" : { "$numberInt" : "0" } }'::bson))
+         ->  Bitmap Index Scan on "idx_routeId"
+               Index Cond: (collection.document @= '{ "routeId" : { "$numberInt" : "1" } }'::bson)
+(9 rows)
+
+-- ---------------------------------------------------------------------------
+-- Test D1: First page (batchSize 2). The cursor must remain streaming
+-- (persistConnection false) rather than being downgraded to persistent.
+-- ---------------------------------------------------------------------------
+CREATE TEMP TABLE pcsub_nosort_first_page AS
+SELECT cursorPage, continuation, persistConnection
+FROM documentdb_api.aggregate_cursor_first_page(
+    database => 'pcsub_pushdown_db',
+    commandSpec => '{ "aggregate": "flights", "pipeline": [
+        { "$match": { "routeId": 1 } },
+        { "$project": {
+            "_id": 1,
+            "routeId": 1,
+            "legCount": { "$size": "$legs" }
+        }},
+        { "$match": { "legCount": { "$gt": 0 } } }
+    ], "cursor": { "batchSize": 2 } }',
+    cursorId => 4294967294);
+SELECT documentdb_api_catalog.bson_dollar_project(cursorPage,
+    '{ "ok": 1, "cursor.id": 1,
+       "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } },
+       "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }'::documentdb_core.bson),
+       persistConnection
+FROM pcsub_nosort_first_page;
+                                                                                        bson_dollar_project                                                                                         | persistconnection 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------
+ { "cursor" : { "id" : { "$numberLong" : "4294967294" } }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "5" }, { "$numberInt" : "10" } ] } | f
+(1 row)
+
+SELECT continuation AS pcsub_nosort_cont FROM pcsub_nosort_first_page \gset
+-- ---------------------------------------------------------------------------
+-- Test D2: getMore drains the remaining documents from the streaming cursor.
+-- The full 4-document result set must be returned correctly across pages.
+-- ---------------------------------------------------------------------------
+SELECT documentdb_api_catalog.bson_dollar_project(cursorPage,
+    '{ "ok": 1, "cursor.id": 1,
+       "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } },
+       "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }'::documentdb_core.bson)
+FROM documentdb_api.cursor_get_more(
+    database => 'pcsub_pushdown_db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967294" }, "collection": "flights", "batchSize": 2 }'::documentdb_core.bson,
+    continuationSpec => :'pcsub_nosort_cont');
+                                                                                    bson_dollar_project                                                                                     
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" } }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "15" }, { "$numberInt" : "20" } ] }
+(1 row)
+
+DROP TABLE pcsub_nosort_first_page;
+-- ===========================================================================
+-- SECTION E: A collation-sensitive match on a projected string retains the
+-- command collation through the subquery boundary and persisted cursor pages.
+-- routeId:1 matches four documents whose carrier values differ only by case.
+-- ===========================================================================
+SET documentdb_core.enableCollation TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db',
+    '{ "aggregate": "flights", "pipeline": [
+        { "$match": { "routeId": 1 } },
+        { "$project": {
+            "_id": 1,
+            "carrierName": "$carrier"
+        }},
+        { "$match": { "carrierName": "ALPHA" } },
+        { "$sort": { "_id": 1 } }
+    ], "cursor": {},
+       "collation": { "locale": "en", "strength": 1 } }');
+$cmd$);
+                                                                                                         run_explain_and_trim                                                                                                          
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Output: agg_stage_2.document, (bson_orderby_index(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Sort Key: (bson_orderby_index(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
+   ->  Subquery Scan on agg_stage_2
+         Output: agg_stage_2.document, bson_orderby_index(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+         Filter: (agg_stage_2.document #= '{ "carrierName" : "ALPHA", "collation" : "en-u-ks-level1" }'::bsonquery)
+         ->  Index Scan using _id_ on documentdb_data.documents_25860101 collection
+               Output: bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "carrierName" : "$carrier" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
+               Index Cond: (collection.shard_key_value = '25860101'::bigint)
+               Filter: (collection.document @= '{ "routeId" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::bson)
+(10 rows)
+
+CREATE TEMP TABLE pcsub_collation_first_page AS
+SELECT cursorPage, continuation, persistConnection
+FROM documentdb_api.aggregate_cursor_first_page(
+    database => 'pcsub_pushdown_db',
+    commandSpec => '{ "aggregate": "flights", "pipeline": [
+        { "$match": { "routeId": 1 } },
+        { "$project": {
+            "_id": 1,
+            "carrierName": "$carrier"
+        }},
+        { "$match": { "carrierName": "ALPHA" } },
+        { "$sort": { "_id": 1 } }
+    ], "cursor": { "batchSize": 2 },
+       "collation": { "locale": "en", "strength": 1 } }',
+    cursorId => 4294967294);
+SELECT documentdb_api_catalog.bson_dollar_project(cursorPage,
+    '{ "ok": 1, "cursor.id": 1,
+       "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } },
+       "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }'::documentdb_core.bson),
+       persistConnection
+FROM pcsub_collation_first_page;
+                                                                                        bson_dollar_project                                                                                         | persistconnection 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------
+ { "cursor" : { "id" : { "$numberLong" : "4294967294" } }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "5" }, { "$numberInt" : "10" } ] } | t
+(1 row)
+
+SELECT continuation AS pcsub_collation_cont FROM pcsub_collation_first_page \gset
+SELECT documentdb_api_catalog.bson_dollar_project(cursorPage,
+    '{ "ok": 1, "cursor.id": 1,
+       "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } },
+       "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }'::documentdb_core.bson)
+FROM documentdb_api.cursor_get_more(
+    database => 'pcsub_pushdown_db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967294" }, "collection": "flights", "batchSize": 2 }'::documentdb_core.bson,
+    continuationSpec => :'pcsub_collation_cont');
+                                                                                    bson_dollar_project                                                                                     
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" } }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "15" }, { "$numberInt" : "20" } ] }
+(1 row)
+
+DROP TABLE pcsub_collation_first_page;
+RESET documentdb_core.enableCollation;
+-- ===========================================================================
+-- SECTION F: Cursor-kind gating for the persisted-cursor pushdown (GUC on,
+-- dynamic cursors off throughout). Two pipelines that differ only in their
+-- trailing stage decide whether the pushdown may fire:
+--   F1: $match -> $project -> $match -> $project has no persistence-forcing
+--       stage, so it stays a STREAMING cursor. The pushdown must be skipped so
+--       the streaming plan is preserved (no Subquery Scan boundary,
+--       persistConnection false). This is the regression guard: pushing the
+--       projection into a subquery here would force streaming onto a
+--       persistent cursor.
+--   F2: $match -> $project -> $match -> $skip (non-zero) forces a PERSISTENT
+--       cursor, so the pushdown fires: the projection is pushed into a subquery
+--       (Subquery Scan boundary present) and persistConnection is true.
+-- Together they show the gate keys off the fully resolved cursor kind, not just
+-- the stages seen before the computed-field $match.
+-- routeId:1 matches 4 documents (_id 5, 10, 15, 20).
+-- ===========================================================================
+SET documentdb.useFileBasedPersistedCursors TO off;
+-- ---------------------------------------------------------------------------
+-- Test F1a: EXPLAIN — streaming pipeline, NO Subquery Scan boundary (pushdown
+-- must be skipped).
+-- ---------------------------------------------------------------------------
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db',
+    '{ "aggregate": "flights", "pipeline": [
+        { "$match": { "routeId": 1 } },
+        { "$project": {
+            "_id": 1,
+            "routeId": 1,
+            "legCount": { "$size": "$legs" }
+        }},
+        { "$match": { "legCount": { "$gt": 0 } } },
+        { "$project": { "_id": 1, "routeId": 1 } }
+    ], "cursor": {} }');
+$cmd$);
+                                                                                                                                                                                                              run_explain_and_trim                                                                                                                                                                                                              
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiScan)
+   Output: bson_dollar_project(bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$size" : "$legs" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" }, "routeId" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), current_cursor_state(document)
+   cursorScanType: streaming
+   ->  Bitmap Heap Scan on documentdb_data.documents_25860101 collection
+         Output: shard_key_value, object_id, document
+         Recheck Cond: (collection.document @= '{ "routeId" : { "$numberInt" : "1" } }'::bson)
+         Filter: (cursor_state(collection.document, '{ }'::bson) AND (bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$size" : "$legs" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson) @> '{ "legCount" : { "$numberInt" : "0" } }'::bson))
+         ->  Bitmap Index Scan on "idx_routeId"
+               Index Cond: (collection.document @= '{ "routeId" : { "$numberInt" : "1" } }'::bson)
+(9 rows)
+
+-- ---------------------------------------------------------------------------
+-- Test F1b: First page (batchSize 2). The cursor must remain streaming
+-- (persistConnection false), and the two-page getMore must return all four
+-- documents.
+-- ---------------------------------------------------------------------------
+CREATE TEMP TABLE pcsub_stream_first_page AS
+SELECT cursorPage, continuation, persistConnection
+FROM documentdb_api.aggregate_cursor_first_page(
+    database => 'pcsub_pushdown_db',
+    commandSpec => '{ "aggregate": "flights", "pipeline": [
+        { "$match": { "routeId": 1 } },
+        { "$project": {
+            "_id": 1,
+            "routeId": 1,
+            "legCount": { "$size": "$legs" }
+        }},
+        { "$match": { "legCount": { "$gt": 0 } } },
+        { "$project": { "_id": 1, "routeId": 1 } }
+    ], "cursor": { "batchSize": 2 } }',
+    cursorId => 4294967290);
+SELECT documentdb_api_catalog.bson_dollar_project(cursorPage,
+    '{ "ok": 1, "cursor.id": 1,
+       "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } },
+       "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }'::documentdb_core.bson),
+       persistConnection
+FROM pcsub_stream_first_page;
+                                                                                        bson_dollar_project                                                                                         | persistconnection 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------
+ { "cursor" : { "id" : { "$numberLong" : "4294967290" } }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "5" }, { "$numberInt" : "10" } ] } | f
+(1 row)
+
+SELECT continuation AS pcsub_stream_cont FROM pcsub_stream_first_page \gset
+SELECT documentdb_api_catalog.bson_dollar_project(cursorPage,
+    '{ "ok": 1, "cursor.id": 1,
+       "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } },
+       "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }'::documentdb_core.bson)
+FROM documentdb_api.cursor_get_more(
+    database => 'pcsub_pushdown_db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967290" }, "collection": "flights", "batchSize": 2 }'::documentdb_core.bson,
+    continuationSpec => :'pcsub_stream_cont');
+                                                                                    bson_dollar_project                                                                                     
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" } }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "15" }, { "$numberInt" : "20" } ] }
+(1 row)
+
+DROP TABLE pcsub_stream_first_page;
+-- ---------------------------------------------------------------------------
+-- Test F2a: EXPLAIN — a non-zero $skip forces a persistent cursor, so the
+-- pushdown fires and a Subquery Scan boundary must appear.
+-- ---------------------------------------------------------------------------
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db',
+    '{ "aggregate": "flights", "pipeline": [
+        { "$match": { "routeId": 1 } },
+        { "$project": {
+            "_id": 1,
+            "routeId": 1,
+            "legCount": { "$size": "$legs" }
+        }},
+        { "$match": { "legCount": { "$gt": 0 } } },
+        { "$skip": 1 }
+    ], "cursor": {} }');
+$cmd$);
+                                                                                                                   run_explain_and_trim                                                                                                                    
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   Output: agg_stage_2.document
+   ->  Subquery Scan on agg_stage_2
+         Output: agg_stage_2.document
+         Filter: (agg_stage_2.document #> '{ "legCount" : { "$numberInt" : "0" } }'::bsonquery)
+         ->  Index Scan using "idx_routeId" on documentdb_data.documents_25860101 collection
+               Output: bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$size" : "$legs" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Index Cond: (collection.document @= '{ "routeId" : { "$numberInt" : "1" } }'::bson)
+(8 rows)
+
+-- ---------------------------------------------------------------------------
+-- Test F2b: First page (batchSize 2). The cursor must be persistent
+-- (persistConnection true). $skip:1 drops _id 5, so the drain returns
+-- _id 10, 15, 20 across the first page and one getMore.
+-- ---------------------------------------------------------------------------
+CREATE TEMP TABLE pcsub_skip_first_page AS
+SELECT cursorPage, continuation, persistConnection
+FROM documentdb_api.aggregate_cursor_first_page(
+    database => 'pcsub_pushdown_db',
+    commandSpec => '{ "aggregate": "flights", "pipeline": [
+        { "$match": { "routeId": 1 } },
+        { "$project": {
+            "_id": 1,
+            "routeId": 1,
+            "legCount": { "$size": "$legs" }
+        }},
+        { "$match": { "legCount": { "$gt": 0 } } },
+        { "$skip": 1 }
+    ], "cursor": { "batchSize": 2 } }',
+    cursorId => 4294967291);
+SELECT documentdb_api_catalog.bson_dollar_project(cursorPage,
+    '{ "ok": 1, "cursor.id": 1,
+       "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } },
+       "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }'::documentdb_core.bson),
+       persistConnection
+FROM pcsub_skip_first_page;
+                                                                                         bson_dollar_project                                                                                         | persistconnection 
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------
+ { "cursor" : { "id" : { "$numberLong" : "4294967291" } }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "10" }, { "$numberInt" : "15" } ] } | t
+(1 row)
+
+SELECT continuation AS pcsub_skip_cont FROM pcsub_skip_first_page \gset
+SELECT documentdb_api_catalog.bson_dollar_project(cursorPage,
+    '{ "ok": 1, "cursor.id": 1,
+       "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } },
+       "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }'::documentdb_core.bson)
+FROM documentdb_api.cursor_get_more(
+    database => 'pcsub_pushdown_db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967291" }, "collection": "flights", "batchSize": 2 }'::documentdb_core.bson,
+    continuationSpec => :'pcsub_skip_cont');
+                                                                        bson_dollar_project                                                                        
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" } }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "1" }, "ids" : [ { "$numberInt" : "20" } ] }
+(1 row)
+
+DROP TABLE pcsub_skip_first_page;
+-- ===========================================================================
+-- SECTION G: Views resolve their underlying pipeline through a separate
+-- stage-extraction pass on the same build context. The persistence look-ahead
+-- raises requiresPersistentCursor monotonically, so a persistence-forcing stage
+-- in one extraction pass must still enable the computed-field $match pushdown in
+-- the other. These cases exercise that cross-extraction propagation, which
+-- Sections A-F (single pipeline, single extraction) cannot reach.
+-- routeId:1 matches 4 documents (_id 5, 10, 15, 20); legCount = 2 for every doc.
+-- ===========================================================================
+-- ---------------------------------------------------------------------------
+-- Test G1: The forcing stage ($sort) and the computed-field $match both live
+-- in the OUTER pipeline over a view whose definition only pre-filters. The view
+-- adds a second extraction pass, but the pushdown must still fire (Subquery Scan
+-- boundary present) and the cursor must be persistent.
+-- ---------------------------------------------------------------------------
+SELECT documentdb_api.create_collection_view('pcsub_pushdown_db',
+    '{ "create": "flights_route1", "viewOn": "flights",
+       "pipeline": [ { "$match": { "routeId": 1 } } ] }');
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db',
+    '{ "aggregate": "flights_route1", "pipeline": [
+        { "$project": {
+            "_id": 1,
+            "legCount": { "$size": "$legs" }
+        }},
+        { "$match": { "legCount": { "$gt": 0 } } },
+        { "$sort": { "_id": 1 } }
+    ], "cursor": {} }');
+$cmd$);
+                                                                                                 run_explain_and_trim                                                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Output: agg_stage_2.document, (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Subquery Scan on agg_stage_2
+         Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         Filter: (agg_stage_2.document #> '{ "legCount" : { "$numberInt" : "0" } }'::bsonquery)
+         ->  Index Scan using "idx_routeId" on documentdb_data.documents_25860101 collection
+               Output: bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "legCount" : { "$size" : "$legs" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Index Cond: (collection.document @= '{ "routeId" : { "$numberInt" : "1" } }'::bson)
+(9 rows)
+
+CREATE TEMP TABLE pcsub_view_outer_first_page AS
+SELECT cursorPage, continuation, persistConnection
+FROM documentdb_api.aggregate_cursor_first_page(
+    database => 'pcsub_pushdown_db',
+    commandSpec => '{ "aggregate": "flights_route1", "pipeline": [
+        { "$project": {
+            "_id": 1,
+            "legCount": { "$size": "$legs" }
+        }},
+        { "$match": { "legCount": { "$gt": 0 } } },
+        { "$sort": { "_id": 1 } }
+    ], "cursor": { "batchSize": 2 } }',
+    cursorId => 4294967289);
+SELECT documentdb_api_catalog.bson_dollar_project(cursorPage,
+    '{ "ok": 1, "cursor.id": 1,
+       "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } },
+       "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }'::documentdb_core.bson),
+       persistConnection
+FROM pcsub_view_outer_first_page;
+                                                                                        bson_dollar_project                                                                                         | persistconnection 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------
+ { "cursor" : { "id" : { "$numberLong" : "4294967289" } }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "5" }, { "$numberInt" : "10" } ] } | t
+(1 row)
+
+SELECT continuation AS pcsub_view_outer_cont FROM pcsub_view_outer_first_page \gset
+SELECT documentdb_api_catalog.bson_dollar_project(cursorPage,
+    '{ "ok": 1, "cursor.id": 1,
+       "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } },
+       "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }'::documentdb_core.bson)
+FROM documentdb_api.cursor_get_more(
+    database => 'pcsub_pushdown_db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967289" }, "collection": "flights_route1", "batchSize": 2 }'::documentdb_core.bson,
+    continuationSpec => :'pcsub_view_outer_cont');
+                                                                                    bson_dollar_project                                                                                     
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" } }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "15" }, { "$numberInt" : "20" } ] }
+(1 row)
+
+DROP TABLE pcsub_view_outer_first_page;
+-- ---------------------------------------------------------------------------
+-- Test G2: The computed-field $match lives in the VIEW definition while the
+-- only persistence-forcing stage ($sort) lives in the OUTER pipeline. The view
+-- definition is extracted separately and on its own would stay streaming, so
+-- the pushdown here depends entirely on the outer pipeline's look-ahead having
+-- already raised requiresPersistentCursor. The Subquery Scan boundary must
+-- still appear and the cursor must be persistent. This is the uniquely
+-- cross-extraction case: Sections A-F keep the $match and the forcing stage in
+-- the same extraction pass.
+-- ---------------------------------------------------------------------------
+SELECT documentdb_api.create_collection_view('pcsub_pushdown_db',
+    '{ "create": "flights_route1_computed", "viewOn": "flights",
+       "pipeline": [
+           { "$match": { "routeId": 1 } },
+           { "$project": {
+               "_id": 1,
+               "legCount": { "$size": "$legs" }
+           }},
+           { "$match": { "legCount": { "$gt": 0 } } }
+       ] }');
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db',
+    '{ "aggregate": "flights_route1_computed", "pipeline": [
+        { "$sort": { "_id": 1 } }
+    ], "cursor": {} }');
+$cmd$);
+                                                                                                 run_explain_and_trim                                                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Output: agg_stage_2.document, (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Subquery Scan on agg_stage_2
+         Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         Filter: (agg_stage_2.document #> '{ "legCount" : { "$numberInt" : "0" } }'::bsonquery)
+         ->  Index Scan using "idx_routeId" on documentdb_data.documents_25860101 collection
+               Output: bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "legCount" : { "$size" : "$legs" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Index Cond: (collection.document @= '{ "routeId" : { "$numberInt" : "1" } }'::bson)
+(9 rows)
+
+CREATE TEMP TABLE pcsub_view_def_first_page AS
+SELECT cursorPage, continuation, persistConnection
+FROM documentdb_api.aggregate_cursor_first_page(
+    database => 'pcsub_pushdown_db',
+    commandSpec => '{ "aggregate": "flights_route1_computed", "pipeline": [
+        { "$sort": { "_id": 1 } }
+    ], "cursor": { "batchSize": 2 } }',
+    cursorId => 4294967288);
+SELECT documentdb_api_catalog.bson_dollar_project(cursorPage,
+    '{ "ok": 1, "cursor.id": 1,
+       "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } },
+       "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }'::documentdb_core.bson),
+       persistConnection
+FROM pcsub_view_def_first_page;
+                                                                                        bson_dollar_project                                                                                         | persistconnection 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------
+ { "cursor" : { "id" : { "$numberLong" : "4294967288" } }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "5" }, { "$numberInt" : "10" } ] } | t
+(1 row)
+
+SELECT continuation AS pcsub_view_def_cont FROM pcsub_view_def_first_page \gset
+SELECT documentdb_api_catalog.bson_dollar_project(cursorPage,
+    '{ "ok": 1, "cursor.id": 1,
+       "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } },
+       "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }'::documentdb_core.bson)
+FROM documentdb_api.cursor_get_more(
+    database => 'pcsub_pushdown_db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967288" }, "collection": "flights_route1_computed", "batchSize": 2 }'::documentdb_core.bson,
+    continuationSpec => :'pcsub_view_def_cont');
+                                                                                    bson_dollar_project                                                                                     
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" } }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "15" }, { "$numberInt" : "20" } ] }
+(1 row)
+
+DROP TABLE pcsub_view_def_first_page;
+-- ===========================================================================
+-- SECTION H: $limit / $skip argument validation with the pushdown GUC on.
+-- Regression guard: the persisted-cursor look-ahead walks the stages to decide
+-- persistence before the stages are built. It must not pre-empt the
+-- stage-specific validation error for $limit (5107201) / $skip (5107200) when
+-- the argument is a numeric value that cannot be expressed as a 64-bit integer
+-- (e.g. Decimal128 NaN or out of range). The look-ahead only runs when the GUC
+-- is on, so the specific error must be raised identically whether the GUC is
+-- on or off.
+-- ===========================================================================
+-- Baseline: with the GUC off the look-ahead is skipped and the stage handler
+-- raises the specific error.
+SET documentdb.enable_subquery_pushdown_for_match_on_persisted_cursors TO off;
+-- $limit Decimal128 NaN -> 5107201
+SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db',
+    '{ "aggregate": "flights", "pipeline": [
+        { "$limit": { "$numberDecimal": "NaN" } }
+    ], "cursor": {} }');
+ERROR:  Invalid $limit stage argument: value cannot be represented as a 64-bit integer: $limit: NaN
+-- $limit Decimal128 out of 64-bit range -> 5107201
+SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db',
+    '{ "aggregate": "flights", "pipeline": [
+        { "$limit": { "$numberDecimal": "Infinity" } }
+    ], "cursor": {} }');
+ERROR:  Invalid $limit stage argument: value cannot be represented as a 64-bit integer: $limit: Infinity
+-- $skip Decimal128 NaN -> 5107200
+SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db',
+    '{ "aggregate": "flights", "pipeline": [
+        { "$skip": { "$numberDecimal": "NaN" } }
+    ], "cursor": {} }');
+ERROR:  Invalid parameter provided to $skip stage: value cannot be expressed as a 64-bit integer $skip: NaN
+-- $skip Decimal128 out of 64-bit range -> 5107200
+SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db',
+    '{ "aggregate": "flights", "pipeline": [
+        { "$skip": { "$numberDecimal": "Infinity" } }
+    ], "cursor": {} }');
+ERROR:  Invalid parameter provided to $skip stage: value cannot be expressed as a 64-bit integer $skip: Infinity
+-- With the GUC on the look-ahead runs first, yet the errors must be identical
+-- to the baseline above (same code, same message, same stage).
+SET documentdb.enable_subquery_pushdown_for_match_on_persisted_cursors TO on;
+-- $limit Decimal128 NaN -> 5107201 (not a generic conversion error)
+SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db',
+    '{ "aggregate": "flights", "pipeline": [
+        { "$limit": { "$numberDecimal": "NaN" } }
+    ], "cursor": {} }');
+ERROR:  Invalid $limit stage argument: value cannot be represented as a 64-bit integer: $limit: NaN
+-- $limit Decimal128 out of 64-bit range -> 5107201
+SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db',
+    '{ "aggregate": "flights", "pipeline": [
+        { "$limit": { "$numberDecimal": "Infinity" } }
+    ], "cursor": {} }');
+ERROR:  Invalid $limit stage argument: value cannot be represented as a 64-bit integer: $limit: Infinity
+-- $skip Decimal128 NaN -> 5107200
+SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db',
+    '{ "aggregate": "flights", "pipeline": [
+        { "$skip": { "$numberDecimal": "NaN" } }
+    ], "cursor": {} }');
+ERROR:  Invalid parameter provided to $skip stage: value cannot be expressed as a 64-bit integer $skip: NaN
+-- $skip Decimal128 out of 64-bit range -> 5107200
+SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db',
+    '{ "aggregate": "flights", "pipeline": [
+        { "$skip": { "$numberDecimal": "Infinity" } }
+    ], "cursor": {} }');
+ERROR:  Invalid parameter provided to $skip stage: value cannot be expressed as a 64-bit integer $skip: Infinity
+SELECT documentdb_api.drop_collection('pcsub_pushdown_db', 'flights_route1');
+NOTICE:  table "documents_25860102" does not exist, skipping
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('pcsub_pushdown_db', 'flights_route1_computed');
+NOTICE:  table "documents_25860103" does not exist, skipping
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('pcsub_pushdown_db', 'flights');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+RESET search_path;

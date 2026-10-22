@@ -5476,109 +5476,31 @@ SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select'
 (5 rows)
 
 ROLLBACK;
--- Semantic collation errors are write errors. An unordered batch continues
--- after each invalid operation.
-BEGIN;
+-- Invalid collation fails the entire unordered command without applying
+-- either the preceding or following updates.
 SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": false, "updates": [ { "q": { "_id": "dog" }, "u": { "$set": { "beforeErrors": true } }, "multi": false }, { "q": { "_id": "cat" }, "u": { "$set": { "invalidLocale": true } }, "multi": false, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "_id": "CAT" }, "u": { "$set": { "missingLocale": true } }, "multi": false, "collation": { "strength": 1 } }, { "q": { "_id": "DOG" }, "u": { "$set": { "afterErrors": true } }, "multi": false } ] }');
-                                                                                                                                                                                                                                                                                     update                                                                                                                                                                                                                                                                                     
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""2"" }, ""n"" : { ""$numberInt"" : ""2"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""1"" }, ""code"" : { ""$numberInt"" : ""16777245"" }, ""errmsg"" : ""unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: \\""invalid_locale_xyz\\"", strength: 1 }."" }, { ""index"" : { ""$numberInt"" : ""2"" }, ""code"" : { ""$numberInt"" : ""119537693"" }, ""errmsg"" : ""Collation specification is missing the required 'locale' field."" } ] }",f)
-(1 row)
-
-SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
-                                                      document                                                       
----------------------------------------------------------------------------------------------------------------------
- { "_id" : "CAT", "name" : "CAT", "group" : "PET", "tags" : [ "CAT" ], "values" : [ "CAT" ] }
- { "_id" : "DOG", "name" : "DOG", "group" : "PET", "tags" : [ "DOG" ], "values" : [ "DOG" ], "afterErrors" : true }
- { "_id" : "cat", "name" : "cat", "group" : "pet", "tags" : [ "cat" ], "values" : [ "cat" ] }
- { "_id" : "dog", "name" : "dog", "group" : "pet", "tags" : [ "dog" ], "values" : [ "dog" ], "beforeErrors" : true }
-(4 rows)
-
-ROLLBACK;
--- An ordered batch preserves earlier writes and stops after the first
--- semantic collation error.
-BEGIN;
+psql:sql/bson_collation_query_tests_core.sql:1771: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "invalid_locale_xyz", strength: 1 }.
+-- An invalid collation also fails the entire ordered command.
 SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": true, "updates": [ { "q": { "_id": "dog" }, "u": { "$set": { "beforeError": true } }, "multi": false }, { "q": { "_id": "cat" }, "u": { "$set": { "invalidLocale": true } }, "multi": false, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "_id": "DOG" }, "u": { "$set": { "afterError": true } }, "multi": false } ] }');
-                                                                                                                                                                                              update                                                                                                                                                                                               
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""1"" }, ""code"" : { ""$numberInt"" : ""16777245"" }, ""errmsg"" : ""unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: \\""invalid_locale_xyz\\"", strength: 1 }."" } ] }",f)
-(1 row)
-
-SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
-                                                      document                                                      
---------------------------------------------------------------------------------------------------------------------
- { "_id" : "CAT", "name" : "CAT", "group" : "PET", "tags" : [ "CAT" ], "values" : [ "CAT" ] }
- { "_id" : "DOG", "name" : "DOG", "group" : "PET", "tags" : [ "DOG" ], "values" : [ "DOG" ] }
- { "_id" : "cat", "name" : "cat", "group" : "pet", "tags" : [ "cat" ], "values" : [ "cat" ] }
- { "_id" : "dog", "name" : "dog", "group" : "pet", "tags" : [ "dog" ], "values" : [ "dog" ], "beforeError" : true }
-(4 rows)
-
-ROLLBACK;
+psql:sql/bson_collation_query_tests_core.sql:1774: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "invalid_locale_xyz", strength: 1 }.
 -- A non-document collation remains a command-level type error, so no write
 -- operation starts.
 SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": false, "updates": [ { "q": { "_id": "dog" }, "u": { "$set": { "shouldNotRun": true } }, "multi": false }, { "q": { "_id": "cat" }, "u": { "$set": { "invalidType": true } }, "multi": false, "collation": "en" } ] }');
-psql:sql/bson_collation_query_tests_core.sql:1785: ERROR:  The BSON field 'update.updates.collation' has an incorrect type 'string'; it should be of type 'object'.
-SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
-                                           document                                           
-----------------------------------------------------------------------------------------------
- { "_id" : "CAT", "name" : "CAT", "group" : "PET", "tags" : [ "CAT" ], "values" : [ "CAT" ] }
- { "_id" : "DOG", "name" : "DOG", "group" : "PET", "tags" : [ "DOG" ], "values" : [ "DOG" ] }
- { "_id" : "cat", "name" : "cat", "group" : "pet", "tags" : [ "cat" ], "values" : [ "cat" ] }
- { "_id" : "dog", "name" : "dog", "group" : "pet", "tags" : [ "dog" ], "values" : [ "dog" ] }
-(4 rows)
-
--- Semantic errors remain write errors when the collection does not exist.
+psql:sql/bson_collation_query_tests_core.sql:1778: ERROR:  The BSON field 'update.updates.collation' has an incorrect type 'string'; it should be of type 'object'.
+-- Collation parsing fails the command even when the collection does not exist.
 SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_missing", "ordered": false, "updates": [ { "q": { "_id": "cat" }, "u": { "$set": { "invalidLocale": true } }, "multi": false, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "_id": "dog" }, "u": { "$set": { "validNoop": true } }, "multi": false } ] }');
-                                                                                                                                                                                              update                                                                                                                                                                                               
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""16777245"" }, ""errmsg"" : ""unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: \\""invalid_locale_xyz\\"", strength: 1 }."" } ] }",f)
-(1 row)
-
--- An update's collation is parsed inside the per-update error boundary rather
--- than when the command is parsed, so update-many also reports an invalid
--- collation as a write error indexed to that update while the rest of an
--- unordered batch still applies.
-BEGIN;
+psql:sql/bson_collation_query_tests_core.sql:1781: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "invalid_locale_xyz", strength: 1 }.
+-- Update-many also fails the entire unordered command on invalid collation.
 SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": false, "updates": [ { "q": { "group": "PeT" }, "u": { "$set": { "multiBeforeError": true } }, "multi": true, "collation": { "locale": "en", "strength": 1 } }, { "q": { "group": "PeT" }, "u": { "$set": { "multiInvalidLocale": true } }, "multi": true, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "group": "PeT" }, "u": { "$set": { "multiMissingLocale": true } }, "multi": true, "collation": { "strength": 1 } }, { "q": { "group": "pet" }, "u": { "$set": { "multiAfterErrors": true } }, "multi": true } ] }');
-                                                                                                                                                                                                                                                                                     update                                                                                                                                                                                                                                                                                     
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""6"" }, ""n"" : { ""$numberInt"" : ""6"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""1"" }, ""code"" : { ""$numberInt"" : ""16777245"" }, ""errmsg"" : ""unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: \\""invalid_locale_xyz\\"", strength: 1 }."" }, { ""index"" : { ""$numberInt"" : ""2"" }, ""code"" : { ""$numberInt"" : ""119537693"" }, ""errmsg"" : ""Collation specification is missing the required 'locale' field."" } ] }",f)
-(1 row)
-
-SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
-                                                                      document                                                                      
-----------------------------------------------------------------------------------------------------------------------------------------------------
- { "_id" : "CAT", "name" : "CAT", "group" : "PET", "tags" : [ "CAT" ], "values" : [ "CAT" ], "multiBeforeError" : true }
- { "_id" : "DOG", "name" : "DOG", "group" : "PET", "tags" : [ "DOG" ], "values" : [ "DOG" ], "multiBeforeError" : true }
- { "_id" : "cat", "name" : "cat", "group" : "pet", "tags" : [ "cat" ], "values" : [ "cat" ], "multiBeforeError" : true, "multiAfterErrors" : true }
- { "_id" : "dog", "name" : "dog", "group" : "pet", "tags" : [ "dog" ], "values" : [ "dog" ], "multiBeforeError" : true, "multiAfterErrors" : true }
-(4 rows)
-
-ROLLBACK;
--- An ordered update-many batch stops at the first invalid collation and keeps
--- the writes that preceded it.
-BEGIN;
+psql:sql/bson_collation_query_tests_core.sql:1784: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "invalid_locale_xyz", strength: 1 }.
+-- An invalid collation also fails the entire ordered update-many command.
 SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": true, "updates": [ { "q": { "group": "PeT" }, "u": { "$set": { "multiBeforeError": true } }, "multi": true, "collation": { "locale": "en", "strength": 1 } }, { "q": { "group": "PeT" }, "u": { "$set": { "multiInvalidLocale": true } }, "multi": true, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "group": "pet" }, "u": { "$set": { "multiAfterError": true } }, "multi": true } ] }');
-                                                                                                                                                                                              update                                                                                                                                                                                               
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""4"" }, ""n"" : { ""$numberInt"" : ""4"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""1"" }, ""code"" : { ""$numberInt"" : ""16777245"" }, ""errmsg"" : ""unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: \\""invalid_locale_xyz\\"", strength: 1 }."" } ] }",f)
-(1 row)
-
-SELECT document FROM documentdb_api.collection('coll_q_db', 'coll_update_select') ORDER BY object_id;
-                                                        document                                                         
--------------------------------------------------------------------------------------------------------------------------
- { "_id" : "CAT", "name" : "CAT", "group" : "PET", "tags" : [ "CAT" ], "values" : [ "CAT" ], "multiBeforeError" : true }
- { "_id" : "DOG", "name" : "DOG", "group" : "PET", "tags" : [ "DOG" ], "values" : [ "DOG" ], "multiBeforeError" : true }
- { "_id" : "cat", "name" : "cat", "group" : "pet", "tags" : [ "cat" ], "values" : [ "cat" ], "multiBeforeError" : true }
- { "_id" : "dog", "name" : "dog", "group" : "pet", "tags" : [ "dog" ], "values" : [ "dog" ], "multiBeforeError" : true }
-(4 rows)
-
-ROLLBACK;
+psql:sql/bson_collation_query_tests_core.sql:1787: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "invalid_locale_xyz", strength: 1 }.
 -- ==============================================================================
 -- SECTION 28: shard-key targeting under explicit simple
 -- ==============================================================================
 SELECT documentdb_api.insert_one('coll_q_db', 'coll_delete_simple', '{"_id": 1, "a": "cat"}');
-psql:sql/bson_collation_query_tests_core.sql:1810: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_core.sql:1792: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -5834,7 +5756,7 @@ SELECT documentdb_api.drop_collection('coll_q_db', 'coll_sortArray');
 SELECT documentdb_api.insert_one(
   'coll_q_db', 'coll_find_modify',
   '{"_id": 1, "group": "pet", "name": "Zulu", "state": "old", "tags": ["cat"], "items": [{"label": "dog"}]}');
-psql:sql/bson_collation_query_tests_core.sql:1871: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_core.sql:1853: NOTICE:  creating collection
                               insert_one
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -5862,7 +5784,7 @@ SET LOCAL documentdb_core.enableCollation TO off;
 SELECT documentdb_api.find_and_modify(
   'coll_q_db',
   '{"findAndModify": "coll_find_modify", "query": {"group": "PeT"}, "update": {"$set": {"state": "disabled"}}, "collation": {"locale": "en", "strength": 1}}');
-psql:sql/bson_collation_query_tests_core.sql:1884: ERROR:  findAndModify.collation is not implemented yet
+psql:sql/bson_collation_query_tests_core.sql:1866: ERROR:  findAndModify.collation is not implemented yet
 ROLLBACK;
 -- Compatibility mode preserves the existing binary behavior while the feature is disabled.
 BEGIN;
@@ -5881,11 +5803,11 @@ ROLLBACK;
 SELECT documentdb_api.find_and_modify(
   'coll_q_db',
   '{"findAndModify": "coll_find_modify", "query": {"group": "pet"}, "update": {"$set": {"state": "invalid"}}, "collation": 1}');
-psql:sql/bson_collation_query_tests_core.sql:1899: ERROR:  The BSON field 'findAndModify.collation' has an incorrect type 'int'; it should be of type 'object'.
+psql:sql/bson_collation_query_tests_core.sql:1881: ERROR:  The BSON field 'findAndModify.collation' has an incorrect type 'int'; it should be of type 'object'.
 SELECT documentdb_api.find_and_modify(
   'coll_q_db',
   '{"findAndModify": "coll_find_modify", "query": {"group": "pet"}, "update": {"$set": {"state": "invalid"}}, "collation": {"strength": 1}}');
-psql:sql/bson_collation_query_tests_core.sql:1902: ERROR:  Collation specification is missing the required 'locale' field.
+psql:sql/bson_collation_query_tests_core.sql:1884: ERROR:  Collation specification is missing the required 'locale' field.
 BEGIN;
 -- Without a collation, mixed-case matching remains binary.
 SELECT documentdb_api.find_and_modify(

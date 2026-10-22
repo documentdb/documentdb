@@ -1,4 +1,29 @@
+### documentdb v1.3-0 (Unreleased) ###
+* Prevent a backend crash from out-of-bounds reads when a composite index scan with more scan keys than index paths, such as a large `$all` on an array field, falls back to an ordered scan. *[Bugfix]*
+* Reuse constant sort specifications and collation options across rows when producing index sort keys. *[Perf]*
+* Prevent high-key optimization from ending compound-index scans early when a range predicate precedes a suffix filter. *[Bugfix]*
+* Prevent high-key optimization from skipping page-level filter checks when an `$exists` predicate is combined with other predicates (such as `$mod`, `$ne`, or `$nin`) on the same indexed path. *[Bugfix]*
+* Prevent lock-upgrade deadlocks during concurrent collection creation with pre-image or update-description options, and preserve pre-image replica identity when sharding, resharding, redistributing, or unsharding collections. *[Bugfix]*
+* Build text indexes specified with the `{ _fts: "text", _ftsx: 1 }` key format as text indexes when ordered indexes are enabled by default, so `$text` queries work on them. *[Bugfix]*
+* Preserve ordered `_id` scan candidates and range bounds when filters are present, and enable cost-time ordering when collection or native btree statistics are enabled. Controlled by the default-on `documentdb.enable_btree_order_by_with_filters` and `documentdb.enable_order_by_id_on_cost_function_with_stats` settings. *[Bugfix]*
+* Preserve released schema definitions when introducing the change-stream heartbeat task. *[Bugfix]* (work item 5713030)
+* Retire `skip_legacy_id_index_stats_check` and always read planner-statistics enablement from collection options instead of legacy index metadata. *[Refactor]*
+* Support create collection with collation on unsharded collections when `documentdb.enable_collation_with_create_collection` is enabled. *[Feature]*
+* Preserve MinKey lower-bound predicates during native range selectivity estimation so sparse existence predicates retain their custom selectivity. *[Bugfix]*
+* Apply native range selectivity to ordered-index traversal boundaries as well as returned-row estimates, without treating trailing filters as traversal bounds. *[Bugfix]*
+
 ### documentdb v1.2-0 (Unreleased) ###
+* Use PostgreSQL `date_bin` for `$dateTrunc` with `unit: "day"`, preserving exact calendar days, reference-aligned bins, and timezone boundaries. Reject strides and results outside PostgreSQL's supported range. Controlled by the default-on `documentdb.enable_date_trunc_day_with_pg_bin` setting; turn it off to restore legacy interval-based behavior. *[Bugfix]*
+* Restrict access to the change-stream heartbeat task and skip heartbeat WAL emission during read-only transactions or disk-full read-only mode. *[Bugfix]* (work item 5713030)
+* Bound timestamp-based change-stream startup scans by the configured archive-segment download limit. *[Bugfix]* (work item 5713030)
+* Skip parallel scan plans for dynamic cursor queries without collection planner statistics by default, controlled by `documentdb.enable_skip_parallel_plans_without_stats`. *[Bugfix]*
+* Reject dynamic streaming paths early for `$unionWith` and SQL set operations so persistent cursors retain selective scan alternatives. *[Bugfix]*
+* Compress eligible remote single-document and batch inserts on the shard before storing them, preserving every document in partial batches and accurate insert counts. *[Bugfix]*
+* Apply the configured inline document compression threshold to multi-document updates. *[Bugfix]*
+* Enforce null/missing conflicts in descending unique indexes by starting conflict probes at the correct bound, including compound keys and collated indexes. Controlled by the default-on `documentdb.enable_unique_null_missing_semantics` setting. *[Bugfix]*
+* Filter the full internal RBAC role-name prefix from client-facing role metadata. *[Bugfix]* (PR 2319746)
+* Estimate direct equality, range, and regular-expression children and pushed index bounds for `$elemMatch` from per-path statistics instead of using a fixed fallback. Controlled by the default-on `documentdb.enable_elem_match_selectivity_from_stats` setting, with compound-index selection regression coverage. *[Bugfix/Perf]* ([#405](https://github.com/documentdb/documentdb/issues/405))
+* Reject collation-aware values that require truncation on both writes and indexed reads by default through the `documentdb.fail_on_collated_index_term_truncation` feature flag. *[Bugfix]* (work item 5643482)
 * Reject passwords that fail SASLprep in `createUser` and `updateUser` before creating or changing native users. *[Bugfix]* ([#765](https://github.com/documentdb/documentdb/issues/765))
 * Estimate the inner side of a `$lookup` join from collected statistics instead of a fixed fallback selectivity, so an index on the `foreignField` is costed correctly. Controlled by the default-on `documentdb.enable_lookup_join_selectivity_from_stats` setting. *[Perf]*
 * Support `timestamptz` values in `bson_build_document`, writing them as BSON dates with millisecond precision. *[Feature]*
@@ -9,14 +34,18 @@
 
 ### documentdb v1.1-0 (Unreleased) ###
 * Remove gateway SQLCommenter injection and its build feature while preserving gateway spans and incoming trace context. *[Refactor]*
+* Preserve backward-compatible `connectionStatus` role reporting through PostgreSQL membership catalogs, filter helper roles, and emit each client-facing role once. *[Bugfix]* (PR 2319746)
+* Return supported built-in role definitions from `rolesInfo`, restricting each definition to callers that inherit the role or can view all roles, and preserve built-in memberships alongside custom roles in `usersInfo` and `connectionStatus`. *[Bugfix]*
 * Add a default-on `documentdb.enable_full_scan_cost_and_selectivity` setting to control full-scan planner estimates and synthetic execution cost. *[Perf]*
 * Allow `collMod` to rename an index when its key pattern and current name both match the catalog entry. *[Feature]*
 * Preserve `admin.system.users` system-catalog permission checks while filtering memberships to catalog-backed custom roles. *[Bugfix]*
 * Return custom-role metadata from `admin.system.roles` in `rolesInfo` and from `admin.system.users` in `usersInfo` and `connectionStatus`. Admin- and root-role users can list or inspect every catalog role, while other users can list or inspect roles they inherit directly or transitively; built-in roles remain excluded. *[Bugfix]*
+* Extend subquery pushdown of `$match` on computed fields to queries using persisted cursors (previously only applied when dynamic cursors were enabled). Guarded by `enable_subquery_pushdown_for_match_on_persisted_cursors` feature flag, disabled by default while pending stabilization. *[Perf]*
 * Derive `$merge` target permissions from its configured actions instead of unconditionally requiring read, insert, and update, and avoid requiring update permission for `$out`'s insert-only query. *[Bugfix]*
 * Preserve UTF-8 string boundaries in trim expressions and string-to-binData conversions. *[Bugfix]*
 * Limit result string size for `$concat`. *[Bugfix]*
 * Reject non-string values resolved by `$meta` before accessing string data. *[Bugfix]*
+* Prevent backend crashes and incorrect results when a correlated `$lookup` rescans a `$densify` stage using full bounds, including scans stopped early by a downstream `$limit`. Release copied partition keys, projection trees, and date intervals between scans to reduce peak query memory. *[Bugfix]*
 * Allow unfiltered `$sample` queries to be pushed down to a `Sample Scan` when a dynamic cursor marker is present. Guarded by the `enable_sample_scan_pushdown_for_dynamic_cursor` feature flag. *[Bugfix/Perf]*
 * Treat an explicit `simple` collation as no collation, emitting no collation tag so it uses binary comparison on every query and index path. *[Bugfix]*
 * Preserve sorting and grouping results when a null equality lies between compound-index sort keys. *[Bugfix]*
@@ -35,7 +64,7 @@
 * Reclaim orphaned empty RUM posting-tree leaves during vacuum cleanup when bulk deletion is skipped because the heap has no new dead tuples, and keep planner statistics consistent with entry-page and posting-page pruning. Guarded by the default-off `documentdb_rum.enable_vacuum_cleanup_posting_tree_pruning` setting. *[Bugfix/Perf]*
 * Reduce lock-manager pressure for dynamic cursor queries on heavily indexed collections by releasing planner-acquired `AccessShareLock`s for indexes not referenced by the final streamable plan immediately after planning. Guarded by the default-off `documentdb.enable_dynamic_cursor_early_index_lock_release` setting. *[Perf]*
 
-### documentdb v1.0-0 (Unreleased) ###
+### documentdb v1.0-0 (October 19, 2026) ###
 * Release executable memory allocated for PCRE2 JIT-compiled regular expressions when their memory context resets. *[Bugfix]* (work item 5530914)
 * Prevent RUM vacuum from processing internal entry-tree and posting-tree roots as leaf pages after concurrent root splits. *[Bugfix]*
 * Restore vacuum cost delays and interrupt handling between RUM posting-tree leaf pages. *[Bugfix]*

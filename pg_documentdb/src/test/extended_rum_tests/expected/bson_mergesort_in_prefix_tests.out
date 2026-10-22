@@ -4147,7 +4147,6 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
 (1 row)
 
 SET documentdb.forceDisableSeqScan TO on;
-SET documentdb.enableDollarSampleReservoirScan TO on;
 SET documentdb.enable_merge_sort_for_in_prefix TO on;
 -- Correctness: a bounded $sample returns exactly the requested size (the matching
 -- set a in {1,4} has 5 docs, so a sample of 2 yields 2).
@@ -4184,7 +4183,6 @@ $cmd$) AS line;
  t                    | t
 (1 row)
 
-RESET documentdb.enableDollarSampleReservoirScan;
 RESET documentdb.enable_merge_sort_for_in_prefix;
 -- =====================================================================
 -- Array on the SORT field (the trailing index column). The index (a, b) is

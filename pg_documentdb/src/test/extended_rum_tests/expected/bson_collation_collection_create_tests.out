@@ -1,0 +1,717 @@
+-- Copyright (c) Microsoft Corporation.
+-- SPDX-License-Identifier: MIT
+SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog;
+SET documentdb.next_collection_id TO 28010000;
+SET documentdb.next_collection_index_id TO 28010000;
+SET documentdb_core.enableCollation TO on;
+SHOW documentdb.enable_collation_with_create_collection;
+ documentdb.enable_collation_with_create_collection 
+----------------------------------------------------
+ off
+(1 row)
+
+SET documentdb.enable_collation_with_create_collection TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET documentdb.enable_collated_unique_indexes TO on;
+SET documentdb.enable_composite_unique_optional_key TO on;
+SET documentdb.defaultUseCompositeOpClass TO off;
+-- One logical _id_ retains the binary primary key and adds a collated unique backing.
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"ids","collation":{"locale":"en","strength":2}}');
+NOTICE:  creating collection
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT collection_id AS cid FROM documentdb_api_catalog.collections
+    WHERE database_name = 'collated_creation' AND collection_name = 'ids' \gset
+SELECT options FROM documentdb_api_catalog.collections
+    WHERE collection_id = :cid;
+                                  options                                   
+----------------------------------------------------------------------------
+ { "collation" : { "locale" : "en", "strength" : { "$numberInt" : "2" } } }
+(1 row)
+
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page(
+    'collated_creation', '{"listIndexes":"ids"}');
+                                                                                                                                                   cursorpage                                                                                                                                                    
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "collated_creation.ids", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_", "collation" : { "locale" : "en", "strength" : { "$numberInt" : "2" } } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT index_spec FROM documentdb_api_catalog.collection_indexes
+    WHERE collection_id = :cid;
+                                                                                               index_spec                                                                                                
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ (_id_,"{ ""_id"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,"{ ""enableOrderedIndex"" : { ""$numberInt"" : ""2"" }, ""collation"" : { ""locale"" : ""en"", ""strength"" : { ""$numberInt"" : ""2"" } } }")
+(1 row)
+
+SELECT count(*) AS logical_indexes FROM documentdb_api_catalog.collection_indexes
+    WHERE collection_id = :cid;
+ logical_indexes 
+-----------------
+               1
+(1 row)
+
+SELECT contype, count(*) FROM pg_constraint
+    WHERE conrelid = ('documentdb_data.documents_' || :cid)::regclass
+    AND contype IN ('p','x') GROUP BY contype ORDER BY contype;
+ contype | count 
+---------+-------
+ p       |     1
+ x       |     1
+(2 rows)
+
+-- Collation-equal identifiers conflict, including nested strings and numeric equivalents.
+SELECT documentdb_api.insert_one('collated_creation', 'ids', '{"_id":"Alpha"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('collated_creation', 'ids', '{"_id":"ALPHA"}');
+                                                                                                                       insert_one                                                                                                                        
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "319029277" }, "errmsg" : "Duplicate key violation on the requested collection: Index '_id_'" } ] }
+(1 row)
+
+SELECT documentdb_api.insert_one('collated_creation', 'ids', '{"_id":"Bravo"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('collated_creation', 'ids', '{"_id":"echo"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('collated_creation', 'ids', '{"_id":"Zulu"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('collated_creation', 'ids', '{"_id":1}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('collated_creation', 'ids', '{"_id":1.0}');
+                                                                                                                       insert_one                                                                                                                        
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "319029277" }, "errmsg" : "Duplicate key violation on the requested collection: Index '_id_'" } ] }
+(1 row)
+
+SELECT documentdb_api.insert_one('collated_creation', 'ids', '{"_id":{"nested":"Value"}}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('collated_creation', 'ids', '{"_id":{"nested":"VALUE"}}');
+                                                                                                                       insert_one                                                                                                                        
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "319029277" }, "errmsg" : "Duplicate key violation on the requested collection: Index '_id_'" } ] }
+(1 row)
+
+-- Confirm hinted matching and ordering, including explicit collation overrides.
+SET enable_seqscan TO off;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find(
+    'collated_creation', '{"find":"ids","filter":{"_id":"ALPHA"},"hint":"_id_"}');
+                                          QUERY PLAN                                           
+-----------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on documents_28010001 collection
+   Recheck Cond: (document @= '{ "_id" : "ALPHA", "collation" : "en-u-ks-level2" }'::bson)
+   ->  Bitmap Index Scan on _id_
+         Index Cond: (document @= '{ "_id" : "ALPHA", "collation" : "en-u-ks-level2" }'::bson)
+(4 rows)
+
+SELECT document FROM bson_aggregation_find(
+    'collated_creation', '{"find":"ids","filter":{"_id":"ALPHA"},"hint":"_id_"}');
+      document       
+---------------------
+ { "_id" : "Alpha" }
+(1 row)
+
+SELECT document FROM bson_aggregation_find(
+    'collated_creation', '{"find":"ids","filter":{"_id":"missing"},"hint":"_id_"}');
+ document 
+----------
+(0 rows)
+
+SELECT document FROM bson_aggregation_find(
+    'collated_creation', '{"find":"ids","filter":{"_id":"ALPHA"},"collation":{"locale":"simple"}}');
+ document 
+----------
+(0 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find(
+    'collated_creation', '{"find":"ids","filter":{"_id":{"$type":"string"}},"sort":{"_id":1},"hint":"_id_"}');
+                                               QUERY PLAN                                                
+---------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_28010001 collection
+   Index Cond: (document @# '{ "_id" : "string", "collation" : "en-u-ks-level2" }'::bson)
+   Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "_id" : { "$numberInt" : "1" } }'::bson)
+(3 rows)
+
+SELECT document FROM bson_aggregation_find(
+    'collated_creation', '{"find":"ids","filter":{"_id":{"$type":"string"}},"sort":{"_id":1},"hint":"_id_"}');
+      document       
+---------------------
+ { "_id" : "Alpha" }
+ { "_id" : "Bravo" }
+ { "_id" : "echo" }
+ { "_id" : "Zulu" }
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find(
+    'collated_creation', '{"find":"ids","filter":{"_id":{"$type":"string"}},"sort":{"_id":-1},"hint":"_id_"}');
+                                                QUERY PLAN                                                
+----------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_28010001 collection
+   Index Cond: (document @# '{ "_id" : "string", "collation" : "en-u-ks-level2" }'::bson)
+   Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "_id" : { "$numberInt" : "-1" } }'::bson)
+(3 rows)
+
+SELECT document FROM bson_aggregation_find(
+    'collated_creation', '{"find":"ids","filter":{"_id":{"$type":"string"}},"sort":{"_id":-1},"hint":"_id_"}');
+      document       
+---------------------
+ { "_id" : "Zulu" }
+ { "_id" : "echo" }
+ { "_id" : "Bravo" }
+ { "_id" : "Alpha" }
+(4 rows)
+
+SELECT document FROM bson_aggregation_find(
+    'collated_creation', '{"find":"ids","filter":{"_id":"ALPHA"},"hint":"_id_","collation":{"locale":"simple"}}');
+ document 
+----------
+(0 rows)
+
+SELECT document FROM bson_aggregation_find(
+    'collated_creation', '{"find":"ids","filter":{"_id":{"$type":"string"}},"sort":{"_id":1},"hint":"_id_","collation":{"locale":"simple"}}');
+      document       
+---------------------
+ { "_id" : "Alpha" }
+ { "_id" : "Bravo" }
+ { "_id" : "Zulu" }
+ { "_id" : "echo" }
+(4 rows)
+
+SELECT document FROM bson_aggregation_find(
+    'collated_creation', '{"find":"ids","filter":{"_id":{"$type":"string"}},"sort":{"_id":1},"collation":{"locale":"en","strength":3}}');
+      document       
+---------------------
+ { "_id" : "Alpha" }
+ { "_id" : "Bravo" }
+ { "_id" : "echo" }
+ { "_id" : "Zulu" }
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find(
+    'collated_creation', '{"find":"ids","filter":{"_id":"ALPHA"},"hint":"_id_","collation":{"locale":"en","strength":3}}');
+                                     QUERY PLAN                                      
+-------------------------------------------------------------------------------------
+ Bitmap Heap Scan on documents_28010001 collection
+   Recheck Cond: (shard_key_value = '28010001'::bigint)
+   Filter: (document @= '{ "_id" : "ALPHA", "collation" : "en-u-ks-level3" }'::bson)
+   ->  Bitmap Index Scan on _id_
+         Index Cond: (shard_key_value = '28010001'::bigint)
+(5 rows)
+
+SELECT document FROM bson_aggregation_find(
+    'collated_creation', '{"find":"ids","filter":{"_id":"ALPHA"},"hint":"_id_","collation":{"locale":"en","strength":3}}');
+ document 
+----------
+(0 rows)
+
+RESET enable_seqscan;
+-- Sequential execution must return the same collated matches and ordering.
+SET enable_indexscan TO off;
+SET enable_bitmapscan TO off;
+SELECT document FROM bson_aggregation_find(
+    'collated_creation', '{"find":"ids","filter":{"_id":"ALPHA"}}');
+      document       
+---------------------
+ { "_id" : "Alpha" }
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find(
+    'collated_creation', '{"find":"ids","filter":{"_id":{"$type":"string"}},"sort":{"_id":1}}');
+                                                                     QUERY PLAN                                                                     
+----------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text)) NULLS FIRST
+   ->  Seq Scan on documents_28010001 collection
+         Filter: (document @# '{ "_id" : "string", "collation" : "en-u-ks-level2" }'::bson)
+(4 rows)
+
+SELECT document FROM bson_aggregation_find(
+    'collated_creation', '{"find":"ids","filter":{"_id":{"$type":"string"}},"sort":{"_id":1}}');
+      document       
+---------------------
+ { "_id" : "Alpha" }
+ { "_id" : "Bravo" }
+ { "_id" : "echo" }
+ { "_id" : "Zulu" }
+(4 rows)
+
+RESET enable_indexscan;
+RESET enable_bitmapscan;
+-- Dropping _id_ is rejected; validation and statistics report one logical _id_ index.
+CALL documentdb_api.drop_indexes('collated_creation',
+    '{"dropIndexes":"ids","index":"_id_"}');
+ERROR:  cannot drop _id index
+SELECT documentdb_api.validate('collated_creation', '{"validate":"ids"}');
+                                                                                                                validate                                                                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "ns" : "collated_creation.ids", "nIndexes" : { "$numberLong" : "1" }, "indexDetails" : { "_id_" : { "valid" : true } }, "valid" : true, "repaired" : false, "warnings" : [  ], "errors" : [  ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline(
+    'collated_creation', '{"aggregate":"ids","pipeline":[{"$indexStats":{}},{"$count":"logical_indexes"}]}');
+                    document                    
+------------------------------------------------
+ { "logical_indexes" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline(
+    'collated_creation', '{"aggregate":"ids","pipeline":[{"$collStats":{"storageStats":{}}},{"$project":{"logical_indexes":"$storageStats.nindexes","_id":0}}]}');
+                    document                    
+------------------------------------------------
+ { "logical_indexes" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Updates find collated identifiers, but forced upserts still enforce uniqueness.
+BEGIN;
+SELECT documentdb_api.update('collated_creation',
+    '{"update":"ids","updates":[{"q":{"_id":"ALPHA"},"u":{"$set":{"value":1}},"collation":{"locale":"en","strength":2}}]}');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT documentdb_api.find_and_modify('collated_creation',
+    '{"findAndModify":"ids","query":{"_id":"alpha"},"update":{"$set":{"value":2}},"collation":{"locale":"en","strength":2},"new":true}');
+                                                                                                      find_and_modify                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""lastErrorObject"" : { ""n"" : { ""$numberInt"" : ""1"" }, ""updatedExisting"" : true }, ""value"" : { ""_id"" : ""Alpha"", ""value"" : { ""$numberInt"" : ""2"" } }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('collated_creation',
+    '{"update":"ids","updates":[{"q":{"_id":"ALPHA","missing":true},"u":{"$set":{"value":3}},"upsert":true}]}');
+                                                                                                                                                                 update                                                                                                                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""319029277"" }, ""errmsg"" : ""Duplicate key violation on the requested collection: Index '_id_'"" } ] }",f)
+(1 row)
+
+SELECT documentdb_api.find_and_modify('collated_creation',
+    '{"findAndModify":"ids","query":{"_id":"alpha","missing":true},"update":{"$set":{"value":4}},"upsert":true}');
+ERROR:  conflicting key value violates exclusion constraint "documents_rum_index_28010001"
+DETAIL:  Key (document, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "_id" : { "$numberInt" : "1" } }'::bson, false, true, 'en-u-ks-level2'::text))=({ "_id" : "alpha", "missing" : true, "value" : { "$numberInt" : "4" } }, { "$shard_key_value" : { "$numberLong" : "28010001" }, "$collation" : "en-u-ks-level2", "$numTerms" : { "$numberInt" : "1" }, "$numPaths" : { "$numberInt" : "1" }, "_id" : [ "alpha" ] }) conflicts with existing key (document, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "_id" : { "$numberInt" : "1" } }'::bson, false, true, 'en-u-ks-level2'::text))=({ "_id" : "Alpha", "value" : { "$numberInt" : "2" } }, { "$shard_key_value" : { "$numberLong" : "28010001" }, "$collation" : "en-u-ks-level2", "$numTerms" : { "$numberInt" : "1" }, "$numPaths" : { "$numberInt" : "1" }, "_id" : [ "Alpha" ] }).
+CONTEXT:  SQL statement "INSERT INTO documentdb_data.documents_28010001 (shard_key_value, object_id, document)  VALUES ($1, documentdb_core.bson_from_bytea($2), documentdb_core.bson_from_bytea($3))"
+ROLLBACK;
+-- Creation-only flags do not weaken uniqueness on an existing collated backing.
+SET documentdb.enable_collation_with_create_collection TO off;
+SET documentdb.enable_collated_unique_indexes TO off;
+SET documentdb.enable_composite_unique_optional_key TO off;
+SELECT documentdb_api.insert_one('collated_creation', 'ids', '{"_id":"alpha"}');
+                                                                                                                       insert_one                                                                                                                        
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "319029277" }, "errmsg" : "Duplicate key violation on the requested collection: Index '_id_'" } ] }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('collated_creation',
+    '{"find":"ids","filter":{"_id":"ALPHA"},"hint":"_id_"}');
+      document       
+---------------------
+ { "_id" : "Alpha" }
+(1 row)
+
+SET documentdb.enable_collated_unique_indexes TO on;
+SET documentdb.enable_composite_unique_optional_key TO on;
+SET documentdb.enable_collation_with_create_collection TO on;
+-- Validation must mark _id_ invalid if either physical backing, or both, are missing.
+SELECT index_id AS iid FROM documentdb_api_catalog.collection_indexes
+    WHERE collection_id = :cid AND (index_spec).index_name = '_id_' \gset
+BEGIN;
+SELECT format('ALTER TABLE documentdb_data.documents_%s DROP CONSTRAINT documents_rum_index_%s',
+    :cid, :iid) \gexec
+ALTER TABLE documentdb_data.documents_28010001 DROP CONSTRAINT documents_rum_index_28010001
+SELECT documentdb_api.validate('collated_creation', '{"validate":"ids"}');
+                                                                                                                 validate                                                                                                                 
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "ns" : "collated_creation.ids", "nIndexes" : { "$numberLong" : "1" }, "indexDetails" : { "_id_" : { "valid" : false } }, "valid" : false, "repaired" : false, "warnings" : [  ], "errors" : [  ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+ROLLBACK;
+BEGIN;
+SELECT format('ALTER TABLE documentdb_data.documents_%s DROP CONSTRAINT collection_pk_%s',
+    :cid, :cid) \gexec
+ALTER TABLE documentdb_data.documents_28010001 DROP CONSTRAINT collection_pk_28010001
+SELECT documentdb_api.validate('collated_creation', '{"validate":"ids"}');
+                                                                                                                 validate                                                                                                                 
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "ns" : "collated_creation.ids", "nIndexes" : { "$numberLong" : "1" }, "indexDetails" : { "_id_" : { "valid" : false } }, "valid" : false, "repaired" : false, "warnings" : [  ], "errors" : [  ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT format('ALTER TABLE documentdb_data.documents_%s DROP CONSTRAINT documents_rum_index_%s',
+    :cid, :iid) \gexec
+ALTER TABLE documentdb_data.documents_28010001 DROP CONSTRAINT documents_rum_index_28010001
+SELECT documentdb_api.validate('collated_creation', '{"validate":"ids"}');
+                                                                                                                 validate                                                                                                                 
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "ns" : "collated_creation.ids", "nIndexes" : { "$numberLong" : "1" }, "indexDetails" : { "_id_" : { "valid" : false } }, "valid" : false, "repaired" : false, "warnings" : [  ], "errors" : [  ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+ROLLBACK;
+-- Equivalent collection recreation is a no-op; a different default cannot replace it.
+-- Collation checks must also run when schema validation is disabled.
+SET documentdb.enableSchemaValidation TO off;
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"ids","collation":{"strength":2,"locale":"en"}}');
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"ids","collation":{"locale":"en","strength":3}}');
+ERROR:  Namespace collated_creation.ids already exists with a different collation
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"ids","collation":{"locale":"simple"}}');
+ERROR:  Namespace collated_creation.ids already exists with a different collation
+SELECT documentdb_api.create_collection_view('collated_creation', '{"create":"ids"}');
+ERROR:  Namespace collated_creation.ids already exists with a different collation
+SELECT documentdb_api.create_collection_with_options('collated_creation', 'ids',
+    '{"collation":{"locale":"simple"}}');
+ create_collection_with_options 
+--------------------------------
+ f
+(1 row)
+
+SELECT options FROM documentdb_api_catalog.collections
+    WHERE database_name = 'collated_creation' AND collection_name = 'ids';
+                                  options                                   
+----------------------------------------------------------------------------
+ { "collation" : { "locale" : "en", "strength" : { "$numberInt" : "2" } } }
+(1 row)
+
+RESET documentdb.enableSchemaValidation;
+-- Case-sensitive, simple, and omitted defaults preserve their respective uniqueness rules.
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"sensitive","collation":{"locale":"en","strength":3}}');
+NOTICE:  creating collection
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('collated_creation', 'sensitive', '{"_id":"Alpha"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('collated_creation', 'sensitive', '{"_id":"ALPHA"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"simple","collation":{"locale":"simple"}}');
+NOTICE:  creating collection
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('collated_creation', 'simple', '{"_id":"Alpha"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('collated_creation', 'simple', '{"_id":"ALPHA"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.validate('collated_creation', '{"validate":"simple"}');
+                                                                                                                 validate                                                                                                                  
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "ns" : "collated_creation.simple", "nIndexes" : { "$numberLong" : "1" }, "indexDetails" : { "_id_" : { "valid" : true } }, "valid" : true, "repaired" : false, "warnings" : [  ], "errors" : [  ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.create_collection_view('collated_creation', '{"create":"binary"}');
+NOTICE:  creating collection
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('collated_creation', 'binary', '{"_id":"Alpha"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('collated_creation', 'binary', '{"_id":"ALPHA"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.validate('collated_creation', '{"validate":"binary"}');
+                                                                                                                 validate                                                                                                                  
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "ns" : "collated_creation.binary", "nIndexes" : { "$numberLong" : "1" }, "indexDetails" : { "_id_" : { "valid" : true } }, "valid" : true, "repaired" : false, "warnings" : [  ], "errors" : [  ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"binary","collation":{"locale":"en","strength":2}}');
+ERROR:  Namespace collated_creation.binary already exists with a different collation
+SELECT count(*) AS converted_binary_defaults FROM documentdb_api_catalog.collections
+    WHERE database_name = 'collated_creation' AND collection_name = 'binary'
+    AND options::text LIKE '%"collation"%';
+ converted_binary_defaults 
+---------------------------
+                         0
+(1 row)
+
+-- Views without collation remain equivalent when collation is enabled.
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"binary_view","viewOn":"binary"}');
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"binary_view","viewOn":"binary"}');
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Malformed options fail before collection metadata or index backings are created.
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"bad","collation":null}');
+ERROR:  The BSON field 'collation' has an incorrect type 'null'; it should be of type 'object'.
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"bad","collation":{}}');
+ERROR:  Collation specification is missing the required 'locale' field.
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"bad","collation":{"strength":2}}');
+ERROR:  Collation specification is missing the required 'locale' field.
+-- Views reject a collation before any metadata is created.
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"bad","viewOn":"ids","collation":{"locale":"en","strength":2}}');
+ERROR:  Collation is not supported for views
+SELECT documentdb_api.create_collection_with_options('collated_creation', 'bad',
+    '{"unknown":true}');
+ERROR:  Unknown collection creation option 'unknown'
+SELECT documentdb_api.create_collection_with_options('collated_creation', 'bad',
+    '{"collation":null}');
+ERROR:  The BSON field 'collation' has an incorrect type 'null'; it should be of type 'object'.
+SELECT documentdb_api.create_collection_with_options('collated_creation', 'bad',
+    '{"collation":{"locale":"en"},"collation":{"locale":"simple"}}');
+ERROR:  Duplicate collection creation option 'collation'
+SELECT documentdb_api.create_collection_with_options('collated_creation', 'strict_null',
+    NULL) IS NULL AS strict_options_null;
+ strict_options_null 
+---------------------
+ t
+(1 row)
+
+SELECT count(*) AS null_options_collections FROM documentdb_api_catalog.collections
+    WHERE database_name = 'collated_creation' AND collection_name = 'strict_null';
+ null_options_collections 
+--------------------------
+                        0
+(1 row)
+
+-- Unsupported access methods and disabled creation capabilities leave no partial collection.
+SET documentdb.alternate_index_handler_name TO '';
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"plain_am","collation":{"locale":"en","strength":2}}');
+ERROR:  The selected index access method does not support collated collection uniqueness
+CONTEXT:  SQL statement "SELECT documentdb_api.create_collection_with_options($1, $2, $3)"
+SET documentdb.alternate_index_handler_name TO 'extended_rum';
+SET documentdb.enable_composite_unique_optional_key TO off;
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"gated","collation":{"locale":"en","strength":2}}');
+ERROR:  Collated collection creation requires collated unique ordered indexes
+CONTEXT:  SQL statement "SELECT documentdb_api.create_collection_with_options($1, $2, $3)"
+SET documentdb.enable_composite_unique_optional_key TO on;
+SET documentdb.enable_collated_unique_indexes TO off;
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"gated","collation":{"locale":"en","strength":2}}');
+ERROR:  Collation is not yet supported for unique indexes
+CONTEXT:  SQL statement "SELECT documentdb_api.create_collection_with_options($1, $2, $3)"
+SET documentdb.enable_collated_unique_indexes TO on;
+-- Both creation entrypoints reject collation when its creation gate is disabled.
+SET documentdb.enable_collation_with_create_collection TO off;
+SET documentdb.skipFailOnCollation TO off;
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"creation_gated","collation":{"locale":"en","strength":2}}');
+ERROR:  Collation is currently not supported
+SELECT documentdb_api.create_collection_with_options('collated_creation', 'creation_gated_sql',
+    '{"collation":{"locale":"en","strength":2}}');
+ERROR:  Collection collation is not supported yet
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"creation_gated_simple","collation":{"locale":"simple"}}');
+ERROR:  Collation is currently not supported
+SELECT documentdb_api.create_collection('collated_creation', 'binary_gate_off');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api.insert_one('collated_creation', 'binary_gate_off', '{"_id":"Alpha"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('collated_creation', 'binary_gate_off', '{"_id":"ALPHA"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Compatibility mode still ignores unsupported command collation.
+SET documentdb.skipFailOnCollation TO on;
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"ignored_default","collation":{"locale":"en","strength":2}}');
+NOTICE:  creating collection
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT count(*) AS ignored_collations FROM documentdb_api_catalog.collections
+    WHERE database_name = 'collated_creation' AND collection_name = 'ignored_default'
+    AND options::text LIKE '%"collation"%';
+ ignored_collations 
+--------------------
+                  0
+(1 row)
+
+SELECT documentdb_api.insert_one('collated_creation', 'ignored_default', '{"_id":"Alpha"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('collated_creation', 'ignored_default', '{"_id":"ALPHA"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET documentdb.skipFailOnCollation;
+SET documentdb.enable_collation_with_create_collection TO on;
+SELECT count(*) AS failed_creations FROM documentdb_api_catalog.collections
+    WHERE database_name = 'collated_creation'
+    AND collection_name IN ('bad','gated','plain_am',
+        'creation_gated','creation_gated_sql','creation_gated_simple');
+ failed_creations 
+------------------
+                0
+(1 row)
+
+SELECT count(*) AS collated_sentinels FROM documentdb_api_catalog.collections
+    WHERE collection_name = 'system.dbSentinel' AND options::text LIKE '%"collation"%';
+ collated_sentinels 
+--------------------
+                  0
+(1 row)
+
+-- A later simple command collation must clear an earlier non-simple value.
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"simple_last","collation":{"locale":"en","strength":2},"collation":{"locale":"simple"}}');
+NOTICE:  creating collection
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT count(*) AS stale_collations FROM documentdb_api_catalog.collections
+    WHERE database_name = 'collated_creation' AND collection_name = 'simple_last'
+    AND options::text LIKE '%"collation"%';
+ stale_collations 
+------------------
+                0
+(1 row)
+
+SELECT documentdb_api.insert_one('collated_creation', 'simple_last', '{"_id":"Alpha"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('collated_creation', 'simple_last', '{"_id":"ALPHA"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.drop_collection('collated_creation', 'ids');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('collated_creation', 'sensitive');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('collated_creation', 'simple');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('collated_creation', 'binary');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('collated_creation', 'binary_view');
+NOTICE:  table "documents_28010005" does not exist, skipping
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('collated_creation', 'binary_gate_off');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('collated_creation', 'ignored_default');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('collated_creation', 'simple_last');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+RESET documentdb.enable_collation_with_create_collection;

@@ -39,13 +39,13 @@
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::{fmt::Debug, fs, path::Path, sync::Arc, time::SystemTime};
+use std::{fmt::Debug, fs, path::Path, str::EscapeDebug, sync::Arc, time::SystemTime};
 
 use arc_swap::ArcSwap;
 use openssl::{
     hash::MessageDigest,
     pkey::{Id, PKey, PKeyRef, Private},
-    ssl::{SslAcceptor, SslCipherRef},
+    ssl::{NameType, SslAcceptor, SslCipherRef, SslRef},
     x509::{X509Ref, X509},
 };
 
@@ -433,6 +433,18 @@ impl TlsProvider {
     #[must_use]
     pub fn certificate_thumbprint(certificate: &X509Ref) -> Option<String> {
         Self::sha1_thumbprint(certificate).ok()
+    }
+
+    /// Returns the host name the client sent in the TLS Server Name Indication
+    /// extension, escaped for safe inclusion in log output. The client chooses
+    /// this value before authenticating, so control characters are escaped
+    /// rather than written verbatim. The result is empty when the client sent
+    /// no host name or one that is not valid UTF-8.
+    #[must_use]
+    pub fn sni_host_name_for_logging(ssl: &SslRef) -> EscapeDebug<'_> {
+        ssl.servername(NameType::HOST_NAME)
+            .unwrap_or_default()
+            .escape_debug()
     }
 
     pub fn is_valid_certificate(&self) -> bool {

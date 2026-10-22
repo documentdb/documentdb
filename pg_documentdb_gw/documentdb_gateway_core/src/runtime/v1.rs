@@ -22,7 +22,8 @@ use crate::{
     context::{ConnectionContext, ServiceContext},
     error::{DocumentDBError, Result},
     postgres::PgDataClient,
-    service::{self, ListenerConfig, RequestRouter},
+    runtime::connection_log::ConnectionLog,
+    service::{self, ListenerConfig, RequestRouter, TlsProvider},
     telemetry::{record_startup_metrics, TelemetryProvider},
     time::STARTUP_INSTANT,
 };
@@ -198,18 +199,20 @@ fn spawn_tcp_handler<T, R>(
     T: PgDataClient + 'static,
     R: RequestRouter<T> + Send + 'static,
 {
-    tokio::spawn(async move {
-        if let Err(error) = handle_connection::<T, R>(
-            stream_and_address,
-            service_context,
-            telemetry,
-            request_router,
-        )
-        .await
-        {
+    match stream_and_address {
+        Ok((stream, peer)) => {
+            tokio::spawn(handle_connection::<T, R>(
+                stream,
+                peer,
+                service_context,
+                telemetry,
+                request_router,
+            ));
+        }
+        Err(error) => {
             tracing::error!("Failed to accept a TCP connection ({protocol}): {error:?}.");
         }
-    });
+    }
 }
 
 fn spawn_unix_handler<T, R>(
@@ -221,18 +224,19 @@ fn spawn_unix_handler<T, R>(
     T: PgDataClient + 'static,
     R: RequestRouter<T> + Send + 'static,
 {
-    tokio::spawn(async move {
-        if let Err(error) = handle_unix_connection::<T, R>(
-            stream_result,
-            service_context,
-            telemetry,
-            request_router,
-        )
-        .await
-        {
+    match stream_result {
+        Ok((stream, _)) => {
+            tokio::spawn(handle_unix_connection::<T, R>(
+                stream,
+                service_context,
+                telemetry,
+                request_router,
+            ));
+        }
+        Err(error) => {
             tracing::error!("Failed to accept a Unix socket connection: {error:?}.");
         }
-    });
+    }
 }
 
 async fn detect_tls_handshake(tcp_stream: &TcpStream, connection_id: Uuid) -> Result<bool> {
@@ -286,18 +290,47 @@ async fn detect_tls_handshake(tcp_stream: &TcpStream, connection_id: Uuid) -> Re
 }
 
 async fn handle_connection<T, R>(
-    stream_and_address: std::result::Result<(TcpStream, std::net::SocketAddr), std::io::Error>,
+    tcp_stream: TcpStream,
+    peer_address: std::net::SocketAddr,
     service_context: ServiceContext,
     telemetry: Option<Box<dyn TelemetryProvider>>,
     request_router: Arc<R>,
+) where
+    T: PgDataClient + 'static,
+    R: RequestRouter<T>,
+{
+    let connection_id = Uuid::new_v4();
+    let ip_address = match peer_address.ip() {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(IpAddr::V6(v6), IpAddr::V4),
+        ip @ IpAddr::V4(_) => ip,
+    };
+    let mut connection_log = ConnectionLog::new(connection_id, ip_address.to_string(), "TCP");
+    let result = handle_tcp_stream::<T, R>(
+        tcp_stream,
+        ip_address,
+        service_context,
+        telemetry,
+        request_router,
+        connection_id,
+        &mut connection_log,
+    )
+    .await;
+    connection_log.finish(&result);
+}
+
+async fn handle_tcp_stream<T, R>(
+    tcp_stream: TcpStream,
+    ip_address: IpAddr,
+    service_context: ServiceContext,
+    telemetry: Option<Box<dyn TelemetryProvider>>,
+    request_router: Arc<R>,
+    connection_id: Uuid,
+    connection_log: &mut ConnectionLog,
 ) -> Result<()>
 where
     T: PgDataClient + 'static,
     R: RequestRouter<T>,
 {
-    let (tcp_stream, peer_address) = stream_and_address?;
-
-    let connection_id = Uuid::new_v4();
     tracing::debug!(
         activity_id = connection_id.to_string().as_str(),
         "Accepted new TCP connection"
@@ -311,24 +344,14 @@ where
         detect_tls_handshake(&tcp_stream, connection_id).await?
     };
 
-    let ip_address = match peer_address.ip() {
-        IpAddr::V4(v4) => IpAddr::V4(v4),
-        IpAddr::V6(v6) => {
-            if let Some(v4) = v6.to_ipv4_mapped() {
-                IpAddr::V4(v4)
-            } else {
-                IpAddr::V6(v6)
-            }
-        }
-    };
-
     if is_tls {
         let tls_acceptor = service_context.tls_provider().tls_acceptor();
         let ssl_session = Ssl::new(tls_acceptor.context())?;
         let mut tls_stream = SslStream::new(ssl_session, tcp_stream)?;
 
-        if let Err(ssl_error) = SslStream::accept(Pin::new(&mut tls_stream)).await {
-            tracing::error!("Failed to create TLS connection: {ssl_error:?}.");
+        let handshake_result = SslStream::accept(Pin::new(&mut tls_stream)).await;
+        connection_log.record_tls(tls_stream.ssl());
+        if let Err(ssl_error) = handshake_result {
             return Err(DocumentDBError::internal_error(format!(
                 "SSL handshake failed: {ssl_error:?}."
             )));
@@ -353,7 +376,8 @@ where
 
         tracing::info!(
             activity_id = connection_id.to_string().as_str(),
-            "TLS TCP connection established - Connection Id {connection_id}, client IP {ip_address}"
+            "TLS TCP connection established - Connection Id {connection_id}, client IP {ip_address}, HostNameFromSni {}",
+            TlsProvider::sni_host_name_for_logging(buffered_stream.get_ref().ssl())
         );
 
         service::handle_stream::<T, R, _>(
@@ -397,18 +421,17 @@ where
 }
 
 async fn handle_unix_connection<T, R>(
-    stream_result: std::result::Result<(UnixStream, UnixSocketAddr), std::io::Error>,
+    unix_stream: UnixStream,
     service_context: ServiceContext,
     telemetry: Option<Box<dyn TelemetryProvider>>,
     request_router: Arc<R>,
-) -> Result<()>
-where
+) where
     T: PgDataClient,
     R: RequestRouter<T>,
 {
-    let (unix_stream, _socket_addr) = stream_result?;
-
     let connection_id = Uuid::new_v4();
+    let mut connection_log =
+        ConnectionLog::new(connection_id, "localhost".to_owned(), "UnixSocket");
     tracing::info!(
         activity_id = connection_id.to_string().as_str(),
         "New Unix socket connection established"
@@ -438,5 +461,102 @@ where
 
     service::handle_stream::<T, R, _>(buffered_stream, connection_context, request_router.as_ref())
         .await;
-    Ok(())
+    connection_log.finish(&Ok(()));
+}
+
+#[cfg(test)]
+mod tests {
+    use openssl::ssl::{SslConnector, SslMethod};
+    use tokio::net::TcpListener;
+    use tracing_subscriber::prelude::*;
+
+    use super::*;
+    use crate::{
+        postgres::DocumentDBDataClient,
+        service::DefaultRequestRouter,
+        testing::{logs::LogCapture, test_connection_context, TestDynamicConfiguration},
+    };
+
+    #[tokio::test]
+    async fn connection_logs_cover_tcp_setup_failure_and_unix_eof() {
+        let context =
+            test_connection_context(false, Arc::new(TestDynamicConfiguration::default()), None)
+                .await;
+        let service_context = context.service_context.as_ref().clone();
+        let capture = LogCapture::new("documentdb_gateway_core::runtime::connection_log");
+        let _guard =
+            tracing::subscriber::set_default(tracing_subscriber::registry().with(capture.clone()));
+        tracing::callsite::rebuild_interest_cache();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let client = TcpStream::connect(listener.local_addr().expect("local address"))
+            .await
+            .expect("connect");
+        let (stream, peer) = listener.accept().await.expect("accept");
+        let client_ssl = SslConnector::builder(SslMethod::tls_client())
+            .expect("client TLS builder")
+            .build()
+            .configure()
+            .expect("client TLS configuration")
+            .into_ssl("diagnostic.example.com")
+            .expect("client SSL");
+        let mut client = SslStream::new(client_ssl, client).expect("TLS client");
+        let (server_result, client_result) = tokio::join!(
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                handle_connection::<DocumentDBDataClient, _>(
+                    stream,
+                    peer,
+                    service_context.clone(),
+                    None,
+                    Arc::new(DefaultRequestRouter {}),
+                ),
+            ),
+            tokio::time::timeout(Duration::from_secs(5), Pin::new(&mut client).connect())
+        );
+        server_result.expect("failed TLS setup should terminate");
+        assert!(
+            client_result
+                .expect("client handshake should finish")
+                .is_err(),
+            "the client must reject the untrusted server certificate"
+        );
+
+        let (client, server) = UnixStream::pair().expect("socket pair");
+        drop(client);
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            handle_unix_connection::<DocumentDBDataClient, _>(
+                server,
+                service_context,
+                None,
+                Arc::new(DefaultRequestRouter {}),
+            ),
+        )
+        .await
+        .expect("Unix EOF should terminate");
+
+        let events = capture.events();
+        assert_eq!(events.len(), 3, "{events:?}");
+        assert_eq!(events[0].level, tracing::Level::ERROR);
+        assert_eq!(events[1].level, tracing::Level::INFO);
+        assert_eq!(events[1].fields["close_reason"], "error");
+        assert_eq!(events[1].fields["transport"], "TCP");
+        assert_eq!(events[1].fields["client_ip"], "127.0.0.1");
+        assert_eq!(
+            events[1].fields["host_name_from_sni"],
+            "diagnostic.example.com"
+        );
+        assert_eq!(
+            events[0].fields["connection_id"],
+            events[1].fields["connection_id"]
+        );
+        assert_eq!(events[2].level, tracing::Level::INFO);
+        assert_eq!(events[2].fields["close_reason"], "completed");
+        assert_eq!(events[2].fields["transport"], "UnixSocket");
+        assert_ne!(
+            events[1].fields["connection_id"],
+            events[2].fields["connection_id"]
+        );
+    }
 }

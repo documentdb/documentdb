@@ -13,6 +13,9 @@ SET citus.propagate_set_commands TO 'local';
 
 SELECT documentdb_api.create_collection('collation_aggregate_dist_db', 'source');
 
+SELECT documentdb_api.shard_collection(
+    'collation_aggregate_dist_db', 'source', '{ "_id": "hashed" }', false);
+
 UPDATE documentdb_api_catalog.collections
 SET options = '{ "collation": { "locale": "en", "strength": 1, "numericOrdering": true } }'::documentdb_core.bson
 WHERE database_name = 'collation_aggregate_dist_db' AND collection_name = 'source';
@@ -31,9 +34,6 @@ SELECT documentdb_api.insert_one(
 SELECT documentdb_api.insert_one(
     'collation_aggregate_dist_db', 'source',
     '{ "_id": 4, "category": "tea", "rank": "20" }');
-
-SELECT documentdb_api.shard_collection(
-    'collation_aggregate_dist_db', 'source', '{ "_id": "hashed" }', false);
 
 BEGIN;
 SET LOCAL citus.enable_local_execution TO off;
@@ -188,15 +188,6 @@ SELECT documentdb_api.create_collection('collation_nested_dist_db', 'graph_targe
 SELECT documentdb_api.create_collection('collation_nested_dist_db', 'binary_source');
 SELECT documentdb_api.create_collection('collation_nested_dist_db', 'defaulted_target');
 
-UPDATE documentdb_api_catalog.collections
-SET options = '{ "collation": {
-    "locale": "en",
-    "strength": 1,
-    "numericOrdering": true
-} }'::documentdb_core.bson
-WHERE database_name = 'collation_nested_dist_db'
-  AND collection_name = 'source';
-
 -- Foreign collection defaults must not replace the command-wide collation.
 UPDATE documentdb_api_catalog.collections
 SET options = '{ "collation": { "locale": "simple" } }'::documentdb_core.bson
@@ -277,6 +268,17 @@ SELECT documentdb_api.shard_collection(
     'collation_nested_dist_db', 'source', '{ "_id": "hashed" }', false);
 SELECT documentdb_api.shard_collection(
     'collation_nested_dist_db', 'binary_source', '{ "_id": "hashed" }', false);
+
+-- Set the source default after sharding to exercise inherited collation on reads.
+UPDATE documentdb_api_catalog.collections
+SET options = '{ "collation": {
+    "locale": "en",
+    "strength": 1,
+    "numericOrdering": true
+} }'::documentdb_core.bson
+WHERE database_name = 'collation_nested_dist_db'
+  AND collection_name = 'source';
+SELECT documentdb_api_internal.invalidate_collection_cache();
 
 BEGIN;
 SET LOCAL citus.enable_local_execution TO off;

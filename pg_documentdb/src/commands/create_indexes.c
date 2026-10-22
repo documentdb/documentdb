@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * src/commands/create_indexes.c
  *
@@ -56,6 +57,7 @@
 #include "planner/mongo_query_operator.h"
 #include "planner/documentdb_planner.h"
 #include "query/query_operator.h"
+#include "rbac_hooks.h"
 #include "utils/error_utils.h"
 #include "utils/guc_utils.h"
 #include "utils/list_utils.h"
@@ -160,6 +162,14 @@ typedef struct
 } WildcardProjectionPathOps;
 
 
+typedef struct
+{
+	CreateIndexesPrivilegeMode mode;
+	bool skipCollCheck;
+	bool collAutoCreated;
+} CreateIndexesDispatchOptions;
+
+
 extern bool ForceIndexTermTruncation;
 extern int IndexTruncationLimitOverride;
 extern int MaxWildcardIndexKeySize;
@@ -189,6 +199,10 @@ extern char *AlternateIndexHandler;
 
 #define REINDEX_SUCCESSFUL_DEBUGMSG \
 	"reindexed all collection indexes"
+
+#define CREATE_INDEXES_DISPATCH_MODE "mode"
+#define CREATE_INDEXES_DISPATCH_SKIP_COLL_CHECK "skipCollCheck"
+#define CREATE_INDEXES_DISPATCH_COLL_AUTO_CREATED "collAutoCreated"
 
 /* We hardcode the rum index size limit at the point in time we defined the limit to not break backward
  * compat if RUM suddenly changes the limit to allow larger index terms. */
@@ -220,6 +234,8 @@ SupportsUniqueShardOptionalKey(void)
 PG_FUNCTION_INFO_V1(generate_create_index_arg);
 
 PG_FUNCTION_INFO_V1(command_create_indexes_non_concurrently);
+PG_FUNCTION_INFO_V1(command_create_indexes_dispatch);
+PG_FUNCTION_INFO_V1(command_create_indexes_with_privs);
 PG_FUNCTION_INFO_V1(command_create_temp_indexes_non_concurrently);
 PG_FUNCTION_INFO_V1(command_index_build_is_in_progress);
 PG_FUNCTION_INFO_V1(command_fix_unique_index_stats_for_collection);
@@ -228,14 +244,13 @@ static ReIndexResult reindex_concurrently(Datum dbNameDatum,
 										  Datum collectionNameDatum);
 static IndexDef * ParseIndexDefDocument(const bson_iter_t *indexesArrayIter,
 										bool ignoreUnknownIndexOptions,
-										bool buildAsUniqueForPrepareUnique);
+										bool buildAsUniqueForPrepareUnique,
+										const bson_value_t *defaultCollation);
 static void EnsureIndexDefDocFieldType(const bson_iter_t *indexDefDocIter,
 									   bson_type_t expectedType);
 static void EnsureIndexDefDocFieldConvertibleToBool(bson_iter_t *indexDefDocIter);
 static bool IsSupportedIndexVersion(int indexVersion);
 static void ThrowIndexDefDocMissingFieldError(const char *fieldName);
-static void UpdateIndexStatsForPostgresIndexCore(uint64 collectionId,
-												 List *indexIdList);
 static IndexDefKey * ParseIndexDefKeyDocument(const bson_iter_t *indexDefDocIter);
 static CosmosSearchOptions * ParseCosmosSearchOptionsDoc(const bson_iter_t *optsIter);
 static BsonIntermediatePathNode * ParseIndexDefWildcardProjDoc(const bson_iter_t *
@@ -302,6 +317,7 @@ static void TryDropFailedCollectionIndexesAfterReIndex(uint64 collectionId,
 static void CreatePostgresIndex(uint64 collectionId, IndexDef *indexDef, int indexId,
 								bool concurrently, bool isTempCollection,
 								bool isUnsharded);
+static void UpdateIndexStatsForPostgresIndexCore(uint64 collectionId, List *indexIdList);
 static void ReIndexPostgresIndex(uint64 collectionId, IndexDetails *indexDetail,
 								 bool concurrently);
 static WildcardProjectionPathOps * ResolveWPPathOpsFromTree(const
@@ -348,6 +364,27 @@ static BsonLeafPathNode * CreateIndexesCreateLeafNode(const StringView *fieldPat
 													  void *state);
 static const char * SerializeWeightedPaths(List *weightedPaths);
 static bool IndexSupportsTruncation(IndexDef *indexDef);
+static pgbson * CommandCreateIndexesNonConcurrentlyCore(Datum databaseName,
+														CreateIndexesArg
+														createIndexesArg,
+														bool
+														skipCollectionCreateCheck,
+														bool
+														createdCollectionAutomatically);
+static Datum CommandCreateIndexesDispatchCore(Datum databaseName,
+											  CreateIndexesArg createIndexesArg,
+											  CreateIndexesDispatchOptions options);
+static pgbson * BuildCreateIndexesDispatchOptions(const
+												  CreateIndexesDispatchOptions *
+												  options);
+static CreateIndexesDispatchOptions ParseCreateIndexesDispatchOptions(const pgbson *
+																	  options);
+static pgbson * DispatchCreateIndexesWithPrivilegeChecks(Datum databaseName, const
+														 char *collectionName, const
+														 pgbson *indexSpec,
+														 const
+														 CreateIndexesDispatchOptions *
+														 options);
 
 /*
  * IsCallCreateIndexesStmt returns true if given node is a CallStmt that runs
@@ -468,6 +505,183 @@ IsHashIndex(IndexDef *indexDef)
 }
 
 
+pgbson *
+RunCreateIndexesWithPrivilegeChecks(Datum databaseName,
+									const char *collectionName,
+									const pgbson *indexSpec,
+									CreateIndexesPrivilegeMode mode,
+									bool skipCollectionCreateCheck)
+{
+	Datum collectionNameDatum = CStringGetTextDatum(collectionName);
+	CreateIndexesDispatchOptions options = {
+		.mode = mode,
+		.skipCollCheck = skipCollectionCreateCheck,
+		.collAutoCreated = false
+	};
+	pgbson *response = DispatchCreateIndexesWithPrivilegeChecks(
+		databaseName, collectionName, indexSpec, &options);
+
+	/*
+	 * A non-NULL result means the collection existed and the requested mode
+	 * completed. The privileged target returns NULL only after authorization
+	 * and validation succeed for a missing collection, so it is then safe to
+	 * create the collection and build its indexes inline below.
+	 */
+	if (response != NULL)
+	{
+		return response;
+	}
+
+	Datum createCollectionArgs[2] = {
+		databaseName,
+		collectionNameDatum
+	};
+	Oid createCollectionArgTypes[2] = {
+		TEXTOID,
+		TEXTOID
+	};
+	bool createCollectionIsNull = true;
+	bool readOnly = false;
+	bool canUseLibPq = true;
+	Datum createCollectionResult =
+		RunCollectionLevelFunctionWithPrivilegeChecks(
+			ApiSchemaName, "create_collection",
+			createCollectionArgs, createCollectionArgTypes, NULL, 2,
+			readOnly, canUseLibPq, &createCollectionIsNull);
+	if (createCollectionIsNull)
+	{
+		ereport(ERROR, (errmsg("create_collection unexpectedly returned NULL")));
+	}
+	bool createdCollectionAutomatically = DatumGetBool(createCollectionResult);
+
+	options.mode = CreateIndexesPrivilegeMode_NonConcurrent;
+	options.skipCollCheck = true;
+	options.collAutoCreated = createdCollectionAutomatically;
+	response = DispatchCreateIndexesWithPrivilegeChecks(
+		databaseName, collectionName, indexSpec, &options);
+	if (response == NULL)
+	{
+		ereport(ERROR, (errmsg("create indexes dispatch unexpectedly returned NULL")));
+	}
+
+	return response;
+}
+
+
+static pgbson *
+DispatchCreateIndexesWithPrivilegeChecks(Datum databaseName,
+										 const char *collectionName,
+										 const pgbson *indexSpec,
+										 const CreateIndexesDispatchOptions *options)
+{
+	pgbson *dispatchOptions = BuildCreateIndexesDispatchOptions(options);
+	Datum args[4] = {
+		databaseName,
+		CStringGetTextDatum(collectionName),
+		PointerGetDatum(indexSpec),
+		PointerGetDatum(dispatchOptions)
+	};
+	Oid argTypes[4] = {
+		TEXTOID,
+		TEXTOID,
+		BsonTypeId(),
+		BsonTypeId()
+	};
+	char argNulls[4] = { ' ', ' ', ' ', ' ' };
+	bool readOnly = false;
+	bool canUseLibPq = false;
+	bool isNull = false;
+	Datum response = RunCollectionLevelFunctionWithPrivilegeChecks(
+		ApiInternalSchemaName, "create_indexes_dispatch", args, argTypes, argNulls, 4,
+		readOnly, canUseLibPq, &isNull);
+
+	if (isNull)
+	{
+		return NULL;
+	}
+
+	return DatumGetPgBson(response);
+}
+
+
+static pgbson *
+BuildCreateIndexesDispatchOptions(const CreateIndexesDispatchOptions *options)
+{
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	PgbsonWriterAppendInt32(&writer, CREATE_INDEXES_DISPATCH_MODE,
+							sizeof(CREATE_INDEXES_DISPATCH_MODE) - 1,
+							options->mode);
+	PgbsonWriterAppendBool(
+		&writer, CREATE_INDEXES_DISPATCH_SKIP_COLL_CHECK,
+		sizeof(CREATE_INDEXES_DISPATCH_SKIP_COLL_CHECK) - 1,
+		options->skipCollCheck);
+	PgbsonWriterAppendBool(
+		&writer, CREATE_INDEXES_DISPATCH_COLL_AUTO_CREATED,
+		sizeof(CREATE_INDEXES_DISPATCH_COLL_AUTO_CREATED) - 1,
+		options->collAutoCreated);
+	return PgbsonWriterGetPgbson(&writer);
+}
+
+
+static CreateIndexesDispatchOptions
+ParseCreateIndexesDispatchOptions(const pgbson *options)
+{
+	CreateIndexesDispatchOptions parsedOptions = { 0 };
+	bool hasMode = false;
+	bool hasSkipCollCheck = false;
+	bool hasCollAutoCreated = false;
+	bson_iter_t optionsIter;
+	PgbsonInitIterator(options, &optionsIter);
+
+	while (bson_iter_next(&optionsIter))
+	{
+		const char *key = bson_iter_key(&optionsIter);
+		if (strcmp(key, CREATE_INDEXES_DISPATCH_MODE) == 0)
+		{
+			if (!BSON_ITER_HOLDS_INT32(&optionsIter))
+			{
+				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+								errmsg("mode must be an integer")));
+			}
+
+			parsedOptions.mode = bson_iter_int32(&optionsIter);
+			hasMode = true;
+		}
+		else if (strcmp(key, CREATE_INDEXES_DISPATCH_SKIP_COLL_CHECK) == 0)
+		{
+			if (!BSON_ITER_HOLDS_BOOL(&optionsIter))
+			{
+				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+								errmsg("skipCollCheck must be a boolean")));
+			}
+
+			parsedOptions.skipCollCheck = bson_iter_bool(&optionsIter);
+			hasSkipCollCheck = true;
+		}
+		else if (strcmp(key, CREATE_INDEXES_DISPATCH_COLL_AUTO_CREATED) == 0)
+		{
+			if (!BSON_ITER_HOLDS_BOOL(&optionsIter))
+			{
+				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+								errmsg("collAutoCreated must be a boolean")));
+			}
+
+			parsedOptions.collAutoCreated = bson_iter_bool(&optionsIter);
+			hasCollAutoCreated = true;
+		}
+	}
+
+	if (!hasMode || !hasSkipCollCheck || !hasCollAutoCreated)
+	{
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("create indexes dispatch options are incomplete")));
+	}
+
+	return parsedOptions;
+}
+
+
 /*
  * Helper function to get the name of the index handler to use. If a new index handler is set via the
  * `alternate_index_handler_name` GUC, we look up its catabilities and check of the index create request
@@ -520,14 +734,6 @@ command_create_indexes_non_concurrently(PG_FUNCTION_ARGS)
 
 	Datum dbNameDatum = PG_ARGISNULL(0) ? (Datum) 0 : PG_GETARG_DATUM(0);
 
-	/* Temporary hack. This allows the MX Tests to call
-	 * the non-concurrent index creation so that we can get
-	 * tests to pass minus the stabilization of CREATE/DROP
-	 * indexes. We will be able to ensure that in MX scenarios
-	 * when Create/Drop indexes comes in, we'll be able to
-	 * release MX with no further blockers. This is used for
-	 * testing purposes only.
-	 */
 	bool skip_check_collection_create = false;
 
 	/* For back-compat scenarios ensure that we check nargs */
@@ -538,18 +744,39 @@ command_create_indexes_non_concurrently(PG_FUNCTION_ARGS)
 
 	ThrowIfServerOrTransactionReadOnly();
 	pgbson *arg = PgbsonDeduplicateFields(PG_GETARG_PGBSON(1));
-	bool buildAsUniqueForPrepareUnique = false;
 	CreateIndexesArg createIndexesArg = ParseCreateIndexesArg(&dbNameDatum,
-															  arg,
-															  buildAsUniqueForPrepareUnique);
+															  arg);
 
 	if (dbNameDatum == (Datum) 0)
 	{
 		ereport(ERROR, (errmsg("dbName cannot be NULL")));
 	}
 
+	bool skipCollectionCreateCheck =
+		skip_check_collection_create || createIndexesArg.blocking;
+	if (IsClusterVersionAtleast(DocDB_V1, 2, 0))
+	{
+		PG_RETURN_POINTER(RunCreateIndexesWithPrivilegeChecks(
+							  dbNameDatum, createIndexesArg.collectionName, arg,
+							  CreateIndexesPrivilegeMode_NonConcurrent,
+							  skipCollectionCreateCheck));
+	}
+
+	bool createdCollectionAutomatically = false;
+	PG_RETURN_POINTER(CommandCreateIndexesNonConcurrentlyCore(
+						  dbNameDatum, createIndexesArg, skipCollectionCreateCheck,
+						  createdCollectionAutomatically));
+}
+
+
+static pgbson *
+CommandCreateIndexesNonConcurrentlyCore(Datum databaseName,
+										CreateIndexesArg createIndexesArg,
+										bool skipCollectionCreateCheck,
+										bool createdCollectionAutomatically)
+{
 	MongoCollection *collection =
-		GetMongoCollectionByNameDatum(dbNameDatum,
+		GetMongoCollectionByNameDatum(databaseName,
 									  CStringGetTextDatum(
 										  createIndexesArg.collectionName),
 									  AccessShareLock);
@@ -558,12 +785,128 @@ command_create_indexes_non_concurrently(PG_FUNCTION_ARGS)
 		EnsureCollectionOwner(collection);
 	}
 
-	skip_check_collection_create |= createIndexesArg.blocking;
 	bool uniqueIndexOnly = false;
+	bool buildAsUniqueForPrepareUnique = false;
+	List *optionalIndexList = NIL;
 	CreateIndexesResult result = create_indexes_non_concurrently(
-		dbNameDatum, createIndexesArg, skip_check_collection_create, uniqueIndexOnly);
+		databaseName, createIndexesArg, skipCollectionCreateCheck, uniqueIndexOnly,
+		buildAsUniqueForPrepareUnique, optionalIndexList);
+	result.createdCollectionAutomatically |= createdCollectionAutomatically;
 
-	PG_RETURN_POINTER(MakeCreateIndexesMsg(&result));
+	return MakeCreateIndexesMsg(&result);
+}
+
+
+Datum
+command_create_indexes_dispatch(PG_FUNCTION_ARGS)
+{
+	if (PG_ARGISNULL(0) || PG_ARGISNULL(1) || PG_ARGISNULL(2) ||
+		PG_ARGISNULL(3))
+	{
+		ereport(ERROR, (errmsg("create_indexes_dispatch arguments cannot be NULL")));
+	}
+
+	Datum databaseName = PG_GETARG_DATUM(0);
+	char *collectionName = text_to_cstring(PG_GETARG_TEXT_P(1));
+	pgbson *indexSpec = PG_GETARG_PGBSON(2);
+	pgbson *dispatchOptions = PG_GETARG_PGBSON(3);
+	CreateIndexesDispatchOptions options =
+		ParseCreateIndexesDispatchOptions(dispatchOptions);
+
+	/* Only privileged dispatch may report that it created the collection. */
+	options.collAutoCreated = false;
+	Datum parsedDatabaseName = databaseName;
+	CreateIndexesArg createIndexesArg = ParseCreateIndexesArg(&parsedDatabaseName,
+															  indexSpec);
+	if (strcmp(createIndexesArg.collectionName, collectionName) != 0)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
+						errmsg(
+							"createIndexes collection does not match the authorized namespace")));
+	}
+
+	return CommandCreateIndexesDispatchCore(databaseName, createIndexesArg, options);
+}
+
+
+Datum
+command_create_indexes_with_privs(PG_FUNCTION_ARGS)
+{
+	if (PG_ARGISNULL(0) || PG_ARGISNULL(1) || PG_ARGISNULL(2) ||
+		PG_ARGISNULL(3))
+	{
+		ereport(ERROR, (errmsg("create_indexes_with_privs arguments cannot be NULL")));
+	}
+
+	Datum databaseName = PG_GETARG_DATUM(0);
+	char *collectionName = text_to_cstring(PG_GETARG_TEXT_P(1));
+	pgbson *indexSpec = PG_GETARG_PGBSON(2);
+	pgbson *dispatchOptions = PG_GETARG_PGBSON(3);
+	CreateIndexesDispatchOptions options =
+		ParseCreateIndexesDispatchOptions(dispatchOptions);
+	Datum parsedDatabaseName = databaseName;
+	CreateIndexesArg createIndexesArg = ParseCreateIndexesArg(&parsedDatabaseName,
+															  indexSpec);
+	if (strcmp(createIndexesArg.collectionName, collectionName) != 0)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
+						errmsg(
+							"createIndexes collection does not match the authorized namespace")));
+	}
+
+	if (GetMongoCollectionByNameDatum(databaseName,
+									  CStringGetTextDatum(collectionName),
+									  AccessShareLock) == NULL)
+	{
+		/* Parse and validate the index definitions before the collection may be created. */
+		bool buildAsUniqueForPrepareUnique = false;
+		const bson_value_t *defaultCollation = NULL;
+		List *indexDefList =
+			GetIndexesDefList(&createIndexesArg.indexesValue,
+							  createIndexesArg.ignoreUnknownIndexOptions,
+							  buildAsUniqueForPrepareUnique,
+							  defaultCollation);
+		list_free_deep(indexDefList);
+		PG_RETURN_NULL();
+	}
+
+	return CommandCreateIndexesDispatchCore(databaseName, createIndexesArg, options);
+}
+
+
+static Datum
+CommandCreateIndexesDispatchCore(Datum databaseName,
+								 CreateIndexesArg createIndexesArg,
+								 CreateIndexesDispatchOptions options)
+{
+	switch (options.mode)
+	{
+		case CreateIndexesPrivilegeMode_Background:
+		{
+			bool snapshotSet = false;
+			List *optionalIndexList = NIL;
+			CreateIndexesResult result =
+				SubmitCreateIndexesRequest(databaseName, createIndexesArg,
+										   &snapshotSet, optionalIndexList);
+
+			return PointerGetDatum(MakeCreateIndexesMsg(&result));
+		}
+
+		case CreateIndexesPrivilegeMode_NonConcurrent:
+		{
+			return PointerGetDatum(CommandCreateIndexesNonConcurrentlyCore(
+									   databaseName, createIndexesArg,
+									   options.skipCollCheck,
+									   options.collAutoCreated));
+		}
+
+		default:
+		{
+			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+							errmsg("Unsupported create indexes execution mode")));
+			return (Datum) 0;
+		}
+	}
 }
 
 
@@ -581,10 +924,8 @@ command_create_temp_indexes_non_concurrently(PG_FUNCTION_ARGS)
 	pgbson *createIndexesMessage = PgbsonDeduplicateFields(PG_GETARG_PGBSON(1));
 	Datum dbNameDatum = PG_ARGISNULL(0) ? (Datum) 0 : PG_GETARG_DATUM(0);
 
-	bool buildAsUniqueForPrepareUnique = false;
 	CreateIndexesArg createIndexesArg = ParseCreateIndexesArg(&dbNameDatum,
-															  createIndexesMessage,
-															  buildAsUniqueForPrepareUnique);
+															  createIndexesMessage);
 
 	if (dbNameDatum == (Datum) 0)
 	{
@@ -605,11 +946,20 @@ command_create_temp_indexes_non_concurrently(PG_FUNCTION_ARGS)
 
 	uint64 collectionId = collection->collectionId;
 	bool isUnsharded = collection->shardKey == NULL;
+	bool buildAsUniqueForPrepareUnique = false;
+
+	const bson_value_t *defaultCollation =
+		FetchAndCloneCollationSpecForCollection(collection);
+
+	List *indexDefList = GetIndexesDefList(&createIndexesArg.indexesValue,
+										   createIndexesArg.ignoreUnknownIndexOptions,
+										   buildAsUniqueForPrepareUnique,
+										   defaultCollation);
 
 	/* create indexes on data table and record them in metadata */
 	ListCell *indexDefCell = NULL;
 	int i = 0;
-	foreach(indexDefCell, createIndexesArg.indexDefList)
+	foreach(indexDefCell, indexDefList)
 	{
 		IndexDef *indexDef = (IndexDef *) lfirst(indexDefCell);
 		bool createIndexesConcurrently = false;
@@ -689,10 +1039,8 @@ command_create_indexes(const CallStmt *callStmt, ProcessUtilityContext context,
 	pgbson *arg = PgbsonDeduplicateFields(PG_GETARG_PGBSON(1));
 	Datum dbNameDatum = PG_ARGISNULL(0) ? (Datum) 0 : PG_GETARG_DATUM(0);
 
-	bool buildAsUniqueForPrepareUnique = false;
 	CreateIndexesArg createIndexesArg = ParseCreateIndexesArg(&dbNameDatum,
-															  arg,
-															  buildAsUniqueForPrepareUnique);
+															  arg);
 
 	if (dbNameDatum == (Datum) 0)
 	{
@@ -714,14 +1062,20 @@ command_create_indexes(const CallStmt *callStmt, ProcessUtilityContext context,
 	buildIndexesConcurrently &= !createIndexesArg.blocking;
 	bool skipCheckCollectionCreate = createIndexesArg.blocking;
 	bool uniqueIndexOnly = false;
+	bool buildAsUniqueForPrepareUnique = false;
+	List *optionalIndexList = NIL;
 	CreateIndexesResult result = buildIndexesConcurrently ?
 								 create_indexes_concurrently(dbNameDatum,
 															 createIndexesArg,
-															 uniqueIndexOnly) :
+															 uniqueIndexOnly,
+															 buildAsUniqueForPrepareUnique)
+								 :
 								 create_indexes_non_concurrently(dbNameDatum,
 																 createIndexesArg,
 																 skipCheckCollectionCreate,
-																 uniqueIndexOnly);
+																 uniqueIndexOnly,
+																 buildAsUniqueForPrepareUnique,
+																 optionalIndexList);
 
 	SendCreateIndexesResultToClientAsBson(fcinfo, &result, destReceiver);
 }
@@ -802,7 +1156,7 @@ command_index_build_is_in_progress(PG_FUNCTION_ARGS)
  */
 CreateIndexesResult
 create_indexes_concurrently(Datum dbNameDatum, CreateIndexesArg createIndexesArg, bool
-							uniqueIndexOnly)
+							uniqueIndexOnly, bool buildAsUniqueForPrepareUnique)
 {
 	char *collectionName = createIndexesArg.collectionName;
 	Datum collectionNameDatum = CStringGetTextDatum(collectionName);
@@ -819,6 +1173,18 @@ create_indexes_concurrently(Datum dbNameDatum, CreateIndexesArg createIndexesArg
 	else
 	{
 		/*
+		 * Validate before implicit collection creation, then parse again below
+		 * with the collection metadata that wins any creation race.
+		 */
+		const bson_value_t *defaultCollationForValidation = NULL;
+		List *indexDefListTemp =
+			GetIndexesDefList(&createIndexesArg.indexesValue,
+							  createIndexesArg.ignoreUnknownIndexOptions,
+							  buildAsUniqueForPrepareUnique,
+							  defaultCollationForValidation);
+		list_free_deep(indexDefListTemp);
+
+		/*
 		 * collection does not exist, create it (or race for creating it).
 		 * The creation is implicit to this command, so it may be carried
 		 * separately and committed before the index work that follows.
@@ -833,6 +1199,14 @@ create_indexes_concurrently(Datum dbNameDatum, CreateIndexesArg createIndexesArg
 
 	uint64 collectionId = collection->collectionId;
 	bool isUnsharded = collection->shardKey == NULL;
+	const bson_value_t *defaultCollation =
+		FetchAndCloneCollationSpecForCollection(collection);
+
+	List *indexDefList = GetIndexesDefList(&createIndexesArg.indexesValue,
+										   createIndexesArg.ignoreUnknownIndexOptions,
+										   buildAsUniqueForPrepareUnique,
+										   defaultCollation);
+
 	AcquireAdvisoryExclusiveLockForCreateIndexes(collectionId);
 
 	/*
@@ -852,21 +1226,20 @@ create_indexes_concurrently(Datum dbNameDatum, CreateIndexesArg createIndexesArg
 	 * wants to create to later determine whether we decided to not create
 	 * some of them due to an identical index.
 	 */
-	int nindexesRequested = list_length(createIndexesArg.indexDefList);
+	int nindexesRequested = list_length(indexDefList);
 
 	List *inBuildIndexIdList = NIL;
-	createIndexesArg.indexDefList =
+	indexDefList =
 		CheckForConflictsAndPruneExistingIndexes(collectionId,
-												 createIndexesArg.indexDefList,
+												 indexDefList,
 												 &inBuildIndexIdList);
 
 	result.numIndexesBefore = CollectionIdGetIndexCount(collectionId);
 
-	if (result.numIndexesBefore + list_length(createIndexesArg.indexDefList) >
-		MaxIndexesPerCollection)
+	if (result.numIndexesBefore + list_length(indexDefList) > MaxIndexesPerCollection)
 	{
 		int reportIndexDefIdx = MaxIndexesPerCollection - result.numIndexesBefore;
-		const IndexDef *reportIndexDef = list_nth(createIndexesArg.indexDefList,
+		const IndexDef *reportIndexDef = list_nth(indexDefList,
 												  reportIndexDefIdx);
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
 						errmsg("add index fails, too many indexes for %s.%s key:%s",
@@ -888,7 +1261,7 @@ create_indexes_concurrently(Datum dbNameDatum, CreateIndexesArg createIndexesArg
 	List *indexIsUniqueList = NIL;
 
 	ListCell *indexDefCell = NULL;
-	foreach(indexDefCell, createIndexesArg.indexDefList)
+	foreach(indexDefCell, indexDefList)
 	{
 		IndexDef *indexDef = (IndexDef *) lfirst(indexDefCell);
 		if (uniqueIndexOnly && indexDef->unique != BoolIndexOption_True)
@@ -942,7 +1315,7 @@ create_indexes_concurrently(Datum dbNameDatum, CreateIndexesArg createIndexesArg
 	StartTransactionCommand();
 
 	TryCreateIndexesResult *tryResult =
-		TryCreateCollectionIndexes(collectionId, createIndexesArg.indexDefList,
+		TryCreateCollectionIndexes(collectionId, indexDefList,
 								   indexIdList, isUnsharded, procMemContext);
 
 	if (!tryResult->ok)
@@ -993,7 +1366,7 @@ create_indexes_concurrently(Datum dbNameDatum, CreateIndexesArg createIndexesArg
 		 * Set "note" field of the response message based on whether we
 		 * rejected creating any indexes.
 		 */
-		if (list_length(createIndexesArg.indexDefList) == 0)
+		if (list_length(indexDefList) == 0)
 		{
 			/*
 			 * We don't allow "indexes" array to be empty, so this means that
@@ -1001,7 +1374,7 @@ create_indexes_concurrently(Datum dbNameDatum, CreateIndexesArg createIndexesArg
 			 */
 			result.note = "All specified indexes already exist";
 		}
-		else if (list_length(createIndexesArg.indexDefList) < nindexesRequested)
+		else if (list_length(indexDefList) < nindexesRequested)
 		{
 			/* then not all but some indexes already exist */
 			result.note = "index already exists";
@@ -1026,7 +1399,9 @@ create_indexes_concurrently(Datum dbNameDatum, CreateIndexesArg createIndexesArg
  */
 CreateIndexesResult
 create_indexes_non_concurrently(Datum dbNameDatum, CreateIndexesArg createIndexesArg,
-								bool skipCheckCollectionCreate, bool uniqueIndexOnly)
+								bool skipCheckCollectionCreate, bool uniqueIndexOnly,
+								bool buildAsUniqueForPrepareUnique,
+								List *optionalIndexList)
 {
 	char *collectionName = createIndexesArg.collectionName;
 	Datum collectionNameDatum = CStringGetTextDatum(collectionName);
@@ -1038,12 +1413,28 @@ create_indexes_non_concurrently(Datum dbNameDatum, CreateIndexesArg createIndexe
 	MongoCollection *collection =
 		GetMongoCollectionByNameDatum(dbNameDatum, collectionNameDatum,
 									  AccessShareLock);
+
 	if (collection)
 	{
 		result.createdCollectionAutomatically = false;
 	}
 	else
 	{
+		/*
+		 * Validate before implicit collection creation, then parse again below
+		 * with the collection metadata that wins any creation race.
+		 */
+		const bson_value_t *defaultCollationForValidation = NULL;
+		if (optionalIndexList == NIL)
+		{
+			List *indexDefListTemp =
+				GetIndexesDefList(&createIndexesArg.indexesValue,
+								  createIndexesArg.ignoreUnknownIndexOptions,
+								  buildAsUniqueForPrepareUnique,
+								  defaultCollationForValidation);
+			list_free_deep(indexDefListTemp);
+		}
+
 		/*
 		 * collection does not exist, create it (or race for creating it).
 		 * The creation is implicit to this command, so it may be carried
@@ -1066,6 +1457,31 @@ create_indexes_non_concurrently(Datum dbNameDatum, CreateIndexesArg createIndexe
 
 	uint64 collectionId = collection->collectionId;
 	bool isUnsharded = collection->shardKey == NULL;
+
+	const bson_value_t *defaultCollation =
+		FetchAndCloneCollationSpecForCollection(collection);
+
+	List *indexDefList = NIL;
+	if (optionalIndexList != NIL)
+	{
+		if (createIndexesArg.indexesValue.value_type != BSON_TYPE_EOD)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"Cannot specify both optionalIndexList and indexes array in createIndexesArg")));
+		}
+
+		indexDefList = optionalIndexList;
+	}
+	else
+	{
+		indexDefList = GetIndexesDefList(&createIndexesArg.indexesValue,
+										 createIndexesArg.ignoreUnknownIndexOptions,
+										 buildAsUniqueForPrepareUnique,
+										 defaultCollation);
+	}
+
+
 	AcquireAdvisoryExclusiveLockForCreateIndexes(collectionId);
 
 	/*
@@ -1082,20 +1498,19 @@ create_indexes_non_concurrently(Datum dbNameDatum, CreateIndexesArg createIndexe
 	 * wants to create to later determine whether we decided to not create
 	 * some of them due to an identical index.
 	 */
-	int nindexesRequested = list_length(createIndexesArg.indexDefList);
+	int nindexesRequested = list_length(indexDefList);
 	List *inBuildIndexIdList = NIL;
-	createIndexesArg.indexDefList =
+	indexDefList =
 		CheckForConflictsAndPruneExistingIndexes(collectionId,
-												 createIndexesArg.indexDefList,
+												 indexDefList,
 												 &inBuildIndexIdList);
 
 	result.numIndexesBefore = CollectionIdGetIndexCount(collectionId);
 
-	if (result.numIndexesBefore + list_length(createIndexesArg.indexDefList) >
-		MaxIndexesPerCollection)
+	if (result.numIndexesBefore + list_length(indexDefList) > MaxIndexesPerCollection)
 	{
 		int reportIndexDefIdx = MaxIndexesPerCollection - result.numIndexesBefore;
-		const IndexDef *reportIndexDef = list_nth(createIndexesArg.indexDefList,
+		const IndexDef *reportIndexDef = list_nth(indexDefList,
 												  reportIndexDefIdx);
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
 						errmsg("add index fails, too many indexes for %s.%s key:%s",
@@ -1112,7 +1527,7 @@ create_indexes_non_concurrently(Datum dbNameDatum, CreateIndexesArg createIndexe
 	 * nearly mean the same thing in terms of concurrency semantics.
 	 */
 	if (!skipCheckCollectionCreate &&
-		list_length(createIndexesArg.indexDefList) != 0 &&
+		list_length(indexDefList) != 0 &&
 		!IsDataTableCreatedWithinCurrentXact(collection))
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_OPERATIONNOTSUPPORTEDINTRANSACTION),
@@ -1127,7 +1542,7 @@ create_indexes_non_concurrently(Datum dbNameDatum, CreateIndexesArg createIndexe
 
 	/* create indexes on data table and record them in metadata */
 	ListCell *indexDefCell = NULL;
-	foreach(indexDefCell, createIndexesArg.indexDefList)
+	foreach(indexDefCell, indexDefList)
 	{
 		IndexDef *indexDef = (IndexDef *) lfirst(indexDefCell);
 		if (uniqueIndexOnly && indexDef->unique != BoolIndexOption_True)
@@ -1135,28 +1550,17 @@ create_indexes_non_concurrently(Datum dbNameDatum, CreateIndexesArg createIndexe
 			continue;
 		}
 
-		/*
-		 * Record the index as valid since we will anyway rollback the
-		 * transaction in case of an error.
-		 */
 		const IndexSpec indexSpec = MakeIndexSpecForIndexDef(indexDef);
-		bool indexIsValid = true;
-		int indexId = RecordCollectionIndex(collectionId, &indexSpec, indexIsValid);
-
-		bool createIndexesConcurrently = false;
-		bool isTempCollection = false;
-		CreatePostgresIndex(collectionId, indexDef, indexId, createIndexesConcurrently,
-							isTempCollection, isUnsharded);
-
-		/* Set statistics for the created indexes */
-		UpdateIndexStatsForPostgresIndex(collectionId, list_make1_int(indexId));
+		bool updatePlannerStatistics = true;
+		CreatePostgresIndexWithMetadata(collectionId, indexDef, &indexSpec, isUnsharded,
+										updatePlannerStatistics);
 	}
 
 	/*
 	 * Set "note" field of the response message based on whether we
 	 * rejected creating any indexes.
 	 */
-	if (list_length(createIndexesArg.indexDefList) == 0)
+	if (list_length(indexDefList) == 0)
 	{
 		/*
 		 * We don't allow "indexes" array to be empty, so this means that
@@ -1164,7 +1568,7 @@ create_indexes_non_concurrently(Datum dbNameDatum, CreateIndexesArg createIndexe
 		 */
 		result.note = "All specified indexes already exist";
 	}
-	else if (list_length(createIndexesArg.indexDefList) < nindexesRequested)
+	else if (list_length(indexDefList) < nindexesRequested)
 	{
 		/* then not all but some indexes already exist */
 		result.note = "index already exists";
@@ -1350,13 +1754,46 @@ InitFCInfoForCallStmt(FunctionCallInfo fcinfo, const CallStmt *callStmt,
 }
 
 
+List *
+GetIndexesDefList(const bson_value_t *indexesValue, bool ignoreUnknownIndexOptions,
+				  bool buildAsUniqueForPrepareUnique, const
+				  bson_value_t *defaultCollation)
+{
+	bson_iter_t indexesArrayIter;
+	List *indexDefList = NIL;
+	BsonValueInitIterator(indexesValue, &indexesArrayIter);
+	while (bson_iter_next(&indexesArrayIter))
+	{
+		StringInfo fieldNameStr = makeStringInfo();
+		int arrIdx = list_length(indexDefList);
+		appendStringInfo(fieldNameStr, "createIndexes.indexes.%d", arrIdx);
+
+		EnsureTopLevelFieldType(fieldNameStr->data, &indexesArrayIter,
+								BSON_TYPE_DOCUMENT);
+
+		IndexDef *indexDef = ParseIndexDefDocument(&indexesArrayIter,
+												   ignoreUnknownIndexOptions,
+												   buildAsUniqueForPrepareUnique,
+												   defaultCollation);
+		indexDefList = lappend(indexDefList, indexDef);
+
+		if (indexDef->unique && indexDef->enableLargeIndexKeys)
+		{
+			ReportFeatureUsage(FEATURE_CREATE_UNIQUE_INDEX_WITH_TERM_TRUNCATION);
+		}
+	}
+
+	return indexDefList;
+}
+
+
 /*
  * ParseCreateIndexesArg returns a CreateIndexesArg object by parsing given
  * pgbson object that represents the "arg" document passed to
  * dbCommand/createIndexes.
  */
 CreateIndexesArg
-ParseCreateIndexesArg(Datum *dbNameDatum, pgbson *arg, bool buildAsUniqueForPrepareUnique)
+ParseCreateIndexesArg(Datum *dbNameDatum, pgbson *arg)
 {
 	CreateIndexesArg createIndexesArg = { 0 };
 
@@ -1415,30 +1852,7 @@ ParseCreateIndexesArg(Datum *dbNameDatum, pgbson *arg, bool buildAsUniqueForPrep
 			EnsureTopLevelFieldType("createIndexes.indexes", &argIter, BSON_TYPE_ARRAY);
 
 			gotIndexesArray = true;
-
-			bson_iter_t indexesArrayIter;
-			bson_iter_recurse(&argIter, &indexesArrayIter);
-			while (bson_iter_next(&indexesArrayIter))
-			{
-				StringInfo fieldNameStr = makeStringInfo();
-				int arrIdx = list_length(createIndexesArg.indexDefList);
-				appendStringInfo(fieldNameStr, "createIndexes.indexes.%d", arrIdx);
-
-				EnsureTopLevelFieldType(fieldNameStr->data, &indexesArrayIter,
-										BSON_TYPE_DOCUMENT);
-
-				IndexDef *indexDef = ParseIndexDefDocument(&indexesArrayIter,
-														   createIndexesArg.
-														   ignoreUnknownIndexOptions,
-														   buildAsUniqueForPrepareUnique);
-				createIndexesArg.indexDefList =
-					lappend(createIndexesArg.indexDefList, indexDef);
-
-				if (indexDef->unique && indexDef->enableLargeIndexKeys)
-				{
-					ReportFeatureUsage(FEATURE_CREATE_UNIQUE_INDEX_WITH_TERM_TRUNCATION);
-				}
-			}
+			createIndexesArg.indexesValue = *bson_iter_value(&argIter);
 		}
 		else if (strcmp(argKey, "ignoreUnknownIndexOptions") == 0)
 		{
@@ -1530,7 +1944,7 @@ ParseCreateIndexesArg(Datum *dbNameDatum, pgbson *arg, bool buildAsUniqueForPrep
 		}
 	}
 
-	if (list_length(createIndexesArg.indexDefList) == 0)
+	if (IsBsonValueEmptyArray(&createIndexesArg.indexesValue))
 	{
 		/* "indexes" field is specified, but to be an empty array */
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
@@ -1565,7 +1979,8 @@ ParseCreateIndexesArg(Datum *dbNameDatum, pgbson *arg, bool buildAsUniqueForPrep
  */
 static IndexDef *
 ParseIndexDefDocument(const bson_iter_t *indexesArrayIter, bool ignoreUnknownIndexOptions,
-					  bool buildAsUniqueForPrepareUnique)
+					  bool buildAsUniqueForPrepareUnique, const
+					  bson_value_t *defaultCollation)
 {
 	const char *indexSpecRepr = PgbsonIterDocumentToJsonForLogging(indexesArrayIter);
 	StringInfo errorMessagePrefixStr = makeStringInfo();
@@ -1584,7 +1999,8 @@ ParseIndexDefDocument(const bson_iter_t *indexesArrayIter, bool ignoreUnknownInd
 												 indexSpecRepr,
 												 ignoreUnknownIndexOptions,
 												 buildAsUniqueForPrepareUnique,
-												 useTTLIndexInvalidOptionsError);
+												 useTTLIndexInvalidOptionsError,
+												 defaultCollation);
 	}
 	PG_CATCH();
 	{
@@ -1741,7 +2157,8 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesDocIter,
 							  const char *indexSpecRepr,
 							  bool ignoreUnknownIndexOptions,
 							  bool buildAsUniqueForPrepareUnique,
-							  bool useTTLIndexInvalidOptionsError)
+							  bool useTTLIndexInvalidOptionsError,
+							  const bson_value_t *defaultCollation)
 {
 	/*
 	 * Distinguish "key: {}" from not specifying "key" field at all,
@@ -1749,6 +2166,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesDocIter,
 	 */
 	bool gotKeyDocument = false;
 	bool isTTLIndex = false;
+	bool hasExplicitCollation = false;
 
 	IndexDef *indexDef = palloc0(sizeof(IndexDef));
 
@@ -2139,6 +2557,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesDocIter,
 		}
 		else if (strcmp(indexDefDocKey, "collation") == 0)
 		{
+			hasExplicitCollation = true;
 			ReportFeatureUsage(FEATURE_COLLATION_CREATE_INDEX);
 			if (EnableCollationWithNonUniqueOrderedIndexes)
 			{
@@ -2214,6 +2633,32 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesDocIter,
 	if (!gotKeyDocument)
 	{
 		ThrowIndexDefDocMissingFieldError("key");
+	}
+
+	/* Before any further validations on the key, set the default collation if
+	 * applicable.
+	 */
+	if (defaultCollation != NULL &&
+		defaultCollation->value_type == BSON_TYPE_DOCUMENT)
+	{
+		/* Don't override the index collation or alter the built-in _id index. */
+		if (!hasExplicitCollation && !indexDef->key->isIdIndex)
+		{
+			if (!EnableCollationWithNonUniqueOrderedIndexes)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+								errmsg("Collation is not supported with indexes yet")));
+			}
+
+			char collationString[MAX_ICU_COLLATION_LENGTH] = { 0 };
+			ParseAndGetCollationString(defaultCollation, collationString);
+			if (IsCollationValid(collationString))
+			{
+				indexDef->collationString = pstrdup(collationString);
+				indexDef->collationSpec = palloc0(sizeof(bson_value_t));
+				bson_value_copy(defaultCollation, indexDef->collationSpec);
+			}
+		}
 	}
 
 	if (!indexDef->key->isWildcard)
@@ -2469,6 +2914,12 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesDocIter,
 										"enableOrderedIndex is only supported with regular indexes.")));
 				}
 			}
+		}
+
+		/* _fts/_ftsx text keys are not added to keyPathList, so check for text directly. */
+		if (indexDef->key->hasTextIndexes)
+		{
+			indexDef->key->canSupportCompositeTerm = false;
 		}
 
 		if (list_length(indexDef->key->keyPathList) > INDEX_MAX_KEYS)
@@ -4410,6 +4861,12 @@ CheckForConflictsAndPruneExistingIndexes(uint64 collectionId, List *indexDefList
 	{
 		IndexDef *indexDef = lfirst(indexDefCell);
 
+		/*
+		 * TODO_COLLATION: _id index requests on a collection created with a
+		 * collation are not yet reconciled with its collated _id_ index (no-op
+		 * recreation, collation, version and key restrictions, and secondary
+		 * _id indexes).
+		 */
 		IndexSpec indexSpec = MakeIndexSpecForIndexDef(indexDef);
 
 		int32_t inBuildIndexId = -1;
@@ -5171,6 +5628,56 @@ TryReIndexCollectionIndexesConcurrently(uint64 collectionId,
 
 
 /*
+ * Build a unique ordered _id_ backing and its logical metadata specification.
+ * Reuse the shared parser and capability checks; the caller creates the backing.
+ */
+IndexDef *
+MakeCollatedBuiltinIdIndexDef(const bson_value_t *collation, IndexSpec *indexSpec)
+{
+	if (!EnableCollationWithNonUniqueOrderedIndexes ||
+		!EnableCompositeUniqueOptionalKey)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+						errmsg(
+							"Collated collection creation requires collated unique ordered indexes")));
+	}
+
+	*indexSpec = MakeIndexSpecForBuiltinIdIndex();
+	indexSpec->indexUnique = BoolIndexOption_True;
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	PgbsonWriterAppendInt32(&writer, "enableOrderedIndex", 18,
+							(int32_t) CustomIndexOption_True);
+	PgbsonWriterAppendValue(&writer, "collation", 9, collation);
+	indexSpec->indexOptions = PgbsonWriterGetPgbson(&writer);
+
+	pgbson *spec = IndexSpecAsBson(indexSpec);
+	bson_iter_t iter;
+	PgbsonInitIterator(spec, &iter);
+	bool ignoreUnknownIndexOptions = false;
+	bool buildAsUniqueForPrepareUnique = false;
+	bool useTTLIndexInvalidOptionsError = false;
+	const bson_value_t *defaultCollation = NULL;
+	IndexDef *definition = ParseIndexDefDocumentInternal(&iter,
+														 PgbsonToJsonForLogging(spec),
+														 ignoreUnknownIndexOptions,
+														 buildAsUniqueForPrepareUnique,
+														 useTTLIndexInvalidOptionsError,
+														 defaultCollation);
+	if (!GetIndexAmHandlerByName(definition)->supports_optional_key)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+						errmsg(
+							"The selected index access method does not support collated collection uniqueness")));
+	}
+
+	/* Built-in uniqueness stays implicit in public metadata. */
+	indexSpec->indexUnique = BoolIndexOption_Undefined;
+	return definition;
+}
+
+
+/*
  * MakeIndexSpecForIndexDef creates an IndexSpec object based on given IndexDef.
  */
 IndexSpec
@@ -5319,6 +5826,35 @@ MakeIndexSpecForIndexDef(IndexDef *indexDef)
 	}
 
 	return indexSpec;
+}
+
+
+/*
+ * Record and create an index in the caller's transaction.
+ * Built-in backings skip collection planner-statistics updates.
+ */
+void
+CreatePostgresIndexWithMetadata(uint64 collectionId, IndexDef *indexDef,
+								const IndexSpec *indexSpec, bool isUnsharded,
+								bool updatePlannerStatistics)
+{
+	/* An error rolls back both the metadata and the physical index. */
+	bool indexIsValid = true;
+	int indexId = RecordCollectionIndex(collectionId, indexSpec, indexIsValid);
+
+	bool concurrently = false;
+	bool isTempCollection = false;
+	CreatePostgresIndex(collectionId, indexDef, indexId, concurrently, isTempCollection,
+						isUnsharded);
+
+	if (updatePlannerStatistics)
+	{
+		UpdateIndexStatsForPostgresIndex(collectionId, list_make1_int(indexId));
+	}
+	else
+	{
+		UpdateIndexStatsForPostgresIndexCore(collectionId, list_make1_int(indexId));
+	}
 }
 
 
@@ -5798,6 +6334,11 @@ ReIndexPostgresIndex(uint64 collectionId, IndexDetails *indexDetail, bool concur
 	bool isIdIndex = (strncmp(indexDetail->indexSpec.indexName,
 							  ID_INDEX_NAME, strlen(ID_INDEX_NAME)) == 0);
 
+	/*
+	 * TODO_COLLATION: reindexing _id_ rebuilds only the primary key; the
+	 * collated unique index of a collection created with a collation is not
+	 * rebuilt.
+	 */
 	StringInfo cmdStr = makeStringInfo();
 	if (indexDetail->indexSpec.indexUnique == BoolIndexOption_True || !concurrently)
 	{
@@ -7327,6 +7868,10 @@ GenerateUniqueProjectionSpec(IndexDefKey *indexDefKey)
 }
 
 
+/*
+ * Set physical index expression statistics targets to zero. Collection-level
+ * planner statistics remain the responsibility of the outer wrapper.
+ */
 static void
 UpdateIndexStatsForPostgresIndexCore(uint64 collectionId, List *indexIdList)
 {

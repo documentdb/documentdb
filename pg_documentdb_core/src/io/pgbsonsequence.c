@@ -1,5 +1,7 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
  *
  * src/io/bsonsequence_io.c
  *
@@ -14,8 +16,10 @@
 
 #include <postgres.h>
 #include <fmgr.h>
+#include <miscadmin.h>
 #include <utils/builtins.h>
 #include <utils/tuplestore.h>
+#include <utils/memutils.h>
 #include <lib/stringinfo.h>
 
 #define PRIVATE_PGBSON_H
@@ -256,6 +260,65 @@ PgbsonSequenceGetDocumentBsonValues(const pgbsonsequence * bsonSequence)
 
 	bson_reader_destroy(reader);
 	return docsList;
+}
+
+
+/*
+ * Copies a slice of document values into a sequence without an intermediate
+ * writer buffer. The count is the number of documents, not an end offset.
+ */
+pgbson_require_alignment() pgbsonsequence *
+PgbsonSequenceBuildFromBsonValuesList(List * bsonValuesList, int offset, int count)
+{
+	if (offset < 0 || count < 0 || offset > list_length(bsonValuesList) ||
+		count > list_length(bsonValuesList) - offset)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg("Invalid document slice for BSON sequence")));
+	}
+
+	Size sequenceDataSize = 0;
+	for (int i = 0; i < count; i++)
+	{
+		CHECK_FOR_INTERRUPTS();
+		const bson_value_t *valuePointer = list_nth(bsonValuesList, offset + i);
+
+		if (valuePointer == NULL || valuePointer->value_type != BSON_TYPE_DOCUMENT)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg("BSON sequence requires nonnull document values")));
+		}
+
+		bson_t docsrc;
+		if (!bson_init_static(&docsrc, valuePointer->value.v_doc.data,
+							  valuePointer->value.v_doc.data_len))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg("Failed to initialize static bson document")));
+		}
+
+		sequenceDataSize += valuePointer->value.v_doc.data_len;
+		if (!AllocSizeIsValid(VARHDRSZ + sequenceDataSize))
+		{
+			ereport(ERROR, (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+							errmsg("BSON sequence exceeds the maximum allocation size")));
+		}
+	}
+
+	Size sequenceSize = VARHDRSZ + sequenceDataSize;
+	pgbsonsequence *sequence = palloc(sequenceSize);
+	SET_VARSIZE(sequence, sequenceSize);
+	uint8_t *sequenceData = (uint8_t *) VARDATA(sequence);
+	for (int i = 0; i < count; i++)
+	{
+		CHECK_FOR_INTERRUPTS();
+		const bson_value_t *valuePointer = list_nth(bsonValuesList, offset + i);
+		memcpy(sequenceData, valuePointer->value.v_doc.data,
+			   valuePointer->value.v_doc.data_len);
+		sequenceData += valuePointer->value.v_doc.data_len;
+	}
+
+	return sequence;
 }
 
 

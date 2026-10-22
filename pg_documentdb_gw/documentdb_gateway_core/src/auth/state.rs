@@ -81,6 +81,13 @@ impl UserAuthState {
                 .is_none_or(|expires_at| EpochClock::almost_now_timestamp() < expires_at)
     }
 
+    /// Reports the recorded status without re-reading the clock, so a caller
+    /// after request processing observes the status routing used to admit it.
+    #[must_use]
+    pub fn has_authenticated_status(&self) -> bool {
+        self.status == AuthStatus::Authenticated
+    }
+
     #[must_use]
     pub fn scheme(&self) -> Option<&str> {
         self.scheme.as_deref()

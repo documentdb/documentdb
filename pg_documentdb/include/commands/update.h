@@ -1,5 +1,7 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
  *
  * include/commands/update.h
  *
@@ -62,6 +64,9 @@ typedef struct
 
 	/* collation string for document selection */
 	char collationString[MAX_ICU_COLLATION_LENGTH];
+
+	/* whether collation was explicitly specified, including "simple" */
+	bool hasExplicitCollation;
 } UpdateOneParams;
 
 

@@ -21,15 +21,14 @@
  * Baseline RBAC group role names.
  */
 
-/*
- * Every group role the RBAC surface provisions for its own use carries this
- * prefix, so the names can be recognized as a family rather than one at a time.
- */
+/* Prefixes for API helper roles and the full internal RBAC role family. */
 #define API_RBAC_API_ROLE_PREFIX "documentdb_rbac_api_"
+#define API_RBAC_ROLE_PREFIX "documentdb_rbac_"
 
 #define API_RBAC_API_ACCESS_ROLE "documentdb_rbac_api_access_role"
 #define API_RBAC_API_COLLECTION_OWNER_ROLE "documentdb_rbac_api_collection_owner_role"
 #define API_RBAC_API_COLLECTION_CREATE_ROLE "documentdb_rbac_api_collection_create_role"
+#define API_RBAC_API_INDEX_CREATE_ROLE "documentdb_rbac_api_index_create_role"
 #define API_RBAC_BASELINE_READ_ROLE "documentdb_rbac_baseline_read_role"
 #define API_RBAC_BASELINE_WRITE_ROLE "documentdb_rbac_baseline_write_role"
 #define API_RBAC_READWRITE_ANYDB_ROLE "documentdb_rbac_readwrite_anydb_role"
@@ -57,19 +56,17 @@
 /*
  * Macro to check if a role is an internal custom rbac role.
  *
- * Everything under API_RBAC_API_ROLE_PREFIX is matched as a family, so a role
+ * Everything under API_RBAC_ROLE_PREFIX is matched as a family, so a role
  * added to that family does not have to be listed here as well. The remaining
  * names sit outside that prefix and are matched individually.
  */
 #define IS_CUSTOM_RBAC_ROLE(roleName) \
-	(strncmp((roleName), API_RBAC_API_ROLE_PREFIX, \
-			 sizeof(API_RBAC_API_ROLE_PREFIX) - 1) == 0 || \
+	(strncmp((roleName), API_RBAC_ROLE_PREFIX, \
+			 sizeof(API_RBAC_ROLE_PREFIX) - 1) == 0 || \
 	 strcmp((roleName), ApiCollectionFindRole) == 0 || \
 	 strcmp((roleName), ApiCollectionInsertRole) == 0 || \
 	 strcmp((roleName), ApiCollectionUpdateRole) == 0 || \
-	 strcmp((roleName), ApiCollectionRemoveRole) == 0 || \
-	 strcmp((roleName), API_RBAC_BASELINE_READ_ROLE) == 0 || \
-	 strcmp((roleName), API_RBAC_BASELINE_WRITE_ROLE) == 0)
+	 strcmp((roleName), ApiCollectionRemoveRole) == 0)
 
 /* Macro to check if a role name matches a native built-in role */
 #define IS_NATIVE_BUILTIN_ROLE(roleName) \

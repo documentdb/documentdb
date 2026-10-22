@@ -97,3 +97,9 @@ SELECT n.nspname AS schema, proname,
        has_schema_privilege('documentdb_api_remove_role', n.nspname, 'USAGE') AS remove_role_has_exec
 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
 WHERE n.nspname = 'documentdb_api_internal_bgworker' ORDER BY n.nspname, proname;
+
+SELECT has_table_privilege(
+	'documentdb_rbac_api_index_create_role',
+	'documentdb_api_catalog.documentdb_index_queue',
+	'INSERT') AS queue_insert_granted \gset
+\echo :queue_insert_granted

@@ -1,5 +1,7 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
  *
  * src/schema_validation.c
  *
@@ -11,6 +13,7 @@
 #include <postgres.h>
 #include "utils/feature_counter.h"
 #include "operators/bson_expr_eval.h"
+#include "io/pgbsonelement.h"
 #include "schema_validation/schema_validation.h"
 #include "metadata/collection.h"
 #include "utils/documentdb_errors.h"
@@ -18,11 +21,13 @@
 #include "utils/version_utils.h"
 
 extern bool EnableSchemaValidation;
+extern bool EnableCollationWithSchemaValidation;
+
 PG_FUNCTION_INFO_V1(command_schema_validation_against_update);
 
 /*
  * command_schema_validation_against_update validates source_document/target_document against a schema validator while updating
- * select __API_SCHEMA_INTERNAL__.schema_validation_against_update(validator, target_document, source_document, is_moderate);
+ * The validator argument can carry the collection collation for multi-updates.
  * @param validator: The schema validator BSON document.
  * @param target_document: Updated document.
  * @param source_document: The document to be updated.
@@ -97,7 +102,7 @@ command_schema_validation_against_update(PG_FUNCTION_ARGS)
 /*
  * PopulateSchemaValidationCache - Initializes a schema validation cache entry.
  *
- * Designed to be used as the populate callback for SetCachedFunctionState.
+ * Designed to be used as the populate callback for cached function state.
  * All allocations are made in CurrentMemoryContext, which the macro sets to
  * fn_mcxt before invoking this function. Do not call directly unless the
  * appropriate memory context is already active.
@@ -108,7 +113,9 @@ command_schema_validation_against_update(PG_FUNCTION_ARGS)
 void
 PopulateSchemaValidationCache(SchemaValidationCache *cache, pgbson *validator)
 {
-	cache->evalState = PrepareForSchemaValidation(validator, CurrentMemoryContext);
+	const char *collationString = NULL;
+	cache->evalState = PrepareForSchemaValidation(validator, CurrentMemoryContext,
+												  collationString);
 }
 
 
@@ -119,20 +126,41 @@ PopulateSchemaValidationCache(SchemaValidationCache *cache, pgbson *validator)
  * Otherwise, return the expression evaluation state for the schema validator.
  */
 ExprEvalState *
-PrepareForSchemaValidation(pgbson *schemaValidationInfo, MemoryContext memoryContext)
+PrepareForSchemaValidation(pgbson *schemaValidationInfo,
+						   MemoryContext memoryContext,
+						   const char *collationString)
 {
-	bson_value_t validatorBsonValue = ConvertPgbsonToBsonValue(
-		schemaValidationInfo);
-	if (validatorBsonValue.value_type == BSON_TYPE_NULL ||
-		validatorBsonValue.value_type == BSON_TYPE_EOD)
+	bson_value_t validatorBsonValue;
+	pgbsonelement validatorElement;
+	const char *validatorCollation = NULL;
+
+	/* Only collated multi-updates use the internal validator wrapper. */
+	if (EnableCollationWithSchemaValidation &&
+		collationString == NULL &&
+		TryGetSinglePgbsonElementFromPgbsonWithCollation(
+			schemaValidationInfo, &validatorElement, &validatorCollation) &&
+		strcmp(validatorElement.path, "$__schema_validator") == 0)
 	{
-		return NULL;
+		/* A single-field wrapper passes extraction even without a collation. */
+		if (validatorElement.bsonValue.value_type != BSON_TYPE_DOCUMENT ||
+			validatorCollation == NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"Invalid schema validator for update with collation")));
+		}
+		validatorBsonValue = validatorElement.bsonValue;
+		collationString = validatorCollation;
+	}
+	else
+	{
+		validatorBsonValue = ConvertPgbsonToBsonValue(schemaValidationInfo);
 	}
 
 	bool hasOperatorRestrictions = true;
 	return GetExpressionEvalStateForBsonInput(
 		&validatorBsonValue,
-		memoryContext, hasOperatorRestrictions);
+		memoryContext, hasOperatorRestrictions, collationString);
 }
 
 

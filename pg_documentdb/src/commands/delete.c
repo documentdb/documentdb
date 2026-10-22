@@ -1,5 +1,7 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
  *
  * src/commands/delete.c
  *
@@ -608,6 +610,7 @@ BuildDeletionSpec(bson_iter_t *deletionIter, const bson_value_t *variableSpec)
 {
 	bson_value_t *query = NULL;
 	int64 limit = -1;
+	bool hasExplicitCollation = false;
 
 	char collationString[MAX_ICU_COLLATION_LENGTH] = "\0";
 	while (bson_iter_next(deletionIter))
@@ -659,6 +662,7 @@ BuildDeletionSpec(bson_iter_t *deletionIter, const bson_value_t *variableSpec)
 				{
 					ParseAndGetCollationString(collationValue,
 											   collationString);
+					hasExplicitCollation = true;
 				}
 			}
 			else
@@ -706,6 +710,7 @@ BuildDeletionSpec(bson_iter_t *deletionIter, const bson_value_t *variableSpec)
 	deletionSpec->limit = limit;
 	deletionSpec->deleteOneParams.query = query;
 	deletionSpec->deleteOneParams.variableSpec = variableSpec;
+	deletionSpec->deleteOneParams.hasExplicitCollation = hasExplicitCollation;
 
 	strlcpy((char *) deletionSpec->deleteOneParams.collationString, collationString,
 			strlen(collationString) + 1);
@@ -923,6 +928,13 @@ static uint64
 ProcessDeletion(MongoCollection *collection, DeletionSpec *deletionSpec,
 				bool forceInlineWrites, text *transactionId)
 {
+	if (EnableCollation && !deletionSpec->deleteOneParams.hasExplicitCollation)
+	{
+		strlcpy((char *) deletionSpec->deleteOneParams.collationString,
+				collection->options.collationString,
+				sizeof(deletionSpec->deleteOneParams.collationString));
+	}
+
 	if (deletionSpec->deleteOneParams.returnDeletedDocument)
 	{
 		ereport(ERROR, (errmsg("cannot return deleted document via "
@@ -1328,6 +1340,12 @@ GenerateDeleteQuery(text *database, pgbson *deleteSpec, bool setStatementTimeout
 	BatchDeletionSpec *batchSpec = BuildBatchDeletionSpec(&deleteCommandIter,
 														  deleteDocs,
 														  &databaseDatum);
+
+	Datum collectionNameDatum = CStringGetTextDatum(batchSpec->collectionName);
+	MongoCollection *collection =
+		GetMongoCollectionByNameDatum(databaseDatum, collectionNameDatum,
+									  RowExclusiveLock);
+
 	PostProcessDeleteBatchSpec(batchSpec);
 
 	if (list_length(batchSpec->deletionsProcessed) != 1)
@@ -1337,12 +1355,17 @@ GenerateDeleteQuery(text *database, pgbson *deleteSpec, bool setStatementTimeout
 	}
 
 	DeletionSpec *deletionSpec = linitial(batchSpec->deletionsProcessed);
+	if (EnableCollation && collection != NULL &&
+		!deletionSpec->deleteOneParams.hasExplicitCollation)
+	{
+		strlcpy((char *) deletionSpec->deleteOneParams.collationString,
+				collection->options.collationString,
+				sizeof(deletionSpec->deleteOneParams.collationString));
+	}
+
 	ValidateQueryDocumentValue(deletionSpec->deleteOneParams.query);
 
-	Datum collectionNameDatum = CStringGetTextDatum(batchSpec->collectionName);
-	MongoCollection *collection =
-		GetMongoCollectionByNameDatum(databaseDatum, collectionNameDatum,
-									  RowExclusiveLock);
+	/* Preserve delete-spec validation before reporting a missing collection. */
 	if (collection == NULL)
 	{
 		ereport(ERROR, (errmsg(
@@ -1648,6 +1671,22 @@ command_delete_worker(PG_FUNCTION_ARGS)
 
 		MongoCollection mongoCollection = { 0 };
 		UpdateMongoCollectionUsingIds(&mongoCollection, collectionId, InvalidOid);
+
+		if (EnableCollation)
+		{
+			MongoCollection *catalogCollection =
+				GetMongoCollectionByColId(collectionId, NoLock);
+			if (catalogCollection == NULL)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+								errmsg(
+									"Collection not found for collectionId %lu on command_delete_worker",
+									collectionId)));
+			}
+			strlcpy(mongoCollection.options.collationString,
+					catalogCollection->options.collationString,
+					sizeof(mongoCollection.options.collationString));
+		}
 
 		bool forceInline = true;
 		ProcessBatchDeletion(&mongoCollection, &batchDeletionSpec, forceInline,
@@ -2140,6 +2179,7 @@ DeserializeDeleteWorkerSpecForDeleteOne(const bson_value_t *workerSpecValue,
 		}
 		else if (EnableCollation && strcmp(key, "collation") == 0)
 		{
+			deleteOneParams->hasExplicitCollation = true;
 			strlcpy((char *) deleteOneParams->collationString,
 					bson_iter_utf8(&commandIter, NULL),
 					sizeof(deleteOneParams->collationString));

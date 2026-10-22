@@ -537,3 +537,211 @@ Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '25703004'::bigint)
 
 RESET documentdb.skipIndexCleanupOnReindex;
+------------------------------------------------------------
+-- Test: reindex via create with planner statistics enabled moves the
+-- statistics dependency to the rebuilt index so the old index can be dropped
+-- concurrently.
+------------------------------------------------------------
+SET documentdb.enablePerCollectionPlannerStatistics TO on;
+SELECT documentdb_api.create_collection('reindex_db', 'reindex_with_stats');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one('reindex_db', 'reindex_with_stats', FORMAT('{"_id": %s, "a": %s}', i, i)::documentdb_core.bson)) FROM generate_series(1, 10) i;
+ count 
+-------
+    10
+(1 row)
+
+SELECT documentdb_api.coll_mod('reindex_db', 'reindex_with_stats', '{ "collMod": "reindex_with_stats", "enableStats": true }');
+             coll_mod              
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('reindex_db',
+  '{ "createIndexes": "reindex_with_stats", "indexes": [ { "key": { "a": 1 }, "name": "a_1" } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT collection_id as stats_coll_id FROM documentdb_api_catalog.collections WHERE database_name = 'reindex_db' AND collection_name = 'reindex_with_stats' \gset
+-- The statistics object depends on the index
+SELECT s.stxname, d.refobjid::regclass AS depends_on_index, d.deptype
+FROM pg_statistic_ext s JOIN pg_depend d ON d.classid = 'pg_statistic_ext'::regclass AND d.objid = s.oid AND d.refclassid = 'pg_class'::regclass
+JOIN pg_class c ON c.oid = d.refobjid AND c.relkind = 'i'
+WHERE s.stxrelid = ('documentdb_data.documents_' || :stats_coll_id)::regclass ORDER BY 1;
+              stxname               |               depends_on_index               | deptype 
+------------------------------------+----------------------------------------------+---------
+ documents_rum_index_25703013_stats | documentdb_data.documents_rum_index_25703013 | a
+(1 row)
+
+-- Reindex via create (updateOptions) renames the old index to _ccold and drops it concurrently
+SELECT documentdb_api.coll_mod('reindex_db', 'reindex_with_stats', '{ "collMod": "reindex_with_stats", "index": { "name": "a_1", "reindex": true, "updateOptions": true } }');
+                                    coll_mod                                    
+--------------------------------------------------------------------------------
+ { "ok" : { "$numberInt" : "1" }, "reindex_old" : false, "reindex_new" : true }
+(1 row)
+
+SELECT cmd_type, index_cmd FROM documentdb_api_catalog.documentdb_index_queue WHERE index_id >= 25703000 AND index_id <= 25703100 ORDER BY index_id;
+ cmd_type |                                                                                                       index_cmd                                                                                                       
+----------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ R        | CREATE INDEX CONCURRENTLY documents_rum_index_25703013_ccnew ON documentdb_data.documents_25703005 USING  documentdb_rum ( document documentdb_api_internal.bson_rum_composite_path_ops(pathspec='[ "a" ]',tl=2691)) 
+(1 row)
+
+CALL documentdb_api_internal.build_index_concurrently(1);
+CALL documentdb_api_internal.build_index_background(1);
+SELECT cmd_type, index_cmd FROM documentdb_api_catalog.documentdb_index_queue WHERE index_id >= 25703000 AND index_id <= 25703100 ORDER BY index_id;
+ cmd_type | index_cmd 
+----------+-----------
+(0 rows)
+
+-- The old _ccold index is gone and the statistics object now depends on the rebuilt index
+\d documentdb_data.documents_:stats_coll_id
+        Table "documentdb_data.documents_25703005"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_25703005" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_25703013" documentdb_rum (document documentdb_api_internal.bson_rum_composite_path_ops (pathspec='[ "a" ]', tl='2691'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '25703005'::bigint)
+Statistics objects:
+    "documentdb_data.documents_rum_index_25703013_stats" ON documentdb_api_internal.bson_stats_project(document, 'a'::text) FROM documentdb_data.documents_25703005
+
+SELECT s.stxname, d.refobjid::regclass AS depends_on_index, d.deptype
+FROM pg_statistic_ext s JOIN pg_depend d ON d.classid = 'pg_statistic_ext'::regclass AND d.objid = s.oid AND d.refclassid = 'pg_class'::regclass
+JOIN pg_class c ON c.oid = d.refobjid AND c.relkind = 'i'
+WHERE s.stxrelid = ('documentdb_data.documents_' || :stats_coll_id)::regclass ORDER BY 1;
+              stxname               |               depends_on_index               | deptype 
+------------------------------------+----------------------------------------------+---------
+ documents_rum_index_25703013_stats | documentdb_data.documents_rum_index_25703013 | a
+(1 row)
+
+-- A plain reindex of a non-unique index uses REINDEX CONCURRENTLY and leaves no _ccold index
+SELECT documentdb_api.coll_mod('reindex_db', 'reindex_with_stats', '{ "collMod": "reindex_with_stats", "index": { "name": "a_1", "reindex": true } }');
+                                    coll_mod                                    
+--------------------------------------------------------------------------------
+ { "ok" : { "$numberInt" : "1" }, "reindex_old" : false, "reindex_new" : true }
+(1 row)
+
+CALL documentdb_api_internal.build_index_concurrently(1);
+CALL documentdb_api_internal.build_index_background(1);
+SELECT COUNT(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE i.indrelid = ('documentdb_data.documents_' || :stats_coll_id)::regclass AND c.relname LIKE '%_ccold';
+ count 
+-------
+     0
+(1 row)
+
+SELECT s.stxname, d.refobjid::regclass AS depends_on_index, d.deptype
+FROM pg_statistic_ext s JOIN pg_depend d ON d.classid = 'pg_statistic_ext'::regclass AND d.objid = s.oid AND d.refclassid = 'pg_class'::regclass
+JOIN pg_class c ON c.oid = d.refobjid AND c.relkind = 'i'
+WHERE s.stxrelid = ('documentdb_data.documents_' || :stats_coll_id)::regclass ORDER BY 1;
+              stxname               |               depends_on_index               | deptype 
+------------------------------------+----------------------------------------------+---------
+ documents_rum_index_25703013_stats | documentdb_data.documents_rum_index_25703013 | a
+(1 row)
+
+-- A plain reindex of a unique index rebuilds via create and drops the _ccold index
+SELECT documentdb_api_internal.create_indexes_non_concurrently('reindex_db',
+  '{ "createIndexes": "reindex_with_stats", "indexes": [ { "key": { "a": -1 }, "name": "a_-1_unique", "unique": true } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.coll_mod('reindex_db', 'reindex_with_stats', '{ "collMod": "reindex_with_stats", "index": { "name": "a_-1_unique", "reindex": true } }');
+                                    coll_mod                                    
+--------------------------------------------------------------------------------
+ { "ok" : { "$numberInt" : "1" }, "reindex_old" : false, "reindex_new" : true }
+(1 row)
+
+CALL documentdb_api_internal.build_index_concurrently(1);
+CALL documentdb_api_internal.build_index_background(1);
+SELECT COUNT(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE i.indrelid = ('documentdb_data.documents_' || :stats_coll_id)::regclass AND c.relname LIKE '%_ccold';
+ count 
+-------
+     0
+(1 row)
+
+SELECT s.stxname, d.refobjid::regclass AS depends_on_index, d.deptype
+FROM pg_statistic_ext s JOIN pg_depend d ON d.classid = 'pg_statistic_ext'::regclass AND d.objid = s.oid AND d.refclassid = 'pg_class'::regclass
+JOIN pg_class c ON c.oid = d.refobjid AND c.relkind = 'i'
+WHERE s.stxrelid = ('documentdb_data.documents_' || :stats_coll_id)::regclass ORDER BY 1;
+              stxname               |               depends_on_index               | deptype 
+------------------------------------+----------------------------------------------+---------
+ documents_rum_index_25703013_stats | documentdb_data.documents_rum_index_25703013 | a
+ documents_rum_index_25703014_stats | documentdb_data.documents_rum_index_25703014 | a
+(2 rows)
+
+CALL documentdb_api.drop_indexes('reindex_db', '{ "dropIndexes": "reindex_with_stats", "index": "a_-1_unique" }');
+                          retval                          
+----------------------------------------------------------
+ { "ok" : true, "nIndexesWas" : { "$numberLong" : "3" } }
+(1 row)
+
+-- A _ccold index left behind by a reindex via create can be dropped concurrently by hand
+SET documentdb.skipIndexCleanupOnReindex TO true;
+SELECT documentdb_api.coll_mod('reindex_db', 'reindex_with_stats', '{ "collMod": "reindex_with_stats", "index": { "name": "a_1", "reindex": true, "updateOptions": true } }');
+                                    coll_mod                                    
+--------------------------------------------------------------------------------
+ { "ok" : { "$numberInt" : "1" }, "reindex_old" : false, "reindex_new" : true }
+(1 row)
+
+CALL documentdb_api_internal.build_index_concurrently(1);
+CALL documentdb_api_internal.build_index_background(1);
+RESET documentdb.skipIndexCleanupOnReindex;
+SELECT 'documentdb_data.documents_rum_index_' || index_id || '_ccold' AS ccold_index_name
+FROM documentdb_api_catalog.collection_indexes WHERE collection_id = :stats_coll_id AND (index_spec).index_name = 'a_1' \gset
+SELECT COUNT(*) FROM pg_class WHERE oid = to_regclass(:'ccold_index_name');
+ count 
+-------
+     1
+(1 row)
+
+DROP INDEX CONCURRENTLY :ccold_index_name;
+\d documentdb_data.documents_:stats_coll_id
+        Table "documentdb_data.documents_25703005"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_25703005" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_25703013" documentdb_rum (document documentdb_api_internal.bson_rum_composite_path_ops (pathspec='[ "a" ]', tl='2691'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '25703005'::bigint)
+Statistics objects:
+    "documentdb_data.documents_rum_index_25703013_stats" ON documentdb_api_internal.bson_stats_project(document, 'a'::text) FROM documentdb_data.documents_25703005
+
+SELECT s.stxname, d.refobjid::regclass AS depends_on_index, d.deptype
+FROM pg_statistic_ext s JOIN pg_depend d ON d.classid = 'pg_statistic_ext'::regclass AND d.objid = s.oid AND d.refclassid = 'pg_class'::regclass
+JOIN pg_class c ON c.oid = d.refobjid AND c.relkind = 'i'
+WHERE s.stxrelid = ('documentdb_data.documents_' || :stats_coll_id)::regclass ORDER BY 1;
+              stxname               |               depends_on_index               | deptype 
+------------------------------------+----------------------------------------------+---------
+ documents_rum_index_25703013_stats | documentdb_data.documents_rum_index_25703013 | a
+(1 row)
+
+-- Dropping the rebuilt index still removes the statistics object
+CALL documentdb_api.drop_indexes('reindex_db', '{ "dropIndexes": "reindex_with_stats", "index": "a_1" }');
+                          retval                          
+----------------------------------------------------------
+ { "ok" : true, "nIndexesWas" : { "$numberLong" : "2" } }
+(1 row)
+
+SELECT COUNT(*) FROM pg_statistic_ext WHERE stxrelid = ('documentdb_data.documents_' || :stats_coll_id)::regclass;
+ count 
+-------
+     0
+(1 row)
+
+RESET documentdb.enablePerCollectionPlannerStatistics;

@@ -159,7 +159,6 @@ extern bool EnableDynamicCursors;
 extern bool EnableDistinctCustomScan;
 extern bool EnableGroupByDistinctScan;
 extern bool EnableDistinctScanForGroupFirst;
-extern bool EnableDollarSampleReservoirScan;
 extern bool EnableMergeSortForInPrefix;
 extern bool EnablePartialFilterEvalOnPlanner;
 extern bool EnableRumIndexOnlyScanProjectionWrapper;
@@ -828,7 +827,7 @@ ExtensionRelPathlistHookCore(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	}
 
 	/* Wrap paths with ReservoirSample CustomPath (must happen after all path transforms) */
-	if (EnableDollarSampleReservoirScan && indexContext.reservoirSampleExpr != NULL)
+	if (indexContext.reservoirSampleExpr != NULL)
 	{
 		AddReservoirSampleCustomPath(root, rel, indexContext.reservoirSampleExpr);
 	}
@@ -2231,9 +2230,6 @@ ExpandAggregationFunction(Query *query, ParamListInfo boundParams, PlannedStmt *
 		if (EnableDynamicCursors)
 		{
 			cursorParams = CursorParamKind_Dynamic;
-
-			/* ensure that in this path, the plan follows what cursors do */
-			*cursorOptions = GetDynamicCursorCursorOptions();
 		}
 	}
 
@@ -2306,6 +2302,14 @@ ExpandAggregationFunction(Query *query, ParamListInfo boundParams, PlannedStmt *
 	{
 		ereport(ERROR, (errmsg(
 							"Unrecognized pipeline functionid provided. This is unexpected")));
+	}
+
+	if (EnableCursorsOnAggregationQueryRewrite &&
+		queryData.cursorKind == QueryCursorType_Dynamic)
+	{
+		/* ensure that in this path, the plan follows what cursors do */
+		bool allowFastPlan = !queryData.requiresDynamicFetchAllCursor;
+		*cursorOptions = GetDynamicCursorCursorOptions(allowFastPlan);
 	}
 
 	if (queryData.cursorKind == QueryCursorType_PointRead)

@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * src/oss_backend/infrastructure/feature_counter.c
  *
@@ -268,10 +269,16 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_AGGREGATE_WINDOW_TOP] = "window_top",
 	[FEATURE_AGGREGATE_WINDOW_TOP_N] = "window_top_n",
 
+	/* Feature Mapping region - Change stream */
+	[FEATURE_CHANGE_STREAM_CLUSTER_TIME] = "change_stream_cluster_time",
+	[FEATURE_CHANGE_STREAM_CLUSTER_TIME_STALLED] = "change_stream_cluster_time_stalled",
+	[FEATURE_CHANGE_STREAM_HISTORICAL] = "change_stream_historical",
+
 	/* Find/Aggregate using collation */
 	[FEATURE_COLLATION] = "collation",
 	[FEATURE_COLLATION_CREATE_COLLECTION] = "collation_with_collection",
 	[FEATURE_COLLATION_CREATE_INDEX] = "collation_with_indexes",
+	[FEATURE_COLLATION_INDEX_TERM_TRUNCATION] = "collation_index_term_truncation",
 	[FEATURE_COLLATION_UNSUPPORTED_GROUP_ACCUMULATOR] =
 		"collation_unsupported_group_accumulator",
 
@@ -536,6 +543,10 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_STAGE_SEARCH_VECTOR_HNSW] = "search_vector_hnsw",
 	[FEATURE_STAGE_SEARCH_VECTOR_IVFFLAT] = "search_vector_ivfflat",
 	[FEATURE_STAGE_SEARCH_VECTOR_PRE_FILTER] = "search_vector_pre_filter",
+	[FEATURE_STAGE_SEARCH_VECTOR_PRE_FILTER_AUTOSELECT_FILTER] =
+		"search_vector_pre_filter_autoselect_filter",
+	[FEATURE_STAGE_SEARCH_VECTOR_PRE_FILTER_AUTOSELECT_VECTOR] =
+		"search_vector_pre_filter_autoselect_vector",
 	[FEATURE_STAGE_SET] = "set",
 	[FEATURE_STAGE_SETWINDOWFIELDS] = "setWindowFields",
 	[FEATURE_STAGE_SKIP] = "skip",

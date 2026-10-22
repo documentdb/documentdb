@@ -1,3 +1,5 @@
+-- Copyright (c) Microsoft Corporation. All rights reserved.
+-- SPDX-License-Identifier: MIT
 SET search_path TO documentdb_api_catalog, documentdb_core, documentdb_api, public;
 SET citus.next_shard_id TO 6750000;
 SET documentdb.next_collection_id TO 67500;
@@ -352,14 +354,14 @@ SELECT documentdb_api.validate('db', '{ "validate" : "feature_counter_col2", "re
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(false);
                                                                                                                                                                                                                                                                                                                                                                                                                                                         get_feature_counter_pretty                                                                                                                                                                                                                                                                                                                                                                                                                                                         
 ---------------------------------------------------------------------
- {"Feature_usage":[{"agg_operator_eq" : 1}, {"agg_operator_mod" : 7}, {"agg_operator_toint" : 7}, {"group_add_to_set" : 1}, {"group_count" : 4}, {"group_first" : 1}, {"group_first_n" : 2}, {"group_last" : 1}, {"group_last_n" : 2}, {"group_max" : 3}, {"group_scalar_agg_index_pushdown" : 1}, {"group_sum" : 2}, {"collation" : 3}, {"collation_unsupported_group_accumulator" : 1}, {"validate_repair" : 1}, {"create_index_composite_based_term" : 1}, {"create_index_ttl" : 1}, {"query_operator_eq" : 4}, {"query_operator_gt" : 4}, {"query_operator_or" : 2}, {"add_fields" : 5}, {"count" : 1}, {"group" : 10}, {"firstN_acc_GT10" : 1}, {"lastN_acc_GT10" : 1}, {"limit" : 3}, {"lookup" : 2}, {"match" : 6}, {"project" : 3}, {"replace_root" : 2}, {"replace_with" : 1}, {"skip" : 3}, {"sort" : 6}, {"sort_by_count" : 1}, {"sort_by_id" : 5}, {"unset" : 1}, {"vector_search_native" : 3}]}
+ {"Feature_usage":[{"agg_operator_eq" : 1}, {"agg_operator_mod" : 7}, {"agg_operator_toint" : 7}, {"group_add_to_set" : 1}, {"group_count" : 4}, {"group_first" : 1}, {"group_first_n" : 2}, {"group_last" : 1}, {"group_last_n" : 2}, {"group_max" : 3}, {"group_scalar_agg_index_pushdown" : 1}, {"group_sum" : 2}, {"collation" : 3}, {"collation_unsupported_group_accumulator" : 1}, {"validate_repair" : 1}, {"create_index_composite_based_term" : 2}, {"create_index_ttl" : 2}, {"query_operator_eq" : 4}, {"query_operator_gt" : 4}, {"query_operator_or" : 2}, {"add_fields" : 5}, {"count" : 1}, {"group" : 10}, {"firstN_acc_GT10" : 1}, {"lastN_acc_GT10" : 1}, {"limit" : 3}, {"lookup" : 2}, {"match" : 6}, {"project" : 3}, {"replace_root" : 2}, {"replace_with" : 1}, {"skip" : 3}, {"sort" : 6}, {"sort_by_count" : 1}, {"sort_by_id" : 5}, {"unset" : 1}, {"vector_search_native" : 3}]}
 (1 row)
 
 -- print and reset the counters
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
                                                                                                                                                                                                                                                                                                                                                                                                                                                         get_feature_counter_pretty                                                                                                                                                                                                                                                                                                                                                                                                                                                         
 ---------------------------------------------------------------------
- {"Feature_usage":[{"agg_operator_eq" : 1}, {"agg_operator_mod" : 7}, {"agg_operator_toint" : 7}, {"group_add_to_set" : 1}, {"group_count" : 4}, {"group_first" : 1}, {"group_first_n" : 2}, {"group_last" : 1}, {"group_last_n" : 2}, {"group_max" : 3}, {"group_scalar_agg_index_pushdown" : 1}, {"group_sum" : 2}, {"collation" : 3}, {"collation_unsupported_group_accumulator" : 1}, {"validate_repair" : 1}, {"create_index_composite_based_term" : 1}, {"create_index_ttl" : 1}, {"query_operator_eq" : 4}, {"query_operator_gt" : 4}, {"query_operator_or" : 2}, {"add_fields" : 5}, {"count" : 1}, {"group" : 10}, {"firstN_acc_GT10" : 1}, {"lastN_acc_GT10" : 1}, {"limit" : 3}, {"lookup" : 2}, {"match" : 6}, {"project" : 3}, {"replace_root" : 2}, {"replace_with" : 1}, {"skip" : 3}, {"sort" : 6}, {"sort_by_count" : 1}, {"sort_by_id" : 5}, {"unset" : 1}, {"vector_search_native" : 3}]}
+ {"Feature_usage":[{"agg_operator_eq" : 1}, {"agg_operator_mod" : 7}, {"agg_operator_toint" : 7}, {"group_add_to_set" : 1}, {"group_count" : 4}, {"group_first" : 1}, {"group_first_n" : 2}, {"group_last" : 1}, {"group_last_n" : 2}, {"group_max" : 3}, {"group_scalar_agg_index_pushdown" : 1}, {"group_sum" : 2}, {"collation" : 3}, {"collation_unsupported_group_accumulator" : 1}, {"validate_repair" : 1}, {"create_index_composite_based_term" : 2}, {"create_index_ttl" : 2}, {"query_operator_eq" : 4}, {"query_operator_gt" : 4}, {"query_operator_or" : 2}, {"add_fields" : 5}, {"count" : 1}, {"group" : 10}, {"firstN_acc_GT10" : 1}, {"lastN_acc_GT10" : 1}, {"limit" : 3}, {"lookup" : 2}, {"match" : 6}, {"project" : 3}, {"replace_root" : 2}, {"replace_with" : 1}, {"skip" : 3}, {"sort" : 6}, {"sort_by_count" : 1}, {"sort_by_id" : 5}, {"unset" : 1}, {"vector_search_native" : 3}]}
 (1 row)
 
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
@@ -413,7 +415,7 @@ ERROR:  The $vectorSearch needs to appear as the initial stage in the processing
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
                                                                                                                                                      get_feature_counter_pretty                                                                                                                                                     
 ---------------------------------------------------------------------
- {"Feature_usage":[{"command_insert" : 2}, {"command_insert_one" : 2}, {"create_index_vector" : 2}, {"create_index_vector_ip" : 1}, {"create_index_vector_l2" : 1}, {"create_index_vector_type_ivfflat" : 2}, {"project" : 2}, {"search_vector_default_nprobes" : 2}, {"search_vector_ivfflat" : 2}, {"vector_search_native" : 2}]}
+ {"Feature_usage":[{"command_insert" : 2}, {"command_insert_one" : 2}, {"create_index_vector" : 3}, {"create_index_vector_ip" : 2}, {"create_index_vector_l2" : 1}, {"create_index_vector_type_ivfflat" : 3}, {"project" : 2}, {"search_vector_default_nprobes" : 2}, {"search_vector_ivfflat" : 2}, {"vector_search_native" : 2}]}
 (1 row)
 
 -- check vector indexes
@@ -504,10 +506,31 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "vectorInde
 (1 row)
 
 ROLLBACK;
-SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
-                                                                                                                                                                                                                                                                                                get_feature_counter_pretty                                                                                                                                                                                                                                                                                                
+BEGIN;
+SET LOCAL documentdb.enableVectorPreFilter = on;
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold = 1.0;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "vectorIndexCollFC", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 2, "path": "vector_ivf", "nProbes": 10, "filter": { "elem": { "$gt": "some p" } }, "filterMode": "autoSelect" } } } ], "cursor": {} }');
+                                                                                                                          document                                                                                                                           
 ---------------------------------------------------------------------
- {"Feature_usage":[{"command_insert" : 2}, {"command_insert_one" : 2}, {"create_index_vector" : 4}, {"create_index_vector_compression_half" : 2}, {"create_index_vector_cos" : 2}, {"create_index_vector_l2" : 2}, {"create_index_vector_type_hnsw" : 2}, {"create_index_vector_type_ivfflat" : 2}, {"query_operator_gt" : 2}, {"search_operator_cosmos_search" : 6}, {"match" : 2}, {"search" : 6}, {"search_vector_compression_half" : 2}, {"search_vector_default_efsearch" : 1}, {"search_vector_default_nprobes" : 1}, {"search_vector_hnsw" : 3}, {"search_vector_ivfflat" : 3}, {"search_vector_pre_filter" : 2}]}
+ { "_id" : { "$numberInt" : "1" }, "elem" : "some sentence ivf", "vector_ivf" : [ { "$numberDouble" : "8.0" }, { "$numberDouble" : "1.0" }, { "$numberDouble" : "9.0" } ], "__cosmos_meta__" : { "score" : { "$numberDouble" : "10.208329887130052072" } } }
+(1 row)
+
+ROLLBACK;
+BEGIN;
+SET LOCAL documentdb.enableVectorPreFilter = on;
+SET LOCAL default_statistics_target = 10000;
+SET LOCAL documentdb.vector_auto_filter_selectivity_threshold = 0;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "vectorIndexCollFC", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 2, "path": "vector_ivf", "nProbes": 10, "filter": { "elem": { "$gt": "some p" } }, "filterMode": "autoSelect" } } } ], "cursor": {} }');
+                                                                                                                          document                                                                                                                           
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "elem" : "some sentence ivf", "vector_ivf" : [ { "$numberDouble" : "8.0" }, { "$numberDouble" : "1.0" }, { "$numberDouble" : "9.0" } ], "__cosmos_meta__" : { "score" : { "$numberDouble" : "10.208329887130052072" } } }
+(1 row)
+
+ROLLBACK;
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                                                                                                                                                                                                                                                                                                                                    get_feature_counter_pretty                                                                                                                                                                                                                                                                                                                                                    
+---------------------------------------------------------------------
+ {"Feature_usage":[{"command_insert" : 2}, {"command_insert_one" : 2}, {"create_index_vector" : 4}, {"create_index_vector_compression_half" : 2}, {"create_index_vector_cos" : 2}, {"create_index_vector_l2" : 2}, {"create_index_vector_type_hnsw" : 2}, {"create_index_vector_type_ivfflat" : 2}, {"query_operator_gt" : 4}, {"search_operator_cosmos_search" : 8}, {"match" : 4}, {"search" : 8}, {"search_vector_compression_half" : 2}, {"search_vector_default_efsearch" : 1}, {"search_vector_default_nprobes" : 1}, {"search_vector_hnsw" : 3}, {"search_vector_ivfflat" : 5}, {"search_vector_pre_filter" : 4}, {"search_vector_pre_filter_autoselect_filter" : 1}, {"search_vector_pre_filter_autoselect_vector" : 1}]}
 (1 row)
 
 -- aggregation operators counters
@@ -1267,7 +1290,6 @@ SELECT count(*) * 0 AS count FROM documentdb_api_internal.command_feature_counte
      0
 (1 row)
 
-SET documentdb.enableDollarSampleReservoirScan TO on;
 SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
 SELECT document FROM bson_aggregation_pipeline('feature_counter_hs_db', '{ "aggregate": "sampleHeapSkipColl", "pipeline": [ { "$match": { "_id": { "$gte": 0 } } }, { "$sample": { "size": 40 } }, { "$sort": { "_id": 1 } }, { "$limit": 3 }, { "$project": { "_id": 1 } } ], "cursor": {} }');
               document              
@@ -1278,7 +1300,6 @@ SELECT document FROM bson_aggregation_pipeline('feature_counter_hs_db', '{ "aggr
 (3 rows)
 
 RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
-RESET documentdb.enableDollarSampleReservoirScan;
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
                                                                         get_feature_counter_pretty                                                                         
 ---------------------------------------------------------------------
@@ -1295,7 +1316,6 @@ SELECT count(*) * 0 AS count FROM documentdb_api_internal.command_feature_counte
      0
 (1 row)
 
-SET documentdb.enableDollarSampleReservoirScan TO on;
 SET documentdb.enableDollarSampleHeapSkipReservoirScan TO off;
 SET enable_seqscan TO off;
 SET enable_bitmapscan TO off;
@@ -1310,7 +1330,6 @@ SELECT document FROM bson_aggregation_pipeline('feature_counter_hs_db', '{ "aggr
 RESET enable_bitmapscan;
 RESET enable_seqscan;
 RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
-RESET documentdb.enableDollarSampleReservoirScan;
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
                                                                              get_feature_counter_pretty                                                                             
 ---------------------------------------------------------------------
@@ -1467,6 +1486,51 @@ SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 
 SELECT documentdb_api.drop_collection('db', 'orderedFirstCandidate');
  drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- Collated term truncation is counted even when rejection is disabled.
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET documentdb.indexTermLimitOverride TO 50;
+SET documentdb.fail_on_collated_index_term_truncation TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'db',
+    '{"createIndexes":"collatedTruncationCounter","indexes":[{"key":{"a":1},"name":"collated_a_1","collation":{"locale":"en","strength":1},"enableCompositeTerm":true}]}',
+    true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT count(*) * 0 AS count FROM documentdb_api_internal.command_feature_counter_stats(true);
+ count
+---------------------------------------------------------------------
+     0
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'db', 'collatedTruncationCounter',
+    format('{"_id":1,"a":"%s"}', repeat('a', 80))::documentdb_core.bson);
+                              insert_one
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                           get_feature_counter_pretty
+---------------------------------------------------------------------
+ {"Feature_usage":[{"collation_index_term_truncation" : 1}, {"command_insert" : 1}, {"command_insert_one" : 1}]}
+(1 row)
+
+RESET documentdb.fail_on_collated_index_term_truncation;
+RESET documentdb.indexTermLimitOverride;
+RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
+RESET documentdb_core.enableCollation;
+SELECT documentdb_api.drop_collection('db', 'collatedTruncationCounter');
+ drop_collection
 ---------------------------------------------------------------------
  t
 (1 row)

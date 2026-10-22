@@ -204,6 +204,7 @@ typedef struct DensifyWindowState
 	 * from nested fields.
 	 */
 	BsonProjectionQueryState *partitionByTreeState;
+	pgbson *partitionByProjectionSpec;
 
 	/*
 	 * State fields that are responsible for choosing how to increment
@@ -241,6 +242,7 @@ static inline pgbson * GetPartitionByFieldsPgbson(pgbson *document,
 												  DensifyWindowState *state,
 												  bool moveToExecutorContext);
 static inline void ReleasePartitionAwareState(PartitionAwareState *state);
+static inline void ReleaseDensifyWindowState(DensifyWindowState *state);
 static inline void ThorwLimitExceededError(int32 nDocumentsGenerated);
 
 static uint32 DensifyFullKeyHashFunc(const void *obj, size_t objsize);
@@ -387,8 +389,22 @@ bson_densify_full(PG_FUNCTION_ARGS)
 
 	if (densifyState == NULL)
 	{
-		densifyState = palloc0(sizeof(DensifyWindowState));
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg(
+					 "$densify requires a constant specification or an external parameter")));
+	}
+
+	if (fcinfo->flinfo->fn_extra == densifyState &&
+		WinGetCurrentPosition(winObject) == 0 &&
+		densifyState->partitionAwareState.isInitialized)
+	{
+		ReleaseDensifyWindowState(densifyState);
+		memset(densifyState, 0, sizeof(DensifyWindowState));
+
+		MemoryContext originalContext = MemoryContextSwitchTo(fcinfo->flinfo->fn_mcxt);
 		InitializeDensifyWindowState(densifyState, spec, DENSIFY_TYPE_FULL);
+		MemoryContextSwitchTo(originalContext);
 	}
 
 	PartitionAwareState *partitionState = GetValidPartitionAwareState(densifyState,
@@ -450,11 +466,10 @@ bson_densify_full(PG_FUNCTION_ARGS)
 		 * Since there is single partition this means we are done
 		 * free all the held resources.
 		 */
-		ReleasePartitionAwareState(&densifyState->partitionAwareState);
-		PgbsonFreeIfNotNull(densifyState->arguments.partitionByFields);
-		if (densifyState->partitionByTreeState != NULL)
+		ReleaseDensifyWindowState(densifyState);
+		if (fcinfo->flinfo->fn_extra == densifyState)
 		{
-			pfree(densifyState->partitionByTreeState);
+			fcinfo->flinfo->fn_extra = NULL;
 		}
 		pfree(densifyState);
 	}
@@ -747,12 +762,40 @@ ReleasePartitionAwareState(PartitionAwareState *partitionState)
 	}
 
 	/* Clear the previous partition state if any here */
-	PgbsonFreeIfNotNull(partitionState->evaluatedPartitionBy);
 	if (partitionState->partitionInfo != NULL)
 	{
+		HASH_SEQ_STATUS status;
+		DensifyFullEntry *entry;
+		hash_seq_init(&status, partitionState->partitionInfo);
+		while ((entry = hash_seq_search(&status)) != NULL)
+		{
+			if (entry->evaluatedPartitionBy != partitionState->evaluatedPartitionBy)
+			{
+				PgbsonFreeIfNotNull(entry->evaluatedPartitionBy);
+			}
+		}
 		hash_destroy(partitionState->partitionInfo);
 	}
+	PgbsonFreeIfNotNull(partitionState->evaluatedPartitionBy);
 	memset(partitionState, 0, sizeof(PartitionAwareState));
+}
+
+
+static inline void
+ReleaseDensifyWindowState(DensifyWindowState *state)
+{
+	ReleasePartitionAwareState(&state->partitionAwareState);
+	PgbsonFreeIfNotNull(state->arguments.partitionByFields);
+	if (state->partitionByTreeState != NULL)
+	{
+		FreeProjectionStateTree(state->partitionByTreeState);
+		pfree(state->partitionByTreeState);
+	}
+	PgbsonFreeIfNotNull(state->partitionByProjectionSpec);
+	if (state->arguments.timeUnit != DateUnit_Invalid)
+	{
+		pfree(DatumGetPointer(state->typedStep.intervalStep));
+	}
 }
 
 
@@ -1555,9 +1598,9 @@ CreateProjectionTreeStateForPartitionBy(DensifyWindowState *state, pgbson *parti
 	/* Exclude _id if any */
 	PgbsonWriterAppendInt32(&projectionSpecWriter, "_id", 3, 0);
 
-	pgbson *densifyPartitionProjectionSpec = PgbsonWriterGetPgbson(&projectionSpecWriter);
+	state->partitionByProjectionSpec = PgbsonWriterGetPgbson(&projectionSpecWriter);
 	bson_iter_t iter;
-	PgbsonInitIterator(densifyPartitionProjectionSpec, &iter);
+	PgbsonInitIterator(state->partitionByProjectionSpec, &iter);
 
 	bool forceProjectId = false;
 	bool allowInclusionExclusion = true;

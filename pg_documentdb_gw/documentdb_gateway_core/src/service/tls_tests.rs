@@ -10,10 +10,30 @@
  *-------------------------------------------------------------------------
  */
 
-use super::state_dir::{
-    resolve_tls_state_dir, tls_paths_for_dir, try_ensure_dir, user_local_state_dir,
-    DEFAULT_TLS_STATE_DIR, ENV_TLS_STATE_DIR,
+use std::pin::Pin;
+
+use openssl::{
+    asn1::Asn1Time,
+    hash::MessageDigest,
+    pkey::PKey,
+    rsa::Rsa,
+    ssl::{
+        Ssl, SslAcceptor, SslConnector, SslMethod, SslSession, SslSessionRef, SslVerifyMode,
+        SslVersion,
+    },
+    x509::{X509Builder, X509NameBuilder},
 };
+use tokio::io::AsyncWriteExt;
+use tokio_openssl::SslStream;
+
+use super::{
+    state_dir::{
+        resolve_tls_state_dir, tls_paths_for_dir, try_ensure_dir, user_local_state_dir,
+        DEFAULT_TLS_STATE_DIR, ENV_TLS_STATE_DIR,
+    },
+    CertificateBundle, TlsProvider,
+};
+use crate::service::docdb_openssl::create_tls_acceptor;
 
 #[test]
 fn tls_paths_for_dir_joins_with_conventional_filenames() {
@@ -142,4 +162,149 @@ fn resolve_tls_state_dir_propagates_error_from_uncreatable_env_override() {
         result.is_err(),
         "explicit env override that can't be created must error, not silently fall back"
     );
+}
+
+/// Builds the gateway acceptor around a freshly generated self-signed certificate.
+fn gateway_acceptor() -> SslAcceptor {
+    let private_key =
+        PKey::from_rsa(Rsa::generate(2048).expect("RSA key generation")).expect("private key wrap");
+    let mut name = X509NameBuilder::new().expect("name builder");
+    name.append_entry_by_text("CN", "localhost")
+        .expect("CN entry");
+    let name = name.build();
+
+    let mut certificate = X509Builder::new().expect("certificate builder");
+    certificate.set_version(2).expect("version");
+    certificate.set_subject_name(&name).expect("subject");
+    certificate.set_issuer_name(&name).expect("issuer");
+    certificate.set_pubkey(&private_key).expect("public key");
+    certificate
+        .set_not_before(&Asn1Time::days_from_now(0).expect("not before"))
+        .expect("set not before");
+    certificate
+        .set_not_after(&Asn1Time::days_from_now(1).expect("not after"))
+        .expect("set not after");
+    certificate
+        .sign(&private_key, MessageDigest::sha256())
+        .expect("sign");
+
+    let bundle = CertificateBundle {
+        certificate: certificate.build(),
+        private_key,
+        ca_chain: Vec::new(),
+    };
+    create_tls_acceptor(&bundle, None)
+        .expect("gateway acceptor")
+        .build()
+}
+
+fn test_connector(max_version: Option<SslVersion>) -> SslConnector {
+    let mut connector = SslConnector::builder(SslMethod::tls_client()).expect("connector builder");
+    connector.set_verify(SslVerifyMode::NONE);
+    connector
+        .set_max_proto_version(max_version)
+        .expect("max protocol version");
+    connector.build()
+}
+
+/// What the server observed for one completed handshake.
+struct ObservedHandshake {
+    logged_sni: String,
+    session_reused: bool,
+    client_session: SslSession,
+}
+
+/// Completes a TLS handshake over an in-memory pipe, optionally resuming
+/// `resume_session`, and closes the connection cleanly so the session stays
+/// resumable.
+async fn handshake(
+    acceptor: &SslAcceptor,
+    connector: &SslConnector,
+    client_sni: Option<&str>,
+    resume_session: Option<&SslSessionRef>,
+) -> ObservedHandshake {
+    let mut client_config = connector.configure().expect("client configuration");
+    client_config.set_use_server_name_indication(client_sni.is_some());
+    client_config.set_verify_hostname(false);
+    let mut client_ssl = client_config
+        .into_ssl(client_sni.unwrap_or("unused"))
+        .expect("client ssl");
+    if let Some(session) = resume_session {
+        // SAFETY: the session was produced by a handshake using this same
+        // connector's context, which is the requirement of `set_session`.
+        unsafe { client_ssl.set_session(session) }.expect("set client session");
+    }
+
+    let (client_io, server_io) = tokio::io::duplex(16 * 1024);
+    let mut client_stream = SslStream::new(client_ssl, client_io).expect("client stream");
+    let mut server_stream =
+        SslStream::new(Ssl::new(acceptor.context()).expect("server ssl"), server_io)
+            .expect("server stream");
+
+    let (client_result, server_result) = tokio::join!(
+        Pin::new(&mut client_stream).connect(),
+        Pin::new(&mut server_stream).accept()
+    );
+    client_result.expect("client handshake");
+    server_result.expect("server handshake");
+
+    let observed = ObservedHandshake {
+        logged_sni: TlsProvider::sni_host_name_for_logging(server_stream.ssl()).to_string(),
+        session_reused: server_stream.ssl().session_reused(),
+        client_session: client_stream
+            .ssl()
+            .session()
+            .expect("client session")
+            .to_owned(),
+    };
+    let _ = tokio::join!(client_stream.shutdown(), server_stream.shutdown());
+    observed
+}
+
+#[tokio::test]
+async fn sni_host_name_returns_host_sent_by_client() {
+    let observed = handshake(
+        &gateway_acceptor(),
+        &test_connector(None),
+        Some("cluster.example.com"),
+        None,
+    )
+    .await;
+    assert_eq!(observed.logged_sni, "cluster.example.com");
+}
+
+#[tokio::test]
+async fn sni_host_name_is_empty_when_client_sends_none() {
+    let observed = handshake(&gateway_acceptor(), &test_connector(None), None, None).await;
+    assert_eq!(observed.logged_sni, "");
+}
+
+#[tokio::test]
+async fn sni_host_name_escapes_control_characters() {
+    let observed = handshake(
+        &gateway_acceptor(),
+        &test_connector(None),
+        Some("evil\nforged\rline"),
+        None,
+    )
+    .await;
+    assert_eq!(observed.logged_sni, "evil\\nforged\\rline");
+}
+
+#[tokio::test]
+async fn sni_host_name_survives_tls12_session_resumption() {
+    let acceptor = gateway_acceptor();
+    let connector = test_connector(Some(SslVersion::TLS1_2));
+    let first = handshake(&acceptor, &connector, Some("cluster.example.com"), None).await;
+    assert!(!first.session_reused);
+
+    let resumed = handshake(
+        &acceptor,
+        &connector,
+        Some("cluster.example.com"),
+        Some(&first.client_session),
+    )
+    .await;
+    assert!(resumed.session_reused, "the second handshake should resume");
+    assert_eq!(resumed.logged_sni, "cluster.example.com");
 }

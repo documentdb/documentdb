@@ -14,6 +14,9 @@ SET citus.enable_local_execution TO off;
 
 SELECT documentdb_api.create_collection('collation_default_dist_db', 'default_match');
 
+SELECT documentdb_api.shard_collection(
+    'collation_default_dist_db', 'default_match', '{ "_id": "hashed" }', false);
+
 UPDATE documentdb_api_catalog.collections
 SET options = '{ "collation": { "locale": "fr", "strength": 1 } }'::documentdb_core.bson
 WHERE database_name = 'collation_default_dist_db' AND collection_name = 'default_match';
@@ -24,9 +27,6 @@ SELECT documentdb_api.insert_one(
     'collation_default_dist_db', 'default_match', '{ "_id": 2, "value": "CAFÉ" }');
 SELECT documentdb_api.insert_one(
     'collation_default_dist_db', 'default_match', '{ "_id": 3, "value": "CAFE" }');
-
-SELECT documentdb_api.shard_collection(
-    'collation_default_dist_db', 'default_match', '{ "_id": "hashed" }', false);
 
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;

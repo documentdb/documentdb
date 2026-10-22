@@ -1,0 +1,118 @@
+-- Copyright (c) DocumentDB. All rights reserved.
+-- SPDX-License-Identifier: MIT
+SET search_path TO documentdb_core, documentdb_api_catalog, documentdb_api, public;
+SET documentdb.next_collection_id TO 9820000;
+SET documentdb.next_collection_index_id TO 9820000;
+\set VERBOSITY sqlstate
+-- All five switches are registered, default on, and can be overridden.
+SELECT name, setting, boot_val
+FROM pg_settings
+WHERE name IN (
+    'documentdb.enable_bson_type_argument_validation',
+    'documentdb.enable_read_concern_validation',
+    'documentdb.enable_session_argument_validation',
+    'documentdb.enable_getmore_argument_validation',
+    'documentdb.enable_server_status_command')
+ORDER BY name;
+                      name                       | setting | boot_val 
+-------------------------------------------------+---------+----------
+ documentdb.enable_bson_type_argument_validation | on      | on
+ documentdb.enable_getmore_argument_validation   | on      | on
+ documentdb.enable_read_concern_validation       | on      | on
+ documentdb.enable_server_status_command         | on      | on
+ documentdb.enable_session_argument_validation   | on      | on
+(5 rows)
+
+SET documentdb.enable_read_concern_validation TO off;
+SET documentdb.enable_session_argument_validation TO off;
+SET documentdb.enable_getmore_argument_validation TO off;
+SET documentdb.enable_server_status_command TO off;
+SET documentdb.enable_bson_type_argument_validation TO off;
+SELECT name, setting
+FROM pg_settings
+WHERE name IN (
+    'documentdb.enable_bson_type_argument_validation',
+    'documentdb.enable_read_concern_validation',
+    'documentdb.enable_session_argument_validation',
+    'documentdb.enable_getmore_argument_validation',
+    'documentdb.enable_server_status_command')
+ORDER BY name;
+                      name                       | setting 
+-------------------------------------------------+---------
+ documentdb.enable_bson_type_argument_validation | off
+ documentdb.enable_getmore_argument_validation   | off
+ documentdb.enable_read_concern_validation       | off
+ documentdb.enable_server_status_command         | off
+ documentdb.enable_session_argument_validation   | off
+(5 rows)
+
+-- Disabled BSON validation restores the legacy error codes and keyword support.
+SELECT documentdb_api.find_and_modify('validation_flags', '{"findAndModify":42}');
+ERROR:  M0001
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('validation_flags', '{"listIndexes":42}');
+ERROR:  M0004
+CALL documentdb_api.drop_indexes('validation_flags', '{"dropIndexes":42,"index":"a_1"}');
+ERROR:  M0004
+SELECT documentdb_api.find_and_modify('validation_flags', '{"findAndModify":"items","remove":true,"let":null}');
+ERROR:  M0004
+SELECT documentdb_api.find_and_modify('validation_flags', '{"findAndModify":"items","remove":true,"hint":{"a":1}}');
+ERROR:  M000U
+SELECT bson_dollar_json_schema('{}', '{"$jsonSchema":{"title":"valid"}}');
+ERROR:  M0003
+SELECT bson_dollar_json_schema('{"a":4}', '{"$jsonSchema":{"properties":{"a":{"multipleOf":-2}}}}');
+ bson_dollar_json_schema 
+-------------------------
+ t
+(1 row)
+
+RESET documentdb.enable_bson_type_argument_validation;
+RESET documentdb.enable_read_concern_validation;
+RESET documentdb.enable_session_argument_validation;
+RESET documentdb.enable_getmore_argument_validation;
+RESET documentdb.enable_server_status_command;
+SELECT name, setting
+FROM pg_settings
+WHERE name IN (
+    'documentdb.enable_bson_type_argument_validation',
+    'documentdb.enable_read_concern_validation',
+    'documentdb.enable_session_argument_validation',
+    'documentdb.enable_getmore_argument_validation',
+    'documentdb.enable_server_status_command')
+ORDER BY name;
+                      name                       | setting 
+-------------------------------------------------+---------
+ documentdb.enable_bson_type_argument_validation | on
+ documentdb.enable_getmore_argument_validation   | on
+ documentdb.enable_read_concern_validation       | on
+ documentdb.enable_server_status_command         | on
+ documentdb.enable_session_argument_validation   | on
+(5 rows)
+
+-- Restoring the defaults reenables the strict backend behavior.
+SELECT documentdb_api.find_and_modify('validation_flags', '{"findAndModify":42}');
+ERROR:  M000Q
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('validation_flags', '{"listIndexes":42}');
+ERROR:  M000Q
+CALL documentdb_api.drop_indexes('validation_flags', '{"dropIndexes":42,"index":"a_1"}');
+ERROR:  M000Q
+SELECT documentdb_api.find_and_modify('validation_flags', '{"findAndModify":"items","remove":true,"let":null}');
+                                                          find_and_modify                                                           
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""lastErrorObject"" : { ""n"" : { ""$numberInt"" : ""0"" } }, ""value"" : null, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT documentdb_api.find_and_modify('validation_flags', '{"findAndModify":"items","remove":true,"hint":{"a":1}}');
+                                                          find_and_modify                                                           
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""lastErrorObject"" : { ""n"" : { ""$numberInt"" : ""0"" } }, ""value"" : null, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT bson_dollar_json_schema('{}', '{"$jsonSchema":{"title":"valid"}}');
+ bson_dollar_json_schema 
+-------------------------
+ t
+(1 row)
+
+SELECT bson_dollar_json_schema('{"a":4}', '{"$jsonSchema":{"properties":{"a":{"multipleOf":-2}}}}');
+ERROR:  M0003
+\set VERBOSITY default

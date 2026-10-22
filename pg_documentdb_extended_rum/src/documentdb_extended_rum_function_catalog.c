@@ -38,6 +38,10 @@ extern PGDLLIMPORT Datum documentdb_rum_repair_revive_all_pages_and_tuples(
 extern PGDLLIMPORT Datum documentdb_rum_test_set_incomplete_split_on_page(
 	PG_FUNCTION_ARGS);
 extern PGDLLIMPORT Datum documentdb_rum_get_index_stats(PG_FUNCTION_ARGS);
+extern PGDLLIMPORT Datum documentdb_rum_get_meta_page_info_index(PG_FUNCTION_ARGS);
+extern PGDLLIMPORT Datum documentdb_rum_page_get_stats_index(PG_FUNCTION_ARGS);
+extern PGDLLIMPORT Datum documentdb_rum_page_get_entries_index(PG_FUNCTION_ARGS);
+extern PGDLLIMPORT Datum documentdb_rum_page_get_data_items_index(PG_FUNCTION_ARGS);
 
 /* Built-in rmgr function catalog */
 extern PGDLLIMPORT Datum builtin_rmgr_try_explain_documentdb_rum_index(PG_FUNCTION_ARGS);
@@ -67,6 +71,14 @@ extern PGDLLIMPORT Datum builtin_rmgr_documentdb_rum_repair_revive_all_pages_and
 extern PGDLLIMPORT Datum builtin_rmgr_documentdb_rum_test_set_incomplete_split_on_page(
 	PG_FUNCTION_ARGS);
 extern PGDLLIMPORT Datum builtin_rmgr_documentdb_rum_get_index_stats(PG_FUNCTION_ARGS);
+extern PGDLLIMPORT Datum builtin_rmgr_documentdb_rum_get_meta_page_info_index(
+	PG_FUNCTION_ARGS);
+extern PGDLLIMPORT Datum builtin_rmgr_documentdb_rum_page_get_stats_index(
+	PG_FUNCTION_ARGS);
+extern PGDLLIMPORT Datum builtin_rmgr_documentdb_rum_page_get_entries_index(
+	PG_FUNCTION_ARGS);
+extern PGDLLIMPORT Datum builtin_rmgr_documentdb_rum_page_get_data_items_index(
+	PG_FUNCTION_ARGS);
 
 CoreFunctionCatalog
 GetCoreFunctionCatalog(void)
@@ -96,6 +108,13 @@ GetCoreFunctionCatalog(void)
 			   .documentdb_rum_test_set_incomplete_split_on_page =
 				   documentdb_rum_test_set_incomplete_split_on_page,
 			   .documentdb_rum_get_stats = documentdb_rum_get_index_stats,
+			   .documentdb_rum_get_meta_page_info_index =
+				   documentdb_rum_get_meta_page_info_index,
+			   .documentdb_rum_page_get_stats_index = documentdb_rum_page_get_stats_index,
+			   .documentdb_rum_page_get_entries_index =
+				   documentdb_rum_page_get_entries_index,
+			   .documentdb_rum_page_get_data_items_index =
+				   documentdb_rum_page_get_data_items_index,
 	};
 }
 
@@ -136,5 +155,13 @@ GetBuiltInRmgrFunctionCatalog(void)
 			   .documentdb_rum_test_set_incomplete_split_on_page =
 				   builtin_rmgr_documentdb_rum_test_set_incomplete_split_on_page,
 			   .documentdb_rum_get_stats = builtin_rmgr_documentdb_rum_get_index_stats,
+			   .documentdb_rum_get_meta_page_info_index =
+				   builtin_rmgr_documentdb_rum_get_meta_page_info_index,
+			   .documentdb_rum_page_get_stats_index =
+				   builtin_rmgr_documentdb_rum_page_get_stats_index,
+			   .documentdb_rum_page_get_entries_index =
+				   builtin_rmgr_documentdb_rum_page_get_entries_index,
+			   .documentdb_rum_page_get_data_items_index =
+				   builtin_rmgr_documentdb_rum_page_get_data_items_index,
 	};
 }

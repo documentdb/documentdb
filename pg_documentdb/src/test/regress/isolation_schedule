@@ -3,3 +3,4 @@ test: isolation-rename-collection
 test: isolation-bulk-write-lock-timeout
 test: isolation-currentop-compact
 test: isolation-drop-indexes-deadlock
+test: isolation-write-collation

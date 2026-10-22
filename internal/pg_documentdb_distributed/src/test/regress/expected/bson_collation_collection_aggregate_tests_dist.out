@@ -15,6 +15,13 @@ NOTICE:  creating collection
  t
 (1 row)
 
+SELECT documentdb_api.shard_collection(
+    'collation_aggregate_dist_db', 'source', '{ "_id": "hashed" }', false);
+ shard_collection
+---------------------------------------------------------------------
+
+(1 row)
+
 UPDATE documentdb_api_catalog.collections
 SET options = '{ "collation": { "locale": "en", "strength": 1, "numericOrdering": true } }'::documentdb_core.bson
 WHERE database_name = 'collation_aggregate_dist_db' AND collection_name = 'source';
@@ -54,13 +61,6 @@ SELECT documentdb_api.insert_one(
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
-(1 row)
-
-SELECT documentdb_api.shard_collection(
-    'collation_aggregate_dist_db', 'source', '{ "_id": "hashed" }', false);
- shard_collection 
----------------------------------------------------------------------
- 
 (1 row)
 
 BEGIN;
@@ -374,14 +374,6 @@ NOTICE:  creating collection
  t
 (1 row)
 
-UPDATE documentdb_api_catalog.collections
-SET options = '{ "collation": {
-    "locale": "en",
-    "strength": 1,
-    "numericOrdering": true
-} }'::documentdb_core.bson
-WHERE database_name = 'collation_nested_dist_db'
-  AND collection_name = 'source';
 -- Foreign collection defaults must not replace the command-wide collation.
 UPDATE documentdb_api_catalog.collections
 SET options = '{ "collation": { "locale": "simple" } }'::documentdb_core.bson
@@ -557,6 +549,21 @@ SELECT documentdb_api.shard_collection(
  shard_collection 
 ---------------------------------------------------------------------
  
+(1 row)
+
+-- Set the source default after sharding to exercise inherited collation on reads.
+UPDATE documentdb_api_catalog.collections
+SET options = '{ "collation": {
+    "locale": "en",
+    "strength": 1,
+    "numericOrdering": true
+} }'::documentdb_core.bson
+WHERE database_name = 'collation_nested_dist_db'
+  AND collection_name = 'source';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+ invalidate_collection_cache
+---------------------------------------------------------------------
+
 (1 row)
 
 BEGIN;

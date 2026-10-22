@@ -33,6 +33,7 @@ typedef enum CustomPrivilegeAction
 	CustomPrivilegeAction_Insert = 1 << 1,
 	CustomPrivilegeAction_Update = 1 << 2,
 	CustomPrivilegeAction_Remove = 1 << 3,
+	CustomPrivilegeAction_ChangeStream = 1 << 4
 } CustomPrivilegeAction;
 
 /*

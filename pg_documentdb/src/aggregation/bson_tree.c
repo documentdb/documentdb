@@ -831,7 +831,9 @@ FreeBsonPathNode(BsonPathNode *node)
 		return;
 	}
 
-	if (node->nodeType == NodeType_LeafField)
+	if (node->nodeType == NodeType_LeafField ||
+		node->nodeType == NodeType_LeafIncluded ||
+		node->nodeType == NodeType_LeafExcluded)
 	{
 		pfree(node);
 	}

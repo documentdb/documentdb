@@ -19,7 +19,7 @@
 
 #include "background_worker/background_worker_job.h"
 
-#define MAX_BACKGROUND_WORKER_JOBS 5
+#define MAX_BACKGROUND_WORKER_JOBS 10
 
 typedef enum
 {
@@ -123,8 +123,8 @@ void RegisterBackgroundWorkerJobStats(int jobId);
 void GetBackgroundWorkerJobStatsSnapshot(BackgroundWorkerJobStatsSnapshot *snapshot);
 int FindBackgroundWorkerJobStatsIndex(int jobId,
 									  const BackgroundWorkerJobStatsSnapshot *snapshot);
-void PublishBackgroundWorkerJobCompletion(int jobId,
-										  BackgroundWorkerJobResult result,
+void PublishBackgroundWorkerJobCompletion(int jobId, BackgroundWorkerJobResult result,
+										  double *observedAttemptDurationMilliseconds,
 										  TimestampTz attemptStartTimestamp,
 										  instr_time attemptStartTime,
 										  bool hasAttemptObservationInterval,

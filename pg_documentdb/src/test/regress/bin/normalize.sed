@@ -12,6 +12,10 @@
 # Normalize the temporary database role used by local and pipeline test clusters.
 s/(via connection to "[^"]* user=)[^ ]+/\1REGRESSION_USER/g
 
+# The privilege-check wrapper adds an internal SPI frame to create-index errors.
+/^(CONTEXT:  )?SQL statement "SELECT .*create_indexes_dispatch\(/d
+/^DEBUG:  executing "SELECT .*create_indexes_dispatch\(.*" via SPI$/d
+
 s/^-[+-]{2,}$/---------------------------------------------------------------------/g
 s/^\s+/ /g
 s/\s+$//g

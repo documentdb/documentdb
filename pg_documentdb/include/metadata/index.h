@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * include/metadata/index.h
  *
@@ -281,6 +282,7 @@ int CollectionIdGetIndexCount(uint64 collectionId);
 int CollectionIdsGetIndexCount(ArrayType *collectionIdsArray);
 bool IndexSpecIsWildcardIndex(const IndexSpec *indexSpec);
 bool IndexSpecIsOrderedIndex(const IndexSpec *indexSpec);
+bool IsCollatedBuiltinIdIndex(const IndexSpec *indexSpec);
 
 
 /* modify/write index metadata */

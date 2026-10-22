@@ -170,3 +170,119 @@ SELECT cmd_type, index_cmd FROM documentdb_api_catalog.documentdb_index_queue WH
 \d documentdb_data.documents_:skip_cleanup_collection_id
 
 RESET documentdb.skipIndexCleanupOnReindex;
+
+------------------------------------------------------------
+-- Test: reindex via create with planner statistics enabled moves the
+-- statistics dependency to the rebuilt index so the old index can be dropped
+-- concurrently. Covers both unsharded and sharded collections, and shows the
+-- statistics objects on the distributed table and on its shards.
+------------------------------------------------------------
+SET citus.override_table_visibility TO off;
+SET documentdb.enablePerCollectionPlannerStatistics TO on;
+
+-- Statistics objects per level, and how many of them depend on an index
+PREPARE reindex_stats_deps(bigint) AS
+SELECT CASE WHEN c.relname = 'documents_' || $1 THEN 'table' ELSE 'shard' END AS level,
+       COUNT(*) AS stats_objects,
+       COUNT(*) FILTER (WHERE EXISTS (
+           SELECT 1 FROM pg_depend d JOIN pg_class i ON i.oid = d.refobjid AND i.relkind = 'i'
+           WHERE d.classid = 'pg_statistic_ext'::regclass AND d.objid = st.oid
+             AND d.refclassid = 'pg_class'::regclass)) AS depends_on_index
+FROM pg_statistic_ext st JOIN pg_class c ON c.oid = st.stxrelid
+WHERE c.relnamespace = 'documentdb_data'::regnamespace
+  AND (c.relname = 'documents_' || $1 OR c.relname LIKE 'documents_' || $1 || '\_%')
+GROUP BY 1 ORDER BY 1;
+
+-- The index the distributed table's statistics object depends on
+PREPARE reindex_stats_index(bigint) AS
+SELECT st.stxname, d.refobjid::regclass AS depends_on_index, d.deptype
+FROM pg_statistic_ext st
+JOIN pg_depend d ON d.classid = 'pg_statistic_ext'::regclass AND d.objid = st.oid AND d.refclassid = 'pg_class'::regclass
+JOIN pg_class i ON i.oid = d.refobjid AND i.relkind = 'i'
+WHERE st.stxrelid = ('documentdb_data.documents_' || $1)::regclass ORDER BY 1;
+
+-- Remaining _ccold indexes per level
+PREPARE reindex_ccold_count(bigint) AS
+SELECT CASE WHEN t.relname = 'documents_' || $1 THEN 'table' ELSE 'shard' END AS level, COUNT(*) AS ccold_indexes
+FROM pg_index x JOIN pg_class i ON i.oid = x.indexrelid JOIN pg_class t ON t.oid = x.indrelid
+WHERE t.relnamespace = 'documentdb_data'::regnamespace
+  AND (t.relname = 'documents_' || $1 OR t.relname LIKE 'documents_' || $1 || '\_%')
+  AND i.relname LIKE '%\_ccold%'
+GROUP BY 1 ORDER BY 1;
+
+-- Unsharded collection
+SELECT documentdb_api.create_collection('reindex_dist_db', 'reindex_with_stats');
+SELECT COUNT(documentdb_api.insert_one('reindex_dist_db', 'reindex_with_stats', FORMAT('{"_id": %s, "a": %s}', i, i)::documentdb_core.bson)) FROM generate_series(1, 10) i;
+SELECT documentdb_api.coll_mod('reindex_dist_db', 'reindex_with_stats', '{ "collMod": "reindex_with_stats", "enableStats": true }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('reindex_dist_db',
+  '{ "createIndexes": "reindex_with_stats", "indexes": [ { "key": { "a": 1 }, "name": "a_1" } ] }', true);
+SELECT collection_id AS stats_coll_id FROM documentdb_api_catalog.collections WHERE database_name = 'reindex_dist_db' AND collection_name = 'reindex_with_stats' \gset
+EXECUTE reindex_stats_deps(:stats_coll_id);
+EXECUTE reindex_stats_index(:stats_coll_id);
+
+SELECT documentdb_api.coll_mod('reindex_dist_db', 'reindex_with_stats', '{ "collMod": "reindex_with_stats", "index": { "name": "a_1", "reindex": true, "updateOptions": true } }');
+CALL documentdb_api_internal.build_index_concurrently(1);
+CALL documentdb_api_internal.build_index_background(1);
+SELECT cmd_type, index_cmd FROM documentdb_api_catalog.documentdb_index_queue WHERE index_id >= 1984300 AND index_id <= 1984400 ORDER BY index_id;
+EXECUTE reindex_ccold_count(:stats_coll_id);
+EXECUTE reindex_stats_deps(:stats_coll_id);
+EXECUTE reindex_stats_index(:stats_coll_id);
+
+-- A _ccold index left behind can be dropped concurrently by hand
+SET documentdb.skipIndexCleanupOnReindex TO true;
+SELECT documentdb_api.coll_mod('reindex_dist_db', 'reindex_with_stats', '{ "collMod": "reindex_with_stats", "index": { "name": "a_1", "reindex": true, "updateOptions": true } }');
+CALL documentdb_api_internal.build_index_concurrently(1);
+CALL documentdb_api_internal.build_index_background(1);
+RESET documentdb.skipIndexCleanupOnReindex;
+EXECUTE reindex_ccold_count(:stats_coll_id);
+SELECT 'documentdb_data.documents_rum_index_' || index_id || '_ccold' AS ccold_index_name
+FROM documentdb_api_catalog.collection_indexes WHERE collection_id = :stats_coll_id AND (index_spec).index_name = 'a_1' \gset
+DROP INDEX CONCURRENTLY :ccold_index_name;
+EXECUTE reindex_ccold_count(:stats_coll_id);
+EXECUTE reindex_stats_deps(:stats_coll_id);
+EXECUTE reindex_stats_index(:stats_coll_id);
+
+-- Dropping the rebuilt index removes the statistics objects on the table and its shards
+CALL documentdb_api.drop_indexes('reindex_dist_db', '{ "dropIndexes": "reindex_with_stats", "index": "a_1" }');
+EXECUTE reindex_stats_deps(:stats_coll_id);
+
+-- Sharded collection
+SELECT documentdb_api.create_collection('reindex_dist_db', 'reindex_with_stats_sharded');
+SELECT COUNT(documentdb_api.insert_one('reindex_dist_db', 'reindex_with_stats_sharded', FORMAT('{"_id": %s, "a": %s}', i, i)::documentdb_core.bson)) FROM generate_series(1, 20) i;
+SELECT documentdb_api.shard_collection('reindex_dist_db', 'reindex_with_stats_sharded', '{ "_id": "hashed" }', false);
+SELECT documentdb_api.coll_mod('reindex_dist_db', 'reindex_with_stats_sharded', '{ "collMod": "reindex_with_stats_sharded", "enableStats": true }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('reindex_dist_db',
+  '{ "createIndexes": "reindex_with_stats_sharded", "indexes": [ { "key": { "a": 1 }, "name": "a_1" } ] }', true);
+SELECT collection_id AS sharded_stats_coll_id FROM documentdb_api_catalog.collections WHERE database_name = 'reindex_dist_db' AND collection_name = 'reindex_with_stats_sharded' \gset
+EXECUTE reindex_stats_deps(:sharded_stats_coll_id);
+EXECUTE reindex_stats_index(:sharded_stats_coll_id);
+
+SELECT documentdb_api.coll_mod('reindex_dist_db', 'reindex_with_stats_sharded', '{ "collMod": "reindex_with_stats_sharded", "index": { "name": "a_1", "reindex": true, "updateOptions": true } }');
+CALL documentdb_api_internal.build_index_concurrently(1);
+CALL documentdb_api_internal.build_index_background(1);
+SELECT cmd_type, index_cmd FROM documentdb_api_catalog.documentdb_index_queue WHERE index_id >= 1984300 AND index_id <= 1984400 ORDER BY index_id;
+EXECUTE reindex_ccold_count(:sharded_stats_coll_id);
+EXECUTE reindex_stats_deps(:sharded_stats_coll_id);
+EXECUTE reindex_stats_index(:sharded_stats_coll_id);
+
+SET documentdb.skipIndexCleanupOnReindex TO true;
+SELECT documentdb_api.coll_mod('reindex_dist_db', 'reindex_with_stats_sharded', '{ "collMod": "reindex_with_stats_sharded", "index": { "name": "a_1", "reindex": true, "updateOptions": true } }');
+CALL documentdb_api_internal.build_index_concurrently(1);
+CALL documentdb_api_internal.build_index_background(1);
+RESET documentdb.skipIndexCleanupOnReindex;
+EXECUTE reindex_ccold_count(:sharded_stats_coll_id);
+SELECT 'documentdb_data.documents_rum_index_' || index_id || '_ccold' AS ccold_index_name
+FROM documentdb_api_catalog.collection_indexes WHERE collection_id = :sharded_stats_coll_id AND (index_spec).index_name = 'a_1' \gset
+DROP INDEX CONCURRENTLY :ccold_index_name;
+EXECUTE reindex_ccold_count(:sharded_stats_coll_id);
+EXECUTE reindex_stats_deps(:sharded_stats_coll_id);
+EXECUTE reindex_stats_index(:sharded_stats_coll_id);
+
+CALL documentdb_api.drop_indexes('reindex_dist_db', '{ "dropIndexes": "reindex_with_stats_sharded", "index": "a_1" }');
+EXECUTE reindex_stats_deps(:sharded_stats_coll_id);
+
+DEALLOCATE reindex_stats_deps;
+DEALLOCATE reindex_stats_index;
+DEALLOCATE reindex_ccold_count;
+RESET documentdb.enablePerCollectionPlannerStatistics;
+RESET citus.override_table_visibility;

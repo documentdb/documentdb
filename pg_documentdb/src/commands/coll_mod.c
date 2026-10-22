@@ -1205,10 +1205,16 @@ ValidateIndexForTTLConversion(const IndexSpec *indexSpec, int expireAfterSeconds
 	bool ignoreUnknownIndexOptions = true;
 	bool buildAsUniqueForPrepareUnique = false;
 	const bool useTTLIndexInvalidOptionsError = true;
+
+	/* We do not need to send a defaultCollation here since the original index
+	 * would have registered the default collation in the spec already by construction.
+	 */
+	const bson_value_t *defaultCollation = NULL;
 	ParseIndexDefDocumentInternal(&indexSpecIter, indexSpecRepresentation,
 								  ignoreUnknownIndexOptions,
 								  buildAsUniqueForPrepareUnique,
-								  useTTLIndexInvalidOptionsError);
+								  useTTLIndexInvalidOptionsError,
+								  defaultCollation);
 }
 
 

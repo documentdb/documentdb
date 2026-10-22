@@ -1702,7 +1702,6 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
   '{ "createIndexes": "coll_sample", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "sample_a_1_b_1" } ] }', true);
 
 SET documentdb.forceDisableSeqScan TO on;
-SET documentdb.enableDollarSampleReservoirScan TO on;
 SET documentdb.enable_merge_sort_for_in_prefix TO on;
 
 -- Correctness: a bounded $sample returns exactly the requested size (the matching
@@ -1728,7 +1727,6 @@ FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
       '{ "aggregate": "coll_sample", "pipeline": [ { "$match": { "a": { "$in": [1, 4] } } }, { "$sort": { "b": 1 } }, { "$sample": { "size": 2 } } ] }')
 $cmd$) AS line;
 
-RESET documentdb.enableDollarSampleReservoirScan;
 RESET documentdb.enable_merge_sort_for_in_prefix;
 
 -- =====================================================================

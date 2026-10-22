@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * src/commands/create_indexes_background.c
  *
@@ -57,6 +58,7 @@
 #include "utils/guc_utils.h"
 #include "utils/list_utils.h"
 #include "utils/query_utils.h"
+#include "utils/role_utils.h"
 #include "utils/feature_counter.h"
 #include "utils/index_utils.h"
 #include "utils/version_utils.h"
@@ -990,7 +992,8 @@ ParseReindexSpec(pgbson *reindexSpec, char **collectionName, bool *updateOptions
 
 static char *
 GenerateIndexCreateSpecForUpdateOptions(IndexDetails *indexDef, bool
-										buildAsUniqueForPrepareUnique)
+										buildAsUniqueForPrepareUnique,
+										const bson_value_t *defaultCollation)
 {
 	/* First convert indexSpec to bson */
 	pgbson *indexSpecBson = IndexSpecAsBson(&indexDef->indexSpec);
@@ -1001,11 +1004,13 @@ GenerateIndexCreateSpecForUpdateOptions(IndexDetails *indexDef, bool
 	PgbsonInitIterator(indexSpecBson, &indexSpecIter);
 	bool ignoreUnknownIndexOptions = true;
 	const bool useTTLIndexInvalidOptionsError = false;
+
 	IndexDef *indexDefinition = ParseIndexDefDocumentInternal(&indexSpecIter,
 															  specJsonRepresentation,
 															  ignoreUnknownIndexOptions,
 															  buildAsUniqueForPrepareUnique,
-															  useTTLIndexInvalidOptionsError);
+															  useTTLIndexInvalidOptionsError,
+															  defaultCollation);
 
 	bool isBackgroundBuild = true;
 	bool createIndexesConcurrently = true;
@@ -1044,6 +1049,8 @@ command_reindex_index_background_internal(PG_FUNCTION_ARGS)
 	}
 
 	uint64 collectionId = collection->collectionId;
+	const bson_value_t *defaultCollation =
+		FetchAndCloneCollationSpecForCollection(collection);
 
 	/*
 	 * Please note that the advisory lock will be released after first transaction commit.
@@ -1080,6 +1087,12 @@ command_reindex_index_background_internal(PG_FUNCTION_ARGS)
 		}
 
 		StringInfo cmdStr = makeStringInfo();
+
+		/*
+		 * TODO_COLLATION: reindexing _id_ rebuilds only the primary key; the
+		 * collated unique index of a collection created with a collation is not
+		 * rebuilt, and updateOptions for it is only rejected through collMod.
+		 */
 		if (indexDef->indexSpec.indexUnique == BoolIndexOption_True)
 		{
 			if (!EnableUniqueReindex)
@@ -1100,7 +1113,8 @@ command_reindex_index_background_internal(PG_FUNCTION_ARGS)
 			{
 				bool buildAsUnique = true;
 				indexBuildCmd = GenerateIndexCreateSpecForUpdateOptions(indexDef,
-																		buildAsUnique);
+																		buildAsUnique,
+																		defaultCollation);
 			}
 			else
 			{
@@ -1153,7 +1167,8 @@ command_reindex_index_background_internal(PG_FUNCTION_ARGS)
 		{
 			bool buildAsUnique = false;
 			const char *indexBuildCmd = GenerateIndexCreateSpecForUpdateOptions(indexDef,
-																				buildAsUnique);
+																				buildAsUnique,
+																				defaultCollation);
 
 			const char *suffix = strstr(indexBuildCmd, "USING");
 			if (!suffix)
@@ -1232,17 +1247,38 @@ command_create_indexes_background_internal(PG_FUNCTION_ARGS)
 	CreateIndexesResult *result = palloc0(sizeof(CreateIndexesResult));
 	MemoryContext savedMemoryContext = CurrentMemoryContext;
 	ResourceOwner oldOwner = CurrentResourceOwner;
+	pgbson *volatile response = NULL;
 
-	/* use a subtransaction to correctly handle failures */
+	/*
+	 * Keep parsing and execution in a subtransaction so every failure retains
+	 * the established background response shape.
+	 */
 	BeginInternalSubTransaction(NULL);
 	PG_TRY();
 	{
-		bool buildAsUniqueForPrepareUnique = false;
-		CreateIndexesArg createIndexesArg = ParseCreateIndexesArg(&dbNameDatum,
-																  arg,
-																  buildAsUniqueForPrepareUnique);
-		*result = SubmitCreateIndexesRequest(dbNameDatum, createIndexesArg, snapshotSet);
+		CreateIndexesArg createIndexesArg = ParseCreateIndexesArg(&dbNameDatum, arg);
 
+		MemoryContextSwitchTo(savedMemoryContext);
+
+		pgbson *innerResponse = NULL;
+		if (IsClusterVersionAtleast(DocDB_V1, 2, 0))
+		{
+			bool skipCollectionCreateCheck = true;
+			innerResponse = RunCreateIndexesWithPrivilegeChecks(
+				dbNameDatum, createIndexesArg.collectionName, arg,
+				CreateIndexesPrivilegeMode_Background,
+				skipCollectionCreateCheck);
+		}
+		else
+		{
+			List *optionalIndexList = NIL;
+			CreateIndexesResult innerResult =
+				SubmitCreateIndexesRequest(
+					dbNameDatum, createIndexesArg, snapshotSet, optionalIndexList);
+			innerResponse = MakeCreateIndexesMsg(&innerResult);
+		}
+
+		response = innerResponse;
 		ReleaseCurrentSubTransaction();
 		MemoryContextSwitchTo(savedMemoryContext);
 		CurrentResourceOwner = oldOwner;
@@ -1254,6 +1290,7 @@ command_create_indexes_background_internal(PG_FUNCTION_ARGS)
 		 */
 		MemoryContextSwitchTo(savedMemoryContext);
 		ErrorData *edata = CopyErrorDataAndFlush();
+		response = NULL;
 		result->errcode = edata->sqlerrcode;
 		result->errmsg = edata->message;
 
@@ -1272,7 +1309,14 @@ command_create_indexes_background_internal(PG_FUNCTION_ARGS)
 	}
 	PG_END_TRY();
 
-	PG_RETURN_POINTER(MakeCreateIndexesMsg(result));
+	pfree(snapshotSet);
+
+	if (response == NULL)
+	{
+		response = MakeCreateIndexesMsg(result);
+	}
+
+	PG_RETURN_POINTER((pgbson *) response);
 }
 
 
@@ -1461,6 +1505,22 @@ setup_index_queue_table(PG_FUNCTION_ARGS)
 									&isNull);
 	}
 
+	if (majorVersion == DocDB_V1 &&
+		minorVersion == 2 &&
+		patchVersion == 0)
+	{
+		StringInfo grantStr = makeStringInfo();
+		bool isNull = false;
+		bool readOnly = false;
+		appendStringInfo(grantStr,
+						 "GRANT INSERT ON TABLE %s TO %s",
+						 quote_qualified_identifier(ApiCatalogSchemaNameV2,
+													GetIndexQueueTableName()),
+						 quote_identifier(API_RBAC_API_INDEX_CREATE_ROLE));
+		ExtensionExecuteQueryViaSPI(grantStr->data, readOnly, SPI_OK_UTILITY,
+									&isNull);
+	}
+
 	PG_RETURN_VOID();
 }
 
@@ -1471,7 +1531,8 @@ setup_index_queue_table(PG_FUNCTION_ARGS)
  */
 CreateIndexesResult
 SubmitCreateIndexesRequest(Datum dbNameDatum,
-						   CreateIndexesArg createIndexesArg, bool *volatile snapshotSet)
+						   CreateIndexesArg createIndexesArg, bool *volatile snapshotSet,
+						   List *optionalIndexDefList)
 {
 	char *collectionName = createIndexesArg.collectionName;
 	Datum collectionNameDatum = CStringGetTextDatum(collectionName);
@@ -1480,6 +1541,7 @@ SubmitCreateIndexesRequest(Datum dbNameDatum,
 		.ok = true /* we will throw an error otherwise */
 	};
 
+	bool buildAsUniqueForPrepareUnique = false;
 	MongoCollection *collection =
 		GetMongoCollectionByNameDatum(dbNameDatum, collectionNameDatum,
 									  AccessShareLock);
@@ -1489,6 +1551,21 @@ SubmitCreateIndexesRequest(Datum dbNameDatum,
 	}
 	else
 	{
+		/*
+		 * Validate before implicit collection creation, then parse again below
+		 * with the collection metadata that wins any creation race.
+		 */
+		const bson_value_t *defaultCollationForValidation = NULL;
+		if (optionalIndexDefList == NIL)
+		{
+			List *indexDefListTemp =
+				GetIndexesDefList(&createIndexesArg.indexesValue,
+								  createIndexesArg.ignoreUnknownIndexOptions,
+								  buildAsUniqueForPrepareUnique,
+								  defaultCollationForValidation);
+			list_free_deep(indexDefListTemp);
+		}
+
 		/*
 		 * collection does not exist, create it (or race for creating it).
 		 * The creation is implicit to this command, so it may be carried
@@ -1514,6 +1591,28 @@ SubmitCreateIndexesRequest(Datum dbNameDatum,
 	EnsureCollectionOwner(collection);
 
 	uint64 collectionId = collection->collectionId;
+	const bson_value_t *defaultCollation =
+		FetchAndCloneCollationSpecForCollection(collection);
+
+	List *indexDefList = NIL;
+	if (optionalIndexDefList != NIL)
+	{
+		if (createIndexesArg.indexesValue.value_type != BSON_TYPE_EOD)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"Cannot specify both optionalIndexDefList and indexes array in createIndexesArg")));
+		}
+
+		indexDefList = optionalIndexDefList;
+	}
+	else
+	{
+		indexDefList = GetIndexesDefList(&createIndexesArg.indexesValue,
+										 createIndexesArg.ignoreUnknownIndexOptions,
+										 buildAsUniqueForPrepareUnique,
+										 defaultCollation);
+	}
 
 	/*
 	 * Please note that the advisory lock will be released after first transaction commit.
@@ -1541,21 +1640,20 @@ SubmitCreateIndexesRequest(Datum dbNameDatum,
 	 * some of them due to an identical index.
 	 */
 
-	int nindexesRequested = list_length(createIndexesArg.indexDefList);
+	int nindexesRequested = list_length(indexDefList);
 
 	List *indexIdList = NIL;
-	createIndexesArg.indexDefList =
+	indexDefList =
 		CheckForConflictsAndPruneExistingIndexes(collectionId,
-												 createIndexesArg.indexDefList,
+												 indexDefList,
 												 &indexIdList);
 
 	result.numIndexesBefore = CollectionIdGetIndexCount(collectionId);
 
-	if (result.numIndexesBefore + list_length(createIndexesArg.indexDefList) >
-		MaxIndexesPerCollection)
+	if (result.numIndexesBefore + list_length(indexDefList) > MaxIndexesPerCollection)
 	{
 		int reportIndexDefIdx = MaxIndexesPerCollection - result.numIndexesBefore;
-		const IndexDef *reportIndexDef = list_nth(createIndexesArg.indexDefList,
+		const IndexDef *reportIndexDef = list_nth(indexDefList,
 												  reportIndexDefIdx);
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
 						errmsg("add index fails, too many indexes for %s.%s key:%s",
@@ -1584,15 +1682,23 @@ SubmitCreateIndexesRequest(Datum dbNameDatum,
 
 		bool uniqueIndexOnly = false;
 		bool skipCheckCollectionCreate = true;
+		CreateIndexesArg parsedCreateIndexesArg = createIndexesArg;
+		if (list_length(indexDefList) > 0)
+		{
+			parsedCreateIndexesArg.indexesValue.value_type = BSON_TYPE_EOD;
+		}
+
 		CreateIndexesResult innerResult = create_indexes_non_concurrently(dbNameDatum,
-																		  createIndexesArg,
+																		  parsedCreateIndexesArg,
 																		  skipCheckCollectionCreate,
-																		  uniqueIndexOnly);
+																		  uniqueIndexOnly,
+																		  buildAsUniqueForPrepareUnique,
+																		  indexDefList);
 		innerResult.createdCollectionAutomatically = true;
 		return innerResult;
 	}
 
-	foreach(indexDefCell, createIndexesArg.indexDefList)
+	foreach(indexDefCell, indexDefList)
 	{
 		IndexDef *indexDef = (IndexDef *) lfirst(indexDefCell);
 		const IndexSpec indexSpec = MakeIndexSpecForIndexDef(indexDef);
@@ -1616,7 +1722,15 @@ SubmitCreateIndexesRequest(Datum dbNameDatum,
 												   isBackgroundBuild,
 												   isUpgradeOptionsCommand);
 
-		Oid userOid = GetAuthenticatedUserId();
+		/*
+		 * A privileged request must be replayed as the index-create role so the
+		 * background worker can alter relations owned by the collection-owner
+		 * role. Ordinary requests retain their authenticated identity.
+		 */
+		Oid createIndexesRoleOid = CreateIndexesRoleOid();
+		Oid currentUserOid = GetUserId();
+		Oid userOid = currentUserOid == createIndexesRoleOid ?
+					  currentUserOid : GetAuthenticatedUserId();
 		AddRequestInIndexQueue(cmd, indexId, collectionId, CREATE_INDEX_COMMAND_TYPE,
 							   userOid);
 		indexIdList = lappend_int(indexIdList, indexId);
@@ -1625,7 +1739,7 @@ SubmitCreateIndexesRequest(Datum dbNameDatum,
 	ereport(DEBUG1, (errmsg(
 						 "Submitted all requests for collection indexes creation successfully")));
 	result.ok = true;
-	int indexCount = list_length(createIndexesArg.indexDefList);
+	int indexCount = list_length(indexDefList);
 
 	/*
 	 * Set "note" field of the response message based on whether we
@@ -1789,6 +1903,24 @@ PostProcessIndexForReIndex(int64 collectionId, IndexDetails *details, bool
 		psprintf("ALTER INDEX %s.%s RENAME to %s", ApiDataSchemaName, reindex_indexname,
 				 base_indexname),
 		readOnly, SPI_OK_UTILITY, &isNullIgnore);
+
+	/*
+	 * The renames swap only the names, so objects that depend on the original
+	 * index (e.g. the planner statistics object, which has an auto dependency
+	 * on it) are still attached to what is now the "_ccold" index. Move them to
+	 * the rebuilt index the same way REINDEX CONCURRENTLY does when it swaps
+	 * indexes. Otherwise dropping "_ccold" cascades to those objects, which
+	 * removes them from the rebuilt index and makes DROP INDEX CONCURRENTLY fail
+	 * with "must be first action in transaction" since the cascaded drop
+	 * assigns a transaction id before the index itself is dropped.
+	 */
+	Oid oldIndexOid = get_relname_relid(old_indexname, ApiDataNamespaceOid());
+	Oid newIndexOid = get_relname_relid(base_indexname, ApiDataNamespaceOid());
+	if (OidIsValid(oldIndexOid) && OidIsValid(newIndexOid))
+	{
+		changeDependenciesOn(RelationRelationId, oldIndexOid, newIndexOid);
+		CommandCounterIncrement();
+	}
 }
 
 

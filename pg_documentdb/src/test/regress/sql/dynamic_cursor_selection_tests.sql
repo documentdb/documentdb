@@ -1,3 +1,6 @@
+-- Copyright (c) Microsoft Corporation.
+-- SPDX-License-Identifier: MIT
+
 -- ============================================================================
 -- Dynamic Cursor Selection Tests
 -- ============================================================================
@@ -42,7 +45,7 @@
 -- | $set     | Set fields (alias of $addFields)         | Streamable      |                                          |
 -- | $unset   | Remove fields                            | Streamable      |                                          |
 -- | $replace | Replace root/with                        | Streamable      |                                          |
--- | $unionW  | Union with another collection            | Streamable      |                                          |
+-- | $unionW  | Union with another collection            | Non-streamable  |                                          |
 -- | $limit=1 | Single-row limit                         | Streamable      |                                          |
 -- | $skip=0  | No-op skip                               | Streamable      |                                          |
 -- | $limit>1 | Multi-row limit                          | Non-streamable  | TODO: track remaining limit              |
@@ -479,7 +482,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$setWindowFields": { "sortBy": { "a": 1 }, "output": { "rank": { "$rank": {} } } } }], "cursor": {} }')
 $cmd$, p_normalize_window := true);
 
--- Stage: $unionWith (streamable - RequiresPersistentCursorFalseNoSingleRow)
+-- Stage: $unionWith (non-streamable)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$unionWith": "lookup_coll" }], "cursor": {} }');
 SET documentdb.enableDynamicCursors TO off;
@@ -706,6 +709,334 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dync
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "geoview", "filter": { "loc": { "$near": { "$geometry": { "type": "Point", "coordinates": [0, 0] } } } } }');
 SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "geoview", "filter": { "loc": { "$near": { "$geometry": { "type": "Point", "coordinates": [0, 0] } } } } }');
+
+-- $unwind prevents dynamic streaming, so its persistent fallback must use total
+-- cost. Without collection statistics, fast-start planning would leave a
+-- selective equality predicate at runtime on an ordered primary-key scan.
+SET documentdb.enablePerCollectionPlannerStatistics TO on;
+SET documentdb.enablePlannerStatisticsNewCollections TO off;
+SET documentdb.defaultUseCompositeOpClass TO off;
+SET documentdb.enableCompositeIndexPlanner TO off;
+SET documentdb.enableOrderByIdOnCostFunction TO on;
+SET documentdb.useFileBasedPersistedCursors TO off;
+SET enable_seqscan TO on;
+SET max_parallel_workers_per_gather TO 0;
+SET cursor_tuple_fraction TO 0.1;
+
+SELECT count(documentdb_api.insert_one('dyncurdb', 'unwind_eq_coll',
+    jsonb_build_object('_id', i, 'tag', i % 100, 'items', jsonb_build_array(1, 2),
+        'label', CASE WHEN i % 100 = 1 THEN 'MATCH' ELSE 'other' END,
+        'padding', repeat(md5(i::text), 4096))::text::documentdb_core.bson))
+FROM generate_series(1, 10000) AS documents(i);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('dyncurdb',
+    '{"createIndexes":"unwind_eq_coll","indexes":[{"key":{"tag":1},"name":"tag_1"}]}', true);
+SELECT documentdb_api.compact('{"compact":"unwind_eq_coll","$db":"dyncurdb","mode":"updateStats"}');
+SELECT bool_and(pg_column_size(document) < octet_length(document::bytea)) AS compressed
+FROM documentdb_api.collection('dyncurdb', 'unwind_eq_coll');
+
+CREATE TEMP TABLE unwind_eq_cursor_results (
+    mode text,
+    persistent boolean,
+    ids integer[],
+    items integer[]
+);
+
+-- Call first_page outside this helper so its planning is not inside a function.
+CREATE FUNCTION pg_temp.drain_unwind_eq_cursor(
+    page documentdb_core.bson, continuation documentdb_core.bson, persist_connection boolean)
+RETURNS TABLE (persistent boolean, ids integer[], items integer[])
+LANGUAGE plpgsql AS $$
+DECLARE
+    batch jsonb;
+BEGIN
+    persistent := persist_connection AND (continuation ->> 'qp')::boolean
+        AND (continuation ->> 'dc.type') IS NULL;
+    ids := '{}';
+    items := '{}';
+    LOOP
+        batch := documentdb_api_catalog.bson_dollar_project(page,
+            '{"ids":{"$ifNull":["$cursor.firstBatch._id","$cursor.nextBatch._id"]},
+              "items":{"$ifNull":["$cursor.firstBatch.items","$cursor.nextBatch.items"]}}')::text::jsonb;
+        ids := ids || ARRAY(SELECT (value ->> '$numberInt')::integer
+            FROM jsonb_array_elements(batch -> 'ids'));
+        items := items || ARRAY(SELECT (value ->> '$numberInt')::integer
+            FROM jsonb_array_elements(batch -> 'items'));
+        EXIT WHEN continuation IS NULL;
+        SELECT gm.cursorPage, gm.continuation INTO STRICT page, continuation
+        FROM documentdb_api.cursor_get_more('dyncurdb',
+            '{"getMore":{"$numberLong":"4294967294"},"collection":"unwind_eq_coll","batchSize":1000}',
+            continuation) AS gm;
+    END LOOP;
+    RETURN NEXT;
+END;
+$$;
+
+-- With statistics disabled, total-cost planning uses tag_1 plus a runtime sort.
+SET documentdb.enableDynamicCursors TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_pipeline('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":{"$eq":1}}},{"$sort":{"_id":1}},{"$unwind":"$items"}],"cursor":{"batchSize":1}}');
+$query$);
+INSERT INTO unwind_eq_cursor_results
+SELECT 'stats_off_dynamic_off', drained.*
+FROM documentdb_api.aggregate_cursor_first_page('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":{"$eq":1}}},{"$sort":{"_id":1}},{"$unwind":"$items"}],"cursor":{"batchSize":1}}',
+    4294967294) AS fp
+CROSS JOIN LATERAL pg_temp.drain_unwind_eq_cursor(fp.cursorPage, fp.continuation, fp.persistConnection) AS drained;
+
+-- Dynamic fallback must retain the selective plan even with a fast-start fraction.
+SET documentdb.enableDynamicCursors TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_pipeline('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":{"$eq":1}}},{"$sort":{"_id":1}},{"$unwind":"$items"}],"cursor":{"batchSize":1}}');
+$query$);
+INSERT INTO unwind_eq_cursor_results
+SELECT 'stats_off_dynamic_on', drained.*
+FROM documentdb_api.aggregate_cursor_first_page('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":{"$eq":1}}},{"$sort":{"_id":1}},{"$unwind":"$items"}],"cursor":{"batchSize":1}}',
+    4294967294) AS fp
+CROSS JOIN LATERAL pg_temp.drain_unwind_eq_cursor(fp.cursorPage, fp.continuation, fp.persistConnection) AS drained;
+
+-- Nested SQL rewrites must remain unplanned until the enclosing query is planned.
+SELECT count(*) AS nested_rows
+FROM (SELECT document FROM bson_aggregation_pipeline('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":{"$eq":1}}},{"$sort":{"_id":1}},{"$unwind":"$items"}],"cursor":{"batchSize":1}}')) AS documents;
+
+-- The fallback must preserve command collation for residual string matching.
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_pipeline('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":{"$eq":1},"label":"match"}},{"$sort":{"_id":1}},{"$unwind":"$items"}],"collation":{"locale":"en","strength":2},"cursor":{"batchSize":1}}');
+$query$);
+INSERT INTO unwind_eq_cursor_results
+SELECT 'stats_off_dynamic_on_collation', drained.*
+FROM documentdb_api.aggregate_cursor_first_page('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":{"$eq":1},"label":"match"}},{"$sort":{"_id":1}},{"$unwind":"$items"}],"collation":{"locale":"en","strength":2},"cursor":{"batchSize":1}}',
+    4294967294) AS fp
+CROSS JOIN LATERAL pg_temp.drain_unwind_eq_cursor(fp.cursorPage, fp.continuation, fp.persistConnection) AS drained;
+-- Set operations must not install streaming paths in either collated branch.
+-- UNION retains setOperations; simple UNION ALL is flattened into append relations.
+SELECT bool_or(line LIKE '%DocumentDBApiCursorScan%') AS union_uses_dynamic_cursor
+FROM documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_pipeline('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":1,"label":"match"}}],"collation":{"locale":"en","strength":2},"cursor":{}}')
+UNION
+SELECT document FROM bson_aggregation_pipeline('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":1,"label":"match"}}],"collation":{"locale":"en","strength":2},"cursor":{}}');
+$query$) AS plan(line);
+SELECT bool_or(line LIKE '%DocumentDBApiCursorScan%') AS union_all_uses_dynamic_cursor
+FROM documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_pipeline('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":1,"label":"match"}}],"collation":{"locale":"en","strength":2},"cursor":{}}')
+UNION ALL
+SELECT document FROM bson_aggregation_pipeline('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":1,"label":"match"}}],"collation":{"locale":"en","strength":2},"cursor":{}}');
+$query$) AS plan(line);
+RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
+RESET documentdb_core.enableCollation;
+
+-- Requesting all rows must select the same persistent plan.
+SET cursor_tuple_fraction TO 1;
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_pipeline('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":{"$eq":1}}},{"$sort":{"_id":1}},{"$unwind":"$items"}],"cursor":{"batchSize":1}}');
+$query$);
+INSERT INTO unwind_eq_cursor_results
+SELECT 'stats_off_dynamic_on_all_rows', drained.*
+FROM documentdb_api.aggregate_cursor_first_page('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":{"$eq":1}}},{"$sort":{"_id":1}},{"$unwind":"$items"}],"cursor":{"batchSize":1}}',
+    4294967294) AS fp
+CROSS JOIN LATERAL pg_temp.drain_unwind_eq_cursor(fp.cursorPage, fp.continuation, fp.persistConnection) AS drained;
+
+-- Without $unwind, the fast-start ordered scan remains streamable. Its
+-- continuation must also survive getMore planning and return all matching rows.
+SET cursor_tuple_fraction TO 0.1;
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_pipeline('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":{"$eq":1}}},{"$sort":{"_id":1}},{"$project":{"_id":1,"items":"$tag"}}],"cursor":{"batchSize":1}}');
+$query$);
+SELECT NOT fp.persistConnection AND (fp.continuation ->> 'dc.type') IS NOT NULL AS dynamic,
+       NOT drained.persistent AS not_persistent, cardinality(drained.ids) AS rows,
+       drained.ids = ARRAY(SELECT i FROM generate_series(1, 10000) AS documents(i)
+           WHERE i % 100 = 1 ORDER BY i) AS correct_ids,
+       drained.items = array_fill(1, ARRAY[100]) AS correct_items
+FROM documentdb_api.aggregate_cursor_first_page('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":{"$eq":1}}},{"$sort":{"_id":1}},{"$project":{"_id":1,"items":"$tag"}}],"cursor":{"batchSize":1}}',
+    4294967294) AS fp
+CROSS JOIN LATERAL pg_temp.drain_unwind_eq_cursor(fp.cursorPage, fp.continuation, fp.persistConnection) AS drained;
+
+-- Without dynamic streaming, total-cost planning selects the cheaper bitmap
+-- scan. This must not replace the fast-start plan of the streamable query above.
+SET documentdb.enableDynamicCursors TO off;
+SET cursor_tuple_fraction TO 1;
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_pipeline('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":{"$eq":1}}},{"$sort":{"_id":1}},{"$project":{"_id":1,"items":"$tag"}}],"cursor":{"batchSize":1}}');
+$query$);
+SELECT drained.persistent, cardinality(drained.ids) AS rows,
+       drained.ids = ARRAY(SELECT i FROM generate_series(1, 10000) AS documents(i)
+           WHERE i % 100 = 1 ORDER BY i) AS correct_ids,
+       drained.items = array_fill(1, ARRAY[100]) AS correct_items
+FROM documentdb_api.aggregate_cursor_first_page('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":{"$eq":1}}},{"$sort":{"_id":1}},{"$project":{"_id":1,"items":"$tag"}}],"cursor":{"batchSize":1}}',
+    4294967294) AS fp
+CROSS JOIN LATERAL pg_temp.drain_unwind_eq_cursor(fp.cursorPage, fp.continuation, fp.persistConnection) AS drained;
+
+-- Compare other stage shapes against dynamic-off and all-rows controls.
+-- Keep the plans visible: a persistent cursor can still retain a fast-start
+-- primary-key scan with a residual tag filter instead of using tag_1.
+CREATE TEMP TABLE cursor_stage_cases (
+    stage text PRIMARY KEY,
+    pipeline jsonb,
+    extra_id integer
+);
+INSERT INTO cursor_stage_cases VALUES
+('group', '[{"$group":{"_id":"$_id","items":{"$first":"$tag"}}},{"$sort":{"_id":1}}]', NULL),
+('lookup', '[{"$lookup":{"from":"lookup_coll","localField":"tag","foreignField":"x","as":"joined"}},
+    {"$project":{"_id":1,"items":{"$size":"$joined"}}}]', NULL),
+('lookup_unwind', '[{"$lookup":{"from":"lookup_coll","localField":"tag","foreignField":"x","as":"joined"}},
+    {"$unwind":"$joined"},{"$project":{"_id":1,"items":"$joined.x"}}]', NULL),
+('unionWith', '[{"$project":{"_id":1,"items":"$tag"}},
+    {"$unionWith":{"coll":"lookup_coll","pipeline":[{"$match":{"x":1}},
+        {"$project":{"_id":{"$literal":-1},"items":"$x"}}]}}]', -1),
+('unionWith_group', '[{"$project":{"_id":1,"items":"$tag"}},
+    {"$unionWith":{"coll":"lookup_coll","pipeline":[{"$match":{"x":1}},
+        {"$group":{"_id":"$x","items":{"$sum":"$x"}}},
+        {"$project":{"_id":{"$literal":-1},"items":1}}]}}]', -1),
+('facet', '[{"$facet":{"rows":[{"$project":{"_id":1,"items":"$tag"}}]}},
+    {"$unwind":"$rows"},{"$replaceWith":"$rows"}]', NULL),
+('setWindowFields', '[{"$setWindowFields":{"sortBy":{"_id":1},
+    "output":{"items":{"$sum":"$tag","window":{"documents":["current","current"]}}}}},
+    {"$project":{"_id":1,"items":1}}]', NULL);
+
+-- Generate top-level first-page calls, not calls inside a helper function.
+-- Separate statements keep held cursors outside an implicit transaction block.
+-- Union output is unordered, so compare complete ID multisets after getMore.
+CREATE TEMP VIEW cursor_stage_statements AS
+SELECT cases.stage, mode.name AS mode, statements.ordinal, statements.statement
+FROM cursor_stage_cases AS cases
+CROSS JOIN (VALUES
+    ('dynamic_off', 'off', '0.1'),
+    ('dynamic_on', 'on', '0.1'),
+    ('dynamic_on_all_rows', 'on', '1')
+) AS mode(name, dynamic, fraction)
+CROSS JOIN LATERAL (
+    SELECT jsonb_build_object('aggregate', 'unwind_eq_coll',
+        'pipeline', '[{"$match":{"tag":{"$eq":1}}},{"$sort":{"_id":1}}]'::jsonb || cases.pipeline,
+        'cursor', '{"batchSize":1}'::jsonb)::text AS spec
+) AS command
+CROSS JOIN LATERAL (VALUES
+    (1, format('SET documentdb.enableDynamicCursors TO %L;', mode.dynamic)),
+    (2, format('SET cursor_tuple_fraction TO %L;', mode.fraction)),
+    (3, format('SELECT %L AS stage, %L AS mode;', cases.stage, mode.name)),
+    (4, format($explain$
+SELECT line
+FROM documentdb_test_helpers.run_explain_and_trim(%L, p_normalize_window := true) AS plan(line)
+WHERE line !~ '^[[:space:]]+Storage: ';
+$explain$,
+        format('EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline(%L, %L);',
+            'dyncurdb', command.spec))),
+    (5, format($sql$
+SELECT drained.persistent, cardinality(drained.ids) AS rows,
+       ARRAY(SELECT id FROM unnest(drained.ids) AS ids(id) ORDER BY id) =
+           ARRAY(SELECT id FROM (
+               SELECT i AS id FROM generate_series(1, 10000) AS documents(i) WHERE i %% 100 = 1
+               UNION ALL SELECT %L::integer WHERE %L::integer IS NOT NULL
+           ) AS expected ORDER BY id) AS correct_ids,
+       drained.items = array_fill(1, ARRAY[100 + %s]) AS correct_items
+FROM documentdb_api.aggregate_cursor_first_page('dyncurdb', %L, 4294967294) AS fp
+CROSS JOIN LATERAL pg_temp.drain_unwind_eq_cursor(fp.cursorPage, fp.continuation, fp.persistConnection) AS drained;
+$sql$, cases.extra_id, cases.extra_id,
+        CASE WHEN cases.extra_id IS NULL THEN 0 ELSE 1 END, command.spec))
+) AS statements(ordinal, statement);
+
+SELECT statement FROM cursor_stage_statements ORDER BY stage, mode, ordinal
+\gexec
+
+-- ANALYZE alone does not enable field selectivity. Enable the collection's
+-- statistics explicitly and refresh them before repeating the same query.
+SELECT documentdb_api.coll_mod('dyncurdb', 'unwind_eq_coll',
+    '{"collMod":"unwind_eq_coll","enableStats":true}');
+SELECT documentdb_api.compact('{"compact":"unwind_eq_coll","$db":"dyncurdb","mode":"updateStats"}');
+SELECT current_setting('documentdb.enablePerCollectionPlannerStatistics')::boolean AS cluster_statistics_enabled,
+       (options ->> 'statsEnabled')::boolean AS statistics_enabled
+FROM documentdb_api_catalog.collections
+WHERE database_name = 'dyncurdb' AND collection_name = 'unwind_eq_coll';
+
+SET cursor_tuple_fraction TO 0.1;
+SET documentdb.enableDynamicCursors TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_pipeline('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":{"$eq":1}}},{"$sort":{"_id":1}},{"$unwind":"$items"}],"cursor":{"batchSize":1}}');
+$query$);
+INSERT INTO unwind_eq_cursor_results
+SELECT 'stats_on_dynamic_off', drained.*
+FROM documentdb_api.aggregate_cursor_first_page('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":{"$eq":1}}},{"$sort":{"_id":1}},{"$unwind":"$items"}],"cursor":{"batchSize":1}}',
+    4294967294) AS fp
+CROSS JOIN LATERAL pg_temp.drain_unwind_eq_cursor(fp.cursorPage, fp.continuation, fp.persistConnection) AS drained;
+
+SET documentdb.enableDynamicCursors TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_pipeline('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":{"$eq":1}}},{"$sort":{"_id":1}},{"$unwind":"$items"}],"cursor":{"batchSize":1}}');
+$query$);
+INSERT INTO unwind_eq_cursor_results
+SELECT 'stats_on_dynamic_on', drained.*
+FROM documentdb_api.aggregate_cursor_first_page('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":{"$eq":1}}},{"$sort":{"_id":1}},{"$unwind":"$items"}],"cursor":{"batchSize":1}}',
+    4294967294) AS fp
+CROSS JOIN LATERAL pg_temp.drain_unwind_eq_cursor(fp.cursorPage, fp.continuation, fp.persistConnection) AS drained;
+
+SET cursor_tuple_fraction TO 1;
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_pipeline('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":{"$eq":1}}},{"$sort":{"_id":1}},{"$unwind":"$items"}],"cursor":{"batchSize":1}}');
+$query$);
+INSERT INTO unwind_eq_cursor_results
+SELECT 'stats_on_dynamic_on_all_rows', drained.*
+FROM documentdb_api.aggregate_cursor_first_page('dyncurdb',
+    '{"aggregate":"unwind_eq_coll","pipeline":[{"$match":{"tag":{"$eq":1}}},{"$sort":{"_id":1}},{"$unwind":"$items"}],"cursor":{"batchSize":1}}',
+    4294967294) AS fp
+CROSS JOIN LATERAL pg_temp.drain_unwind_eq_cursor(fp.cursorPage, fp.continuation, fp.persistConnection) AS drained;
+
+-- Repeat every stage with statistics enabled against the same planning controls.
+SELECT statement FROM cursor_stage_statements ORDER BY stage, mode, ordinal
+\gexec
+DROP VIEW cursor_stage_statements;
+DROP TABLE cursor_stage_cases;
+
+SELECT mode, persistent, cardinality(ids) AS rows,
+       ids = ARRAY(SELECT i FROM generate_series(1, 10000) AS documents(i),
+           generate_series(1, 2) AS elements(item) WHERE i % 100 = 1 ORDER BY i, item) AS correct_ids,
+       items = ARRAY(SELECT item FROM generate_series(1, 10000) AS documents(i),
+           generate_series(1, 2) AS elements(item) WHERE i % 100 = 1 ORDER BY i, item) AS correct_items
+FROM unwind_eq_cursor_results ORDER BY mode;
+
+DROP FUNCTION pg_temp.drain_unwind_eq_cursor(documentdb_core.bson, documentdb_core.bson, boolean);
+DROP TABLE unwind_eq_cursor_results;
+SELECT documentdb_api.drop_collection('dyncurdb', 'unwind_eq_coll');
+RESET cursor_tuple_fraction;
+RESET max_parallel_workers_per_gather;
+RESET enable_seqscan;
+RESET documentdb.useFileBasedPersistedCursors;
+RESET documentdb.enableOrderByIdOnCostFunction;
+RESET documentdb.enableCompositeIndexPlanner;
+RESET documentdb.defaultUseCompositeOpClass;
+RESET documentdb.enablePlannerStatisticsNewCollections;
+RESET documentdb.enablePerCollectionPlannerStatistics;
 
 -- Reset for any tests that may run after this section.
 SET documentdb.enableDynamicCursors TO off;

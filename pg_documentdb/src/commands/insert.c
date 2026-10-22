@@ -1,5 +1,7 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
  *
  * src/commands/insert.c
  *
@@ -21,6 +23,7 @@
 #include <utils/snapmgr.h>
 #include <catalog/pg_class.h>
 #include <parser/parse_relation.h>
+#include <storage/lmgr.h>
 #include <utils/lsyscache.h>
 #include <access/heaptoast.h>
 #include <access/toast_internals.h>
@@ -141,6 +144,9 @@ static uint64 InsertOneWithTransactionCore(uint64 collectionId, const
 static uint64 CallInsertWorkerForInsertOne(MongoCollection *collection, int64
 										   shardKeyHash,
 										   pgbson *document, text *transactionId);
+static pgbson * CallInsertWorkerForInsert(MongoCollection *collection, int64 shardKeyHash,
+										  pgbson *document, text *transactionId,
+										  pgbsonsequence *documentsequence);
 static Datum CommandInsertCore(PG_FUNCTION_ARGS, WriteMode writeMode, MemoryContext
 							   allocContext);
 static inline List * CreateValuesListForInsert(Const *shardKey, Expr *objectId,
@@ -165,9 +171,24 @@ static inline void ReportInsertFeatureUsage(int batchSize);
 bool EnableCreateCollectionOnInsert = true;
 extern bool UseLocalExecutionShardQueries;
 extern bool EnableBypassDocumentValidation;
+extern bool SkipFailOnCollation;
 extern int BatchUpdateLockTimeoutMs;
 extern int32_t DocumentToastCompressionThreshold;
 extern bool DefaultInlineWriteOperations;
+
+
+inline static bool
+DoWorkerDispatchForInsertion(MongoCollection *collection,
+							 text *transactionId,
+							 ExprEvalState *evalState)
+{
+	return DocumentToastCompressionThreshold > 0 &&
+		   transactionId == NULL &&
+		   evalState == NULL &&
+		   collection->shardKey == NULL &&
+		   collection->isShardRemote;
+}
+
 
 /*
  * command_insert handles the insert command invocation through a PostgreSQL function.
@@ -371,6 +392,15 @@ BuildBatchInsertionSpec(bson_iter_t *insertCommandIter, pgbsonsequence *insertDo
 		else if (strcmp(field, "$db") == 0)
 		{
 			ValidateOrExtractDatabaseNameFromSpec(insertCommandIter, databaseNameDatum);
+		}
+		else if (strcmp(field, "collation") == 0)
+		{
+			if (!SkipFailOnCollation)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_UNKNOWNBSONFIELD),
+								errmsg("BSON field 'insert.%s' is an unknown field.",
+									   field)));
+			}
 		}
 		else if (IsCommonSpecIgnoredField(field))
 		{
@@ -606,17 +636,133 @@ SetCompressedDocumentParam(ParamExternData *documentParam)
  * TODO: While we can optimize this by treating the sub-batch that succeeded first
  * and moving forward, this is left as an optimization for the future.
  */
+static void
+DoMultiInsertWithoutTransactionIdCore(MongoCollection *collection, List *inserts,
+									  Oid shardOid, int insertIndex,
+									  int *insertCountResult, int *insertIncrIndex,
+									  ExprEvalState *evalState)
+{
+	int insertInnerIndex = insertIndex;
+	int insertCount = 0;
+	List *valuesList = NIL;
+	ListCell *insertCell;
+
+	/* Make params for all the BSONs - we have 2 per insert - objectId/insertDoc */
+	int expectedNumParams = Min(list_length(inserts), BatchWriteSubTransactionCount);
+	ParamListInfo paramListInfo = makeParamList(expectedNumParams * 2);
+	int paramIndex = 0;
+	while (insertInnerIndex < list_length(inserts) &&
+		   insertCount < BatchWriteSubTransactionCount)
+	{
+		insertCell = list_nth_cell(inserts, insertInnerIndex);
+		const bson_value_t *documentValue = lfirst(insertCell);
+
+		int64_t shardKeyValue;
+		pgbson *objectId;
+		pgbson *insertDoc =
+			PreprocessInsertionDoc(documentValue, collection, &shardKeyValue,
+								   &objectId, evalState);
+
+		/* Generate a values lists for the insert as
+		 * VALUES(shard_key_value, object_id, document, creationTime)
+		 */
+		Const *shardKeyConst = makeConst(INT8OID, -1, InvalidOid, 8,
+										 Int64GetDatum(shardKeyValue), false, true);
+		Expr *objectidParam = CreateBsonParam(paramIndex, paramListInfo, objectId);
+		paramIndex++;
+
+		Expr *documentParam = CreateBsonParam(paramIndex, paramListInfo, insertDoc);
+		SetCompressedDocumentParam(&paramListInfo->params[paramIndex]);
+
+		paramIndex++;
+
+		List *values = CreateValuesListForInsert(shardKeyConst, objectidParam,
+												 documentParam,
+												 collection->
+												 mongoDataCreationTimeVarAttrNumber);
+
+		valuesList = lappend(valuesList, values);
+		insertCount++;
+		insertInnerIndex++;
+	}
+
+	*insertIncrIndex = insertInnerIndex;
+	paramListInfo->numParams = paramIndex;
+
+	uint64_t rowsProcessed = 0;
+	if (shardOid == InvalidOid)
+	{
+		Query *query = CreateInsertQuery(collection, shardOid,
+										 valuesList);
+		rowsProcessed = RunInsertQuery(query, paramListInfo);
+	}
+	else
+	{
+		ThrowIfWriteCommandNotAllowed();
+
+		PlannedStmt *queryPlan = CreateLocalShardInsertPlan(collection,
+															shardOid, valuesList);
+		rowsProcessed = ExecuteLocalShardInsertPlan(queryPlan, paramListInfo);
+	}
+
+	/* Merge inner batchResult with outer batchResult */
+	*insertCountResult = rowsProcessed;
+	list_free_deep(valuesList);
+	pfree(paramListInfo);
+}
+
+
+static void
+DoMultiInsertWithoutTransactionViaInsertWorker(MongoCollection *collection, List *inserts,
+											   int insertIndex, int *insertCountResult,
+											   int *insertIncrIndex)
+{
+	/* Serialize the batch to a worker spec */
+	Assert(collection->shardKey == NULL);
+	int batchCount = Min(BatchWriteSubTransactionCount, list_length(inserts) -
+						 insertIndex);
+	*insertIncrIndex = insertIndex + batchCount;
+	pgbsonsequence *batchSequence = PgbsonSequenceBuildFromBsonValuesList(inserts,
+																		  insertIndex,
+																		  batchCount);
+	text *transactionId = NULL;
+	int64 shardKeyHash = collection->collectionId;
+
+	pgbsonelement element = { 0 };
+	element.path = "insertMany";
+	element.pathLength = 10;
+	element.bsonValue.value_type = BSON_TYPE_INT64;
+	element.bsonValue.value.v_int64 = (int64_t) collection->collectionId;
+	pgbson *specDocument = PgbsonElementToPgbson(&element);
+	pgbson *result = CallInsertWorkerForInsert(collection, shardKeyHash, specDocument,
+											   transactionId,
+											   batchSequence);
+	pgbsonelement resultElement;
+	PgbsonToSinglePgbsonElement(result, &resultElement);
+	if (strcmp(resultElement.path, "n") != 0 ||
+		resultElement.bsonValue.value_type != BSON_TYPE_INT32 ||
+		resultElement.bsonValue.value.v_int32 != batchCount)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg(
+							"insert_worker returned an unexpected batch insert count")));
+	}
+
+	*insertCountResult = resultElement.bsonValue.value.v_int32;
+	pfree(result);
+	pfree(batchSequence);
+	pfree(specDocument);
+}
+
+
 static bool
-DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts, Oid
-								  shardOid,
+DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts,
+								  Oid shardOid,
 								  BatchInsertionResult *batchResult, int insertIndex,
 								  int *insertCountResult, int *insertIncrIndex,
 								  ExprEvalState *evalState, WriteMode writeMode)
 {
-	/* declared volatile because of the longjmp in PG_CATCH */
-	volatile int insertInnerIndex = insertIndex;
-	volatile int insertCount = 0;
-
+	*insertCountResult = 0;
 	MemoryContext oldContext = CurrentMemoryContext;
 	ResourceOwner oldOwner = CurrentResourceOwner;
 
@@ -632,75 +778,22 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts, Oi
 			SetGUCLocally("lock_timeout", batchLockTimeoutStr);
 		}
 
-		List *valuesList = NIL;
-		ListCell *insertCell;
-
-		/* Make params for all the BSONs - we have 2 per insert - objectId/insertDoc */
-		int expectedNumParams = Min(list_length(inserts), BatchWriteSubTransactionCount);
-		ParamListInfo paramListInfo = makeParamList(expectedNumParams * 2);
-		int paramIndex = 0;
-		while (insertInnerIndex < list_length(inserts) &&
-			   insertCount < BatchWriteSubTransactionCount)
+		text *transactionId = NULL;
+		if (DoWorkerDispatchForInsertion(collection, transactionId, evalState))
 		{
-			insertCell = list_nth_cell(inserts, insertInnerIndex);
-			const bson_value_t *documentValue = lfirst(insertCell);
-
-			int64_t shardKeyValue;
-			pgbson *objectId;
-			pgbson *insertDoc =
-				PreprocessInsertionDoc(documentValue, collection, &shardKeyValue,
-									   &objectId, evalState);
-
-			/* Generate a values lists for the insert as
-			 * VALUES(shard_key_value, object_id, document, creationTime)
-			 */
-			Const *shardKeyConst = makeConst(INT8OID, -1, InvalidOid, 8,
-											 Int64GetDatum(shardKeyValue), false, true);
-			Expr *objectidParam = CreateBsonParam(paramIndex, paramListInfo, objectId);
-			paramIndex++;
-
-			Expr *documentParam = CreateBsonParam(paramIndex, paramListInfo, insertDoc);
-			SetCompressedDocumentParam(&paramListInfo->params[paramIndex]);
-
-			paramIndex++;
-
-			List *values = CreateValuesListForInsert(shardKeyConst, objectidParam,
-													 documentParam,
-													 collection->
-													 mongoDataCreationTimeVarAttrNumber);
-
-			valuesList = lappend(valuesList, values);
-			insertCount++;
-			insertInnerIndex++;
-		}
-
-		*insertIncrIndex = insertInnerIndex;
-		paramListInfo->numParams = paramIndex;
-
-		uint64_t rowsProcessed = 0;
-		if (shardOid == InvalidOid)
-		{
-			Query *query = CreateInsertQuery(collection, shardOid,
-											 valuesList);
-			rowsProcessed = RunInsertQuery(query, paramListInfo);
+			DoMultiInsertWithoutTransactionViaInsertWorker(collection, inserts,
+														   insertIndex, insertCountResult,
+														   insertIncrIndex);
 		}
 		else
 		{
-			ThrowIfWriteCommandNotAllowed();
-
-			PlannedStmt *queryPlan = CreateLocalShardInsertPlan(collection,
-																shardOid, valuesList);
-			rowsProcessed = ExecuteLocalShardInsertPlan(queryPlan, paramListInfo);
+			DoMultiInsertWithoutTransactionIdCore(collection, inserts, shardOid,
+												  insertIndex, insertCountResult,
+												  insertIncrIndex, evalState);
 		}
 
-		/* Merge inner batchResult with outer batchResult */
-		batchResult->rowsInserted += rowsProcessed;
-		*insertCountResult = rowsProcessed;
-		insertCount = rowsProcessed;
-		list_free_deep(valuesList);
-		pfree(paramListInfo);
-
 		/* Commit the inner transaction, return to outer xact context */
+		batchResult->rowsInserted += *insertCountResult;
 		ReleaseCurrentSubTransaction();
 		MemoryContextSwitchTo(oldContext);
 		CurrentResourceOwner = oldOwner;
@@ -714,7 +807,7 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts, Oi
 		RollbackAndReleaseCurrentSubTransaction();
 		MemoryContextSwitchTo(oldContext);
 		CurrentResourceOwner = oldOwner;
-		insertCount = 0;
+		*insertCountResult = 0;
 
 		if (IsOperatorInterventionError(errorData))
 		{
@@ -741,7 +834,7 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts, Oi
 	}
 	PG_END_TRY();
 
-	return insertCount != 0;
+	return *insertCountResult != 0;
 }
 
 
@@ -894,8 +987,9 @@ ProcessBatchInsertion(MongoCollection *collection, BatchInsertionSpec *batchSpec
 	 */
 	if (CheckSchemaValidationEnabled(collection, batchSpec->bypassDocumentValidation))
 	{
-		evalState = PrepareForSchemaValidation(collection->schemaValidator.validator,
-											   batchResult->resultMemoryContext);
+		evalState = PrepareForSchemaValidation(
+			collection->schemaValidator.validator, batchResult->resultMemoryContext,
+			collection->options.collationString);
 	}
 
 	/*
@@ -1038,6 +1132,16 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 }
 
 
+inline static bool
+DocumentDatumNeedsCompression(Datum inputDatum)
+{
+	Size varSize = VARSIZE(DatumGetPointer(inputDatum));
+	return DocumentToastCompressionThreshold > 0 &&
+		   varSize > (Size) DocumentToastCompressionThreshold &&
+		   varSize < TOAST_TUPLE_THRESHOLD;
+}
+
+
 /*
  * CompressBsonIfNeeded returns an inline compressed copy of the document if it
  * exceeds the configured compression threshold but is small enough that the
@@ -1047,10 +1151,7 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 Datum
 CompressBsonIfNeeded(Datum inputDatum)
 {
-	Size varSize = VARSIZE(DatumGetPointer(inputDatum));
-	if (DocumentToastCompressionThreshold > 0 &&
-		varSize > (Size) DocumentToastCompressionThreshold &&
-		varSize < TOAST_TUPLE_THRESHOLD)
+	if (DocumentDatumNeedsCompression(inputDatum))
 	{
 		Datum compressedDatum = toast_compress_datum(inputDatum,
 													 default_toast_compression);
@@ -1139,6 +1240,60 @@ ExecuteSPIPlanWithCompressedDocument(SPIPlanPtr plan, Datum *argValues, Oid *arg
 }
 
 
+static uint64
+ProcessInsertionCore(MongoCollection *collection,
+					 Oid optionalInsertShardOid,
+					 int64 shardKeyHash,
+					 pgbson *objectIdPtr,
+					 pgbson *insertDoc,
+					 ExprEvalState *evalState)
+{
+	/*
+	 * If retry is NULL then we don't really need to call insert_one on the worker, and then
+	 * have that call INSERT - we can just do that directly from the coordinator (which probably
+	 * saves one query parsing and planning per document).
+	 */
+	Const *shardKeyConst = makeConst(INT8OID, -1, InvalidOid, 8,
+									 Int64GetDatum(shardKeyHash), false, true);
+
+	List *singleInsertList = NULL;
+	uint64_t insertResult = 0;
+
+	ParamListInfo paramListInfo = makeParamList(2);
+	paramListInfo->numParams = 2;
+	Expr *objectidParam = CreateBsonParam(0, paramListInfo, objectIdPtr);
+	Expr *documentParam = CreateBsonParam(1, paramListInfo, insertDoc);
+
+	SetCompressedDocumentParam(&paramListInfo->params[1]);
+
+	singleInsertList = CreateValuesListForInsert(shardKeyConst, objectidParam,
+												 documentParam,
+												 collection->
+												 mongoDataCreationTimeVarAttrNumber);
+
+	if (optionalInsertShardOid == InvalidOid)
+	{
+		Query *query = CreateInsertQuery(collection, optionalInsertShardOid,
+										 list_make1(
+											 singleInsertList));
+		insertResult = RunInsertQuery(query, paramListInfo);
+	}
+	else
+	{
+		ThrowIfWriteCommandNotAllowed();
+
+		PlannedStmt *queryPlan = CreateLocalShardInsertPlan(collection,
+															optionalInsertShardOid,
+															list_make1(
+																singleInsertList));
+		insertResult = ExecuteLocalShardInsertPlan(queryPlan, paramListInfo);
+	}
+	pfree(paramListInfo);
+	list_free_deep(singleInsertList);
+	return insertResult;
+}
+
+
 /*
  * ProcessInsertion processes a single insertion operation.
  */
@@ -1176,51 +1331,23 @@ ProcessInsertion(MongoCollection *collection,
 											   &objectIdPtr, evalState);
 
 	/* make sure the document has an _id and it is in the right place */
+
+	/* If there's compression required, and it's a remote *unsharded* collection,
+	 * use the insertOne path to let the insert go to the local shard so we can compress
+	 * before passing it on to PG.
+	 */
+	if (DoWorkerDispatchForInsertion(collection, transactionId, evalState) &&
+		DocumentDatumNeedsCompression(PointerGetDatum(insertDoc)))
+	{
+		return CallInsertWorkerForInsertOne(collection, shardKeyHash, insertDoc,
+											transactionId);
+	}
+
 	if (transactionId == NULL)
 	{
-		/*
-		 * If retry is NULL then we don't really need to call insert_one on the worker, and then
-		 * have that call INSERT - we can just do that directly from the coordinator (which probably
-		 * saves one query parsing and planning per document).
-		 */
-		Const *shardKeyConst = makeConst(INT8OID, -1, InvalidOid, 8,
-										 Int64GetDatum(shardKeyHash), false, true);
-
-		List *singleInsertList = NULL;
-		uint64_t insertResult = 0;
-
-		ParamListInfo paramListInfo = makeParamList(2);
-		paramListInfo->numParams = 2;
-		Expr *objectidParam = CreateBsonParam(0, paramListInfo, objectIdPtr);
-		Expr *documentParam = CreateBsonParam(1, paramListInfo, insertDoc);
-
-		SetCompressedDocumentParam(&paramListInfo->params[1]);
-
-		singleInsertList = CreateValuesListForInsert(shardKeyConst, objectidParam,
-													 documentParam,
-													 collection->
-													 mongoDataCreationTimeVarAttrNumber);
-
-		if (optionalInsertShardOid == InvalidOid)
-		{
-			Query *query = CreateInsertQuery(collection, optionalInsertShardOid,
-											 list_make1(
-												 singleInsertList));
-			insertResult = RunInsertQuery(query, paramListInfo);
-		}
-		else
-		{
-			ThrowIfWriteCommandNotAllowed();
-
-			PlannedStmt *queryPlan = CreateLocalShardInsertPlan(collection,
-																optionalInsertShardOid,
-																list_make1(
-																	singleInsertList));
-			insertResult = ExecuteLocalShardInsertPlan(queryPlan, paramListInfo);
-		}
-		pfree(paramListInfo);
-		list_free_deep(singleInsertList);
-		return insertResult;
+		return ProcessInsertionCore(collection, optionalInsertShardOid,
+									shardKeyHash, objectIdPtr,
+									insertDoc, evalState);
 	}
 	else
 	{
@@ -1318,15 +1445,16 @@ CommandInsertCore(PG_FUNCTION_ARGS, WriteMode writeMode, MemoryContext allocCont
 }
 
 
-static uint64
-CallInsertWorkerForInsertOne(MongoCollection *collection, int64 shardKeyHash,
-							 pgbson *document, text *transactionId)
+static pgbson *
+CallInsertWorkerForInsert(MongoCollection *collection, int64 shardKeyHash,
+						  pgbson *specDocument, text *transactionId,
+						  pgbsonsequence *documentsequence)
 {
 	int argCount = 6;
 	Datum argValues[6];
 
 	/* whitespace means not null, n means null */
-	char argNulls[6] = { ' ', ' ', ' ', ' ', 'n', ' ' };
+	char argNulls[6] = { ' ', ' ', ' ', ' ', 'n', 'n' };
 	Oid argTypes[6] = { INT8OID, INT8OID, REGCLASSOID, BYTEAOID, BYTEAOID, TEXTOID };
 
 	const char *updateQuery = FormatSqlQuery(
@@ -1344,15 +1472,20 @@ CallInsertWorkerForInsertOne(MongoCollection *collection, int64 shardKeyHash,
 	/* p_shard_oid */
 	argValues[2] = ObjectIdGetDatum(InvalidOid);
 
-	/* We just send the document for now */
-	pgbsonelement element = { 0 };
-	element.path = "insertOne";
-	element.pathLength = 9;
-	element.bsonValue = ConvertPgbsonToBsonValue(document);
-	argValues[3] = PointerGetDatum(PgbsonElementToPgbson(&element));
+	/* p_spec_document */
+	argValues[3] = PointerGetDatum(specDocument);
 
-	argValues[5] = PointerGetDatum(transactionId);
-	argNulls[5] = ' ';
+	if (documentsequence != NULL)
+	{
+		argValues[4] = PointerGetDatum(documentsequence);
+		argNulls[4] = ' ';
+	}
+
+	if (transactionId != NULL)
+	{
+		argValues[5] = PointerGetDatum(transactionId);
+		argNulls[5] = ' ';
+	}
 
 	bool readOnly = false;
 
@@ -1373,6 +1506,26 @@ CallInsertWorkerForInsertOne(MongoCollection *collection, int64 shardKeyHash,
 	}
 
 	/* If we got here, then it succeeded and inserted */
+	return DatumGetPgBson(resultDatum[0]);
+}
+
+
+static uint64
+CallInsertWorkerForInsertOne(MongoCollection *collection, int64 shardKeyHash,
+							 pgbson *document, text *transactionId)
+{
+	pgbsonsequence *documentsequence = NULL;
+
+	/* We just send the document for now */
+	pgbsonelement element = { 0 };
+	element.path = "insertOne";
+	element.pathLength = 9;
+	element.bsonValue = ConvertPgbsonToBsonValue(document);
+	pgbson *specDocument = PgbsonElementToPgbson(&element);
+	pgbson *bson = CallInsertWorkerForInsert(collection, shardKeyHash, specDocument,
+											 transactionId, documentsequence);
+	pfree(specDocument);
+	pfree(bson);
 	return 1;
 }
 
@@ -1416,6 +1569,55 @@ InsertOneWithTransactionCore(uint64 collectionId, const char *shardTableName,
 }
 
 
+static void
+DoInsertWorkerInsertOne(Oid shardOid, text *transactionId, pgbsonelement element,
+						int64_t shardKeyValue, uint64_t collectionId)
+{
+	const char *localShardTable = NULL;
+	if (UseLocalExecutionShardQueries)
+	{
+		localShardTable = get_rel_name(shardOid);
+	}
+
+	if (transactionId != NULL)
+	{
+		pgbson *document = PgbsonInitFromDocumentBsonValue(&element.bsonValue);
+		pgbson *objectId = PgbsonGetDocumentId(document);
+		InsertOneWithTransactionCore(collectionId, localShardTable, shardKeyValue,
+									 transactionId, objectId,
+									 document);
+	}
+	else
+	{
+		/* The direct insert plan bypasses the planner's write-lock acquisition. */
+		LockRelationOid(shardOid, RowExclusiveLock);
+		MongoCollection *mongoCollection = GetMongoCollectionByColId(collectionId,
+																	 NoLock);
+
+		if (mongoCollection == NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg(
+								"Collection not found for collectionId %lu on command_insert_worker. This could be a metadata sync issue",
+								collectionId),
+							errdetail_log(
+								"Collection not found for collectionId %lu on command_insert_worker. This could be a metadata sync issue.",
+								collectionId)));
+		}
+
+		UpdateMongoCollectionUsingIds(mongoCollection, collectionId, shardOid);
+
+		/* Call the core insertion function for nested distribution */
+		pgbson *document = PgbsonInitFromDocumentBsonValue(&element.bsonValue);
+		pgbson *objectId = PgbsonGetDocumentId(document);
+		ExprEvalState *evalState = NULL;
+		ProcessInsertionCore(mongoCollection, shardOid,
+							 shardKeyValue, objectId,
+							 document, evalState);
+	}
+}
+
+
 Datum
 command_insert_worker(PG_FUNCTION_ARGS)
 {
@@ -1424,7 +1626,7 @@ command_insert_worker(PG_FUNCTION_ARGS)
 	Oid shardOid = PG_GETARG_OID(2);
 
 	pgbson *insertInternalSpec = PG_GETARG_PGBSON_PACKED(3);
-	text *transactionId = PG_GETARG_TEXT_P(5);
+	text *transactionId = PG_ARGISNULL(5) ? NULL : PG_GETARG_TEXT_P(5);
 
 	if (shardOid == InvalidOid)
 	{
@@ -1440,25 +1642,77 @@ command_insert_worker(PG_FUNCTION_ARGS)
 	pgbsonelement element = { 0 };
 	PgbsonToSinglePgbsonElement(insertInternalSpec, &element);
 
-	if (strcmp(element.path, "insertOne") != 0 ||
-		element.bsonValue.value_type != BSON_TYPE_DOCUMENT)
+	if (strcmp(element.path, "insertOne") == 0)
+	{
+		if (element.bsonValue.value_type != BSON_TYPE_DOCUMENT)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg(
+								"Only insertOne with a single document on the worker is supported currently")));
+		}
+
+		DoInsertWorkerInsertOne(shardOid, transactionId, element, shardKeyValue,
+								collectionId);
+		PG_RETURN_POINTER(PgbsonInitEmpty());
+	}
+	else if (strcmp(element.path, "insertMany") == 0)
+	{
+		if (PG_ARGISNULL(4) || transactionId != NULL ||
+			element.bsonValue.value_type != BSON_TYPE_INT64 ||
+			element.bsonValue.value.v_int64 != (int64) collectionId)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg("Invalid insertMany worker specification")));
+		}
+
+		LockRelationOid(shardOid, RowExclusiveLock);
+		MongoCollection *collection = GetMongoCollectionByColId(collectionId, NoLock);
+		if (collection == NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg(
+								"Collection not found for collectionId %lu on command_insert_worker",
+								collectionId)));
+		}
+
+		pgbsonsequence *insertSequence = PG_GETARG_PGBSON_SEQUENCE(4);
+		List *inserts = PgbsonSequenceGetDocumentBsonValues(insertSequence);
+		if (inserts == NIL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg(
+								"insertMany worker requires a nonempty document sequence")));
+		}
+
+		int insertIndex = 0;
+		int rowsInserted = 0;
+		ExprEvalState *evalState = NULL;
+
+		/* Consume the whole sequence even if this session uses a smaller batch limit. */
+		while (insertIndex < list_length(inserts))
+		{
+			CHECK_FOR_INTERRUPTS();
+			int insertCountResult = 0;
+			int insertIncrIndex = insertIndex;
+			DoMultiInsertWithoutTransactionIdCore(collection, inserts, shardOid,
+												  insertIndex,
+												  &insertCountResult, &insertIncrIndex,
+												  evalState);
+			rowsInserted += insertCountResult;
+			insertIndex = insertIncrIndex;
+		}
+
+		pgbson_writer resultWriter;
+		PgbsonWriterInit(&resultWriter);
+		PgbsonWriterAppendInt32(&resultWriter, "n", 1, rowsInserted);
+		PG_RETURN_POINTER(PgbsonWriterGetPgbson(&resultWriter));
+	}
+	else
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-						errmsg(
-							"Only insertOne with a single document on the worker is supported currently")));
+						errmsg("Unsupported insert worker specification")));
 	}
 
-	const char *localShardTable = NULL;
-	if (UseLocalExecutionShardQueries)
-	{
-		localShardTable = get_rel_name(shardOid);
-	}
-
-	pgbson *document = PgbsonInitFromDocumentBsonValue(&element.bsonValue);
-	pgbson *objectId = PgbsonGetDocumentId(document);
-	InsertOneWithTransactionCore(collectionId, localShardTable, shardKeyValue,
-								 transactionId, objectId,
-								 document);
 	PG_RETURN_POINTER(PgbsonInitEmpty());
 }
 

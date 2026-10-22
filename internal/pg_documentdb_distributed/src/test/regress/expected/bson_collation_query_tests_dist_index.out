@@ -1013,8 +1013,7 @@ SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_unsharded_d', '{
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
--- The non-transactional unsharded batch path serializes the client-shaped
--- collation document and reparses it on the worker.
+-- The unsharded batch path parses collation before constructing the worker request.
 SET documentdb_core.enableCollation TO on;
 SET documentdb.useLocalExecutionShardQueries TO off;
 CALL documentdb_api.update_bulk(
@@ -1032,23 +1031,12 @@ SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_un
  { "_id" : { "$numberInt" : "2" }, "name" : "CAT", "selected" : true }
 (2 rows)
 
--- Semantic collation errors from the worker are indexed write errors, and an
--- unordered batch preserves valid writes before and after them.
+-- Invalid collation fails the entire unordered command without applying
+-- either the preceding or following updates.
 CALL documentdb_api.update_bulk(
     'coll_q_dist_db',
     '{ "update": "coll_update_unsharded_d", "ordered": false, "updates": [ { "q": { "_id": 1 }, "u": { "$set": { "beforeError": true } }, "multi": false }, { "q": { "_id": 1 }, "u": { "$set": { "invalidLocale": true } }, "multi": false, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "_id": 2 }, "u": { "$set": { "afterError": true } }, "multi": false } ] }');
-                                                                                                                                                                      p_result                                                                                                                                                                       | p_success 
----------------------------------------------------------------------
- { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "2" }, "n" : { "$numberInt" : "2" }, "writeErrors" : [ { "index" : { "$numberInt" : "1" }, "code" : { "$numberInt" : "16777245" }, "errmsg" : "unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: \"invalid_locale_xyz\", strength: 1 }." } ] } | f
-(1 row)
-
-SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_unsharded_d') ORDER BY object_id;
-                                          document                                           
----------------------------------------------------------------------
- { "_id" : { "$numberInt" : "1" }, "name" : "cat", "selected" : true, "beforeError" : true }
- { "_id" : { "$numberInt" : "2" }, "name" : "CAT", "selected" : true, "afterError" : true }
-(2 rows)
-
+psql:sql/bson_collation_query_tests_dist_core.sql:401: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "invalid_locale_xyz", strength: 1 }.
 RESET documentdb.useLocalExecutionShardQueries;
 RESET documentdb_core.enableCollation;
 -- A collation-sensitive shard-key equality must fan out rather than prune to
@@ -1131,27 +1119,12 @@ SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_se
 (3 rows)
 
 ROLLBACK;
--- The update-many worker path pushes down the parsed collation string, which
--- the coordinator produces inside the per-update error boundary. An invalid
--- collation therefore stays an indexed write error here as well, instead of
--- failing the whole command before any update runs.
+-- Invalid collation aborts this update-many transaction.
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
 SET LOCAL documentdb.enable_update_many_worker_pushdown TO on;
 SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_d", "ordered": false, "updates": [ { "q": { "name": "CaT" }, "u": { "$set": { "workerBeforeError": true } }, "multi": true, "collation": { "locale": "en", "strength": 1 } }, { "q": { "name": "CaT" }, "u": { "$set": { "workerInvalidLocale": true } }, "multi": true, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "name": "cat" }, "u": { "$set": { "workerAfterError": true } }, "multi": true } ] }');
-                                                                                                                                                                                              update                                                                                                                                                                                               
----------------------------------------------------------------------
- ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""3"" }, ""n"" : { ""$numberInt"" : ""3"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""1"" }, ""code"" : { ""$numberInt"" : ""16777245"" }, ""errmsg"" : ""unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: \\""invalid_locale_xyz\\"", strength: 1 }."" } ] }",f)
-(1 row)
-
-SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_select_d') ORDER BY object_id;
-                                                                                                  document
----------------------------------------------------------------------
- { "_id" : "CAT", "name" : "CAT", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "1" }, "tags" : [ "CAT" ], "pipelineValue" : "CAT", "workerBeforeError" : true }
- { "_id" : "cat", "name" : "cat", "bucket" : { "$numberInt" : "1" }, "rank" : { "$numberInt" : "10" }, "tags" : [ "cat" ], "pipelineValue" : "cat", "workerBeforeError" : true, "workerAfterError" : true }
- { "_id" : "dog", "name" : "dog", "bucket" : { "$numberInt" : "2" }, "rank" : { "$numberInt" : "5" }, "tags" : [ "dog" ], "pipelineValue" : "dog" }
-(3 rows)
-
+psql:sql/bson_collation_query_tests_dist_core.sql:445: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "invalid_locale_xyz", strength: 1 }.
 ROLLBACK;
 -- The global _id lookup applies the requested sort before choosing a shard.
 BEGIN;
@@ -1426,7 +1399,7 @@ ROLLBACK;
 -- Exact _id values can repeat on different shards, so candidate selection
 -- must apply the requested sort before choosing a shard.
 SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_update_duplicate_id_d', '{ "_id": "duplicate", "name": 1, "rank": 10 }');
-psql:sql/bson_collation_query_tests_dist_core.sql:581: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_dist_core.sql:575: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1611,7 +1584,7 @@ SELECT documentdb_api.drop_collection('coll_q_dist_db', 'single_field_d');
 SELECT documentdb_api.insert_one(
   'coll_q_dist_db', 'coll_find_modify_d',
   '{"_id": 1, "group": "pet", "name": "Zulu", "state": "old"}');
-psql:sql/bson_collation_query_tests_dist_core.sql:639: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_dist_core.sql:633: NOTICE:  creating collection
                               insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1640,7 +1613,7 @@ ROLLBACK;
 SELECT documentdb_api.insert_one(
   'coll_q_dist_db', 'coll_find_modify_sharded_d',
   '{"_id": 1, "tenant": 1, "name": "cat", "state": "old"}');
-psql:sql/bson_collation_query_tests_dist_core.sql:653: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_dist_core.sql:647: NOTICE:  creating collection
                               insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1687,7 +1660,7 @@ ROLLBACK;
 SELECT documentdb_api.insert_one(
   'coll_q_dist_db', 'coll_find_modify_string_shard_d',
   '{"_id": 1, "tenant": "alpha", "state": "old"}');
-psql:sql/bson_collation_query_tests_dist_core.sql:675: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_dist_core.sql:669: NOTICE:  creating collection
                               insert_one
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1705,14 +1678,14 @@ SET LOCAL documentdb_core.enableCollation TO on;
 SELECT documentdb_api.find_and_modify(
   'coll_q_dist_db',
   '{"findAndModify": "coll_find_modify_string_shard_d", "query": {"tenant": "ALPHA"}, "update": {"$set": {"state": "updated"}}, "collation": {"locale": "en", "strength": 1}}');
-psql:sql/bson_collation_query_tests_dist_core.sql:682: ERROR:  findAndModify on a sharded collection cannot be routed to a single shard when the shard key value is collation-sensitive (string type).
+psql:sql/bson_collation_query_tests_dist_core.sql:676: ERROR:  findAndModify on a sharded collection cannot be routed to a single shard when the shard key value is collation-sensitive (string type).
 ROLLBACK;
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
 SELECT documentdb_api.find_and_modify(
   'coll_q_dist_db',
   '{"findAndModify": "coll_find_modify_string_shard_d", "query": {"tenant": "ALPHA"}, "remove": true, "collation": {"locale": "en", "strength": 1}}');
-psql:sql/bson_collation_query_tests_dist_core.sql:688: ERROR:  findAndModify on a sharded collection cannot be routed to a single shard when the shard key value is collation-sensitive (string type).
+psql:sql/bson_collation_query_tests_dist_core.sql:682: ERROR:  findAndModify on a sharded collection cannot be routed to a single shard when the shard key value is collation-sensitive (string type).
 ROLLBACK;
 -- Explicit simple collation retains exact string shard-key routing.
 BEGIN;

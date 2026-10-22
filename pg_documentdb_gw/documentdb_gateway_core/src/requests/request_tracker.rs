@@ -6,7 +6,7 @@
  *-------------------------------------------------------------------------
  */
 
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 
 use tokio::time::Instant;
 
@@ -66,8 +66,11 @@ pub struct RequestTracker {
     /// means no cursor is associated with the request, matching the wire-protocol
     /// sentinel for "no more cursor".
     cursor_id: AtomicI64,
-}
 
+    /// Whether this request was reissued against a different backend after the
+    /// first attempt was given up on. Recorded for telemetry only.
+    reissued_elsewhere: AtomicBool,
+}
 impl Default for RequestTracker {
     fn default() -> Self {
         Self::new()
@@ -80,6 +83,7 @@ impl RequestTracker {
         Self {
             request_interval_metrics_array: std::array::from_fn(|_| AtomicU64::new(0)),
             cursor_id: AtomicI64::new(0),
+            reissued_elsewhere: AtomicBool::new(false),
         }
     }
 
@@ -111,6 +115,14 @@ impl RequestTracker {
             id => Some(id),
         }
     }
+
+    pub fn set_reissued_elsewhere(&self) {
+        self.reissued_elsewhere.store(true, Ordering::Relaxed);
+    }
+
+    pub fn reissued_elsewhere(&self) -> bool {
+        self.reissued_elsewhere.load(Ordering::Relaxed)
+    }
 }
 
 #[cfg(test)]
@@ -121,6 +133,19 @@ mod tests {
     fn cursor_id_defaults_to_none() {
         let tracker = RequestTracker::new();
         assert_eq!(tracker.cursor_id(), None);
+    }
+
+    #[test]
+    fn a_request_is_not_reissued_elsewhere_by_default() {
+        let tracker = RequestTracker::new();
+        assert!(!tracker.reissued_elsewhere());
+    }
+
+    #[test]
+    fn reissued_elsewhere_holds_once_recorded() {
+        let tracker = RequestTracker::new();
+        tracker.set_reissued_elsewhere();
+        assert!(tracker.reissued_elsewhere());
     }
 
     #[test]

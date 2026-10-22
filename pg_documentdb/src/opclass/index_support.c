@@ -363,6 +363,8 @@ extern bool EnableCrossIndexBitmapOrSortMerge;
 extern bool EnableCompositeReducedCorrelatedFirstOwnerFallback;
 extern bool EnableLookupJoinSelectivityFromStats;
 extern bool EnableFullScanCostAndSelectivity;
+extern bool EnableBtreeOrderByWithFilters;
+extern bool EnableCompositeRangeSelectivity;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -394,6 +396,8 @@ static bool IsMatchingPathForQueryOperator(RelOptInfo *rel, Path *path,
 										   MatchIndexPath matchIndexPath,
 										   void *matchContext);
 static RestrictInfo * MarkReducedCorrelatedIndexQualPlanned(RestrictInfo *indexQual);
+static bool HasMultipleRangeConditionsForOrderedIndexPath(IndexPath *indexPath);
+static RestrictInfo * GetNativeStatsRangeQual(RestrictInfo *rinfo, List **itemsToFree);
 static bool PruneReducedCorrelatedIndexQuals(IndexPath *indexPath, bytea *indexOptions,
 											 uint32_t multiKeyPathBitMask);
 static Expr * ProcessFullScanForOrderBy(SupportRequestIndexCondition *req, List *args);
@@ -552,7 +556,6 @@ static const ForceIndexSupportFuncs ForceIndexOperatorSupport[] =
 extern bool EnableVectorForceIndexPushdown;
 extern bool EnableGeonearForceIndexPushdown;
 extern bool ForceIndexOnlyScanIfAvailable;
-extern bool EnableOrderByIdOnCostFunction;
 extern int MaxMergeSortInValues;
 extern bool EnablePrimaryKeyCursorScan;
 
@@ -3778,7 +3781,7 @@ documentdb_btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 {
 	bool convertedToIndexOnlyScan = false;
 
-	if (EnableOrderByIdOnCostFunction &&
+	if (ShouldEnableOrderByIdOnCostFunction(root, path->path.parent) &&
 		list_length(root->query_pathkeys) == 1)
 	{
 		ConsiderBtreeOrderByPushdown(root, path);
@@ -4324,7 +4327,8 @@ ConsiderIndexOrderByPushdownForId(PlannerInfo *root, RelOptInfo *rel, RangeTblEn
 	/* In this path, we only consider order by pushdown for the PK index - so we only support
 	 * having a single order by path key
 	 */
-	if (EnableOrderByIdOnCostFunction || list_length(root->query_pathkeys) != 1)
+	if (ShouldEnableOrderByIdOnCostFunction(root, rel) || list_length(
+			root->query_pathkeys) != 1)
 	{
 		return;
 	}
@@ -4428,14 +4432,68 @@ ConsiderIndexOrderByPushdownForId(PlannerInfo *root, RelOptInfo *rel, RangeTblEn
 				SortPathKeyStrategy(sortDetailsInput->sortPathKey) ==
 				BTGreaterStrategyNumber ?
 				BackwardScanDirection : ForwardScanDirection;
+			IndexPath *primaryKeyPath = NULL;
 
-			IndexClause *shard_key_clause =
-				BuildPointReadIndexClause(
-					context->plannerOrderByData.shardKeyEqualityExpr, 0);
-			List *indexClauses = list_make1(shard_key_clause);
-			IndexPath *primaryKeyPath = create_index_path(
-				root, primaryKeyIndex, indexClauses, NIL, NIL, NIL, scanDir, false, NULL,
-				1, false);
+			if (EnableBtreeOrderByWithFilters)
+			{
+				List *newIndexList = list_make1(primaryKeyIndex);
+
+				List *oldRelPaths = rel->pathlist;
+				List *oldIndexList = rel->indexlist;
+				rel->pathlist = NIL;
+				rel->indexlist = newIndexList;
+				create_index_paths(root, rel);
+				List *buildPaths = rel->pathlist;
+				rel->pathlist = oldRelPaths;
+				rel->indexlist = oldIndexList;
+
+				if (list_length(buildPaths) > 0)
+				{
+					Path *bestPath = linitial(buildPaths);
+					IndexPath *indexPath = NULL;
+					if (IsA(bestPath, IndexPath))
+					{
+						indexPath = (IndexPath *) bestPath;
+					}
+					else if (IsA(bestPath, BitmapHeapPath))
+					{
+						BitmapHeapPath *bitmapPath = (BitmapHeapPath *) bestPath;
+						if (IsA(bitmapPath->bitmapqual, IndexPath))
+						{
+							indexPath = (IndexPath *) bitmapPath->bitmapqual;
+						}
+					}
+
+					if (indexPath != NULL &&
+						indexPath->indexinfo == primaryKeyIndex)
+					{
+						if (list_length(indexPath->indexclauses) > 1)
+						{
+							bool hasNonIdFilters = false;
+							indexPath = TrimIndexRestrictInfoForBtreePath(root, indexPath,
+																		  &hasNonIdFilters);
+						}
+
+						primaryKeyPath = indexPath;
+					}
+				}
+			}
+
+			/* An unsharded collection's redundant shard-key qual may already
+			 * be removed, leaving no indexable filters to regenerate a path. */
+			if (primaryKeyPath == NULL)
+			{
+				IndexClause *shard_key_clause =
+					BuildPointReadIndexClause(
+						context->plannerOrderByData.shardKeyEqualityExpr, 0);
+				List *indexClauses = list_make1(shard_key_clause);
+				primaryKeyPath = create_index_path(
+					root, primaryKeyIndex, indexClauses, NIL, NIL, NIL, scanDir, false,
+					NULL,
+					1, false);
+			}
+
+			primaryKeyPath->indexscandir = scanDir;
 			primaryKeyPath->path.pathkeys = list_make1(sortDetailsInput->sortPathKey);
 			pathsToAdd = lappend(pathsToAdd, primaryKeyPath);
 		}
@@ -8129,13 +8187,16 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
  * for a query that has EQ(A), EQ(C) -> the boundary is "EQ(A)"
  */
 List *
-ExtractBoundaryQualsForOrderedIndexPath(IndexPath *indexPath, int *num_sa_scans)
+ExtractBoundaryQualsForOrderedIndexPath(IndexPath *indexPath, int *num_sa_scans,
+										List **itemsToFree)
 {
 	List *validRestrictInfos[INDEX_MAX_KEYS] = { 0 };
 	bool equalityPrefixesGlobal[INDEX_MAX_KEYS] = { 0 };
 	int32_t numSaopScans[INDEX_MAX_KEYS] = { 0 };
 	int maxGlobalColumnNumber = -1;
 	*num_sa_scans = 1;
+	bool rewriteRanges = EnableCompositeRangeSelectivity &&
+						 HasMultipleRangeConditionsForOrderedIndexPath(indexPath);
 
 	ListCell *cell;
 	foreach(cell, indexPath->indexclauses)
@@ -8219,7 +8280,16 @@ ExtractBoundaryQualsForOrderedIndexPath(IndexPath *indexPath, int *num_sa_scans)
 		}
 
 		/* This path is valid for consideration with boundary clauses */
-		finalBoundaryClauses = list_concat(finalBoundaryClauses, validRestrictInfos[i]);
+		foreach(cell, validRestrictInfos[i])
+		{
+			RestrictInfo *rinfo = lfirst_node(RestrictInfo, cell);
+			if (rewriteRanges)
+			{
+				rinfo = GetNativeStatsRangeQual(rinfo, itemsToFree);
+			}
+
+			finalBoundaryClauses = lappend(finalBoundaryClauses, rinfo);
+		}
 
 		*num_sa_scans += numSaopScans[i];
 
@@ -8260,57 +8330,7 @@ GetModifiedClauseListForOrderedIndexPath(IndexPath *indexPath, List **itemsToFre
 	List *modifiedClauses = NIL;
 	bool equalityPrefixes[INDEX_MAX_KEYS] = { 0 };
 	bool nonEqualityPrefixes[INDEX_MAX_KEYS] = { 0 };
-	int numConds[INDEX_MAX_KEYS] = { 0 };
-	bool hasMultipleConditionsForPath = false;
-
-	foreach(cell, indexPath->indexclauses)
-	{
-		IndexClause *iclause = (IndexClause *) lfirst(cell);
-		ListCell *indexQualCell;
-		foreach(indexQualCell, iclause->indexquals)
-		{
-			RestrictInfo *rinfo = lfirst_node(RestrictInfo, indexQualCell);
-			int32_t indexStrategy = 0;
-			int columnNumber = ProcessSingleCompositeFilter(
-				(Node *) rinfo->clause,
-				indexPath->indexinfo->opclassoptions[iclause->indexcol],
-				equalityPrefixes, nonEqualityPrefixes, &indexStrategy);
-			if (columnNumber < 0)
-			{
-				continue;
-			}
-
-			switch (indexStrategy)
-			{
-				case BSON_INDEX_STRATEGY_DOLLAR_GREATER:
-				case BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL:
-				case BSON_INDEX_STRATEGY_DOLLAR_LESS:
-				case BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL:
-				{
-					numConds[columnNumber]++;
-					hasMultipleConditionsForPath = numConds[columnNumber] > 1;
-					break;
-				}
-
-				default:
-				{
-					break;
-				}
-			}
-
-			if (hasMultipleConditionsForPath)
-			{
-				break;
-			}
-		}
-
-		if (hasMultipleConditionsForPath)
-		{
-			break;
-		}
-	}
-
-	if (!hasMultipleConditionsForPath)
+	if (!HasMultipleRangeConditionsForOrderedIndexPath(indexPath))
 	{
 		return indexPath->indexclauses;
 	}
@@ -8342,98 +8362,9 @@ GetModifiedClauseListForOrderedIndexPath(IndexPath *indexPath, List **itemsToFre
 				continue;
 			}
 
-			int btreeStrategy = 0;
-			switch (indexStrategy)
-			{
-				case BSON_INDEX_STRATEGY_DOLLAR_GREATER:
-				{
-					btreeStrategy = BTGreaterStrategyNumber;
-					break;
-				}
-
-				case BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL:
-				{
-					btreeStrategy = BTGreaterEqualStrategyNumber;
-					break;
-				}
-
-				case BSON_INDEX_STRATEGY_DOLLAR_LESS:
-				{
-					btreeStrategy = BTLessStrategyNumber;
-					break;
-				}
-
-				case BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL:
-				{
-					btreeStrategy = BTLessEqualStrategyNumber;
-					break;
-				}
-
-				default:
-				{
-					modifiedIndexQuals = lappend(modifiedIndexQuals, rinfo);
-					continue;
-				}
-			}
-
-			Oid opNo = NativeStatsBtreeOperatorForStrategy(btreeStrategy);
-			if (!OidIsValid(opNo) || list_length(opExpr->args) != 2)
-			{
-				modifiedIndexQuals = lappend(modifiedIndexQuals, rinfo);
-				continue;
-			}
-
-			Expr *firstArg = linitial(opExpr->args);
-			Expr *secondArg = lsecond(opExpr->args);
-			if (IsA(firstArg, Var) && IsA(secondArg, Const) &&
-				!((Const *) secondArg)->constisnull)
-			{
-				Const *argConst = (Const *) secondArg;
-				pgbson *argBson = DatumGetPgBson(argConst->constvalue);
-				pgbsonelement dollarElement = { 0 };
-				PgbsonToSinglePgbsonElementWithCollation(argBson, &dollarElement);
-
-				Const *pathValue = MakeTextConst(dollarElement.path,
-												 dollarElement.pathLength);
-				*itemsToFree = lappend(*itemsToFree,
-									   DatumGetPointer(pathValue->constvalue));
-				*itemsToFree = lappend(*itemsToFree, pathValue);
-				List *pathArgs = list_make2(firstArg, pathValue);
-				*itemsToFree = lappend(*itemsToFree, pathArgs);
-				Expr *projectedValue = (Expr *) makeFuncExpr(
-					BsonStatsProjectFuncOid(), BsonTypeId(),
-					pathArgs, InvalidOid,
-					DEFAULT_COLLATION_OID, COERCE_EXPLICIT_CALL);
-				*itemsToFree = lappend(*itemsToFree, projectedValue);
-				pgbson *queryDocument = BsonValueToDocumentPgbson(
-					&dollarElement.bsonValue);
-				*itemsToFree = lappend(*itemsToFree, queryDocument);
-				Const *queryValue = MakeBsonConst(queryDocument);
-				*itemsToFree = lappend(*itemsToFree, queryValue);
-				queryValue->consttype = BsonQueryTypeId();
-				Expr *modifiedOpExpr = make_opclause(opNo, BOOLOID, false,
-													 projectedValue,
-													 (Expr *) queryValue,
-													 opExpr->opcollid,
-													 opExpr->inputcollid);
-				*itemsToFree = lappend(*itemsToFree,
-									   ((OpExpr *) modifiedOpExpr)->args);
-				*itemsToFree = lappend(*itemsToFree, modifiedOpExpr);
-				RestrictInfo *rinfoCopy = makeNode(RestrictInfo);
-				*itemsToFree = lappend(*itemsToFree, rinfoCopy);
-				memcpy(rinfoCopy, rinfo, sizeof(RestrictInfo));
-				rinfoCopy->clause = modifiedOpExpr;
-
-				/* The cached selectivity belongs to the original clause. */
-				rinfoCopy->norm_selec = -1;
-				rinfoCopy->outer_selec = -1;
-				modifiedIndexQuals = lappend(modifiedIndexQuals, rinfoCopy);
-				qualsModified = true;
-			}
-			else
-			{
-				modifiedIndexQuals = lappend(modifiedIndexQuals, rinfo);
-			}
+			RestrictInfo *modifiedQual = GetNativeStatsRangeQual(rinfo, itemsToFree);
+			modifiedIndexQuals = lappend(modifiedIndexQuals, modifiedQual);
+			qualsModified |= modifiedQual != rinfo;
 		}
 
 		if (qualsModified)
@@ -8467,6 +8398,173 @@ GetModifiedClauseListForOrderedIndexPath(IndexPath *indexPath, List **itemsToFre
 /* --------------------------------------------------------- */
 /* Private functions */
 /* --------------------------------------------------------- */
+
+static bool
+HasMultipleRangeConditionsForOrderedIndexPath(IndexPath *indexPath)
+{
+	bool equalityPrefixes[INDEX_MAX_KEYS] = { 0 };
+	bool nonEqualityPrefixes[INDEX_MAX_KEYS] = { 0 };
+	int numConds[INDEX_MAX_KEYS] = { 0 };
+	ListCell *cell;
+	foreach(cell, indexPath->indexclauses)
+	{
+		IndexClause *iclause = lfirst_node(IndexClause, cell);
+		ListCell *qualCell;
+		foreach(qualCell, iclause->indexquals)
+		{
+			RestrictInfo *rinfo = lfirst_node(RestrictInfo, qualCell);
+			int32_t indexStrategy = 0;
+			int columnNumber = ProcessSingleCompositeFilter(
+				(Node *) rinfo->clause,
+				indexPath->indexinfo->opclassoptions[iclause->indexcol],
+				equalityPrefixes, nonEqualityPrefixes, &indexStrategy);
+			if (columnNumber < 0)
+			{
+				continue;
+			}
+
+			switch (indexStrategy)
+			{
+				case BSON_INDEX_STRATEGY_DOLLAR_GREATER:
+				case BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL:
+				case BSON_INDEX_STRATEGY_DOLLAR_LESS:
+				case BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL:
+				{
+					if (++numConds[columnNumber] > 1)
+					{
+						return true;
+					}
+
+					break;
+				}
+
+				default:
+				{
+					break;
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+
+static RestrictInfo *
+GetNativeStatsRangeQual(RestrictInfo *rinfo, List **itemsToFree)
+{
+	if (!IsA(rinfo->clause, OpExpr))
+	{
+		return rinfo;
+	}
+
+	OpExpr *opExpr = (OpExpr *) rinfo->clause;
+	const MongoIndexOperatorInfo *indexOperator =
+		GetMongoIndexOperatorByPostgresOperatorId(opExpr->opno);
+	if (indexOperator == NULL || list_length(opExpr->args) != 2)
+	{
+		return rinfo;
+	}
+
+	Expr *firstArg = linitial(opExpr->args);
+	Expr *secondArg = lsecond(opExpr->args);
+	if (!IsA(firstArg, Var) || !IsA(secondArg, Const) ||
+		((Const *) secondArg)->constisnull)
+	{
+		return rinfo;
+	}
+
+	Const *argConst = (Const *) secondArg;
+	pgbson *argBson = DatumGetPgBson(argConst->constvalue);
+	pgbsonelement dollarElement = { 0 };
+	PgbsonToSinglePgbsonElementWithCollation(argBson, &dollarElement);
+
+	bool equalityPrefix = false;
+	bool nonEqualityPrefix = false;
+	int8_t orderScanDirection = 0;
+	int32_t indexStrategy = 0;
+	bool isPartialFilterExpr = true;
+	IndexStrategyClassify(indexOperator->indexStrategy, &equalityPrefix,
+						  &nonEqualityPrefix, opExpr->opno, isPartialFilterExpr,
+						  &dollarElement.bsonValue, &orderScanDirection, &indexStrategy);
+
+	int btreeStrategy = 0;
+	switch (indexStrategy)
+	{
+		case BSON_INDEX_STRATEGY_DOLLAR_GREATER:
+		{
+			btreeStrategy = BTGreaterStrategyNumber;
+			break;
+		}
+
+		case BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL:
+		{
+			btreeStrategy = BTGreaterEqualStrategyNumber;
+			break;
+		}
+
+		case BSON_INDEX_STRATEGY_DOLLAR_LESS:
+		{
+			btreeStrategy = BTLessStrategyNumber;
+			break;
+		}
+
+		case BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL:
+		{
+			btreeStrategy = BTLessEqualStrategyNumber;
+			break;
+		}
+
+		default:
+		{
+			return rinfo;
+		}
+	}
+
+	Oid opNo = NativeStatsBtreeOperatorForStrategy(btreeStrategy);
+	if (!OidIsValid(opNo))
+	{
+		return rinfo;
+	}
+
+	/* Preserve the existence semantics of >= MinKey. */
+	if (btreeStrategy == BTGreaterEqualStrategyNumber &&
+		dollarElement.bsonValue.value_type == BSON_TYPE_MINKEY)
+	{
+		return rinfo;
+	}
+
+	Const *pathValue = MakeTextConst(dollarElement.path, dollarElement.pathLength);
+	*itemsToFree = lappend(*itemsToFree, DatumGetPointer(pathValue->constvalue));
+	*itemsToFree = lappend(*itemsToFree, pathValue);
+	List *pathArgs = list_make2(firstArg, pathValue);
+	*itemsToFree = lappend(*itemsToFree, pathArgs);
+	Expr *projectedValue = (Expr *) makeFuncExpr(
+		BsonStatsProjectFuncOid(), BsonTypeId(),
+		pathArgs, InvalidOid,
+		DEFAULT_COLLATION_OID, COERCE_EXPLICIT_CALL);
+	*itemsToFree = lappend(*itemsToFree, projectedValue);
+	pgbson *queryDocument = BsonValueToDocumentPgbson(&dollarElement.bsonValue);
+	*itemsToFree = lappend(*itemsToFree, queryDocument);
+	Const *queryValue = MakeBsonConst(queryDocument);
+	*itemsToFree = lappend(*itemsToFree, queryValue);
+	queryValue->consttype = BsonQueryTypeId();
+	Expr *modifiedOpExpr = make_opclause(opNo, BOOLOID, false,
+										 projectedValue, (Expr *) queryValue,
+										 opExpr->opcollid, opExpr->inputcollid);
+	*itemsToFree = lappend(*itemsToFree, ((OpExpr *) modifiedOpExpr)->args);
+	*itemsToFree = lappend(*itemsToFree, modifiedOpExpr);
+	RestrictInfo *rinfoCopy = makeNode(RestrictInfo);
+	*itemsToFree = lappend(*itemsToFree, rinfoCopy);
+	memcpy(rinfoCopy, rinfo, sizeof(RestrictInfo));
+	rinfoCopy->clause = modifiedOpExpr;
+
+	/* The cached selectivity belongs to the original clause. */
+	rinfoCopy->norm_selec = -1;
+	rinfoCopy->outer_selec = -1;
+	return rinfoCopy;
+}
+
 
 /*
  * Inspects an input SupportRequestIndexCondition and associated FuncExpr
