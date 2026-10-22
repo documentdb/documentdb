@@ -96,6 +96,22 @@ pub struct Connection {
     default_command_deadline: Duration,
 }
 
+/// Discard a connection if the caller drops a statement before it completes.
+struct StatementGuard<'a> {
+    abandoned: &'a AtomicU64,
+    deadline: Duration,
+    completed: bool,
+}
+
+impl Drop for StatementGuard<'_> {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.abandoned
+                .store(duration_to_nanos(self.deadline).max(1), Ordering::Relaxed);
+        }
+    }
+}
+
 impl Connection {
     #[must_use]
     pub fn new(
@@ -184,11 +200,15 @@ impl Connection {
         }
 
         let deadline = self.command_deadline();
+        let mut guard = StatementGuard {
+            abandoned: &self.abandoned_deadline_nanos,
+            deadline,
+            completed: false,
+        };
         let Ok(result) = tokio::time::timeout(deadline, statement).await else {
-            self.abandoned_deadline_nanos
-                .store(duration_to_nanos(deadline), Ordering::Relaxed);
             return Err(StatementError::Timeout(deadline));
         };
+        guard.completed = true;
         result
     }
 
@@ -466,5 +486,125 @@ mod tests {
             rendered.contains(&format!("{deadline:?}")),
             "Display should include the deadline, got {rendered:?}"
         );
+    }
+
+    fn deadline_connection() -> Connection {
+        Connection {
+            inner: None,
+            in_transaction: AtomicBool::new(false),
+            abandoned_deadline_nanos: AtomicU64::new(0),
+            command_deadline_nanos: AtomicU64::new(duration_to_nanos(Duration::from_secs(30))),
+            default_command_deadline: Duration::from_secs(30),
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_statement_marks_the_connection_unusable() {
+        let connection = deadline_connection();
+        let result = tokio::time::timeout(
+            Duration::from_millis(5),
+            connection.with_command_deadline(std::future::pending::<Result<(), StatementError>>()),
+        )
+        .await;
+        result.unwrap_err();
+        assert!(connection.abandoned_deadline().is_some());
+        let retried = connection
+            .with_command_deadline(async {
+                panic!("an abandoned connection must not start another operation");
+                #[expect(unreachable_code, reason = "the assertion must not be reached")]
+                Ok::<(), StatementError>(())
+            })
+            .await;
+        assert!(matches!(retried, Err(StatementError::Timeout(_))));
+    }
+
+    #[tokio::test]
+    async fn completed_statements_do_not_abandon_the_connection() {
+        let connection = deadline_connection();
+        connection
+            .with_command_deadline(async { Ok::<_, StatementError>(()) })
+            .await
+            .unwrap();
+        assert!(connection.abandoned_deadline().is_none());
+        assert!(connection
+            .with_command_deadline(async {
+                Err::<(), _>(StatementError::Timeout(Duration::from_secs(1)))
+            })
+            .await
+            .is_err());
+        assert!(connection.abandoned_deadline().is_none());
+    }
+
+    #[tokio::test]
+    async fn cancelling_an_executing_query_removes_its_pooled_connection() {
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+            sync::oneshot,
+        };
+
+        use crate::{
+            configuration::DocumentDBSetupConfiguration,
+            postgres::{
+                conn_mgmt::{ConnectionPool, PgPoolSettings},
+                create_query_catalog,
+            },
+            testing::test_setup_configuration,
+        };
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (started, observed) = oneshot::channel();
+        let backend = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let length = socket.read_u32().await.unwrap();
+            let mut startup = vec![0; usize::try_from(length - 4).unwrap()];
+            socket.read_exact(&mut startup).await.unwrap();
+            socket
+                .write_all(b"R\0\0\0\x08\0\0\0\0Z\0\0\0\x05I")
+                .await
+                .unwrap();
+            assert_eq!(socket.read_u8().await.unwrap(), b'Q');
+            let length = socket.read_u32().await.unwrap();
+            let mut query = vec![0; usize::try_from(length - 4).unwrap()];
+            socket.read_exact(&mut query).await.unwrap();
+            started.send(()).unwrap();
+            let mut rest = Vec::new();
+            socket.read_to_end(&mut rest).await.unwrap();
+        });
+        let setup = DocumentDBSetupConfiguration {
+            postgres_host_name: Some("127.0.0.1".to_owned()),
+            postgres_port: Some(port),
+            ..test_setup_configuration()
+        };
+        let pool = ConnectionPool::new_with_user(
+            &setup,
+            &create_query_catalog(),
+            "user",
+            None,
+            "test",
+            PgPoolSettings::system_pool_settings(1).with_connect_timeout(Duration::from_secs(1)),
+        )
+        .unwrap();
+        let connection = Connection::new(
+            pool.acquire_connection().await.unwrap(),
+            false,
+            Duration::from_secs(30),
+        );
+        {
+            let query = connection.batch_execute("SELECT 1");
+            tokio::pin!(query);
+            tokio::select! {
+                result = &mut query => panic!("backend must remain blocked: {result:?}"),
+                result = observed => result.unwrap(),
+            }
+        }
+        assert!(connection.abandoned_deadline().is_some());
+        drop(connection);
+        assert_eq!(pool.status().status().size, 0);
+        tokio::time::timeout(Duration::from_secs(2), backend)
+            .await
+            .unwrap()
+            .unwrap();
     }
 }

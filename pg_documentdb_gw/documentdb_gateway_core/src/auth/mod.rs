@@ -10,6 +10,7 @@
 
 mod command;
 mod manager;
+pub mod query;
 mod state;
 
 pub mod scram;
@@ -24,3 +25,6 @@ pub use state::UserAuthState;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod scram_executor_tests;

@@ -8,25 +8,21 @@
  *-------------------------------------------------------------------------
  */
 
-use std::{future::Future, str::from_utf8, sync::Arc};
+use std::{str::from_utf8, sync::Arc};
 
 use async_trait::async_trait;
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
-use tokio::time::Duration;
 use tokio_postgres::types::Type;
 
 use crate::{
-    auth::{AuthenticationHandler, AuthenticationResult, AuthenticationSuccess},
+    auth::{
+        query::{AuthenticationQueryExecutor, PostgresAuthenticationQueryExecutor},
+        AuthenticationHandler, AuthenticationResult, AuthenticationSuccess,
+    },
     context::{ConnectionContext, RequestContext},
     error::{DocumentDBError, ErrorCode, Result},
-    postgres::{
-        conn_mgmt::{
-            run_request_with_retries, Connection, ConnectionSource, QueryOptions, RequestOptions,
-            StatementError,
-        },
-        PgDocument,
-    },
+    postgres::PgDocument,
     requests::{RequestType, WireRequest},
     security::principal::Principal,
 };
@@ -49,13 +45,27 @@ struct ScramConversation {
 }
 
 /// Salted Challenge Response Authentication Mechanism (SCRAM)
-#[derive(Debug, Default)]
-pub struct ScramAuthenticationHandler;
+#[derive(Debug)]
+pub struct ScramAuthenticationHandler {
+    executor: Arc<dyn AuthenticationQueryExecutor>,
+}
+
+impl Default for ScramAuthenticationHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl ScramAuthenticationHandler {
     #[must_use]
-    pub const fn new() -> Self {
-        Self
+    pub fn new() -> Self {
+        Self::with_executor(Arc::new(PostgresAuthenticationQueryExecutor))
+    }
+
+    /// Uses the supplied database executor for every round of the conversation.
+    #[must_use]
+    pub fn with_executor(executor: Arc<dyn AuthenticationQueryExecutor>) -> Self {
+        Self { executor }
     }
 }
 
@@ -67,9 +77,11 @@ impl AuthenticationHandler for ScramAuthenticationHandler {
         request_context: &RequestContext<'_>,
     ) -> Result<AuthenticationResult> {
         match request_context.request_type() {
-            RequestType::SaslStart => handle_sasl_start(connection_context, request_context).await,
+            RequestType::SaslStart => {
+                handle_sasl_start(connection_context, request_context, self.executor.as_ref()).await
+            }
             RequestType::SaslContinue => {
-                handle_sasl_continue(connection_context, request_context).await
+                handle_sasl_continue(connection_context, request_context, self.executor.as_ref()).await
             }
             request_type => Err(DocumentDBError::authentication_failed_internal_error(
                 "Authentication Failed".to_owned(),
@@ -92,6 +104,7 @@ pub fn create_handler() -> Box<dyn AuthenticationHandler> {
 async fn handle_sasl_start(
     connection_context: &mut ConnectionContext,
     request_context: &RequestContext<'_>,
+    executor: &dyn AuthenticationQueryExecutor,
 ) -> Result<AuthenticationResult> {
     let payload = parse_sasl_payload(request_context.request(), true)?;
 
@@ -104,7 +117,7 @@ async fn handle_sasl_start(
 
     let server_nonce = generate_server_nonce(client_nonce);
     let (salt, iterations) =
-        get_salt_and_iterations(connection_context, username, request_context).await?;
+        get_salt_and_iterations(connection_context, username, request_context, executor).await?;
 
     let server_first_message = format!("r={server_nonce},s={salt},i={iterations}");
 
@@ -130,6 +143,7 @@ async fn handle_sasl_start(
 async fn handle_sasl_continue(
     connection_context: &ConnectionContext,
     request_context: &RequestContext<'_>,
+    executor: &dyn AuthenticationQueryExecutor,
 ) -> Result<AuthenticationResult> {
     let conversation: ScramConversation = connection_context
         .user()
@@ -181,10 +195,12 @@ async fn handle_sasl_continue(
         &auth_message,
         proof,
         request_context,
+        executor,
     )
     .await?;
 
-    let user_oid = get_user_oid(connection_context, username, request_context).await?;
+    let user_oid =
+        get_user_oid_with_executor(connection_context, username, request_context, executor).await?;
     let principal = Principal::new(username, user_oid);
 
     Ok(AuthenticationResult::Success(AuthenticationSuccess::new(
@@ -297,6 +313,7 @@ async fn get_salt_and_iterations(
     connection_context: &ConnectionContext,
     username: &str,
     request_context: &RequestContext<'_>,
+    executor: &dyn AuthenticationQueryExecutor,
 ) -> Result<(String, i32)> {
     for blocked_prefix in connection_context
         .service_context
@@ -318,18 +335,21 @@ async fn get_salt_and_iterations(
         .query_catalog()
         .salt_and_iterations();
 
-    let run_func = |connection: Arc<Connection>| async move {
-        let rows = connection.query(query, &[Type::TEXT], &[&username]).await?;
-        let Some(row) = rows.first() else {
-            return Ok(None);
-        };
-        let doc: PgDocument = row.try_get(0)?;
-        Ok(Some(doc.0.to_raw_document_buf()))
-    };
-
-    let doc = run_auth_query(connection_context, request_context, run_func)
-        .await?
-        .ok_or_else(DocumentDBError::pg_response_empty)?;
+    let rows = executor
+        .query(
+            connection_context,
+            request_context,
+            query,
+            &[Type::TEXT],
+            &[&username],
+        )
+        .await?;
+    let doc: PgDocument = rows
+        .first()
+        .ok_or_else(DocumentDBError::pg_response_empty)?
+        .try_get(0)
+        .map_err(DocumentDBError::from)?;
+    let doc = doc.0;
 
     if doc
         .get_i32("ok")
@@ -359,30 +379,28 @@ async fn verify_scram_proof(
     auth_message: &str,
     proof: &str,
     request_context: &RequestContext<'_>,
+    executor: &dyn AuthenticationQueryExecutor,
 ) -> Result<String> {
     let query = connection_context
         .service_context
         .query_catalog()
         .authenticate_with_scram_sha256();
 
-    let run_func = |connection: Arc<Connection>| async move {
-        let rows = connection
-            .query(
-                query,
-                &[Type::TEXT, Type::TEXT, Type::TEXT],
-                &[&username, &auth_message, &proof],
-            )
-            .await?;
-        let Some(row) = rows.first() else {
-            return Ok(None);
-        };
-        let doc: PgDocument = row.try_get(0)?;
-        Ok(Some(doc.0.to_raw_document_buf()))
-    };
-
-    let scram_doc = run_auth_query(connection_context, request_context, run_func)
-        .await?
-        .ok_or_else(DocumentDBError::pg_response_empty)?;
+    let rows = executor
+        .query(
+            connection_context,
+            request_context,
+            query,
+            &[Type::TEXT, Type::TEXT, Type::TEXT],
+            &[&username, &auth_message, &proof],
+        )
+        .await?;
+    let scram_doc: PgDocument = rows
+        .first()
+        .ok_or_else(DocumentDBError::pg_response_empty)?
+        .try_get(0)
+        .map_err(DocumentDBError::from)?;
+    let scram_doc = scram_doc.0;
 
     if scram_doc
         .get_i32("ok")
@@ -410,62 +428,38 @@ pub async fn get_user_oid(
     username: &str,
     request_context: &RequestContext<'_>,
 ) -> Result<u32> {
-    let run_func = |connection: Arc<Connection>| async move {
-        let rows = connection
-            .query(
-                "SELECT oid from pg_roles WHERE rolname = $1",
-                &[Type::TEXT],
-                &[&username],
-            )
-            .await?;
-        rows.first()
-            .map(|row| row.try_get::<_, tokio_postgres::types::Oid>(0))
-            .transpose()
-            .map_err(StatementError::from)
-    };
-
-    run_auth_query(connection_context, request_context, run_func)
-        .await?
-        .ok_or_else(DocumentDBError::pg_response_empty)
-}
-
-/// Runs an authentication query against the system auth pool with retries.
-async fn run_auth_query<T, F, Fut>(
-    connection_context: &ConnectionContext,
-    request_context: &RequestContext<'_>,
-    run_func: F,
-) -> Result<T>
-where
-    F: Fn(Arc<Connection>) -> Fut,
-    Fut: Future<Output = std::result::Result<T, StatementError>>,
-{
-    let pool = connection_context
-        .service_context
-        .connection_pool_manager()
-        .system_auth_pool();
-
-    let query_options = QueryOptions::builder().build();
-    let request_options = RequestOptions::new(
-        false, // in_replica_cluster_mode: always retry auth queries.
-        None,  // no gateway-level command timeout for auth queries.
-    );
-    let dynamic_configuration = connection_context.dynamic_configuration();
-
-    run_request_with_retries(
-        ConnectionSource::Pool(pool),
-        query_options,
-        request_options,
-        Duration::from_secs(
-            connection_context
-                .service_context
-                .dynamic_configuration()
-                .max_request_timeout_sec(),
-        ),
-        dynamic_configuration.as_ref(),
+    get_user_oid_with_executor(
+        connection_context,
+        username,
         request_context,
-        run_func,
+        &PostgresAuthenticationQueryExecutor,
     )
     .await
+}
+
+/// Resolves a role using the conversation's database executor.
+///
+/// # Errors
+/// Returns an error when lookup fails or the role does not exist.
+pub async fn get_user_oid_with_executor(
+    connection_context: &ConnectionContext,
+    username: &str,
+    request_context: &RequestContext<'_>,
+    executor: &dyn AuthenticationQueryExecutor,
+) -> Result<u32> {
+    let rows = executor
+        .query(
+            connection_context,
+            request_context,
+            "SELECT oid from pg_roles WHERE rolname = $1",
+            &[Type::TEXT],
+            &[&username],
+        )
+        .await?;
+    rows.first()
+        .ok_or_else(DocumentDBError::pg_response_empty)?
+        .try_get::<_, tokio_postgres::types::Oid>(0)
+        .map_err(DocumentDBError::from)
 }
 
 #[cfg(test)]

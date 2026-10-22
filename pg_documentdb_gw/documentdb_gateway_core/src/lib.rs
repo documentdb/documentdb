@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * documentdb_gateway_core/src/lib.rs
  *
@@ -33,8 +34,11 @@ mod runtime;
 #[doc(hidden)]
 pub use runtime::v2::benchmarks as runtime_benchmarks;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test"))]
 pub(crate) mod testing;
+
+#[cfg(feature = "test")]
+pub mod test_support;
 
 use tokio_util::sync::CancellationToken;
 

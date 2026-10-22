@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * documentdb_gateway_core/src/testing/connection_context.rs
  *
@@ -7,6 +8,11 @@
  *
  *-------------------------------------------------------------------------
  */
+
+#![expect(
+    clippy::expect_used,
+    reason = "Opt-in test fixtures fail fast on setup errors"
+)]
 
 use std::sync::Arc;
 
@@ -31,6 +37,10 @@ use crate::{
     telemetry::{TelemetryProvider, TelemetrySettings},
 };
 
+/// Constructs an isolated connection context for tests.
+///
+/// # Panics
+/// Panics if pool or certificate fixture creation fails.
 pub async fn test_connection_context(
     metrics_enabled: bool,
     dynamic_configuration: Arc<dyn DynamicConfiguration>,
@@ -45,6 +55,10 @@ pub async fn test_connection_context(
     .await
 }
 
+/// Constructs a test connection with the supplied authentication handlers.
+///
+/// # Panics
+/// Panics if pool or certificate fixture creation fails.
 pub async fn test_connection_context_with_authentication_manager(
     metrics_enabled: bool,
     dynamic_configuration: Arc<dyn DynamicConfiguration>,
