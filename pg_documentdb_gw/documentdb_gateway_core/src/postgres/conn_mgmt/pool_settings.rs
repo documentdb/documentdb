@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * documentdb_gateway_core/src/postgres/conn_mgmt/pool_settings.rs
  *
@@ -84,9 +85,9 @@ impl PgPoolSettings {
         }
     }
 
-    #[cfg(test)]
+    /// Bounds connection establishment and pool-object creation.
     #[must_use]
-    pub(crate) const fn with_connect_timeout(mut self, connect_timeout: Duration) -> Self {
+    pub const fn with_connect_timeout(mut self, connect_timeout: Duration) -> Self {
         self.connect_timeout = Some(connect_timeout);
         self
     }

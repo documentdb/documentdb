@@ -12,6 +12,7 @@ categories.workspace = true
 [features]
 default = []
 runtime-benchmarks = []
+test = []
 # Compiles request span creation and inbound W3C parent extraction.
 request-tracing = []
 
