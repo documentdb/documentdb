@@ -175,7 +175,7 @@ ParseCollectionCollationOptions(pgbson *options, bson_value_t *collationValue)
 		return NULL;
 	}
 	if (!(EnableCollation && EnableCollationWithCreateCollection &&
-		  IsClusterVersionAtleast(DocDB_V1, 3, 0)))
+		  IsCreateCollectionWithOptionsSchemaSupported()))
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
 						errmsg("Collection collation is not supported yet")));
