@@ -124,7 +124,6 @@ SELECT documentdb_api.insert_one('db', 'fl_sortgroup_dist', '{ "_id": 10, "g": "
 SELECT documentdb_api.shard_collection('db', 'fl_sortgroup_dist', '{ "_id": "hashed" }', false);
 
 -- Sort node should disappear, with orderby pushed to aggregate.
-SET documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 
 set citus.propagate_set_commands to 'local';
 BEGIN;
@@ -135,7 +134,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgro
 
 ROLLBACK;
 
-RESET documentdb.enableSortPushToAccumulatorWithPrefix;
 SELECT documentdb_api.drop_collection('db', 'fl_sortgroup_dist');
 
 -- =============================================================================

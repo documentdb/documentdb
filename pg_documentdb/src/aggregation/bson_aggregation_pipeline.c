@@ -97,7 +97,6 @@ extern bool EnableGroupByCompoundIdIndexPushdown;
 extern bool EnableScalarAggregateIndexPushdown;
 extern bool EnableScalarAggregateAccumulatorPathCollection;
 extern bool EnableProjectPushUpBeforeUnwindWithGroup;
-extern bool EnableSortPushToAccumulatorWithPrefix;
 extern bool EnableSampleScanPushdownForDynamicCursor;
 extern bool EnableDistinctIndexPushdown;
 extern bool EnableDistinctExistsFilterPushdown;
@@ -7435,7 +7434,7 @@ HandleSortGroup(const bson_value_t *existingValue, Query *query,
 
 	/* Drop the explicit Sort node when :
 	 * 1) Group keys form a non-dotted prefix of the sort keys; any remaining suffix keys are pushed into the
-	 * accumulator's ORDER BY.  Gated by EnableSortPushToAccumulatorWithPrefix.
+	 * accumulator's ORDER BY.
 	 * 2) No order-sensitive accumulators are present.
 	 * */
 	bool hasSuffixSort = analysisResult.suffixSortSpec.value_type != BSON_TYPE_EOD;
@@ -7443,8 +7442,7 @@ HandleSortGroup(const bson_value_t *existingValue, Query *query,
 	{
 		ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_SORT_PREFIX_CANDIDATE);
 	}
-	bool prefixOptimization = analysisResult.groupKeysFormSortPrefix &&
-							  EnableSortPushToAccumulatorWithPrefix;
+	bool prefixOptimization = analysisResult.groupKeysFormSortPrefix;
 	bool canPushSort = prefixOptimization && hasSuffixSort;
 	bool canSkipSortNode = prefixOptimization || analysisResult.canDropSort;
 

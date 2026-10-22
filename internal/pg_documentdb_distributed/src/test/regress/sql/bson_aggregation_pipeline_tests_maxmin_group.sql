@@ -253,6 +253,8 @@ SELECT documentdb_api.insert_one('db','maxmin_collation_test','{ "_id": 2, "grou
 SELECT documentdb_api.insert_one('db','maxmin_collation_test','{ "_id": 3, "group": "A", "name": "Apple" }');
 SELECT documentdb_api.insert_one('db','maxmin_collation_test','{ "_id": 4, "group": "a", "name": "date" }');
 SELECT documentdb_api.insert_one('db','maxmin_collation_test','{ "_id": 5, "group": "a", "name": "FIG" }');
+SELECT documentdb_api.insert_one('db','maxmin_collation_test','{ "_id": 6, "group": "A", "name": null }');
+SELECT documentdb_api.insert_one('db','maxmin_collation_test','{ "_id": 7, "group": "a" }');
 
 SET documentdb_core.enableCollation TO on;
 
@@ -454,17 +456,10 @@ RESET citus.enable_local_execution;
 SELECT documentdb_api.drop_collection('db', 'maxmin_project_group_test');
 
 -- =============================================================================
--- Test 18: $group with enable_min_max_skip_null_values propagated to workers.
--- A plain session-level SET does not reach the Citus workers (so the worker-side
--- transition keeps skipping nulls regardless); this test enables
--- citus.propagate_set_commands = 'local' and issues the flag as a SET LOCAL
--- inside a transaction. Citus then ships the GUC to the workers, so the
--- worker-side $min/$max transition honors it. With skipping off, explicit null
--- is considered again across shards; WithExpr excludes missing fields
--- regardless of the flag.
+-- Test 18: $group excludes null and missing values on workers.
 -- =============================================================================
 
--- Group "mixed": explicit null + missing + numbers. Skip on => min 5, max 100.
+-- Group "mixed": explicit null + missing + numbers. Min 5, max 100.
 SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 1,  "grp": "mixed", "val": 50 }');
 SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 2,  "grp": "mixed", "val": null }');
 SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 3,  "grp": "mixed", "val": 5 }');
@@ -490,8 +485,7 @@ SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 18,
 SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 19, "grp": "mk", "val": null }');
 SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 20, "grp": "mk", "val": null }');
 
--- Group "missingonly": numbers + missing, no explicit null. WithExpr excludes
--- missing fields even with skipping off (min 5).
+-- Group "missingonly": numbers + missing, no explicit null. Min 5.
 SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 21, "grp": "missingonly", "val": 30 }');
 SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 22, "grp": "missingonly", "val": 5 }');
 SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 23, "grp": "missingonly" }');
@@ -500,34 +494,18 @@ SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 25,
 
 SELECT documentdb_api.shard_collection('db', 'maxmin_null_prop_dist_test', '{ "_id": "hashed" }', false);
 
--- Propagate SET LOCAL commands to workers for the queries below.
-SET citus.propagate_set_commands TO 'local';
-
--- WithExpr accumulator path, skipping ON (propagated).
+-- Force worker execution of the WithExpr accumulator path.
 BEGIN;
 SET LOCAL citus.enable_local_execution TO off;
-SET LOCAL documentdb.enable_min_max_skip_null_values TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_null_prop_dist_test", "pipeline": [ { "$group": { "_id": "$grp", "minVal": { "$min": "$val" }, "maxVal": { "$max": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
 COMMIT;
 
--- WithExpr accumulator path, skipping OFF (propagated): explicit null considered,
--- missing still excluded.
-BEGIN;
-SET LOCAL citus.enable_local_execution TO off;
-SET LOCAL documentdb.enable_min_max_skip_null_values TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_null_prop_dist_test", "pipeline": [ { "$group": { "_id": "$grp", "minVal": { "$min": "$val" }, "maxVal": { "$max": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
-COMMIT;
-
-RESET citus.propagate_set_commands;
 SELECT documentdb_api.drop_collection('db', 'maxmin_null_prop_dist_test');
 
 -- =============================================================================
--- Test 19: $setWindowFields with enable_min_max_skip_null_values propagated to
--- workers. Sharding on the partition field executes each partition on a worker,
--- so the SET LOCAL flag must reach the worker for the window transition to honor
--- it. This exercises the window-function transition path (distinct from $group).
--- With skipping on, null/missing are excluded on the workers; with skipping off,
--- explicit null is considered while missing fields remain excluded.
+-- Test 19: $setWindowFields excludes null and missing values on workers.
+-- Sharding on the partition field executes each partition on a worker,
+-- exercising the window-function transition path separately from $group.
 -- =============================================================================
 
 SELECT documentdb_api.insert_one('db','maxmin_null_prop_window_dist_test','{ "_id": 1, "grp": "mixed", "val": 50 }');
@@ -542,21 +520,10 @@ SELECT documentdb_api.insert_one('db','maxmin_null_prop_window_dist_test','{ "_i
 
 SELECT documentdb_api.shard_collection('db', 'maxmin_null_prop_window_dist_test', '{ "grp": "hashed" }', false);
 
-SET citus.propagate_set_commands TO 'local';
-
--- WithExpr accumulator path, skipping ON (propagated): excludes null/missing.
+-- Force worker execution of the window accumulator path.
 BEGIN;
 SET LOCAL citus.enable_local_execution TO off;
-SET LOCAL documentdb.enable_min_max_skip_null_values TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_null_prop_window_dist_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$grp", "sortBy": { "_id": 1 }, "output": { "minVal": { "$min": "$val", "window": { "documents": [ "unbounded", "unbounded" ] } }, "maxVal": { "$max": "$val", "window": { "documents": [ "unbounded", "unbounded" ] } } } } }, { "$project": { "_id": 1, "grp": 1, "minVal": 1, "maxVal": 1 } }, { "$sort": { "_id": 1 } } ] }');
 COMMIT;
 
--- WithExpr accumulator path, skipping OFF (propagated).
-BEGIN;
-SET LOCAL citus.enable_local_execution TO off;
-SET LOCAL documentdb.enable_min_max_skip_null_values TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_null_prop_window_dist_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$grp", "sortBy": { "_id": 1 }, "output": { "minVal": { "$min": "$val", "window": { "documents": [ "unbounded", "unbounded" ] } }, "maxVal": { "$max": "$val", "window": { "documents": [ "unbounded", "unbounded" ] } } } } }, { "$project": { "_id": 1, "grp": 1, "minVal": 1, "maxVal": 1 } }, { "$sort": { "_id": 1 } } ] }');
-COMMIT;
-
-RESET citus.propagate_set_commands;
 SELECT documentdb_api.drop_collection('db', 'maxmin_null_prop_window_dist_test');

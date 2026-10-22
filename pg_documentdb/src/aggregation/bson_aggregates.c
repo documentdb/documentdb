@@ -31,7 +31,6 @@
 #include "operators/bson_expression_operators.h"
 #include "collation/collation.h"
 
-extern bool EnableMinMaxSkipNullValues;
 extern bool BsonTextUseJsonRepresentation;
 
 /* --------------------------------------------------------- */
@@ -811,8 +810,7 @@ bson_avg_final(PG_FUNCTION_ARGS)
 static bool
 CanSkipNullInMinMax(void)
 {
-	return EnableMinMaxSkipNullValues &&
-		   IsClusterVersionAtleast(DocDB_V0, 115, 0);
+	return IsClusterVersionAtleast(DocDB_V0, 115, 0);
 }
 
 

@@ -1,4 +1,5 @@
 ### documentdb v1.3-0 (Unreleased) ###
+* Retire `enable_min_max_skip_null_values` and `enableSortPushToAccumulatorWithPrefix`, retaining null-skipping for `$min`/`$max` accumulators and prefix-based sort pushdown into group accumulators. *[Refactor]*
 * Prevent a backend crash from out-of-bounds reads when a composite index scan with more scan keys than index paths, such as a large `$all` on an array field, falls back to an ordered scan. *[Bugfix]*
 * Reuse constant sort specifications and collation options across rows when producing index sort keys. *[Perf]*
 * Prevent high-key optimization from ending compound-index scans early when a range predicate precedes a suffix filter. *[Bugfix]*

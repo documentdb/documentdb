@@ -113,7 +113,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
 SET LOCAL documentdb_core.enableWriteDocumentsInRepath TO on;
 SET LOCAL documentdb_api.forceUseIndexIfAvailable TO on;
@@ -250,7 +249,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
 SET LOCAL documentdb_core.enableWriteDocumentsInRepath TO on;
 SET LOCAL documentdb_api.forceUseIndexIfAvailable TO on;
@@ -351,7 +349,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
 SET LOCAL documentdb_core.enableWriteDocumentsInRepath TO on;
 SET LOCAL documentdb_api.forceUseIndexIfAvailable TO on;
@@ -441,7 +438,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
 SET LOCAL documentdb_core.enableWriteDocumentsInRepath TO on;
 SET LOCAL documentdb_api.forceUseIndexIfAvailable TO on;
@@ -496,7 +492,7 @@ SELECT COUNT(documentdb_api.insert_one(
         i % 29,
         CASE WHEN i % 5 = 0 THEN 'true' ELSE 'false' END)::bson))
 FROM generate_series(1, 800) AS i;
-psql:sql/bson_aggregation_in_sort_group_explain_tests.sql:409: NOTICE:  creating collection
+psql:sql/bson_aggregation_in_sort_group_explain_tests.sql:405: NOTICE:  creating collection
  count 
 -------
    800
@@ -535,7 +531,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
 SET LOCAL documentdb_core.enableWriteDocumentsInRepath TO on;
 SET LOCAL documentdb_api.forceUseIndexIfAvailable TO on;

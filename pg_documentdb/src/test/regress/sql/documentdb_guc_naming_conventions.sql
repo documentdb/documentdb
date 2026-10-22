@@ -88,7 +88,6 @@ INSERT INTO documentdb_guc_naming_baseline (name) VALUES
     ('documentdb.enableRumDynamicIndexScansSkipToTid'),
     ('documentdb.enableSchemaEnforcementForCSFLE'),
     ('documentdb.enableSchemaValidation'),
-    ('documentdb.enableSortPushToAccumulatorWithPrefix'),
     ('documentdb.enableStatementTimeout'),
     ('documentdb.enableTTLBatchObservability'),
     ('documentdb.enableTTLDescSort'),
@@ -196,4 +195,6 @@ DROP TABLE documentdb_guc_naming_baseline;
 SELECT count(*) = 0 AS retired_accumulator_gucs_absent
 FROM pg_settings
 WHERE lower(name) IN ('documentdb.enablenewminmaxaccumulators',
-                      'documentdb.enablenewwithexpraccumulators');
+                      'documentdb.enablenewwithexpraccumulators',
+                      'documentdb.enable_min_max_skip_null_values',
+                      'documentdb.enablesortpushtoaccumulatorwithprefix');

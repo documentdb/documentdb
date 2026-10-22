@@ -194,7 +194,6 @@ SET documentdb_core.enableCollation TO off;
 -- WithPrefix: group key {category} is a prefix of sort {category, val};
 -- the suffix {val} gets pushed into the accumulator's ORDER BY and the Sort node
 -- should disappear.
-SET documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 BEGIN;
 set local citus.max_adaptive_executor_pool_size to 1;
 set local citus.enable_local_execution to off;
@@ -206,7 +205,6 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 $cmd$);
 ROLLBACK;
 
-RESET documentdb.enableSortPushToAccumulatorWithPrefix;
 
 -- Cleanup
 SELECT documentdb_api.drop_collection('db', 'group_firstlast_dist');

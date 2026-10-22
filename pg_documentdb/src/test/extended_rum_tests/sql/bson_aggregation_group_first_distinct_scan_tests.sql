@@ -359,8 +359,7 @@ $Q$, p_ignore_heap_fetches := true);
 ROLLBACK;
 
 -- ============================================================
--- B7: Same shape as C11 ($sort on the GROUP KEY alone, then $group
--- with $first), but with enableSortPushToAccumulatorWithPrefix ON.
+-- B7: $sort on the group key alone, then $group with $first.
 -- The rewrite sees groupKeysFormSortPrefix=true and hasSuffixSort=false,
 -- so the Sort node is dropped and NOTHING is pushed into the
 -- accumulator. $first stays as the plain (non-sort-aware) variant,
@@ -372,7 +371,6 @@ SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
 SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
@@ -603,7 +601,7 @@ ROLLBACK;
 
 -- ============================================================
 -- C4: $sort prefix matches the group key, suffix on another field.
--- With enableSortPushToAccumulatorWithPrefix ON, the rewrite drops the
+-- The prefix optimization drops the
 -- prefix (group key already covered by idx_x) and pushes the suffix into
 -- the accumulator as bsonfirstonsorted(... ORDER BY bson_orderby(...)).
 -- The aggregate is eligible, but idx_x does not provide the y suffix order,
@@ -618,7 +616,6 @@ SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
 SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
@@ -651,7 +648,6 @@ SET LOCAL enable_hashagg TO off;
 SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
 SET LOCAL documentdb.enable_distinct_scan_for_ordered_group_first TO off;
 SET LOCAL documentdb.enable_distinct_skip_scan_on_key TO off;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($Q$
 EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
@@ -670,7 +666,6 @@ SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
 SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
 SET LOCAL documentdb.enable_distinct_skip_scan_on_key TO off;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_first", "hint": "idx_x_y_desc", "pipeline": [
@@ -701,7 +696,6 @@ SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
 SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($Q$
 EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
@@ -728,7 +722,6 @@ SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
 SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($Q$
 EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
@@ -886,39 +879,6 @@ SELECT documentdb_test_helpers.run_explain_and_trim($Q$
 EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_first", "hint": "idx_y", "pipeline": [
-    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
-    { "$sort": { "_id": 1 } }
-  ] }')
-$Q$, p_ignore_heap_fetches := true);
-ROLLBACK;
-
--- ============================================================
--- C11: Leading $sort on the GROUP KEY before $group with $first.
--- AnalyzeSortGroupAccumulators does NOT drop this sort; it pushes the
--- sort spec into the accumulator, converting $first to the sort-aware
--- bsonfirst(...) variant. The walker rejects sort-aware bsonfirst.
--- Wrapper must NOT fire. Output is still correct (a->10, b->20, c->40)
--- but only because insertion order matches $sort:{x:1} order.
--- ============================================================
-BEGIN;
-SET LOCAL enable_seqscan TO off;
-SET LOCAL enable_bitmapscan TO off;
-SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
-SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
-
-SELECT document FROM bson_aggregation_pipeline('db',
-  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
-    { "$sort": { "x": 1 } },
-    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
-    { "$sort": { "_id": 1 } }
-  ] }');
-
-SELECT documentdb_test_helpers.run_explain_and_trim($Q$
-EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
-SELECT document FROM bson_aggregation_pipeline('db',
-  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
-    { "$sort": { "x": 1 } },
     { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
     { "$sort": { "_id": 1 } }
   ] }')
