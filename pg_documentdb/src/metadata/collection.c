@@ -1831,6 +1831,17 @@ CreateCollection(Datum dbNameDatum, Datum collectionNameDatum, bool canUseLibPq)
 }
 
 
+/* Exact patch-line checks must not enable unpatched intermediate schemas. */
+bool
+IsCreateCollectionWithOptionsSchemaSupported(void)
+{
+	return IsClusterVersionAtleast(DocDB_V1, 3, 0) ||
+		   IsClusterVersionAtLeastPatch(DocDB_V1, 0, 2) ||
+		   IsClusterVersionAtLeastPatch(DocDB_V1, 1, 1) ||
+		   IsClusterVersionAtLeastPatch(DocDB_V1, 2, 1);
+}
+
+
 /*
  * Require the options-aware SQL schema and keep local creation in the caller's
  * transaction. Return whether a new collection was created.
@@ -1838,7 +1849,7 @@ CreateCollection(Datum dbNameDatum, Datum collectionNameDatum, bool canUseLibPq)
 bool
 CreateCollectionWithOptions(Datum dbNameDatum, Datum collectionNameDatum, pgbson *options)
 {
-	if (!IsClusterVersionAtleast(DocDB_V1, 3, 0))
+	if (!IsCreateCollectionWithOptionsSchemaSupported())
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
 						errmsg("Collection collation is not supported yet")));

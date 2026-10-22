@@ -263,6 +263,7 @@ Oid GetRelationIdForCollectionId(uint64 collectionId, LOCKMODE lockMode);
  * Only a caller that can tolerate that may pass true.
  */
 bool CreateCollection(Datum dbNameDatum, Datum collectionNameDatum, bool canUseLibPq);
+bool IsCreateCollectionWithOptionsSchemaSupported(void);
 bool CreateCollectionWithOptions(Datum dbNameDatum, Datum collectionNameDatum,
 								 pgbson *options);
 

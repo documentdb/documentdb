@@ -490,7 +490,7 @@ ParseCreateSpec(Datum *databaseDatum, pgbson *createSpec, bool *hasSchemaValidat
 		{
 			ReportFeatureUsage(FEATURE_COLLATION_CREATE_COLLECTION);
 			if (EnableCollation && EnableCollationWithCreateCollection &&
-				IsClusterVersionAtleast(DocDB_V1, 3, 0))
+				IsCreateCollectionWithOptionsSchemaSupported())
 			{
 				EnsureTopLevelFieldType("collation", &createIter, BSON_TYPE_DOCUMENT);
 				const bson_value_t *value = bson_iter_value(&createIter);
