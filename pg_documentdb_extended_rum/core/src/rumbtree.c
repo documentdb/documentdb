@@ -188,9 +188,13 @@ rumFindLeafPage(RumBtree btree, RumBtreeStack *stack, bool rootConflictCheck)
 		int access = RUM_SHARE;
 
 		/*
-		 * The buffer is pinned but not yet locked here (except for the first
-		 * page, where the lock holds off interrupts), so a cancel is serviced
-		 * on every level of the descent.
+		 * Let a cancel or terminate stop a descent that doesn't end, such as
+		 * one on a corrupt index. From the second level on, no buffer lock is
+		 * held here: the parent was unlocked before moving down, and this
+		 * page is pinned but not yet locked. Erroring out is safe, since
+		 * abort releases the pins. On the first iteration the caller still
+		 * holds the lock on the starting page, and holding an LWLock holds
+		 * off interrupts, so the check does nothing there.
 		 */
 		CHECK_FOR_INTERRUPTS();
 
