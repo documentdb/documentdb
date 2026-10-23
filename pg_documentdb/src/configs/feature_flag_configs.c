@@ -254,6 +254,11 @@ bool EnableCompositeReducedCorrelatedBoundsPlanning =
 bool EnableCompositeReducedCorrelatedFirstOwnerFallback =
 	DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_FIRST_OWNER_FALLBACK;
 
+/* Added on v1.3, enabled on v1.3, remove after v1.5 */
+#define DEFAULT_ENABLE_REDUCED_CORRELATED_NON_MULTIKEY_ORDER_BY true
+bool EnableReducedCorrelatedNonMultiKeyOrderBy =
+	DEFAULT_ENABLE_REDUCED_CORRELATED_NON_MULTIKEY_ORDER_BY;
+
 /* Added on v1.1, enabled on v1.1, remove after v1.3 */
 #define DEFAULT_ENABLE_SINGLE_BOUNDARY_FOR_DOLLAR_NOT_IN true
 bool EnableSingleBoundaryForDollarNotIn =
@@ -1444,6 +1449,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to select the first eligible $elemMatch owner when multiple owners constrain the leading reduced-correlated index path and none has an equality bound."),
 		NULL, &EnableCompositeReducedCorrelatedFirstOwnerFallback,
 		DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_FIRST_OWNER_FALLBACK,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_reduced_correlated_non_multikey_order_by", newGucPrefix),
+		gettext_noop(
+			"Whether to allow index order by on non-leading paths of a reduced-correlated composite index that is not multi-key."),
+		NULL, &EnableReducedCorrelatedNonMultiKeyOrderBy,
+		DEFAULT_ENABLE_REDUCED_CORRELATED_NON_MULTIKEY_ORDER_BY,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

@@ -218,6 +218,7 @@ extern bool EnableHighKeyOptimization;
 extern bool EnableFailureOnParallelIndexArraysForMetadataTracking;
 extern bool EnableDynamicCursorDedupTracking;
 extern bool EnableCompositeSecondaryPathOrderPushdown;
+extern bool EnableReducedCorrelatedNonMultiKeyOrderBy;
 extern bool EnableOrderedSaopMultiRangeSkipAdvance;
 extern bool EnableUniqueNullMissingSemantics;
 extern bool EnableValueOnlyIndexTerms;
@@ -4209,12 +4210,27 @@ GetCompositeTraverseOptionSinglePath(BsonGinCompositePathOptions *options,
 				 strategy == BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_REVERSE) &&
 				i > 0)
 			{
+				bool hasDottedPath = memchr(indexPaths[i], '.', indexPathsLengths[i]) !=
+									 NULL;
 				if (options->enableMetadataBasedTracking &&
 					EnableCompositeSecondaryPathOrderPushdown &&
-					memchr(indexPaths[i], '.', indexPathsLengths[i]) == NULL)
+					!hasDottedPath)
 				{
 					/* Reduced correlated term index, and secondary path, but it's
 					 * top level (not dotted) - eligible for pushdown
+					 */
+					*compositeIndexCol = i;
+					return IndexTraverse_Match;
+				}
+
+				if (EnableReducedCorrelatedNonMultiKeyOrderBy &&
+					hasDottedPath)
+				{
+					/*
+					 * Reduced correlated terms are only generated for array values,
+					 * so a dotted secondary path is orderable while the index is not
+					 * multi-key. The planner rejects the order by when the index may
+					 * be multi-key (see ProcessOrderByStatements).
 					 */
 					*compositeIndexCol = i;
 					return IndexTraverse_Match;

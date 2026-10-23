@@ -361,6 +361,7 @@ extern bool EnableCompositeReducedCorrelatedBoundsPlanning;
 extern bool EnableMergeSortForBitmapOr;
 extern bool EnableCrossIndexBitmapOrSortMerge;
 extern bool EnableCompositeReducedCorrelatedFirstOwnerFallback;
+extern bool EnableReducedCorrelatedNonMultiKeyOrderBy;
 extern bool EnableLookupJoinSelectivityFromStats;
 extern bool EnableFullScanCostAndSelectivity;
 extern bool EnableBtreeOrderByWithFilters;
@@ -6628,7 +6629,7 @@ ProcessOrderByStatements(PlannerInfo *root,
 						 int32_t maxOrderByColumn, bool isMultiKeyIndex,
 						 bool hasPerPathMetadata,
 						 uint32_t multiKeyBitMask,
-						 bool isReducedCorrelatedIndex,
+						 bool mayHaveReducedCorrelatedTerms,
 						 bool prunedCorrelatedIndexQuals,
 						 const char *queryOrderPaths[INDEX_MAX_KEYS],
 						 bool equalityPrefixes[INDEX_MAX_KEYS],
@@ -6773,11 +6774,27 @@ ProcessOrderByStatements(PlannerInfo *root,
 			}
 		}
 
-		if (isReducedCorrelatedIndex && !prunedCorrelatedIndexQuals &&
+		if (mayHaveReducedCorrelatedTerms && !prunedCorrelatedIndexQuals &&
 			i > 0)
 		{
 			/* For reduced correlated indexes, if the order by is on a path that's not the first path,
 			 * the runtime will prune the intermediate quals, and so we must disallow the orderby
+			 */
+			break;
+		}
+
+		if (mayHaveReducedCorrelatedTerms && i > 0 && pathSortOrders[i] != 0 &&
+			strchr(queryOrderPaths[i], '.') != NULL)
+		{
+			/*
+			 * This mirrors the rejection of order by on dotted secondary paths in
+			 * GetCompositeTraverseOptionSinglePath (bson_gin_composite_entrypoint.c),
+			 * which now allows them when enable_reduced_correlated_non_multikey_order_by
+			 * is on because it cannot tell whether the index is multi-key. Even when
+			 * the correlated quals are pruned at planning time, a multi-key index
+			 * orders a document by the value of the element that matched the
+			 * prefix, while the sort key of an array path is the smallest value
+			 * across all its elements.
 			 */
 			break;
 		}
@@ -7930,6 +7947,28 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 
 	bytea *indexOptions = indexPath->indexinfo->opclassoptions != NULL ?
 						  indexPath->indexinfo->opclassoptions[0] : NULL;
+
+	/*
+	 * Reduced correlated terms are only generated for array values, so an index
+	 * that is known not to be multi-key has none. When the multi-key status is
+	 * unknown, fall back to the index options.
+	 *
+	 * This could be strengthened to not rely on indexMetadata.hasCorrelatedReducedTerms
+	 * at all: order by on the secondary paths of a multi-key reduced correlated
+	 * index cannot be pushed down regardless (see ProcessOrderByStatements), so
+	 * the multi-key status alone determines whether the order by is safe.
+	 */
+	bool mayHaveReducedCorrelatedTerms = indexMetadata.isReducedCorrelatedIndex &&
+										 (isMultiKeyIndex ||
+										  !EnableReducedCorrelatedNonMultiKeyOrderBy);
+	if (metadataResult == CompositeOpClassMetadataReadResult_None &&
+		indexOptions != NULL &&
+		((BsonGinCompositePathOptions *) indexOptions)->
+		enableCompositeReducedCorrelatedTerms)
+	{
+		mayHaveReducedCorrelatedTerms = true;
+	}
+
 	bool prunedCorrelatedIndexQuals = false;
 	if (EnableCompositeReducedCorrelatedBoundsPlanning &&
 		hasPerPathMetadata &&
@@ -8091,7 +8130,7 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 			maxOrderByColumn, isMultiKeyIndex,
 			hasPerPathMetadata,
 			indexMetadata.multiKeyPathBitMask,
-			indexMetadata.isReducedCorrelatedIndex,
+			mayHaveReducedCorrelatedTerms,
 			prunedCorrelatedIndexQuals,
 			queryOrderPaths, equalityPrefixes,
 			nonEqualityPrefixes,

@@ -1695,16 +1695,15 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    Sort Method: quicksort  Memory: xxxkB
    ->  Subquery Scan on agg_stage_1 (actual rows=10 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id.city" : { "$numberInt" : "1" } }'::bson), bson_orderby(agg_stage_1.document, '{ "_id.rent" : { "$numberInt" : "1" } }'::bson)
-         ->  HashAggregate (actual rows=10 loops=1)
+         ->  GroupAggregate (actual rows=10 loops=1)
                Output: bson_repath_and_build('_id'::text, bson_repath_and_build('city'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'rent'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
                Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-               Batches: 1  Memory Usage: xxxkB
                ->  Index Only Scan using addr_city_rent_1 on documentdb_data.documents_9107 collection (actual rows=10 loops=1)
                      Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
-                     Index Cond: (collection.document @<> '{ "addr.city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
-                     Order By: (collection.document |-<> '{ "addr.city" : { "$numberInt" : "1" } }'::bson)
+                     Index Cond: ((collection.document @<> '{ "addr.city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "addr.rent" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+                     Order By: ((collection.document |-<> '{ "addr.city" : { "$numberInt" : "1" } }'::bson) AND (collection.document |-<> '{ "addr.rent" : { "$numberInt" : "1" } }'::bson))
                      Heap Fetches: xxx
-(15 rows)
+(14 rows)
 
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "hint" : "addr_city_rent_1", "pipeline" : [{ "$group" : { "_id" : { "city": "$addr.city", "rent": "$addr.rent" }, "cnt" : { "$count" : {} } } }, { "$sort": {"_id.city": 1, "_id.rent": 1} }], "cursor" : {}}');
                                                 document                                                
@@ -1739,13 +1738,13 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    Sort Method: quicksort  Memory: xxxkB
    ->  Subquery Scan on agg_stage_2 (actual rows=2 loops=1)
          Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
-         ->  HashAggregate (actual rows=2 loops=1)
+         ->  GroupAggregate (actual rows=2 loops=1)
                Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.geo.zip" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.geo.zip" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
                Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.geo.zip" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-               Batches: 1  Memory Usage: xxxkB
                ->  Index Only Scan using addr_city_geo_zip_1 on documentdb_data.documents_9107 collection (actual rows=4 loops=1)
                      Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.geo.zip" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
                      Index Cond: (collection.document @= '{ "addr.city" : "Seattle" }'::bson)
+                     Order By: (collection.document |-<> '{ "addr.geo.zip" : { "$numberInt" : "1" } }'::bson)
                      Heap Fetches: xxx
 (14 rows)
 
