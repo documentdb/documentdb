@@ -222,3 +222,28 @@ SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs4
 
 SELECT documentdb_api.drop_collection('gbmk_db', 'recs4');
 \pset format aligned
+
+-- ============================================================================
+-- A sort on a dotted secondary path of a multi-key reduced correlated index is
+-- not pushed, even when the correlated quals are pruned at planning time. The
+-- index orders a document by the role of the element matching the $elemMatch,
+-- while the sort key is the smallest role across all elements: _id 2 sorts on
+-- "a" and must come first.
+-- ============================================================================
+RESET documentdb_core.enableCollation;
+RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('gbmk_db',
+    '{ "createIndexes": "recs5", "indexes": [ { "key": { "items.id": 1, "items.city": 1, "items.role": 1 }, "name": "idx_items_role", "enableOrderedIndex": 1 } ] }',
+    true);
+SELECT documentdb_api.insert_one('gbmk_db', 'recs5', '{ "_id": 1, "items": [ { "id": "A", "city": "sea", "role": "m" } ] }');
+SELECT documentdb_api.insert_one('gbmk_db', 'recs5', '{ "_id": 2, "items": [ { "id": "A", "city": "sea", "role": "z" }, { "id": "B", "city": "x", "role": "a" } ] }');
+SELECT documentdb_api.insert_one('gbmk_db', 'recs5', '{ "_id": 3, "items": [ { "id": "A", "city": "sea", "role": "c" }, { "id": "A", "city": "sea", "role": "y" } ] }');
+
+\set recs5Asc '{ "find": "recs5", "filter": { "items": { "$elemMatch": { "id": "A", "city": "sea" } } }, "sort": { "items.role": 1 }, "projection": { "_id": 1 }, "hint": "idx_items_role" }'
+\set recs5Desc '{ "find": "recs5", "filter": { "items": { "$elemMatch": { "id": "A", "city": "sea" } } }, "sort": { "items.role": -1 }, "projection": { "_id": 1 }, "hint": "idx_items_role" }'
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('gbmk_db', '{ "find": "recs5", "filter": { "items": { "$elemMatch": { "id": "A", "city": "sea" } } }, "sort": { "items.role": 1 }, "projection": { "_id": 1 }, "hint": "idx_items_role" }') $cmd$);
+SELECT document FROM bson_aggregation_find('gbmk_db', :'recs5Asc');
+SELECT document FROM bson_aggregation_find('gbmk_db', :'recs5Desc');
+
+SELECT documentdb_api.drop_collection('gbmk_db', 'recs5');

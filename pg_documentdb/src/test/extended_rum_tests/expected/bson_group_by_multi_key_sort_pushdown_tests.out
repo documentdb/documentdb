@@ -429,3 +429,82 @@ drop_collection
 t
 (1 row)
 \pset format aligned
+-- ============================================================================
+-- A sort on a dotted secondary path of a multi-key reduced correlated index is
+-- not pushed, even when the correlated quals are pruned at planning time. The
+-- index orders a document by the role of the element matching the $elemMatch,
+-- while the sort key is the smallest role across all elements: _id 2 sorts on
+-- "a" and must come first.
+-- ============================================================================
+RESET documentdb_core.enableCollation;
+RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('gbmk_db',
+    '{ "createIndexes": "recs5", "indexes": [ { "key": { "items.id": 1, "items.city": 1, "items.role": 1 }, "name": "idx_items_role", "enableOrderedIndex": 1 } ] }',
+    true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('gbmk_db', 'recs5', '{ "_id": 1, "items": [ { "id": "A", "city": "sea", "role": "m" } ] }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('gbmk_db', 'recs5', '{ "_id": 2, "items": [ { "id": "A", "city": "sea", "role": "z" }, { "id": "B", "city": "x", "role": "a" } ] }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('gbmk_db', 'recs5', '{ "_id": 3, "items": [ { "id": "A", "city": "sea", "role": "c" }, { "id": "A", "city": "sea", "role": "y" } ] }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+\set recs5Asc '{ "find": "recs5", "filter": { "items": { "$elemMatch": { "id": "A", "city": "sea" } } }, "sort": { "items.role": 1 }, "projection": { "_id": 1 }, "hint": "idx_items_role" }'
+\set recs5Desc '{ "find": "recs5", "filter": { "items": { "$elemMatch": { "id": "A", "city": "sea" } } }, "sort": { "items.role": -1 }, "projection": { "_id": 1 }, "hint": "idx_items_role" }'
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('gbmk_db', '{ "find": "recs5", "filter": { "items": { "$elemMatch": { "id": "A", "city": "sea" } } }, "sort": { "items.role": 1 }, "projection": { "_id": 1 }, "hint": "idx_items_role" }') $cmd$);
+                                                                                                                                                                                                                     run_explain_and_trim                                                                                                                                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (bson_orderby(document, '{ "items.role" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: gbmk_db.recs5
+         indexName: idx_items_role
+         indexKey: {"items.id": 1,"items.city": 1,"items.role": 1}
+         isMultiKey: true
+         multiKeyPaths: items.id, items.city, items.role
+         hasCorrelatedTerms: true
+         indexBounds: ["items.id": ["A", "A"], "items.city": ["sea", "sea"], "items.role": (MinKey, MaxKey)]
+         ->  Index Scan using idx_items_role on documents_13305 collection
+               Index Cond: ((document @<> '{ "items.id" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "A", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson) AND (document @<> '{ "items.city" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "sea", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson))
+               Filter: (document @#? '{ "items" : { "id" : "A", "city" : "sea" } }'::bson)
+(13 rows)
+
+SELECT document FROM bson_aggregation_find('gbmk_db', :'recs5Asc');
+              document              
+------------------------------------
+ { "_id" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "1" } }
+(3 rows)
+
+SELECT document FROM bson_aggregation_find('gbmk_db', :'recs5Desc');
+              document              
+------------------------------------
+ { "_id" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "1" } }
+(3 rows)
+
+SELECT documentdb_api.drop_collection('gbmk_db', 'recs5');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
