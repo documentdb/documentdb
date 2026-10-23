@@ -1,6 +1,5 @@
 -- Copyright (c) Microsoft Corporation.
 -- Licensed under the MIT License.
--- SPDX-License-Identifier: MIT
 -- Tests that rumvacuumcleanup prunes orphaned empty posting-tree leaves even
 -- when ambulkdelete is not called (no dead TIDs in the heap).
 --
@@ -320,6 +319,16 @@ SELECT :orphans_after_bulkdel < :orphans_after_ff AS bulk_delete_reclaimed_stran
  t                                     |                                  2
 (1 row)
 
+SELECT count(*) = 2
+       AND bool_and(left_link IS NULL OR right_link IS NULL)
+       AS targeted_retained_only_boundary_leaves
+FROM pg_temp.index_page_stats(:'orphan_index_name')
+WHERE flags = 'LEAF|DATA' AND n_entries = 0;
+ targeted_retained_only_boundary_leaves 
+----------------------------------------
+ t
+(1 row)
+
 SET documentdb_rum.enable_vacuum_cleanup_posting_tree_pruning TO on;
 -- Case 7: bulk delete with the feature on must not count a cleanup retry.
 SELECT FORMAT('TRUNCATE documentdb_data.documents_%s;', :orphan_col) \gexec
@@ -366,6 +375,16 @@ SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PA
 VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
 LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=2, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
 RESET client_min_messages;
+SELECT count(*) = 2
+       AND bool_and(left_link IS NULL OR right_link IS NULL)
+       AS inline_retained_only_boundary_leaves
+FROM pg_temp.index_page_stats(:'orphan_index_name')
+WHERE flags = 'LEAF|DATA' AND n_entries = 0;
+ inline_retained_only_boundary_leaves 
+--------------------------------------
+ t
+(1 row)
+
 -- Case 9: empty single-page posting roots allow entry-page pruning. Count
 -- committed leaf-tuple removals and posting-root deletions as well as the
 -- entry pages unlinked, without counting retained high keys as tuple removals.

@@ -3,9 +3,8 @@
  * rumvacuum.c
  *	  delete & vacuum routines for the postgres RUM
  *
- * SPDX-License-Identifier: MIT
- *
- * Portions Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Portions Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  * Portions Copyright (c) 2015-2022, Postgres Professional
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -3093,9 +3092,9 @@ TryDeletePostingLeafFromTree(RumVacuumState *gvs, BlockNumber rootBlkno,
  * Prune empty pages from the posting tree.
  * Returns the number of posting tree pages deleted.
  *
- * Walks leaves without holding the root cleanup lock. For each empty leaf, takes
- * the root cleanup lock only for a targeted descent to that leaf. Also prunes
- * empty ancestors on the stack unwind.
+ * Walks leaves without holding the root cleanup lock. For each prunable empty
+ * leaf, takes the root cleanup lock only for a targeted descent to that leaf.
+ * Also prunes empty ancestors on the stack unwind.
  *
  * This intentionally mirrors RumVacuumPrunePostingTree, but keeps an ambulkdelete-facing
  * contract: rumVacuumPostingTree already computed leaf emptiness during TID cleanup and
@@ -3139,14 +3138,17 @@ rumPostingTreePruneEmptyPagesTargeted(RumVacuumState *gvs,
 	}
 
 	/*
-	 * Iterate posting tree leaves using rightlinks. For each empty leaf, use a
+	 * Iterate posting tree leaves using rightlinks. For each prunable empty leaf, use a
 	 * targeted descent from the root to attempt to delete the leaf and prune empty ancestors.
 	 */
 	while (true)
 	{
 		BlockNumber currentBlockNo = BufferGetBlockNumber(buffer);
 		nextBlockNumber = RumPageGetOpaque(page)->rightlink;
-		if (RumDataPageMaxOff(page) < FirstOffsetNumber)
+
+		/* Do not lock the root for boundary leaves that cannot be unlinked. */
+		if (RumDataPageMaxOff(page) < FirstOffsetNumber &&
+			!RumPageLeftMost(page) && !RumPageRightMost(page))
 		{
 			/* We're trying to delete this page - send the right bound entry of the current page
 			 * So that's the one being searched for in the parents.
@@ -3220,12 +3222,13 @@ RumVacuumPrunePostingTree(RumVacuumState *gvs, OffsetNumber attnum, BlockNumber 
 		/*
 		 * TODO: Use BufferGetBlockNumber(buffer), as the targeted path above
 		 * does. On the first iteration blockNo still identifies the root,
-		 * not the leftmost leaf returned by FindLeftMostLeafDataPage(), so
-		 * deletion targets the wrong block.
+		 * not the leftmost leaf returned by FindLeftMostLeafDataPage().
+		 * That first boundary leaf is skipped before constructing a deletion.
 		 */
 		BlockNumber currentBlockNo = blockNo;
+		bool isPageEmpty = RumDataPageMaxOff(page) < FirstOffsetNumber;
 		blockNo = RumPageGetOpaque(page)->rightlink;
-		if (RumDataPageMaxOff(page) < FirstOffsetNumber)
+		if (isPageEmpty && !RumPageLeftMost(page) && !RumPageRightMost(page))
 		{
 			/* We're trying to delete this page - send the right bound entry of the current page
 			 * So that's the one being searched for in the parents.
@@ -3246,7 +3249,10 @@ RumVacuumPrunePostingTree(RumVacuumState *gvs, OffsetNumber attnum, BlockNumber 
 		else
 		{
 			isPostingTreePrunableEmpty = false;
-			isPostingTreeLeavesEmpty = false;
+			if (!isPageEmpty)
+			{
+				isPostingTreeLeavesEmpty = false;
+			}
 			UnlockReleaseBuffer(buffer);
 		}
 
