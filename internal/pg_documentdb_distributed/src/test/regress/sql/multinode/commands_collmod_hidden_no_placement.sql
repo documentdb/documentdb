@@ -355,6 +355,9 @@ SELECT bool_and(shell_table_index = 'hidden') AS all_nodes_agree_hidden_drained
 FROM documentdb_distributed_test_helpers.hidden_index_by_node('coll_drained');
 
 -- Put the cluster back the way it was found.
+-- Finish deferred drops before the refill transaction reads cleanup records.
+SET client_min_messages TO WARNING;
+CALL citus_cleanup_orphaned_resources();
 SET client_min_messages TO ERROR;
 DO $refill$
 DECLARE
