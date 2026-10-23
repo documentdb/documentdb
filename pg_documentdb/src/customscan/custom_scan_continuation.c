@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/customscan/custom_scan_continuation.c
  *
@@ -161,23 +162,53 @@ typedef struct ExtensionScanState
 /* Continuation state of the currently active query */
 static ContinuationState *CurrentQueryState = NULL;
 
-/* Constants used in serialization of cursor state */
-const StringView CursorContinuationTableName =
+/*
+ * Constants used in serialization of cursor state.
+ * Keep entries in alphabetical order by member name, matching ContinuationFieldNames.
+ */
+const ContinuationFieldNames ContinuationFields =
 {
-	.length = 10,
-	.string = "table_name"
-};
-
-const StringView CursorContinuationValue =
-{
-	.length = 5,
-	.string = "value"
-};
-
-const StringView PrimaryKeyShardKey =
-{
-	.length = 2,
-	.string = "pk"
+	.BatchCount = {
+		.string = "getpage_batchCount", .length = sizeof("getpage_batchCount") - 1
+	},
+	.BatchSize = {
+		.string = "getpage_batchSize", .length = sizeof("getpage_batchSize") - 1
+	},
+	.BatchSizeAttribute = {
+		.string = "getpage_batchSizeAttr", .length = sizeof("getpage_batchSizeAttr") - 1
+	},
+	.BatchSizeHint = {
+		.string = "getpage_batchSizeHint", .length = sizeof("getpage_batchSizeHint") - 1
+	},
+	.ClusterTime = { .string = "ct", .length = sizeof("ct") - 1 },
+	.Collation = { .string = "cl", .length = sizeof("cl") - 1 },
+	.Continuation = {
+		.string = "continuation", .length = sizeof("continuation") - 1
+	},
+	.CursorId = { .string = "qi", .length = sizeof("qi") - 1 },
+	.CursorName = { .string = "qn", .length = sizeof("qn") - 1 },
+	.DistributedTableOid = { .string = "dr", .length = sizeof("dr") - 1 },
+	.DynamicCursorState = { .string = "dc", .length = sizeof("dc") - 1 },
+	.DynamicQuery = { .string = "qd", .length = sizeof("qd") - 1 },
+	.FileState = { .string = "qf", .length = sizeof("qf") - 1 },
+	.HasFetchedRows = {
+		.string = "hasFetchedRows", .length = sizeof("hasFetchedRows") - 1
+	},
+	.HasParallelPlan = { .string = "pp", .length = sizeof("pp") - 1 },
+	.NowValue = { .string = "sn", .length = sizeof("sn") - 1 },
+	.NumIterations = { .string = "numIters", .length = sizeof("numIters") - 1 },
+	.Persisted = { .string = "qp", .length = sizeof("qp") - 1 },
+	.PrimaryKey = { .string = "pk", .length = sizeof("pk") - 1 },
+	.QueryKind = { .string = "qk", .length = sizeof("qk") - 1 },
+	.RemainingLimit = { .string = "lim", .length = sizeof("lim") - 1 },
+	.RemoteQuery = { .string = "qr", .length = sizeof("qr") - 1 },
+	.ResumeToken = { .string = "rt", .length = sizeof("rt") - 1 },
+	.ResumeTokenData = { .string = "_data", .length = sizeof("_data") - 1 },
+	.StreamingQuery = { .string = "qc", .length = sizeof("qc") - 1 },
+	.TableName = { .string = "table_name", .length = sizeof("table_name") - 1 },
+	.TailableQuery = { .string = "qt", .length = sizeof("qt") - 1 },
+	.Value = { .string = "value", .length = sizeof("value") - 1 },
+	.WorkerContinuation = { .string = "wc", .length = sizeof("wc") - 1 }
 };
 
 extern bool EnablePrimaryKeyCursorScan;
@@ -297,8 +328,8 @@ command_current_cursor_state(PG_FUNCTION_ARGS)
 
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
-	PgbsonWriterAppendUtf8(&writer, CursorContinuationTableName.string,
-						   CursorContinuationTableName.length,
+	PgbsonWriterAppendUtf8(&writer, ContinuationFields.TableName.string,
+						   ContinuationFields.TableName.length,
 						   CurrentQueryState->currentTableName);
 
 	bson_value_t binaryValue;
@@ -306,16 +337,16 @@ command_current_cursor_state(PG_FUNCTION_ARGS)
 	binaryValue.value.v_binary.subtype = BSON_SUBTYPE_BINARY;
 	binaryValue.value.v_binary.data = (uint8_t *) &CurrentQueryState->currentTuple;
 	binaryValue.value.v_binary.data_len = sizeof(ItemPointerData);
-	PgbsonWriterAppendValue(&writer, CursorContinuationValue.string,
-							CursorContinuationValue.length,
+	PgbsonWriterAppendValue(&writer, ContinuationFields.Value.string,
+							ContinuationFields.Value.length,
 							&binaryValue);
 
 	if (EnablePrimaryKeyCursorScan &&
 		CurrentQueryState->isPrimaryKeyScan)
 	{
 		pgbson_array_writer arrayWriter;
-		PgbsonWriterStartArray(&writer, PrimaryKeyShardKey.string,
-							   PrimaryKeyShardKey.length, &arrayWriter);
+		PgbsonWriterStartArray(&writer, ContinuationFields.PrimaryKey.string,
+							   ContinuationFields.PrimaryKey.length, &arrayWriter);
 
 		bson_value_t shard_key_value = { 0 };
 		shard_key_value.value_type = BSON_TYPE_INT64;
@@ -1892,7 +1923,7 @@ ParseContinuationState(ExtensionScanState *extensionScanState,
 	while (bson_iter_next(&continuationIterator))
 	{
 		const char *currentField = bson_iter_key(&continuationIterator);
-		if (strcmp(currentField, "getpage_batchCount") == 0)
+		if (strcmp(currentField, ContinuationFields.BatchCount.string) == 0)
 		{
 			if (!BSON_ITER_HOLDS_NUMBER(&continuationIterator))
 			{
@@ -1907,7 +1938,7 @@ ParseContinuationState(ExtensionScanState *extensionScanState,
 			extensionScanState->batchCount = BsonValueAsInt64(bson_iter_value(
 																  &continuationIterator));
 		}
-		else if (strcmp(currentField, "getpage_batchSizeAttr") == 0)
+		else if (strcmp(currentField, ContinuationFields.BatchSizeAttribute.string) == 0)
 		{
 			if (!BSON_ITER_HOLDS_NUMBER(&continuationIterator))
 			{
@@ -1924,7 +1955,7 @@ ParseContinuationState(ExtensionScanState *extensionScanState,
 			extensionScanState->contentTrackAttributeNumber =
 				(AttrNumber) batchSizeAttribute;
 		}
-		else if (strcmp(currentField, "getpage_batchSizeHint") == 0)
+		else if (strcmp(currentField, ContinuationFields.BatchSizeHint.string) == 0)
 		{
 			if (!BSON_ITER_HOLDS_NUMBER(&continuationIterator))
 			{
@@ -1939,7 +1970,7 @@ ParseContinuationState(ExtensionScanState *extensionScanState,
 														 &continuationIterator));
 			extensionScanState->batchSizeHintBytes = (uint64_t) batchSizeHint;
 		}
-		else if (strcmp(currentField, "continuation") == 0)
+		else if (strcmp(currentField, ContinuationFields.Continuation.string) == 0)
 		{
 			bson_iter_t continuationArray;
 			if (!BSON_ITER_HOLDS_ARRAY(&continuationIterator) ||
@@ -1965,25 +1996,25 @@ ParseContinuationState(ExtensionScanState *extensionScanState,
 				{
 					StringView keyView = bson_iter_key_string_view(
 						&singleContinuationDoc);
-					if (StringViewEquals(&keyView, &CursorContinuationTableName))
+					if (StringViewEquals(&keyView, &ContinuationFields.TableName))
 					{
 						if (!BSON_ITER_HOLDS_UTF8(&singleContinuationDoc))
 						{
 							ereport(ERROR, (errmsg(
 												"Expecting a valid string value for %s",
-												CursorContinuationTableName.string)));
+												ContinuationFields.TableName.string)));
 						}
 
 						tableName = bson_iter_utf8(&singleContinuationDoc, NULL);
 					}
 					else if (StringViewEquals(&keyView,
-											  &CursorContinuationValue))
+											  &ContinuationFields.Value))
 					{
 						continuationBinaryValue = *bson_iter_value(
 							&singleContinuationDoc);
 					}
 					else if (StringViewEquals(&keyView,
-											  &PrimaryKeyShardKey))
+											  &ContinuationFields.PrimaryKey))
 					{
 						primaryKeyBsonValue = *bson_iter_value(&singleContinuationDoc);
 					}
@@ -1998,7 +2029,7 @@ ParseContinuationState(ExtensionScanState *extensionScanState,
 				if (continuationBinaryValue.value_type != BSON_TYPE_BINARY)
 				{
 					ereport(ERROR, (errmsg("Expecting binary value for %s",
-										   CursorContinuationValue.string)));
+										   ContinuationFields.Value.string)));
 				}
 
 				if (continuationBinaryValue.value.v_binary.data_len !=
