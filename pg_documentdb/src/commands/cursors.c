@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.
- * SPDX-License-Identifier: MIT
+ * Licensed under the MIT License
  *
  * src/commands/cursors.c
  *
@@ -2396,25 +2396,25 @@ UpdateCursorInContinuationMapCore(bson_iter_t *singleContinuationDoc, HTAB *curs
 	while (bson_iter_next(singleContinuationDoc))
 	{
 		StringView keyView = bson_iter_key_string_view(singleContinuationDoc);
-		if (StringViewEquals(&keyView, &CursorContinuationTableName))
+		if (StringViewEquals(&keyView, &ContinuationFields.TableName))
 		{
 			if (!BSON_ITER_HOLDS_UTF8(singleContinuationDoc))
 			{
 				ereport(ERROR, (errmsg("Expecting a valid string value for %s",
-									   CursorContinuationTableName.string)));
+									   ContinuationFields.TableName.string)));
 			}
 
 			searchEntry.tableName = bson_iter_utf8(singleContinuationDoc,
 												   &searchEntry.tableNameLength);
 		}
 		else if (StringViewEquals(&keyView,
-								  &CursorContinuationValue))
+								  &ContinuationFields.Value))
 		{
 			continuationBinaryValue = *bson_iter_value(
 				singleContinuationDoc);
 		}
 		else if (EnablePrimaryKeyCursorScan &&
-				 StringViewEquals(&keyView, &PrimaryKeyShardKey))
+				 StringViewEquals(&keyView, &ContinuationFields.PrimaryKey))
 		{
 			primaryKeyValue = *bson_iter_value(singleContinuationDoc);
 		}
@@ -2429,7 +2429,7 @@ UpdateCursorInContinuationMapCore(bson_iter_t *singleContinuationDoc, HTAB *curs
 	{
 		ereport(ERROR, (errmsg(
 							"Expected a binary value for %s but instead encountered %s",
-							CursorContinuationValue.string, BsonTypeName(
+							ContinuationFields.Value.string, BsonTypeName(
 								continuationBinaryValue.value_type))));
 	}
 
@@ -2482,7 +2482,7 @@ BuildContinuationMap(pgbson *continuationValue, HTAB *cursorMap)
 		const char *currentField = bson_iter_key(&continuationIterator);
 
 		/* Ignore all other valuesin this stage. */
-		if (strcmp(currentField, "continuation") != 0)
+		if (strcmp(currentField, ContinuationFields.Continuation.string) != 0)
 		{
 			continue;
 		}
@@ -2573,7 +2573,8 @@ void
 SerializeContinuationsToWriter(pgbson_writer *writer, HTAB *cursorMap)
 {
 	pgbson_array_writer childWriter;
-	PgbsonWriterStartArray(writer, "continuation", -1, &childWriter);
+	PgbsonWriterStartArray(writer, ContinuationFields.Continuation.string,
+						   ContinuationFields.Continuation.length, &childWriter);
 
 	HASH_SEQ_STATUS hashStatus;
 	CursorContinuationEntry *entry;
@@ -2584,16 +2585,16 @@ SerializeContinuationsToWriter(pgbson_writer *writer, HTAB *cursorMap)
 		pgbson_writer entryWriter;
 		PgbsonArrayWriterStartDocument(&childWriter, &entryWriter);
 
-		PgbsonWriterAppendUtf8(&entryWriter, CursorContinuationTableName.string,
-							   CursorContinuationTableName.length, entry->tableName);
+		PgbsonWriterAppendUtf8(&entryWriter, ContinuationFields.TableName.string,
+							   ContinuationFields.TableName.length, entry->tableName);
 
 		bson_value_t continuationValue;
 		continuationValue.value_type = BSON_TYPE_BINARY;
 		continuationValue.value.v_binary.subtype = BSON_SUBTYPE_BINARY;
 		continuationValue.value.v_binary.data = (uint8_t *) &entry->continuation;
 		continuationValue.value.v_binary.data_len = sizeof(ItemPointerData);
-		PgbsonWriterAppendValue(&entryWriter, CursorContinuationValue.string,
-								CursorContinuationValue.length,
+		PgbsonWriterAppendValue(&entryWriter, ContinuationFields.Value.string,
+								ContinuationFields.Value.length,
 								&continuationValue);
 
 		if (EnablePrimaryKeyCursorScan &&
@@ -2601,7 +2602,9 @@ SerializeContinuationsToWriter(pgbson_writer *writer, HTAB *cursorMap)
 		{
 			pgbsonelement element = { 0 };
 			PgbsonToSinglePgbsonElement(entry->cursorEntry, &element);
-			PgbsonWriterAppendValue(&entryWriter, "pk", 2, &element.bsonValue);
+			PgbsonWriterAppendValue(&entryWriter, ContinuationFields.PrimaryKey.string,
+									ContinuationFields.PrimaryKey.length,
+									&element.bsonValue);
 		}
 
 		PgbsonArrayWriterEndDocument(&childWriter, &entryWriter);
@@ -2634,12 +2637,15 @@ SerializeContinuationForWorker(HTAB *cursorMap, int32_t batchSize)
 	}
 
 	/* Write the batchCount and batchSize */
-	PgbsonWriterAppendInt32(&finalWriter, "getpage_batchCount", -1, batchSize);
-	PgbsonWriterAppendInt32(&finalWriter, "getpage_batchSizeHint", -1,
+	PgbsonWriterAppendInt32(&finalWriter, ContinuationFields.BatchCount.string,
+							ContinuationFields.BatchCount.length, batchSize);
+	PgbsonWriterAppendInt32(&finalWriter, ContinuationFields.BatchSizeHint.string,
+							ContinuationFields.BatchSizeHint.length,
 							MaxWorkerCursorSize);
 
 	/* We only track the size of attribute 1 (the bson document attribute). */
-	PgbsonWriterAppendInt32(&finalWriter, "getpage_batchSizeAttr", -1, 1);
+	PgbsonWriterAppendInt32(&finalWriter, ContinuationFields.BatchSizeAttribute.string,
+							ContinuationFields.BatchSizeAttribute.length, 1);
 	return PgbsonWriterGetPgbson(&finalWriter);
 }
 
@@ -2661,11 +2667,14 @@ ExtendTailableContinuation(pgbson *continuationValue, int32_t batchSize)
 	}
 
 	/* Write the batchCount and batchSize */
-	PgbsonWriterAppendInt32(&writer, "getpage_batchCount", -1, batchSize);
-	PgbsonWriterAppendInt32(&writer, "getpage_batchSize", -1, MaxWorkerCursorSize);
+	PgbsonWriterAppendInt32(&writer, ContinuationFields.BatchCount.string,
+							ContinuationFields.BatchCount.length, batchSize);
+	PgbsonWriterAppendInt32(&writer, ContinuationFields.BatchSize.string,
+							ContinuationFields.BatchSize.length, MaxWorkerCursorSize);
 
 	/* We only track the size of attribute 1 (the bson document attribute). */
-	PgbsonWriterAppendInt32(&writer, "getpage_batchSizeAttr", -1, 1);
+	PgbsonWriterAppendInt32(&writer, ContinuationFields.BatchSizeAttribute.string,
+							ContinuationFields.BatchSizeAttribute.length, 1);
 	return PgbsonWriterGetPgbson(&writer);
 }
 
@@ -2879,7 +2888,8 @@ AppendLastContinuationTokenToCursor(pgbson_writer *writer, pgbson *lastContinuat
 	bson_iter_t continuationTokenIter;
 
 	/* Make sure the lastContinuationDoc has continuationToken field. */
-	if (!PgbsonInitIteratorAtPath(lastContinuationDoc, "rt",
+	if (!PgbsonInitIteratorAtPath(lastContinuationDoc,
+								  ContinuationFields.ResumeToken.string,
 								  &continuationTokenIter))
 	{
 		ereport(ERROR, (errmsg("Field 'rt' not found in lastContinuationDoc.")));
@@ -2896,7 +2906,9 @@ AppendLastContinuationTokenToCursor(pgbson_writer *writer, pgbson *lastContinuat
 		 */
 		uint64 clusterTime = 0;
 		bson_iter_t clusterTimeIter;
-		if (PgbsonInitIteratorAtPath(lastContinuationDoc, "ct", &clusterTimeIter) &&
+		if (PgbsonInitIteratorAtPath(lastContinuationDoc,
+									 ContinuationFields.ClusterTime.string,
+									 &clusterTimeIter) &&
 			BSON_ITER_HOLDS_INT64(&clusterTimeIter))
 		{
 			clusterTime = (uint64) bson_iter_int64(&clusterTimeIter);
@@ -2910,7 +2922,10 @@ AppendLastContinuationTokenToCursor(pgbson_writer *writer, pgbson *lastContinuat
 		PgbsonWriterInit(&resumeTokenWriter);
 		PgbsonWriterStartDocument(writer, "postBatchResumeToken", 20,
 								  &resumeTokenWriter);
-		PgbsonWriterAppendUtf8(&resumeTokenWriter, "_data", 5, encodedResumeToken);
+		PgbsonWriterAppendUtf8(&resumeTokenWriter,
+							   ContinuationFields.ResumeTokenData.string,
+							   ContinuationFields.ResumeTokenData.length,
+							   encodedResumeToken);
 		PgbsonWriterEndDocument(writer, &resumeTokenWriter);
 
 		pfree(encodedResumeToken);

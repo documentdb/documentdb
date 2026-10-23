@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/commands/aggregation_cursors.c
  *
@@ -26,6 +27,7 @@
 #include <utils/feature_counter.h>
 #include "utils/version_utils.h"
 #include <io/bson_core.h>
+#include <commands/cursor_common.h>
 #include <commands/cursor_private.h>
 #include "commands/parse_error.h"
 #include <aggregation/bson_aggregation_pipeline.h>
@@ -907,7 +909,8 @@ aggregation_cursor_get_more(text *database, pgbson *getMoreSpec,
 			/* Extract the continuation sub-document from the full cursorSpec */
 			pgbson *tailableCursorSpec = NULL;
 			bson_iter_t cursorSpecIter;
-			if (PgbsonInitIteratorAtPath(cursorSpec, "continuation",
+			if (PgbsonInitIteratorAtPath(cursorSpec,
+										 ContinuationFields.Continuation.string,
 										 &cursorSpecIter))
 			{
 				tailableCursorSpec = PgbsonInitFromDocumentBsonValue(
@@ -1696,7 +1699,9 @@ AppendCollationToContinuation(pgbson_writer *writer, QueryKind queryKind,
 
 	if (supportsCollation && queryData->hasCapturedCollation)
 	{
-		PgbsonWriterAppendUtf8(writer, "cl", 2, queryData->collationString);
+		PgbsonWriterAppendUtf8(writer, ContinuationFields.Collation.string,
+							   ContinuationFields.Collation.length,
+							   queryData->collationString);
 	}
 }
 
@@ -1713,27 +1718,34 @@ BuildStreamingContinuationDocument(HTAB *cursorMap, pgbson *querySpec, int64_t c
 
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
-	PgbsonWriterAppendInt64(&writer, "qi", 2, cursorId);
-	PgbsonWriterAppendBool(&writer, "qp", 2, false);
+	PgbsonWriterAppendInt64(&writer, ContinuationFields.CursorId.string,
+							ContinuationFields.CursorId.length, cursorId);
+	PgbsonWriterAppendBool(&writer, ContinuationFields.Persisted.string,
+						   ContinuationFields.Persisted.length, false);
 
-	PgbsonWriterAppendInt32(&writer, "qk", 2, (int) queryKind);
+	PgbsonWriterAppendInt32(&writer, ContinuationFields.QueryKind.string,
+							ContinuationFields.QueryKind.length, (int) queryKind);
 
 	/* Add the original query spec so that getMore can reuse it */
 	/* For streaming cursor, save the query with "qc" key. */
-	PgbsonWriterAppendDocument(&writer, "qc", 2, querySpec);
+	PgbsonWriterAppendDocument(&writer, ContinuationFields.StreamingQuery.string,
+							   ContinuationFields.StreamingQuery.length, querySpec);
 
 	AppendCollationToContinuation(&writer, queryKind, queryData);
 	SerializeContinuationsToWriter(&writer, cursorMap);
 
 	/* In the response add the number of iterations (used in tests) */
-	PgbsonWriterAppendInt32(&writer, "numIters", 8, numIterations);
+	PgbsonWriterAppendInt32(&writer, ContinuationFields.NumIterations.string,
+							ContinuationFields.NumIterations.length, numIterations);
 
 	/* Add time system variables accordingly */
 	const TimeSystemVariables *timeSystemVariables =
 		&queryData->timeSystemVariables;
 	if (timeSystemVariables->nowValue.value_type != BSON_TYPE_EOD)
 	{
-		PgbsonWriterAppendValue(&writer, "sn", 2, &timeSystemVariables->nowValue);
+		PgbsonWriterAppendValue(&writer, ContinuationFields.NowValue.string,
+								ContinuationFields.NowValue.length,
+								&timeSystemVariables->nowValue);
 	}
 
 	return PgbsonWriterGetPgbson(&writer);
@@ -1752,14 +1764,18 @@ BuildTailableContinuationDocument(pgbson *continuationDoc, pgbson *querySpec,
 {
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
-	PgbsonWriterAppendInt64(&writer, "qi", 2, cursorId);
-	PgbsonWriterAppendBool(&writer, "qp", 2, false);
+	PgbsonWriterAppendInt64(&writer, ContinuationFields.CursorId.string,
+							ContinuationFields.CursorId.length, cursorId);
+	PgbsonWriterAppendBool(&writer, ContinuationFields.Persisted.string,
+						   ContinuationFields.Persisted.length, false);
 
-	PgbsonWriterAppendInt32(&writer, "qk", 2, (int) queryKind);
+	PgbsonWriterAppendInt32(&writer, ContinuationFields.QueryKind.string,
+							ContinuationFields.QueryKind.length, (int) queryKind);
 
 	/* Add the original query spec so that getMore can reuse it */
 	/* For tailable cursor, save the query with "qt" to differentiate from streaming query. */
-	PgbsonWriterAppendDocument(&writer, "qt", 2, querySpec);
+	PgbsonWriterAppendDocument(&writer, ContinuationFields.TailableQuery.string,
+							   ContinuationFields.TailableQuery.length, querySpec);
 
 	/*
 	 * continuationDoc may be NULL when the underlying tailable pipeline
@@ -1767,17 +1783,22 @@ BuildTailableContinuationDocument(pgbson *continuationDoc, pgbson *querySpec,
 	 */
 	if (continuationDoc != NULL)
 	{
-		PgbsonWriterAppendDocument(&writer, "continuation", 12, continuationDoc);
+		PgbsonWriterAppendDocument(&writer, ContinuationFields.Continuation.string,
+								   ContinuationFields.Continuation.length,
+								   continuationDoc);
 	}
 
 	/* In the response add the number of iterations (used in tests) */
-	PgbsonWriterAppendInt32(&writer, "numIters", 8, numIterations);
+	PgbsonWriterAppendInt32(&writer, ContinuationFields.NumIterations.string,
+							ContinuationFields.NumIterations.length, numIterations);
 
 	/* Add time system variables accordingly */
 	if (timeSystemVariables != NULL && timeSystemVariables->nowValue.value_type !=
 		BSON_TYPE_EOD)
 	{
-		PgbsonWriterAppendValue(&writer, "sn", 2, &timeSystemVariables->nowValue);
+		PgbsonWriterAppendValue(&writer, ContinuationFields.NowValue.string,
+								ContinuationFields.NowValue.length,
+								&timeSystemVariables->nowValue);
 	}
 
 	return PgbsonWriterGetPgbson(&writer);
@@ -1796,18 +1817,25 @@ BuildDynamicStreamingContinuationDocument(int64_t cursorId, QueryKind queryKind,
 
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
-	PgbsonWriterAppendInt64(&writer, "qi", 2, cursorId);
-	PgbsonWriterAppendBool(&writer, "qp", 2, false);
+	PgbsonWriterAppendInt64(&writer, ContinuationFields.CursorId.string,
+							ContinuationFields.CursorId.length, cursorId);
+	PgbsonWriterAppendBool(&writer, ContinuationFields.Persisted.string,
+						   ContinuationFields.Persisted.length, false);
 
-	PgbsonWriterAppendInt32(&writer, "qk", 2, (int) queryKind);
+	PgbsonWriterAppendInt32(&writer, ContinuationFields.QueryKind.string,
+							ContinuationFields.QueryKind.length, (int) queryKind);
 
 	/* Add the original query spec so that getMore can reuse it */
 	/* For dynamic streaming cursor, save the query with "qd" key. */
-	PgbsonWriterAppendDocument(&writer, "qd", 2, querySpec);
+	PgbsonWriterAppendDocument(&writer, ContinuationFields.DynamicQuery.string,
+							   ContinuationFields.DynamicQuery.length, querySpec);
 
 	AppendCollationToContinuation(&writer, queryKind, queryData);
-	PgbsonWriterAppendDocument(&writer, "dc", 2, continuationDoc);
-	PgbsonWriterAppendBool(&writer, "hasFetchedRows", 14, hasFetchedRows);
+	PgbsonWriterAppendDocument(&writer, ContinuationFields.DynamicCursorState.string,
+							   ContinuationFields.DynamicCursorState.length,
+							   continuationDoc);
+	PgbsonWriterAppendBool(&writer, ContinuationFields.HasFetchedRows.string,
+						   ContinuationFields.HasFetchedRows.length, hasFetchedRows);
 
 	/*
 	 * Store a positive remaining count in "lim". -1 is untracked; callers must
@@ -1815,7 +1843,8 @@ BuildDynamicStreamingContinuationDocument(int64_t cursorId, QueryKind queryKind,
 	 */
 	if (remainingLimit > 0)
 	{
-		PgbsonWriterAppendInt64(&writer, "lim", 3, remainingLimit);
+		PgbsonWriterAppendInt64(&writer, ContinuationFields.RemainingLimit.string,
+								ContinuationFields.RemainingLimit.length, remainingLimit);
 	}
 	else if (remainingLimit != -1)
 	{
@@ -1828,14 +1857,17 @@ BuildDynamicStreamingContinuationDocument(int64_t cursorId, QueryKind queryKind,
 	}
 
 	/* In the response add the number of iterations (used in tests) */
-	PgbsonWriterAppendInt32(&writer, "numIters", 8, numIterations);
+	PgbsonWriterAppendInt32(&writer, ContinuationFields.NumIterations.string,
+							ContinuationFields.NumIterations.length, numIterations);
 
 	/* Add time system variables accordingly */
 	const TimeSystemVariables *timeSystemVariables =
 		&queryData->timeSystemVariables;
 	if (timeSystemVariables->nowValue.value_type != BSON_TYPE_EOD)
 	{
-		PgbsonWriterAppendValue(&writer, "sn", 2, &timeSystemVariables->nowValue);
+		PgbsonWriterAppendValue(&writer, ContinuationFields.NowValue.string,
+								ContinuationFields.NowValue.length,
+								&timeSystemVariables->nowValue);
 	}
 
 	return PgbsonWriterGetPgbson(&writer);
@@ -1853,33 +1885,42 @@ BuildPersistedFileContinuationDocument(const char *cursorName, int64_t
 {
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
-	PgbsonWriterAppendInt64(&writer, "qi", 2, cursorId);
-	PgbsonWriterAppendBool(&writer, "qp", 2, true);
+	PgbsonWriterAppendInt64(&writer, ContinuationFields.CursorId.string,
+							ContinuationFields.CursorId.length, cursorId);
+	PgbsonWriterAppendBool(&writer, ContinuationFields.Persisted.string,
+						   ContinuationFields.Persisted.length, true);
 
 	/* Add the original query spec so that getMore can reuse it */
-	PgbsonWriterAppendInt32(&writer, "qk", 2, (int) queryKind);
-	PgbsonWriterAppendUtf8(&writer, "qn", 2, cursorName);
+	PgbsonWriterAppendInt32(&writer, ContinuationFields.QueryKind.string,
+							ContinuationFields.QueryKind.length, (int) queryKind);
+	PgbsonWriterAppendUtf8(&writer, ContinuationFields.CursorName.string,
+						   ContinuationFields.CursorName.length, cursorName);
 
 	bson_value_t continuationValue;
 	continuationValue.value_type = BSON_TYPE_BINARY;
 	continuationValue.value.v_binary.subtype = BSON_SUBTYPE_BINARY;
 	continuationValue.value.v_binary.data = (uint8_t *) continuationState;
 	continuationValue.value.v_binary.data_len = VARSIZE(continuationState);
-	PgbsonWriterAppendValue(&writer, "qf", 2, &continuationValue);
+	PgbsonWriterAppendValue(&writer, ContinuationFields.FileState.string,
+							ContinuationFields.FileState.length, &continuationValue);
 
 	/* In the response add the number of iterations (used in tests) */
-	PgbsonWriterAppendInt32(&writer, "numIters", 8, numIterations);
+	PgbsonWriterAppendInt32(&writer, ContinuationFields.NumIterations.string,
+							ContinuationFields.NumIterations.length, numIterations);
 
 	/* Add time system variables accordingly */
 	if (timeSystemVariables != NULL && timeSystemVariables->nowValue.value_type !=
 		BSON_TYPE_EOD)
 	{
-		PgbsonWriterAppendValue(&writer, "sn", 2, &timeSystemVariables->nowValue);
+		PgbsonWriterAppendValue(&writer, ContinuationFields.NowValue.string,
+								ContinuationFields.NowValue.length,
+								&timeSystemVariables->nowValue);
 	}
 
 	if (hasParallelPlan)
 	{
-		PgbsonWriterAppendBool(&writer, "pp", 2, true);
+		PgbsonWriterAppendBool(&writer, ContinuationFields.HasParallelPlan.string,
+							   ContinuationFields.HasParallelPlan.length, true);
 	}
 
 	return PgbsonWriterGetPgbson(&writer);
@@ -1896,26 +1937,34 @@ BuildPersistedContinuationDocument(const char *cursorName, int64_t cursorId, Que
 {
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
-	PgbsonWriterAppendInt64(&writer, "qi", 2, cursorId);
-	PgbsonWriterAppendBool(&writer, "qp", 2, true);
+	PgbsonWriterAppendInt64(&writer, ContinuationFields.CursorId.string,
+							ContinuationFields.CursorId.length, cursorId);
+	PgbsonWriterAppendBool(&writer, ContinuationFields.Persisted.string,
+						   ContinuationFields.Persisted.length, true);
 
 	/* Add the original query spec so that getMore can reuse it */
-	PgbsonWriterAppendInt32(&writer, "qk", 2, (int) queryKind);
-	PgbsonWriterAppendUtf8(&writer, "qn", 2, cursorName);
+	PgbsonWriterAppendInt32(&writer, ContinuationFields.QueryKind.string,
+							ContinuationFields.QueryKind.length, (int) queryKind);
+	PgbsonWriterAppendUtf8(&writer, ContinuationFields.CursorName.string,
+						   ContinuationFields.CursorName.length, cursorName);
 
 	/* In the response add the number of iterations (used in tests) */
-	PgbsonWriterAppendInt32(&writer, "numIters", 8, numIterations);
+	PgbsonWriterAppendInt32(&writer, ContinuationFields.NumIterations.string,
+							ContinuationFields.NumIterations.length, numIterations);
 
 	/* Add time system variables accordingly */
 	if (timeSystemVariables != NULL && timeSystemVariables->nowValue.value_type !=
 		BSON_TYPE_EOD)
 	{
-		PgbsonWriterAppendValue(&writer, "sn", 2, &timeSystemVariables->nowValue);
+		PgbsonWriterAppendValue(&writer, ContinuationFields.NowValue.string,
+								ContinuationFields.NowValue.length,
+								&timeSystemVariables->nowValue);
 	}
 
 	if (hasParallelPlan)
 	{
-		PgbsonWriterAppendBool(&writer, "pp", 2, true);
+		PgbsonWriterAppendBool(&writer, ContinuationFields.HasParallelPlan.string,
+							   ContinuationFields.HasParallelPlan.length, true);
 	}
 
 	return PgbsonWriterGetPgbson(&writer);
@@ -2101,7 +2150,7 @@ ParseCursorInputSpec(pgbson *cursorSpec, QueryGetMoreInfo *getMoreInfo)
 			/* hasFetchedRows: whether a prior page returned any rows */
 			case 'h':
 			{
-				if (strcmp(pathKey, "hasFetchedRows") == 0)
+				if (strcmp(pathKey, ContinuationFields.HasFetchedRows.string) == 0)
 				{
 					const bson_value_t *hasFetchedRowsValue =
 						bson_iter_value(&cursorSpecIter);
@@ -2122,7 +2171,9 @@ ParseCursorInputSpec(pgbson *cursorSpec, QueryGetMoreInfo *getMoreInfo)
 			/* numIters — page iteration counter stored in the continuation */
 			case 'n':
 			{
-				if (strncmp(pathKey, "numIters", 8) == 0 && pathKey[8] == '\0')
+				if (strncmp(pathKey, ContinuationFields.NumIterations.string,
+							ContinuationFields.NumIterations.length) == 0 &&
+					pathKey[ContinuationFields.NumIterations.length] == '\0')
 				{
 					getMoreInfo->numIterations = bson_iter_int32(&cursorSpecIter);
 				}
@@ -2132,7 +2183,9 @@ ParseCursorInputSpec(pgbson *cursorSpec, QueryGetMoreInfo *getMoreInfo)
 			/* lim — remaining streamable limit tracked across getMore pages */
 			case 'l':
 			{
-				if (strncmp(pathKey, "lim", 3) == 0 && pathKey[3] == '\0')
+				if (strncmp(pathKey, ContinuationFields.RemainingLimit.string,
+							ContinuationFields.RemainingLimit.length) == 0 &&
+					pathKey[ContinuationFields.RemainingLimit.length] == '\0')
 				{
 					const bson_value_t *remainingLimitValue =
 						bson_iter_value(&cursorSpecIter);
@@ -2256,29 +2309,40 @@ BuildRemoteCursorContinuationDocument(int64_t cursorId, QueryKind queryKind,
 
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
-	PgbsonWriterAppendInt64(&writer, "qi", 2, cursorId);
-	PgbsonWriterAppendBool(&writer, "qp", 2, false);
-	PgbsonWriterAppendInt32(&writer, "qk", 2, (int) queryKind);
+	PgbsonWriterAppendInt64(&writer, ContinuationFields.CursorId.string,
+							ContinuationFields.CursorId.length, cursorId);
+	PgbsonWriterAppendBool(&writer, ContinuationFields.Persisted.string,
+						   ContinuationFields.Persisted.length, false);
+	PgbsonWriterAppendInt32(&writer, ContinuationFields.QueryKind.string,
+							ContinuationFields.QueryKind.length, (int) queryKind);
 
 	/* "qr" carries the query spec and signals a remote dynamic cursor. */
-	PgbsonWriterAppendDocument(&writer, "qr", 2, querySpec);
+	PgbsonWriterAppendDocument(&writer, ContinuationFields.RemoteQuery.string,
+							   ContinuationFields.RemoteQuery.length, querySpec);
 
 	/* Opaque worker continuation, stored verbatim and passed straight back. */
 	if (workerContinuation != NULL)
 	{
-		PgbsonWriterAppendDocument(&writer, "wc", 2, workerContinuation);
+		PgbsonWriterAppendDocument(&writer, ContinuationFields.WorkerContinuation.string,
+								   ContinuationFields.WorkerContinuation.length,
+								   workerContinuation);
 	}
 
 	/* Distributed table OID for routing on getMore. */
-	PgbsonWriterAppendInt64(&writer, "dr", 2, (int64_t) distributedTableOid);
+	PgbsonWriterAppendInt64(&writer, ContinuationFields.DistributedTableOid.string,
+							ContinuationFields.DistributedTableOid.length,
+							(int64_t) distributedTableOid);
 
-	PgbsonWriterAppendInt32(&writer, "numIters", 8, numIterations);
+	PgbsonWriterAppendInt32(&writer, ContinuationFields.NumIterations.string,
+							ContinuationFields.NumIterations.length, numIterations);
 
 	const TimeSystemVariables *timeSystemVariables =
 		&queryData->timeSystemVariables;
 	if (timeSystemVariables->nowValue.value_type != BSON_TYPE_EOD)
 	{
-		PgbsonWriterAppendValue(&writer, "sn", 2, &timeSystemVariables->nowValue);
+		PgbsonWriterAppendValue(&writer, ContinuationFields.NowValue.string,
+								ContinuationFields.NowValue.length,
+								&timeSystemVariables->nowValue);
 	}
 
 	return PgbsonWriterGetPgbson(&writer);

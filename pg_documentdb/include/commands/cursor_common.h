@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * include/commands/cursor_common.h
  *
@@ -8,9 +9,46 @@
  *-------------------------------------------------------------------------
  */
 
-extern const StringView CursorContinuationTableName;
-extern const StringView CursorContinuationValue;
-extern const StringView PrimaryKeyShardKey;
+#ifndef CURSOR_COMMON_H
+#define CURSOR_COMMON_H
+
+#include "utils/string_view.h"
+
+/* Keep serialized keys stable for continuations issued by earlier versions. */
+typedef struct ContinuationFieldNames
+{
+	StringView BatchCount;
+	StringView BatchSize;
+	StringView BatchSizeAttribute;
+	StringView BatchSizeHint;
+	StringView ClusterTime;
+	StringView Collation;
+	StringView Continuation;
+	StringView CursorId;
+	StringView CursorName;
+	StringView DistributedTableOid;
+	StringView DynamicCursorState;
+	StringView DynamicQuery;
+	StringView FileState;
+	StringView HasFetchedRows;
+	StringView HasParallelPlan;
+	StringView NowValue;
+	StringView NumIterations;
+	StringView Persisted;
+	StringView PrimaryKey;
+	StringView QueryKind;
+	StringView RemainingLimit;
+	StringView RemoteQuery;
+	StringView ResumeToken;
+	StringView ResumeTokenData;
+	StringView StreamingQuery;
+	StringView TableName;
+	StringView TailableQuery;
+	StringView Value;
+	StringView WorkerContinuation;
+} ContinuationFieldNames;
+
+extern const ContinuationFieldNames ContinuationFields;
 
 /*
  * Tailable (change stream) resume tokens may carry an optional cluster-time
@@ -24,3 +62,5 @@ extern const StringView PrimaryKeyShardKey;
 #define RESUME_TOKEN_PREFIX_HEX_LEN (RESUME_TOKEN_PREFIX_BIN_LEN * 2)
 
 char * EncodeResumeTokenWithClusterTime(const char *rawToken, uint64 clusterTime);
+
+#endif
