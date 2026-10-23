@@ -1,7 +1,6 @@
 /* Copyright (c) Microsoft Corporation. SPDX-License-Identifier: MIT */ \i sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql
 -- Copyright (c) Microsoft Corporation.
 -- Licensed under the MIT License.
--- SPDX-License-Identifier: MIT
 -- Tests that rumvacuumcleanup prunes orphaned empty posting-tree leaves even
 -- when ambulkdelete is not called (no dead TIDs in the heap).
 --
@@ -45,7 +44,7 @@ SET documentdb_rum.enable_targeted_posting_tree_pruning TO off;
 -- unrelated transactions cannot change the logged page-state counts.
 SET documentdb_rum.skip_global_visibility_check_on_prune TO on;
 SELECT documentdb_api.create_collection('pvacuum_orphan_db', 'orphan_test');
-psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:46: NOTICE:  creating collection
+psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:45: NOTICE:  creating collection
  create_collection 
 -------------------
  t
@@ -137,7 +136,7 @@ SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_befo
 SET client_min_messages TO LOG;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
 VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
-psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:138: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=15, emptyPostingPages=2, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=1, cleanupRetryPostingTrees=1, cleanupRetryPostingPagesDeleted=15, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:137: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=15, emptyPostingPages=2, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=1, cleanupRetryPostingTrees=1, cleanupRetryPostingPagesDeleted=15, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
 RESET client_min_messages;
 SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_after_sp \gset
 SELECT :orphans_before_sp > 2 AS had_prunable_orphans_single_pass,
@@ -161,7 +160,7 @@ FROM pg_temp.data_page_counts(:'orphan_index_name');
 SET client_min_messages TO LOG;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
 VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
-psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:154: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=2, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=1, cleanupRetryPostingTrees=1, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:153: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=2, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=1, cleanupRetryPostingTrees=1, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
 RESET client_min_messages;
 -- ============================================================
 -- Case 2: targeted posting tree pruning
@@ -183,7 +182,7 @@ SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_befo
 SET client_min_messages TO LOG;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
 VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
-psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:179: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=15, emptyPostingPages=2, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=1, cleanupRetryPostingTrees=1, cleanupRetryPostingPagesDeleted=15, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:178: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=15, emptyPostingPages=2, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=1, cleanupRetryPostingTrees=1, cleanupRetryPostingPagesDeleted=15, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
 RESET client_min_messages;
 SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_after_tg \gset
 SELECT :orphans_before_tg > 2 AS had_prunable_orphans_targeted,
@@ -213,7 +212,7 @@ SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_befo
 SET client_min_messages TO LOG;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
 VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
-psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:208: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=13, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=22, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:207: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=13, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=22, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
 RESET client_min_messages;
 SET documentdb_rum.vacuum_skip_prune_posting_tree_pages TO off;
 SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_after_ks \gset
@@ -246,7 +245,7 @@ SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_befo
 SET client_min_messages TO LOG;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
 VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
-psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:241: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=13, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=22, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:240: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=13, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=22, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
 RESET client_min_messages;
 SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_after_nowl \gset
 SELECT :orphans_before_nowl > 2 AS had_prunable_orphans_no_weak_lock,
@@ -278,7 +277,7 @@ SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_befo
 SET client_min_messages TO LOG;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
 VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
-psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:273: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=13, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=22, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:272: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=13, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=22, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
 RESET client_min_messages;
 SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_after_ff \gset
 SELECT :orphans_before_ff > 2 AS had_prunable_orphans_flag_off,
@@ -310,8 +309,8 @@ CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 SET client_min_messages TO LOG;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
 VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
-psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:303: LOG:  Vacuum[index=xxx,vacuumCleanup=0] emptyEntryPages=1, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=15, emptyPostingPages=12, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=1, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=11, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
-psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:303: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=2, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:302: LOG:  Vacuum[index=xxx,vacuumCleanup=0] emptyEntryPages=1, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=15, emptyPostingPages=12, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=1, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=11, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:302: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=2, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
 RESET client_min_messages;
 SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_after_bulkdel \gset
 SELECT :orphans_after_bulkdel < :orphans_after_ff AS bulk_delete_reclaimed_stranded_leaves,
@@ -319,6 +318,16 @@ SELECT :orphans_after_bulkdel < :orphans_after_ff AS bulk_delete_reclaimed_stran
  bulk_delete_reclaimed_stranded_leaves | bound_leaves_remaining_bulk_delete 
 ---------------------------------------+------------------------------------
  t                                     |                                  2
+(1 row)
+
+SELECT count(*) = 2
+       AND bool_and(left_link IS NULL OR right_link IS NULL)
+       AS targeted_retained_only_boundary_leaves
+FROM pg_temp.index_page_stats(:'orphan_index_name')
+WHERE flags = 'LEAF|DATA' AND n_entries = 0;
+ targeted_retained_only_boundary_leaves 
+----------------------------------------
+ t
 (1 row)
 
 SET documentdb_rum.enable_vacuum_cleanup_posting_tree_pruning TO on;
@@ -330,8 +339,8 @@ CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 SET client_min_messages TO LOG;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
 VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
-psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:319: LOG:  Vacuum[index=xxx,vacuumCleanup=0] emptyEntryPages=1, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=15, emptyPostingPages=13, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=1, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
-psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:319: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=2, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:324: LOG:  Vacuum[index=xxx,vacuumCleanup=0] emptyEntryPages=1, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=15, emptyPostingPages=13, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=1, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:324: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=2, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
 RESET client_min_messages;
 SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') = 2 AS bulk_delete_pruned_without_cleanup_retry;
  bulk_delete_pruned_without_cleanup_retry 
@@ -350,8 +359,8 @@ CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 SET client_min_messages TO LOG;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
 VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
-psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:333: LOG:  Vacuum[index=xxx,vacuumCleanup=0] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=22, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
-psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:333: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=15, emptyPostingPages=2, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:338: LOG:  Vacuum[index=xxx,vacuumCleanup=0] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=22, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:338: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=15, emptyPostingPages=2, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
 RESET client_min_messages;
 SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') = 2 AS inline_pruned_with_retry_flag_off;
  inline_pruned_with_retry_flag_off 
@@ -365,8 +374,18 @@ SET documentdb_rum.enable_vacuum_cleanup_posting_tree_pruning TO on;
 SET client_min_messages TO LOG;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
 VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
-psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:342: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=2, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:347: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=2, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=7, numVoidPages=15, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
 RESET client_min_messages;
+SELECT count(*) = 2
+       AND bool_and(left_link IS NULL OR right_link IS NULL)
+       AS inline_retained_only_boundary_leaves
+FROM pg_temp.index_page_stats(:'orphan_index_name')
+WHERE flags = 'LEAF|DATA' AND n_entries = 0;
+ inline_retained_only_boundary_leaves 
+--------------------------------------
+ t
+(1 row)
+
 -- Case 9: empty single-page posting roots allow entry-page pruning. Count
 -- committed leaf-tuple removals and posting-root deletions as well as the
 -- entry pages unlinked, without counting retained high keys as tuple removals.
@@ -412,7 +431,7 @@ SET documentdb_rum.prune_rum_empty_pages TO on;
 SET client_min_messages TO LOG;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
 VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_25001;
-psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:374: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=9, emptyEntries=0, emptyPostingTrees=20, prunedEntries=9, prunedPages=7,prunedPostingTrees=16, postingPagesDeleted=0, emptyPostingPages=4, numBacktracks=0, isNewBulkDelete=1, numEntryPages=3, numDataPages=4, numVoidPages=16, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=1, cleanupRetryPostingTrees=20, cleanupRetryPostingPagesDeleted=16, cleanupRetryEntryPagesPruned=7, cleanupRetryEntriesPruned=9
+psql:sql/rum_vacuum_orphaned_leaf_cleanup_tests.sql:385: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=9, emptyEntries=0, emptyPostingTrees=20, prunedEntries=9, prunedPages=7,prunedPostingTrees=16, postingPagesDeleted=0, emptyPostingPages=4, numBacktracks=0, isNewBulkDelete=1, numEntryPages=3, numDataPages=4, numVoidPages=16, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=1, cleanupRetryPostingTrees=20, cleanupRetryPostingPagesDeleted=16, cleanupRetryEntryPagesPruned=7, cleanupRetryEntriesPruned=9
 RESET client_min_messages;
 SELECT count(*) FILTER (WHERE flags = 'LEAF|DATA' AND n_entries = 0
                          AND left_link IS NULL AND right_link IS NULL) AS empty_roots_after,

@@ -1,6 +1,5 @@
 -- Copyright (c) Microsoft Corporation.
 -- Licensed under the MIT License.
--- SPDX-License-Identifier: MIT
 
 -- Tests that rumvacuumcleanup prunes orphaned empty posting-tree leaves even
 -- when ambulkdelete is not called (no dead TIDs in the heap).
@@ -308,6 +307,12 @@ SELECT pg_temp.count_orphaned_empty_leaves(:'orphan_index_name') AS orphans_afte
 SELECT :orphans_after_bulkdel < :orphans_after_ff AS bulk_delete_reclaimed_stranded_leaves,
        :orphans_after_bulkdel AS bound_leaves_remaining_bulk_delete;
 
+SELECT count(*) = 2
+       AND bool_and(left_link IS NULL OR right_link IS NULL)
+       AS targeted_retained_only_boundary_leaves
+FROM pg_temp.index_page_stats(:'orphan_index_name')
+WHERE flags = 'LEAF|DATA' AND n_entries = 0;
+
 SET documentdb_rum.enable_vacuum_cleanup_posting_tree_pruning TO on;
 
 -- Case 7: bulk delete with the feature on must not count a cleanup retry.
@@ -341,6 +346,12 @@ SET documentdb_rum.enable_vacuum_cleanup_posting_tree_pruning TO on;
 SET client_min_messages TO LOG;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :orphan_col) \gexec
 RESET client_min_messages;
+
+SELECT count(*) = 2
+       AND bool_and(left_link IS NULL OR right_link IS NULL)
+       AS inline_retained_only_boundary_leaves
+FROM pg_temp.index_page_stats(:'orphan_index_name')
+WHERE flags = 'LEAF|DATA' AND n_entries = 0;
 
 -- Case 9: empty single-page posting roots allow entry-page pruning. Count
 -- committed leaf-tuple removals and posting-root deletions as well as the

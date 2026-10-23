@@ -1,4 +1,5 @@
 ### documentdb v1.3-0 (Unreleased) ###
+* Skip posting-tree root cleanup locks for empty boundary leaves during targeted and cleanup vacuum pruning, while preserving empty-tree accounting. *[Perf]*
 * Push sort and group ordering down to a non-leading dotted path of a composite index that shares a common sub-path when the index is not multi-key. Controlled by the default-on `documentdb.enable_reduced_correlated_non_multikey_order_by` setting. *[Perf]*
 * Retire `enable_min_max_skip_null_values` and `enableSortPushToAccumulatorWithPrefix`, retaining null-skipping for `$min`/`$max` accumulators and prefix-based sort pushdown into group accumulators. *[Refactor]*
 * Prevent a backend crash from out-of-bounds reads when a composite index scan with more scan keys than index paths, such as a large `$all` on an array field, falls back to an ordered scan. *[Bugfix]*
