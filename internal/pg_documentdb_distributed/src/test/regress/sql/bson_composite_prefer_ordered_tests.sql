@@ -96,7 +96,7 @@ set enable_bitmapscan to off;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "ordered_delete", "filter": { "a": { "$lte": 4 } } }')
 $cmd$);
-SELECT document FROM bson_aggregation_pipeline('comp_db2', '{ "aggregate": "ordered_delete", "pipeline": [ { "$match": { "a": { "$lte": 4 } } }, { "$group": { "_id": "$a", "c": { "$count": {} } }} ] }');
+SELECT document FROM bson_aggregation_pipeline('comp_db2', '{ "aggregate": "ordered_delete", "pipeline": [ { "$match": { "a": { "$lte": 4 } } }, { "$group": { "_id": "$a", "c": { "$count": {} } }}, { "$sort": { "_id": 1 } } ] }');
 
 reset enable_indexscan;
 reset enable_bitmapscan;
@@ -107,7 +107,7 @@ set enable_bitmapscan to off;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (ANALYZE OFF, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('comp_db2', '{ "aggregate": "ordered_delete", "pipeline": [ { "$match": { "a": { "$lte": 4 } } }, { "$group": { "_id": "$a", "c": { "$count": {} } }} ] }')
 $cmd$);
-SELECT document FROM bson_aggregation_pipeline('comp_db2', '{ "aggregate": "ordered_delete", "pipeline": [ { "$match": { "a": { "$lte": 4 } } }, { "$group": { "_id": "$a", "c": { "$count": {} } }} ] }');
+SELECT document FROM bson_aggregation_pipeline('comp_db2', '{ "aggregate": "ordered_delete", "pipeline": [ { "$match": { "a": { "$lte": 4 } } }, { "$group": { "_id": "$a", "c": { "$count": {} } }}, { "$sort": { "_id": 1 } } ] }');
 reset enable_bitmapscan;
 
 -- now delete everthing

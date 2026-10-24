@@ -647,8 +647,8 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
     SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "filter1": "filter1-5", "filter2": "filter2-55", "filter3": { "$gt": 50 } }, "sort": { "orderKey": 1 }, "limit": 10 }')
 $cmd$);
 
--- Without per-collection statistics, the full-scan cost and selectivity determine
--- whether the filter index plus a top-N sort is cheaper than the sort index.
+-- With per-collection statistics disabled, toggling the full-scan overrides
+-- leaves the filter index plus a top-N sort cheaper than the sort index.
 SET documentdb.enablePerCollectionPlannerStatistics TO off;
 SET documentdb.enable_full_scan_cost_and_selectivity TO off;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$

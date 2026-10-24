@@ -2488,8 +2488,8 @@ $cmd$);
                Order By: (document |-<> '{ "orderKey" : { "$numberInt" : "1" } }'::bson)
 (12 rows)
 
--- Without per-collection statistics, the full-scan cost and selectivity determine
--- whether the filter index plus a top-N sort is cheaper than the sort index.
+-- With per-collection statistics disabled, toggling the full-scan overrides
+-- leaves the filter index plus a top-N sort cheaper than the sort index.
 SET documentdb.enablePerCollectionPlannerStatistics TO off;
 SET documentdb.enable_full_scan_cost_and_selectivity TO off;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
@@ -2519,22 +2519,22 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
     SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "index_orderby_selection", "filter": { "filter1": "filter1-5", "filter2": { "$gte": "filter2-55" }, "filter3": { "$gt": 50 } }, "sort": { "orderKey": 1 }, "limit": 10 }')
 $cmd$);
-                                                                                        run_explain_and_trim                                                                                         
+                                                                                             run_explain_and_trim                                                                                              
 ---------------------------------------------------------------------
  Limit (actual rows=10 loops=1)
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=10 loops=1)
-         indexName: sortIndex_1
-         indexKey: {"orderKey": 1,"otherPath": 1}
-         isMultiKey: false
-         indexBounds: ["orderKey": (MinKey, MaxKey), "otherPath": (MinKey, MaxKey)]
-         innerScanLoops: 595 loops
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 595)]
-         ->  Index Scan using "sortIndex_1" on documents_68011_680022 collection (actual rows=10 loops=1)
-               Index Cond: (document @<> '{ "orderKey" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
-               Order By: (document |-<> '{ "orderKey" : { "$numberInt" : "1" } }'::bson)
-               Filter: ((document @= '{ "filter1" : "filter1-5" }'::bson) AND (document @>= '{ "filter2" : "filter2-55" }'::bson) AND (document @> '{ "filter3" : { "$numberInt" : "50" } }'::bson))
-               Rows Removed by Filter: 585
+   ->  Sort (actual rows=10 loops=1)
+         Sort Key: (bson_orderby(document, '{ "orderKey" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+         Sort Method: top-N heapsort  Memory: 28kB
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=255 loops=1)
+               indexName: filterSortIndex_1
+               indexKey: {"filter1": 1,"filter2": 1,"orderKey": 1,"filter3": 1}
+               isMultiKey: false
+               indexBounds: ["filter1": ["filter1-5", "filter1-5"], "filter2": ["filter2-55", { }), "orderKey": (MinKey, MaxKey), "filter3": (50, Infinity]]
+               innerScanLoops: 501 loops
+               scanType: ordered
+               scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 36)]
+               ->  Index Scan using "filterSortIndex_1" on documents_68011_680022 collection (actual rows=255 loops=1)
+                     Index Cond: ((document @= '{ "filter1" : "filter1-5" }'::bson) AND (document @>= '{ "filter2" : "filter2-55" }'::bson) AND (document @> '{ "filter3" : { "$numberInt" : "50" } }'::bson))
 (14 rows)
 
 RESET documentdb.enablePerCollectionPlannerStatistics;

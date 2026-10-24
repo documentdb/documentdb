@@ -628,15 +628,18 @@ dollar_support(PG_FUNCTION_ARGS)
 	else if (IsA(supportRequest, SupportRequestSelectivity))
 	{
 		SupportRequestSelectivity *req = (SupportRequestSelectivity *) supportRequest;
+
+		bool enablePlannerCostSelectivity = EnablePlannerCostSelectivity(req->root,
+																		 req->args);
 		if (req->funcid == BsonFullScanFunctionOid())
 		{
-			if (EnableFullScanCostAndSelectivity)
+			if (EnableFullScanCostAndSelectivity && enablePlannerCostSelectivity)
 			{
 				req->selectivity = 1.0;
 				responsePointer = (Pointer) req;
 			}
 		}
-		else if (EnablePlannerCostSelectivity(req->root, req->args))
+		else if (enablePlannerCostSelectivity)
 		{
 			const MongoIndexOperatorInfo *indexOperator =
 				GetMongoIndexOperatorInfoByPostgresFuncId(req->funcid);
@@ -684,7 +687,10 @@ dollar_support(PG_FUNCTION_ARGS)
 			}
 		}
 		else if (EnableFullScanCostAndSelectivity &&
-				 req->funcid == BsonFullScanFunctionOid())
+				 req->funcid == BsonFullScanFunctionOid() &&
+				 req->node != NULL && IsA(req->node, FuncExpr) &&
+				 EnablePlannerCostSelectivity(req->root,
+											  ((FuncExpr *) req->node)->args))
 		{
 			req->per_tuple = 1e-9;
 			req->startup = 0;
