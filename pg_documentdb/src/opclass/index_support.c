@@ -8475,7 +8475,8 @@ HasMultipleRangeConditionsForOrderedIndexPath(IndexPath *indexPath)
 				case BSON_INDEX_STRATEGY_DOLLAR_LESS:
 				case BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL:
 				{
-					if (++numConds[columnNumber] > 1)
+					numConds[columnNumber]++;
+					if (numConds[columnNumber] > 1)
 					{
 						return true;
 					}

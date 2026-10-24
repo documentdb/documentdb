@@ -386,5 +386,206 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXECUTE large_prepare_regex2
 $cmd$);
 
+-- Absolute start anchors use the same prefix bounds as ^, including on array elements.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db',
+        '{ "find": "regex_coll", "filter": { "a": { "$regex": "\\Astring" } } }')
+$cmd$);
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll',
+    '{ "_id": 200, "a": ["other", "string_array"], "b": true }');
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll',
+    '{ "_id": 201, "a": "other\nstring_line", "b": true }');
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll',
+    '{ "_id": 202, "a": "\\Astring_literal", "b": true }');
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll',
+    '{ "_id": 203, "a": "STRING_upper", "b": true }');
+
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "\\Astring" } }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regularExpression": { "pattern": "\\Astring", "options": "ms" } }, "b": true }, "sort": { "_id": 1 } }');
+
+-- Only \A stays anchored to the entire string in multiline mode.
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "^string", "$options": "m" } }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "\\Astring", "$options": "i" } }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "\\\\Astring" } }, "sort": { "_id": 1 } }');
+
+-- Optional prefix characters and alternatives after metacharacters must not exclude matches.
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "\\Aabcd?" } }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "\\Aabcd*" } }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "\\Aabcd{0}" } }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "\\Aabc.*|xyz" } }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "^abcd?" } }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "^abc.*|xyz" } }, "sort": { "_id": 1 } }');
+
+-- Compare tight bounds, option safety, empty prefixes, alternation, and escaped anchors.
+SELECT pattern, options, documentdb_test_helpers.run_explain_and_trim(FORMAT($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', %L)
+$cmd$, bson_build_document('find', 'regex_coll'::text,
+    'filter', bson_build_document('a',
+        bson_build_document('$regex', pattern, '$options', options))::bson)::text))
+FROM (VALUES
+    ('\Astring', ''),
+    ('\Astring', 'ms'),
+    ('^string', 'm'),
+    ('\Astring', 'i'),
+    ('\Astring', 'x'),
+    ('\A', ''),
+    ('\Aabc|xyz', ''),
+    ('\Aabc.*|xyz', ''),
+    ('\Aabcd?', ''),
+    ('\\Astring', ''),
+    ('\Aabc\.d', '')
+) AS cases(pattern, options);
+
+-- Regex remains case-sensitive under a non-default command collation.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.forceDisableSeqScan TO off;
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "\\Astring" } }, "collation": { "locale": "en", "strength": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "\\Aabcd?" } }, "collation": { "locale": "en", "strength": 1 }, "sort": { "_id": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db',
+        '{ "find": "regex_coll", "filter": { "a": { "$regex": "\\Astring" } }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+ROLLBACK;
+
+-- Exercise optional literals through scalar, multikey, and primary-key bounds.
+CREATE TEMP TABLE regex_prefix_documents (document jsonb);
+INSERT INTO regex_prefix_documents
+SELECT jsonb_build_object('_id', value, 'a', value, 'arr', jsonb_build_array('unrelated', value))
+FROM unnest(ARRAY[
+    '', 'a', 'ab', 'abc', 'abcd', 'abcdd', 'abce', 'abd', 'xyz', 'other',
+    E'other\nabcd', 'ABCD', 'abc.', 'abc\', 'é', 'ê', 'éñ', 'é.',
+    '€', '€x', '€y', '😀', '😀x', '😀y',
+    'abcé', 'abc€', 'abc😀', 'b', 'abc|b', 'abc\|b', E'abc\034', 'abc<b'
+]) AS values(value);
+INSERT INTO regex_prefix_documents VALUES
+    ('{"_id":"mixed_array","a":42,"arr":[null,42,"abc"]}'),
+    ('{"_id":"null_value","a":null,"arr":null}'),
+    ('{"_id":"empty_array","a":[],"arr":[]}'),
+    ('{"_id":"missing_value"}');
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('regex_db',
+    '{ "createIndexes": "prefix_quantifiers", "indexes": [
+        { "name": "prefix_a", "key": { "a": 1, "b": 1 } },
+        { "name": "prefix_arr", "key": { "arr": 1, "b": 1 } }
+    ] }', TRUE);
+SELECT count(documentdb_api.insert_one('regex_db', 'prefix_quantifiers', document::text::bson))
+FROM regex_prefix_documents;
+
+CREATE TEMP TABLE regex_prefix_cases AS
+SELECT anchor || suffix AS pattern, ''::text AS options
+FROM unnest(ARRAY['^', '\A']) AS anchors(anchor)
+CROSS JOIN unnest(ARRAY[
+    'abcd?', 'abcd*', 'abcd??', 'abcd*+', 'abcd+', 'a?',
+    'abc\.?', 'abc\\*', 'abcé?', 'abc€*', 'abc😀?',
+    'éñ?', 'é\.?', '€x?', '😀x?', 'abcd?|xyz', 'abcd{0,1}',
+    'abc(?#comment)?', 'éñ(?#comment)*', 'a(?#comment)?', 'abc(d)?',
+    'abc\c\|b', 'abc\c|b', 'abc.*\|b', 'abc.*\\|b', 'abc.*\\\|b',
+    'abc\\\|b', 'abc\\\c\|b', 'abc\x{5c}|b'
+]) AS suffixes(suffix);
+INSERT INTO regex_prefix_cases VALUES
+    ('^abcd?', 'm'), ('\Aabcd?', 'm'), ('\Aabcd*', 's'),
+    ('^abc\E?', ''), ('\Aabc\E*', ''),
+    ('^abc\Q\E?', ''), ('\Aabc\Q\E*', ''),
+    ('^abc\E{0,1}', ''), ('\Aéñ\Q\E\E?', ''),
+    ('^abc\\\E?', ''), ('\Aabc\\E?', ''),
+    ('^abc\Q.d\E?', ''), ('\Aabc\Q|b', '');
+
+CREATE FUNCTION pg_temp.regex_prefix_runtime(filter_doc bson)
+RETURNS text[]
+LANGUAGE plpgsql
+SET documentdb.forceDisableSeqScan = off
+SET enable_indexscan = off
+SET enable_bitmapscan = off
+SET enable_seqscan = on
+AS $fn$
+DECLARE
+    ids text[];
+BEGIN
+    SELECT coalesce(array_agg(document::text::jsonb->>'_id'
+        ORDER BY (document::text::jsonb->>'_id') COLLATE "C"), ARRAY[]::text[])
+    INTO ids
+    FROM documentdb_api.collection('regex_db', 'prefix_quantifiers')
+    WHERE document @@ filter_doc;
+    RETURN ids;
+END
+$fn$;
+
+CREATE FUNCTION pg_temp.regex_prefix_probe(pattern text, options text, field_name text)
+RETURNS TABLE(bounds text, ids text[])
+LANGUAGE plpgsql
+SET enable_bitmapscan = on
+AS $fn$
+DECLARE
+    filter_doc bson := bson_build_document(field_name,
+        bson_build_document('$regex', pattern, '$options', options));
+    index_name text := CASE field_name WHEN '_id' THEN '_id_' ELSE 'prefix_' || field_name END;
+    command bson := bson_build_document('find', 'prefix_quantifiers'::text,
+        'filter', filter_doc, 'hint', index_name);
+    query text := format('SELECT document FROM bson_aggregation_find(''regex_db'', %L)', command);
+    runtime_ids text[];
+BEGIN
+    PERFORM set_config('enable_bitmapscan', CASE WHEN field_name = '_id' THEN 'off' ELSE 'on' END, true);
+    EXECUTE format('SELECT coalesce(array_agg(document::text::jsonb->>''_id''
+        ORDER BY (document::text::jsonb->>''_id'') COLLATE "C"), ARRAY[]::text[])
+        FROM (%s) AS matched', query)
+    INTO ids;
+
+    runtime_ids := pg_temp.regex_prefix_runtime(filter_doc);
+    IF ids IS DISTINCT FROM runtime_ids THEN
+        RAISE EXCEPTION 'Indexed/runtime mismatch: field %, pattern %, options %, indexed %, runtime %',
+            field_name, pattern, options, ids, runtime_ids;
+    END IF;
+
+    SELECT trim(line) INTO STRICT bounds
+    FROM documentdb_test_helpers.run_explain_and_trim('EXPLAIN (COSTS OFF) ' || query) AS plan(line)
+    WHERE CASE WHEN field_name = '_id'
+        THEN line LIKE '%Index Cond:%object_id%'
+        ELSE line LIKE '%indexBounds:%' END;
+    RETURN NEXT;
+END
+$fn$;
+
+CREATE TEMP TABLE regex_prefix_results AS
+SELECT pattern, options, field_name, bounds, ids
+FROM regex_prefix_cases
+CROSS JOIN unnest(ARRAY['a', 'arr', '_id']) AS fields(field_name)
+CROSS JOIN LATERAL pg_temp.regex_prefix_probe(pattern, options, field_name);
+
+SELECT field_name, options, count(*) AS cases_checked
+FROM regex_prefix_results GROUP BY field_name, options ORDER BY field_name, options;
+
+SELECT actual.field_name, actual.options,
+    bool_and(split_part(actual.bounds, '], [', 1) = split_part(base.bounds, '], [', 1)) AS same_bounds
+FROM regex_prefix_results AS actual
+JOIN regex_prefix_results AS base USING (pattern, field_name)
+WHERE base.options = '' AND
+    (actual.options = 's' OR (actual.options = 'm' AND left(actual.pattern, 2) = '\A'))
+GROUP BY actual.field_name, actual.options ORDER BY actual.field_name, actual.options;
+
+-- Keep the detailed no-option bounds visible; all option combinations check results above.
+SELECT pattern, field_name, bounds, cardinality(ids) AS matches
+FROM regex_prefix_results WHERE options = '' ORDER BY pattern COLLATE "C", field_name;
+
+DROP FUNCTION pg_temp.regex_prefix_probe(text, text, text);
+DROP FUNCTION pg_temp.regex_prefix_runtime(bson);
+
 reset documentdb.enableExtendedExplainPlans;
 reset documentdb.forceDisableSeqScan;
