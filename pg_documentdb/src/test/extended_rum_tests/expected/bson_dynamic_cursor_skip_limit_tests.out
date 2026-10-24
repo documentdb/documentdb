@@ -1418,15 +1418,17 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_find('dyncur_slc_db',
         '{ "find": "a", "filter": { "_id": { "$gte": 5 } }, "skip": 23000, "limit": 1, "sort": { "_id": 1 } }')
 $cmd$);
-                                                                                      run_explain_and_trim                                                                                      
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                  run_explain_and_trim                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit (actual rows=1 loops=1)
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=23001 loops=1)
-         namespaceName: dyncur_slc_db.a
-         indexName: _id_
-         ->  Index Scan using _id_ on documents_9910 collection (actual rows=23001 loops=1)
-               Index Cond: ((shard_key_value = '9910'::bigint) AND (object_id >= '{ "" : { "$numberInt" : "5" } }'::bson) AND (object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
-(6 rows)
+   ->  Sort (actual rows=23001 loops=1)
+         Sort Key: (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+         Sort Method: quicksort  Memory: xxxkB
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=30000 loops=1)
+               namespaceName: dyncur_slc_db.a
+               ->  Seq Scan on documents_9910 collection (actual rows=30000 loops=1)
+                     Filter: ((document @>= '{ "_id" : { "$numberInt" : "5" } }'::bson) AND (object_id >= '{ "" : { "$numberInt" : "5" } }'::bson) AND (object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
+(8 rows)
 
 SET documentdb_core.enableBsonSelectivityFromBtreeStats TO off;
 SET documentdb.enableCompositeIndexPlanner TO on;

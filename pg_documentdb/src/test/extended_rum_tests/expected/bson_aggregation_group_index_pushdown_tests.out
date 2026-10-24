@@ -2,6 +2,8 @@ SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog, docu
 SET documentdb.defaultUseCompositeOpClass TO on;
 SET documentdb.next_collection_id TO 25900;
 SET documentdb.next_collection_index_id TO 25900;
+SET documentdb.enablePerCollectionPlannerStatistics TO on;
+SET documentdb.enableCompositeIndexPlanner TO off;
 -- $group index pushdown with a $match on a non-group key.
 -- Pipeline: $match equality on meta.ownerKey, $group by meta.category with
 -- $max of updatedAt, then $sort on the accumulated value and $limit.
@@ -11,7 +13,6 @@ SET documentdb.next_collection_index_id TO 25900;
 --   idx_owner_cat_ts:  { meta.ownerKey: 1, meta.category: 1, updatedAt: -1 }
 --       $match equality on the leading field followed by the group key, so
 --       both the filter and the group ordering can be served by the index.
--- No per-collection planner statistics are collected for the collection.
 SELECT COUNT(documentdb_api.insert_one('grp_idx_push_db', 'grp_idx_push',
     bson_build_document(
         '_id'::text, i,
@@ -41,8 +42,14 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('grp_idx_push_db'
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
--- Mirror autovacuum: populate table size and default ANALYZE data. Per-collection
--- planner statistics are not enabled for this collection.
+SELECT documentdb_api.coll_mod('grp_idx_push_db', 'grp_idx_push',
+  '{ "collMod": "grp_idx_push", "enableStats": true }');
+             coll_mod              
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Collect planner statistics so the full-scan cost and selectivity overrides apply.
 VACUUM ANALYZE documentdb_data.documents_25901;
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
 SET random_page_cost TO 1.1;
@@ -58,9 +65,8 @@ SELECT document FROM bson_aggregation_pipeline('grp_idx_push_db',
 
 -- idx_owner_cat_ts shares the "meta" prefix, so it uses reduced correlated
 -- terms. With order by on its non-leading meta.category path disabled:
--- With enable_full_scan_cost_and_selectivity on, the planner picks
--- idx_cat_region_ts: the group is pushed to the index (ordered scan on
--- meta.category) but meta.ownerKey is evaluated as a runtime filter.
+-- With collection statistics, idx_owner_cat_ts is cheaper for this selective
+-- filter even when full-scan overrides are on. Group ordering is not pushed.
 SET documentdb.enable_reduced_correlated_non_multikey_order_by TO off;
 SET documentdb.enable_full_scan_cost_and_selectivity TO on;
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('grp_idx_push_db',
@@ -71,34 +77,50 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('grp_idx_push
    ->  Sort
          Sort Key: (bson_orderby(agg_stage_2.document, '{ "updatedAt" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
          ->  Subquery Scan on agg_stage_2
-               ->  GroupAggregate
+               ->  HashAggregate
                      Group Key: bson_expression_get(collection.document, '{ "" : "$meta.category" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-                     ->  Index Scan using idx_cat_region_ts on documents_25901 collection
-                           Index Cond: (document @<> '{ "meta.category" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
-                           Order By: (document |-<> '{ "meta.category" : { "$numberInt" : "1" } }'::bson)
-                           Filter: (document @= '{ "meta.ownerKey" : "owner-7" }'::bson)
-(10 rows)
+                     ->  Index Only Scan using idx_owner_cat_ts on documents_25901 collection
+                           Index Cond: (document @= '{ "meta.ownerKey" : "owner-7" }'::bson)
+(8 rows)
 
--- With enable_full_scan_cost_and_selectivity off, the planner picks
--- idx_owner_cat_ts: the filter is pushed as an index condition but the group
--- is not pushed (the scan is not ordered on meta.category, so a Sort or a
--- HashAggregate is needed).
+SELECT substring(plan_line FROM 'rows=([0-9]+)')::integer AS estimated_scan_rows
+FROM documentdb_test_helpers.run_explain_and_trim($query$
+  EXPLAIN (COSTS ON) SELECT document FROM bson_aggregation_pipeline('grp_idx_push_db',
+    '{ "aggregate": "grp_idx_push", "pipeline": [ { "$match": { "meta.ownerKey": "owner-7" } }, { "$group": { "_id": "$meta.category", "updatedAt": { "$max": "$updatedAt" } } }, { "$sort": { "updatedAt": -1 } }, { "$limit": 5 } ], "cursor": {} }')
+$query$) AS plan(plan_line)
+WHERE plan_line ~ 'Index Only Scan using idx_owner_cat_ts ';
+ estimated_scan_rows 
+---------------------
+                  10
+(1 row)
+
+-- Turning full-scan overrides off keeps the access path but reduces its row
+-- estimate by the fallback selectivity of the full-scan predicate.
 SET documentdb.enable_full_scan_cost_and_selectivity TO off;
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('grp_idx_push_db',
   '{ "aggregate": "grp_idx_push", "pipeline": [ { "$match": { "meta.ownerKey": "owner-7" } }, { "$group": { "_id": "$meta.category", "updatedAt": { "$max": "$updatedAt" } } }, { "$sort": { "updatedAt": -1 } }, { "$limit": 5 } ], "cursor": {} }');
-                                                                                           QUERY PLAN                                                                                           
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                       QUERY PLAN                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    ->  Sort
          Sort Key: (bson_orderby(agg_stage_2.document, '{ "updatedAt" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
          ->  Subquery Scan on agg_stage_2
-               ->  GroupAggregate
-                     Group Key: (bson_expression_get(collection.document, '{ "" : "$meta.category" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-                     ->  Sort
-                           Sort Key: (bson_expression_get(collection.document, '{ "" : "$meta.category" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-                           ->  Index Only Scan using idx_owner_cat_ts on documents_25901 collection
-                                 Index Cond: (document @= '{ "meta.ownerKey" : "owner-7" }'::bson)
-(10 rows)
+               ->  HashAggregate
+                     Group Key: bson_expression_get(collection.document, '{ "" : "$meta.category" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+                     ->  Index Only Scan using idx_owner_cat_ts on documents_25901 collection
+                           Index Cond: (document @= '{ "meta.ownerKey" : "owner-7" }'::bson)
+(8 rows)
+
+SELECT substring(plan_line FROM 'rows=([0-9]+)')::integer AS estimated_scan_rows
+FROM documentdb_test_helpers.run_explain_and_trim($query$
+  EXPLAIN (COSTS ON) SELECT document FROM bson_aggregation_pipeline('grp_idx_push_db',
+    '{ "aggregate": "grp_idx_push", "pipeline": [ { "$match": { "meta.ownerKey": "owner-7" } }, { "$group": { "_id": "$meta.category", "updatedAt": { "$max": "$updatedAt" } } }, { "$sort": { "updatedAt": -1 } }, { "$limit": 5 } ], "cursor": {} }')
+$query$) AS plan(plan_line)
+WHERE plan_line ~ 'Index Only Scan using idx_owner_cat_ts ';
+ estimated_scan_rows 
+---------------------
+                   3
+(1 row)
 
 RESET documentdb.enable_reduced_correlated_non_multikey_order_by;
 -- Reduced correlated terms only exist for array values, so while the index is
@@ -164,19 +186,17 @@ SELECT document FROM bson_aggregation_pipeline('grp_idx_push_db', :'hintedQuery'
 -- With the feature disabled, the group is not pushed.
 SET documentdb.enable_reduced_correlated_non_multikey_order_by TO off;
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('grp_idx_push_db', :'hintedQuery');
-                                                                                           QUERY PLAN                                                                                           
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                       QUERY PLAN                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    ->  Sort
          Sort Key: (bson_orderby(agg_stage_2.document, '{ "updatedAt" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
          ->  Subquery Scan on agg_stage_2
-               ->  GroupAggregate
-                     Group Key: (bson_expression_get(collection.document, '{ "" : "$meta.category" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-                     ->  Sort
-                           Sort Key: (bson_expression_get(collection.document, '{ "" : "$meta.category" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-                           ->  Index Only Scan using idx_owner_cat_ts on documents_25901 collection
-                                 Index Cond: (document @= '{ "meta.ownerKey" : "owner-7" }'::bson)
-(10 rows)
+               ->  HashAggregate
+                     Group Key: bson_expression_get(collection.document, '{ "" : "$meta.category" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+                     ->  Index Only Scan using idx_owner_cat_ts on documents_25901 collection
+                           Index Cond: (document @= '{ "meta.ownerKey" : "owner-7" }'::bson)
+(8 rows)
 
 RESET documentdb.enable_reduced_correlated_non_multikey_order_by;
 -- A $sort on the non-leading dotted path is pushed in both directions.
@@ -238,21 +258,17 @@ SELECT documentdb_api.insert_one('grp_idx_push_db', 'grp_idx_push',
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('grp_idx_push_db', :'hintedQuery');
-                                                                                           QUERY PLAN                                                                                           
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                       QUERY PLAN                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    ->  Sort
          Sort Key: (bson_orderby(agg_stage_2.document, '{ "updatedAt" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
          ->  Subquery Scan on agg_stage_2
-               ->  GroupAggregate
-                     Group Key: (bson_expression_get(collection.document, '{ "" : "$meta.category" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-                     ->  Sort
-                           Sort Key: (bson_expression_get(collection.document, '{ "" : "$meta.category" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-                           ->  Bitmap Heap Scan on documents_25901 collection
-                                 Recheck Cond: (document @= '{ "meta.ownerKey" : "owner-7" }'::bson)
-                                 ->  Bitmap Index Scan on idx_owner_cat_ts
-                                       Index Cond: (document @= '{ "meta.ownerKey" : "owner-7" }'::bson)
-(12 rows)
+               ->  HashAggregate
+                     Group Key: bson_expression_get(collection.document, '{ "" : "$meta.category" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+                     ->  Index Scan using idx_owner_cat_ts on documents_25901 collection
+                           Index Cond: (document @= '{ "meta.ownerKey" : "owner-7" }'::bson)
+(8 rows)
 
 SELECT document FROM bson_aggregation_pipeline('grp_idx_push_db', :'hintedQuery');
                                                   document                                                   
@@ -374,3 +390,5 @@ SELECT documentdb_api.drop_database('grp_idx_push_db');
  
 (1 row)
 
+RESET documentdb.enablePerCollectionPlannerStatistics;
+RESET documentdb.enableCompositeIndexPlanner;

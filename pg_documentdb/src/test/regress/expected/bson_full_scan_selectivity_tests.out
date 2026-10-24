@@ -6,6 +6,10 @@
 SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog;
 SET documentdb.next_collection_id TO 8900000;
 SET documentdb.next_collection_index_id TO 8900000;
+SET documentdb.enablePlannerStatisticsNewCollections TO off;
+SET documentdb.enablePerCollectionPlannerStatistics TO on;
+SET documentdb.enableCompositeIndexPlanner TO off;
+SET documentdb_core.enableCollation TO on;
 SELECT documentdb_api.create_collection('full_scan_selectivity_db', 'planner_rows');
 NOTICE:  creating collection
  create_collection 
@@ -13,10 +17,20 @@ NOTICE:  creating collection
  t
 (1 row)
 
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'full_scan_selectivity_db',
+    '{ "createIndexes": "planner_rows", "indexes": [ { "key": { "other": 1 }, "name": "other_1" } ] }',
+    true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
 SELECT COUNT(documentdb_api.insert_one(
     'full_scan_selectivity_db',
     'planner_rows',
-    bson_build_document('_id', value, 'value', value)))
+    bson_build_document('_id', value, 'value', value,
+        'label', CASE WHEN value % 2 = 0 THEN 'A' ELSE 'a' END)))
 FROM generate_series(1, 90) AS value;
  count 
 -------
@@ -25,20 +39,31 @@ FROM generate_series(1, 90) AS value;
 
 ANALYZE documentdb_data.documents_8900001;
 CREATE SCHEMA bson_full_scan_selectivity_tests;
-CREATE FUNCTION bson_full_scan_selectivity_tests.get_find_plan_rows()
-RETURNS TABLE(estimated_rows bigint, analyzed_rows bigint, estimates_match boolean)
+CREATE FUNCTION bson_full_scan_selectivity_tests.get_find_plan_rows(
+    find_command bson DEFAULT '{ "find": "planner_rows", "projection": { "value": 1, "_id": 0 }, "sort": { "value": 1 } }')
+RETURNS TABLE(estimated_rows bigint, analyzed_rows bigint, estimates_match boolean, total_cost numeric)
 LANGUAGE plpgsql AS $fn$
 DECLARE
     explain_plan jsonb;
+    cost_plan jsonb;
 BEGIN
     EXECUTE $query$
         EXPLAIN (FORMAT JSON)
         SELECT document
         FROM documentdb_api_catalog.bson_aggregation_find(
             'full_scan_selectivity_db',
-            '{ "find": "planner_rows", "projection": { "value": 1, "_id": 0 }, "sort": { "value": 1 } }')
+            $1)
     $query$
-    INTO explain_plan;
+    INTO explain_plan USING find_command;
+
+    -- Isolate predicate cost from projection and sort costs, which vary with rows.
+    EXECUTE $query$
+        EXPLAIN (FORMAT JSON)
+        SELECT document FROM documentdb_data.documents_8900001
+        WHERE documentdb_api_internal.bson_dollar_fullscan(
+            document, '{ "value": { "fullScan": true } }')
+    $query$
+    INTO cost_plan;
 
     RETURN QUERY
     WITH RECURSIVE plan_nodes(node) AS
@@ -64,34 +89,124 @@ BEGIN
     )
     SELECT row_estimates.estimated_rows,
            analyzed_table.analyzed_rows,
-           row_estimates.estimated_rows = analyzed_table.analyzed_rows
+           row_estimates.estimated_rows = analyzed_table.analyzed_rows,
+           (cost_plan->0->'Plan'->>'Total Cost')::numeric
     FROM row_estimates
     CROSS JOIN analyzed_table;
 END;
 $fn$;
--- A filterless find with projection and sort must retain the analyzed base-table
--- row estimate. The full-scan support function previously applied PostgreSQL's
--- default one-third function selectivity, reducing this estimate from 90 to 30.
+-- Without collection statistics or the composite-index planner, preserve
+-- the legacy estimates and costs.
 SHOW documentdb.enable_full_scan_cost_and_selectivity;
  documentdb.enable_full_scan_cost_and_selectivity 
 --------------------------------------------------
  on
 (1 row)
 
-SELECT * FROM bson_full_scan_selectivity_tests.get_find_plan_rows();
- estimated_rows | analyzed_rows | estimates_match 
-----------------+---------------+-----------------
-             90 |            90 | t
-(1 row)
-
+CREATE TEMP TABLE full_scan_plans AS
+SELECT 'stats_off_flag_on' AS scenario, *
+FROM bson_full_scan_selectivity_tests.get_find_plan_rows();
+\set collated_find '{ "find": "planner_rows", "projection": { "label": 1, "_id": 0 }, "sort": { "label": 1 }, "collation": { "locale": "en", "strength": 2 } }'
+INSERT INTO full_scan_plans
+SELECT 'stats_off_collated', *
+FROM bson_full_scan_selectivity_tests.get_find_plan_rows(:'collated_find');
 SET documentdb.enable_full_scan_cost_and_selectivity TO off;
-SELECT * FROM bson_full_scan_selectivity_tests.get_find_plan_rows();
- estimated_rows | analyzed_rows | estimates_match 
-----------------+---------------+-----------------
-             30 |            90 | f
+INSERT INTO full_scan_plans
+SELECT 'stats_off_flag_off', *
+FROM bson_full_scan_selectivity_tests.get_find_plan_rows();
+RESET documentdb.enable_full_scan_cost_and_selectivity;
+-- The composite-index planner follows the existing cost/selectivity gate.
+SET documentdb.enableCompositeIndexPlanner TO on;
+INSERT INTO full_scan_plans
+SELECT 'composite_on_without_stats', *
+FROM bson_full_scan_selectivity_tests.get_find_plan_rows();
+SET documentdb.enableCompositeIndexPlanner TO off;
+SELECT documentdb_api.coll_mod('full_scan_selectivity_db', 'planner_rows',
+    '{ "collMod": "planner_rows", "enableStats": true }');
+             coll_mod              
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
 (1 row)
 
+ANALYZE documentdb_data.documents_8900001;
+-- Collection statistics enable both overrides without the composite-index planner.
+INSERT INTO full_scan_plans
+SELECT 'stats_on_flag_on', *
+FROM bson_full_scan_selectivity_tests.get_find_plan_rows();
+INSERT INTO full_scan_plans
+SELECT 'stats_on_collated', *
+FROM bson_full_scan_selectivity_tests.get_find_plan_rows(:'collated_find');
+SET documentdb.enable_full_scan_cost_and_selectivity TO off;
+INSERT INTO full_scan_plans
+SELECT 'stats_on_flag_off', *
+FROM bson_full_scan_selectivity_tests.get_find_plan_rows();
 RESET documentdb.enable_full_scan_cost_and_selectivity;
+SET documentdb.enablePerCollectionPlannerStatistics TO off;
+INSERT INTO full_scan_plans
+SELECT 'stats_globally_off', *
+FROM bson_full_scan_selectivity_tests.get_find_plan_rows();
+RESET documentdb.enablePerCollectionPlannerStatistics;
+SELECT documentdb_api.coll_mod('full_scan_selectivity_db', 'planner_rows',
+    '{ "collMod": "planner_rows", "enableStats": false }');
+             coll_mod              
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+INSERT INTO full_scan_plans
+SELECT 'stats_disabled_again', *
+FROM bson_full_scan_selectivity_tests.get_find_plan_rows();
+SELECT scenario, estimated_rows, analyzed_rows, estimates_match
+FROM full_scan_plans ORDER BY scenario;
+          scenario          | estimated_rows | analyzed_rows | estimates_match 
+----------------------------+----------------+---------------+-----------------
+ composite_on_without_stats |             90 |            90 | t
+ stats_disabled_again       |             30 |            90 | f
+ stats_globally_off         |             30 |            90 | f
+ stats_off_collated         |             30 |            90 | f
+ stats_off_flag_off         |             30 |            90 | f
+ stats_off_flag_on          |             30 |            90 | f
+ stats_on_collated          |             90 |            90 | t
+ stats_on_flag_off          |             30 |            90 | f
+ stats_on_flag_on           |             90 |            90 | t
+(9 rows)
+
+SELECT enabled.total_cost = disabled.total_cost AS unchanged_cost_without_stats
+FROM full_scan_plans enabled, full_scan_plans disabled
+WHERE enabled.scenario = 'stats_off_flag_on' AND disabled.scenario = 'stats_off_flag_off';
+ unchanged_cost_without_stats 
+------------------------------
+ t
+(1 row)
+
+SELECT enabled.total_cost < disabled.total_cost AS reduced_cost_with_stats
+FROM full_scan_plans enabled, full_scan_plans disabled
+WHERE enabled.scenario = 'stats_on_flag_on' AND disabled.scenario = 'stats_on_flag_off';
+ reduced_cost_with_stats 
+-------------------------
+ t
+(1 row)
+
+SELECT composite.total_cost = stats.total_cost AS same_cost_with_composite_planner
+FROM full_scan_plans composite, full_scan_plans stats
+WHERE composite.scenario = 'composite_on_without_stats' AND stats.scenario = 'stats_on_flag_on';
+ same_cost_with_composite_planner 
+----------------------------------
+ t
+(1 row)
+
+SELECT disabled.scenario, disabled.total_cost = baseline.total_cost AS legacy_cost
+FROM full_scan_plans disabled, full_scan_plans baseline
+WHERE disabled.scenario IN ('stats_globally_off', 'stats_disabled_again')
+  AND baseline.scenario = 'stats_on_flag_off'
+ORDER BY disabled.scenario;
+       scenario       | legacy_cost 
+----------------------+-------------
+ stats_disabled_again | t
+ stats_globally_off   | t
+(2 rows)
+
+DROP TABLE full_scan_plans;
 SELECT documentdb_api.drop_collection('full_scan_selectivity_db', 'planner_rows');
  drop_collection 
 -----------------
@@ -99,4 +214,7 @@ SELECT documentdb_api.drop_collection('full_scan_selectivity_db', 'planner_rows'
 (1 row)
 
 DROP SCHEMA bson_full_scan_selectivity_tests CASCADE;
-NOTICE:  drop cascades to function bson_full_scan_selectivity_tests.get_find_plan_rows()
+NOTICE:  drop cascades to function bson_full_scan_selectivity_tests.get_find_plan_rows(bson)
+RESET documentdb.enablePlannerStatisticsNewCollections;
+RESET documentdb.enableCompositeIndexPlanner;
+RESET documentdb_core.enableCollation;
