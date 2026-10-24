@@ -187,17 +187,6 @@ rumFindLeafPage(RumBtree btree, RumBtreeStack *stack, bool rootConflictCheck)
 		BlockNumber child;
 		int access = RUM_SHARE;
 
-		/*
-		 * Let a cancel or terminate stop a descent that doesn't end, such as
-		 * one on a corrupt index. From the second level on, no buffer lock is
-		 * held here: the parent was unlocked before moving down, and this
-		 * page is pinned but not yet locked. Erroring out is safe, since
-		 * abort releases the pins. On the first iteration the caller still
-		 * holds the lock on the starting page, and holding an LWLock holds
-		 * off interrupts, so the check does nothing there.
-		 */
-		CHECK_FOR_INTERRUPTS();
-
 		stack->off = InvalidOffsetNumber;
 
 		page = BufferGetPage(stack->buffer);
@@ -311,6 +300,14 @@ rumFindLeafPage(RumBtree btree, RumBtreeStack *stack, bool rootConflictCheck)
 			stack->buffer = ReadBuffer(btree->index, stack->blkno);
 			stack->predictNumber = 1;
 		}
+
+		/*
+		 * No buffer lock is held here: the parent is unlocked and the child
+		 * is only pinned. Let a cancel or terminate stop a descent that
+		 * doesn't end, such as one on a corrupt index; abort releases the
+		 * pins.
+		 */
+		CHECK_FOR_INTERRUPTS();
 	}
 }
 
