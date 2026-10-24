@@ -13,6 +13,7 @@ use warnings;
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
+use JSON::PP qw(decode_json);
 
 # ============================================================================
 # PART 1: Initialize primary node
@@ -83,6 +84,35 @@ AS '$libdir/pg_documentdb_extended_rum_core', 'documentdb_rum_page_get_stats';
 CREATE OR REPLACE FUNCTION public.documentdb_rum_page_get_entries(page bytea, index_oid oid)
 RETURNS SETOF jsonb LANGUAGE c
 AS '$libdir/pg_documentdb_extended_rum_core', 'documentdb_rum_page_get_entries';
+
+CREATE FUNCTION public.documentdb_rum_get_wal_insert_descriptions(pg_lsn, pg_lsn)
+RETURNS text[] LANGUAGE c STRICT
+AS '$libdir/pg_documentdb_extended_rum_core', 'documentdb_rum_get_wal_insert_descriptions';
+});
+
+my ($inspect_status, $inspect_stdout, $inspect_stderr) = $node_primary->psql(
+    'postgres',
+    "SELECT public.documentdb_rum_get_wal_insert_descriptions('0/0', '0/1')");
+isnt($inspect_status, 0, 'WAL inspection rejects invalid LSN ranges');
+like($inspect_stderr, qr/invalid WAL LSN range/, 'invalid WAL range is reported');
+
+$node_primary->safe_psql('postgres', q{
+CREATE ROLE rum_wal_reader;
+GRANT USAGE ON SCHEMA documentdb_core, documentdb_api, documentdb_api_internal,
+    documentdb_api_catalog TO rum_wal_reader;
+});
+($inspect_status, $inspect_stdout, $inspect_stderr) = $node_primary->psql(
+    'postgres', q{
+SET ROLE rum_wal_reader;
+SELECT public.documentdb_rum_get_wal_insert_descriptions('0/0', '0/1');
+});
+isnt($inspect_status, 0, 'WAL inspection rejects non-superusers');
+like($inspect_stderr, qr/must be superuser to inspect RUM WAL/,
+    'WAL inspection checks privileges before reading records');
+$node_primary->safe_psql('postgres', q{
+REVOKE USAGE ON SCHEMA documentdb_core, documentdb_api, documentdb_api_internal,
+    documentdb_api_catalog FROM rum_wal_reader;
+DROP ROLE rum_wal_reader;
 });
 
 # Verify collection was created
@@ -278,5 +308,131 @@ SELECT pg_relation_size(FORMAT('documentdb_data.documents_rum_index_%s', '$index
 });
 
 is($standby_pages, $primary_pages, 'standby index page count matches primary after VACUUM');
+
+for my $persistence ('', 'UNLOGGED', 'TEMPORARY')
+{
+    my $name = $persistence eq '' ? 'permanent' : lc($persistence);
+    my $plan = decode_json($node_primary->safe_psql('postgres', qq{
+CREATE $persistence TABLE rum_wal_$name (document documentdb_core.bson)
+    WITH (autovacuum_enabled = off);
+CREATE INDEX ON rum_wal_$name USING documentdb_extended_rum(
+    document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops(path='a'));
+EXPLAIN (ANALYZE, WAL, FORMAT JSON)
+INSERT INTO rum_wal_$name VALUES ('{"a": 1}');
+}));
+    my $records = $plan->[0]->{'Plan'}->{'WAL Records'};
+    if ($persistence eq '')
+    {
+        cmp_ok($records, '>', 0, 'permanent index insert generates WAL');
+    }
+    else
+    {
+        is($records, 0, "$name index insert does not generate WAL");
+    }
+}
+
+$node_primary->safe_psql('postgres', q{
+SELECT documentdb_api.create_collection('testdb', 'wal_hint_test');
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'testdb',
+    '{"createIndexes": "wal_hint_test", "indexes": [{"key": {"a": 1}, "name": "idx_hint_a", "enableCompositeTerm": true}]}',
+    true
+);
+SELECT documentdb_api.insert_one('testdb', 'wal_hint_test',
+    FORMAT('{"_id": %s, "a": %s}', i, i)::documentdb_core.bson)
+FROM generate_series(1, 5) AS i;
+});
+
+my $hint_table = $node_primary->safe_psql('postgres', q{
+SELECT FORMAT('documentdb_data.documents_%s', collection_id)
+FROM documentdb_api_catalog.collections
+WHERE database_name = 'testdb' AND collection_name = 'wal_hint_test';
+});
+my $hint_index = $node_primary->safe_psql('postgres', q{
+SELECT FORMAT('documentdb_data.documents_rum_index_%s', ci.index_id)
+FROM documentdb_api_catalog.collection_indexes ci
+JOIN documentdb_api_catalog.collections c USING (collection_id)
+WHERE c.database_name = 'testdb' AND c.collection_name = 'wal_hint_test'
+    AND (ci.index_spec).index_name = 'idx_hint_a';
+});
+
+$node_primary->safe_psql('postgres', qq{
+ALTER TABLE $hint_table SET (autovacuum_enabled = off);
+SELECT documentdb_api.delete('testdb',
+    '{"delete": "wal_hint_test", "deletes": [{"q": {"a": 2}, "limit": 0}]}');
+VACUUM (FREEZE, INDEX_CLEANUP OFF) $hint_table;
+});
+
+# Warm the index after the checkpoint so hinting does not emit another FPI.
+$node_primary->safe_psql('postgres', 'CHECKPOINT');
+my $fpi_start = $node_primary->safe_psql('postgres',
+    'SELECT pg_current_wal_insert_lsn()');
+$node_primary->safe_psql('postgres', q{
+SET wal_consistency_checking = 'DOCDB_EXRUM';
+SELECT documentdb_api.insert_one('testdb', 'wal_hint_test', '{"_id": 6, "a": 6}');
+});
+my $fpi_end = $node_primary->safe_psql('postgres',
+    'SELECT pg_current_wal_flush_lsn()');
+$result = $node_primary->safe_psql('postgres', qq{
+SELECT unnest(public.documentdb_rum_get_wal_insert_descriptions('$fpi_start', '$fpi_end'));
+});
+like($result, qr/^isdata: F isleaf: T \(full page image\)$/m,
+    'descriptor handles applied full-page images without block data');
+$node_primary->wait_for_catchup($node_standby);
+
+$node_primary->safe_psql('postgres', q{
+SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog, documentdb_api_internal;
+SET documentdb.forceDisableSeqScan = on;
+SET documentdb_rum.enable_support_dead_index_items = on;
+SELECT document FROM bson_aggregation_find('testdb',
+    '{"find": "wal_hint_test", "filter": {"a": {"$exists": true}}, "sort": {"a": 1}, "hint": "idx_hint_a"}');
+SELECT document FROM bson_aggregation_find('testdb',
+    '{"find": "wal_hint_test", "filter": {"a": {"$exists": true}}, "sort": {"a": 1}, "hint": "idx_hint_a"}');
+});
+
+my $dead_entries = $node_primary->safe_psql('postgres', qq{
+SELECT COUNT(*)
+FROM public.documentdb_rum_page_get_entries(
+    get_raw_page('$hint_index', 1), '$hint_index'::regclass) entry
+WHERE (entry->>'entryFlags')::int = 3;
+});
+cmp_ok($dead_entries, '>', 0, 'primary has entry hints not present on standby');
+
+my $verification_start = $node_primary->safe_psql('postgres',
+    'SELECT pg_current_wal_insert_lsn()');
+$node_primary->safe_psql('postgres', q{
+SET wal_consistency_checking = 'DOCDB_EXRUM';
+SELECT documentdb_api.insert_one('testdb', 'wal_hint_test', '{"_id": 7, "a": 7}');
+});
+my $verification_end = $node_primary->safe_psql('postgres',
+    'SELECT pg_current_wal_flush_lsn()');
+$result = $node_primary->safe_psql('postgres', qq{
+SELECT unnest(public.documentdb_rum_get_wal_insert_descriptions('$verification_start', '$verification_end'));
+});
+like($result, qr/^isdata: F isleaf: T \(full page image, for WAL verification\)$/m,
+    'descriptor distinguishes verification-only full-page images');
+$node_primary->wait_for_catchup($node_standby);
+
+$result = $node_standby->safe_psql('postgres', q{
+SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog, documentdb_api_internal;
+SET enable_seqscan = off;
+SELECT COUNT(*) FROM documentdb_api.collection('testdb', 'wal_hint_test')
+WHERE document @@ '{"a": 7}';
+});
+is($result, '1', 'standby replays entry inserts with unlogged primary hints');
+
+my $delta_start = $node_primary->safe_psql('postgres',
+    'SELECT pg_current_wal_insert_lsn()');
+$node_primary->safe_psql('postgres', q{
+SET wal_consistency_checking = '';
+SELECT documentdb_api.insert_one('testdb', 'wal_hint_test', '{"_id": 8, "a": 8}');
+});
+my $delta_end = $node_primary->safe_psql('postgres',
+    'SELECT pg_current_wal_flush_lsn()');
+$result = $node_primary->safe_psql('postgres', qq{
+SELECT unnest(public.documentdb_rum_get_wal_insert_descriptions('$delta_start', '$delta_end'));
+});
+like($result, qr/^isdata: F isleaf: T isdelete: [TF]$/m,
+    'descriptor reads block data when no full-page image is present');
 
 done_testing();

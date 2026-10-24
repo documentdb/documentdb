@@ -3,7 +3,8 @@
  * rumbtree.c
  *	  page utilities routines for the postgres inverted index access method.
  *
- * Portions Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Portions Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  * Portions Copyright (c) 2015-2022, Postgres Professional
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -645,7 +646,8 @@ rumPlaceToPage(RumBtree btree, RumBtreeStack *stack,
 			page = BufferGetPage(stack->buffer);
 			START_CRIT_SECTION();
 		}
-		else if (SupportsXLogInsertForEntry(page, childbuf))
+		else if (RelationNeedsWAL(btree->index) &&
+				 SupportsXLogInsertForEntry(page, childbuf))
 		{
 			/* Entry page XLog is handled inside placeToPage */
 			START_CRIT_SECTION();

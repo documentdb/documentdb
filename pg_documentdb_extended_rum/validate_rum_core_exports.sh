@@ -24,6 +24,7 @@ expectedExports=(
 expectedPgExports=(
     documentdb_rum_get_meta_page_info
     documentdb_rum_get_meta_page_info_index
+    documentdb_rum_get_wal_insert_descriptions
     documentdb_rum_page_get_data_items
     documentdb_rum_page_get_data_items_index
     documentdb_rum_page_get_entries
