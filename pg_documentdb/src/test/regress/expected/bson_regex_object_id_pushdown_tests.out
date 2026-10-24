@@ -424,6 +424,37 @@ $cmd$);
          Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
 (6 rows)
 
+-- Absolute start anchor: both regex representations should get the same btree bounds.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "\\Aabc" } } }')
+$cmd$);
+                                                             run_explain_and_trim                                                             
+----------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+   namespaceName: regexIdDb.regex_id_coll
+   indexName: _id_
+   ->  Index Scan using _id_ on documents_86101 collection (actual rows=2 loops=1)
+         Index Cond: ((shard_key_value = '86101'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))
+         Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "\\Aabc", "options" : "" } } }'::bson)
+(6 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_coll", "filter": { "_id": { "$regularExpression": { "pattern": "\\Aabc", "options": "m" } } } }')
+$cmd$);
+                                                             run_explain_and_trim                                                             
+----------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+   namespaceName: regexIdDb.regex_id_coll
+   indexName: _id_
+   ->  Index Scan using _id_ on documents_86101 collection (actual rows=2 loops=1)
+         Index Cond: ((shard_key_value = '86101'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))
+         Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "\\Aabc", "options" : "m" } } }'::bson)
+(6 rows)
+
 -- Non-anchored: should still pushdown (with wider bounds)
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)

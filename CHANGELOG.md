@@ -1,4 +1,5 @@
 ### documentdb v1.3-0 (Unreleased) ###
+* Derive tight index bounds for regex prefixes anchored with `\A`, including in multiline mode, retain mandatory prefixes before `?` and `*` quantifiers even when separated by inline comments or ignored quoting markers, and preserve matches when counted repetitions or alternation, including after control escapes, prevent safe prefix bounds. *[Bugfix]* ([#806](https://github.com/documentdb/documentdb/issues/806))
 * Gate full-scan cost and selectivity overrides on collection planner statistics or the composite-index planner, preserving legacy estimates otherwise. *[Bugfix]*
 * Skip posting-tree root cleanup locks for empty boundary leaves during targeted and cleanup vacuum pruning, while preserving empty-tree accounting. *[Perf]*
 * Push sort and group ordering down to a non-leading dotted path of a composite index that shares a common sub-path when the index is not multi-key. Controlled by the default-on `documentdb.enable_reduced_correlated_non_multikey_order_by` setting. *[Perf]*

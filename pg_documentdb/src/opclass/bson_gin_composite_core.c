@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- * SPDX-License-Identifier: MIT
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/opclass/bson_gin_composite_core.c
  *
@@ -2563,7 +2563,7 @@ TryBuildNextUtf8PrefixBoundary(char *prefix, uint32_t codePointStart,
 
 
 static bool
-HasValidRegexOptions(const char *regexOptions)
+HasValidRegexOptions(const char *regexOptions, bool hasAbsoluteStartAnchor)
 {
 	if (regexOptions == NULL)
 	{
@@ -2583,6 +2583,17 @@ HasValidRegexOptions(const char *regexOptions)
 				continue;
 			}
 
+			case 'm':
+			{
+				/* Multiline mode changes ^, but not the absolute start anchor \A. */
+				if (!hasAbsoluteStartAnchor)
+				{
+					return false;
+				}
+
+				continue;
+			}
+
 			case 'a':
 			{
 				/* TODO: Handle anchor set via options*/
@@ -2598,6 +2609,39 @@ HasValidRegexOptions(const char *regexOptions)
 }
 
 
+/* \cX consumes X even when it is a backslash or pipe. */
+static inline bool
+IsRegexControlEscape(const StringView *regex, uint32_t startIndex)
+{
+	return startIndex + 2 < regex->length && regex->string[startIndex + 1] == 'c';
+}
+
+
+static bool
+HasRegexAlternation(const StringView *regex, uint32_t startIndex)
+{
+	uint32_t i = startIndex;
+	while (i < regex->length)
+	{
+		CHECK_FOR_INTERRUPTS();
+		if (regex->string[i] == '\\')
+		{
+			i += IsRegexControlEscape(regex, i) ? 3 : 2;
+		}
+		else if (regex->string[i] == '|')
+		{
+			return true;
+		}
+		else
+		{
+			i++;
+		}
+	}
+
+	return false;
+}
+
+
 void
 GetBoundsForRegex(const char *regexString, const char *regexOptions,
 				  bson_value_t *lowerBound, bool *lowerBoundInclusive,
@@ -2605,10 +2649,12 @@ GetBoundsForRegex(const char *regexString, const char *regexOptions,
 {
 	StringView strView = regexString != NULL ? CreateStringViewFromString(
 		regexString) : CreateStringViewFromString("");
+	StringView absoluteStartAnchor = CreateStringViewFromString("\\A");
+	bool hasAbsoluteStartAnchor = StringViewStartsWithStringView(&strView,
+																 &absoluteStartAnchor);
 
-	/* We can only optimize if we have no options and the regex starts with ^ */
-	if (!HasValidRegexOptions(regexOptions) ||
-		!StringViewStartsWith(&strView, '^'))
+	if (!HasValidRegexOptions(regexOptions, hasAbsoluteStartAnchor) ||
+		(!hasAbsoluteStartAnchor && !StringViewStartsWith(&strView, '^')))
 	{
 		/* Set the bounds to be all strings since we can't optimize based on the regex expression */
 		CompositeSingleBound bounds = GetTypeLowerBound(BSON_TYPE_UTF8);
@@ -2621,10 +2667,11 @@ GetBoundsForRegex(const char *regexString, const char *regexOptions,
 		return;
 	}
 
-	strView = StringViewSubstring(&strView, 1); /* skip the '^' character */
+	strView = StringViewSubstring(&strView, hasAbsoluteStartAnchor ?
+								  absoluteStartAnchor.length : 1);
 	char *anchorPrefixBuffer = palloc0(sizeof(char) * (strView.length + 1));
 	uint32_t prefixLength = 0;
-	int32_t lastNonAsciiCodepointStart = -1;
+	uint32_t lastCodepointStart = 0;
 
 	uint32_t i = 0;
 	for (; i < strView.length; i++)
@@ -2633,55 +2680,81 @@ GetBoundsForRegex(const char *regexString, const char *regexOptions,
 
 		if (currentChar == '\\')
 		{
-			/* Escaped literals like \. can contribute to prefix, but
-			 * escaped regex classes like \d cannot be safely range-bounded. */
-			if (i + 1 >= strView.length)
+			if (i + 1 >= strView.length || IsRegexControlEscape(&strView, i))
 			{
 				break;
 			}
 
 			char escapedChar = strView.string[i + 1];
+
+			/* Ignored markers leave the preceding literal available for quantifiers. */
+			if (escapedChar == 'E')
+			{
+				i++;
+				continue;
+			}
+
+			if (escapedChar == 'Q' && i + 3 < strView.length &&
+				strView.string[i + 2] == '\\' && strView.string[i + 3] == 'E')
+			{
+				i += 3;
+				continue;
+			}
+
+			/* Only escaped metacharacters contribute known literal bytes. */
 			if (!IsRegexMetaCharacter(escapedChar))
 			{
 				break;
 			}
 
+			lastCodepointStart = prefixLength;
 			anchorPrefixBuffer[prefixLength++] = escapedChar;
 			i++;
 			continue;
 		}
 
-		if (currentChar == '|')
-		{
-			/* We can't optimize this since the anchor has an OR so the boundary is not stable. */
-			prefixLength = 0;
-			break;
-		}
-
 		if (IsRegexMetaCharacter(currentChar))
 		{
+			bool isInlineComment = false;
+			if (currentChar == '(')
+			{
+				isInlineComment = i + 2 < strView.length &&
+								  strView.string[i + 1] == '?' &&
+								  strView.string[i + 2] == '#';
+			}
+
+			if (isInlineComment || currentChar == '*' || currentChar == '?')
+			{
+				/* A comment can hide a quantifier, so conservatively remove the
+				 * preceding literal's complete UTF-8 codepoint as well. */
+				prefixLength = lastCodepointStart;
+				while (lastCodepointStart > 0)
+				{
+					lastCodepointStart--;
+					if (!is_utf8_continuation_byte(
+							anchorPrefixBuffer[lastCodepointStart]))
+					{
+						break;
+					}
+				}
+			}
+			else if (currentChar == '{')
+			{
+				prefixLength = 0;
+			}
+
 			break;
 		}
 
-		/* Track the start of non-ASCII UTF-8 codepoints as we build the prefix */
-		if (!isascii((unsigned char) currentChar))
+		if (!is_utf8_continuation_byte(currentChar))
 		{
-			/* If this is a UTF-8 start byte (not continuation), update the position. We need to check this in case we have 2 UTF8 codepoints in a row at the end of the prefix i.e (^éñ.) */
-			if (!is_utf8_continuation_byte(currentChar))
-			{
-				lastNonAsciiCodepointStart = prefixLength;
-			}
-		}
-		else
-		{
-			/* ASCII character resets - we only care about trailing non-ASCII codepoints */
-			lastNonAsciiCodepointStart = -1;
+			lastCodepointStart = prefixLength;
 		}
 
 		anchorPrefixBuffer[prefixLength++] = currentChar;
 	}
 
-	if (prefixLength > 0)
+	if (prefixLength > 0 && !HasRegexAlternation(&strView, i))
 	{
 		/* Keep lower-bound storage stable since upper-bound generation may rewrite the work buffer. */
 		char *lowerBoundary = pnstrdup(anchorPrefixBuffer, prefixLength);
@@ -2694,10 +2767,10 @@ GetBoundsForRegex(const char *regexString, const char *regexOptions,
 		char *upperBoundary = NULL;
 		uint32_t upperBoundaryLength = 0;
 		bool hasUpperBoundary = false;
-		if (lastNonAsciiCodepointStart >= 0)
+		if (!isascii((unsigned char) anchorPrefixBuffer[lastCodepointStart]))
 		{
 			hasUpperBoundary = TryBuildNextUtf8PrefixBoundary(anchorPrefixBuffer,
-															  lastNonAsciiCodepointStart,
+															  lastCodepointStart,
 															  &upperBoundary,
 															  &upperBoundaryLength);
 		}

@@ -1136,7 +1136,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
     SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$nin": [{ "$regularExpression": { "pattern": "^string", "options": "" } }] } } }')
 $cmd$);
-                                                         run_explain_and_trim
+                                                         run_explain_and_trim                                                         
 --------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=27 loops=1)
    namespaceName: regex_db.regex_coll
@@ -1207,5 +1207,746 @@ $cmd$);
                Index Cond: (document @~ '{ "a" : "^abc|qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq" }'::bson)
 (12 rows)
 
+-- Absolute start anchors use the same prefix bounds as ^, including on array elements.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db',
+        '{ "find": "regex_coll", "filter": { "a": { "$regex": "\\Astring" } } }')
+$cmd$);
+                                                                                                               run_explain_and_trim                                                                                                                
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["string", "strinh"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Astring", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Astring", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=3 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\Astring", "options" : "" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=5 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\Astring", "options" : "" } } }'::bson)
+(13 rows)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll',
+    '{ "_id": 200, "a": ["other", "string_array"], "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll',
+    '{ "_id": 201, "a": "other\nstring_line", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll',
+    '{ "_id": 202, "a": "\\Astring_literal", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll',
+    '{ "_id": 203, "a": "STRING_upper", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "\\Astring" } }, "sort": { "_id": 1 } }');
+                                      document                                       
+-------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "string1", "b" : true }
+ { "_id" : { "$numberInt" : "2" }, "a" : "string2", "b" : true }
+ { "_id" : { "$numberInt" : "3" }, "a" : "string123", "b" : false }
+ { "_id" : { "$numberInt" : "200" }, "a" : [ "other", "string_array" ], "b" : true }
+(4 rows)
+
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regularExpression": { "pattern": "\\Astring", "options": "ms" } }, "b": true }, "sort": { "_id": 1 } }');
+                                      document                                       
+-------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "string1", "b" : true }
+ { "_id" : { "$numberInt" : "2" }, "a" : "string2", "b" : true }
+ { "_id" : { "$numberInt" : "200" }, "a" : [ "other", "string_array" ], "b" : true }
+(3 rows)
+
+-- Only \A stays anchored to the entire string in multiline mode.
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "^string", "$options": "m" } }, "sort": { "_id": 1 } }');
+                                      document                                       
+-------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "string1", "b" : true }
+ { "_id" : { "$numberInt" : "2" }, "a" : "string2", "b" : true }
+ { "_id" : { "$numberInt" : "3" }, "a" : "string123", "b" : false }
+ { "_id" : { "$numberInt" : "200" }, "a" : [ "other", "string_array" ], "b" : true }
+ { "_id" : { "$numberInt" : "201" }, "a" : "other\nstring_line", "b" : true }
+(5 rows)
+
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "\\Astring", "$options": "i" } }, "sort": { "_id": 1 } }');
+                                      document                                       
+-------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "string1", "b" : true }
+ { "_id" : { "$numberInt" : "2" }, "a" : "string2", "b" : true }
+ { "_id" : { "$numberInt" : "3" }, "a" : "string123", "b" : false }
+ { "_id" : { "$numberInt" : "200" }, "a" : [ "other", "string_array" ], "b" : true }
+ { "_id" : { "$numberInt" : "203" }, "a" : "STRING_upper", "b" : true }
+(5 rows)
+
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "\\\\Astring" } }, "sort": { "_id": 1 } }');
+                                  document                                   
+-----------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "202" }, "a" : "\\Astring_literal", "b" : true }
+(1 row)
+
+-- Optional prefix characters and alternatives after metacharacters must not exclude matches.
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "\\Aabcd?" } }, "sort": { "_id": 1 } }');
+                              document                               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : "abc", "b" : true }
+ { "_id" : { "$numberInt" : "6" }, "a" : "abcd", "b" : true }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abce", "b" : false }
+ { "_id" : { "$numberInt" : "12" }, "a" : "abc\x7Fdef", "b" : true }
+ { "_id" : { "$numberInt" : "15" }, "a" : "abc|def", "b" : true }
+ { "_id" : { "$numberInt" : "16" }, "a" : "abc\\dog", "b" : true }
+(6 rows)
+
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "\\Aabcd*" } }, "sort": { "_id": 1 } }');
+                              document                               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : "abc", "b" : true }
+ { "_id" : { "$numberInt" : "6" }, "a" : "abcd", "b" : true }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abce", "b" : false }
+ { "_id" : { "$numberInt" : "12" }, "a" : "abc\x7Fdef", "b" : true }
+ { "_id" : { "$numberInt" : "15" }, "a" : "abc|def", "b" : true }
+ { "_id" : { "$numberInt" : "16" }, "a" : "abc\\dog", "b" : true }
+(6 rows)
+
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "\\Aabcd{0}" } }, "sort": { "_id": 1 } }');
+                              document                               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : "abc", "b" : true }
+ { "_id" : { "$numberInt" : "6" }, "a" : "abcd", "b" : true }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abce", "b" : false }
+ { "_id" : { "$numberInt" : "12" }, "a" : "abc\x7Fdef", "b" : true }
+ { "_id" : { "$numberInt" : "15" }, "a" : "abc|def", "b" : true }
+ { "_id" : { "$numberInt" : "16" }, "a" : "abc\\dog", "b" : true }
+(6 rows)
+
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "\\Aabc.*|xyz" } }, "sort": { "_id": 1 } }');
+                              document                               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : "abc", "b" : true }
+ { "_id" : { "$numberInt" : "6" }, "a" : "abcd", "b" : true }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abce", "b" : false }
+ { "_id" : { "$numberInt" : "8" }, "a" : "xyz", "b" : true }
+ { "_id" : { "$numberInt" : "12" }, "a" : "abc\x7Fdef", "b" : true }
+ { "_id" : { "$numberInt" : "15" }, "a" : "abc|def", "b" : true }
+ { "_id" : { "$numberInt" : "16" }, "a" : "abc\\dog", "b" : true }
+(7 rows)
+
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "^abcd?" } }, "sort": { "_id": 1 } }');
+                              document                               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : "abc", "b" : true }
+ { "_id" : { "$numberInt" : "6" }, "a" : "abcd", "b" : true }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abce", "b" : false }
+ { "_id" : { "$numberInt" : "12" }, "a" : "abc\x7Fdef", "b" : true }
+ { "_id" : { "$numberInt" : "15" }, "a" : "abc|def", "b" : true }
+ { "_id" : { "$numberInt" : "16" }, "a" : "abc\\dog", "b" : true }
+(6 rows)
+
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "^abc.*|xyz" } }, "sort": { "_id": 1 } }');
+                              document                               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : "abc", "b" : true }
+ { "_id" : { "$numberInt" : "6" }, "a" : "abcd", "b" : true }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abce", "b" : false }
+ { "_id" : { "$numberInt" : "8" }, "a" : "xyz", "b" : true }
+ { "_id" : { "$numberInt" : "12" }, "a" : "abc\x7Fdef", "b" : true }
+ { "_id" : { "$numberInt" : "15" }, "a" : "abc|def", "b" : true }
+ { "_id" : { "$numberInt" : "16" }, "a" : "abc\\dog", "b" : true }
+(7 rows)
+
+-- Compare tight bounds, option safety, empty prefixes, alternation, and escaped anchors.
+SELECT pattern, options, documentdb_test_helpers.run_explain_and_trim(FORMAT($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', %L)
+$cmd$, bson_build_document('find', 'regex_coll'::text,
+    'filter', bson_build_document('a',
+        bson_build_document('$regex', pattern, '$options', options))::bson)::text))
+FROM (VALUES
+    ('\Astring', ''),
+    ('\Astring', 'ms'),
+    ('^string', 'm'),
+    ('\Astring', 'i'),
+    ('\Astring', 'x'),
+    ('\A', ''),
+    ('\Aabc|xyz', ''),
+    ('\Aabc.*|xyz', ''),
+    ('\Aabcd?', ''),
+    ('\\Astring', ''),
+    ('\Aabc\.d', '')
+) AS cases(pattern, options);
+   pattern   | options |                                                                                                                 run_explain_and_trim                                                                                                                  
+-------------+---------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ \Astring    |         | Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+ \Astring    |         |   namespaceName: regex_db.regex_coll
+ \Astring    |         |   indexName: idx_a_1_b_1
+ \Astring    |         |   indexKey: {"a": 1,"b": 1}
+ \Astring    |         |   isMultiKey: true
+ \Astring    |         |   hasTruncation: true
+ \Astring    |         |   indexBounds: ["a": ["string", "strinh"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Astring", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Astring", "options" : "" } }], "b": (MinKey, MaxKey)]
+ \Astring    |         |   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=4 loops=1)
+ \Astring    |         |         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\Astring", "options" : "" } } }'::bson)
+ \Astring    |         |         Rows Removed by Index Recheck: 2
+ \Astring    |         |         Heap Blocks: exact=1
+ \Astring    |         |         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=6 loops=1)
+ \Astring    |         |               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\Astring", "options" : "" } } }'::bson)
+ \Astring    | ms      | Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+ \Astring    | ms      |   namespaceName: regex_db.regex_coll
+ \Astring    | ms      |   indexName: idx_a_1_b_1
+ \Astring    | ms      |   indexKey: {"a": 1,"b": 1}
+ \Astring    | ms      |   isMultiKey: true
+ \Astring    | ms      |   hasTruncation: true
+ \Astring    | ms      |   indexBounds: ["a": ["string", "strinh"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Astring", "options" : "ms" } }, { "$regularExpression" : { "pattern" : "\\Astring", "options" : "ms" } }], "b": (MinKey, MaxKey)]
+ \Astring    | ms      |   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=4 loops=1)
+ \Astring    | ms      |         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\Astring", "options" : "ms" } } }'::bson)
+ \Astring    | ms      |         Rows Removed by Index Recheck: 2
+ \Astring    | ms      |         Heap Blocks: exact=1
+ \Astring    | ms      |         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=6 loops=1)
+ \Astring    | ms      |               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\Astring", "options" : "ms" } } }'::bson)
+ ^string     | m       | Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
+ ^string     | m       |   namespaceName: regex_db.regex_coll
+ ^string     | m       |   indexName: idx_a_1_b_1
+ ^string     | m       |   indexKey: {"a": 1,"b": 1}
+ ^string     | m       |   isMultiKey: true
+ ^string     | m       |   hasTruncation: true
+ ^string     | m       |   indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^string", "options" : "m" } }, { "$regularExpression" : { "pattern" : "^string", "options" : "m" } }], "b": (MinKey, MaxKey)]
+ ^string     | m       |   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=5 loops=1)
+ ^string     | m       |         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^string", "options" : "m" } } }'::bson)
+ ^string     | m       |         Rows Removed by Index Recheck: 2
+ ^string     | m       |         Heap Blocks: exact=1
+ ^string     | m       |         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=7 loops=1)
+ ^string     | m       |               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^string", "options" : "m" } } }'::bson)
+ \Astring    | i       | Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
+ \Astring    | i       |   namespaceName: regex_db.regex_coll
+ \Astring    | i       |   indexName: idx_a_1_b_1
+ \Astring    | i       |   indexKey: {"a": 1,"b": 1}
+ \Astring    | i       |   isMultiKey: true
+ \Astring    | i       |   hasTruncation: true
+ \Astring    | i       |   indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Astring", "options" : "i" } }, { "$regularExpression" : { "pattern" : "\\Astring", "options" : "i" } }], "b": (MinKey, MaxKey)]
+ \Astring    | i       |   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=5 loops=1)
+ \Astring    | i       |         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\Astring", "options" : "i" } } }'::bson)
+ \Astring    | i       |         Rows Removed by Index Recheck: 2
+ \Astring    | i       |         Heap Blocks: exact=1
+ \Astring    | i       |         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=7 loops=1)
+ \Astring    | i       |               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\Astring", "options" : "i" } } }'::bson)
+ \Astring    | x       | Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+ \Astring    | x       |   namespaceName: regex_db.regex_coll
+ \Astring    | x       |   indexName: idx_a_1_b_1
+ \Astring    | x       |   indexKey: {"a": 1,"b": 1}
+ \Astring    | x       |   isMultiKey: true
+ \Astring    | x       |   hasTruncation: true
+ \Astring    | x       |   indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Astring", "options" : "x" } }, { "$regularExpression" : { "pattern" : "\\Astring", "options" : "x" } }], "b": (MinKey, MaxKey)]
+ \Astring    | x       |   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=4 loops=1)
+ \Astring    | x       |         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\Astring", "options" : "x" } } }'::bson)
+ \Astring    | x       |         Rows Removed by Index Recheck: 2
+ \Astring    | x       |         Heap Blocks: exact=1
+ \Astring    | x       |         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=6 loops=1)
+ \Astring    | x       |               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\Astring", "options" : "x" } } }'::bson)
+ \A          |         | Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=32 loops=1)
+ \A          |         |   namespaceName: regex_db.regex_coll
+ \A          |         |   indexName: idx_a_1_b_1
+ \A          |         |   indexKey: {"a": 1,"b": 1}
+ \A          |         |   isMultiKey: true
+ \A          |         |   hasTruncation: true
+ \A          |         |   indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\A", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\A", "options" : "" } }], "b": (MinKey, MaxKey)]
+ \A          |         |   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=32 loops=1)
+ \A          |         |         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\A", "options" : "" } } }'::bson)
+ \A          |         |         Heap Blocks: exact=1
+ \A          |         |         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=32 loops=1)
+ \A          |         |               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\A", "options" : "" } } }'::bson)
+ \Aabc|xyz   |         | Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
+ \Aabc|xyz   |         |   namespaceName: regex_db.regex_coll
+ \Aabc|xyz   |         |   indexName: idx_a_1_b_1
+ \Aabc|xyz   |         |   indexKey: {"a": 1,"b": 1}
+ \Aabc|xyz   |         |   isMultiKey: true
+ \Aabc|xyz   |         |   hasTruncation: true
+ \Aabc|xyz   |         |   indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabc|xyz", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc|xyz", "options" : "" } }], "b": (MinKey, MaxKey)]
+ \Aabc|xyz   |         |   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=7 loops=1)
+ \Aabc|xyz   |         |         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\Aabc|xyz", "options" : "" } } }'::bson)
+ \Aabc|xyz   |         |         Rows Removed by Index Recheck: 2
+ \Aabc|xyz   |         |         Heap Blocks: exact=1
+ \Aabc|xyz   |         |         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=9 loops=1)
+ \Aabc|xyz   |         |               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\Aabc|xyz", "options" : "" } } }'::bson)
+ \Aabc.*|xyz |         | Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
+ \Aabc.*|xyz |         |   namespaceName: regex_db.regex_coll
+ \Aabc.*|xyz |         |   indexName: idx_a_1_b_1
+ \Aabc.*|xyz |         |   indexKey: {"a": 1,"b": 1}
+ \Aabc.*|xyz |         |   isMultiKey: true
+ \Aabc.*|xyz |         |   hasTruncation: true
+ \Aabc.*|xyz |         |   indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabc.*|xyz", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc.*|xyz", "options" : "" } }], "b": (MinKey, MaxKey)]
+ \Aabc.*|xyz |         |   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=7 loops=1)
+ \Aabc.*|xyz |         |         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\Aabc.*|xyz", "options" : "" } } }'::bson)
+ \Aabc.*|xyz |         |         Rows Removed by Index Recheck: 2
+ \Aabc.*|xyz |         |         Heap Blocks: exact=1
+ \Aabc.*|xyz |         |         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=9 loops=1)
+ \Aabc.*|xyz |         |               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\Aabc.*|xyz", "options" : "" } } }'::bson)
+ \Aabcd?     |         | Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+ \Aabcd?     |         |   namespaceName: regex_db.regex_coll
+ \Aabcd?     |         |   indexName: idx_a_1_b_1
+ \Aabcd?     |         |   indexKey: {"a": 1,"b": 1}
+ \Aabcd?     |         |   isMultiKey: true
+ \Aabcd?     |         |   hasTruncation: true
+ \Aabcd?     |         |   indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabcd?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabcd?", "options" : "" } }], "b": (MinKey, MaxKey)]
+ \Aabcd?     |         |   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=6 loops=1)
+ \Aabcd?     |         |         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\Aabcd?", "options" : "" } } }'::bson)
+ \Aabcd?     |         |         Rows Removed by Index Recheck: 2
+ \Aabcd?     |         |         Heap Blocks: exact=1
+ \Aabcd?     |         |         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=8 loops=1)
+ \Aabcd?     |         |               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\Aabcd?", "options" : "" } } }'::bson)
+ \\Astring   |         | Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+ \\Astring   |         |   namespaceName: regex_db.regex_coll
+ \\Astring   |         |   indexName: idx_a_1_b_1
+ \\Astring   |         |   indexKey: {"a": 1,"b": 1}
+ \\Astring   |         |   isMultiKey: true
+ \\Astring   |         |   hasTruncation: true
+ \\Astring   |         |   indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\\\Astring", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\\\Astring", "options" : "" } }], "b": (MinKey, MaxKey)]
+ \\Astring   |         |   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=1 loops=1)
+ \\Astring   |         |         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\\\Astring", "options" : "" } } }'::bson)
+ \\Astring   |         |         Rows Removed by Index Recheck: 2
+ \\Astring   |         |         Heap Blocks: exact=1
+ \\Astring   |         |         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=3 loops=1)
+ \\Astring   |         |               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\\\Astring", "options" : "" } } }'::bson)
+ \Aabc\.d    |         | Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
+ \Aabc\.d    |         |   namespaceName: regex_db.regex_coll
+ \Aabc\.d    |         |   indexName: idx_a_1_b_1
+ \Aabc\.d    |         |   indexKey: {"a": 1,"b": 1}
+ \Aabc\.d    |         |   isMultiKey: true
+ \Aabc\.d    |         |   hasTruncation: true
+ \Aabc\.d    |         |   indexBounds: ["a": ["abc.d", "abc.e"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabc\\.d", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\.d", "options" : "" } }], "b": (MinKey, MaxKey)]
+ \Aabc\.d    |         |   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=0 loops=1)
+ \Aabc\.d    |         |         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\Aabc\\.d", "options" : "" } } }'::bson)
+ \Aabc\.d    |         |         Rows Removed by Index Recheck: 2
+ \Aabc\.d    |         |         Heap Blocks: exact=1
+ \Aabc\.d    |         |         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=2 loops=1)
+ \Aabc\.d    |         |               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\Aabc\\.d", "options" : "" } } }'::bson)
+(142 rows)
+
+-- Regex remains case-sensitive under a non-default command collation.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.forceDisableSeqScan TO off;
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "\\Astring" } }, "collation": { "locale": "en", "strength": 1 }, "sort": { "_id": 1 } }');
+                                      document                                       
+-------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "string1", "b" : true }
+ { "_id" : { "$numberInt" : "2" }, "a" : "string2", "b" : true }
+ { "_id" : { "$numberInt" : "3" }, "a" : "string123", "b" : false }
+ { "_id" : { "$numberInt" : "200" }, "a" : [ "other", "string_array" ], "b" : true }
+(4 rows)
+
+SELECT document FROM bson_aggregation_find('regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "\\Aabcd?" } }, "collation": { "locale": "en", "strength": 1 }, "sort": { "_id": 1 } }');
+                              document                               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : "abc", "b" : true }
+ { "_id" : { "$numberInt" : "6" }, "a" : "abcd", "b" : true }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abce", "b" : false }
+ { "_id" : { "$numberInt" : "12" }, "a" : "abc\x7Fdef", "b" : true }
+ { "_id" : { "$numberInt" : "15" }, "a" : "abc|def", "b" : true }
+ { "_id" : { "$numberInt" : "16" }, "a" : "abc\\dog", "b" : true }
+(6 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db',
+        '{ "find": "regex_coll", "filter": { "a": { "$regex": "\\Astring" } }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=4 loops=1)
+         Recheck Cond: (shard_key_value = '1201'::bigint)
+         Filter: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "\\Astring", "options" : "" } }, "collation" : "en-u-ks-level1" }'::bson)
+         Rows Removed by Filter: 30
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on _id_ (actual rows=34 loops=1)
+               Index Cond: (shard_key_value = '1201'::bigint)
+(10 rows)
+
+ROLLBACK;
+-- Exercise optional literals through scalar, multikey, and primary-key bounds.
+CREATE TEMP TABLE regex_prefix_documents (document jsonb);
+INSERT INTO regex_prefix_documents
+SELECT jsonb_build_object('_id', value, 'a', value, 'arr', jsonb_build_array('unrelated', value))
+FROM unnest(ARRAY[
+    '', 'a', 'ab', 'abc', 'abcd', 'abcdd', 'abce', 'abd', 'xyz', 'other',
+    E'other\nabcd', 'ABCD', 'abc.', 'abc\', 'é', 'ê', 'éñ', 'é.',
+    '€', '€x', '€y', '😀', '😀x', '😀y',
+    'abcé', 'abc€', 'abc😀', 'b', 'abc|b', 'abc\|b', E'abc\034', 'abc<b'
+]) AS values(value);
+INSERT INTO regex_prefix_documents VALUES
+    ('{"_id":"mixed_array","a":42,"arr":[null,42,"abc"]}'),
+    ('{"_id":"null_value","a":null,"arr":null}'),
+    ('{"_id":"empty_array","a":[],"arr":[]}'),
+    ('{"_id":"missing_value"}');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('regex_db',
+    '{ "createIndexes": "prefix_quantifiers", "indexes": [
+        { "name": "prefix_a", "key": { "a": 1, "b": 1 } },
+        { "name": "prefix_arr", "key": { "arr": 1, "b": 1 } }
+    ] }', TRUE);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT count(documentdb_api.insert_one('regex_db', 'prefix_quantifiers', document::text::bson))
+FROM regex_prefix_documents;
+ count 
+-------
+    36
+(1 row)
+
+CREATE TEMP TABLE regex_prefix_cases AS
+SELECT anchor || suffix AS pattern, ''::text AS options
+FROM unnest(ARRAY['^', '\A']) AS anchors(anchor)
+CROSS JOIN unnest(ARRAY[
+    'abcd?', 'abcd*', 'abcd??', 'abcd*+', 'abcd+', 'a?',
+    'abc\.?', 'abc\\*', 'abcé?', 'abc€*', 'abc😀?',
+    'éñ?', 'é\.?', '€x?', '😀x?', 'abcd?|xyz', 'abcd{0,1}',
+    'abc(?#comment)?', 'éñ(?#comment)*', 'a(?#comment)?', 'abc(d)?',
+    'abc\c\|b', 'abc\c|b', 'abc.*\|b', 'abc.*\\|b', 'abc.*\\\|b',
+    'abc\\\|b', 'abc\\\c\|b', 'abc\x{5c}|b'
+]) AS suffixes(suffix);
+INSERT INTO regex_prefix_cases VALUES
+    ('^abcd?', 'm'), ('\Aabcd?', 'm'), ('\Aabcd*', 's'),
+    ('^abc\E?', ''), ('\Aabc\E*', ''),
+    ('^abc\Q\E?', ''), ('\Aabc\Q\E*', ''),
+    ('^abc\E{0,1}', ''), ('\Aéñ\Q\E\E?', ''),
+    ('^abc\\\E?', ''), ('\Aabc\\E?', ''),
+    ('^abc\Q.d\E?', ''), ('\Aabc\Q|b', '');
+CREATE FUNCTION pg_temp.regex_prefix_runtime(filter_doc bson)
+RETURNS text[]
+LANGUAGE plpgsql
+SET documentdb.forceDisableSeqScan = off
+SET enable_indexscan = off
+SET enable_bitmapscan = off
+SET enable_seqscan = on
+AS $fn$
+DECLARE
+    ids text[];
+BEGIN
+    SELECT coalesce(array_agg(document::text::jsonb->>'_id'
+        ORDER BY (document::text::jsonb->>'_id') COLLATE "C"), ARRAY[]::text[])
+    INTO ids
+    FROM documentdb_api.collection('regex_db', 'prefix_quantifiers')
+    WHERE document @@ filter_doc;
+    RETURN ids;
+END
+$fn$;
+CREATE FUNCTION pg_temp.regex_prefix_probe(pattern text, options text, field_name text)
+RETURNS TABLE(bounds text, ids text[])
+LANGUAGE plpgsql
+SET enable_bitmapscan = on
+AS $fn$
+DECLARE
+    filter_doc bson := bson_build_document(field_name,
+        bson_build_document('$regex', pattern, '$options', options));
+    index_name text := CASE field_name WHEN '_id' THEN '_id_' ELSE 'prefix_' || field_name END;
+    command bson := bson_build_document('find', 'prefix_quantifiers'::text,
+        'filter', filter_doc, 'hint', index_name);
+    query text := format('SELECT document FROM bson_aggregation_find(''regex_db'', %L)', command);
+    runtime_ids text[];
+BEGIN
+    PERFORM set_config('enable_bitmapscan', CASE WHEN field_name = '_id' THEN 'off' ELSE 'on' END, true);
+    EXECUTE format('SELECT coalesce(array_agg(document::text::jsonb->>''_id''
+        ORDER BY (document::text::jsonb->>''_id'') COLLATE "C"), ARRAY[]::text[])
+        FROM (%s) AS matched', query)
+    INTO ids;
+
+    runtime_ids := pg_temp.regex_prefix_runtime(filter_doc);
+    IF ids IS DISTINCT FROM runtime_ids THEN
+        RAISE EXCEPTION 'Indexed/runtime mismatch: field %, pattern %, options %, indexed %, runtime %',
+            field_name, pattern, options, ids, runtime_ids;
+    END IF;
+
+    SELECT trim(line) INTO STRICT bounds
+    FROM documentdb_test_helpers.run_explain_and_trim('EXPLAIN (COSTS OFF) ' || query) AS plan(line)
+    WHERE CASE WHEN field_name = '_id'
+        THEN line LIKE '%Index Cond:%object_id%'
+        ELSE line LIKE '%indexBounds:%' END;
+    RETURN NEXT;
+END
+$fn$;
+CREATE TEMP TABLE regex_prefix_results AS
+SELECT pattern, options, field_name, bounds, ids
+FROM regex_prefix_cases
+CROSS JOIN unnest(ARRAY['a', 'arr', '_id']) AS fields(field_name)
+CROSS JOIN LATERAL pg_temp.regex_prefix_probe(pattern, options, field_name);
+SELECT field_name, options, count(*) AS cases_checked
+FROM regex_prefix_results GROUP BY field_name, options ORDER BY field_name, options;
+ field_name | options | cases_checked 
+------------+---------+---------------
+ a          |         |            68
+ a          | m       |             2
+ a          | s       |             1
+ arr        |         |            68
+ arr        | m       |             2
+ arr        | s       |             1
+ _id        |         |            68
+ _id        | m       |             2
+ _id        | s       |             1
+(9 rows)
+
+SELECT actual.field_name, actual.options,
+    bool_and(split_part(actual.bounds, '], [', 1) = split_part(base.bounds, '], [', 1)) AS same_bounds
+FROM regex_prefix_results AS actual
+JOIN regex_prefix_results AS base USING (pattern, field_name)
+WHERE base.options = '' AND
+    (actual.options = 's' OR (actual.options = 'm' AND left(actual.pattern, 2) = '\A'))
+GROUP BY actual.field_name, actual.options ORDER BY actual.field_name, actual.options;
+ field_name | options | same_bounds 
+------------+---------+-------------
+ a          | m       | t
+ a          | s       | t
+ arr        | m       | t
+ arr        | s       | t
+ _id        | m       | t
+ _id        | s       | t
+(6 rows)
+
+-- Keep the detailed no-option bounds visible; all option combinations check results above.
+SELECT pattern, field_name, bounds, cardinality(ids) AS matches
+FROM regex_prefix_results WHERE options = '' ORDER BY pattern COLLATE "C", field_name;
+      pattern      | field_name |                                                                                                                             bounds                                                                                                                              | matches 
+-------------------+------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------
+ \Aa(?#comment)?   | a          | indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aa(?#comment)?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aa(?#comment)?", "options" : "" } }], "b": (MinKey, MaxKey)]              |      32
+ \Aa(?#comment)?   | arr        | indexBounds: ["arr": ["", { }), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aa(?#comment)?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aa(?#comment)?", "options" : "" } }], "b": (MinKey, MaxKey)]          |      33
+ \Aa(?#comment)?   | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))                                                                                                                                 |      36
+ \Aa?              | a          | indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aa?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aa?", "options" : "" } }], "b": (MinKey, MaxKey)]                                    |      32
+ \Aa?              | arr        | indexBounds: ["arr": ["", { }), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aa?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aa?", "options" : "" } }], "b": (MinKey, MaxKey)]                                |      33
+ \Aa?              | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))                                                                                                                                 |      36
+ \Aabc(?#comment)? | a          | indexBounds: ["a": ["ab", "ac"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabc(?#comment)?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc(?#comment)?", "options" : "" } }], "b": (MinKey, MaxKey)]       |      15
+ \Aabc(?#comment)? | arr        | indexBounds: ["arr": ["ab", "ac"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabc(?#comment)?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc(?#comment)?", "options" : "" } }], "b": (MinKey, MaxKey)]   |      16
+ \Aabc(?#comment)? | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "ab" }'::bson) AND (object_id < '{ "" : "ac" }'::bson))                                                                                                                               |      15
+ \Aabc(d)?         | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabc(d)?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc(d)?", "options" : "" } }], "b": (MinKey, MaxKey)]                     |      13
+ \Aabc(d)?         | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabc(d)?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc(d)?", "options" : "" } }], "b": (MinKey, MaxKey)]                 |      14
+ \Aabc(d)?         | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |      13
+ \Aabc.*\\\|b      | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabc.*\\\\\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc.*\\\\\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]         |       1
+ \Aabc.*\\\|b      | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabc.*\\\\\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc.*\\\\\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]     |       1
+ \Aabc.*\\\|b      | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |       1
+ \Aabc.*\\|b       | a          | indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabc.*\\\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc.*\\\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]                  |      17
+ \Aabc.*\\|b       | arr        | indexBounds: ["arr": ["", { }), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabc.*\\\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc.*\\\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]              |      18
+ \Aabc.*\\|b       | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))                                                                                                                                 |      17
+ \Aabc.*\|b        | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabc.*\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc.*\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]                 |       2
+ \Aabc.*\|b        | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabc.*\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc.*\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]             |       2
+ \Aabc.*\|b        | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |       2
+ \Aabc\.?          | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabc\\.?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\.?", "options" : "" } }], "b": (MinKey, MaxKey)]                     |      13
+ \Aabc\.?          | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabc\\.?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\.?", "options" : "" } }], "b": (MinKey, MaxKey)]                 |      14
+ \Aabc\.?          | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |      13
+ \Aabc\E*          | a          | indexBounds: ["a": ["ab", "ac"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabc\\E*", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\E*", "options" : "" } }], "b": (MinKey, MaxKey)]                       |      15
+ \Aabc\E*          | arr        | indexBounds: ["arr": ["ab", "ac"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabc\\E*", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\E*", "options" : "" } }], "b": (MinKey, MaxKey)]                   |      16
+ \Aabc\E*          | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "ab" }'::bson) AND (object_id < '{ "" : "ac" }'::bson))                                                                                                                               |      15
+ \Aabc\Q\E*        | a          | indexBounds: ["a": ["ab", "ac"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabc\\Q\\E*", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\Q\\E*", "options" : "" } }], "b": (MinKey, MaxKey)]                 |      15
+ \Aabc\Q\E*        | arr        | indexBounds: ["arr": ["ab", "ac"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabc\\Q\\E*", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\Q\\E*", "options" : "" } }], "b": (MinKey, MaxKey)]             |      16
+ \Aabc\Q\E*        | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "ab" }'::bson) AND (object_id < '{ "" : "ac" }'::bson))                                                                                                                               |      15
+ \Aabc\Q|b         | a          | indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabc\\Q|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\Q|b", "options" : "" } }], "b": (MinKey, MaxKey)]                        |       1
+ \Aabc\Q|b         | arr        | indexBounds: ["arr": ["", { }), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabc\\Q|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\Q|b", "options" : "" } }], "b": (MinKey, MaxKey)]                    |       1
+ \Aabc\Q|b         | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))                                                                                                                                 |       1
+ \Aabc\\*          | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabc\\\\*", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\\\*", "options" : "" } }], "b": (MinKey, MaxKey)]                   |      13
+ \Aabc\\*          | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabc\\\\*", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\\\*", "options" : "" } }], "b": (MinKey, MaxKey)]               |      14
+ \Aabc\\*          | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |      13
+ \Aabc\\E?         | a          | indexBounds: ["a": ["abc\\", "abc]"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabc\\\\E?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\\\E?", "options" : "" } }], "b": (MinKey, MaxKey)]              |       2
+ \Aabc\\E?         | arr        | indexBounds: ["arr": ["abc\\", "abc]"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabc\\\\E?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\\\E?", "options" : "" } }], "b": (MinKey, MaxKey)]          |       2
+ \Aabc\\E?         | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc\\" }'::bson) AND (object_id < '{ "" : "abc]" }'::bson))                                                                                                                          |       2
+ \Aabc\\\c\|b      | a          | indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabc\\\\\\c\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\\\\\c\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]            |      17
+ \Aabc\\\c\|b      | arr        | indexBounds: ["arr": ["", { }), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabc\\\\\\c\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\\\\\c\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]        |      18
+ \Aabc\\\c\|b      | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))                                                                                                                                 |      17
+ \Aabc\\\|b        | a          | indexBounds: ["a": ["abc\\|b", "abc\\|c"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabc\\\\\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\\\\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]     |       1
+ \Aabc\\\|b        | arr        | indexBounds: ["arr": ["abc\\|b", "abc\\|c"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabc\\\\\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\\\\\|b", "options" : "" } }], "b": (MinKey, MaxKey)] |       1
+ \Aabc\\\|b        | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc\\|b" }'::bson) AND (object_id < '{ "" : "abc\\|c" }'::bson))                                                                                                                     |       1
+ \Aabc\c\|b        | a          | indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabc\\c\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\c\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]                    |      17
+ \Aabc\c\|b        | arr        | indexBounds: ["arr": ["", { }), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabc\\c\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\c\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]                |      18
+ \Aabc\c\|b        | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))                                                                                                                                 |      17
+ \Aabc\c|b         | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabc\\c|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\c|b", "options" : "" } }], "b": (MinKey, MaxKey)]                   |       1
+ \Aabc\c|b         | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabc\\c|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\c|b", "options" : "" } }], "b": (MinKey, MaxKey)]               |       1
+ \Aabc\c|b         | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |       1
+ \Aabc\x{5c}|b     | a          | indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabc\\x{5c}|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\x{5c}|b", "options" : "" } }], "b": (MinKey, MaxKey)]                |      17
+ \Aabc\x{5c}|b     | arr        | indexBounds: ["arr": ["", { }), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabc\\x{5c}|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc\\x{5c}|b", "options" : "" } }], "b": (MinKey, MaxKey)]            |      18
+ \Aabc\x{5c}|b     | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))                                                                                                                                 |      17
+ \Aabcd*           | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabcd*", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabcd*", "options" : "" } }], "b": (MinKey, MaxKey)]                         |      13
+ \Aabcd*           | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabcd*", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabcd*", "options" : "" } }], "b": (MinKey, MaxKey)]                     |      14
+ \Aabcd*           | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |      13
+ \Aabcd*+          | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabcd*+", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabcd*+", "options" : "" } }], "b": (MinKey, MaxKey)]                       |      13
+ \Aabcd*+          | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabcd*+", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabcd*+", "options" : "" } }], "b": (MinKey, MaxKey)]                   |      14
+ \Aabcd*+          | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |      13
+ \Aabcd+           | a          | indexBounds: ["a": ["abcd", "abce"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabcd+", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabcd+", "options" : "" } }], "b": (MinKey, MaxKey)]                       |       2
+ \Aabcd+           | arr        | indexBounds: ["arr": ["abcd", "abce"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabcd+", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabcd+", "options" : "" } }], "b": (MinKey, MaxKey)]                   |       2
+ \Aabcd+           | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abcd" }'::bson) AND (object_id < '{ "" : "abce" }'::bson))                                                                                                                           |       2
+ \Aabcd?           | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabcd?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabcd?", "options" : "" } }], "b": (MinKey, MaxKey)]                         |      13
+ \Aabcd?           | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabcd?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabcd?", "options" : "" } }], "b": (MinKey, MaxKey)]                     |      14
+ \Aabcd?           | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |      13
+ \Aabcd??          | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabcd??", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabcd??", "options" : "" } }], "b": (MinKey, MaxKey)]                       |      13
+ \Aabcd??          | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabcd??", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabcd??", "options" : "" } }], "b": (MinKey, MaxKey)]                   |      14
+ \Aabcd??          | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |      13
+ \Aabcd?|xyz       | a          | indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabcd?|xyz", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabcd?|xyz", "options" : "" } }], "b": (MinKey, MaxKey)]                      |      14
+ \Aabcd?|xyz       | arr        | indexBounds: ["arr": ["", { }), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabcd?|xyz", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabcd?|xyz", "options" : "" } }], "b": (MinKey, MaxKey)]                  |      15
+ \Aabcd?|xyz       | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))                                                                                                                                 |      14
+ \Aabcd{0,1}       | a          | indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabcd{0,1}", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabcd{0,1}", "options" : "" } }], "b": (MinKey, MaxKey)]                      |      13
+ \Aabcd{0,1}       | arr        | indexBounds: ["arr": ["", { }), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabcd{0,1}", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabcd{0,1}", "options" : "" } }], "b": (MinKey, MaxKey)]                  |      14
+ \Aabcd{0,1}       | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))                                                                                                                                 |      13
+ \Aabcé?           | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabcé?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabcé?", "options" : "" } }], "b": (MinKey, MaxKey)]                         |      13
+ \Aabcé?           | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabcé?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabcé?", "options" : "" } }], "b": (MinKey, MaxKey)]                     |      14
+ \Aabcé?           | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |      13
+ \Aabc€*           | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabc€*", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc€*", "options" : "" } }], "b": (MinKey, MaxKey)]                         |      13
+ \Aabc€*           | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabc€*", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc€*", "options" : "" } }], "b": (MinKey, MaxKey)]                     |      14
+ \Aabc€*           | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |      13
+ \Aabc😀?          | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aabc😀?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc😀?", "options" : "" } }], "b": (MinKey, MaxKey)]                       |      13
+ \Aabc😀?          | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aabc😀?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aabc😀?", "options" : "" } }], "b": (MinKey, MaxKey)]                   |      14
+ \Aabc😀?          | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |      13
+ \Aé\.?            | a          | indexBounds: ["a": ["é", "ê"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aé\\.?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aé\\.?", "options" : "" } }], "b": (MinKey, MaxKey)]                             |       3
+ \Aé\.?            | arr        | indexBounds: ["arr": ["é", "ê"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aé\\.?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aé\\.?", "options" : "" } }], "b": (MinKey, MaxKey)]                         |       3
+ \Aé\.?            | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "é" }'::bson) AND (object_id < '{ "" : "ê" }'::bson))                                                                                                                                 |       3
+ \Aéñ(?#comment)*  | a          | indexBounds: ["a": ["é", "ê"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aéñ(?#comment)*", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aéñ(?#comment)*", "options" : "" } }], "b": (MinKey, MaxKey)]           |       3
+ \Aéñ(?#comment)*  | arr        | indexBounds: ["arr": ["é", "ê"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aéñ(?#comment)*", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aéñ(?#comment)*", "options" : "" } }], "b": (MinKey, MaxKey)]       |       3
+ \Aéñ(?#comment)*  | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "é" }'::bson) AND (object_id < '{ "" : "ê" }'::bson))                                                                                                                                 |       3
+ \Aéñ?             | a          | indexBounds: ["a": ["é", "ê"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aéñ?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aéñ?", "options" : "" } }], "b": (MinKey, MaxKey)]                                 |       3
+ \Aéñ?             | arr        | indexBounds: ["arr": ["é", "ê"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aéñ?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aéñ?", "options" : "" } }], "b": (MinKey, MaxKey)]                             |       3
+ \Aéñ?             | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "é" }'::bson) AND (object_id < '{ "" : "ê" }'::bson))                                                                                                                                 |       3
+ \Aéñ\Q\E\E?       | a          | indexBounds: ["a": ["é", "ê"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\Aéñ\\Q\\E\\E?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aéñ\\Q\\E\\E?", "options" : "" } }], "b": (MinKey, MaxKey)]               |       3
+ \Aéñ\Q\E\E?       | arr        | indexBounds: ["arr": ["é", "ê"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\Aéñ\\Q\\E\\E?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\Aéñ\\Q\\E\\E?", "options" : "" } }], "b": (MinKey, MaxKey)]           |       3
+ \Aéñ\Q\E\E?       | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "é" }'::bson) AND (object_id < '{ "" : "ê" }'::bson))                                                                                                                                 |       3
+ \A€x?             | a          | indexBounds: ["a": ["€", "₭"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\A€x?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\A€x?", "options" : "" } }], "b": (MinKey, MaxKey)]                                 |       3
+ \A€x?             | arr        | indexBounds: ["arr": ["€", "₭"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\A€x?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\A€x?", "options" : "" } }], "b": (MinKey, MaxKey)]                             |       3
+ \A€x?             | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "€" }'::bson) AND (object_id < '{ "" : "₭" }'::bson))                                                                                                                                 |       3
+ \A😀x?            | a          | indexBounds: ["a": ["😀", "😁"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "\\A😀x?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\A😀x?", "options" : "" } }], "b": (MinKey, MaxKey)]                             |       3
+ \A😀x?            | arr        | indexBounds: ["arr": ["😀", "😁"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "\\A😀x?", "options" : "" } }, { "$regularExpression" : { "pattern" : "\\A😀x?", "options" : "" } }], "b": (MinKey, MaxKey)]                         |       3
+ \A😀x?            | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "😀" }'::bson) AND (object_id < '{ "" : "😁" }'::bson))                                                                                                                               |       3
+ ^a(?#comment)?    | a          | indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^a(?#comment)?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^a(?#comment)?", "options" : "" } }], "b": (MinKey, MaxKey)]                  |      32
+ ^a(?#comment)?    | arr        | indexBounds: ["arr": ["", { }), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^a(?#comment)?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^a(?#comment)?", "options" : "" } }], "b": (MinKey, MaxKey)]              |      33
+ ^a(?#comment)?    | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))                                                                                                                                 |      36
+ ^a?               | a          | indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^a?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^a?", "options" : "" } }], "b": (MinKey, MaxKey)]                                        |      32
+ ^a?               | arr        | indexBounds: ["arr": ["", { }), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^a?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^a?", "options" : "" } }], "b": (MinKey, MaxKey)]                                    |      33
+ ^a?               | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))                                                                                                                                 |      36
+ ^abc(?#comment)?  | a          | indexBounds: ["a": ["ab", "ac"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc(?#comment)?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc(?#comment)?", "options" : "" } }], "b": (MinKey, MaxKey)]           |      15
+ ^abc(?#comment)?  | arr        | indexBounds: ["arr": ["ab", "ac"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abc(?#comment)?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc(?#comment)?", "options" : "" } }], "b": (MinKey, MaxKey)]       |      16
+ ^abc(?#comment)?  | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "ab" }'::bson) AND (object_id < '{ "" : "ac" }'::bson))                                                                                                                               |      15
+ ^abc(d)?          | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc(d)?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc(d)?", "options" : "" } }], "b": (MinKey, MaxKey)]                         |      13
+ ^abc(d)?          | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abc(d)?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc(d)?", "options" : "" } }], "b": (MinKey, MaxKey)]                     |      14
+ ^abc(d)?          | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |      13
+ ^abc.*\\\|b       | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc.*\\\\\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc.*\\\\\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]             |       1
+ ^abc.*\\\|b       | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abc.*\\\\\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc.*\\\\\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]         |       1
+ ^abc.*\\\|b       | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |       1
+ ^abc.*\\|b        | a          | indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc.*\\\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc.*\\\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]                      |      17
+ ^abc.*\\|b        | arr        | indexBounds: ["arr": ["", { }), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abc.*\\\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc.*\\\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]                  |      18
+ ^abc.*\\|b        | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))                                                                                                                                 |      17
+ ^abc.*\|b         | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc.*\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc.*\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]                     |       2
+ ^abc.*\|b         | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abc.*\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc.*\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]                 |       2
+ ^abc.*\|b         | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |       2
+ ^abc\.?           | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc\\.?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\.?", "options" : "" } }], "b": (MinKey, MaxKey)]                         |      13
+ ^abc\.?           | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abc\\.?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\.?", "options" : "" } }], "b": (MinKey, MaxKey)]                     |      14
+ ^abc\.?           | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |      13
+ ^abc\E?           | a          | indexBounds: ["a": ["ab", "ac"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc\\E?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\E?", "options" : "" } }], "b": (MinKey, MaxKey)]                           |      15
+ ^abc\E?           | arr        | indexBounds: ["arr": ["ab", "ac"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abc\\E?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\E?", "options" : "" } }], "b": (MinKey, MaxKey)]                       |      16
+ ^abc\E?           | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "ab" }'::bson) AND (object_id < '{ "" : "ac" }'::bson))                                                                                                                               |      15
+ ^abc\E{0,1}       | a          | indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc\\E{0,1}", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\E{0,1}", "options" : "" } }], "b": (MinKey, MaxKey)]                      |      15
+ ^abc\E{0,1}       | arr        | indexBounds: ["arr": ["", { }), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abc\\E{0,1}", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\E{0,1}", "options" : "" } }], "b": (MinKey, MaxKey)]                  |      16
+ ^abc\E{0,1}       | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))                                                                                                                                 |      15
+ ^abc\Q.d\E?       | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc\\Q.d\\E?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\Q.d\\E?", "options" : "" } }], "b": (MinKey, MaxKey)]               |       1
+ ^abc\Q.d\E?       | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abc\\Q.d\\E?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\Q.d\\E?", "options" : "" } }], "b": (MinKey, MaxKey)]           |       1
+ ^abc\Q.d\E?       | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |       1
+ ^abc\Q\E?         | a          | indexBounds: ["a": ["ab", "ac"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc\\Q\\E?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\Q\\E?", "options" : "" } }], "b": (MinKey, MaxKey)]                     |      15
+ ^abc\Q\E?         | arr        | indexBounds: ["arr": ["ab", "ac"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abc\\Q\\E?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\Q\\E?", "options" : "" } }], "b": (MinKey, MaxKey)]                 |      16
+ ^abc\Q\E?         | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "ab" }'::bson) AND (object_id < '{ "" : "ac" }'::bson))                                                                                                                               |      15
+ ^abc\\*           | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc\\\\*", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\\\*", "options" : "" } }], "b": (MinKey, MaxKey)]                       |      13
+ ^abc\\*           | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abc\\\\*", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\\\*", "options" : "" } }], "b": (MinKey, MaxKey)]                   |      14
+ ^abc\\*           | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |      13
+ ^abc\\\E?         | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc\\\\\\E?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\\\\\E?", "options" : "" } }], "b": (MinKey, MaxKey)]                 |      13
+ ^abc\\\E?         | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abc\\\\\\E?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\\\\\E?", "options" : "" } }], "b": (MinKey, MaxKey)]             |      14
+ ^abc\\\E?         | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |      13
+ ^abc\\\c\|b       | a          | indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc\\\\\\c\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\\\\\c\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]                |      17
+ ^abc\\\c\|b       | arr        | indexBounds: ["arr": ["", { }), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abc\\\\\\c\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\\\\\c\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]            |      18
+ ^abc\\\c\|b       | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))                                                                                                                                 |      17
+ ^abc\\\|b         | a          | indexBounds: ["a": ["abc\\|b", "abc\\|c"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc\\\\\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\\\\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]         |       1
+ ^abc\\\|b         | arr        | indexBounds: ["arr": ["abc\\|b", "abc\\|c"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abc\\\\\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\\\\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]     |       1
+ ^abc\\\|b         | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc\\|b" }'::bson) AND (object_id < '{ "" : "abc\\|c" }'::bson))                                                                                                                     |       1
+ ^abc\c\|b         | a          | indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc\\c\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\c\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]                        |      17
+ ^abc\c\|b         | arr        | indexBounds: ["arr": ["", { }), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abc\\c\\|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\c\\|b", "options" : "" } }], "b": (MinKey, MaxKey)]                    |      18
+ ^abc\c\|b         | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))                                                                                                                                 |      17
+ ^abc\c|b          | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc\\c|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\c|b", "options" : "" } }], "b": (MinKey, MaxKey)]                       |       1
+ ^abc\c|b          | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abc\\c|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\c|b", "options" : "" } }], "b": (MinKey, MaxKey)]                   |       1
+ ^abc\c|b          | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |       1
+ ^abc\x{5c}|b      | a          | indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc\\x{5c}|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\x{5c}|b", "options" : "" } }], "b": (MinKey, MaxKey)]                    |      17
+ ^abc\x{5c}|b      | arr        | indexBounds: ["arr": ["", { }), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abc\\x{5c}|b", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\x{5c}|b", "options" : "" } }], "b": (MinKey, MaxKey)]                |      18
+ ^abc\x{5c}|b      | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))                                                                                                                                 |      17
+ ^abcd*            | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abcd*", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abcd*", "options" : "" } }], "b": (MinKey, MaxKey)]                             |      13
+ ^abcd*            | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abcd*", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abcd*", "options" : "" } }], "b": (MinKey, MaxKey)]                         |      14
+ ^abcd*            | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |      13
+ ^abcd*+           | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abcd*+", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abcd*+", "options" : "" } }], "b": (MinKey, MaxKey)]                           |      13
+ ^abcd*+           | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abcd*+", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abcd*+", "options" : "" } }], "b": (MinKey, MaxKey)]                       |      14
+ ^abcd*+           | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |      13
+ ^abcd+            | a          | indexBounds: ["a": ["abcd", "abce"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abcd+", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abcd+", "options" : "" } }], "b": (MinKey, MaxKey)]                           |       2
+ ^abcd+            | arr        | indexBounds: ["arr": ["abcd", "abce"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abcd+", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abcd+", "options" : "" } }], "b": (MinKey, MaxKey)]                       |       2
+ ^abcd+            | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abcd" }'::bson) AND (object_id < '{ "" : "abce" }'::bson))                                                                                                                           |       2
+ ^abcd?            | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abcd?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abcd?", "options" : "" } }], "b": (MinKey, MaxKey)]                             |      13
+ ^abcd?            | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abcd?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abcd?", "options" : "" } }], "b": (MinKey, MaxKey)]                         |      14
+ ^abcd?            | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |      13
+ ^abcd??           | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abcd??", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abcd??", "options" : "" } }], "b": (MinKey, MaxKey)]                           |      13
+ ^abcd??           | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abcd??", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abcd??", "options" : "" } }], "b": (MinKey, MaxKey)]                       |      14
+ ^abcd??           | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |      13
+ ^abcd?|xyz        | a          | indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abcd?|xyz", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abcd?|xyz", "options" : "" } }], "b": (MinKey, MaxKey)]                          |      14
+ ^abcd?|xyz        | arr        | indexBounds: ["arr": ["", { }), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abcd?|xyz", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abcd?|xyz", "options" : "" } }], "b": (MinKey, MaxKey)]                      |      15
+ ^abcd?|xyz        | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))                                                                                                                                 |      14
+ ^abcd{0,1}        | a          | indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abcd{0,1}", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abcd{0,1}", "options" : "" } }], "b": (MinKey, MaxKey)]                          |      13
+ ^abcd{0,1}        | arr        | indexBounds: ["arr": ["", { }), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abcd{0,1}", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abcd{0,1}", "options" : "" } }], "b": (MinKey, MaxKey)]                      |      14
+ ^abcd{0,1}        | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))                                                                                                                                 |      13
+ ^abcé?            | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abcé?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abcé?", "options" : "" } }], "b": (MinKey, MaxKey)]                             |      13
+ ^abcé?            | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abcé?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abcé?", "options" : "" } }], "b": (MinKey, MaxKey)]                         |      14
+ ^abcé?            | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |      13
+ ^abc€*            | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc€*", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc€*", "options" : "" } }], "b": (MinKey, MaxKey)]                             |      13
+ ^abc€*            | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abc€*", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc€*", "options" : "" } }], "b": (MinKey, MaxKey)]                         |      14
+ ^abc€*            | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |      13
+ ^abc😀?           | a          | indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc😀?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc😀?", "options" : "" } }], "b": (MinKey, MaxKey)]                           |      13
+ ^abc😀?           | arr        | indexBounds: ["arr": ["abc", "abd"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^abc😀?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc😀?", "options" : "" } }], "b": (MinKey, MaxKey)]                       |      14
+ ^abc😀?           | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))                                                                                                                             |      13
+ ^é\.?             | a          | indexBounds: ["a": ["é", "ê"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^é\\.?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^é\\.?", "options" : "" } }], "b": (MinKey, MaxKey)]                                 |       3
+ ^é\.?             | arr        | indexBounds: ["arr": ["é", "ê"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^é\\.?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^é\\.?", "options" : "" } }], "b": (MinKey, MaxKey)]                             |       3
+ ^é\.?             | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "é" }'::bson) AND (object_id < '{ "" : "ê" }'::bson))                                                                                                                                 |       3
+ ^éñ(?#comment)*   | a          | indexBounds: ["a": ["é", "ê"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^éñ(?#comment)*", "options" : "" } }, { "$regularExpression" : { "pattern" : "^éñ(?#comment)*", "options" : "" } }], "b": (MinKey, MaxKey)]               |       3
+ ^éñ(?#comment)*   | arr        | indexBounds: ["arr": ["é", "ê"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^éñ(?#comment)*", "options" : "" } }, { "$regularExpression" : { "pattern" : "^éñ(?#comment)*", "options" : "" } }], "b": (MinKey, MaxKey)]           |       3
+ ^éñ(?#comment)*   | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "é" }'::bson) AND (object_id < '{ "" : "ê" }'::bson))                                                                                                                                 |       3
+ ^éñ?              | a          | indexBounds: ["a": ["é", "ê"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^éñ?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^éñ?", "options" : "" } }], "b": (MinKey, MaxKey)]                                     |       3
+ ^éñ?              | arr        | indexBounds: ["arr": ["é", "ê"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^éñ?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^éñ?", "options" : "" } }], "b": (MinKey, MaxKey)]                                 |       3
+ ^éñ?              | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "é" }'::bson) AND (object_id < '{ "" : "ê" }'::bson))                                                                                                                                 |       3
+ ^€x?              | a          | indexBounds: ["a": ["€", "₭"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^€x?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^€x?", "options" : "" } }], "b": (MinKey, MaxKey)]                                     |       3
+ ^€x?              | arr        | indexBounds: ["arr": ["€", "₭"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^€x?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^€x?", "options" : "" } }], "b": (MinKey, MaxKey)]                                 |       3
+ ^€x?              | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "€" }'::bson) AND (object_id < '{ "" : "₭" }'::bson))                                                                                                                                 |       3
+ ^😀x?             | a          | indexBounds: ["a": ["😀", "😁"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^😀x?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^😀x?", "options" : "" } }], "b": (MinKey, MaxKey)]                                 |       3
+ ^😀x?             | arr        | indexBounds: ["arr": ["😀", "😁"), "b": (MinKey, MaxKey)], ["arr": [{ "$regularExpression" : { "pattern" : "^😀x?", "options" : "" } }, { "$regularExpression" : { "pattern" : "^😀x?", "options" : "" } }], "b": (MinKey, MaxKey)]                             |       3
+ ^😀x?             | _id        | Index Cond: ((shard_key_value = '1202'::bigint) AND (object_id >= '{ "" : "😀" }'::bson) AND (object_id < '{ "" : "😁" }'::bson))                                                                                                                               |       3
+(204 rows)
+
+DROP FUNCTION pg_temp.regex_prefix_probe(text, text, text);
+DROP FUNCTION pg_temp.regex_prefix_runtime(bson);
 reset documentdb.enableExtendedExplainPlans;
 reset documentdb.forceDisableSeqScan;

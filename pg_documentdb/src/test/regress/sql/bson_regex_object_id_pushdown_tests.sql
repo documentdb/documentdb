@@ -166,6 +166,18 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
         '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^abc" } } }')
 $cmd$);
 
+-- Absolute start anchor: both regex representations should get the same btree bounds.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "\\Aabc" } } }')
+$cmd$);
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_coll", "filter": { "_id": { "$regularExpression": { "pattern": "\\Aabc", "options": "m" } } } }')
+$cmd$);
+
 -- Non-anchored: should still pushdown (with wider bounds)
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
