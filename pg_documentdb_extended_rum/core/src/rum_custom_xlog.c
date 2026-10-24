@@ -4,7 +4,8 @@
  *	  xlog utilities routines for the postgres extended rum inverted index access method.
  *    This file provides WAL (Write-Ahead Log) support for the DocumentDB RUM
  *
- * Portions Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Portions Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  * Portions Copyright (c) 2015-2022, Postgres Professional
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -193,6 +194,18 @@ extended_rum_mask(char *pagedata, BlockNumber blkno)
 	mask_page_hint_bits(page);
 
 	/*
+	 * Entry death hints and vacuum cycle IDs can change without WAL.
+	 * Cycle IDs only optimize vacuum traversal and need not match after redo.
+	 * These masks normalize comparison copies, not live index pages, so they
+	 * do not change vacuum's cycle-ID handling or backtracking.
+	 */
+	if (RumPageIsLeaf(page) && !RumPageIsData(page))
+	{
+		mask_lp_flags(page);
+	}
+	RumPageGetCycleId(page) = 0;
+
+	/*
 	 * For a RUM_DELETED page, the page is initialized to empty.  Hence, mask
 	 * the whole page content.  For other pages, mask the hole if pd_lower
 	 * appears to have been set correctly.
@@ -221,10 +234,26 @@ extended_rum_desc(StringInfo buf, XLogReaderState *record)
 			appendStringInfo(buf, "isdata: %c isleaf: %c",
 							 (xlrec->flags & GIN_INSERT_ISDATA) ? 'T' : 'F',
 							 (xlrec->flags & GIN_INSERT_ISLEAF) ? 'T' : 'F');
+			if (XLogRecHasBlockImage(record, 0))
+			{
+				if (XLogRecBlockImageApply(record, 0))
+				{
+					appendStringInfoString(buf, " (full page image)");
+				}
+				else
+				{
+					appendStringInfoString(buf,
+										   " (full page image, for WAL verification)");
+				}
+			}
+			else
+			{
+				char *payload = XLogRecGetBlockData(record, 0, NULL);
+				appendStringInfo(buf, " isdelete: %c",
+								 (((ginxlogInsertEntry *) payload)->isDelete) ? 'T' :
+								 'F');
+			}
 
-			char *payload = XLogRecGetBlockData(record, 0, NULL);
-			appendStringInfo(buf, " isdelete: %c",
-							 (((ginxlogInsertEntry *) payload)->isDelete) ? 'T' : 'F');
 			break;
 		}
 

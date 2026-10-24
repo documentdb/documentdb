@@ -48,6 +48,7 @@ RUN dnf -y swap curl-minimal curl && \
     libicu-devel \
     krb5-devel \
     perl-IPC-Run \
+    perl-JSON-PP \
     perl-Test-Harness \
     perl-Test-Simple
 

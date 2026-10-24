@@ -3,7 +3,8 @@
  * rumdebug.c
  *	  utilities routines for the postgres inverted index access method.
  *
- * Portions Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Portions Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  * Portions Copyright (c) 2015-2022, Postgres Professional
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -17,10 +18,17 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "access/rmgr.h"
+#include "access/xlog.h"
+#include "access/xlog_internal.h"
+#include "access/xlogreader.h"
+#include "access/xlogrecovery.h"
+#include "access/xlogutils.h"
 #include "miscadmin.h"
 #include "storage/indexfsm.h"
 #include "storage/lmgr.h"
 #include "utils/builtins.h"
+#include "utils/array.h"
 #include "utils/guc.h"
 #include "utils/index_selfuncs.h"
 #include "utils/lsyscache.h"
@@ -28,9 +36,11 @@
 #include "utils/typcache.h"
 #include "utils/jsonb.h"
 #include "utils/numeric.h"
+#include "utils/pg_lsn.h"
 #include "funcapi.h"
 
 #include "pg_documentdb_rum.h"
+#include "pg_documentdb_rum_xlogprivate.h"
 
 typedef struct RumPageGetEntriesContext
 {
@@ -67,6 +77,114 @@ RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_get_meta_page_info_index);
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_page_get_stats_index);
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_page_get_entries_index);
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_page_get_data_items_index);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_get_wal_insert_descriptions);
+
+
+/*
+ * TODO: Replace this test-only WAL inspection helper with pg_walinspect when
+ * it is available in the recovery test environment.
+ */
+RMGR_PG_FUNCTION_DEF(documentdb_rum_get_wal_insert_descriptions)
+{
+	if (!superuser())
+	{
+		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+						errmsg("must be superuser to inspect RUM WAL")));
+	}
+
+	XLogRecPtr startLsn = PG_GETARG_LSN(0);
+	XLogRecPtr endLsn = PG_GETARG_LSN(1);
+	XLogRecPtr availableLsn = RecoveryInProgress() ?
+							  GetXLogReplayRecPtr(NULL) : GetFlushRecPtr(NULL);
+	if (startLsn < XLOG_BLCKSZ || startLsn >= endLsn || endLsn > availableLsn)
+	{
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("invalid WAL LSN range"),
+						errdetail(
+							"The range must be nonempty and within available WAL.")));
+	}
+
+#ifdef RUM_BUILT_IN_RMGR_MODE
+	RmgrId rmgrId = RM_GIN_ID;
+#else
+	RmgrId rmgrId = RM_EXPERIMENTAL_ID;
+#endif
+	ArrayBuildState *descriptions = initArrayResult(TEXTOID, CurrentMemoryContext,
+													false);
+	StringInfoData description;
+	initStringInfo(&description);
+
+	ReadLocalXLogPageNoWaitPrivate privateData = { 0 };
+	XLogReaderState *reader = XLogReaderAllocate(wal_segment_size, NULL,
+												 XL_ROUTINE(
+													 .page_read =
+														 read_local_xlog_page_no_wait,
+													 .segment_open = wal_segment_open,
+													 .segment_close = wal_segment_close),
+												 &privateData);
+	if (reader == NULL)
+	{
+		ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY),
+						errmsg("could not allocate a WAL reader")));
+	}
+
+	PG_TRY();
+	{
+		char *findErrorMessage = NULL;
+#if PG_VERSION_NUM >= 190000
+		XLogRecPtr nextRecord = XLogFindNextRecord(reader, startLsn, &findErrorMessage);
+#else
+		XLogRecPtr nextRecord = XLogFindNextRecord(reader, startLsn);
+#endif
+		if (XLogRecPtrIsInvalid(nextRecord))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
+							errmsg("could not find a WAL record at or after %X/%X",
+								   LSN_FORMAT_ARGS(startLsn)),
+							findErrorMessage != NULL ?
+							errdetail_internal("%s", findErrorMessage) : 0));
+		}
+
+		while (reader->EndRecPtr < endLsn)
+		{
+			char *errorMessage = NULL;
+			CHECK_FOR_INTERRUPTS();
+			if (XLogReadRecord(reader, &errorMessage) == NULL)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
+								errmsg("could not read WAL at %X/%X",
+									   LSN_FORMAT_ARGS(reader->EndRecPtr)),
+								errdetail_internal("%s", errorMessage != NULL ?
+												   errorMessage :
+												   "reached the end of available WAL")));
+			}
+			if (reader->EndRecPtr > endLsn)
+			{
+				break;
+			}
+			if (XLogRecGetRmid(reader) != rmgrId ||
+				(XLogRecGetInfo(reader) & ~XLR_INFO_MASK) != XLOG_GIN_INSERT)
+			{
+				continue;
+			}
+
+			resetStringInfo(&description);
+			GetRmgr(rmgrId).rm_desc(&description, reader);
+			text *value = cstring_to_text(description.data);
+			(void) accumArrayResult(descriptions, PointerGetDatum(value), false,
+									TEXTOID, CurrentMemoryContext);
+			pfree(value);
+		}
+	}
+	PG_FINALLY();
+	{
+		XLogReaderFree(reader);
+	}
+	PG_END_TRY();
+
+	pfree(description.data);
+	PG_RETURN_DATUM(makeArrayResult(descriptions, CurrentMemoryContext));
+}
 
 
 static Page
