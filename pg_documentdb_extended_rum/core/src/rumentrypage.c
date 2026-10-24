@@ -333,10 +333,16 @@ entryScanBegin:
 	LockBuffer(nextbuffer, RUM_SHARE);
 
 	/* Sanity check that the page we stepped to is of similar kind. */
+	rumCheckTreePage(index, nextbuffer);
 	page = BufferGetPage(nextbuffer);
 	if (isLeaf != RumPageIsLeaf(page) || isData != RumPageIsData(page))
 	{
-		elog(ERROR, "right sibling of RUM page is of different type");
+		ereport(ERROR,
+				(errcode(ERRCODE_INDEX_CORRUPTED),
+				 errmsg("right sibling of RUM page is of different type"),
+				 errdetail("Index \"%s\", block %u.",
+						   RelationGetRelationName(index), blkno),
+				 errhint("Please REINDEX it.")));
 	}
 
 	/*
@@ -345,8 +351,12 @@ entryScanBegin:
 	 */
 	if (RumPageIsDeleted(page))
 	{
-		elog(ERROR, "%s sibling of RUM page was deleted",
-			 ScanDirectionIsForward(scanDirection) ? "right" : "left");
+		ereport(ERROR,
+				(errcode(ERRCODE_INDEX_CORRUPTED),
+				 errmsg("%s sibling of RUM page was deleted",
+						ScanDirectionIsForward(scanDirection) ? "right" : "left"),
+				 errdetail("Index \"%s\", block %u.",
+						   RelationGetRelationName(index), blkno)));
 	}
 
 	if (RumPageIsHalfDead(page))

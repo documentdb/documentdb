@@ -24,15 +24,51 @@ static void rumFinishOldSplit(RumBtree btree, RumBtreeStack *stack, BlockNumber 
 							  RumStatsData *buildStats, int access);
 
 /*
+ * Errors out if a page reached by following a link in the tree can't be a
+ * tree page: an all-zero page (for instance one whose WAL was lost in crash
+ * recovery) or the metapage. Without this, a corrupt link makes a tree walk
+ * spin forever, since a zero page looks like an internal page whose first
+ * child is the metapage. The caller must hold a lock on the buffer, and must
+ * call this before reading the page's flags.
+ */
+void
+rumCheckTreePage(Relation index, Buffer buffer)
+{
+	Page page = BufferGetPage(buffer);
+	BlockNumber blkno = BufferGetBlockNumber(buffer);
+
+	if (PageIsNew(page))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INDEX_CORRUPTED),
+				 errmsg("index \"%s\" contains unexpected zero page at block %u",
+						RelationGetRelationName(index), blkno),
+				 errhint("Please REINDEX it.")));
+	}
+
+	if (blkno == RUM_METAPAGE_BLKNO ||
+		(RumPageGetOpaque(page)->flags & RUM_META) != 0)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INDEX_CORRUPTED),
+				 errmsg("index \"%s\" contains a tree link to its metapage at block %u",
+						RelationGetRelationName(index), blkno),
+				 errhint("Please REINDEX it.")));
+	}
+}
+
+
+/*
  * Locks buffer by needed method for search.
  */
 static int
-rumTraverseLock(Buffer buffer, bool searchMode)
+rumTraverseLock(Relation index, Buffer buffer, bool searchMode)
 {
 	Page page;
 	int access = RUM_SHARE;
 
 	LockBuffer(buffer, RUM_SHARE);
+	rumCheckTreePage(index, buffer);
 	page = BufferGetPage(buffer);
 	if (RumPageIsLeaf(page))
 	{
@@ -70,7 +106,7 @@ rumPrepareFindLeafPage(RumBtree btree, BlockNumber blkno)
 	stack->parent = NULL;
 	stack->predictNumber = 1;
 
-	rumTraverseLock(stack->buffer, btree->searchMode);
+	rumTraverseLock(btree->index, stack->buffer, btree->searchMode);
 
 	return stack;
 }
@@ -165,7 +201,19 @@ rumFindLeafPage(RumBtree btree, RumBtreeStack *stack, bool rootConflictCheck)
 		}
 		else
 		{
-			access = rumTraverseLock(stack->buffer, btree->searchMode);
+			access = rumTraverseLock(btree->index, stack->buffer,
+									 btree->searchMode);
+		}
+
+		if (RumPageIsData(page) != btree->isData)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INDEX_CORRUPTED),
+					 errmsg("index \"%s\" has %s page at block %u in its %s tree",
+							RelationGetRelationName(btree->index),
+							RumPageIsData(page) ? "a posting" : "an entry",
+							stack->blkno, btree->isData ? "posting" : "entry"),
+					 errhint("Please REINDEX it.")));
 		}
 
 		if (RumFixIncompleteSplit && !btree->searchMode &&
@@ -217,8 +265,16 @@ rumFindLeafPage(RumBtree btree, RumBtreeStack *stack, bool rootConflictCheck)
 		child = btree->findChildPage(btree, stack);
 
 		LockBuffer(stack->buffer, RUM_UNLOCK);
-		Assert(child != InvalidBlockNumber);
-		Assert(stack->blkno != child);
+		if (child == InvalidBlockNumber || child == stack->blkno)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INDEX_CORRUPTED),
+					 errmsg(
+						 "index \"%s\" has an invalid downlink to block %u at block %u",
+						 RelationGetRelationName(btree->index), child,
+						 stack->blkno),
+					 errhint("Please REINDEX it.")));
+		}
 
 		if (btree->searchMode)
 		{
@@ -244,6 +300,14 @@ rumFindLeafPage(RumBtree btree, RumBtreeStack *stack, bool rootConflictCheck)
 			stack->buffer = ReadBuffer(btree->index, stack->blkno);
 			stack->predictNumber = 1;
 		}
+
+		/*
+		 * No buffer lock is held here: the parent is unlocked and the child
+		 * is only pinned. Let a cancel or terminate stop a descent that
+		 * doesn't end, such as one on a corrupt index; abort releases the
+		 * pins.
+		 */
+		CHECK_FOR_INTERRUPTS();
 	}
 }
 
@@ -289,10 +353,16 @@ rumStepCore(Buffer buffer, Relation index, int lockmode, ScanDirection scanDirec
 	}
 
 	/* Sanity check that the page we stepped to is of similar kind. */
+	rumCheckTreePage(index, nextbuffer);
 	page = BufferGetPage(nextbuffer);
 	if (isLeaf != RumPageIsLeaf(page) || isData != RumPageIsData(page))
 	{
-		elog(ERROR, "right sibling of RUM page is of different type");
+		ereport(ERROR,
+				(errcode(ERRCODE_INDEX_CORRUPTED),
+				 errmsg("right sibling of RUM page is of different type"),
+				 errdetail("Index \"%s\", block %u.",
+						   RelationGetRelationName(index), blkno),
+				 errhint("Please REINDEX it.")));
 	}
 
 	/*
@@ -301,8 +371,12 @@ rumStepCore(Buffer buffer, Relation index, int lockmode, ScanDirection scanDirec
 	 */
 	if (RumPageIsDeleted(page))
 	{
-		elog(ERROR, "%s sibling of RUM page was deleted",
-			 ScanDirectionIsForward(scanDirection) ? "right" : "left");
+		ereport(ERROR,
+				(errcode(ERRCODE_INDEX_CORRUPTED),
+				 errmsg("%s sibling of RUM page was deleted",
+						ScanDirectionIsForward(scanDirection) ? "right" : "left"),
+				 errdetail("Index \"%s\", block %u.",
+						   RelationGetRelationName(index), blkno)));
 	}
 
 	return nextbuffer;
@@ -419,9 +493,15 @@ rumFindParents(RumBtree btree, RumBtreeStack *stack,
 	for (;;)
 	{
 		LockBuffer(buffer, RUM_EXCLUSIVE);
+		rumCheckTreePage(btree->index, buffer);
 		page = BufferGetPage(buffer);
 		if (RumPageIsLeaf(page))
 		{
+			/*
+			 * Stays an internal error: GetWriteErrorFromErrorData() matches
+			 * this code and message and turns it into a retryable
+			 * ERRCODE_INDEX_LOSTPATH.
+			 */
 			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 							errmsg("Lost path"),
 							errdetail_log("Lost path on index %u while finding the "
@@ -764,7 +844,15 @@ rumPlaceToPage(RumBtree btree, RumBtreeStack *stack,
 				state = GenericXLogStart(btree->index);
 
 				lpage = GenericXLogRegisterBuffer(state, stack->buffer, 0);
-				rpage = GenericXLogRegisterBuffer(state, rbuffer, 0);
+
+				/*
+				 * rbuffer is a fresh page from RumNewBuffer(): log a full image
+				 * rather than a delta. A delta against a page that was never
+				 * written out is skipped by redo, and with full_page_writes = off
+				 * that leaves an all-zero page in the tree after crash recovery.
+				 */
+				rpage = GenericXLogRegisterBuffer(state, rbuffer,
+												  GENERIC_XLOG_FULL_IMAGE);
 			}
 
 			rightrightBlkno = RumPageGetOpaque(lpage)->rightlink;

@@ -2400,6 +2400,7 @@ entryGetNextItem(RumState *rumstate, RumScanEntry entry, Snapshot snapshot,
 			newBlock = btree.getLeftMostPage(&btree, page);
 			newBuffer = ReadBuffer(btree.index, newBlock);
 			LockBuffer(newBuffer, RUM_SHARE);
+			rumCheckTreePage(btree.index, newBuffer);
 			UnlockReleaseBuffer(entry->buffer);
 			entry->buffer = newBuffer;
 			page = BufferGetPage(entry->buffer);
@@ -3538,6 +3539,7 @@ entryFindItem(RumState *rumstate, RumScanEntry entry, RumItem *item, Snapshot sn
 		newBlock = btree.getLeftMostPage(&btree, page);
 		newBuffer = ReadBuffer(btree.index, newBlock);
 		LockBuffer(newBuffer, RUM_SHARE);
+		rumCheckTreePage(btree.index, newBuffer);
 		UnlockReleaseBuffer(entry->buffer);
 		entry->buffer = newBuffer;
 		page = BufferGetPage(entry->buffer);
