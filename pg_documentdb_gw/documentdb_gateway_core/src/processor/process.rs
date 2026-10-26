@@ -495,7 +495,12 @@ mod tests {
         document: &RawDocumentBuf,
     ) -> Result<Response> {
         let config = connection.dynamic_configuration();
-        let request = reader::parse_cmd(document, None, config.enable_read_concern_validation())?;
+        let request = reader::parse_cmd(
+            document,
+            None,
+            config.enable_read_concern_validation(),
+            config.enable_write_concern_validation(),
+        )?;
         let tracker = RequestTracker::new();
         let context = RequestContext::new("validation-guards-test", &request, &tracker);
         let client = DocumentDBDataClient::new_unauthorized(&connection.service_context)?;

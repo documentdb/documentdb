@@ -70,6 +70,10 @@ bool EnableGetMoreArgumentValidation = DEFAULT_ENABLE_GETMORE_ARGUMENT_VALIDATIO
 #define DEFAULT_ENABLE_SERVER_STATUS_COMMAND true
 bool EnableServerStatusCommand = DEFAULT_ENABLE_SERVER_STATUS_COMMAND;
 
+/* Added on v1.2, enabled on v1.2, remove after v1.4 */
+#define DEFAULT_ENABLE_WRITE_CONCERN_VALIDATION true
+bool EnableWriteConcernValidation = DEFAULT_ENABLE_WRITE_CONCERN_VALIDATION;
+
 /*
  * SECTION: Text search flags
  */
@@ -876,6 +880,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableNullCollectionValidation,
 		DEFAULT_ENABLE_NULL_COLLECTION_VALIDATION,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_write_concern_validation", prefix),
+		gettext_noop(
+			"Whether or not to enforce writeConcern field and sub-field validation in the gateways."),
+		NULL,
+		&EnableWriteConcernValidation,
+		DEFAULT_ENABLE_WRITE_CONCERN_VALIDATION,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

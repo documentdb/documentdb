@@ -30,6 +30,11 @@ pub(crate) const SOCKET_CONNECTION_IDLE_TIMEOUT_KEY: &str = "SocketConnectionIdl
 pub(crate) const SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS: u64 = 18_000;
 pub const ENABLE_REQUEST_METRICS_KEY: &str = "enable_request_metrics";
 
+/// Dynamic-configuration key gating writeConcern field and sub-field validation
+/// during request parsing. When the value is `false`, the writeConcern argument
+/// is accepted without validation, restoring the pre-validation behavior.
+pub(crate) const ENABLE_WRITE_CONCERN_VALIDATION_KEY: &str = "enable_write_concern_validation";
+
 /// Dynamic-configuration key controlling whether a connection is closed
 /// gracefully once the server certificate is rotated on disk.
 pub(crate) const ENABLE_GRACEFUL_CLOSURE_ON_CERT_ROTATION_KEY: &str =

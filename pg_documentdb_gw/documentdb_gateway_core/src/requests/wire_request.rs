@@ -461,9 +461,9 @@ impl WireRequest<'static> {
 
         let common = {
             // Internally-constructed owned command documents (legacy OP_INSERT, cursor
-            // continuation) do not carry a client readConcern, so validation state is
+            // continuation) do not carry client concerns, so validation state is
             // immaterial here; use the validating path to match prior behavior.
-            let common = extract_info_from_document(&command, request_type, true)?;
+            let common = extract_info_from_document(&command, request_type, true, true)?;
             StrictRequestInfo::try_from_info(common)?.into_owned_metadata()
         };
         Ok(Self::from_owned_command(

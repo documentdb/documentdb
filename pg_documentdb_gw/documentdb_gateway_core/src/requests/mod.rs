@@ -18,6 +18,7 @@ pub mod read_preference;
 pub mod request_tracker;
 pub mod request_type;
 pub mod validation;
+pub mod write_concern;
 
 pub(crate) use common_fields::extract_request_type_and_info_from_document;
 pub(crate) use info::StrictRequestInfo;

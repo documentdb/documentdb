@@ -82,7 +82,7 @@ async fn invoke(
         "$db": "admin",
     };
     let request = Request::RawBuf(request_type, build_raw_document(&command));
-    let info = request.extract_common(true).unwrap();
+    let info = request.extract_common(true, true).unwrap();
     let wire = WireRequest::from_request_and_info(&request, info);
     let tracker = RequestTracker::new();
     let context = RequestContext::new("auth-test", &wire, &tracker);
