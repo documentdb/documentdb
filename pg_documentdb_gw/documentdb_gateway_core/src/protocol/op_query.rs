@@ -27,18 +27,28 @@ struct QueryCommand<'a> {
 ///
 /// # Errors
 /// Returns an error if the message is malformed or cannot be parsed.
-pub fn parse_query(message: &[u8], read_concern_validation: bool) -> Result<WireRequest<'_>> {
+pub fn parse_query(
+    message: &[u8],
+    read_concern_validation: bool,
+    write_concern_validation: bool,
+) -> Result<WireRequest<'_>> {
     let command = parse_query_document(message)?;
 
     if command.collection_name == "$cmd" {
         if has_database_name(command.document) {
-            return reader::parse_cmd(command.document, None, read_concern_validation);
+            return reader::parse_cmd(
+                command.document,
+                None,
+                read_concern_validation,
+                write_concern_validation,
+            );
         }
 
         return parse_cmd_with_db(
             command.document,
             command.database_name,
             read_concern_validation,
+            write_concern_validation,
         );
     }
 
@@ -136,8 +146,13 @@ fn parse_cmd_with_db(
     query: &RawDocument,
     db: &str,
     read_concern_validation: bool,
+    write_concern_validation: bool,
 ) -> Result<WireRequest<'static>> {
-    reader::parse_cmd_buf(build_command_with_db(query, db)?, read_concern_validation)
+    reader::parse_cmd_buf(
+        build_command_with_db(query, db)?,
+        read_concern_validation,
+        write_concern_validation,
+    )
 }
 
 fn parse_cmd_payload_with_db(query: &RawDocument, db: &str) -> Result<RequestPreview<'static>> {
@@ -194,7 +209,7 @@ mod tests {
         let command = rawdoc! { "find": "myCollection", "filter": {} };
         let msg = build_op_query_message("testdb.$cmd", command.as_bytes());
 
-        let request = parse_query(&msg, true).expect("should parse OP_QUERY");
+        let request = parse_query(&msg, true, true).expect("should parse OP_QUERY");
         assert_eq!(request.db(), "testdb");
         assert_eq!(request.document().get_str("$db").unwrap(), "testdb");
         assert_eq!(request.request_type(), RequestType::Find);
@@ -205,7 +220,7 @@ mod tests {
         let command = rawdoc! { "find": "myCollection", "$db": "fromBody" };
         let msg = build_op_query_message("wiredb.$cmd", command.as_bytes());
 
-        let request = parse_query(&msg, true).expect("should parse OP_QUERY");
+        let request = parse_query(&msg, true, true).expect("should parse OP_QUERY");
         assert_eq!(request.db(), "fromBody");
     }
 
@@ -214,7 +229,7 @@ mod tests {
         let command = rawdoc! { "find": "myCollection" };
         let msg = build_op_query_message("testdb.regularCollection", command.as_bytes());
 
-        let error = parse_query(&msg, true).expect_err("non-$cmd OP_QUERY should fail");
+        let error = parse_query(&msg, true, true).expect_err("non-$cmd OP_QUERY should fail");
         assert_eq!(
             error.error_code(),
             crate::error::ErrorCode::CommandNotSupported
@@ -226,7 +241,7 @@ mod tests {
         let command = rawdoc! { "find": "myCollection", "$db": 42 };
         let msg = build_op_query_message("testdb.$cmd", command.as_bytes());
 
-        parse_query(&msg, true).expect_err("non-string $db should be rejected");
+        parse_query(&msg, true, true).expect_err("non-string $db should be rejected");
     }
 
     #[test]
@@ -234,8 +249,92 @@ mod tests {
         // Fewer than 4 bytes: too short to even hold the flags field.
         let msg = vec![0_u8; 2];
 
-        let error = parse_query(&msg, true).expect_err("truncated OP_QUERY frame should fail");
+        let error =
+            parse_query(&msg, true, true).expect_err("truncated OP_QUERY frame should fail");
         assert_eq!(error.error_code(), crate::error::ErrorCode::InvalidLength);
+    }
+
+    #[test]
+    fn op_query_read_and_write_concern_validation_are_independent() {
+        for read_enabled in [false, true] {
+            for write_enabled in [false, true] {
+                for invalid_read_concern in [false, true] {
+                    for include_db in [false, true] {
+                        let mut command = if invalid_read_concern {
+                            rawdoc! {
+                                "find": "items",
+                                "readConcern": { "level": "invalid" }, "writeConcern": { "w": 1 },
+                            }
+                        } else {
+                            rawdoc! {
+                                "find": "items",
+                                "readConcern": { "level": "local" }, "writeConcern": { "w": 51 },
+                            }
+                        };
+                        if include_db {
+                            command.append("$db", "testdb");
+                        }
+                        let msg = build_op_query_message("testdb.$cmd", command.as_bytes());
+                        let result = parse_query(&msg, read_enabled, write_enabled);
+                        let enabled = if invalid_read_concern {
+                            read_enabled
+                        } else {
+                            write_enabled
+                        };
+                        if enabled {
+                            let error = result
+                                .expect_err("enabled concern validation must reject invalid input");
+                            assert_eq!(
+                                error.error_code(),
+                                if invalid_read_concern {
+                                    ErrorCode::BadValue
+                                } else {
+                                    ErrorCode::FailedToParse
+                                },
+                            );
+                        } else {
+                            result
+                                .expect("disabled concern validation must tolerate invalid input");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn op_query_write_concern_validation_follows_dynamic_config() {
+        use crate::{configuration::DynamicConfiguration, testing::TestDynamicConfiguration};
+
+        // A malformed writeConcern (`w` out of range) that strict validation
+        // rejects with FailedToParse.
+        let command = rawdoc! {
+            "insert": "myCollection",
+            "$db": "testdb",
+            "writeConcern": { "w": 51_i32 },
+        };
+        let msg = build_op_query_message("testdb.$cmd", command.as_bytes());
+
+        // Default config has the kill switch enabled, so parsing rejects it.
+        let enabled = TestDynamicConfiguration::default();
+        parse_query(
+            &msg,
+            enabled.enable_read_concern_validation(),
+            enabled.enable_write_concern_validation(),
+        )
+        .expect_err("malformed writeConcern should be rejected when validation is enabled");
+
+        // Flipping the kill switch off restores the permissive pre-validation
+        // behavior and the same command parses successfully.
+        let disabled = TestDynamicConfiguration::default();
+        disabled.set_enable_write_concern_validation(false);
+        let request = parse_query(
+            &msg,
+            disabled.enable_read_concern_validation(),
+            disabled.enable_write_concern_validation(),
+        )
+        .expect("malformed writeConcern should be accepted when validation is disabled");
+        assert_eq!(request.request_type(), RequestType::Insert);
     }
 
     #[test]

@@ -14,7 +14,8 @@ use crate::{
     configuration::{
         Version, CONNECTION_GRACEFUL_CLOSURE_INTERVAL_DEFAULT_SECS,
         CONNECTION_GRACEFUL_CLOSURE_INTERVAL_SEC_KEY, ENABLE_GRACEFUL_CLOSURE_ON_CERT_ROTATION_KEY,
-        SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS, SOCKET_CONNECTION_IDLE_TIMEOUT_KEY,
+        ENABLE_WRITE_CONCERN_VALIDATION_KEY, SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS,
+        SOCKET_CONNECTION_IDLE_TIMEOUT_KEY,
     },
     postgres::conn_mgmt,
 };
@@ -114,6 +115,14 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
 
     fn enable_connection_status(&self) -> bool {
         self.get_bool("enableConnectionStatus", true)
+    }
+
+    /// Whether writeConcern field and sub-field validation is enforced during
+    /// request parsing. When disabled, the writeConcern argument is accepted
+    /// without validation, restoring the behavior that preceded strict
+    /// writeConcern validation.
+    fn enable_write_concern_validation(&self) -> bool {
+        self.get_bool(ENABLE_WRITE_CONCERN_VALIDATION_KEY, true)
     }
 
     fn enable_bson_type_argument_validation(&self) -> bool {

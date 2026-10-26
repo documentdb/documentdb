@@ -20,10 +20,10 @@ use bson::{rawbson, RawBson};
 
 use crate::configuration::{
     DynamicConfiguration, CONNECTION_GRACEFUL_CLOSURE_INTERVAL_SEC_KEY,
-    ENABLE_GRACEFUL_CLOSURE_ON_CERT_ROTATION_KEY, MAX_REQUEST_TIMEOUT_DEFAULT_SEC,
-    MAX_REQUEST_TIMEOUT_SEC_KEY, SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS,
-    SOCKET_CONNECTION_IDLE_TIMEOUT_KEY, TRANSACTION_TIMEOUT_DEFAULT_SEC,
-    TRANSACTION_TIMEOUT_SEC_KEY,
+    ENABLE_GRACEFUL_CLOSURE_ON_CERT_ROTATION_KEY, ENABLE_WRITE_CONCERN_VALIDATION_KEY,
+    MAX_REQUEST_TIMEOUT_DEFAULT_SEC, MAX_REQUEST_TIMEOUT_SEC_KEY,
+    SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS, SOCKET_CONNECTION_IDLE_TIMEOUT_KEY,
+    TRANSACTION_TIMEOUT_DEFAULT_SEC, TRANSACTION_TIMEOUT_SEC_KEY,
 };
 
 const UNSET_U64: u64 = u64::MAX;
@@ -34,6 +34,7 @@ pub struct TestDynamicConfiguration {
     send_shutdown_responses: AtomicBool,
     allow_transaction_snapshot: AtomicBool,
     enable_role_crud: AtomicBool,
+    enable_write_concern_validation: AtomicBool,
     socket_connection_idle_timeout_sec: AtomicU64,
     enable_graceful_closure_on_cert_rotation: AtomicBool,
     connection_graceful_closure_interval_sec: AtomicU64,
@@ -46,6 +47,7 @@ impl Default for TestDynamicConfiguration {
             send_shutdown_responses: AtomicBool::new(false),
             allow_transaction_snapshot: AtomicBool::new(false),
             enable_role_crud: AtomicBool::new(false),
+            enable_write_concern_validation: AtomicBool::new(true),
             socket_connection_idle_timeout_sec: AtomicU64::new(UNSET_U64),
             enable_graceful_closure_on_cert_rotation: AtomicBool::new(false),
             connection_graceful_closure_interval_sec: AtomicU64::new(UNSET_U64),
@@ -67,6 +69,11 @@ impl TestDynamicConfiguration {
 
     pub fn set_enable_role_crud(&self, value: bool) {
         self.enable_role_crud.store(value, Ordering::Relaxed);
+    }
+
+    pub fn set_enable_write_concern_validation(&self, value: bool) {
+        self.enable_write_concern_validation
+            .store(value, Ordering::Relaxed);
     }
 
     pub fn set_socket_connection_idle_timeout_sec(&self, value: u64) {
@@ -101,6 +108,9 @@ impl DynamicConfiguration for TestDynamicConfiguration {
         }
         match key {
             "enableRoleCrud" => self.enable_role_crud.load(Ordering::Relaxed),
+            ENABLE_WRITE_CONCERN_VALIDATION_KEY => {
+                self.enable_write_concern_validation.load(Ordering::Relaxed)
+            }
             "SendShutdownResponses" => self.send_shutdown_responses.load(Ordering::Relaxed),
             ENABLE_GRACEFUL_CLOSURE_ON_CERT_ROTATION_KEY => self
                 .enable_graceful_closure_on_cert_rotation
@@ -192,5 +202,20 @@ mod tests {
         config.set_socket_connection_idle_timeout_sec(42);
 
         assert_eq!(config.socket_connection_idle_timeout_sec(), 42);
+    }
+
+    #[test]
+    fn enable_write_concern_validation_defaults_to_true() {
+        let config = TestDynamicConfiguration::default();
+
+        assert!(config.enable_write_concern_validation());
+    }
+
+    #[test]
+    fn enable_write_concern_validation_honors_override() {
+        let config = TestDynamicConfiguration::default();
+        config.set_enable_write_concern_validation(false);
+
+        assert!(!config.enable_write_concern_validation());
     }
 }

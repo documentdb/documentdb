@@ -19,6 +19,7 @@ use crate::{
         read_concern::{self, ReadConcern},
         read_preference::ReadPreference,
         request_type::RequestType,
+        write_concern,
     },
 };
 
@@ -77,6 +78,7 @@ pub fn extract_info_from_document(
     document: &RawDocument,
     request_type: RequestType,
     read_concern_validation: bool,
+    write_concern_validation: bool,
 ) -> Result<RequestInfo<'_>> {
     let mut request_info = RequestInfo::builder();
     let collection_field = collection_fields_for(request_type);
@@ -91,6 +93,7 @@ pub fn extract_info_from_document(
             &field,
             collection_field,
             read_concern_validation,
+            write_concern_validation,
         )
     })?;
 
@@ -106,6 +109,7 @@ pub fn extract_info_from_document(
 pub fn extract_request_type_and_info_from_document(
     document: &RawDocument,
     read_concern_validation: bool,
+    write_concern_validation: bool,
 ) -> Result<(RequestType, RequestInfo<'_>)> {
     let mut request_info = RequestInfo::builder();
     let mut request_type = None;
@@ -129,6 +133,7 @@ pub fn extract_request_type_and_info_from_document(
             &field,
             collection_fields_for(current_request_type),
             read_concern_validation,
+            write_concern_validation,
         )
     })?;
 
@@ -145,6 +150,7 @@ fn extract_common_field<'a>(
     field: &RawField<'a>,
     collection_field: &[&str],
     read_concern_validation: bool,
+    write_concern_validation: bool,
 ) -> Result<()> {
     match key {
         "$db" => {
@@ -276,6 +282,11 @@ fn extract_common_field<'a>(
                 request_info.read_concern(read_concern);
             }
         }
+        "writeConcern" => {
+            if write_concern_validation {
+                write_concern::validate(field)?;
+            }
+        }
         "$readPreference" => {
             ReadPreference::parse(field.as_embedded_document_bytes())?;
         }
@@ -332,7 +343,7 @@ mod tests {
         );
 
         let info = request
-            .extract_common(true)
+            .extract_common(true, true)
             .expect("common fields should extract from document with ignored fields");
 
         assert_eq!(info.db().expect("$db should be present"), "admin");
@@ -350,7 +361,7 @@ mod tests {
         );
 
         request
-            .extract_common(true)
+            .extract_common(true, true)
             .expect_err("non-binary lsid.id should be rejected");
     }
 
@@ -372,7 +383,7 @@ mod tests {
         );
 
         request
-            .extract_common(true)
+            .extract_common(true, true)
             .expect_err("first lsid.id field controls type validation");
     }
 
@@ -389,7 +400,7 @@ mod tests {
         );
 
         let error = request
-            .extract_common(true)
+            .extract_common(true, true)
             .expect_err("txnNumber without lsid should be rejected");
 
         assert_eq!(error.error_code(), ErrorCode::InvalidOptions);
@@ -413,7 +424,7 @@ mod tests {
         };
         let request = Request::RawBuf(RequestType::GetMore, build_raw(&doc));
         let info = request
-            .extract_common(true)
+            .extract_common(true, true)
             .expect("extract_common should succeed");
 
         assert_eq!(
@@ -431,7 +442,7 @@ mod tests {
         };
         let request = Request::RawBuf(RequestType::GetMore, build_raw(&doc));
         let info = request
-            .extract_common(true)
+            .extract_common(true, true)
             .expect("extract_common should succeed");
 
         assert!(
@@ -449,7 +460,7 @@ mod tests {
         };
         let request = Request::RawBuf(RequestType::Find, build_raw(&doc));
         let info = request
-            .extract_common(true)
+            .extract_common(true, true)
             .expect("extract_common should succeed");
 
         assert_eq!(
@@ -467,7 +478,7 @@ mod tests {
             "maxTimeMS": 500_i32,
         };
 
-        let (request_type, info) = extract_request_type_and_info_from_document(&doc, true)
+        let (request_type, info) = extract_request_type_and_info_from_document(&doc, true, true)
             .expect("request metadata should parse");
 
         assert_eq!(request_type, RequestType::Find);
@@ -483,7 +494,7 @@ mod tests {
     fn extract_request_type_and_info_rejects_empty_document() {
         let doc = rawdoc! {};
 
-        extract_request_type_and_info_from_document(&doc, true)
+        extract_request_type_and_info_from_document(&doc, true, true)
             .expect_err("empty command document should be rejected");
     }
 

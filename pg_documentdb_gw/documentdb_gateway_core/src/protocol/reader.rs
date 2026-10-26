@@ -143,15 +143,25 @@ pub fn parse_request<'a>(
     message: &'a RequestMessage,
     requires_response: &mut bool,
     read_concern_validation: bool,
+    write_concern_validation: bool,
 ) -> Result<WireRequest<'a>> {
     // Parse the specific message based on OpCode
     let request = match message.op_code() {
-        OpCode::Msg => parse_msg(message, requires_response, read_concern_validation)?,
+        OpCode::Msg => parse_msg(
+            message,
+            requires_response,
+            read_concern_validation,
+            write_concern_validation,
+        )?,
         #[expect(
             deprecated,
             reason = "OP_QUERY is still supported for legacy clients and testing"
         )]
-        OpCode::Query => op_query::parse_query(message.request(), read_concern_validation)?,
+        OpCode::Query => op_query::parse_query(
+            message.request(),
+            read_concern_validation,
+            write_concern_validation,
+        )?,
         #[expect(
             deprecated,
             reason = "OP_INSERT is still supported for legacy clients and testing"
@@ -246,6 +256,7 @@ fn parse_msg<'a>(
     message: &'a RequestMessage,
     requires_response: &mut bool,
     read_concern_validation: bool,
+    write_concern_validation: bool,
 ) -> Result<WireRequest<'a>> {
     let reader = Cursor::new(message.request_as_u8());
     let msg: Message = Message::read_from_op_msg(reader, message.response_to())?;
@@ -260,7 +271,12 @@ fn parse_msg<'a>(
         .command
         .ok_or_else(|| DocumentDBError::bad_value("Message had no command document".to_owned()))?;
 
-    parse_cmd_from_message(command, msg.extra.as_ref(), read_concern_validation)
+    parse_cmd_from_message(
+        command,
+        msg.extra.as_ref(),
+        read_concern_validation,
+        write_concern_validation,
+    )
 }
 
 fn parse_msg_payload<'a>(
@@ -317,19 +333,28 @@ pub fn parse_cmd<'a>(
     command: &'a RawDocument,
     extra: Option<&'a [u8]>,
     read_concern_validation: bool,
+    write_concern_validation: bool,
 ) -> Result<WireRequest<'a>> {
-    parse_cmd_core(command, extra, read_concern_validation, |_| Ok(()))
+    parse_cmd_core(
+        command,
+        extra,
+        read_concern_validation,
+        write_concern_validation,
+        |_| Ok(()),
+    )
 }
 
 fn parse_cmd_from_message<'a>(
     command: &'a RawDocument,
     extra: Option<&MessageSection<'a>>,
     read_concern_validation: bool,
+    write_concern_validation: bool,
 ) -> Result<WireRequest<'a>> {
     parse_cmd_core(
         command,
         extra.map(MessageSection::as_bytes),
         read_concern_validation,
+        write_concern_validation,
         |request_type| validate_sequence_identifier(request_type, extra),
     )
 }
@@ -347,13 +372,17 @@ fn parse_cmd_core<'a, F>(
     command: &'a RawDocument,
     extra: Option<&'a [u8]>,
     read_concern_validation: bool,
+    write_concern_validation: bool,
     validate_extra: F,
 ) -> Result<WireRequest<'a>>
 where
     F: FnOnce(RequestType) -> Result<()>,
 {
-    let (request_type, common) =
-        extract_request_type_and_info_from_document(command, read_concern_validation)?;
+    let (request_type, common) = extract_request_type_and_info_from_document(
+        command,
+        read_concern_validation,
+        write_concern_validation,
+    )?;
     let common = StrictRequestInfo::try_from_info(common)?;
     validate_extra(request_type)?;
     let execution = execution_for(request_type, command, &common);
@@ -423,9 +452,13 @@ pub(crate) fn parse_cmd_payload_with_db<'a>(
 pub(crate) fn parse_cmd_buf(
     command: RawDocumentBuf,
     read_concern_validation: bool,
+    write_concern_validation: bool,
 ) -> Result<WireRequest<'static>> {
-    let (request_type, common) =
-        extract_request_type_and_info_from_document(command.as_ref(), read_concern_validation)?;
+    let (request_type, common) = extract_request_type_and_info_from_document(
+        command.as_ref(),
+        read_concern_validation,
+        write_concern_validation,
+    )?;
     let common = StrictRequestInfo::try_from_info(common)?;
     let (execution_mode, target_collection) = {
         let execution = execution_for(request_type, command.as_ref(), &common);
@@ -528,9 +561,12 @@ mod tests {
     use bytes::Bytes;
 
     use super::*;
-    use crate::testing::{
-        build_document_section, build_document_sequence_section, build_op_msg_parts_with_sections,
-        build_raw_document,
+    use crate::{
+        error::ErrorCode,
+        testing::{
+            build_document_section, build_document_sequence_section,
+            build_op_msg_parts_with_sections, build_raw_document,
+        },
     };
 
     /// Builds an `OP_MSG` wire-format `RequestMessage` from a BSON command document.
@@ -564,7 +600,7 @@ mod tests {
         let msg = make_op_msg(&doc);
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response, true).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true, true).unwrap();
         assert_eq!(request.request_type(), RequestType::Find);
         let frame = request
             .frame()
@@ -582,7 +618,7 @@ mod tests {
         let msg = make_op_msg(&doc);
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response, true).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true, true).unwrap();
         assert_eq!(request.request_type(), RequestType::Aggregate);
     }
 
@@ -616,7 +652,7 @@ mod tests {
         let msg = make_op_msg_from_body(body, header.request_id());
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response, true).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true, true).unwrap();
 
         assert_eq!(request.request_type(), RequestType::Insert);
         assert_eq!(request.extra().unwrap(), raw_documents_bytes(&documents));
@@ -634,7 +670,7 @@ mod tests {
         let msg = make_op_msg_from_body(body, header.request_id());
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response, true).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true, true).unwrap();
 
         assert_eq!(request.request_type(), RequestType::Update);
         assert_eq!(request.extra().unwrap(), raw_documents_bytes(&updates));
@@ -651,7 +687,7 @@ mod tests {
         let msg = make_op_msg_from_body(body, header.request_id());
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response, true).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true, true).unwrap();
 
         assert_eq!(request.request_type(), RequestType::Delete);
         assert_eq!(request.extra().unwrap(), raw_documents_bytes(&deletes));
@@ -668,7 +704,7 @@ mod tests {
         let msg = make_op_msg_from_body(body, header.request_id());
         let mut requires_response = true;
 
-        parse_request(&msg, &mut requires_response, true)
+        parse_request(&msg, &mut requires_response, true, true)
             .expect_err("insert must reject non-documents sequence identifier");
     }
 
@@ -697,7 +733,7 @@ mod tests {
         let msg = make_op_msg_from_body(body, header.request_id());
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response, true).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true, true).unwrap();
 
         assert_eq!(request.request_type(), RequestType::Find);
         assert_eq!(
@@ -721,7 +757,7 @@ mod tests {
         let msg = make_op_msg_from_body(body, header.request_id());
         let mut requires_response = true;
 
-        parse_request(&msg, &mut requires_response, true)
+        parse_request(&msg, &mut requires_response, true, true)
             .expect_err("too many OP_MSG sections should be rejected");
         assert!(requires_response);
     }
@@ -734,7 +770,7 @@ mod tests {
         let msg = make_op_msg_from_body(body, header.request_id());
         let mut requires_response = true;
 
-        parse_request(&msg, &mut requires_response, true).unwrap_err();
+        parse_request(&msg, &mut requires_response, true, true).unwrap_err();
     }
 
     #[test]
@@ -747,7 +783,7 @@ mod tests {
         let msg = make_op_msg_from_body(body, header.request_id());
         let mut requires_response = true;
 
-        parse_request(&msg, &mut requires_response, true).unwrap_err();
+        parse_request(&msg, &mut requires_response, true, true).unwrap_err();
     }
 
     #[test]
@@ -763,7 +799,7 @@ mod tests {
         let msg = make_op_msg_from_body(body, header.request_id());
         let mut requires_response = true;
 
-        parse_request(&msg, &mut requires_response, true).unwrap_err();
+        parse_request(&msg, &mut requires_response, true, true).unwrap_err();
     }
 
     #[test]
@@ -778,7 +814,7 @@ mod tests {
         let msg = make_op_msg_from_body(body, header.request_id());
         let mut requires_response = true;
 
-        parse_request(&msg, &mut requires_response, true).unwrap_err();
+        parse_request(&msg, &mut requires_response, true, true).unwrap_err();
     }
 
     #[test]
@@ -791,7 +827,7 @@ mod tests {
         let msg = make_op_msg(&doc);
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response, true).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true, true).unwrap();
         assert_eq!(request.request_type(), RequestType::Explain);
     }
 
@@ -804,7 +840,7 @@ mod tests {
         let msg = make_op_msg(&doc);
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response, true).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true, true).unwrap();
         let target = request.explain_target().unwrap();
 
         assert_eq!(target.request_type(), RequestType::Find);
@@ -820,7 +856,7 @@ mod tests {
         let msg = make_op_msg(&doc);
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response, true).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true, true).unwrap();
         let target = request.explain_target().unwrap();
 
         assert_eq!(target.request_type(), RequestType::Aggregate);
@@ -836,7 +872,7 @@ mod tests {
         let msg = make_op_msg(&doc);
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response, true).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true, true).unwrap();
 
         assert_eq!(request.request_type(), RequestType::Explain);
         assert_eq!(request.execution_mode(), RequestExecutionMode::Normal);
@@ -862,7 +898,7 @@ mod tests {
         let msg = make_op_msg(&doc);
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response, true).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true, true).unwrap();
         // parse_request returns Find (first element determines type)
         assert_eq!(request.request_type(), RequestType::Find);
 
@@ -883,7 +919,7 @@ mod tests {
         let msg = make_op_msg(&doc);
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response, true).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true, true).unwrap();
         assert!(!request.is_explain());
         assert_eq!(request.execution_request_type(), RequestType::Find);
         assert_eq!(request.db(), "testdb");
@@ -899,7 +935,7 @@ mod tests {
         let msg = make_op_msg(&doc);
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response, true).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true, true).unwrap();
         assert!(!request.is_explain());
         assert_eq!(request.execution_request_type(), RequestType::Aggregate);
     }
@@ -921,7 +957,7 @@ mod tests {
         let mut requires_response = true;
 
         // This must NOT panic (previously hit unreachable!())
-        let request = parse_request(&msg, &mut requires_response, true).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true, true).unwrap();
         assert_eq!(request.request_type(), RequestType::Insert);
         let frame = request
             .frame()
@@ -940,7 +976,7 @@ mod tests {
         let msg = make_op_msg(&doc);
         let mut requires_response = true;
 
-        let request = parse_request(&msg, &mut requires_response, true).unwrap();
+        let request = parse_request(&msg, &mut requires_response, true, true).unwrap();
         assert_eq!(request.db(), "myapp");
         assert_eq!(request.max_time_ms(), Some(3000));
         assert!(!request.is_explain());
@@ -949,13 +985,96 @@ mod tests {
     #[test]
     fn parse_cmd_empty_document_returns_error() {
         let doc = rawdoc! {};
-        parse_cmd(&doc, None, true).unwrap_err();
+        parse_cmd(&doc, None, true, true).unwrap_err();
     }
 
     #[test]
     fn parse_cmd_unknown_command_returns_error() {
         let doc = rawdoc! { "unknownCommand": 1 };
-        parse_cmd(&doc, None, true).unwrap_err();
+        parse_cmd(&doc, None, true, true).unwrap_err();
+    }
+
+    #[test]
+    fn read_and_write_concern_validation_are_independent() {
+        for read_enabled in [false, true] {
+            for write_enabled in [false, true] {
+                for invalid_read_concern in [false, true] {
+                    let doc = if invalid_read_concern {
+                        rawdoc! {
+                            "find": "items", "$db": "testdb",
+                            "readConcern": { "level": "invalid" }, "writeConcern": { "w": 1 },
+                        }
+                    } else {
+                        rawdoc! {
+                            "find": "items", "$db": "testdb",
+                            "readConcern": { "level": "local" }, "writeConcern": { "w": 51 },
+                        }
+                    };
+                    let msg = make_op_msg(&doc);
+                    let mut requires_response = true;
+                    let result =
+                        parse_request(&msg, &mut requires_response, read_enabled, write_enabled);
+                    let enabled = if invalid_read_concern {
+                        read_enabled
+                    } else {
+                        write_enabled
+                    };
+                    if enabled {
+                        let error = result
+                            .expect_err("enabled concern validation must reject invalid input");
+                        assert_eq!(
+                            error.error_code(),
+                            if invalid_read_concern {
+                                ErrorCode::BadValue
+                            } else {
+                                ErrorCode::FailedToParse
+                            },
+                        );
+                    } else {
+                        result.expect("disabled concern validation must tolerate invalid input");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn parse_request_write_concern_validation_follows_dynamic_config() {
+        use crate::{configuration::DynamicConfiguration, testing::TestDynamicConfiguration};
+
+        // A malformed writeConcern (`w` out of range) that strict validation
+        // rejects with FailedToParse.
+        let doc = rawdoc! {
+            "insert": "mycoll",
+            "$db": "testdb",
+            "writeConcern": { "w": 51_i32 },
+        };
+        let msg = make_op_msg(&doc);
+
+        // Default config has the kill switch enabled, so parsing rejects it.
+        let enabled = TestDynamicConfiguration::default();
+        let mut requires_response = true;
+        parse_request(
+            &msg,
+            &mut requires_response,
+            enabled.enable_read_concern_validation(),
+            enabled.enable_write_concern_validation(),
+        )
+        .expect_err("malformed writeConcern should be rejected when validation is enabled");
+
+        // Flipping the kill switch off restores the permissive pre-validation
+        // behavior and the same command parses successfully.
+        let disabled = TestDynamicConfiguration::default();
+        disabled.set_enable_write_concern_validation(false);
+        let mut requires_response = true;
+        let request = parse_request(
+            &msg,
+            &mut requires_response,
+            disabled.enable_read_concern_validation(),
+            disabled.enable_write_concern_validation(),
+        )
+        .expect("malformed writeConcern should be accepted when validation is disabled");
+        assert_eq!(request.request_type(), RequestType::Insert);
     }
 
     #[test]
@@ -966,7 +1085,8 @@ mod tests {
             "maxTimeMS": "not a number",
         };
 
-        parse_cmd(&doc, None, true).expect_err("strict parsing should reject invalid maxTimeMS");
+        parse_cmd(&doc, None, true, true)
+            .expect_err("strict parsing should reject invalid maxTimeMS");
         let request =
             parse_cmd_payload(&doc, None).expect("payload parsing should preserve identity");
 
