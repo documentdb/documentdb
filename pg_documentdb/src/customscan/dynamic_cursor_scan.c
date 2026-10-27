@@ -172,6 +172,9 @@ typedef struct ExtensionCursorScanState
 
 	/* The core scan method to fetch tuples */
 	ExecScanAccessMtd execScanMethod;
+
+	/* The maximum batch size for fetching tuples */
+	int currentBatchCount;
 } ExtensionCursorScanState;
 
 /* --------------------------------------------------------- */
@@ -192,6 +195,7 @@ static void ExtensionCursorScanReScanCustomScan(CustomScanState *node);
 static void ExtensionCursorScanExplainCustomScan(CustomScanState *node, List *ancestors,
 												 ExplainState *es);
 static TupleTableSlot * ExtensionCursorScanNext(CustomScanState *node);
+static TupleTableSlot * ExtensionCursorScanNextWithBatchSize(CustomScanState *node);
 static bool ExtensionCursorScanNextRecheck(ScanState *state, TupleTableSlot *slot);
 static void CopyNodeDynamicCursorContinuation(ExtensibleNode *target_node, const
 											  ExtensibleNode *source_node);
@@ -234,6 +238,7 @@ extern bool EnableGroupByDynamicStreaming;
 extern bool EnableDynamicCursorMultiKeyBitmap;
 extern bool EnableSkipParallelPlansWithoutStats;
 extern bool EnablePerCollectionPlannerStatistics;
+extern int DynamicCursorMaxBatchSize;
 
 /* Declaration of extensibility paths for query processing (See extensible.h) */
 static const struct CustomPathMethods DynamicExtensionCursorScanMethods = {
@@ -1708,6 +1713,14 @@ ExtensionCursorScanCreateCustomScanState(CustomScan *cscan)
 		}
 	}
 
+	if (DynamicCursorMaxBatchSize > 0 &&
+		scanState->execScanMethod == (ExecScanAccessMtd) ExtensionCursorScanNext)
+	{
+		scanState->currentBatchCount = 0;
+		scanState->execScanMethod =
+			(ExecScanAccessMtd) ExtensionCursorScanNextWithBatchSize;
+	}
+
 	return (Node *) cscanstate;
 }
 
@@ -1860,13 +1873,50 @@ ExtensionCursorScanNext(CustomScanState *node)
 
 
 static TupleTableSlot *
+ExtensionCursorScanNextWithBatchSize(CustomScanState *node)
+{
+	Assert(DynamicCursorMaxBatchSize > 0);
+	ExtensionCursorScanState *extensionCursorScanState =
+		(ExtensionCursorScanState *) node;
+
+	if (extensionCursorScanState->currentBatchCount >= DynamicCursorMaxBatchSize)
+	{
+		return NULL;
+	}
+
+	TupleTableSlot *slot = ExtensionCursorScanNext(node);
+	if (TupIsNull(slot))
+	{
+		return slot;
+	}
+
+	extensionCursorScanState->currentBatchCount++;
+	return slot;
+}
+
+
+inline static void
+SetNextScanMethodOnContinuation(ExtensionCursorScanState *scanState)
+{
+	scanState->execScanMethod = (ExecScanAccessMtd) ExtensionCursorScanNext;
+	if (DynamicCursorMaxBatchSize > 0)
+	{
+		scanState->currentBatchCount = 0;
+		scanState->execScanMethod =
+			(ExecScanAccessMtd) ExtensionCursorScanNextWithBatchSize;
+	}
+}
+
+
+static TupleTableSlot *
 ExtensionCursorScanNextWithIndexContinuation(CustomScanState *node)
 {
 	ExtensionCursorScanState *scanState =
 		(ExtensionCursorScanState *) node;
 
 	/* From the next round, just use the vanilla next function */
-	scanState->execScanMethod = (ExecScanAccessMtd) ExtensionCursorScanNext;
+	SetNextScanMethodOnContinuation(scanState);
+
 	if (!ItemPointerIsValid(&scanState->userContinuationState))
 	{
 		return scanState->execScanMethod((ScanState *) node);
@@ -1972,6 +2022,11 @@ ExtensionCursorScanNextWithIndexContinuation(CustomScanState *node)
 		node->ss.ps.instrument->ntuples2 = numSkipped;
 	}
 
+	if (DynamicCursorMaxBatchSize > 0)
+	{
+		scanState->currentBatchCount++;
+	}
+
 	TupleTableSlot *ourSlot = node->ss.ss_ScanTupleSlot;
 	return ExecCopySlot(ourSlot, slot);
 }
@@ -1985,7 +2040,7 @@ ExtensionCursorScanNextWithContinuation(CustomScanState *node)
 	TupleTableSlot *slot = NULL;
 
 	/* From the next round, just use the vanilla next function */
-	scanState->execScanMethod = (ExecScanAccessMtd) ExtensionCursorScanNext;
+	SetNextScanMethodOnContinuation(scanState);
 	if (ItemPointerIsValid(&scanState->userContinuationState))
 	{
 		bool returnOnEquality = true;
@@ -2001,12 +2056,17 @@ ExtensionCursorScanNextWithContinuation(CustomScanState *node)
 
 		if (slot != NULL)
 		{
+			if (DynamicCursorMaxBatchSize > 0)
+			{
+				scanState->currentBatchCount++;
+			}
+
 			TupleTableSlot *ourSlot = node->ss.ss_ScanTupleSlot;
 			return ExecCopySlot(ourSlot, slot);
 		}
 	}
 
-	return ExtensionCursorScanNext(node);
+	return scanState->execScanMethod((ScanState *) node);
 }
 
 

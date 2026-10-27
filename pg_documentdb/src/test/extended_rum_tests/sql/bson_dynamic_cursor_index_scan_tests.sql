@@ -141,6 +141,34 @@ PREPARE drain_ios(bson, bson) AS
 -- ===========================================================================
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
 
+-- A batch cap bounds index-only execution, including the first resumed row.
+SET documentdb.dynamic_cursor_max_batch_size TO 3;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ios_idx_db',
+        '{"find":"ios_coll","filter":{"a":"v1"},"projection":{"a":1,"b":1,"_id":0},"hint":"idx_ab_ad"}');
+$cmd$, true);
+
+SELECT continuation AS batch_continuation FROM find_cursor_first_page(
+    'ios_idx_db',
+    '{"find":"ios_coll","filter":{"a":"v1"},"projection":{"a":1,"b":1,"_id":0},"hint":"idx_ab_ad","batchSize":2}',
+    537) \gset
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_getmore('ios_idx_db',
+        '{"getMore":{"$numberLong":"537"},"collection":"ios_coll","batchSize":2}',
+        $cmd$ || quote_literal(:'batch_continuation') || $cmd$::bson);
+$cmd$, true);
+
+SET documentdb.dynamic_cursor_max_batch_size TO 1;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_getmore('ios_idx_db',
+        '{"getMore":{"$numberLong":"537"},"collection":"ios_coll","batchSize":2}',
+        $cmd$ || quote_literal(:'batch_continuation') || $cmd$::bson);
+$cmd$, true);
+RESET documentdb.dynamic_cursor_max_batch_size;
+
 -- ---------------------------------------------------------------------------
 -- 2-path ASC+DESC {a:1, b:-1}: first page + getMore with continuation
 -- ---------------------------------------------------------------------------

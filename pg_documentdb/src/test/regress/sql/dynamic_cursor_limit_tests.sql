@@ -493,6 +493,83 @@ SELECT validate_pk_sorted_limit(
     ARRAY[1,2,3], 2, false, ARRAY[2,1]) AS pk_sort_response_size_limit;
 
 ------------------------------------------------------------
+-- Batch caps must stop the inner scan, not just truncate its output.
+-- ANALYZE exposes actual row counts; timing and buffer output are omitted.
+------------------------------------------------------------
+SET documentdb.dynamic_cursor_max_batch_size TO 3;
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find('limtest',
+    '{"find":"coll","sort":{"_id":1}}');
+$query$);
+
+-- A smaller query limit still takes precedence.
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find('limtest',
+    '{"find":"coll","sort":{"_id":1},"limit":2}');
+$query$);
+
+SET documentdb.dynamic_cursor_max_batch_size TO 1;
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find('limtest',
+    '{"find":"coll","sort":{"_id":1}}');
+$query$);
+
+-- Exhaustion before the cap returns only the ten available documents.
+SET documentdb.dynamic_cursor_max_batch_size TO 20;
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find('limtest',
+    '{"find":"coll","sort":{"_id":1}}');
+$query$);
+
+RESET documentdb.dynamic_cursor_max_batch_size;
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find('limtest',
+    '{"find":"coll","sort":{"_id":1}}');
+$query$);
+
+-- A resumed primary-key scan gets a fresh batch allowance.
+SELECT continuation AS batch_cont FROM find_cursor_first_page('limtest',
+    '{"find":"coll","sort":{"_id":1},"batchSize":2}', 542) \gset
+SET documentdb.dynamic_cursor_max_batch_size TO 3;
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_getmore('limtest',
+    '{"getMore":{"$numberLong":"542"},"collection":"coll","batchSize":2}',
+    $query$ || quote_literal(:'batch_cont') || $query$::bson);
+$query$);
+
+-- Bitmap scans count the first resumed row toward the batch cap.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('limtest',
+    '{"createIndexes":"coll","indexes":[{"key":{"a":1},"name":"batch_a_1"}]}', true);
+SET enable_bitmapscan TO on;
+SET enable_indexscan TO off;
+SET enable_indexonlyscan TO off;
+SET documentdb.enableRumCursorDynamicIndexScans TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find('limtest',
+    '{"find":"coll","filter":{"a":{"$gte":1}},"hint":"batch_a_1"}');
+$query$);
+SELECT continuation AS batch_cont FROM find_cursor_first_page('limtest',
+    '{"find":"coll","filter":{"a":{"$gte":1}},"hint":"batch_a_1","batchSize":2}', 544) \gset
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_getmore('limtest',
+    '{"getMore":{"$numberLong":"544"},"collection":"coll","batchSize":2}',
+    $query$ || quote_literal(:'batch_cont') || $query$::bson);
+$query$);
+RESET enable_indexonlyscan;
+RESET enable_indexscan;
+RESET enable_bitmapscan;
+RESET documentdb.enableRumCursorDynamicIndexScans;
+RESET documentdb.dynamic_cursor_max_batch_size;
+
+------------------------------------------------------------
 -- Cleanup
 ------------------------------------------------------------
 SELECT documentdb_api.drop_collection('limtest', 'coll');
