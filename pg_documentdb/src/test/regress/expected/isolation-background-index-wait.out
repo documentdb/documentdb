@@ -1,0 +1,33 @@
+Parsed test spec with 2 sessions
+
+starting permutation: lock-queue build spend-budget release-queue check-budget
+step lock-queue: 
+    BEGIN;
+    LOCK TABLE documentdb_api_catalog.documentdb_index_queue IN ACCESS EXCLUSIVE MODE;
+
+step build: 
+    CALL documentdb_api_internal.build_index_concurrently(1);
+ <waiting ...>
+step spend-budget: 
+    SELECT pg_sleep(3.1);
+    UPDATE public.index_build_wait_timing SET released_at = clock_timestamp();
+
+pg_sleep
+--------
+        
+(1 row)
+
+step release-queue: 
+    COMMIT;
+
+step build: <... completed>
+step check-budget: 
+    SELECT clock_timestamp() - released_at < interval '2 seconds'
+        AS queue_wait_consumed_invocation_budget
+    FROM public.index_build_wait_timing;
+
+queue_wait_consumed_invocation_budget
+-------------------------------------
+t                                    
+(1 row)
+

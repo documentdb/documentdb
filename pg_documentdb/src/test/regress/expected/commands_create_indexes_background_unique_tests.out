@@ -10,6 +10,12 @@ NOTICE:  Processing job_id: 3
  
 (1 row)
 
+SELECT documentdb_test_helpers.stop_index_jobs();
+ stop_index_jobs 
+-----------------
+ 
+(1 row)
+
 -- Delete all old create index requests from other tests
 DELETE from documentdb_api_catalog.documentdb_index_queue;
 -- Enable the feature flag for background unique index builds

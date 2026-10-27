@@ -335,6 +335,7 @@ DELETE FROM documentdb_api_catalog.documentdb_index_queue;
 
 -- Disable cron jobs to prevent them from racing with manual build calls below.
 SELECT documentdb_test_helpers.change_index_jobs_status(false);
+SELECT documentdb_test_helpers.stop_index_jobs();
 
 -- insert multiple index requests across multiple collections.
 SELECT documentdb_api.create_indexes_background('db', '{ "createIndexes": "backgroundcoll1", "indexes": [ { "key" : { "a": 1 }, "name": "a_1"}] }');

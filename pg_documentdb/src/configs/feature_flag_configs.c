@@ -710,6 +710,10 @@ bool EnableTTLCleanupBackground = DEFAULT_ENABLE_TTL_CLEANUP_BACKGROUND;
 #define DEFAULT_INDEX_BUILDS_SCHEDULED_ON_BGWORKER false
 bool IndexBuildsScheduledOnBgWorker = DEFAULT_INDEX_BUILDS_SCHEDULED_ON_BGWORKER;
 
+/* Added on v1.3, enabled on v1.3, remove after v1.5 */
+#define DEFAULT_ENABLE_BACKGROUND_INDEX_BUILD_NOTIFY true
+bool EnableBackgroundIndexBuildNotify = DEFAULT_ENABLE_BACKGROUND_INDEX_BUILD_NOTIFY;
+
 /*
  * SECTION: TTL feature flags
  */
@@ -1354,6 +1358,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable non-blocking background builds of unique indexes."),
 		NULL, &EnableNonBlockingUniqueIndexBuild,
 		DEFAULT_ENABLE_NON_BLOCKING_UNIQUE_INDEX_BUILD,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_background_index_build_notify", newGucPrefix),
+		gettext_noop(
+			"Whether an idle background index builder waits for committed index requests."),
+		NULL, &EnableBackgroundIndexBuildNotify,
+		DEFAULT_ENABLE_BACKGROUND_INDEX_BUILD_NOTIFY,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

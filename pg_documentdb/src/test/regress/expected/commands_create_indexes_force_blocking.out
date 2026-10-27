@@ -11,6 +11,12 @@ NOTICE:  Processing job_id: 3
  
 (1 row)
 
+SELECT documentdb_test_helpers.stop_index_jobs();
+ stop_index_jobs 
+-----------------
+ 
+(1 row)
+
 -- Pre-create the collection so createIndexes takes the queue path. A collection
 -- auto-created in the same transaction always builds inline regardless of the
 -- GUC, which would not exercise the concurrent-vs-blocking decision.

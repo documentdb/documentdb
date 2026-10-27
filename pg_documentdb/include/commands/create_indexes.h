@@ -300,6 +300,7 @@ void command_reindex(const CallStmt *callStmt,
 					 const ParamListInfo params,
 					 DestReceiver *destReceiver);
 bool IndexBuildIsInProgress(int indexId);
+void NotifyBackgroundIndexBuild(void);
 void InitFCInfoForCallStmt(FunctionCallInfo fcinfo, const CallStmt *callStmt,
 						   ProcessUtilityContext context,
 						   const ParamListInfo params);

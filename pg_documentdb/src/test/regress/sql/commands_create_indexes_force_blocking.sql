@@ -6,6 +6,7 @@ SET search_path to documentdb_core,documentdb_api,documentdb_api_catalog,documen
 -- Disable cron jobs so queued createIndexes requests persist for inspection and
 -- so we can drive the build steps ourselves.
 SELECT documentdb_test_helpers.change_index_jobs_status(false);
+SELECT documentdb_test_helpers.stop_index_jobs();
 
 -- Pre-create the collection so createIndexes takes the queue path. A collection
 -- auto-created in the same transaction always builds inline regardless of the
