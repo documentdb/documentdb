@@ -5,6 +5,7 @@ SET search_path to documentdb_core,documentdb_api,documentdb_api_catalog,documen
 
 -- Disable cron jobs to prevent interference since we call build_index directly
 SELECT documentdb_test_helpers.change_index_jobs_status(false);
+SELECT documentdb_test_helpers.stop_index_jobs();
 
 -- Delete all old create index requests from other tests
 DELETE from documentdb_api_catalog.documentdb_index_queue;
@@ -413,6 +414,8 @@ CALL documentdb_api_internal.build_index_concurrently(1);
 CALL documentdb_api_internal.build_index_background(1);
 
 -- Verify clean state after successful reindex
+SELECT count(*) FROM documentdb_api_catalog.documentdb_index_queue
+WHERE collection_id = :coll_reindex_fail;
 \d documentdb_data.documents_:coll_reindex_fail
 SELECT * FROM documentdb_test_helpers.count_collection_indexes('faildb', 'reindex_fail_coll') ORDER BY 1,2;
 SELECT documentdb_api.insert_one('faildb','reindex_fail_coll', '{"_id": 102, "a": 1}', NULL);
@@ -452,6 +455,8 @@ CALL documentdb_api_internal.build_index_concurrently(1);
 CALL documentdb_api_internal.build_index_background(1);
 
 -- Verify clean state
+SELECT count(*) FROM documentdb_api_catalog.documentdb_index_queue
+WHERE collection_id = :coll_reindex_fail;
 \d documentdb_data.documents_:coll_reindex_fail
 SELECT * FROM documentdb_test_helpers.count_collection_indexes('faildb', 'reindex_fail_coll') ORDER BY 1,2;
 SELECT documentdb_api.insert_one('faildb','reindex_fail_coll', '{"_id": 104, "a": 1}', NULL);
@@ -490,6 +495,8 @@ CALL documentdb_api_internal.build_index_concurrently(1);
 CALL documentdb_api_internal.build_index_background(1);
 
 -- Verify clean state after successful retry
+SELECT count(*) FROM documentdb_api_catalog.documentdb_index_queue
+WHERE collection_id = :coll_reindex_fail;
 \d documentdb_data.documents_:coll_reindex_fail
 SELECT * FROM documentdb_test_helpers.count_collection_indexes('faildb', 'reindex_fail_coll') ORDER BY 1,2;
 SELECT documentdb_api.insert_one('faildb','reindex_fail_coll', '{"_id": 106, "a": 1}', NULL);

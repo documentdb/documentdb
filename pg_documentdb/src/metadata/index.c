@@ -1550,6 +1550,7 @@ AddRequestInIndexQueue(char *createIndexCmd, int indexId, uint64 collectionId, c
 										argValues, argNulls, readOnly,
 										SPI_OK_INSERT,
 										&isNull);
+	NotifyBackgroundIndexBuild();
 }
 
 

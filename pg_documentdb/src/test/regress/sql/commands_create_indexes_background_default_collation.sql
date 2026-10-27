@@ -11,6 +11,7 @@ SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
 SET documentdb.defaultUseCompositeOpClass TO on;
 
 SELECT documentdb_test_helpers.change_index_jobs_status(false);
+SELECT documentdb_test_helpers.stop_index_jobs();
 DELETE FROM documentdb_api_catalog.documentdb_index_queue;
 
 SELECT documentdb_api.create_collection('collation_index_db', 'background_default');

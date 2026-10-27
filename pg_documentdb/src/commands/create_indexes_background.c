@@ -16,6 +16,7 @@
 #include <access/xact.h>
 #include <catalog/dependency.h>
 #include <catalog/namespace.h>
+#include <commands/async.h>
 #include <executor/executor.h>
 #include <executor/spi.h>
 #include <lib/stringinfo.h>
@@ -28,10 +29,13 @@
 #include <tcop/pquery.h>
 #include <tcop/utility.h>
 #include <utils/builtins.h>
+#include <utils/inval.h>
 #include <utils/lsyscache.h>
 #include <utils/ruleutils.h>
 #include <utils/snapmgr.h>
 #include <utils/syscache.h>
+#include <utils/timestamp.h>
+#include <utils/wait_event.h>
 #include "utils/backend_status.h"
 #include "catalog/pg_authid.h"
 #include "commands/defrem.h"
@@ -70,6 +74,7 @@
 
 #define FinishKey "finish"
 #define FinishKeyLength 6
+#define IndexQueueNotifyChannel "documentdb_index_queue"
 
 
 /*
@@ -115,6 +120,12 @@ typedef enum BackgroundIndexRunStatus
 	RunStatus_IndexBuildDone = 4,
 } BackgroundIndexRunStatus;
 
+typedef struct BackgroundIndexBuildState
+{
+	uint64 collectionId;
+	TimestampTz startedAt;
+} BackgroundIndexBuildState;
+
 bool ShouldSetupIndexQueueInUdf = true;
 extern int MaxIndexBuildAttempts;
 extern int IndexQueueEvictionIntervalInSec;
@@ -123,6 +134,8 @@ extern bool EnableDropInvalidIndexesOnReadOnly;
 extern bool SkipIndexCleanupOnFailure;
 extern bool SkipIndexCleanupOnReindex;
 extern bool EnableUniqueReindex;
+extern bool EnableBackgroundIndexBuildNotify;
+extern int IndexBuildScheduleInSec;
 
 /*
  * IndexBuildFailurePoint: test-only GUC to inject failures at specific points
@@ -176,9 +189,7 @@ static IndexJobOpId * GetIndexBuildJobOpId(void);
 static void MarkIndexAsValid(int indexId);
 static bool IsSkippableError(int targetErrorCode, char *errMsg);
 static LockAcquireResult AcquireAdvisoryExclusiveSessionLockForCreateIndexBackground(
-	uint64 collectionId);
-static void ReleaseAdvisoryExclusiveSessionLockForCreateIndexBackground(uint64
-																		collectionId);
+	uint64 collectionId, BackgroundIndexBuildState *buildState);
 static LOCKTAG CreateLockTagAdvisoryForCreateIndexBackground(uint64 collectionId);
 
 static BuildIndexesResult * CheckForIndexCmdToFinish(const List *indexIdList, char
@@ -195,9 +206,15 @@ static void TryDropCollectionIndex(int indexId, bool isReindex);
 static void TryDropCollectionIndexFromIndexDetails(IndexDetails *indexDetails, bool
 												   isReindex);
 static void TryDropReindexedCollectionIndex(IndexDetails *indexDetails);
-static bool PruneSkippableIndexes(MemoryContext mcxt);
+static bool PruneSkippableIndexes(MemoryContext mcxt,
+								  BackgroundIndexBuildState *buildState);
 static BackgroundIndexRunStatus build_index_concurrently_from_indexqueue_core(
-	MemoryContext stableContext);
+	MemoryContext stableContext, BackgroundIndexBuildState *buildState);
+static IndexCmdRequest * GetNextBackgroundIndexBuildRequest(MemoryContext stableContext,
+															BackgroundIndexBuildState *
+															buildState);
+static void ReleaseBackgroundIndexBuildLock(BackgroundIndexBuildState *buildState);
+static bool WaitForIndexCreateNotification(BackgroundIndexBuildState *buildState);
 static Datum build_index_background_core(PG_FUNCTION_ARGS);
 static void PostProcessIndexForReIndex(int64 collectionId, IndexDetails *details, bool
 									   isReindexViaCreate);
@@ -207,6 +224,17 @@ static void UpdatePostgresIndexForBackgroundOperation(uint64_t collectionId, int
 static void PostProcessIndexForCreateUnique(int64 collectionId, IndexDetails *details);
 static bool IndexSpecsAreEquivalentForUniqueness(const IndexSpec *leftIndexSpec,
 												 const IndexSpec *rightIndexSpec);
+
+
+void
+NotifyBackgroundIndexBuild(void)
+{
+	if (EnableBackgroundIndexBuildNotify)
+	{
+		/* PostgreSQL delivers the notification only if the enqueue commits. */
+		Async_Notify(IndexQueueNotifyChannel, "");
+	}
+}
 
 
 /*
@@ -257,23 +285,212 @@ build_index_background_core(PG_FUNCTION_ARGS)
 		PG_RETURN_VOID();
 	}
 
+	int jobIndex = PG_ARGISNULL(0) ? 0 : PG_GETARG_INT32(0);
 	BackgroundIndexRunStatus runStatus = RunStatus_NoValidIndexFound;
 	MemoryContext createContext = AllocSetContextCreate(fcinfo->flinfo->fn_mcxt,
 														"Create Index Child context",
 														ALLOCSET_DEFAULT_SIZES);
+	BackgroundIndexBuildState buildState = { .startedAt = GetCurrentTimestamp() };
 	do {
-		runStatus = build_index_concurrently_from_indexqueue_core(createContext);
+		runStatus = build_index_concurrently_from_indexqueue_core(createContext,
+																  &buildState);
+		ReleaseBackgroundIndexBuildLock(&buildState);
 
 		/* Commit and start before doing another round */
 		PopAllActiveSnapshots();
 		CommitTransactionCommand();
 		StartTransactionCommand();
 		MemoryContextReset(createContext);
+
+		if (runStatus == RunStatus_NoValidIndexFound &&
+			EnableBackgroundIndexBuildNotify &&
+			jobIndex == 1 &&
+			WaitForIndexCreateNotification(&buildState))
+		{
+			runStatus = RunStatus_IndexBuildDone;
+		}
 	} while (runStatus == RunStatus_IndexBuildDone);
 
 	/* Clean up the memory context. */
 	MemoryContextDelete(createContext);
 	PG_RETURN_VOID();
+}
+
+
+/* Returns a request with its collection's background-build lock held. */
+static IndexCmdRequest *
+GetNextBackgroundIndexBuildRequest(MemoryContext stableContext,
+								   BackgroundIndexBuildState *buildState)
+{
+	IndexCmdRequest *volatile indexCmdRequest = NULL;
+	Assert(buildState->collectionId == 0);
+
+	PG_TRY();
+	{
+		List *excludeCollectionIds = NIL;
+		uint64 *collectionIds = GetCollectionIdsForIndexBuild(excludeCollectionIds);
+		while (collectionIds != NULL && collectionIds[0] != 0 && !indexCmdRequest)
+		{
+			CHECK_FOR_INTERRUPTS();
+
+			/* iterate over collectionIds array */
+			for (int i = 0; i < MaxNumActiveUsersIndexBuilds; i++)
+			{
+				if (collectionIds[i] == 0)
+				{
+					break;
+				}
+				uint64 collectionId = collectionIds[i];
+				if (AcquireAdvisoryExclusiveSessionLockForCreateIndexBackground(
+						collectionId, buildState) != LOCKACQUIRE_NOT_AVAIL)
+				{
+					indexCmdRequest = GetRequestFromIndexQueue(collectionId,
+															   stableContext);
+					if (indexCmdRequest)
+					{
+						break;
+					}
+
+					ReleaseBackgroundIndexBuildLock(buildState);
+				}
+
+				uint64 *collectionIdPtr = palloc(sizeof(uint64));
+				*collectionIdPtr = collectionId;
+				excludeCollectionIds = lappend(excludeCollectionIds, collectionIdPtr);
+
+				ereport(DEBUG1,
+						(errmsg("Excluded collectionId "UINT64_FORMAT, collectionId),
+						 errdetail_log("Excluded collectionId "UINT64_FORMAT,
+									   collectionId)));
+			}
+
+			if (indexCmdRequest || excludeCollectionIds == NIL)
+			{
+				break;
+			}
+
+			pfree(collectionIds);
+			collectionIds = GetCollectionIdsForIndexBuild(excludeCollectionIds);
+		}
+
+		if (collectionIds != NULL)
+		{
+			pfree(collectionIds);
+		}
+		list_free_deep(excludeCollectionIds);
+	}
+	PG_CATCH();
+	{
+		ReleaseBackgroundIndexBuildLock(buildState);
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+
+	return indexCmdRequest;
+}
+
+
+static void
+ReleaseBackgroundIndexBuildLock(BackgroundIndexBuildState *buildState)
+{
+	if (buildState->collectionId != 0)
+	{
+		bool sessionLock = true;
+		LOCKTAG locktag = CreateLockTagAdvisoryForCreateIndexBackground(
+			buildState->collectionId);
+		(void) LockRelease(&locktag, ShareUpdateExclusiveLock, sessionLock);
+		buildState->collectionId = 0;
+	}
+}
+
+
+static bool
+WaitForIndexCreateNotification(BackgroundIndexBuildState *buildState)
+{
+	if (TimestampDifferenceExceeds(buildState->startedAt, GetCurrentTimestamp(),
+								   IndexBuildScheduleInSec * 1000))
+	{
+		return false;
+	}
+
+	/* Not volatile: the catch path rethrows rather than returning this value. */
+	bool workAvailable = false;
+	PG_TRY();
+	{
+		Async_Listen(IndexQueueNotifyChannel);
+		PopAllActiveSnapshots();
+		CommitTransactionCommand();
+
+		for (;;)
+		{
+			long remaining_ms = IndexBuildScheduleInSec * 1000L -
+								TimestampDifferenceMilliseconds(buildState->startedAt,
+																GetCurrentTimestamp());
+			if (remaining_ms <= 0)
+			{
+				break;
+			}
+
+			/* Reset before checking the queue to avoid losing a committed request. */
+			ResetLatch(MyLatch);
+			ProcessNotifyInterrupt(false);
+			CHECK_FOR_INTERRUPTS();
+			StartTransactionCommand();
+
+			/* LISTEN has committed; recheck before sleeping to close the enqueue race. */
+			IndexCmdRequest *indexCmdRequest =
+				GetNextBackgroundIndexBuildRequest(CurrentMemoryContext, buildState);
+			ReleaseBackgroundIndexBuildLock(buildState);
+			workAvailable = indexCmdRequest != NULL;
+			if (workAvailable)
+			{
+				pfree(indexCmdRequest->cmd);
+				if (indexCmdRequest->comment != NULL)
+				{
+					pfree(indexCmdRequest->comment);
+				}
+				pfree(indexCmdRequest);
+			}
+			PopAllActiveSnapshots();
+			CommitTransactionCommand();
+			if (workAvailable)
+			{
+				break;
+			}
+
+			remaining_ms = IndexBuildScheduleInSec * 1000L -
+						   TimestampDifferenceMilliseconds(buildState->startedAt,
+														   GetCurrentTimestamp());
+			if (remaining_ms <= 0)
+			{
+				break;
+			}
+
+			/* Do not retain a transaction or snapshot while waiting. */
+			WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
+					  remaining_ms, PG_WAIT_EXTENSION);
+		}
+
+		StartTransactionCommand();
+		Async_Unlisten(IndexQueueNotifyChannel);
+		CommitTransactionCommand();
+		StartTransactionCommand();
+	}
+	PG_CATCH();
+	{
+		ReleaseBackgroundIndexBuildLock(buildState);
+
+		/* UNLISTEN is transactional; detach even when the caller keeps its session. */
+		AbortCurrentTransaction();
+		StartTransactionCommand();
+		Async_Unlisten(IndexQueueNotifyChannel);
+		CommitTransactionCommand();
+		StartTransactionCommand();
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+
+	return workAvailable;
 }
 
 
@@ -308,82 +525,28 @@ TryCleanupRequestFromQueue(IndexCmdRequest *request, bool skipIndexCleanup)
 
 
 static BackgroundIndexRunStatus
-build_index_concurrently_from_indexqueue_core(MemoryContext stableContext)
+build_index_concurrently_from_indexqueue_core(MemoryContext stableContext,
+											  BackgroundIndexBuildState *buildState)
 {
 	HTAB *indexNameCache = NULL;
 
 	/* Prioritize pruning the index queue for old indexes */
-	if (PruneSkippableIndexes(stableContext))
+	if (PruneSkippableIndexes(stableContext, buildState))
 	{
 		ereport(LOG, (errmsg(
 						  "Pruned skippable indexes. Retrying index checks in another round.")));
 		return RunStatus_PrunedSkippableIndexes;
 	}
 
-	List *excludeCollectionIds = NIL;
-	uint64 *collectionIds = GetCollectionIdsForIndexBuild(excludeCollectionIds);
-
-	volatile uint64_t collectionId = 0;
-	IndexCmdRequest *volatile indexCmdRequest = NULL;
-
-	while (collectionIds != NULL && collectionIds[0] != 0 && !indexCmdRequest)
-	{
-		/* iterate over collectionIds array */
-		for (int i = 0; i < MaxNumActiveUsersIndexBuilds; i++)
-		{
-			if (collectionIds[i] == 0)
-			{
-				break;
-			}
-			collectionId = collectionIds[i];
-			if (AcquireAdvisoryExclusiveSessionLockForCreateIndexBackground(
-					collectionId) != LOCKACQUIRE_NOT_AVAIL)
-			{
-				indexCmdRequest = GetRequestFromIndexQueue(collectionId, stableContext);
-				if (!indexCmdRequest)
-				{
-					/* Could not get any index requests for this collection, skip it for this round */
-					uint64 *collectionIdPtr = palloc(sizeof(uint64));
-					*collectionIdPtr = collectionId;
-					excludeCollectionIds = lappend(excludeCollectionIds, collectionIdPtr);
-
-					ereport(DEBUG1,
-							(errmsg("Excluded collectionId "UINT64_FORMAT, collectionId),
-							 errdetail_log("Excluded collectionId "UINT64_FORMAT,
-										   collectionId)));
-					ReleaseAdvisoryExclusiveSessionLockForCreateIndexBackground(
-						collectionId);
-					continue;
-				}
-				break;
-			}
-			else
-			{
-				uint64 *collectionIdPtr = palloc(sizeof(uint64));
-				*collectionIdPtr = collectionId;
-				excludeCollectionIds = lappend(excludeCollectionIds, collectionIdPtr);
-
-				ereport(DEBUG1,
-						(errmsg("Excluded collectionId "UINT64_FORMAT, collectionId),
-						 errdetail_log("Excluded collectionId "UINT64_FORMAT,
-									   collectionId)));
-			}
-		}
-
-		if (excludeCollectionIds == NIL)
-		{
-			break;
-		}
-
-		/* excluded collectionids so far */
-		collectionIds = GetCollectionIdsForIndexBuild(excludeCollectionIds);
-	}
+	IndexCmdRequest *volatile indexCmdRequest =
+		GetNextBackgroundIndexBuildRequest(stableContext, buildState);
 
 	if (!indexCmdRequest)
 	{
 		return RunStatus_NoValidIndexFound;
 	}
 
+	volatile uint64_t collectionId = indexCmdRequest->collectionId;
 	if (indexCmdRequest->attemptCount >= MaxIndexBuildAttempts)
 	{
 		/* mark the request as skipped (pruned at a later point) */
@@ -506,6 +669,9 @@ build_index_concurrently_from_indexqueue_core(MemoryContext stableContext)
 		bool concurrently = true;
 		ExecuteCreatePostgresIndexCmd(cmd, concurrently, indexCmdRequest->userOid,
 									  useSerialExecution);
+
+		/* Refresh cached lookups after the other backend creates the index. */
+		AcceptInvalidationMessages();
 		indexCreated = true;
 	}
 	PG_CATCH();
@@ -812,7 +978,6 @@ build_index_concurrently_from_indexqueue_core(MemoryContext stableContext)
 		TryDropReindexedCollectionIndex(indexDetails);
 	}
 
-	ReleaseAdvisoryExclusiveSessionLockForCreateIndexBackground(collectionId);
 	return RunStatus_IndexBuildDone;
 }
 
@@ -2208,26 +2373,22 @@ IsSkippableError(int targetErrorCode, char *errMsg)
  * advisory lock that we acquire in AcquireAdvisoryExclusiveLockForCreateIndexes because of field4 tag.
  */
 static LockAcquireResult
-AcquireAdvisoryExclusiveSessionLockForCreateIndexBackground(uint64 collectionId)
+AcquireAdvisoryExclusiveSessionLockForCreateIndexBackground(uint64 collectionId,
+															BackgroundIndexBuildState *
+															buildState)
 {
+	Assert(buildState->collectionId == 0);
 	bool dontWait = true;
 	bool sessionLock = true;
 	LOCKTAG locktag = CreateLockTagAdvisoryForCreateIndexBackground(
 		collectionId);
-	return LockAcquire(&locktag, ShareUpdateExclusiveLock, sessionLock, dontWait);
-}
-
-
-/**
- * ReleaseAdvisoryExclusiveSessionLockForCreateIndexBackground releases the lock acquired by AcquireAdvisoryExclusiveSessionLockForCreateIndexBackground
- */
-static void
-ReleaseAdvisoryExclusiveSessionLockForCreateIndexBackground(uint64 collectionId)
-{
-	bool sessionLock = true;
-	LOCKTAG locktag = CreateLockTagAdvisoryForCreateIndexBackground(
-		collectionId);
-	(void) LockRelease(&locktag, ShareUpdateExclusiveLock, sessionLock);
+	LockAcquireResult result = LockAcquire(&locktag, ShareUpdateExclusiveLock,
+										   sessionLock, dontWait);
+	if (result != LOCKACQUIRE_NOT_AVAIL)
+	{
+		buildState->collectionId = collectionId;
+	}
+	return result;
 }
 
 
@@ -2779,93 +2940,100 @@ RunIndexCommandOnMetadataCoordinator(const char *query, int expectedSpiOk)
 
 
 static bool
-PruneSkippableIndexes(MemoryContext mcxt)
+PruneSkippableIndexes(MemoryContext mcxt, BackgroundIndexBuildState *buildState)
 {
-	bool prunedIndexes = false;
-	List *excludeCollectionIds = NIL;
-	IndexCmdRequest *volatile request = GetSkippableRequestFromIndexQueue(
-		IndexQueueEvictionIntervalInSec, excludeCollectionIds, mcxt);
+	volatile bool prunedIndexes = false;
+	Assert(buildState->collectionId == 0);
 
-	while (request != NULL)
+	PG_TRY();
 	{
-		CHECK_FOR_INTERRUPTS();
-		if (EnableDropInvalidIndexesOnReadOnly)
+		List *excludeCollectionIds = NIL;
+		IndexCmdRequest *volatile request = GetSkippableRequestFromIndexQueue(
+			IndexQueueEvictionIntervalInSec, excludeCollectionIds, mcxt);
+
+		while (request != NULL)
 		{
-			if (XactReadOnly)
+			CHECK_FOR_INTERRUPTS();
+			if (EnableDropInvalidIndexesOnReadOnly)
 			{
-				/* This happens if default_transaction_readonly gets set to true
-				 * in this case, start a new transaction with read-write semantics
-				 * so that the drop index below can succeed.
-				 */
+				if (XactReadOnly)
+				{
+					/* This happens if default_transaction_readonly gets set to true
+					 * in this case, start a new transaction with read-write semantics
+					 * so that the drop index below can succeed.
+					 */
+					PopAllActiveSnapshots();
+					CommitTransactionCommand();
+					StartTransactionCommand();
+					SetGUCLocally("transaction_read_only", "false");
+				}
+			}
+
+			/* Acquire the lock to drop the index */
+			if (AcquireAdvisoryExclusiveSessionLockForCreateIndexBackground(
+					request->collectionId, buildState) != LOCKACQUIRE_NOT_AVAIL)
+			{
+				prunedIndexes = true;
+				elog_unredacted(
+					"Removing skippable request permanently index_id: %d and collectionId: "
+					UINT64_FORMAT,
+					request->indexId, request->collectionId);
+
+				if (request->cmdType == CREATE_INDEX_COMMAND_TYPE)
+				{
+					/* remove any stale entry from PG */
+					bool isReindex = false;
+					TryDropCollectionIndex(request->indexId, isReindex);
+
+					/* remove the request permanently */
+					RemoveRequestFromIndexQueue(request->indexId,
+												request->cmdType);
+					DeleteCollectionIndexRecord(request->collectionId, request->indexId);
+				}
+				else
+				{
+					bool isReindex = request->cmdType == REINDEX_COMMAND_TYPE;
+					TryDropCollectionIndex(request->indexId, isReindex);
+
+					/* remove the request permanently */
+					RemoveRequestFromIndexQueue(request->indexId,
+												request->cmdType);
+				}
+
+				ReleaseBackgroundIndexBuildLock(buildState);
+
+				/* Commit the delete before asking for the next one */
 				PopAllActiveSnapshots();
 				CommitTransactionCommand();
 				StartTransactionCommand();
-				SetGUCLocally("transaction_read_only", "false");
-			}
-		}
-
-		/* Acquire the lock to drop the index */
-		if (AcquireAdvisoryExclusiveSessionLockForCreateIndexBackground(
-				request->collectionId) != LOCKACQUIRE_NOT_AVAIL)
-		{
-			prunedIndexes = true;
-			elog_unredacted(
-				"Removing skippable request permanently index_id: %d and collectionId: "
-				UINT64_FORMAT,
-				request->indexId, request->collectionId);
-
-			if (request->cmdType == CREATE_INDEX_COMMAND_TYPE)
-			{
-				/* remove any stale entry from PG */
-				bool isReindex = false;
-				TryDropCollectionIndex(request->indexId, isReindex);
-
-				/* remove the request permanently */
-				RemoveRequestFromIndexQueue(request->indexId,
-											request->cmdType);
-				DeleteCollectionIndexRecord(request->collectionId, request->indexId);
 			}
 			else
 			{
-				bool isReindex = request->cmdType == REINDEX_COMMAND_TYPE;
-				TryDropCollectionIndex(request->indexId, isReindex);
-
-				/* remove the request permanently */
-				RemoveRequestFromIndexQueue(request->indexId,
-											request->cmdType);
+				/* We hit this due to a concurrent lock acquisition
+				 * We will try again next time
+				 */
+				MemoryContext oldContext = MemoryContextSwitchTo(mcxt);
+				uint64_t *collectionid = palloc0(sizeof(uint64_t));
+				*collectionid = request->collectionId;
+				excludeCollectionIds = lappend(excludeCollectionIds, collectionid);
+				MemoryContextSwitchTo(oldContext);
 			}
 
-			ReleaseAdvisoryExclusiveSessionLockForCreateIndexBackground(
-				request->collectionId);
+			pfree(request);
 
-			/* Commit the delete before asking for the next one */
-			PopAllActiveSnapshots();
-			CommitTransactionCommand();
-			StartTransactionCommand();
-		}
-		else
-		{
-			/* We hit this due to a concurrent lock acquisition
-			 * We will try again next time
-			 */
-			ReleaseAdvisoryExclusiveSessionLockForCreateIndexBackground(
-				request->collectionId);
-			MemoryContext oldContext = MemoryContextSwitchTo(mcxt);
-			uint64_t *collectionid = palloc0(sizeof(uint64_t));
-			*collectionid = request->collectionId;
-			excludeCollectionIds = lappend(excludeCollectionIds, collectionid);
-			MemoryContextSwitchTo(oldContext);
+			/* Check for more prunable requests */
+			request = GetSkippableRequestFromIndexQueue(
+				IndexQueueEvictionIntervalInSec, excludeCollectionIds, mcxt);
 		}
 
-		pfree(request);
-
-		/* Check for more prunable requests */
-		request = GetSkippableRequestFromIndexQueue(
-			IndexQueueEvictionIntervalInSec, excludeCollectionIds, mcxt);
+		list_free_deep(excludeCollectionIds);
 	}
-
-	list_free_deep(excludeCollectionIds);
-	excludeCollectionIds = NIL;
+	PG_CATCH();
+	{
+		ReleaseBackgroundIndexBuildLock(buildState);
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
 
 	return prunedIndexes;
 }

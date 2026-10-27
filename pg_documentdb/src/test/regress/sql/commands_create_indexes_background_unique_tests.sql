@@ -5,6 +5,7 @@ SET search_path to documentdb_core,documentdb_api,documentdb_api_catalog,documen
 
 -- Disable cron jobs to prevent interference since we call build_index directly
 SELECT documentdb_test_helpers.change_index_jobs_status(false);
+SELECT documentdb_test_helpers.stop_index_jobs();
 
 -- Delete all old create index requests from other tests
 DELETE from documentdb_api_catalog.documentdb_index_queue;

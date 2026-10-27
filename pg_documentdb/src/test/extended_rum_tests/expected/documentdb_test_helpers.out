@@ -431,6 +431,31 @@ BEGIN
 END;
 $$
 LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION documentdb_test_helpers.stop_index_jobs()
+RETURNS void
+LANGUAGE plpgsql
+SET client_min_messages TO error
+AS $$
+DECLARE
+    job_pid integer;
+BEGIN
+    -- Commit the scheduler change first so it cannot launch replacements.
+    -- A job may exit between the lookup and termination; suppress that warning.
+    FOR job_pid IN (
+        SELECT pid FROM pg_stat_activity
+        WHERE datname = current_database()
+          AND state = 'active'
+          AND query LIKE 'CALL documentdb_api_internal.build_index_concurrently(%')
+    LOOP
+        IF NOT pg_terminate_backend(job_pid, 10000) THEN
+            PERFORM pg_stat_clear_snapshot();
+            IF EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = job_pid) THEN
+                RAISE EXCEPTION 'Timed out terminating index cron job %', job_pid;
+            END IF;
+        END IF;
+    END LOOP;
+END;
+$$;
 CREATE OR REPLACE FUNCTION documentdb_test_helpers.write_cursor_file(
     file_name text,
     contents text)

@@ -889,9 +889,15 @@ psql:sql/create_indexes_background_core.sql:337: NOTICE:  Processing job_id: 3
  
 (1 row)
 
+SELECT documentdb_test_helpers.stop_index_jobs();
+ stop_index_jobs 
+-----------------
+ 
+(1 row)
+
 -- insert multiple index requests across multiple collections.
 SELECT documentdb_api.create_indexes_background('db', '{ "createIndexes": "backgroundcoll1", "indexes": [ { "key" : { "a": 1 }, "name": "a_1"}] }');
-psql:sql/create_indexes_background_core.sql:340: NOTICE:  creating collection
+psql:sql/create_indexes_background_core.sql:341: NOTICE:  creating collection
                                                                                                                            create_indexes_background                                                                                                                           
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ("{ ""raw"" : { ""defaultShard"" : { ""numIndexesBefore"" : { ""$numberInt"" : ""1"" }, ""numIndexesAfter"" : { ""$numberInt"" : ""2"" }, ""createdCollectionAutomatically"" : true, ""ok"" : { ""$numberInt"" : ""1"" } } }, ""ok"" : { ""$numberInt"" : ""1"" } }",t,"{ }")
@@ -910,7 +916,7 @@ SELECT documentdb_api.create_indexes_background('db', '{ "createIndexes": "backg
 (1 row)
 
 SELECT documentdb_api.create_indexes_background('db', '{ "createIndexes": "backgroundcoll2", "indexes": [ { "key" : { "a": 1 }, "name": "a_1"}] }');
-psql:sql/create_indexes_background_core.sql:344: NOTICE:  creating collection
+psql:sql/create_indexes_background_core.sql:345: NOTICE:  creating collection
                                                                                                                            create_indexes_background                                                                                                                           
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ("{ ""raw"" : { ""defaultShard"" : { ""numIndexesBefore"" : { ""$numberInt"" : ""1"" }, ""numIndexesAfter"" : { ""$numberInt"" : ""2"" }, ""createdCollectionAutomatically"" : true, ""ok"" : { ""$numberInt"" : ""1"" } } }, ""ok"" : { ""$numberInt"" : ""1"" } }",t,"{ }")
@@ -1020,8 +1026,8 @@ SELECT * FROM documentdb_api_catalog.documentdb_index_queue;
 
 -- Re-enable cron jobs for the schedule_background_index_build_jobs test below.
 SELECT documentdb_test_helpers.change_index_jobs_status(true);
-psql:sql/create_indexes_background_core.sql:386: NOTICE:  Processing job_id: 2
-psql:sql/create_indexes_background_core.sql:386: NOTICE:  Processing job_id: 3
+psql:sql/create_indexes_background_core.sql:387: NOTICE:  Processing job_id: 2
+psql:sql/create_indexes_background_core.sql:387: NOTICE:  Processing job_id: 3
  change_index_jobs_status 
 --------------------------
  
@@ -1082,3 +1088,96 @@ NOTICE:  Processing job_id: 3
  
 (1 row)
 
+SELECT documentdb_test_helpers.stop_index_jobs();
+ stop_index_jobs 
+-----------------
+ 
+(1 row)
+
+-- A discarded request must not retain its collection lock in this session.
+SET documentdb.enable_background_index_build_notify TO on;
+SET documentdb.indexBuildScheduleInSec TO 1;
+SELECT documentdb_api.create_collection('db', 'background_lock_cleanup');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT ok FROM documentdb_api.create_indexes_background('db',
+  '{"createIndexes":"background_lock_cleanup","indexes":[{"key":{"a":1},"name":"stale_1"}]}');
+ ok 
+----
+ t
+(1 row)
+
+DELETE FROM documentdb_api_catalog.collection_indexes
+WHERE collection_id = (SELECT collection_id FROM documentdb_api_catalog.collections
+  WHERE database_name = 'db' AND collection_name = 'background_lock_cleanup')
+  AND (index_spec).index_name = 'stale_1';
+CALL documentdb_api_internal.build_index_concurrently(1);
+SELECT NOT EXISTS (
+  SELECT 1 FROM pg_locks WHERE pid = pg_backend_pid()
+    AND locktype = 'advisory' AND mode = 'ShareUpdateExclusiveLock'
+) AS stale_request_lock_released;
+ stale_request_lock_released 
+-----------------------------
+ t
+(1 row)
+
+SELECT ok FROM documentdb_api.create_indexes_background('db',
+  '{"createIndexes":"background_lock_cleanup","indexes":[{"key":{"b":1},"name":"exhausted_1"}]}');
+ ok 
+----
+ t
+(1 row)
+
+UPDATE documentdb_api_catalog.documentdb_index_queue
+SET attempt = current_setting('documentdb.maxIndexBuildAttempts')::integer
+WHERE collection_id = (SELECT collection_id FROM documentdb_api_catalog.collections
+  WHERE database_name = 'db' AND collection_name = 'background_lock_cleanup');
+CALL documentdb_api_internal.build_index_concurrently(1);
+SELECT NOT EXISTS (
+  SELECT 1 FROM pg_locks WHERE pid = pg_backend_pid()
+    AND locktype = 'advisory' AND mode = 'ShareUpdateExclusiveLock'
+) AS exhausted_request_lock_released;
+ exhausted_request_lock_released 
+---------------------------------
+ t
+(1 row)
+
+UPDATE documentdb_api_catalog.documentdb_index_queue
+SET update_time = '-infinity'
+WHERE collection_id = (SELECT collection_id FROM documentdb_api_catalog.collections
+  WHERE database_name = 'db' AND collection_name = 'background_lock_cleanup');
+CALL documentdb_api_internal.build_index_concurrently(1);
+SELECT NOT EXISTS (
+  SELECT 1 FROM documentdb_api_catalog.documentdb_index_queue
+  WHERE collection_id = (SELECT collection_id FROM documentdb_api_catalog.collections
+    WHERE database_name = 'db' AND collection_name = 'background_lock_cleanup')
+) AS expired_request_pruned;
+ expired_request_pruned 
+------------------------
+ t
+(1 row)
+
+SELECT NOT EXISTS (
+  SELECT 1 FROM pg_locks WHERE pid = pg_backend_pid()
+    AND locktype = 'advisory' AND mode = 'ShareUpdateExclusiveLock'
+) AS pruned_request_lock_released;
+ pruned_request_lock_released 
+------------------------------
+ t
+(1 row)
+
+DELETE FROM documentdb_api_catalog.documentdb_index_queue
+WHERE collection_id = (SELECT collection_id FROM documentdb_api_catalog.collections
+  WHERE database_name = 'db' AND collection_name = 'background_lock_cleanup');
+SELECT documentdb_api.drop_collection('db', 'background_lock_cleanup');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+RESET documentdb.indexBuildScheduleInSec;
+RESET documentdb.enable_background_index_build_notify;

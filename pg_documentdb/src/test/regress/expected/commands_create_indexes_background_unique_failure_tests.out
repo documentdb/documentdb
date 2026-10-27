@@ -11,6 +11,12 @@ NOTICE:  Processing job_id: 3
  
 (1 row)
 
+SELECT documentdb_test_helpers.stop_index_jobs();
+ stop_index_jobs 
+-----------------
+ 
+(1 row)
+
 -- Delete all old create index requests from other tests
 DELETE from documentdb_api_catalog.documentdb_index_queue;
 -- Enable feature flags
@@ -712,6 +718,13 @@ SELECT documentdb_api.coll_mod('faildb', 'reindex_fail_coll', '{ "collMod": "rei
 CALL documentdb_api_internal.build_index_concurrently(1);
 CALL documentdb_api_internal.build_index_background(1);
 -- Verify clean state after successful reindex
+SELECT count(*) FROM documentdb_api_catalog.documentdb_index_queue
+WHERE collection_id = :coll_reindex_fail;
+ count 
+-------
+     0
+(1 row)
+
 \d documentdb_data.documents_:coll_reindex_fail
         Table "documentdb_data.documents_25820007"
      Column      |  Type  | Collation | Nullable | Default 
@@ -758,9 +771,9 @@ SELECT index_cmd_status, comment
 FROM documentdb_api_catalog.documentdb_index_queue
 WHERE collection_id = :coll_reindex_fail
 ORDER BY index_id DESC LIMIT 1;
- index_cmd_status |                                                                                comment                                                                                
-------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
-                4 | { "err_msg" : "Injected failure point 4: before prepareUnique during reindex for index_id: 25820020 collectionId: 25820007", "err_code" : { "$numberInt" : "2600" } }
+ index_cmd_status |                                                                               comment                                                                                
+------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                4 | { "err_msg" : "Injected failure point 5: after prepareUnique, before rename for index_id: 25820020 collectionId: 25820007", "err_code" : { "$numberInt" : "2600" } }
 (1 row)
 
 -- Index should still be valid (transaction aborted, old index intact)
@@ -803,6 +816,13 @@ SELECT documentdb_api.coll_mod('faildb', 'reindex_fail_coll', '{ "collMod": "rei
 CALL documentdb_api_internal.build_index_concurrently(1);
 CALL documentdb_api_internal.build_index_background(1);
 -- Verify clean state
+SELECT count(*) FROM documentdb_api_catalog.documentdb_index_queue
+WHERE collection_id = :coll_reindex_fail;
+ count 
+-------
+     0
+(1 row)
+
 \d documentdb_data.documents_:coll_reindex_fail
         Table "documentdb_data.documents_25820007"
      Column      |  Type  | Collation | Nullable | Default 
@@ -848,9 +868,9 @@ SELECT index_cmd_status, comment
 FROM documentdb_api_catalog.documentdb_index_queue
 WHERE collection_id = :coll_reindex_fail
 ORDER BY index_id DESC LIMIT 1;
- index_cmd_status |                                                                                comment                                                                                
-------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
-                4 | { "err_msg" : "Injected failure point 4: before prepareUnique during reindex for index_id: 25820020 collectionId: 25820007", "err_code" : { "$numberInt" : "2600" } }
+ index_cmd_status |                                                                                  comment                                                                                   
+------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                4 | { "err_msg" : "Injected failure point 6: after first rename, before second rename for index_id: 25820020 collectionId: 25820007", "err_code" : { "$numberInt" : "2600" } }
 (1 row)
 
 -- The index catalog entry should still be valid (transaction aborted)
@@ -893,6 +913,13 @@ SELECT documentdb_api.coll_mod('faildb', 'reindex_fail_coll', '{ "collMod": "rei
 CALL documentdb_api_internal.build_index_concurrently(1);
 CALL documentdb_api_internal.build_index_background(1);
 -- Verify clean state after successful retry
+SELECT count(*) FROM documentdb_api_catalog.documentdb_index_queue
+WHERE collection_id = :coll_reindex_fail;
+ count 
+-------
+     0
+(1 row)
+
 \d documentdb_data.documents_:coll_reindex_fail
         Table "documentdb_data.documents_25820007"
      Column      |  Type  | Collation | Nullable | Default 

@@ -48,3 +48,52 @@ SELECT schedule, jobname FROM cron.job WHERE jobname LIKE 'documentdb_index_buil
 
 -- Reset -- so that other tests do not get impacted
 SELECT documentdb_test_helpers.change_index_jobs_status(false);
+SELECT documentdb_test_helpers.stop_index_jobs();
+
+-- A discarded request must not retain its collection lock in this session.
+SET documentdb.enable_background_index_build_notify TO on;
+SET documentdb.indexBuildScheduleInSec TO 1;
+SELECT documentdb_api.create_collection('db', 'background_lock_cleanup');
+SELECT ok FROM documentdb_api.create_indexes_background('db',
+  '{"createIndexes":"background_lock_cleanup","indexes":[{"key":{"a":1},"name":"stale_1"}]}');
+DELETE FROM documentdb_api_catalog.collection_indexes
+WHERE collection_id = (SELECT collection_id FROM documentdb_api_catalog.collections
+  WHERE database_name = 'db' AND collection_name = 'background_lock_cleanup')
+  AND (index_spec).index_name = 'stale_1';
+CALL documentdb_api_internal.build_index_concurrently(1);
+SELECT NOT EXISTS (
+  SELECT 1 FROM pg_locks WHERE pid = pg_backend_pid()
+    AND locktype = 'advisory' AND mode = 'ShareUpdateExclusiveLock'
+) AS stale_request_lock_released;
+
+SELECT ok FROM documentdb_api.create_indexes_background('db',
+  '{"createIndexes":"background_lock_cleanup","indexes":[{"key":{"b":1},"name":"exhausted_1"}]}');
+UPDATE documentdb_api_catalog.documentdb_index_queue
+SET attempt = current_setting('documentdb.maxIndexBuildAttempts')::integer
+WHERE collection_id = (SELECT collection_id FROM documentdb_api_catalog.collections
+  WHERE database_name = 'db' AND collection_name = 'background_lock_cleanup');
+CALL documentdb_api_internal.build_index_concurrently(1);
+SELECT NOT EXISTS (
+  SELECT 1 FROM pg_locks WHERE pid = pg_backend_pid()
+    AND locktype = 'advisory' AND mode = 'ShareUpdateExclusiveLock'
+) AS exhausted_request_lock_released;
+UPDATE documentdb_api_catalog.documentdb_index_queue
+SET update_time = '-infinity'
+WHERE collection_id = (SELECT collection_id FROM documentdb_api_catalog.collections
+  WHERE database_name = 'db' AND collection_name = 'background_lock_cleanup');
+CALL documentdb_api_internal.build_index_concurrently(1);
+SELECT NOT EXISTS (
+  SELECT 1 FROM documentdb_api_catalog.documentdb_index_queue
+  WHERE collection_id = (SELECT collection_id FROM documentdb_api_catalog.collections
+    WHERE database_name = 'db' AND collection_name = 'background_lock_cleanup')
+) AS expired_request_pruned;
+SELECT NOT EXISTS (
+  SELECT 1 FROM pg_locks WHERE pid = pg_backend_pid()
+    AND locktype = 'advisory' AND mode = 'ShareUpdateExclusiveLock'
+) AS pruned_request_lock_released;
+DELETE FROM documentdb_api_catalog.documentdb_index_queue
+WHERE collection_id = (SELECT collection_id FROM documentdb_api_catalog.collections
+  WHERE database_name = 'db' AND collection_name = 'background_lock_cleanup');
+SELECT documentdb_api.drop_collection('db', 'background_lock_cleanup');
+RESET documentdb.indexBuildScheduleInSec;
+RESET documentdb.enable_background_index_build_notify;

@@ -63,3 +63,6 @@ test: documentdb_guc_naming_conventions
 test: command_validation_flags
 
 test: bson_text_meta_state_cleanup_tests
+
+# Changes the global index scheduler and waits for a minute-boundary cron tick.
+test: commands_create_indexes_background_cron_delay
