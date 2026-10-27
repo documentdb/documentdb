@@ -812,6 +812,167 @@ SELECT validate_pk_sorted_limit(
 (1 row)
 
 ------------------------------------------------------------
+-- Batch caps must stop the inner scan, not just truncate its output.
+-- ANALYZE exposes actual row counts; timing and buffer output are omitted.
+------------------------------------------------------------
+SET documentdb.dynamic_cursor_max_batch_size TO 3;
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find('limtest',
+    '{"find":"coll","sort":{"_id":1}}');
+$query$);
+                               run_explain_and_trim                                
+-----------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiCursorScan) (actual rows=3 loops=1)
+   cursorScanType: Primary Key Scan
+   indexName: _id_
+   ->  Index Scan using _id_ on documents_26101 collection (actual rows=3 loops=1)
+         Index Cond: (shard_key_value = '26101'::bigint)
+(5 rows)
+
+-- A smaller query limit still takes precedence.
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find('limtest',
+    '{"find":"coll","sort":{"_id":1},"limit":2}');
+$query$);
+                                  run_explain_and_trim                                   
+-----------------------------------------------------------------------------------------
+ Limit (actual rows=2 loops=1)
+   ->  Custom Scan (DocumentDBApiCursorScan) (actual rows=2 loops=1)
+         cursorScanType: Primary Key Scan
+         indexName: _id_
+         ->  Index Scan using _id_ on documents_26101 collection (actual rows=2 loops=1)
+               Index Cond: (shard_key_value = '26101'::bigint)
+(6 rows)
+
+SET documentdb.dynamic_cursor_max_batch_size TO 1;
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find('limtest',
+    '{"find":"coll","sort":{"_id":1}}');
+$query$);
+                               run_explain_and_trim                                
+-----------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiCursorScan) (actual rows=1 loops=1)
+   cursorScanType: Primary Key Scan
+   indexName: _id_
+   ->  Index Scan using _id_ on documents_26101 collection (actual rows=1 loops=1)
+         Index Cond: (shard_key_value = '26101'::bigint)
+(5 rows)
+
+-- Exhaustion before the cap returns only the ten available documents.
+SET documentdb.dynamic_cursor_max_batch_size TO 20;
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find('limtest',
+    '{"find":"coll","sort":{"_id":1}}');
+$query$);
+                                run_explain_and_trim                                
+------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiCursorScan) (actual rows=10 loops=1)
+   cursorScanType: Primary Key Scan
+   indexName: _id_
+   ->  Index Scan using _id_ on documents_26101 collection (actual rows=10 loops=1)
+         Index Cond: (shard_key_value = '26101'::bigint)
+(5 rows)
+
+RESET documentdb.dynamic_cursor_max_batch_size;
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find('limtest',
+    '{"find":"coll","sort":{"_id":1}}');
+$query$);
+                                run_explain_and_trim                                
+------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiCursorScan) (actual rows=10 loops=1)
+   cursorScanType: Primary Key Scan
+   indexName: _id_
+   ->  Index Scan using _id_ on documents_26101 collection (actual rows=10 loops=1)
+         Index Cond: (shard_key_value = '26101'::bigint)
+(5 rows)
+
+-- A resumed primary-key scan gets a fresh batch allowance.
+SELECT continuation AS batch_cont FROM find_cursor_first_page('limtest',
+    '{"find":"coll","sort":{"_id":1},"batchSize":2}', 542) \gset
+SET documentdb.dynamic_cursor_max_batch_size TO 3;
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_getmore('limtest',
+    '{"getMore":{"$numberLong":"542"},"collection":"coll","batchSize":2}',
+    $query$ || quote_literal(:'batch_cont') || $query$::bson);
+$query$);
+                                                 run_explain_and_trim                                                 
+----------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiCursorScan) (actual rows=3 loops=1)
+   cursorScanType: Primary Key Scan
+   indexName: _id_
+   ->  Index Scan using _id_ on documents_26101 collection (actual rows=3 loops=1)
+         Index Cond: ((shard_key_value = '26101'::bigint) AND (object_id >= '{ "" : { "$numberInt" : "3" } }'::bson))
+(5 rows)
+
+-- Bitmap scans count the first resumed row toward the batch cap.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('limtest',
+    '{"createIndexes":"coll","indexes":[{"key":{"a":1},"name":"batch_a_1"}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SET enable_bitmapscan TO on;
+SET enable_indexscan TO off;
+SET enable_indexonlyscan TO off;
+SET documentdb.enableRumCursorDynamicIndexScans TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_find('limtest',
+    '{"find":"coll","filter":{"a":{"$gte":1}},"hint":"batch_a_1"}');
+$query$);
+                               run_explain_and_trim                                
+-----------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiCursorScan) (actual rows=3 loops=1)
+   cursorScanType: Secondary Index Bitmap Scan
+   indexName: batch_a_1
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": [1, Infinity]]
+   ->  Bitmap Heap Scan on documents_26101 collection (actual rows=3 loops=1)
+         Recheck Cond: (document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on batch_a_1 (actual rows=10 loops=1)
+               Index Cond: (document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
+(11 rows)
+
+SELECT continuation AS batch_cont FROM find_cursor_first_page('limtest',
+    '{"find":"coll","filter":{"a":{"$gte":1}},"hint":"batch_a_1","batchSize":2}', 544) \gset
+SELECT documentdb_test_helpers.run_explain_and_trim($query$
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT document FROM bson_aggregation_getmore('limtest',
+    '{"getMore":{"$numberLong":"544"},"collection":"coll","batchSize":2}',
+    $query$ || quote_literal(:'batch_cont') || $query$::bson);
+$query$);
+                               run_explain_and_trim                                
+-----------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiCursorScan) (actual rows=3 loops=1)
+   cursorScanType: Secondary Index Bitmap Scan
+   Skipped Tuples: 3 docs
+   indexName: batch_a_1
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": [1, Infinity]]
+   ->  Bitmap Heap Scan on documents_26101 collection (actual rows=5 loops=1)
+         Recheck Cond: (document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on batch_a_1 (actual rows=10 loops=1)
+               Index Cond: (document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
+(12 rows)
+
+RESET enable_indexonlyscan;
+RESET enable_indexscan;
+RESET enable_bitmapscan;
+RESET documentdb.enableRumCursorDynamicIndexScans;
+RESET documentdb.dynamic_cursor_max_batch_size;
+------------------------------------------------------------
 -- Cleanup
 ------------------------------------------------------------
 SELECT documentdb_api.drop_collection('limtest', 'coll');

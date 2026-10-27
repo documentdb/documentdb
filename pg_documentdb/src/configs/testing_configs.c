@@ -165,6 +165,9 @@ bool EnableElemMatchSelectivityLowerBound =
 #define DEFAULT_ENABLE_DYNAMIC_CURSOR_MULTIKEY_BITMAP false
 bool EnableDynamicCursorMultiKeyBitmap = DEFAULT_ENABLE_DYNAMIC_CURSOR_MULTIKEY_BITMAP;
 
+#define DEFAULT_DYNAMIC_CURSOR_MAX_BATCH_SIZE -1
+int DynamicCursorMaxBatchSize = DEFAULT_DYNAMIC_CURSOR_MAX_BATCH_SIZE;
+
 #define DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP false
 bool EnableContinuationFastBitmapLookup = DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP;
 
@@ -579,6 +582,13 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		NULL, &EnableDynamicCursorMultiKeyBitmap,
 		DEFAULT_ENABLE_DYNAMIC_CURSOR_MULTIKEY_BITMAP,
 		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.dynamic_cursor_max_batch_size", newGucPrefix),
+		gettext_noop("The maximum batch size for dynamic cursors in tests."),
+		NULL, &DynamicCursorMaxBatchSize,
+		DEFAULT_DYNAMIC_CURSOR_MAX_BATCH_SIZE, -1, INT_MAX,
+		PGC_USERSET, GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.enableContinuationFastBitmapLookup", newGucPrefix),

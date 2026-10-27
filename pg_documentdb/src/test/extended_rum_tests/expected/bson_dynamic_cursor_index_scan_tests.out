@@ -238,6 +238,83 @@ PREPARE drain_ios(bson, bson) AS
 --   2-path ASC+DESC, 3-path ASC+DESC+ASC, cross-boundary DESC+ASC+DESC
 -- ===========================================================================
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
+-- A batch cap bounds index-only execution, including the first resumed row.
+SET documentdb.dynamic_cursor_max_batch_size TO 3;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ios_idx_db',
+        '{"find":"ios_coll","filter":{"a":"v1"},"projection":{"a":1,"b":1,"_id":0},"hint":"idx_ab_ad"}');
+$cmd$, true);
+                                    run_explain_and_trim                                    
+--------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiCursorScan) (actual rows=3 loops=1)
+   cursorScanType: Secondary Index Only Scan
+   indexName: idx_ab_ad
+   indexKey: {"a": 1,"b": -1}
+   isMultiKey: false
+   indexBounds: ["a": ["v1", "v1"], "b": DESC(MinKey, MaxKey)]
+   innerScanLoops: 1 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
+   ->  Index Only Scan using idx_ab_ad on documents_9601 collection (actual rows=3 loops=1)
+         Index Cond: (document @= '{ "a" : "v1" }'::bson)
+         Heap Fetches: xxx
+(12 rows)
+
+SELECT continuation AS batch_continuation FROM find_cursor_first_page(
+    'ios_idx_db',
+    '{"find":"ios_coll","filter":{"a":"v1"},"projection":{"a":1,"b":1,"_id":0},"hint":"idx_ab_ad","batchSize":2}',
+    537) \gset
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_getmore('ios_idx_db',
+        '{"getMore":{"$numberLong":"537"},"collection":"ios_coll","batchSize":2}',
+        $cmd$ || quote_literal(:'batch_continuation') || $cmd$::bson);
+$cmd$, true);
+                                                                                          run_explain_and_trim                                                                                          
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiCursorScan) (actual rows=3 loops=1)
+   cursorScanType: Secondary Index Only Scan
+   Skipped Tuples: 3 docs
+   indexName: idx_ab_ad
+   indexKey: {"a": 1,"b": -1}
+   isMultiKey: false
+   indexBounds: ["a": ["v1", "v1"], "b": DESC(MinKey, MaxKey)]
+   minKey: ["v1", 3]
+   innerScanLoops: 1 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
+   ->  Index Only Scan using idx_ab_ad on documents_9601 collection (actual rows=5 loops=1)
+         Index Cond: ((document @= '{ "a" : "v1" }'::bson) AND (document @<> '{ "a" : { "minIndexOp" : { "$binary" : { "base64" : "YAAAAAQXBQIAAwAAAHYxABGFEAADAAAA", "subType" : "00" } } } }'::bson))
+         Heap Fetches: xxx
+(14 rows)
+
+SET documentdb.dynamic_cursor_max_batch_size TO 1;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_getmore('ios_idx_db',
+        '{"getMore":{"$numberLong":"537"},"collection":"ios_coll","batchSize":2}',
+        $cmd$ || quote_literal(:'batch_continuation') || $cmd$::bson);
+$cmd$, true);
+                                                                                          run_explain_and_trim                                                                                          
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiCursorScan) (actual rows=1 loops=1)
+   cursorScanType: Secondary Index Only Scan
+   Skipped Tuples: 3 docs
+   indexName: idx_ab_ad
+   indexKey: {"a": 1,"b": -1}
+   isMultiKey: false
+   indexBounds: ["a": ["v1", "v1"], "b": DESC(MinKey, MaxKey)]
+   minKey: ["v1", 3]
+   innerScanLoops: 1 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
+   ->  Index Only Scan using idx_ab_ad on documents_9601 collection (actual rows=3 loops=1)
+         Index Cond: ((document @= '{ "a" : "v1" }'::bson) AND (document @<> '{ "a" : { "minIndexOp" : { "$binary" : { "base64" : "YAAAAAQXBQIAAwAAAHYxABGFEAADAAAA", "subType" : "00" } } } }'::bson))
+         Heap Fetches: xxx
+(14 rows)
+
+RESET documentdb.dynamic_cursor_max_batch_size;
 -- ---------------------------------------------------------------------------
 -- 2-path ASC+DESC {a:1, b:-1}: first page + getMore with continuation
 -- ---------------------------------------------------------------------------
