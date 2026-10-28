@@ -3397,9 +3397,8 @@ GenerateDistinctQuery(text *databaseDatum, pgbson *distinctSpec, bool setStateme
 	context.databaseNameDatum = databaseDatum;
 	context.joinStatus = JoinStageStatus_Unknown;
 
-	context.shouldResolveDefaultCollation =
-		IsClusterVersionAtLeastPatch(DocDB_V1, 0, 3) ||
-		IsClusterVersionAtleast(DocDB_V1, 1, 0);
+	/* Distinct supports collation starting with version 1.1. */
+	context.shouldResolveDefaultCollation = IsClusterVersionAtleast(DocDB_V1, 1, 0);
 
 	bson_iter_t distinctIter;
 	PgbsonInitIterator(distinctSpec, &distinctIter);
@@ -3451,8 +3450,7 @@ GenerateDistinctQuery(text *databaseDatum, pgbson *distinctSpec, bool setStateme
 		{
 			ReportFeatureUsage(FEATURE_COLLATION);
 			if (EnableCollation &&
-				(IsClusterVersionAtLeastPatch(DocDB_V1, 0, 3) ||
-				 IsClusterVersionAtleast(DocDB_V1, 1, 0)))
+				IsClusterVersionAtleast(DocDB_V1, 1, 0))
 			{
 				if (EnsureTopLevelFieldIsDocumentNullOrEmptyOk(
 						"collation", &distinctIter))

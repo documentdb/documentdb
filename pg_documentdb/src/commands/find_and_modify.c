@@ -373,7 +373,7 @@ ParseFindAndModifyMessage(pgbson *message, Datum *databaseNameDatum)
 			ReportFeatureUsage(FEATURE_COLLATION);
 
 			if (EnableCollation &&
-				IsClusterVersionAtleast(DocDB_V1, 0, 3))
+				IsClusterVersionAtleast(DocDB_V1, 1, 0))
 			{
 				if (EnsureTopLevelFieldIsDocumentNullOrEmptyOk(
 						"findAndModify.collation", &messageIter))
