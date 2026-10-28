@@ -1154,7 +1154,7 @@ BuildUpdateSpec(bson_iter_t *updateIter, const bson_value_t *variableSpec,
 		{
 			ReportFeatureUsage(FEATURE_COLLATION);
 
-			if (EnableCollation && IsClusterVersionAtleast(DocDB_V1, 1, 0))
+			if (EnableCollation && IsClusterVersionAtleast(DocDB_V1, 0, 3))
 			{
 				if (EnsureTopLevelFieldIsDocumentNullOrEmptyOk(
 						"update.updates.collation", updateIter))
@@ -2558,7 +2558,12 @@ BuildUpdateAllMatchingDocumentQuery(MongoCollection *collection,
 		if (EnableCollationWithSchemaValidation &&
 			IsCollationApplicable(collection->options.collationString))
 		{
-			if (!IsClusterVersionAtleast(DocDB_V1, 2, 0))
+			/*
+			 * Workers unwrap the collated validator starting with version 1.2
+			 * and in the 1.0-3 patch line.
+			 */
+			if (!IsClusterVersionAtleast(DocDB_V1, 2, 0) &&
+				!IsClusterVersionAtLeastPatch(DocDB_V1, 0, 3))
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
 								errmsg(
@@ -3347,11 +3352,12 @@ SerializeUpdateBatchParams(int *updateIndex, List *updates,
 		}
 
 		/*
-		 * $_internalCollation was added to the worker spec in version 1.2.
-		 * Older workers reject this field.
+		 * $_internalCollation was added to the worker spec in version 1.2 and
+		 * in the 1.0-3 patch line. Older workers reject this field.
 		 */
 		if (IsCollationValid(updateSpec->updateOneParams.collationString) &&
-			!IsClusterVersionAtleast(DocDB_V1, 2, 0))
+			!IsClusterVersionAtleast(DocDB_V1, 2, 0) &&
+			!IsClusterVersionAtLeastPatch(DocDB_V1, 0, 3))
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
 							errmsg(
