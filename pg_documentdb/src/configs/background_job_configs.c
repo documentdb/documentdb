@@ -16,97 +16,143 @@
 #include "metadata/metadata_cache.h"
 
 
-#define DEFAULT_MAX_INDEX_BUILD_ATTEMPTS 3
-int MaxIndexBuildAttempts = DEFAULT_MAX_INDEX_BUILD_ATTEMPTS;
+/*
+ * SECTION: Background worker infrastructure
+ */
 
-#define DEFAULT_INDEX_BUILD_SCHEDULE_IN_SEC 2
-int32_t IndexBuildScheduleInSec = DEFAULT_INDEX_BUILD_SCHEDULE_IN_SEC;
-
-#define DEFAULT_INDEX_BUILD_EVICTION_INTERVAL_IN_SEC 1200
-int IndexQueueEvictionIntervalInSec = DEFAULT_INDEX_BUILD_EVICTION_INTERVAL_IN_SEC;
-
-#define DEFAULT_MAX_NUM_ACTIVE_USERS_INDEX_BUILDS 2
-int MaxNumActiveUsersIndexBuilds = DEFAULT_MAX_NUM_ACTIVE_USERS_INDEX_BUILDS;
-
-#define DEFAULT_FORCE_INDEX_BUILDS_BLOCKING false
-bool ForceIndexBuildsBlocking = DEFAULT_FORCE_INDEX_BUILDS_BLOCKING;
-
-#define DEFAULT_MAX_TTL_DELETE_BATCH_SIZE 1000
-int MaxTTLDeleteBatchSize = DEFAULT_MAX_TTL_DELETE_BATCH_SIZE;
-
-#define DEFAULT_TTL_PURGER_STATEMENT_TIMEOUT 60000
-int TTLPurgerStatementTimeout = DEFAULT_TTL_PURGER_STATEMENT_TIMEOUT;
-
-#define DEFAULT_TTL_PURGER_LOCK_TIMEOUT 10000
-int TTLPurgerLockTimeout = DEFAULT_TTL_PURGER_LOCK_TIMEOUT;
-
-/* TODO: remove this this TTL repeat mode is stabilized in production */
-#define DEFAULT_SINGLE_TTL_TASK_TIME_BUDGET 20000
-int SingleTTLTaskTimeBudget = DEFAULT_SINGLE_TTL_TASK_TIME_BUDGET;
-
-#define DEFAULT_TTL_TASK_MAX_RUNTIME_IN_MS 60000
-int TTLTaskMaxRunTimeInMS = DEFAULT_TTL_TASK_MAX_RUNTIME_IN_MS;
-
-#define DEFAULT_REPEAT_PURGE_INDEXES_FOR_TTL_TASK true
-bool RepeatPurgeIndexesForTTLTask = DEFAULT_REPEAT_PURGE_INDEXES_FOR_TTL_TASK;
-
-
-#define DEFAULT_SKIP_REPEAT_DELETE_FOR_UNORDERED_INDEX true
-bool SkipRepeatDeleteForUnOrderedIndex = DEFAULT_SKIP_REPEAT_DELETE_FOR_UNORDERED_INDEX;
-
-#define DEFAULT_MAX_TTL_BATCH_SIZE_UNORDERED_INDEX 10000
-int MaxTTLBatchSizeUnorderedIndex = DEFAULT_MAX_TTL_BATCH_SIZE_UNORDERED_INDEX;
-
-
-#define DEFAULT_ENABLE_TTL_DESC_SORT false
-bool EnableTTLDescSort = DEFAULT_ENABLE_TTL_DESC_SORT;
-
-
+/* SystemConfig */
 #define DEFAULT_ENABLE_BG_WORKER true
 bool EnableBackgroundWorker = DEFAULT_ENABLE_BG_WORKER;
 
+/* SystemConfig */
 #define DEFAULT_ENABLE_BG_WORKER_JOBS true
 bool EnableBackgroundWorkerJobs = DEFAULT_ENABLE_BG_WORKER_JOBS;
 
+/* FeatureFlag */
+/* Added in v1.1, pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_BG_WORKER_JOBS_IN_RECOVERY false
 bool EnableBackgroundWorkerJobsInRecovery =
 	DEFAULT_ENABLE_BG_WORKER_JOBS_IN_RECOVERY;
 
+/* FeatureFlag */
+/* Added in v1.1, pending stabilization, enable in v1.3 */
 #define DEFAULT_START_BG_WORKER_IN_RECOVERY false
 bool StartBackgroundWorkerInRecovery = DEFAULT_START_BG_WORKER_IN_RECOVERY;
 
+/* FeatureFlag */
+/* Added in v1.2, pending stabilization, enable in v1.4 */
 #define DEFAULT_ENABLE_BG_WORKER_PROMOTION_BARRIER false
 bool EnableBgWorkerPromotionBarrier =
 	DEFAULT_ENABLE_BG_WORKER_PROMOTION_BARRIER;
 
-/* Added in v0.111, pending stabilization */
+/* FeatureFlag */
+/* Added in v0.111, pending stabilization, enable in v1.10 */
 #define DEFAULT_ENABLE_BG_WORKER_INIT_JOBS false
 bool EnableBackgroundWorkerInitJobs = DEFAULT_ENABLE_BG_WORKER_INIT_JOBS;
 
-#define DEFAULT_BG_WORKER_JOB_TIMEOUT_THRESHOLD_SEC 300
-int BackgroundWorkerJobTimeoutThresholdSec = DEFAULT_BG_WORKER_JOB_TIMEOUT_THRESHOLD_SEC;
-
+/* SystemConfig */
 #define DEFAULT_ENABLE_LEGACY_JOBS_TIMEOUT true
 bool EnableLegacyJobsTimeout = DEFAULT_ENABLE_LEGACY_JOBS_TIMEOUT;
 
+/* SystemConfig */
 #define DEFAULT_BG_DATABASE_NAME "postgres"
 char *BackgroundWorkerDatabaseName = DEFAULT_BG_DATABASE_NAME;
 
+/* SystemConfig */
 #define DEFAULT_BG_LATCH_TIMEOUT_SEC 1
 int LatchTimeOutSec = DEFAULT_BG_LATCH_TIMEOUT_SEC;
 
+/* TestingConfig */
 #define DEFAULT_BG_WORKER_ENABLE_DIAGNOSTICS_LOG false
 bool BgWorkerEnableDiagnosticsLog = DEFAULT_BG_WORKER_ENABLE_DIAGNOSTICS_LOG;
 
+/* TestingConfig */
 #define DEFAULT_LOG_TTL_PROGRESS_ACTIVITY false
 bool LogTTLProgressActivity = DEFAULT_LOG_TTL_PROGRESS_ACTIVITY;
 
+/* SystemConfig */
 #define DEFAULT_ENABLE_TTL_BATCH_OBSERVABILITY true
 bool EnableTTLBatchObservability = DEFAULT_ENABLE_TTL_BATCH_OBSERVABILITY;
 
+
+/*
+ * SECTION: TTL indexes
+ */
+
+/* SystemConfig */
+#define DEFAULT_MAX_TTL_DELETE_BATCH_SIZE 1000
+int MaxTTLDeleteBatchSize = DEFAULT_MAX_TTL_DELETE_BATCH_SIZE;
+
+/* SystemConfig */
+#define DEFAULT_TTL_PURGER_STATEMENT_TIMEOUT 60000
+int TTLPurgerStatementTimeout = DEFAULT_TTL_PURGER_STATEMENT_TIMEOUT;
+
+/* SystemConfig */
+#define DEFAULT_TTL_PURGER_LOCK_TIMEOUT 10000
+int TTLPurgerLockTimeout = DEFAULT_TTL_PURGER_LOCK_TIMEOUT;
+
+/* SystemConfig */
+#define DEFAULT_SINGLE_TTL_TASK_TIME_BUDGET 20000
+int SingleTTLTaskTimeBudget = DEFAULT_SINGLE_TTL_TASK_TIME_BUDGET;
+
+/* SystemConfig */
+#define DEFAULT_TTL_TASK_MAX_RUNTIME_IN_MS 60000
+int TTLTaskMaxRunTimeInMS = DEFAULT_TTL_TASK_MAX_RUNTIME_IN_MS;
+
+/* SystemConfig */
+#define DEFAULT_MAX_TTL_BATCH_SIZE_UNORDERED_INDEX 10000
+int MaxTTLBatchSizeUnorderedIndex = DEFAULT_MAX_TTL_BATCH_SIZE_UNORDERED_INDEX;
+
+/* FeatureFlag */
+/* Added in v0.111, enabled in v0.111, remove after v1.10 */
+#define DEFAULT_SKIP_REPEAT_DELETE_FOR_UNORDERED_INDEX true
+bool SkipRepeatDeleteForUnOrderedIndex = DEFAULT_SKIP_REPEAT_DELETE_FOR_UNORDERED_INDEX;
+
+/* FeatureFlag */
+/* Added in v0.108, pending stabilization, enable in v1.10 */
+#define DEFAULT_ENABLE_TTL_DESC_SORT false
+bool EnableTTLDescSort = DEFAULT_ENABLE_TTL_DESC_SORT;
+
+/* FeatureFlag */
+/* Added in v0.107, enabled in v0.110, remove after v1.10 */
+#define DEFAULT_REPEAT_PURGE_INDEXES_FOR_TTL_TASK true
+bool RepeatPurgeIndexesForTTLTask = DEFAULT_REPEAT_PURGE_INDEXES_FOR_TTL_TASK;
+
+/* FeatureFlag */
+/* Added in v0.107, enabled in v0.107, remove after v1.10 */
 #define DEFAULT_USE_INDEX_HINTS_TTL_TASK true
 bool UseIndexHintsForTTLTask = DEFAULT_USE_INDEX_HINTS_TTL_TASK;
 
+
+/*
+ * SECTION: Index build
+ */
+
+/* SystemConfig */
+#define DEFAULT_MAX_INDEX_BUILD_ATTEMPTS 3
+int MaxIndexBuildAttempts = DEFAULT_MAX_INDEX_BUILD_ATTEMPTS;
+
+/* SystemConfig */
+#define DEFAULT_INDEX_BUILD_SCHEDULE_IN_SEC 2
+int IndexBuildScheduleInSec = DEFAULT_INDEX_BUILD_SCHEDULE_IN_SEC;
+
+/* SystemConfig */
+#define DEFAULT_INDEX_BUILD_EVICTION_INTERVAL_IN_SEC 1200
+int IndexQueueEvictionIntervalInSec = DEFAULT_INDEX_BUILD_EVICTION_INTERVAL_IN_SEC;
+
+/* SystemConfig */
+#define DEFAULT_MAX_NUM_ACTIVE_USERS_INDEX_BUILDS 2
+int MaxNumActiveUsersIndexBuilds = DEFAULT_MAX_NUM_ACTIVE_USERS_INDEX_BUILDS;
+
+/* SystemConfig */
+#define DEFAULT_BG_WORKER_JOB_TIMEOUT_THRESHOLD_SEC 300
+int BackgroundWorkerJobTimeoutThresholdSec = DEFAULT_BG_WORKER_JOB_TIMEOUT_THRESHOLD_SEC;
+
+/* TestingConfig */
+#define DEFAULT_FORCE_INDEX_BUILDS_BLOCKING false
+bool ForceIndexBuildsBlocking = DEFAULT_FORCE_INDEX_BUILDS_BLOCKING;
+
+/* SystemConfig */
 #define DEFAULT_ENABLE_DROP_INDEXES_ON_READ_ONLY true
 bool EnableDropInvalidIndexesOnReadOnly = DEFAULT_ENABLE_DROP_INDEXES_ON_READ_ONLY;
 
