@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * include/utils/documentdb_pg_compatibility.h
  *
@@ -10,6 +11,14 @@
 
 #ifndef DOCUMENTDB_PG_COMPATIBILITY_H
 #define DOCUMENTDB_PG_COMPATIBILITY_H
+
+#if PG_VERSION_NUM >= 160000
+#define PgProcAclCheckCompat(functionOid, roleId, mode) \
+	object_aclcheck(ProcedureRelationId, functionOid, roleId, mode)
+#else
+#define PgProcAclCheckCompat(functionOid, roleId, mode) \
+	pg_proc_aclcheck(functionOid, roleId, mode)
+#endif
 
 #if PG_VERSION_NUM >= 190000
 #define PgPlanQueryCompat(query, queryString, cursorOptions, boundParams) \
