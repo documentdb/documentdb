@@ -31,6 +31,13 @@ pub fn get_service_context(
 
     conn_mgmt::clean_unused_pools(Arc::clone(&connection_pool_manager));
 
+    if setup_configuration
+        .telemetry_settings()
+        .request_metrics_enabled()
+    {
+        conn_mgmt::sample_pool_metrics(Arc::clone(&connection_pool_manager));
+    }
+
     ServiceContext::new(
         setup_configuration,
         dynamic_configuration,

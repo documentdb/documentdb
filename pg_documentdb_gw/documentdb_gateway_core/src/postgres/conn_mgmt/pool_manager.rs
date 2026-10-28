@@ -9,7 +9,7 @@
 use std::{hash::Hash, sync::Arc};
 
 use dashmap::{mapref::entry::Entry, DashMap};
-use tokio::time::{interval, Duration};
+use tokio::time::{interval, Duration, MissedTickBehavior};
 use tokio_postgres::{
     config::SslMode,
     tls::{MakeTlsConnect, TlsConnect},
@@ -20,7 +20,10 @@ use crate::{
     configuration::{DynamicConfiguration, SetupConfiguration},
     error::{DocumentDBError, Result},
     postgres::{
-        conn_mgmt::{Connection, ConnectionPool, ConnectionPoolStatus, PgPoolSettings},
+        conn_mgmt::{
+            pool_metrics::{PoolRole, PoolRoleGauges, PoolUsage},
+            Connection, ConnectionPool, ConnectionPoolStatus, PgPoolSettings,
+        },
         PgDocument, QueryCatalog,
     },
     telemetry::event_id::EventId,
@@ -35,6 +38,10 @@ pub const AUTHENTICATION_MAX_CONNECTIONS: usize = 5;
 const POSTGRES_POOL_CLEANUP_INTERVAL_SEC: u64 = 300;
 /// The threshold when a connection pool needs to be disposed
 const POSTGRES_POOL_DISPOSE_INTERVAL_SEC: u64 = 7200;
+/// How often the backend pool gauges are sampled. Delta export omits a gauge
+/// that was not set since the previous export, so this stays shorter than the
+/// default metric export interval.
+const POOL_METRICS_SAMPLE_INTERVAL: Duration = Duration::from_secs(5);
 
 async fn acquire_pooled_connection(pool: &ConnectionPool) -> Result<Connection> {
     let pool_connection = pool.acquire_connection().await?;
@@ -73,6 +80,8 @@ impl PoolManager<NoTls> {
         system_requests_pool: ConnectionPool,
         system_auth_pool: ConnectionPool,
     ) -> Self {
+        assign_system_roles(&system_requests_pool, &system_auth_pool);
+
         Self {
             query_catalog,
             setup_configuration,
@@ -103,6 +112,8 @@ where
         system_auth_pool: ConnectionPool,
         tls: T,
     ) -> Self {
+        assign_system_roles(&system_requests_pool, &system_auth_pool);
+
         Self {
             query_catalog,
             setup_configuration,
@@ -163,16 +174,18 @@ where
         password: &str,
         settings: PgPoolSettings,
     ) -> Result<Arc<ConnectionPool>> {
-        Ok(Arc::new(ConnectionPool::new_with_user_and_tls(
+        let pool = ConnectionPool::new_with_user_and_tls(
             self.setup_configuration.as_ref(),
             &self.query_catalog,
             username,
             Some(password),
-            &format!("{}-Data", self.setup_configuration.application_name()),
+            &pool_application_name(self.setup_configuration.as_ref(), PoolRole::Data),
             settings,
             &self.tls,
             self.ssl_mode,
-        )?))
+        )?;
+        pool.assign_role(PoolRole::Data);
+        Ok(Arc::new(pool))
     }
 
     /// # Errors
@@ -223,11 +236,12 @@ where
                     &self.query_catalog,
                     self.setup_configuration.postgres_data_user(),
                     self.setup_configuration.postgres_data_user_password(),
-                    &format!("{}-Data", self.setup_configuration.application_name()),
+                    &pool_application_name(self.setup_configuration.as_ref(), PoolRole::Data),
                     settings,
                     &self.tls,
                     self.ssl_mode,
                 )?);
+                system_shared_pool.assign_role(PoolRole::Data);
 
                 entry.insert(Arc::clone(&system_shared_pool));
                 Ok(system_shared_pool)
@@ -280,25 +294,49 @@ where
         clean(&self.shared_data_pools, max_age);
     }
 
-    pub fn report_pool_stats(&self) -> Vec<ConnectionPoolStatus> {
-        fn report<K>(map: &DashMap<K, Arc<ConnectionPool>>, reports: &mut Vec<ConnectionPoolStatus>)
-        where
-            K: Eq + Hash,
-        {
-            for entry in map {
-                reports.push(entry.value().report_status());
-            }
+    /// Visits every pool this manager owns. Pool-wide reports go through this
+    /// one enumeration, so they see the same pools however they are stored.
+    fn for_each_pool(&self, mut visit: impl FnMut(&ConnectionPool)) {
+        visit(&self.system_auth_pool);
+        visit(&self.system_requests_pool);
+
+        for entry in &self.user_data_pools {
+            visit(entry.value());
         }
 
-        let mut pool_stats = vec![
-            self.system_auth_pool.report_status(),
-            self.system_requests_pool.report_status(),
-        ];
+        for entry in &self.shared_data_pools {
+            visit(entry.value());
+        }
+    }
 
-        report(&self.user_data_pools, &mut pool_stats);
-        report(&self.shared_data_pools, &mut pool_stats);
-
+    pub fn report_pool_stats(&self) -> Vec<ConnectionPoolStatus> {
+        let mut pool_stats = Vec::new();
+        self.for_each_pool(|pool| pool_stats.push(pool.report_status()));
         pool_stats
+    }
+
+    /// Sets the gauges of each role from one pass over every pool, summing the
+    /// pools that serve the same role. A role without pools reports zero, so
+    /// its series never carries a stale value. Unlike
+    /// [`Self::report_pool_stats`], this leaves the interval counters intact.
+    fn record_pool_usage(&self, gauges: &[(PoolRole, PoolRoleGauges)]) {
+        let mut usage = [PoolUsage::default(); PoolRole::ALL.len()];
+
+        self.for_each_pool(|pool| {
+            let Some(role) = pool.role() else {
+                return;
+            };
+
+            if let Some(role_usage) = usage.get_mut(role.index()) {
+                *role_usage = role_usage.with(pool.combined_status());
+            }
+        });
+
+        for (role, role_gauges) in gauges {
+            if let Some(role_usage) = usage.get(role.index()) {
+                role_gauges.record(*role_usage);
+            }
+        }
     }
 
     #[must_use]
@@ -329,23 +367,59 @@ where
     });
 }
 
+/// Samples the backend pool gauges of every pool role until the runtime
+/// shuts down. The gauges report to the recorder installed when this is called.
+pub fn sample_pool_metrics<T>(pool_manager: Arc<PoolManager<T>>)
+where
+    T: Send + Sync + 'static,
+{
+    let gauges = PoolRole::ALL.map(|role| (role, PoolRoleGauges::new(role)));
+
+    tokio::spawn(async move {
+        let mut sample_interval = interval(POOL_METRICS_SAMPLE_INTERVAL);
+        sample_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
+        loop {
+            sample_interval.tick().await;
+            pool_manager.record_pool_usage(&gauges);
+        }
+    });
+}
+
+fn assign_system_roles(system_requests_pool: &ConnectionPool, system_auth_pool: &ConnectionPool) {
+    system_requests_pool.assign_role(PoolRole::SystemRequests);
+    system_auth_pool.assign_role(PoolRole::PreAuthRequests);
+}
+
+/// Application name with which the pools of `role` connect to the backend.
+fn pool_application_name(setup_configuration: &dyn SetupConfiguration, role: PoolRole) -> String {
+    format!(
+        "{}-{}",
+        setup_configuration.application_name(),
+        role.pool_name()
+    )
+}
+
 fn get_system_connection_pool(
     setup_configuration: &dyn SetupConfiguration,
     query_catalog: &QueryCatalog,
-    pool_name: &str,
+    role: PoolRole,
     max_connections: usize,
 ) -> Result<ConnectionPool> {
     let postgres_system_user = setup_configuration.postgres_system_user();
-    let full_pool_name = format!("{}-{}", setup_configuration.application_name(), pool_name);
+    let full_pool_name = pool_application_name(setup_configuration, role);
 
-    ConnectionPool::new_with_user(
+    let pool = ConnectionPool::new_with_user(
         setup_configuration,
         query_catalog,
         postgres_system_user,
         None,
         &full_pool_name,
         PgPoolSettings::system_pool_settings(max_connections),
-    )
+    )?;
+    // Labeled before startup validation opens the first connection.
+    pool.assign_role(role);
+    Ok(pool)
 }
 
 async fn validate_startup_pool(
@@ -405,7 +479,7 @@ pub async fn create_connection_pool_manager(
     let system_requests_pool = get_system_connection_pool(
         setup_configuration.as_ref(),
         &query_catalog,
-        "SystemRequests",
+        PoolRole::SystemRequests,
         SYSTEM_REQUESTS_MAX_CONNECTIONS,
     )?;
 
@@ -414,7 +488,7 @@ pub async fn create_connection_pool_manager(
     let authentication_pool = get_system_connection_pool(
         setup_configuration.as_ref(),
         &query_catalog,
-        "PreAuthRequests",
+        PoolRole::PreAuthRequests,
         AUTHENTICATION_MAX_CONNECTIONS,
     )?;
 
@@ -444,6 +518,8 @@ mod tests {
         configuration::{CertInputType, CertificateOptions, DocumentDBSetupConfiguration},
         error::{ErrorCode, ErrorKind},
         postgres::create_query_catalog,
+        telemetry::consts::{labels, metric_names},
+        testing::RecordingMetricsRecorder,
     };
 
     #[derive(Debug)]
@@ -1050,5 +1126,69 @@ mod tests {
         assert_eq!(next_system_requests_report.connections_created(), 0);
         assert_eq!(next_system_requests_report.connection_create_time_us(), 0);
         assert_eq!(next_system_requests_report.connection_timeouts(), 0);
+    }
+
+    #[tokio::test]
+    async fn pool_usage_is_recorded_once_per_role() {
+        yield_now().await;
+
+        let recorder = RecordingMetricsRecorder::default();
+        let gauges = metrics::with_local_recorder(&recorder, || {
+            PoolRole::ALL.map(|role| (role, PoolRoleGauges::new(role)))
+        });
+        let dynamic_configuration = MaxConnectionConfig::new(100);
+        let pool_manager = test_pool_manager();
+
+        let pool_name = |role: PoolRole| (labels::BACKEND_CONNECTION_POOL_ROLE, role.as_str());
+        let max = |role: PoolRole| {
+            recorder.gauge(
+                metric_names::BACKEND_CONNECTION_POOL_LIMIT,
+                &[pool_name(role)],
+            )
+        };
+        let connections = |role: PoolRole, state: &str| {
+            recorder.gauge(
+                metric_names::BACKEND_CONNECTION_POOL_USAGE,
+                &[pool_name(role), (labels::DB_CLIENT_CONNECTION_STATE, state)],
+            )
+        };
+
+        // A role without pools reports zero rather than keeping a stale value.
+        pool_manager.record_pool_usage(&gauges);
+        assert_eq!(max(PoolRole::Data), Some(0.0));
+        assert_eq!(
+            recorder.gauge(
+                metric_names::BACKEND_CONNECTION_POOL_WAIT_ACTIVE,
+                &[pool_name(PoolRole::Data)],
+            ),
+            Some(0.0)
+        );
+
+        // Per-user pools and the shared pool all serve the data role.
+        for user in ["alice", "bob"] {
+            pool_manager
+                .allocate_data_pool(user, "password", &dynamic_configuration)
+                .unwrap();
+        }
+        pool_manager
+            .get_system_shared_pool(&dynamic_configuration)
+            .unwrap();
+        pool_manager.record_pool_usage(&gauges);
+
+        assert_eq!(
+            max(PoolRole::Data),
+            Some(600.0),
+            "the data role sums the capacity of every data pool, per-user or shared"
+        );
+        assert_eq!(max(PoolRole::SystemRequests), Some(4.0));
+        assert_eq!(max(PoolRole::PreAuthRequests), Some(10.0));
+        assert_eq!(connections(PoolRole::Data, "used"), Some(0.0));
+        assert_eq!(connections(PoolRole::Data, "idle"), Some(0.0));
+
+        assert_eq!(
+            recorder.series_count(metric_names::BACKEND_CONNECTION_POOL_USAGE),
+            6,
+            "one used and one idle series per role, never one per pool"
+        );
     }
 }
