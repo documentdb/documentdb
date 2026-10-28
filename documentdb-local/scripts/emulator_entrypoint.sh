@@ -182,10 +182,14 @@ Optional arguments:
                         You still need to publish this port (e.g. -p ${d_gw}:${d_gw}).
                         Defaults to ${d_gw}
                         Overrides DOCUMENTDB_PORT environment variable.
-  --enable-telemetry    Enable telemetry data sent to the usage colletor (Azure Application Insights). 
-                        This is the gateway's OPERATIONAL telemetry and is a separate setting from
-                        the anonymous usage telemetry below: ENABLE_TELEMETRY=false does not turn
-                        that off. Use --usage-telemetry false for it.
+  --enable-telemetry <true|false>
+                        Export the gateway's operational metrics over OpenTelemetry OTLP to the
+                        collector at OTEL_EXPORTER_OTLP_ENDPOINT (default http://localhost:4317,
+                        which resolves inside this container). true sets OTEL_METRICS_ENABLED=true
+                        unless it is already set; other OTEL_* variables reach the gateway unchanged.
+                        This is a separate setting from the anonymous usage telemetry below:
+                        ENABLE_TELEMETRY=false does not turn that off. Use --usage-telemetry false for it.
+                        Defaults to $(documentdb_local_setting_default ENABLE_TELEMETRY).
                         Overrides ENABLE_TELEMETRY environment variable.
   --usage-telemetry <true|false>
                         Anonymous usage telemetry that reports only this image's version, platform
@@ -511,6 +515,12 @@ if [ "${DISABLE_EXTENDED_RUM:-}" = "true" ]; then
     echo "Warning: --disable-extended-rum (DISABLE_EXTENDED_RUM) is deprecated and has no effect; documentdb_extended_rum is always enabled for a data volume this image initializes. To use the plain rum access method instead, set documentdb.alternate_index_handler_name = 'rum' in the data volume's postgresql.conf and restart the container. This option will be removed in the next minor release." >&2
 fi
 unset DISABLE_EXTENDED_RUM
+
+# The gateway reads OTEL_METRICS_ENABLED, not ENABLE_TELEMETRY. A value the
+# operator set explicitly wins over --enable-telemetry.
+if [ "${ENABLE_TELEMETRY:-}" = "true" ] && [ -z "${OTEL_METRICS_ENABLED:-}" ]; then
+    export OTEL_METRICS_ENABLED=true
+fi
 
 # Image-internal paths and identities. Not operator settings: they describe
 # where this image put things, and only a source-checkout run overrides them.

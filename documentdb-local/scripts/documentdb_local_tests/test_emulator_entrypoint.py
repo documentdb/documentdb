@@ -1509,6 +1509,39 @@ exit 0
         self.assertIn("listening", usage)
         self.assertIn("getParameter", usage)
 
+    def _gateway_metrics_enabled(self, *args, extra_env):
+        """The OTEL_METRICS_ENABLED value the gateway process inherits, or
+        "<unset>"."""
+        record = self.root / "gateway-otel-metrics-enabled"
+        self._write_exec(
+            self.gateway_release_dir / "documentdb_gateway",
+            f'#!/bin/sh\nprintf "%s" "${{OTEL_METRICS_ENABLED-<unset>}}" > "{record}"\n',
+        )
+        env = {"ENABLE_TELEMETRY": None, "OTEL_METRICS_ENABLED": None}
+        env.update(extra_env)
+        result = self._run_entrypoint(*args, extra_env=env)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        return record.read_text(encoding="utf-8")
+
+    def test_enable_telemetry_turns_on_gateway_metrics(self):
+        cases = (
+            ("default", (), {}, "<unset>"),
+            ("flag", ("--enable-telemetry", "true"), {}, "true"),
+            ("env", (), {"ENABLE_TELEMETRY": "true"}, "true"),
+            (
+                "explicit OTEL_METRICS_ENABLED wins",
+                (),
+                {"ENABLE_TELEMETRY": "true", "OTEL_METRICS_ENABLED": "false"},
+                "false",
+            ),
+        )
+        for name, args, extra_env, expected in cases:
+            with self.subTest(name):
+                self.assertEqual(
+                    self._gateway_metrics_enabled(*args, extra_env=extra_env),
+                    expected,
+                )
+
     def test_toast_compression_omitted_when_build_lacks_lz4(self):
         # PostgreSQL refuses to start when the value names a method the build
         # does not have, so the default must degrade to writing nothing.

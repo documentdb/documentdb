@@ -19,7 +19,7 @@ pub use connection::{
 };
 pub use connection_pool::{command_deadline_for, ConnectionPool, PoolConnection};
 pub use pool_manager::{
-    clean_unused_pools, create_connection_pool_manager, PoolManager,
+    clean_unused_pools, create_connection_pool_manager, sample_pool_metrics, PoolManager,
     AUTHENTICATION_MAX_CONNECTIONS, SYSTEM_REQUESTS_MAX_CONNECTIONS,
 };
 pub use pool_metrics::{ConnectionPoolMetricSnapshot, ConnectionPoolStatus};

@@ -41,7 +41,7 @@ use crate::{
     error::Result,
     postgres::{
         conn_mgmt::{
-            pool_metrics::{ConnectionPoolMetrics, ConnectionPoolStatus},
+            pool_metrics::{ConnectionPoolMetrics, ConnectionPoolStatus, PoolRole},
             PgPoolSettings,
         },
         QueryCatalog,
@@ -178,7 +178,9 @@ impl DeadpoolManager for InstrumentedManager {
 
     async fn create(&self) -> std::result::Result<Self::Type, Self::Error> {
         let create_start = Instant::now();
-        let client = DeadpoolManager::create(&self.inner).await?;
+        let client = DeadpoolManager::create(&self.inner)
+            .await
+            .inspect_err(|error| self.metrics.record_connection_failed(error))?;
         self.metrics
             .record_connection_created(create_start.elapsed());
         Ok(client)
@@ -506,7 +508,19 @@ impl ConnectionPool {
         )
     }
 
-    fn combined_status(&self) -> Status {
+    /// Labels this pool's backend connection instruments with `role`. The
+    /// first assignment wins; until then the pool records no instruments.
+    pub(super) fn assign_role(&self, role: PoolRole) {
+        self.metrics.assign_role(role);
+    }
+
+    /// The role this pool serves, once assigned.
+    pub(super) fn role(&self) -> Option<PoolRole> {
+        self.metrics.role()
+    }
+
+    /// Returns the deadpool status summed over the primary and timeout pools.
+    pub(super) fn combined_status(&self) -> Status {
         let primary = self.pool.status();
         let timeout = self.timeout_pool.status();
 
@@ -528,13 +542,18 @@ impl Drop for ConnectionPool {
 
 #[cfg(test)]
 mod tests {
-    use tokio::{net::TcpListener, task::yield_now};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+        task::yield_now,
+    };
 
     use super::*;
     use crate::{
         configuration::DocumentDBSetupConfiguration,
         postgres::create_query_catalog,
-        testing::{test_connection_pool, test_setup_configuration},
+        telemetry::consts::{labels, metric_names},
+        testing::{test_connection_pool, test_setup_configuration, RecordingMetricsRecorder},
     };
 
     #[tokio::test]
@@ -836,6 +855,116 @@ mod tests {
             drop(socket);
         });
 
+        let recorder = RecordingMetricsRecorder::default();
+        let pool = data_pool(&recorder, port);
+
+        let started = Instant::now();
+        pool.acquire_connection()
+            .await
+            .expect_err("a backend that never answers cannot produce a connection");
+
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "the acquire must be bounded by the creation timeout, not left to hang"
+        );
+        assert_eq!(
+            recorder.counter(metric_names::BACKEND_CONNECTION_POOL_TIMEOUT_COUNT, &[DATA]),
+            Some(1)
+        );
+        assert_eq!(failed_creations(&recorder, "network"), Some(1));
+
+        accept_task.abort();
+    }
+
+    #[tokio::test]
+    async fn rejected_connections_are_counted_by_error_type() {
+        for (code, error_type) in [
+            ("28P01", "auth"),
+            ("53300", "connection_limit"),
+            ("57P03", "other"),
+        ] {
+            let (port, backend) = scripted_backend(error_response(code)).await;
+            let recorder = RecordingMetricsRecorder::default();
+            let pool = data_pool(&recorder, port);
+
+            pool.acquire_connection()
+                .await
+                .expect_err("the backend rejects the connection");
+
+            for failure in ["auth", "connection_limit", "network", "other"] {
+                let expected = u64::from(failure == error_type);
+                assert_eq!(
+                    failed_creations(&recorder, failure),
+                    Some(expected),
+                    "SQLSTATE {code}, error.type {failure}"
+                );
+            }
+            assert_eq!(
+                recorder.counter(metric_names::BACKEND_CONNECTION_CREATE_COUNT, &[DATA]),
+                Some(0),
+                "SQLSTATE {code}"
+            );
+            backend.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_backend_is_a_network_failure() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let recorder = RecordingMetricsRecorder::default();
+        let pool = data_pool(&recorder, port);
+
+        pool.acquire_connection()
+            .await
+            .expect_err("nothing listens on the port");
+
+        assert_eq!(failed_creations(&recorder, "network"), Some(1));
+        assert_eq!(
+            recorder.counter(metric_names::BACKEND_CONNECTION_POOL_TIMEOUT_COUNT, &[DATA]),
+            Some(0)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_created_connection_is_counted_without_an_error_type() {
+        // AuthenticationOk, then ReadyForQuery with an idle transaction status.
+        let ready = vec![b'R', 0, 0, 0, 8, 0, 0, 0, 0, b'Z', 0, 0, 0, 5, b'I'];
+        let (port, backend) = scripted_backend(ready).await;
+        let recorder = RecordingMetricsRecorder::default();
+        let pool = data_pool(&recorder, port);
+
+        let connection = pool
+            .acquire_connection()
+            .await
+            .expect("the backend accepts the connection");
+
+        assert_eq!(
+            recorder.counter(metric_names::BACKEND_CONNECTION_CREATE_COUNT, &[DATA]),
+            Some(1)
+        );
+        for failure in ["auth", "connection_limit", "network", "other"] {
+            assert_eq!(failed_creations(&recorder, failure), Some(0), "{failure}");
+        }
+
+        drop(connection);
+        backend.abort();
+    }
+
+    const DATA: (&str, &str) = (labels::BACKEND_CONNECTION_POOL_ROLE, "data");
+
+    fn failed_creations(recorder: &RecordingMetricsRecorder, error_type: &str) -> Option<u64> {
+        recorder.counter(
+            metric_names::BACKEND_CONNECTION_CREATE_COUNT,
+            &[DATA, (labels::ERROR_TYPE, error_type)],
+        )
+    }
+
+    /// Builds a single-connection pool for a local test backend whose
+    /// instruments report to `recorder` under the `data` role.
+    fn data_pool(recorder: &RecordingMetricsRecorder, port: u16) -> ConnectionPool {
         let setup_config = DocumentDBSetupConfiguration {
             postgres_host_name: Some("127.0.0.1".to_owned()),
             postgres_port: Some(port),
@@ -851,18 +980,46 @@ mod tests {
             PgPoolSettings::system_pool_settings(1).with_connect_timeout(Duration::from_secs(1)),
         )
         .expect("the pool should build");
+        metrics::with_local_recorder(recorder, || pool.assign_role(PoolRole::Data));
+        pool
+    }
 
-        let started = Instant::now();
-        pool.acquire_connection()
-            .await
-            .expect_err("a backend that never answers cannot produce a connection");
+    /// A backend that answers the startup message with `reply`, then holds the
+    /// connection until the client closes it.
+    async fn scripted_backend(reply: Vec<u8>) -> (u16, JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let backend = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let length = usize::try_from(socket.read_u32().await.unwrap()).unwrap();
+            let mut startup = vec![0; length - 4];
+            socket.read_exact(&mut startup).await.unwrap();
+            socket.write_all(&reply).await.unwrap();
+            let mut remaining = Vec::new();
+            let _ = socket.read_to_end(&mut remaining).await;
+        });
+        (port, backend)
+    }
 
-        assert!(
-            started.elapsed() < Duration::from_secs(10),
-            "the acquire must be bounded by the creation timeout, not left to hang"
-        );
+    /// Encodes a fatal `ErrorResponse` message carrying the SQLSTATE `code`.
+    fn error_response(code: &str) -> Vec<u8> {
+        let mut fields = Vec::new();
+        for (field, value) in [
+            (b'S', "FATAL"),
+            (b'C', code),
+            (b'M', "rejected by the test backend"),
+        ] {
+            fields.push(field);
+            fields.extend_from_slice(value.as_bytes());
+            fields.push(0);
+        }
+        fields.push(0);
 
-        accept_task.abort();
+        let length = u32::try_from(fields.len() + 4).unwrap();
+        let mut message = vec![b'E'];
+        message.extend_from_slice(&length.to_be_bytes());
+        message.extend_from_slice(&fields);
+        message
     }
 
     const fn test_connection(connect_timeout: Option<Duration>) -> BackendConnectionConfig {

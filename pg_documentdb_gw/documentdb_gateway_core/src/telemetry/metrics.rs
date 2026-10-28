@@ -138,6 +138,7 @@ pub fn describe_metrics() {
         metrics::Unit::Count,
         "Logical cursors ended by exhaustion, explicit kill, invalidation, or expiration"
     );
+    describe_connection_pool_metrics();
     describe_startup_metrics();
 }
 
@@ -146,6 +147,34 @@ fn describe_authentication_metrics() {
         metric_names::AUTHENTICATION_ATTEMPTS,
         metrics::Unit::Count,
         "Terminal gateway authentication attempts"
+    );
+}
+
+fn describe_connection_pool_metrics() {
+    metrics::describe_gauge!(
+        metric_names::BACKEND_CONNECTION_POOL_USAGE,
+        metrics::Unit::Count,
+        "Open backend connections in each pool role, in the state given by db.client.connection.state"
+    );
+    metrics::describe_gauge!(
+        metric_names::BACKEND_CONNECTION_POOL_LIMIT,
+        metrics::Unit::Count,
+        "Maximum open backend connections allowed across the pools of each pool role"
+    );
+    metrics::describe_gauge!(
+        metric_names::BACKEND_CONNECTION_POOL_WAIT_ACTIVE,
+        metrics::Unit::Count,
+        "Requests waiting for a backend connection from each pool role"
+    );
+    metrics::describe_counter!(
+        metric_names::BACKEND_CONNECTION_POOL_TIMEOUT_COUNT,
+        metrics::Unit::Count,
+        "Backend connection acquisitions that timed out while waiting for, creating, or recycling a connection"
+    );
+    metrics::describe_counter!(
+        metric_names::BACKEND_CONNECTION_CREATE_COUNT,
+        metrics::Unit::Count,
+        "Backend connection creation attempts, counted when each attempt succeeds, fails, or times out; error.type marks failures"
     );
 }
 
@@ -331,6 +360,7 @@ pub fn record_startup_metrics(duration: Duration) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{MetricKind, RecordingMetricsRecorder};
 
     #[test]
     fn authentication_outcome_labels_do_not_include_user_oid() {
@@ -346,5 +376,41 @@ mod tests {
     #[test]
     fn test_record_startup_metrics_callable_without_provider() {
         super::record_startup_metrics(Duration::from_millis(42));
+    }
+
+    #[test]
+    fn describe_metrics_registers_connection_pool_instruments() {
+        let recorder = RecordingMetricsRecorder::default();
+        metrics::with_local_recorder(&recorder, describe_metrics);
+
+        for (name, kind) in [
+            (
+                metric_names::BACKEND_CONNECTION_POOL_USAGE,
+                MetricKind::Gauge,
+            ),
+            (
+                metric_names::BACKEND_CONNECTION_POOL_LIMIT,
+                MetricKind::Gauge,
+            ),
+            (
+                metric_names::BACKEND_CONNECTION_POOL_WAIT_ACTIVE,
+                MetricKind::Gauge,
+            ),
+            (
+                metric_names::BACKEND_CONNECTION_POOL_TIMEOUT_COUNT,
+                MetricKind::Counter,
+            ),
+            (
+                metric_names::BACKEND_CONNECTION_CREATE_COUNT,
+                MetricKind::Counter,
+            ),
+        ] {
+            let description = recorder
+                .description(name)
+                .unwrap_or_else(|| panic!("{name} should be described"));
+            assert_eq!(description.kind(), kind, "{name}");
+            assert_eq!(description.unit(), Some(metrics::Unit::Count), "{name}");
+            assert!(!description.description().is_empty(), "{name}");
+        }
     }
 }

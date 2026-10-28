@@ -48,4 +48,4 @@ pub use request_documents::{
     ping_document,
 };
 #[cfg(test)]
-pub use telemetry::RecordingTelemetryProvider;
+pub use telemetry::{MetricKind, RecordingMetricsRecorder, RecordingTelemetryProvider};

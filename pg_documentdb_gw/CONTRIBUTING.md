@@ -22,7 +22,7 @@ Test helper functions in `documentdb_tests/src/commands/` are organized as one m
 
 ### Telemetry
 
-The gateway exposes OpenTelemetry-compatible **metrics** and **traces** via OTLP/gRPC. Both signals are opt-in. Enable them in `SetupConfiguration.json`:
+The gateway exposes OpenTelemetry-compatible **metrics** and **traces** via OTLP/gRPC. Both signals are opt-in. Enable them with the standard OpenTelemetry environment variables (`OTEL_METRICS_ENABLED`, `OTEL_TRACES_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_TRACES_SAMPLER_ARG`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_SERVICE_NAME`) or in `SetupConfiguration.json`:
 
 ```json
 "TelemetryOptions": {
@@ -31,7 +31,7 @@ The gateway exposes OpenTelemetry-compatible **metrics** and **traces** via OTLP
 }
 ```
 
-Or via the standard OpenTelemetry environment variables (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_TRACES_ENABLED`, `OTEL_TRACES_SAMPLER_ARG`, `OTEL_METRICS_ENABLED`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_SERVICE_NAME`). JSON values take precedence over env vars; env vars take precedence over defaults.
+JSON values take precedence over env vars; env vars take precedence over defaults. The shipped `SetupConfiguration.json` leaves `Metrics` and `Tracing` unset, so the environment variables apply to both signals; its `ServiceName` takes precedence over `OTEL_SERVICE_NAME`.
 
 Tracing emits a `gateway.request` root span per request with `db.system.name`, `db.operation.name`, `db.collection.name`, `db.namespace`, `connection.id`, `network.protocol`, and `network.transport.tls` attributes, plus nested spans (`gateway.read_request`, `gateway.format_request`, `gateway.auth`, `gateway.process_request`, `postgres.transaction`, `postgres.acquire_connection`, `postgres.execute`, `gateway.write_response`) that mirror the metric phase breakdown.
 

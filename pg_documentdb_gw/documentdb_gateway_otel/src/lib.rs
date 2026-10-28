@@ -20,6 +20,7 @@ use std::{
 use documentdb_gateway_core::{
     error::{DocumentDBError, Result},
     telemetry::{
+        consts::{histogram_bounds, metric_names},
         context_propagation::{install_trace_context_bridge, TraceContextBridge},
         describe_metrics, TelemetrySettings,
     },
@@ -35,7 +36,10 @@ use opentelemetry::{
 };
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
-    metrics::{PeriodicReader, SdkMeterProvider, Temporality},
+    metrics::{
+        exporter::PushMetricExporter, Aggregation, Instrument, InstrumentKind, PeriodicReader,
+        SdkMeterProvider, Stream, Temporality,
+    },
     propagation::TraceContextPropagator,
     trace::{RandomIdGenerator, Sampler, SdkTracer, SdkTracerProvider},
     Resource,
@@ -237,15 +241,53 @@ fn create_metrics_provider(
             DocumentDBError::internal_error(format!("Failed to build metrics exporter: {error}"))
         })?;
 
+    Ok(Some(build_metrics_pipeline(
+        exporter,
+        resource,
+        Duration::from_millis(config.export_interval_ms()),
+    )))
+}
+
+/// Builds the meter provider that exports through `exporter` every
+/// `export_interval`, and the `metrics` recorder that feeds it.
+fn build_metrics_pipeline<E>(
+    exporter: E,
+    resource: Resource,
+    export_interval: Duration,
+) -> (SdkMeterProvider, Recorder)
+where
+    E: PushMetricExporter,
+{
     let reader = PeriodicReader::builder(exporter)
-        .with_interval(Duration::from_millis(config.export_interval_ms()))
+        .with_interval(export_interval)
         .build();
 
-    Ok(Some(
-        Recorder::builder(instrumentation::SCOPE)
-            .with_meter_provider(|builder| builder.with_resource(resource).with_reader(reader))
-            .build(),
-    ))
+    Recorder::builder(instrumentation::SCOPE)
+        .with_meter_provider(|builder| {
+            builder
+                .with_resource(resource)
+                .with_reader(reader)
+                .with_view(histogram_bucket_view)
+        })
+        .build()
+}
+
+/// Applies explicit bucket boundaries to the operation duration histogram.
+/// Every other instrument keeps the SDK default aggregation.
+fn histogram_bucket_view(instrument: &Instrument) -> Option<Stream> {
+    if instrument.kind() != InstrumentKind::Histogram
+        || instrument.name() != metric_names::OPERATION_DURATION
+    {
+        return None;
+    }
+
+    Stream::builder()
+        .with_aggregation(Aggregation::ExplicitBucketHistogram {
+            boundaries: histogram_bounds::OPERATION_DURATION.to_vec(),
+            record_min_max: true,
+        })
+        .build()
+        .ok()
 }
 
 fn create_tracer_provider(
@@ -505,6 +547,10 @@ fn parse_remote_span_context(traceparent: &str, tracestate: Option<&str>) -> Opt
 
 #[cfg(test)]
 mod tests {
+    use opentelemetry_sdk::metrics::{
+        data::{AggregatedMetrics, MetricData, ResourceMetrics, ScopeMetrics},
+        InMemoryMetricExporter,
+    };
     use serde_json::json;
 
     use super::*;
@@ -589,6 +635,49 @@ mod tests {
         assert!(create_tracer_provider(config.tracing(), resource)
             .expect("disabled tracing should not fail")
             .is_none());
+    }
+
+    #[test]
+    fn only_operation_duration_uses_explicit_bucket_boundaries() {
+        let exporter = InMemoryMetricExporter::default();
+        let (provider, recorder) = build_metrics_pipeline(
+            exporter.clone(),
+            Resource::builder().build(),
+            Duration::from_hours(1),
+        );
+
+        metrics::with_local_recorder(&recorder, || {
+            metrics::histogram!(metric_names::OPERATION_DURATION).record(0.2);
+            metrics::histogram!(metric_names::GATEWAY_STARTUP_DELAY_MS).record(0.2);
+        });
+        provider.force_flush().expect("metrics should flush");
+
+        let flushed = exporter
+            .get_finished_metrics()
+            .expect("the exporter should hold the flushed metrics");
+        let bounds = |name: &str| -> Option<Vec<f64>> {
+            let metric = flushed
+                .iter()
+                .flat_map(ResourceMetrics::scope_metrics)
+                .flat_map(ScopeMetrics::metrics)
+                .find(|metric| metric.name() == name)?;
+            let AggregatedMetrics::F64(MetricData::Histogram(histogram)) = metric.data() else {
+                return None;
+            };
+            Some(histogram.data_points().next()?.bounds().collect())
+        };
+
+        assert_eq!(
+            bounds(metric_names::OPERATION_DURATION),
+            Some(histogram_bounds::OPERATION_DURATION.to_vec())
+        );
+        let startup_bounds = bounds(metric_names::GATEWAY_STARTUP_DELAY_MS)
+            .expect("the startup delay should be exported as a histogram");
+        assert_ne!(
+            startup_bounds,
+            histogram_bounds::OPERATION_DURATION,
+            "other histograms keep the default boundaries"
+        );
     }
 
     #[test]
