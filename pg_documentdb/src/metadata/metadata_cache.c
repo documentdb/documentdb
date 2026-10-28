@@ -1327,6 +1327,15 @@ typedef struct DocumentDBApiOidCacheData
 	/* Oid of the ApiDataSchemaName namespace */
 	Oid ApiDataNamespaceOid;
 
+	/* OIDs of the ApiInternalSchemaNameV2.update_bson_document */
+	Oid UpdateBsonDocumentFunctionOid;
+
+	/* OIDs of the ApiInternalSchemaNameV2.update_bson_document overload with update description */
+	Oid UpdateBsonDocumentWithDescriptionFunctionOid;
+
+	/* OID of the ApiInternalSchemaNameV2.bson_update_returned_value function */
+	Oid BsonUpdateReturnedValueFunctionOid;
+
 	/* OID of the ApiInternalSchemaName.update_worker function */
 	Oid UpdateWorkerFunctionOid;
 
@@ -3558,6 +3567,56 @@ ApiCursorStateFunctionId(void)
 	}
 
 	return Cache.CursorStateFunctionId;
+}
+
+
+Oid
+UpdateBsonDocumentFunctionOid(void)
+{
+	Oid bsonTypeId = BsonTypeId();
+	Oid argTypes[6] = {
+		bsonTypeId, bsonTypeId, bsonTypeId, bsonTypeId, bsonTypeId, TEXTOID
+	};
+	int nargs = 6;
+	bool missingOk = false;
+
+	return GetSchemaFunctionIdWithNargs(&Cache.UpdateBsonDocumentFunctionOid,
+										ApiInternalSchemaNameV2,
+										"update_bson_document", nargs, argTypes,
+										missingOk);
+}
+
+
+Oid
+UpdateBsonDocumentWithDescriptionFunctionOid(void)
+{
+	Oid bsonTypeId = BsonTypeId();
+	Oid argTypes[8] = {
+		bsonTypeId, bsonTypeId, bsonTypeId, bsonTypeId, bsonTypeId, TEXTOID,
+		TIDOID, OIDOID
+	};
+	int nargs = 8;
+	bool missingOk = false;
+
+	return GetSchemaFunctionIdWithNargs(
+		&Cache.UpdateBsonDocumentWithDescriptionFunctionOid,
+		ApiInternalSchemaNameV2,
+		"update_bson_document", nargs, argTypes,
+		missingOk);
+}
+
+
+Oid
+BsonUpdateReturnedValueFunctionOid(void)
+{
+	Oid argTypes[1] = { INT8OID };
+	int nargs = 1;
+	bool missingOk = false;
+
+	return GetSchemaFunctionIdWithNargs(&Cache.BsonUpdateReturnedValueFunctionOid,
+										ApiInternalSchemaNameV2,
+										"bson_update_returned_value", nargs, argTypes,
+										missingOk);
 }
 
 

@@ -92,6 +92,7 @@
 #include "commands/insert.h"
 #include "commands/parse_error.h"
 #include "commands/update.h"
+#include "commands/update_query.h"
 #include "metadata/collection.h"
 #include "metadata/metadata_cache.h"
 #include "infrastructure/documentdb_plan_cache.h"
@@ -203,21 +204,6 @@ typedef struct
 	/* object ID that was inserted */
 	pgbson *objectId;
 } UpsertResult;
-
-/*
- * UpdateAllMAtchingDocsResult represents the result of updating
- * multiple documents in a single operation.
- */
-typedef struct
-{
-	/* the number of documents that were actually updated */
-	uint64 rowsUpdated;
-
-	/* the number of documents that matched the query
-	 * this can be greater than rowsUpdated if more docs
-	 * matched the query, but weren't affected by the update */
-	uint64 matchedDocs;
-} UpdateAllMatchingDocsResult;
 
 /*
  * UpdateQueryParserState stores a generated update query and its bound parameters.
@@ -491,6 +477,17 @@ static void BuildUpdateOneByObjectIdPlanQuery(MongoCollection *collection,
 											  bool queryHasNonIdFilters,
 											  bool isIdFilterCollationAware,
 											  UpdateQueryParserState *state);
+
+static void BuildUpdateAllQuerySpec(MongoCollection *collection, UpdateOneParams *params,
+									bool hasShardKeyValueFilter, int64 shardKeyHash,
+									bool *hasOnlyObjectIdFilter,
+									UpdateAllQuerySpec *spec);
+static UpdateAllMatchingDocsResult PerformUpdateAllLegacy(const UpdateAllQuerySpec *spec,
+														  pgbson *schemaValidator);
+static void BuildUpdateAllMatchingDocumentQueryLegacy(const UpdateAllQuerySpec *spec,
+													  pgbson *schemaValidator,
+													  bool forceBsonOutput,
+													  UpdateQueryParserState *updateState);
 
 PG_FUNCTION_INFO_V1(command_update_bulk);
 PG_FUNCTION_INFO_V1(command_update);
@@ -2143,6 +2140,54 @@ ProcessUpdate(MongoCollection *collection, UpdateSpec *updateSpec,
 
 
 /*
+ * Builds the query specification context used to update all matching documents.
+ */
+static void
+BuildUpdateAllQuerySpec(MongoCollection *collection, UpdateOneParams *params,
+						bool hasShardKeyValueFilter, int64 shardKeyHash,
+						bool *hasOnlyObjectIdFilter,
+						UpdateAllQuerySpec *spec)
+{
+	spec->collection = collection;
+	spec->updateParams = params;
+	spec->shardKeyHash = shardKeyHash;
+
+	bool queryHasNonIdFilters = false;
+	bool isIdFilterCollationAware = false;
+	spec->objectIdFilter = GetObjectIdFilterFromQueryDocumentValue(params->query,
+																   &queryHasNonIdFilters,
+																   &
+																   isIdFilterCollationAware);
+	if (spec->objectIdFilter)
+	{
+		spec->queryFlags |= UPDATE_QUERY_FLAG_HAS_OBJECT_ID;
+	}
+	if (queryHasNonIdFilters)
+	{
+		spec->queryFlags |= UPDATE_QUERY_FLAG_HAS_NON_ID_FILTERS;
+	}
+	if (isIdFilterCollationAware)
+	{
+		spec->queryFlags |= UPDATE_QUERY_FLAG_HAS_COLLATION_AWARE_ID_FILTER;
+	}
+	if (hasShardKeyValueFilter)
+	{
+		spec->queryFlags |= UPDATE_QUERY_FLAG_HAS_SHARD_KEY;
+	}
+
+	/* Determine if the query has only an object ID filter */
+	if (UpdateQueryHasFlag(spec, UPDATE_QUERY_FLAG_HAS_OBJECT_ID) &&
+		!UpdateQueryHasFlag(spec, UPDATE_QUERY_FLAG_HAS_NON_ID_FILTERS))
+	{
+		*hasOnlyObjectIdFilter = true;
+		spec->queryFlags |= UPDATE_QUERY_FLAG_HAS_ONLY_OBJECT_ID_FILTER;
+	}
+
+	spec->isCollationApplicable = IsCollationApplicable(params->collationString);
+}
+
+
+/*
  * Builds the query and parameters used to update every matching document.
  */
 static void
@@ -2155,6 +2200,27 @@ BuildUpdateAllMatchingDocumentQuery(MongoCollection *collection,
 									bool forceBsonOutput,
 									UpdateQueryParserState *updateState)
 {
+	UpdateAllQuerySpec spec;
+	memset(&spec, 0, sizeof(UpdateAllQuerySpec));
+	BuildUpdateAllQuerySpec(collection, currentUpdate, hasShardKeyValueFilter,
+							shardKeyHash, hasOnlyObjectIdFilter, &spec);
+
+	BuildUpdateAllMatchingDocumentQueryLegacy(&spec, schemaValidator, forceBsonOutput,
+											  updateState);
+}
+
+
+static void
+BuildUpdateAllMatchingDocumentQueryLegacy(const UpdateAllQuerySpec *spec,
+										  pgbson *schemaValidator,
+										  bool forceBsonOutput,
+										  UpdateQueryParserState *updateState)
+{
+	MongoCollection *collection = spec->collection;
+	UpdateOneParams *currentUpdate = spec->updateParams;
+	bool hasShardKeyValueFilter = UpdateQueryHasFlag(spec,
+													 UPDATE_QUERY_FLAG_HAS_SHARD_KEY);
+	int64 shardKeyHash = spec->shardKeyHash;
 	updateState->tableName = collection->tableName;
 	updateState->isLocalShardQuery = false;
 	bool setShardKeyValueFilter = false;
@@ -2175,16 +2241,11 @@ BuildUpdateAllMatchingDocumentQuery(MongoCollection *collection,
 	pgbson *arrayFilters = currentUpdate->arrayFilters == NULL ? NULL :
 						   BsonValueToDocumentPgbson(currentUpdate->arrayFilters);
 
-	/* Do these under the SPI Context so that they get deleted automatically at the end */
-	bool queryHasNonIdFilters = false;
-
-	bool isIdFilterCollationAware = false;
-	pgbson *objectIdFilter = GetObjectIdFilterFromQueryDocumentValue(currentUpdate->query,
-																	 &queryHasNonIdFilters,
-																	 &
-																	 isIdFilterCollationAware);
-
-	*hasOnlyObjectIdFilter = objectIdFilter != NULL && !queryHasNonIdFilters;
+	bool queryHasNonIdFilters = UpdateQueryHasFlag(spec,
+												   UPDATE_QUERY_FLAG_HAS_NON_ID_FILTERS);
+	bool isIdFilterCollationAware = UpdateQueryHasFlag(spec,
+													   UPDATE_QUERY_FLAG_HAS_COLLATION_AWARE_ID_FILTER);
+	pgbson *objectIdFilter = spec->objectIdFilter;
 
 	const bson_value_t *variableSpec = currentUpdate->variableSpec;
 	pgbson *variableSpecBson = NULL;
@@ -2612,21 +2673,43 @@ UpdateAllMatchingDocuments(MongoCollection *collection,
 						   pgbson *schemaValidator,
 						   bool *hasOnlyObjectIdFilter)
 {
-	UpdateAllMatchingDocsResult result;
-	memset(&result, 0, sizeof(UpdateAllMatchingDocsResult));
-
 	SPI_connect();
 
+	UpdateAllQuerySpec spec;
+	memset(&spec, 0, sizeof(UpdateAllQuerySpec));
+
+	BuildUpdateAllQuerySpec(collection, currentUpdate, hasShardKeyValueFilter,
+							shardKeyHash, hasOnlyObjectIdFilter, &spec);
+
+	/* TODO: move schema validation to AST
+	 * currently the optimized ID-only path and schema validation remain in legacy execution
+	 */
+	bool requiresSchemaValidation = EnableSchemaValidation && schemaValidator != NULL;
+	UpdateAllMatchingDocsResult result = { 0 };
+
+	if (!requiresSchemaValidation && IsUpdateAstEnabled(*hasOnlyObjectIdFilter))
+	{
+		result = PerformUpdateAll(&spec);
+	}
+	else
+	{
+		result = PerformUpdateAllLegacy(&spec, schemaValidator);
+	}
+
+	SPI_finish();
+	return result;
+}
+
+
+static UpdateAllMatchingDocsResult
+PerformUpdateAllLegacy(const UpdateAllQuerySpec *spec, pgbson *schemaValidator)
+{
+	MongoCollection *collection = spec->collection;
+	UpdateAllMatchingDocsResult result = { 0 };
 	UpdateQueryParserState state = { 0 };
 	bool forceBsonOutput = false;
-	BuildUpdateAllMatchingDocumentQuery(collection,
-										currentUpdate,
-										hasShardKeyValueFilter,
-										shardKeyHash,
-										schemaValidator,
-										hasOnlyObjectIdFilter,
-										forceBsonOutput,
-										&state);
+	BuildUpdateAllMatchingDocumentQueryLegacy(spec, schemaValidator, forceBsonOutput,
+											  &state);
 
 	bool readOnly = false;
 	long maxTupleCount = 0;
@@ -2712,8 +2795,6 @@ UpdateAllMatchingDocuments(MongoCollection *collection,
 
 		result.rowsUpdated = isNull ? 0 : DatumGetUInt64(updatedRowsDatum);
 	}
-
-	SPI_finish();
 
 	return result;
 }
@@ -3110,25 +3191,19 @@ command_update_worker(PG_FUNCTION_ARGS)
 	if (params.isUpdateMany)
 	{
 		/*
-		 * updateMany on worker: run the UPDATE locally on this shard and
-		 * return matched/modified counts as BSON.
-		 * Note: schema validation is not currently supported on this path;
-		 * the coordinator only routes here when validatorInfo is NULL.
+		 * The shared update-all boundary chooses native or legacy execution.
+		 * Schema validation is excluded by the coordinator's worker-pushdown gate.
 		 */
 		bool hasOnlyObjectIdFilter = false;
 		bool hasShardKeyValueFilter = false;
-
 		UpdateAllMatchingDocsResult updateResult = UpdateAllMatchingDocuments(
-			mongoCollection, &params.param.updateOne,
-			hasShardKeyValueFilter, shardKeyHash, NULL,
-			&hasOnlyObjectIdFilter);
+			mongoCollection, &params.param.updateOne, hasShardKeyValueFilter,
+			shardKeyHash, NULL, &hasOnlyObjectIdFilter);
 
 		pgbson_writer writer;
 		PgbsonWriterInit(&writer);
-		PgbsonWriterAppendInt64(&writer, "m", 1, /* matched */
-								(int64_t) updateResult.matchedDocs);
-		PgbsonWriterAppendInt64(&writer, "d", 1, /* modified */
-								(int64_t) updateResult.rowsUpdated);
+		PgbsonWriterAppendInt64(&writer, "m", 1, (int64_t) updateResult.matchedDocs);
+		PgbsonWriterAppendInt64(&writer, "d", 1, (int64_t) updateResult.rowsUpdated);
 		PG_RETURN_POINTER(PgbsonWriterGetPgbson(&writer));
 	}
 

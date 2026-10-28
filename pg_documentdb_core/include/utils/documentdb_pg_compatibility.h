@@ -24,6 +24,8 @@
 #define char_uint8_compat uint8
 #define ExecutorRun_Compat(queryDesc, scanDirection, numRows, runOnce) \
 	ExecutorRun(queryDesc, scanDirection, numRows)
+#define PortalRunCompat(portal, count, isTopLevel, runOnce, dest, altdest, completion) \
+	((void) (runOnce), PortalRun(portal, count, isTopLevel, dest, altdest, completion))
 
 #define SortPathKeyStrategy(pathKey) ((pathKey)->pk_cmptype)
 
@@ -33,6 +35,8 @@
 
 #define ExecutorRun_Compat(queryDesc, scanDirection, numRows, runOnce) \
 	ExecutorRun(queryDesc, scanDirection, numRows, runOnce)
+#define PortalRunCompat(portal, count, isTopLevel, runOnce, dest, altdest, completion) \
+	PortalRun(portal, count, isTopLevel, runOnce, dest, altdest, completion)
 
 #define SortPathKeyStrategy(pathKey) ((pathKey)->pk_strategy)
 

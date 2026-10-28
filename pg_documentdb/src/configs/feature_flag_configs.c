@@ -645,6 +645,10 @@ bool EnableNewNamespaceValidation =
  * SECTION: Write path feature flags
  */
 
+/* Added on v1.2, pending stabilization, enable on v1.5 */
+#define DEFAULT_ENABLE_UPDATE_QUERY_AST false
+bool EnableUpdateQueryAst = DEFAULT_ENABLE_UPDATE_QUERY_AST;
+
 /* Added in v0.116, Pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_UPDATE_MANY_WORKER_PUSHDOWN false
 bool EnableUpdateManyWorkerPushdown = DEFAULT_ENABLE_UPDATE_MANY_WORKER_PUSHDOWN;
@@ -1789,6 +1793,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableCompactVacuumFull,
 		DEFAULT_ENABLE_COMPACT_VACUUM_FULL,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_update_query_ast", newGucPrefix),
+		gettext_noop(
+			"Build general-match update-all queries using native query trees when schema validation is not required."),
+		NULL,
+		&EnableUpdateQueryAst,
+		DEFAULT_ENABLE_UPDATE_QUERY_AST,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
