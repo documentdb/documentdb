@@ -1,7 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- *
- * SPDX-License-Identifier: MIT
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/aggregation/bson_aggregation_pipeline.c
  *
@@ -105,92 +104,6 @@ extern bool EnableSupportFunctionIdPushdown;
 
 /* GUC to config tdigest compression */
 extern int TdigestCompressionAccuracy;
-
-/*
- * The mutation function that modifies a given query with a pipeline stage's value.
- */
-typedef Query *(*MutateQueryForStageFunc)(const bson_value_t *existingValue,
-										  Query *query,
-										  AggregationPipelineBuildContext *context);
-
-/*
- * This function checks the compatibility of stages in the pipeline.
- */
-typedef void (*PipelineStagesPreCheckFunc)(const bson_value_t *existingValue,
-										   const AggregationPipelineBuildContext *context);
-
-/*
- * Whether or not the stage requires persistence on the cursor.
- */
-typedef bool (*RequiresPersistentCursorFunc)(const bson_value_t *existingValue,
-											 bool *isSingleRowResult);
-
-/*
- * Whether or not the stage can be inlined for a lookup stage
- */
-typedef bool (*CanInlineLookupStage)(const bson_value_t *stageValue, const
-									 StringView *lookupPath, bool hasLet);
-
-
-typedef bool (*IsDynamicCursorFetchAllFunc)(const bson_value_t *existingValue,
-											Query *query);
-
-
-/*
- * Declaration of a given aggregation pipeline stage.
- */
-typedef struct AggregationStageDefinition
-{
-	/* The stage name (e.g. $addFields, $project) */
-	const char *stage;
-
-	/* The function that will modify the pipeline for that stage - NULL if unsupported */
-	MutateQueryForStageFunc mutateFunc;
-
-	/* Whether or not the stage requires persistence on cursors */
-	RequiresPersistentCursorFunc requiresPersistentCursor;
-
-	/* Optional function for whether lookup stages can be inlined in the substage */
-	CanInlineLookupStage canInlineLookupStageFunc;
-
-	/* Does the stage maintain a stable sort order or modify the input stream */
-	bool preservesStableSortOrder;
-
-	/* Whether or not the stage supports collection agnostic queries
-	 */
-	bool canHandleAgnosticQueries;
-
-	/* Whether or not the stage is a linear transform of the prior stage.
-	 * i.e. whether or not the stage is purely a projection transform of its input.
-	 */
-	bool isProjectTransform;
-
-	/* Check whether given pipeline stages are compatible. */
-	PipelineStagesPreCheckFunc pipelineCheckFunc;
-
-	/* Whether or not the stage is an output stage. $merge and $out are output stages */
-	bool isOutputStage;
-
-	/* whether or not the stage is a multi-collection stage */
-	bool isMultiJoinUnionStage;
-
-	/* Allow Base shard table pushdown */
-	bool allowBaseShardTablePushdown;
-
-
-	/*
-	 * Whether or not the stage requires persisted cursors
-	 * even when dynamic cursors are present.
-	 * TODO: This is temporary, until we can get the persisted costing
-	 * fixed directly in the planner when dynamic cursors decide persisted
-	 * vs streaming based on startup cost during planning.
-	 * Also note: It is by design we DO NOT want to run planning twice as a
-	 * fix for this.
-	 */
-	IsDynamicCursorFetchAllFunc isDynamicCursorFetchAllFunc;
-
-	Stage stageEnum;
-} AggregationStageDefinition;
 
 /*
  * Result of analyzing $sort + $group accumulators to decide
@@ -314,6 +227,8 @@ static void SetBatchSize(const char *fieldName, const bson_value_t *value,
 						 QueryData *queryData);
 
 static int CompareStageByStageName(const void *a, const void *b);
+static const AggregationStageDefinition * GetAggregationStageDefinition(const
+																		char *stageName);
 static bool IsSampleScanEligibleJoinTree(Node *node);
 static List * AddShardKeyAndIdFilters(const bson_value_t *existingValue, Query *query,
 									  AggregationPipelineBuildContext *context,
@@ -1385,6 +1300,11 @@ static const AggregationStageDefinition StageDefinitions[] =
 static const int AggregationStageCount = sizeof(StageDefinitions) /
 										 sizeof(AggregationStageDefinition);
 
+#define MAX_EXTENSIBLE_AGGREGATION_STAGES 10
+static AggregationStageDefinition ExtensibleStageDefinitions[
+	MAX_EXTENSIBLE_AGGREGATION_STAGES];
+static int ExtensibleStageCount = 0;
+
 static const int MaxEvenFunctionArguments = ((int) (FUNC_MAX_ARGS / 2)) * 2;
 
 PG_FUNCTION_INFO_V1(command_bson_aggregation_pipeline);
@@ -1395,6 +1315,60 @@ PG_FUNCTION_INFO_V1(command_bson_aggregation_find_and_modify);
 PG_FUNCTION_INFO_V1(command_api_collection);
 PG_FUNCTION_INFO_V1(command_aggregation_support);
 PG_FUNCTION_INFO_V1(documentdb_core_bson_to_bson);
+
+/*
+ * Registration is limited to startup so backends inherit an immutable registry.
+ */
+void
+RegisterAggregationStageExtension(const AggregationStageDefinition *definition)
+{
+	if (!process_shared_preload_libraries_in_progress)
+	{
+		ereport(ERROR, (errmsg(
+							"Aggregation stage extensions can only be added during shared_preload_libraries")));
+	}
+
+	if (definition == NULL || definition->stage == NULL ||
+		definition->stage[0] != '$' || definition->stage[1] == '\0' ||
+		definition->mutateFunc == NULL ||
+		definition->requiresPersistentCursor == NULL ||
+		definition->isDynamicCursorFetchAllFunc == NULL)
+	{
+		ereport(ERROR, (errmsg("Invalid aggregation stage extension definition"),
+						errdetail(
+							"A stage name starting with '$' and mutation, persistent cursor, and dynamic cursor callbacks are required.")));
+	}
+
+	if (GetAggregationStageDefinition(definition->stage) != NULL)
+	{
+		ereport(ERROR, (errmsg("Aggregation stage \"%s\" is already registered",
+							   definition->stage)));
+	}
+
+	if (ExtensibleStageCount == MAX_EXTENSIBLE_AGGREGATION_STAGES)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register more than %d aggregation stage extensions",
+							MAX_EXTENSIBLE_AGGREGATION_STAGES)));
+	}
+
+	AggregationStageDefinition registeredDefinition = *definition;
+	registeredDefinition.stage = MemoryContextStrdup(TopMemoryContext, definition->stage);
+	registeredDefinition.stageEnum = Stage_Extensible;
+
+	int insertIndex = 0;
+	while (insertIndex < ExtensibleStageCount &&
+		   strcmp(ExtensibleStageDefinitions[insertIndex].stage, definition->stage) < 0)
+	{
+		insertIndex++;
+	}
+
+	memmove(&ExtensibleStageDefinitions[insertIndex + 1],
+			&ExtensibleStageDefinitions[insertIndex],
+			(ExtensibleStageCount - insertIndex) * sizeof(AggregationStageDefinition));
+	ExtensibleStageDefinitions[insertIndex] = registeredDefinition;
+	ExtensibleStageCount++;
+}
 
 
 inline static void
@@ -3716,11 +3690,8 @@ CanInlineLookupPipeline(const bson_value_t *pipeline,
 		}
 
 		/* Now handle each stage */
-		const AggregationStageDefinition *definition = bsearch(
-			stageElement.path, StageDefinitions,
-			AggregationStageCount,
-			sizeof(AggregationStageDefinition),
-			CompareStageByStageName);
+		const AggregationStageDefinition *definition =
+			GetAggregationStageDefinition(stageElement.path);
 		if (definition == NULL)
 		{
 			canInline = false;
@@ -9678,11 +9649,8 @@ ExtractAggregationStages(const bson_value_t *pipelineValue,
 		}
 
 		/* Get the definition of the stage */
-		const AggregationStageDefinition *definition = bsearch(
-			stageElement.path, StageDefinitions,
-			AggregationStageCount,
-			sizeof(AggregationStageDefinition),
-			CompareStageByStageName);
+		const AggregationStageDefinition *definition =
+			GetAggregationStageDefinition(stageElement.path);
 		if (definition == NULL)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_UNRECOGNIZEDCOMMAND),
@@ -10593,10 +10561,26 @@ HandleSample(const bson_value_t *existingValue, Query *query,
 
 
 /*
- * Helper method used by MutateStageWithPipeline to extract the appropriate
- * Stage information. Compares the aggregation stage by the ordinal comparison
- * of its name.
+ * Built-in stages retain precedence and avoid searching an empty extension registry.
  */
+static const AggregationStageDefinition *
+GetAggregationStageDefinition(const char *stageName)
+{
+	const AggregationStageDefinition *definition = bsearch(
+		stageName, StageDefinitions, AggregationStageCount,
+		sizeof(AggregationStageDefinition), CompareStageByStageName);
+
+	if (definition == NULL && ExtensibleStageCount > 0)
+	{
+		definition = bsearch(stageName, ExtensibleStageDefinitions, ExtensibleStageCount,
+							 sizeof(AggregationStageDefinition), CompareStageByStageName);
+	}
+
+	return definition;
+}
+
+
+/* String-key comparator shared by both sorted stage tables. */
 static int
 CompareStageByStageName(const void *a, const void *b)
 {

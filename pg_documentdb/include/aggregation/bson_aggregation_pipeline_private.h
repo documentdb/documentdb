@@ -1,7 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- *
- * SPDX-License-Identifier: MIT
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * include/planner/bson_aggregation_pipeline_private.h
  *
@@ -92,6 +91,7 @@ typedef enum
 	Stage_InverseMatch = 100,
 	Stage_LookupUnwind,
 	Stage_SortGroup,
+	Stage_Extensible,
 } Stage;
 
 
@@ -275,6 +275,47 @@ typedef struct AggregationPipelineBuildContext
 		ShardKeyFilter_In = 2,
 	} shardKeyFilterAppliedType;
 } AggregationPipelineBuildContext;
+
+typedef Query *(*MutateQueryForStageFunc)(const bson_value_t *existingValue,
+										  Query *query,
+										  AggregationPipelineBuildContext *context);
+typedef void (*PipelineStagesPreCheckFunc)(const bson_value_t *existingValue,
+										   const AggregationPipelineBuildContext *context);
+typedef bool (*RequiresPersistentCursorFunc)(const bson_value_t *existingValue,
+											 bool *isSingleRowResult);
+typedef bool (*CanInlineLookupStage)(const bson_value_t *stageValue,
+									 const StringView *lookupPath, bool hasLet);
+typedef bool (*IsDynamicCursorFetchAllFunc)(const bson_value_t *existingValue,
+											Query *query);
+
+struct AggregationStageDefinition
+{
+	const char *stage;
+	MutateQueryForStageFunc mutateFunc;
+	RequiresPersistentCursorFunc requiresPersistentCursor;
+	CanInlineLookupStage canInlineLookupStageFunc;
+	bool preservesStableSortOrder;
+	bool canHandleAgnosticQueries;
+
+	/* True only for a projection transform of the input. */
+	bool isProjectTransform;
+	PipelineStagesPreCheckFunc pipelineCheckFunc;
+	bool isOutputStage;
+	bool isMultiJoinUnionStage;
+	bool allowBaseShardTablePushdown;
+
+	/* Whether dynamic cursors must fetch all results into a persisted cursor. */
+	IsDynamicCursorFetchAllFunc isDynamicCursorFetchAllFunc;
+	Stage stageEnum;
+};
+
+/*
+ * Register during shared-preload initialization.
+ * Up to ten distinct stage names are supported; built-in names are reserved.
+ * The definition and name are copied, and stageEnum is set to Stage_Extensible.
+ * Mutation and both cursor callbacks are required; other callbacks are optional.
+ */
+void RegisterAggregationStageExtension(const AggregationStageDefinition *definition);
 
 
 typedef struct
