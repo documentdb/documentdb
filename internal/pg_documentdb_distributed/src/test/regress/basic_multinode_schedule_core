@@ -3,6 +3,7 @@ test: multinode/bson_collation_collection_create_tests_mn
 test: multinode/roles_reference_table
 test: multinode/schema_validation_update_multi
 test: multinode/bson_collation_write_multinode
+test: multinode/commands_update_all_query_ast
 test: multinode/shard_commands_worker_validation
 test: multinode/nonblocking_unique_index_hook
 test: multinode/commands_collmod_hidden

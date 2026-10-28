@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * src/bson_query.h
  *
@@ -138,6 +139,9 @@ bool QueryDocumentsAreEquivalent(const pgbson *leftQueryDocument,
 								 bool convertSupportedInToScalarArrayOp);
 List * CreateQualsFromQueryDocIterator(bson_iter_t *queryDocIterator,
 									   BsonQueryOperatorContext *context);
+List * CreateQualsForBsonQuery(pgbson *queryDocument,
+							   BsonQueryOperatorContext *context,
+							   Query *query, ParamListInfo boundParams);
 Node * EvaluateBoundParameters(Node *expression, ParamListInfo boundParams);
 
 List * CreateQualsForBsonValueTopLevelQueryIter(bson_iter_t *queryIter,

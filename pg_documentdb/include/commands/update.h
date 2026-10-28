@@ -18,6 +18,7 @@
 #include "metadata/collection.h"
 #include "operators/bson_expr_eval.h"
 
+extern bool EnableUpdateQueryAst;
 
 /*
  * UpdateReturnValue specifies whether an update should return

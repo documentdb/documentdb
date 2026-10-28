@@ -1,0 +1,721 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
+SET documentdb.next_collection_id TO 26710000;
+SET documentdb.next_collection_index_id TO 26710000;
+SET documentdb.enableSchemaValidation TO ON;
+SET documentdb.enableBypassDocumentValidation TO ON;
+SET documentdb.enable_update_many_worker_pushdown TO OFF;
+SET documentdb_core.enableCollation TO ON;
+SET documentdb.skipFailOnCollation TO OFF;
+SET documentdb.enable_support_function_id_pushdown TO OFF;
+SHOW documentdb.enable_update_query_ast;
+ documentdb.enable_update_query_ast 
+------------------------------------
+ off
+(1 row)
+
+SELECT documentdb_api.create_collection('update_all_ast', 'plain');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api.create_collection_view('update_all_ast', '{"create":"strict","validator":{"$jsonSchema":{"properties":{"value":{"bsonType":"int"}}}},"validationLevel":"strict","validationAction":"error"}');
+NOTICE:  creating collection
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.create_collection_view('update_all_ast', '{"create":"moderate","validator":{"$jsonSchema":{"properties":{"value":{"bsonType":"int"}}}},"validationLevel":"moderate","validationAction":"error"}');
+NOTICE:  creating collection
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.create_collection_view('update_all_ast', '{"create":"described","enableUpdateDescription":true,"validator":{"$jsonSchema":{"properties":{"value":{"bsonType":"int"}}}},"validationLevel":"strict","validationAction":"error"}');
+NOTICE:  creating collection
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+CREATE TEMP TABLE update_all_cases (
+    seq int PRIMARY KEY, label text, target text, command bson,
+    matched int, modified int, fails bool DEFAULT false
+);
+INSERT INTO update_all_cases VALUES
+ (1, 'empty predicate', 'plain', '{"update":"plain","updates":[{"q":{},"u":{"$inc":{"value":1}},"multi":true}]}', 3, 3, false),
+ (2, 'no-op', 'plain', '{"update":"plain","updates":[{"q":{"group":"x"},"u":{"$set":{"group":"x"}},"multi":true}]}', 2, 0, false),
+ (3, 'zero matches', 'plain', '{"update":"plain","updates":[{"q":{"group":"missing"},"u":{"$inc":{"value":1}},"multi":true}]}', 0, 0, false),
+ (4, 'mixed ID residual match', 'plain', '{"update":"plain","updates":[{"q":{"_id":1,"group":"x"},"u":{"$inc":{"value":1}},"multi":true}]}', 1, 1, false),
+ (5, 'mixed ID residual rejection', 'plain', '{"update":"plain","updates":[{"q":{"_id":1,"group":"missing"},"u":{"$inc":{"value":1}},"multi":true}]}', 0, 0, false),
+ (6, 'ID range', 'plain', '{"update":"plain","updates":[{"q":{"_id":{"$gte":2}},"u":{"$inc":{"value":1}},"multi":true}]}', 2, 2, false),
+ (7, 'protected ID equality', 'plain', '{"update":"plain","updates":[{"q":{"_id":1},"u":{"$inc":{"value":1}},"multi":true}]}', 1, 1, false),
+ (8, 'protected ID eq operator', 'plain', '{"update":"plain","updates":[{"q":{"_id":{"$eq":1}},"u":{"$inc":{"value":1}},"multi":true}]}', 1, 1, false),
+ (9, 'protected repeated ID', 'plain', '{"update":"plain","updates":[{"q":{"$and":[{"_id":1},{"_id":1}]},"u":{"$inc":{"value":1}},"multi":true}]}', 1, 1, false),
+ (10, 'array filters', 'plain', '{"update":"plain","updates":[{"q":{"group":"x"},"u":{"$inc":{"items.$[item].qty":10}},"arrayFilters":[{"item.qty":{"$lt":3}}],"multi":true}]}', 2, 2, false),
+ (11, 'let and normalized now', 'plain', '{"update":"plain","let":{"wanted":{"$literal":"x"},"increment":2},"updates":[{"q":{"$expr":{"$eq":["$group","$$wanted"]}},"u":[{"$set":{"value":{"$add":["$value","$$increment"]},"stamp":"$$NOW"}},{"$set":{"same_now":{"$eq":["$stamp","$$NOW"]}}},{"$unset":"stamp"}],"multi":true}]}', 2, 2, false),
+ (12, 'collated match and positional update', 'plain', '{"update":"plain","updates":[{"q":{"label":"CAT","items.label":"CAT"},"u":{"$inc":{"items.$.qty":10}},"multi":true,"collation":{"locale":"en","strength":2}}]}', 2, 2, false),
+ (13, 'collated update expression', 'plain', '{"update":"plain","updates":[{"q":{"label":"CAT"},"u":[{"$set":{"equal":{"$eq":["$label","CAT"]}}}],"multi":true,"collation":{"locale":"en","strength":2}}]}', 2, 2, false),
+ (14, 'collated array filters and modifier', 'plain', '{"update":"plain","updates":[{"q":{"label":"CAT"},"u":{"$set":{"items.$[item].seen":true},"$addToSet":{"tags":"CAT"}},"arrayFilters":[{"item.label":"CAT"}],"multi":true,"collation":{"locale":"en","strength":2}}]}', 2, 2, false),
+ (15, 'strict valid', 'strict', '{"update":"strict","updates":[{"q":{"group":"x"},"u":{"$inc":{"value":1}},"multi":true}]}', 2, 2, false),
+ (16, 'strict invalid rolls back all rows', 'strict', '{"update":"strict","updates":[{"q":{"group":"x"},"u":[{"$set":{"value":{"$cond":[{"$eq":["$_id",2]},"invalid",11]}}}],"multi":true}]}', NULL, NULL, true),
+ (17, 'strict bypass', 'strict', '{"update":"strict","bypassDocumentValidation":true,"updates":[{"q":{"group":"x"},"u":{"$set":{"value":"bypassed"}},"multi":true}]}', 2, 2, false),
+ (18, 'strict zero matches', 'strict', '{"update":"strict","updates":[{"q":{"_id":1,"group":"missing"},"u":{"$set":{"value":"invalid"}},"multi":true}]}', 0, 0, false),
+ (19, 'moderate valid to invalid', 'moderate', '{"update":"moderate","updates":[{"q":{"group":"x"},"u":{"$set":{"value":"invalid"}},"multi":true}]}', NULL, NULL, true),
+ (20, 'moderate invalid to invalid', 'moderate', '{"update":"moderate","updates":[{"q":{"group":"y"},"u":{"$set":{"value":"still invalid"}},"multi":true}]}', 1, 1, false),
+ (21, 'description validation let collation', 'described', '{"update":"described","let":{"increment":2},"updates":[{"q":{"_id":1,"label":"CAT"},"u":[{"$set":{"value":{"$add":["$value","$$increment"]},"equal":{"$eq":["$label","CAT"]}}}],"multi":true,"collation":{"locale":"en","strength":2}}]}', 1, 1, false),
+ (22, 'description validation rejects', 'described', '{"update":"described","updates":[{"q":{"_id":1,"group":"x"},"u":{"$set":{"value":"invalid"}},"multi":true}]}', NULL, NULL, true),
+ (23, 'batch write visibility', 'plain', '{"update":"plain","updates":[{"q":{"group":"x"},"u":{"$set":{"visible":true}},"multi":true},{"q":{"visible":true},"u":{"$inc":{"value":1}},"multi":true},{"q":{"visible":true},"u":{"$set":{"visible":true}},"multi":true}]}', 6, 4, false),
+ (24, 'partially unchanged matches', 'plain', '{"update":"plain","updates":[{"q":{"group":"x"},"u":{"$set":{"value":10}},"multi":true}]}', 2, 1, false),
+ (25, 'ID membership with residual', 'plain', '{"update":"plain","updates":[{"q":{"_id":{"$in":[1,3]},"group":"x"},"u":{"$inc":{"value":1}},"multi":true}]}', 1, 1, false),
+ (26, 'disjunctive ID filters', 'plain', '{"update":"plain","updates":[{"q":{"$or":[{"_id":1,"group":"x"},{"_id":3,"group":"y"}]},"u":{"$inc":{"value":1}},"multi":true}]}', 2, 2, false),
+ (27, 'element match before transformation', 'plain', '{"update":"plain","updates":[{"q":{"items":{"$elemMatch":{"label":"Cat","qty":{"$lt":3}}}},"u":{"$set":{"items":[]}},"multi":true}]}', 1, 1, false),
+ (28, 'comment-only predicate', 'plain', '{"update":"plain","updates":[{"q":{"$comment":"match all"},"u":{"$inc":{"value":1}},"multi":true}]}', 3, 3, false),
+ (29, 'contradictory ID filters', 'plain', '{"update":"plain","updates":[{"q":{"$and":[{"_id":1},{"_id":2}],"group":"x"},"u":{"$inc":{"value":1}},"multi":true}]}', 0, 0, false);
+CREATE TEMP TABLE update_all_results (
+    pass text, seq int, result text, success bool, error text, documents text[],
+    PRIMARY KEY (pass, seq)
+);
+-- Compare full responses and ordered documents, and reject equal-but-wrong
+-- counts or errors. Each operation starts with the same fixture.
+CREATE FUNCTION pg_temp.run_update_all_cases(pass_name text) RETURNS int
+LANGUAGE plpgsql AS $$
+DECLARE
+    test_case record;
+    response bson;
+    succeeded bool;
+    failure text;
+    before_docs text[];
+    after_docs text[];
+BEGIN
+    FOR test_case IN SELECT * FROM update_all_cases ORDER BY seq LOOP
+        PERFORM documentdb_api.delete('update_all_ast',
+            format('{"delete":"%s","deletes":[{"q":{},"limit":0}]}', test_case.target)::bson);
+        PERFORM documentdb_api.insert('update_all_ast', format(
+            '{"insert":"%s","bypassDocumentValidation":true,"documents":[
+             {"_id":1,"group":"x","label":"Cat","value":10,"tags":["Cat"],"items":[{"label":"Cat","qty":1},{"label":"Dog","qty":5}]},
+             {"_id":2,"group":"x","label":"cat","value":20,"tags":["cat"],"items":[{"label":"cat","qty":2},{"label":"Dog","qty":7}]},
+             {"_id":3,"group":"y","label":"dog","value":%s,"tags":["dog"],"items":[{"label":"dog","qty":3}]}]}',
+            test_case.target, CASE WHEN test_case.target = 'moderate' THEN '"invalid"' ELSE '30' END)::bson);
+        SELECT array_agg(document::text ORDER BY object_id) INTO before_docs
+        FROM documentdb_api.collection('update_all_ast', test_case.target);
+        response := NULL;
+        succeeded := NULL;
+        failure := NULL;
+        BEGIN
+            SELECT p_result, p_success INTO response, succeeded
+            FROM documentdb_api.update('update_all_ast', test_case.command);
+        EXCEPTION WHEN OTHERS THEN
+            failure := SQLSTATE || ': ' || SQLERRM;
+        END;
+        SELECT array_agg(document::text ORDER BY object_id) INTO after_docs
+        FROM documentdb_api.collection('update_all_ast', test_case.target);
+        IF test_case.fails IS DISTINCT FROM (failure IS NOT NULL OR succeeded IS NOT TRUE) THEN
+            RAISE EXCEPTION 'Unexpected outcome for %: %, %', test_case.label, response, failure;
+        END IF;
+        IF NOT test_case.fails AND (response @@ format(
+            '{"n":%s,"nModified":%s}', test_case.matched, test_case.modified)::bson) IS NOT TRUE THEN
+            RAISE EXCEPTION 'Unexpected counts for %: %', test_case.label, response;
+        END IF;
+        IF test_case.fails AND (response @@
+            '{"n":0,"nModified":0,"writeErrors":{"$elemMatch":{"errmsg":"Document failed validation"}}}'::bson) IS NOT TRUE THEN
+            RAISE EXCEPTION 'Expected validation failure for %: %, %', test_case.label, response, failure;
+        END IF;
+        IF (test_case.fails OR test_case.modified = 0) AND before_docs IS DISTINCT FROM after_docs THEN
+            RAISE EXCEPTION 'Unexpected document changes for %', test_case.label;
+        END IF;
+        INSERT INTO update_all_results VALUES
+            (pass_name, test_case.seq, response::text, succeeded, failure, after_docs);
+    END LOOP;
+    RETURN (SELECT count(*)::int FROM update_all_cases);
+END;
+$$;
+PREPARE update_all_cases_prepared(text) AS SELECT pg_temp.run_update_all_cases($1);
+SET documentdb.enable_update_query_ast TO OFF;
+EXECUTE update_all_cases_prepared('legacy');
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+ run_update_all_cases 
+----------------------
+                   29
+(1 row)
+
+SET documentdb.enable_update_query_ast TO ON;
+EXECUTE update_all_cases_prepared('native');
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+ run_update_all_cases 
+----------------------
+                   29
+(1 row)
+
+SET documentdb.enable_update_query_ast TO OFF;
+EXECUTE update_all_cases_prepared('legacy_again');
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+ run_update_all_cases 
+----------------------
+                   29
+(1 row)
+
+SET documentdb.enable_support_function_id_pushdown TO ON;
+EXECUTE update_all_cases_prepared('legacy_id_pushdown');
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+ run_update_all_cases 
+----------------------
+                   29
+(1 row)
+
+SET documentdb.enable_update_query_ast TO ON;
+EXECUTE update_all_cases_prepared('native_id_pushdown');
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+ run_update_all_cases 
+----------------------
+                   29
+(1 row)
+
+SET documentdb.enable_support_function_id_pushdown TO OFF;
+SET documentdb.enable_update_query_ast TO OFF;
+DO $$
+BEGIN
+    IF (SELECT count(*) FROM update_all_results) <> 5 * (SELECT count(*) FROM update_all_cases)
+       OR EXISTS (
+           SELECT 1 FROM update_all_results a JOIN update_all_results b USING (seq)
+           WHERE a.pass = 'legacy' AND b.pass <> 'legacy' AND
+                 ROW(a.result, a.success, a.error, a.documents) IS DISTINCT FROM
+                 ROW(b.result, b.success, b.error, b.documents)
+       ) THEN
+        RAISE EXCEPTION 'Native update-all response or document parity failed';
+    END IF;
+END;
+$$;
+SELECT c.label,
+       ROW(a.result, a.success, a.error, a.documents) IS NOT DISTINCT FROM
+       ROW(b.result, b.success, b.error, b.documents) AS native_equal,
+       ROW(a.result, a.success, a.error, a.documents) IS NOT DISTINCT FROM
+       ROW(d.result, d.success, d.error, d.documents) AS disabled_again_equal
+FROM update_all_cases c
+JOIN update_all_results a ON a.seq = c.seq AND a.pass = 'legacy'
+JOIN update_all_results b ON b.seq = c.seq AND b.pass = 'native'
+JOIN update_all_results d ON d.seq = c.seq AND d.pass = 'legacy_again'
+ORDER BY c.seq;
+                label                 | native_equal | disabled_again_equal 
+--------------------------------------+--------------+----------------------
+ empty predicate                      | t            | t
+ no-op                                | t            | t
+ zero matches                         | t            | t
+ mixed ID residual match              | t            | t
+ mixed ID residual rejection          | t            | t
+ ID range                             | t            | t
+ protected ID equality                | t            | t
+ protected ID eq operator             | t            | t
+ protected repeated ID                | t            | t
+ array filters                        | t            | t
+ let and normalized now               | t            | t
+ collated match and positional update | t            | t
+ collated update expression           | t            | t
+ collated array filters and modifier  | t            | t
+ strict valid                         | t            | t
+ strict invalid rolls back all rows   | t            | t
+ strict bypass                        | t            | t
+ strict zero matches                  | t            | t
+ moderate valid to invalid            | t            | t
+ moderate invalid to invalid          | t            | t
+ description validation let collation | t            | t
+ description validation rejects       | t            | t
+ batch write visibility               | t            | t
+ partially unchanged matches          | t            | t
+ ID membership with residual          | t            | t
+ disjunctive ID filters               | t            | t
+ element match before transformation  | t            | t
+ comment-only predicate               | t            | t
+ contradictory ID filters             | t            | t
+(29 rows)
+
+SELECT b.pass, count(*) AS cases,
+       bool_and(ROW(a.result, a.success, a.error, a.documents) IS NOT DISTINCT FROM
+                ROW(b.result, b.success, b.error, b.documents)) AS exact_parity
+FROM update_all_results a JOIN update_all_results b USING (seq)
+WHERE a.pass = 'legacy' AND b.pass IN ('legacy_id_pushdown', 'native_id_pushdown')
+GROUP BY b.pass ORDER BY b.pass;
+        pass        | cases | exact_parity 
+--------------------+-------+--------------
+ legacy_id_pushdown |    29 | t
+ native_id_pushdown |    29 | t
+(2 rows)
+
+SELECT c.label, r.result, r.success, r.error
+FROM update_all_cases c JOIN update_all_results r USING (seq)
+WHERE r.pass = 'legacy' ORDER BY c.seq;
+                label                 |                                                                                                                         result                                                                                                                         | success | error 
+--------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------+-------
+ empty predicate                      | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "3" }, "n" : { "$numberInt" : "3" } }                                                                                                                                             | t       | 
+ no-op                                | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "0" }, "n" : { "$numberInt" : "2" } }                                                                                                                                             | t       | 
+ zero matches                         | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "0" }, "n" : { "$numberInt" : "0" } }                                                                                                                                             | t       | 
+ mixed ID residual match              | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "1" }, "n" : { "$numberInt" : "1" } }                                                                                                                                             | t       | 
+ mixed ID residual rejection          | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "0" }, "n" : { "$numberInt" : "0" } }                                                                                                                                             | t       | 
+ ID range                             | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "2" }, "n" : { "$numberInt" : "2" } }                                                                                                                                             | t       | 
+ protected ID equality                | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "1" }, "n" : { "$numberInt" : "1" } }                                                                                                                                             | t       | 
+ protected ID eq operator             | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "1" }, "n" : { "$numberInt" : "1" } }                                                                                                                                             | t       | 
+ protected repeated ID                | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "1" }, "n" : { "$numberInt" : "1" } }                                                                                                                                             | t       | 
+ array filters                        | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "2" }, "n" : { "$numberInt" : "2" } }                                                                                                                                             | t       | 
+ let and normalized now               | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "2" }, "n" : { "$numberInt" : "2" } }                                                                                                                                             | t       | 
+ collated match and positional update | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "2" }, "n" : { "$numberInt" : "2" } }                                                                                                                                             | t       | 
+ collated update expression           | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "2" }, "n" : { "$numberInt" : "2" } }                                                                                                                                             | t       | 
+ collated array filters and modifier  | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "2" }, "n" : { "$numberInt" : "2" } }                                                                                                                                             | t       | 
+ strict valid                         | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "2" }, "n" : { "$numberInt" : "2" } }                                                                                                                                             | t       | 
+ strict invalid rolls back all rows   | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "0" }, "n" : { "$numberInt" : "0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "525074461" }, "errmsg" : "Document failed validation" } ] } | f       | 
+ strict bypass                        | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "2" }, "n" : { "$numberInt" : "2" } }                                                                                                                                             | t       | 
+ strict zero matches                  | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "0" }, "n" : { "$numberInt" : "0" } }                                                                                                                                             | t       | 
+ moderate valid to invalid            | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "0" }, "n" : { "$numberInt" : "0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "525074461" }, "errmsg" : "Document failed validation" } ] } | f       | 
+ moderate invalid to invalid          | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "1" }, "n" : { "$numberInt" : "1" } }                                                                                                                                             | t       | 
+ description validation let collation | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "1" }, "n" : { "$numberInt" : "1" } }                                                                                                                                             | t       | 
+ description validation rejects       | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "0" }, "n" : { "$numberInt" : "0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "525074461" }, "errmsg" : "Document failed validation" } ] } | f       | 
+ batch write visibility               | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "4" }, "n" : { "$numberInt" : "6" } }                                                                                                                                             | t       | 
+ partially unchanged matches          | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "1" }, "n" : { "$numberInt" : "2" } }                                                                                                                                             | t       | 
+ ID membership with residual          | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "1" }, "n" : { "$numberInt" : "1" } }                                                                                                                                             | t       | 
+ disjunctive ID filters               | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "2" }, "n" : { "$numberInt" : "2" } }                                                                                                                                             | t       | 
+ element match before transformation  | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "1" }, "n" : { "$numberInt" : "1" } }                                                                                                                                             | t       | 
+ comment-only predicate               | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "3" }, "n" : { "$numberInt" : "3" } }                                                                                                                                             | t       | 
+ contradictory ID filters             | { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "0" }, "n" : { "$numberInt" : "0" } }                                                                                                                                             | t       | 
+(29 rows)
+
+SELECT c.label, r.documents
+FROM update_all_cases c JOIN update_all_results r USING (seq)
+WHERE r.pass = 'native' AND c.seq IN (10, 11, 12, 13, 14, 16, 20, 21)
+ORDER BY c.seq;
+                label                 |                                                                                                                                                                                                                                                                                                                                                                                                                                     documents                                                                                                                                                                                                                                                                                                                                                                                                                                      
+--------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ array filters                        | {"{ \"_id\" : { \"$numberInt\" : \"1\" }, \"group\" : \"x\", \"label\" : \"Cat\", \"value\" : { \"$numberInt\" : \"10\" }, \"tags\" : [ \"Cat\" ], \"items\" : [ { \"label\" : \"Cat\", \"qty\" : { \"$numberInt\" : \"11\" } }, { \"label\" : \"Dog\", \"qty\" : { \"$numberInt\" : \"5\" } } ] }","{ \"_id\" : { \"$numberInt\" : \"2\" }, \"group\" : \"x\", \"label\" : \"cat\", \"value\" : { \"$numberInt\" : \"20\" }, \"tags\" : [ \"cat\" ], \"items\" : [ { \"label\" : \"cat\", \"qty\" : { \"$numberInt\" : \"12\" } }, { \"label\" : \"Dog\", \"qty\" : { \"$numberInt\" : \"7\" } } ] }","{ \"_id\" : { \"$numberInt\" : \"3\" }, \"group\" : \"y\", \"label\" : \"dog\", \"value\" : { \"$numberInt\" : \"30\" }, \"tags\" : [ \"dog\" ], \"items\" : [ { \"label\" : \"dog\", \"qty\" : { \"$numberInt\" : \"3\" } } ] }"}
+ let and normalized now               | {"{ \"_id\" : { \"$numberInt\" : \"1\" }, \"group\" : \"x\", \"label\" : \"Cat\", \"value\" : { \"$numberInt\" : \"12\" }, \"tags\" : [ \"Cat\" ], \"items\" : [ { \"label\" : \"Cat\", \"qty\" : { \"$numberInt\" : \"1\" } }, { \"label\" : \"Dog\", \"qty\" : { \"$numberInt\" : \"5\" } } ], \"same_now\" : true }","{ \"_id\" : { \"$numberInt\" : \"2\" }, \"group\" : \"x\", \"label\" : \"cat\", \"value\" : { \"$numberInt\" : \"22\" }, \"tags\" : [ \"cat\" ], \"items\" : [ { \"label\" : \"cat\", \"qty\" : { \"$numberInt\" : \"2\" } }, { \"label\" : \"Dog\", \"qty\" : { \"$numberInt\" : \"7\" } } ], \"same_now\" : true }","{ \"_id\" : { \"$numberInt\" : \"3\" }, \"group\" : \"y\", \"label\" : \"dog\", \"value\" : { \"$numberInt\" : \"30\" }, \"tags\" : [ \"dog\" ], \"items\" : [ { \"label\" : \"dog\", \"qty\" : { \"$numberInt\" : \"3\" } } ] }"}
+ collated match and positional update | {"{ \"_id\" : { \"$numberInt\" : \"1\" }, \"group\" : \"x\", \"label\" : \"Cat\", \"value\" : { \"$numberInt\" : \"10\" }, \"tags\" : [ \"Cat\" ], \"items\" : [ { \"label\" : \"Cat\", \"qty\" : { \"$numberInt\" : \"11\" } }, { \"label\" : \"Dog\", \"qty\" : { \"$numberInt\" : \"5\" } } ] }","{ \"_id\" : { \"$numberInt\" : \"2\" }, \"group\" : \"x\", \"label\" : \"cat\", \"value\" : { \"$numberInt\" : \"20\" }, \"tags\" : [ \"cat\" ], \"items\" : [ { \"label\" : \"cat\", \"qty\" : { \"$numberInt\" : \"12\" } }, { \"label\" : \"Dog\", \"qty\" : { \"$numberInt\" : \"7\" } } ] }","{ \"_id\" : { \"$numberInt\" : \"3\" }, \"group\" : \"y\", \"label\" : \"dog\", \"value\" : { \"$numberInt\" : \"30\" }, \"tags\" : [ \"dog\" ], \"items\" : [ { \"label\" : \"dog\", \"qty\" : { \"$numberInt\" : \"3\" } } ] }"}
+ collated update expression           | {"{ \"_id\" : { \"$numberInt\" : \"1\" }, \"group\" : \"x\", \"label\" : \"Cat\", \"value\" : { \"$numberInt\" : \"10\" }, \"tags\" : [ \"Cat\" ], \"items\" : [ { \"label\" : \"Cat\", \"qty\" : { \"$numberInt\" : \"1\" } }, { \"label\" : \"Dog\", \"qty\" : { \"$numberInt\" : \"5\" } } ], \"equal\" : true }","{ \"_id\" : { \"$numberInt\" : \"2\" }, \"group\" : \"x\", \"label\" : \"cat\", \"value\" : { \"$numberInt\" : \"20\" }, \"tags\" : [ \"cat\" ], \"items\" : [ { \"label\" : \"cat\", \"qty\" : { \"$numberInt\" : \"2\" } }, { \"label\" : \"Dog\", \"qty\" : { \"$numberInt\" : \"7\" } } ], \"equal\" : true }","{ \"_id\" : { \"$numberInt\" : \"3\" }, \"group\" : \"y\", \"label\" : \"dog\", \"value\" : { \"$numberInt\" : \"30\" }, \"tags\" : [ \"dog\" ], \"items\" : [ { \"label\" : \"dog\", \"qty\" : { \"$numberInt\" : \"3\" } } ] }"}
+ collated array filters and modifier  | {"{ \"_id\" : { \"$numberInt\" : \"1\" }, \"group\" : \"x\", \"label\" : \"Cat\", \"value\" : { \"$numberInt\" : \"10\" }, \"tags\" : [ \"Cat\" ], \"items\" : [ { \"label\" : \"Cat\", \"qty\" : { \"$numberInt\" : \"1\" }, \"seen\" : true }, { \"label\" : \"Dog\", \"qty\" : { \"$numberInt\" : \"5\" } } ] }","{ \"_id\" : { \"$numberInt\" : \"2\" }, \"group\" : \"x\", \"label\" : \"cat\", \"value\" : { \"$numberInt\" : \"20\" }, \"tags\" : [ \"cat\" ], \"items\" : [ { \"label\" : \"cat\", \"qty\" : { \"$numberInt\" : \"2\" }, \"seen\" : true }, { \"label\" : \"Dog\", \"qty\" : { \"$numberInt\" : \"7\" } } ] }","{ \"_id\" : { \"$numberInt\" : \"3\" }, \"group\" : \"y\", \"label\" : \"dog\", \"value\" : { \"$numberInt\" : \"30\" }, \"tags\" : [ \"dog\" ], \"items\" : [ { \"label\" : \"dog\", \"qty\" : { \"$numberInt\" : \"3\" } } ] }"}
+ strict invalid rolls back all rows   | {"{ \"_id\" : { \"$numberInt\" : \"1\" }, \"group\" : \"x\", \"label\" : \"Cat\", \"value\" : { \"$numberInt\" : \"10\" }, \"tags\" : [ \"Cat\" ], \"items\" : [ { \"label\" : \"Cat\", \"qty\" : { \"$numberInt\" : \"1\" } }, { \"label\" : \"Dog\", \"qty\" : { \"$numberInt\" : \"5\" } } ] }","{ \"_id\" : { \"$numberInt\" : \"2\" }, \"group\" : \"x\", \"label\" : \"cat\", \"value\" : { \"$numberInt\" : \"20\" }, \"tags\" : [ \"cat\" ], \"items\" : [ { \"label\" : \"cat\", \"qty\" : { \"$numberInt\" : \"2\" } }, { \"label\" : \"Dog\", \"qty\" : { \"$numberInt\" : \"7\" } } ] }","{ \"_id\" : { \"$numberInt\" : \"3\" }, \"group\" : \"y\", \"label\" : \"dog\", \"value\" : { \"$numberInt\" : \"30\" }, \"tags\" : [ \"dog\" ], \"items\" : [ { \"label\" : \"dog\", \"qty\" : { \"$numberInt\" : \"3\" } } ] }"}
+ moderate invalid to invalid          | {"{ \"_id\" : { \"$numberInt\" : \"1\" }, \"group\" : \"x\", \"label\" : \"Cat\", \"value\" : { \"$numberInt\" : \"10\" }, \"tags\" : [ \"Cat\" ], \"items\" : [ { \"label\" : \"Cat\", \"qty\" : { \"$numberInt\" : \"1\" } }, { \"label\" : \"Dog\", \"qty\" : { \"$numberInt\" : \"5\" } } ] }","{ \"_id\" : { \"$numberInt\" : \"2\" }, \"group\" : \"x\", \"label\" : \"cat\", \"value\" : { \"$numberInt\" : \"20\" }, \"tags\" : [ \"cat\" ], \"items\" : [ { \"label\" : \"cat\", \"qty\" : { \"$numberInt\" : \"2\" } }, { \"label\" : \"Dog\", \"qty\" : { \"$numberInt\" : \"7\" } } ] }","{ \"_id\" : { \"$numberInt\" : \"3\" }, \"group\" : \"y\", \"label\" : \"dog\", \"value\" : \"still invalid\", \"tags\" : [ \"dog\" ], \"items\" : [ { \"label\" : \"dog\", \"qty\" : { \"$numberInt\" : \"3\" } } ] }"}
+ description validation let collation | {"{ \"_id\" : { \"$numberInt\" : \"1\" }, \"group\" : \"x\", \"label\" : \"Cat\", \"value\" : { \"$numberInt\" : \"12\" }, \"tags\" : [ \"Cat\" ], \"items\" : [ { \"label\" : \"Cat\", \"qty\" : { \"$numberInt\" : \"1\" } }, { \"label\" : \"Dog\", \"qty\" : { \"$numberInt\" : \"5\" } } ], \"equal\" : true }","{ \"_id\" : { \"$numberInt\" : \"2\" }, \"group\" : \"x\", \"label\" : \"cat\", \"value\" : { \"$numberInt\" : \"20\" }, \"tags\" : [ \"cat\" ], \"items\" : [ { \"label\" : \"cat\", \"qty\" : { \"$numberInt\" : \"2\" } }, { \"label\" : \"Dog\", \"qty\" : { \"$numberInt\" : \"7\" } } ] }","{ \"_id\" : { \"$numberInt\" : \"3\" }, \"group\" : \"y\", \"label\" : \"dog\", \"value\" : { \"$numberInt\" : \"30\" }, \"tags\" : [ \"dog\" ], \"items\" : [ { \"label\" : \"dog\", \"qty\" : { \"$numberInt\" : \"3\" } } ] }"}
+(8 rows)
+
+-- A collated ID equality cannot be added as a binary equality to either shape.
+SELECT 1 FROM documentdb_api.insert_one('update_all_ast', 'plain', '{"_id":"CASE","group":"x","value":1}');
+ ?column? 
+----------
+        1
+(1 row)
+
+SELECT 1 FROM documentdb_api.insert_one('update_all_ast', 'strict', '{"_id":"CASE","group":"x","value":1}');
+ ?column? 
+----------
+        1
+(1 row)
+
+BEGIN;
+SET LOCAL documentdb.enable_update_query_ast TO OFF;
+SELECT documentdb_api.update('update_all_ast', '{"update":"plain","updates":[{"q":{"_id":"case","group":"x"},"u":{"$inc":{"value":1}},"multi":true,"collation":{"locale":"en","strength":2}}]}');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('update_all_ast', '{"update":"strict","updates":[{"q":{"_id":"case","group":"x"},"u":{"$inc":{"value":1}},"multi":true,"collation":{"locale":"en","strength":2}}]}');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('update_all_ast', 'plain') WHERE document @@ '{"_id":"CASE"}';
+                              document                               
+---------------------------------------------------------------------
+ { "_id" : "CASE", "group" : "x", "value" : { "$numberInt" : "2" } }
+(1 row)
+
+SELECT document FROM documentdb_api.collection('update_all_ast', 'strict') WHERE document @@ '{"_id":"CASE"}';
+                              document                               
+---------------------------------------------------------------------
+ { "_id" : "CASE", "group" : "x", "value" : { "$numberInt" : "2" } }
+(1 row)
+
+ROLLBACK;
+BEGIN;
+SET LOCAL documentdb.enable_update_query_ast TO ON;
+SELECT documentdb_api.update('update_all_ast', '{"update":"plain","updates":[{"q":{"_id":"case","group":"x"},"u":{"$inc":{"value":1}},"multi":true,"collation":{"locale":"en","strength":2}}]}');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('update_all_ast', '{"update":"strict","updates":[{"q":{"_id":"case","group":"x"},"u":{"$inc":{"value":1}},"multi":true,"collation":{"locale":"en","strength":2}}]}');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('update_all_ast', 'plain') WHERE document @@ '{"_id":"CASE"}';
+                              document                               
+---------------------------------------------------------------------
+ { "_id" : "CASE", "group" : "x", "value" : { "$numberInt" : "2" } }
+(1 row)
+
+SELECT document FROM documentdb_api.collection('update_all_ast', 'strict') WHERE document @@ '{"_id":"CASE"}';
+                              document                               
+---------------------------------------------------------------------
+ { "_id" : "CASE", "group" : "x", "value" : { "$numberInt" : "2" } }
+(1 row)
+
+ROLLBACK;
+-- Eager qualification must retain the write-specific geospatial rejection.
+DO $$
+DECLARE
+    native bool;
+    near_operator text;
+    response bson;
+    legacy_response bson;
+    succeeded bool;
+BEGIN
+    FOREACH near_operator IN ARRAY ARRAY['$near', '$nearSphere'] LOOP
+        FOREACH native IN ARRAY ARRAY[false, true] LOOP
+            PERFORM set_config('documentdb.enable_update_query_ast', native::text, true);
+            SELECT p_result, p_success INTO response, succeeded
+            FROM documentdb_api.update('update_all_ast', format(
+                '{"update":"plain","updates":[{"q":{"location":{"%s":[0,0]}},"u":{"$set":{"unexpected":true}},"multi":true}]}',
+                near_operator)::bson);
+            IF succeeded IS DISTINCT FROM false OR
+               (response @@ '{"n":0,"nModified":0,"writeErrors":{"$exists":true}}'::bson) IS NOT TRUE THEN
+                RAISE EXCEPTION 'Expected write rejection for %: %', near_operator, response;
+            END IF;
+            IF NOT native THEN
+                legacy_response := response;
+            ELSIF response::text IS DISTINCT FROM legacy_response::text THEN
+                RAISE EXCEPTION 'Different write rejection for %: %, %', near_operator, legacy_response, response;
+            END IF;
+        END LOOP;
+    END LOOP;
+END;
+$$;
+-- Literal worker specs omit variableSpec. Toggle pushdown to cover both the
+-- BSON-result wrapper and the direct executor's matched/modified counters.
+SELECT 1 FROM documentdb_api.delete('update_all_ast', '{"delete":"plain","deletes":[{"q":{},"limit":0}]}');
+ ?column? 
+----------
+        1
+(1 row)
+
+SELECT 1 FROM documentdb_api.insert('update_all_ast', '{"insert":"plain","documents":[
+    {"_id":1,"group":"x","value":10},
+    {"_id":2,"group":"x","value":20},
+    {"_id":3,"group":"y","value":30}]}');
+ ?column? 
+----------
+        1
+(1 row)
+
+SELECT collection_id AS all_ast_plain_id FROM documentdb_api_catalog.collections
+WHERE database_name = 'update_all_ast' AND collection_name = 'plain' \gset
+SELECT collection_id AS all_ast_described_id FROM documentdb_api_catalog.collections
+WHERE database_name = 'update_all_ast' AND collection_name = 'described' \gset
+PREPARE update_all_worker(bigint, bson) AS
+SELECT documentdb_api_internal.update_worker($1, $1, 0, $2, NULL::bsonsequence, NULL::text)
+FROM documentdb_api.collection('update_all_ast', 'plain');
+PREPARE update_all_described_worker(bigint, bson) AS
+SELECT documentdb_api_internal.update_worker($1, $1, 0, $2, NULL::bsonsequence, NULL::text)
+FROM documentdb_api.collection('update_all_ast', 'described');
+BEGIN;
+SET LOCAL documentdb.enable_update_query_ast TO OFF;
+SET LOCAL documentdb.enable_update_many_worker_pushdown TO ON;
+EXECUTE update_all_worker(:all_ast_plain_id, '{"updateMany":{"query":{"group":"x"},"update":{"$set":{"worker":true}}}}');
+                          update_worker                           
+------------------------------------------------------------------
+ { "m" : { "$numberLong" : "2" }, "d" : { "$numberLong" : "2" } }
+(1 row)
+
+EXECUTE update_all_worker(:all_ast_plain_id, '{"updateMany":{"query":{"group":"x"},"update":{"$set":{"worker":true}}}}');
+                          update_worker                           
+------------------------------------------------------------------
+ { "m" : { "$numberLong" : "2" }, "d" : { "$numberLong" : "0" } }
+(1 row)
+
+EXECUTE update_all_worker(:all_ast_plain_id, '{"updateMany":{"query":{"group":"missing"},"update":{"$set":{"worker":true}}}}');
+                          update_worker                           
+------------------------------------------------------------------
+ { "m" : { "$numberLong" : "0" }, "d" : { "$numberLong" : "0" } }
+(1 row)
+
+EXECUTE update_all_worker(:all_ast_plain_id, '{"updateMany":{"query":{"group":"x"},"update":{"$set":{"value":20}}}}');
+                          update_worker                           
+------------------------------------------------------------------
+ { "m" : { "$numberLong" : "2" }, "d" : { "$numberLong" : "1" } }
+(1 row)
+
+EXECUTE update_all_described_worker(:all_ast_described_id, '{"updateMany":{"query":{"group":"x"},"update":{"$inc":{"value":1}}}}');
+                          update_worker                           
+------------------------------------------------------------------
+ { "m" : { "$numberLong" : "2" }, "d" : { "$numberLong" : "2" } }
+(1 row)
+
+SAVEPOINT invalid_worker_update;
+EXECUTE update_all_worker(:all_ast_plain_id, '{"updateMany":{"query":{"_id":1,"group":"x"},"update":{"$inc":{"group":1}}}}');
+ERROR:  Operation $inc cannot be performed because the target value is not numeric. Document { _id: 1 } contains the field 'group' which is of non-numeric type string.
+CONTEXT:  SQL statement "UPDATE documentdb_data.documents_26710001 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, $1::documentdb_core.bson, $2::documentdb_core.bson, $3::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT), document)  WHERE document OPERATOR(documentdb_api_catalog.@@) $2::documentdb_core.bson "
+ROLLBACK TO invalid_worker_update;
+EXECUTE update_all_worker(:all_ast_plain_id, '{"updateMany":{"query":{"group":"x"},"update":{"$inc":{"value":0}}}}');
+                          update_worker                           
+------------------------------------------------------------------
+ { "m" : { "$numberLong" : "2" }, "d" : { "$numberLong" : "2" } }
+(1 row)
+
+SELECT document FROM documentdb_api.collection('update_all_ast', 'plain') ORDER BY object_id;
+                                               document                                                
+-------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "group" : "x", "value" : { "$numberInt" : "20" }, "worker" : true }
+ { "_id" : { "$numberInt" : "2" }, "group" : "x", "value" : { "$numberInt" : "20" }, "worker" : true }
+ { "_id" : { "$numberInt" : "3" }, "group" : "y", "value" : { "$numberInt" : "30" } }
+(3 rows)
+
+SELECT document FROM documentdb_api.collection('update_all_ast', 'described') ORDER BY object_id;
+                                                                                                                     document                                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "group" : "x", "label" : "Cat", "value" : { "$numberInt" : "11" }, "tags" : [ "Cat" ], "items" : [ { "label" : "Cat", "qty" : { "$numberInt" : "1" } }, { "label" : "Dog", "qty" : { "$numberInt" : "5" } } ] }
+ { "_id" : { "$numberInt" : "2" }, "group" : "x", "label" : "cat", "value" : { "$numberInt" : "21" }, "tags" : [ "cat" ], "items" : [ { "label" : "cat", "qty" : { "$numberInt" : "2" } }, { "label" : "Dog", "qty" : { "$numberInt" : "7" } } ] }
+ { "_id" : { "$numberInt" : "3" }, "group" : "y", "label" : "dog", "value" : { "$numberInt" : "30" }, "tags" : [ "dog" ], "items" : [ { "label" : "dog", "qty" : { "$numberInt" : "3" } } ] }
+(3 rows)
+
+ROLLBACK;
+BEGIN;
+SET LOCAL documentdb.enable_update_query_ast TO ON;
+SET LOCAL documentdb.enable_update_many_worker_pushdown TO OFF;
+EXECUTE update_all_worker(:all_ast_plain_id, '{"updateMany":{"query":{"group":"x"},"update":{"$set":{"worker":true}}}}');
+                          update_worker                           
+------------------------------------------------------------------
+ { "m" : { "$numberLong" : "2" }, "d" : { "$numberLong" : "2" } }
+(1 row)
+
+ROLLBACK;
+BEGIN;
+SET LOCAL documentdb.enable_update_query_ast TO ON;
+SET LOCAL documentdb.enable_update_many_worker_pushdown TO ON;
+EXECUTE update_all_worker(:all_ast_plain_id, '{"updateMany":{"query":{"group":"x"},"update":{"$set":{"worker":true}}}}');
+                          update_worker                           
+------------------------------------------------------------------
+ { "m" : { "$numberLong" : "2" }, "d" : { "$numberLong" : "2" } }
+(1 row)
+
+EXECUTE update_all_worker(:all_ast_plain_id, '{"updateMany":{"query":{"group":"x"},"update":{"$set":{"worker":true}}}}');
+                          update_worker                           
+------------------------------------------------------------------
+ { "m" : { "$numberLong" : "2" }, "d" : { "$numberLong" : "0" } }
+(1 row)
+
+EXECUTE update_all_worker(:all_ast_plain_id, '{"updateMany":{"query":{"group":"missing"},"update":{"$set":{"worker":true}}}}');
+                          update_worker                           
+------------------------------------------------------------------
+ { "m" : { "$numberLong" : "0" }, "d" : { "$numberLong" : "0" } }
+(1 row)
+
+EXECUTE update_all_worker(:all_ast_plain_id, '{"updateMany":{"query":{"group":"x"},"update":{"$set":{"value":20}}}}');
+                          update_worker                           
+------------------------------------------------------------------
+ { "m" : { "$numberLong" : "2" }, "d" : { "$numberLong" : "1" } }
+(1 row)
+
+EXECUTE update_all_described_worker(:all_ast_described_id, '{"updateMany":{"query":{"group":"x"},"update":{"$inc":{"value":1}}}}');
+                          update_worker                           
+------------------------------------------------------------------
+ { "m" : { "$numberLong" : "2" }, "d" : { "$numberLong" : "2" } }
+(1 row)
+
+SAVEPOINT invalid_worker_update;
+EXECUTE update_all_worker(:all_ast_plain_id, '{"updateMany":{"query":{"_id":1,"group":"x"},"update":{"$inc":{"group":1}}}}');
+ERROR:  Operation $inc cannot be performed because the target value is not numeric. Document { _id: 1 } contains the field 'group' which is of non-numeric type string.
+ROLLBACK TO invalid_worker_update;
+EXECUTE update_all_worker(:all_ast_plain_id, '{"updateMany":{"query":{"group":"x"},"update":{"$inc":{"value":0}}}}');
+                          update_worker                           
+------------------------------------------------------------------
+ { "m" : { "$numberLong" : "2" }, "d" : { "$numberLong" : "2" } }
+(1 row)
+
+SELECT document FROM documentdb_api.collection('update_all_ast', 'plain') ORDER BY object_id;
+                                               document                                                
+-------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "group" : "x", "value" : { "$numberInt" : "20" }, "worker" : true }
+ { "_id" : { "$numberInt" : "2" }, "group" : "x", "value" : { "$numberInt" : "20" }, "worker" : true }
+ { "_id" : { "$numberInt" : "3" }, "group" : "y", "value" : { "$numberInt" : "30" } }
+(3 rows)
+
+SELECT document FROM documentdb_api.collection('update_all_ast', 'described') ORDER BY object_id;
+                                                                                                                     document                                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "group" : "x", "label" : "Cat", "value" : { "$numberInt" : "11" }, "tags" : [ "Cat" ], "items" : [ { "label" : "Cat", "qty" : { "$numberInt" : "1" } }, { "label" : "Dog", "qty" : { "$numberInt" : "5" } } ] }
+ { "_id" : { "$numberInt" : "2" }, "group" : "x", "label" : "cat", "value" : { "$numberInt" : "21" }, "tags" : [ "cat" ], "items" : [ { "label" : "cat", "qty" : { "$numberInt" : "2" } }, { "label" : "Dog", "qty" : { "$numberInt" : "7" } } ] }
+ { "_id" : { "$numberInt" : "3" }, "group" : "y", "label" : "dog", "value" : { "$numberInt" : "30" }, "tags" : [ "dog" ], "items" : [ { "label" : "dog", "qty" : { "$numberInt" : "3" } } ] }
+(3 rows)
+
+ROLLBACK;
+SELECT count(*) AS rolled_back_worker_writes FROM documentdb_api.collection('update_all_ast', 'plain')
+WHERE document @@ '{"worker":true}';
+ rolled_back_worker_writes 
+---------------------------
+                         0
+(1 row)
+
+DEALLOCATE update_all_worker;
+DEALLOCATE update_all_described_worker;
+DEALLOCATE update_all_cases_prepared;
+SELECT documentdb_api.drop_collection('update_all_ast', 'plain');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('update_all_ast', 'strict');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('update_all_ast', 'moderate');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('update_all_ast', 'described');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+RESET documentdb.enable_update_query_ast;
+RESET documentdb.enable_update_many_worker_pushdown;
+RESET documentdb.enableSchemaValidation;
+RESET documentdb.enableBypassDocumentValidation;
+RESET documentdb_core.enableCollation;
+RESET documentdb.skipFailOnCollation;
+RESET documentdb.enable_support_function_id_pushdown;

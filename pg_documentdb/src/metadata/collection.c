@@ -2391,6 +2391,7 @@ UpdateMongoCollectionUsingIds(MongoCollection *mongoCollection, uint64 collectio
 	if (shardTableName != NULL)
 	{
 		strcpy(mongoCollection->shardTableName, shardTableName);
+		mongoCollection->relationId = shardOid;
 	}
 
 	snprintf(mongoCollection->tableName, NAMEDATALEN, DOCUMENT_DATA_TABLE_NAME_FORMAT,

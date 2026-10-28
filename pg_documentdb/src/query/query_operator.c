@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * src/query/query_operator.c
  *
@@ -524,6 +525,84 @@ ReplaceBsonQueryOperators(Query *node, ParamListInfo boundParams)
 	context.boundParams = boundParams;
 
 	return ReplaceBsonQueryOperatorsMutator((Node *) node, &context);
+}
+
+
+/*
+ * Expand a BSON match and derive collection-key quals from its source relation.
+ * Callers supply documentExpr, variableContext and collationString, and apply
+ * any returned sort clauses/target entries with UpdateQueryOperatorContextSortList.
+ * Parameter liveness remains the caller's responsibility.
+ */
+List *
+CreateQualsForBsonQuery(pgbson *queryDocument, BsonQueryOperatorContext *context,
+						Query *query, ParamListInfo boundParams)
+{
+	context->inputType = MongoQueryOperatorInputType_Bson;
+	context->simplifyOperators = true;
+	context->coerceOperatorExprIfApplicable = true;
+	context->skipIdBtreeCoercion = EnableSupportFunctionIdPushdown &&
+								   IsClusterVersionAtleast(DocDB_V0, 112, 1);
+
+	bson_iter_t queryDocIter;
+	PgbsonInitIterator(queryDocument, &queryDocIter);
+	List *quals = CreateQualsFromQueryDocIterator(&queryDocIter, context);
+	if (quals == NIL)
+	{
+		return quals;
+	}
+
+	Index collectionVarno = 0;
+	bool isCollectionBasedRTE = false;
+	MongoCollection *collection = GetCollectionByDocumentVar(context->documentExpr,
+															 query, &collectionVarno,
+															 boundParams,
+															 &isCollectionBasedRTE);
+	if (collection == NULL)
+	{
+		return quals;
+	}
+
+	bool hasShardKeyFilters = false;
+
+	/* Collection-function RTEs receive their unsharded filter separately. */
+	if (!isCollectionBasedRTE || collection->shardKey != NULL)
+	{
+		bson_value_t queryDocValue = ConvertPgbsonToBsonValue(queryDocument);
+		bool areShardKeysCollationAware = false;
+		Expr *shardKeyFilters = CreateShardKeyFiltersForQuery(
+			&queryDocValue, collection->shardKey, collection->collectionId,
+			collectionVarno, &areShardKeysCollationAware);
+		if (shardKeyFilters != NULL &&
+			!(IsCollationApplicable(context->collationString) &&
+			  areShardKeysCollationAware))
+		{
+			hasShardKeyFilters = true;
+			quals = lappend(quals, shardKeyFilters);
+		}
+	}
+	else
+	{
+		hasShardKeyFilters = true;
+	}
+
+	/* Support-function pushdown also rewrites ID expressions for scatter queries. */
+	if (hasShardKeyFilters || context->skipIdBtreeCoercion)
+	{
+		bool isCollationAware;
+		bool isPointRead;
+		bool hasObjectIdFuncExprs;
+		Expr *idFilter = CreateIdFilterForQuery(quals, collectionVarno,
+												&isCollationAware, &isPointRead,
+												&hasObjectIdFuncExprs);
+		if (idFilter != NULL &&
+			!(isCollationAware && IsCollationApplicable(context->collationString)))
+		{
+			quals = lappend(quals, idFilter);
+		}
+	}
+
+	return quals;
 }
 
 
@@ -1597,9 +1676,7 @@ ReplaceBsonQueryOperatorsMutator(Node *node, ReplaceBsonQueryOperatorsContext *c
 
 /*
  * ExpandBsonQueryOperator returns an expanded expression that is logically
- * equivalent to the Mongo query BSON on the right side of the expression.
- * hasSublink flag is set when query tree has SUBLINK. This is used later in ReplaceBsonQueryOperatorsMutator to set Query->hasSubLinks flag.
- * Example: There is $elemMatch operator in expression which results in creation of SUBLINK in query tree.
+ * equivalent to the query BSON on the right side of the expression.
  */
 static Expr *
 ExpandBsonQueryOperator(OpExpr *queryOpExpr, Node *queryNode,
@@ -1609,21 +1686,6 @@ ExpandBsonQueryOperator(OpExpr *queryOpExpr, Node *queryNode,
 {
 	BsonQueryOperatorContext context = { 0 };
 	context.documentExpr = linitial(queryOpExpr->args);
-	context.inputType = MongoQueryOperatorInputType_Bson;
-	context.simplifyOperators = true;
-	context.coerceOperatorExprIfApplicable = true;
-	context.skipIdBtreeCoercion = EnableSupportFunctionIdPushdown &&
-								  IsClusterVersionAtleast(DocDB_V0, 112, 1);
-	context.requiredFilterPathNameHashSet = NULL;
-
-	/* Resolve the collection early only when the GUC is enabled so we can
-	 * gate _id coercion before qual generation. Otherwise the lookup is
-	 * deferred until after quals are generated (and skipped entirely when
-	 * there are no quals). */
-	Index collectionVarno = 0;
-	bool isCollectionBasedRTE = false;
-
-	context.variableContext = NULL;
 	if (variableSpec != NULL && !variableSpec->constisnull)
 	{
 		context.variableContext = (Expr *) variableSpec;
@@ -1653,12 +1715,8 @@ ExpandBsonQueryOperator(OpExpr *queryOpExpr, Node *queryNode,
 
 	pgbson *queryDocument = DatumGetPgBson(queryConst->constvalue);
 
-	/* open the Mongo query document */
-	bson_iter_t queryDocIter;
-	PgbsonInitIterator(queryDocument, &queryDocIter);
-
-	/* convert the Mongo query to a list of Postgres quals */
-	List *quals = CreateQualsFromQueryDocIterator(&queryDocIter, &context);
+	List *quals = CreateQualsForBsonQuery(queryDocument, &context, currentQuery,
+										  boundParams);
 
 	if (context.targetEntries != NULL)
 	{
@@ -1667,77 +1725,6 @@ ExpandBsonQueryOperator(OpExpr *queryOpExpr, Node *queryNode,
 	if (context.sortClauses != NULL)
 	{
 		*sortClauses = context.sortClauses;
-	}
-
-	/* extract the collection via the document Var */
-	if (quals != NIL)
-	{
-		MongoCollection *collection = GetCollectionByDocumentVar(context.documentExpr,
-																 currentQuery,
-																 &collectionVarno,
-																 boundParams,
-																 &isCollectionBasedRTE);
-
-		if (collection != NULL)
-		{
-			bool hasShardKeyFilters = false;
-
-			/* For collection-based RTE on unsharded collections, shard_key_value is already appended, so skip here */
-			if (!isCollectionBasedRTE ||
-				collection->shardKey != NULL)
-			{
-				/* Retrieve the shard_key_value filter applicable to the specified collection */
-				bson_value_t queryDocValue = ConvertPgbsonToBsonValue(queryDocument);
-				bool areShardKeysCollationAware = false;
-				Expr *shardKeyFilters =
-					CreateShardKeyFiltersForQuery(&queryDocValue, collection->shardKey,
-												  collection->collectionId,
-												  collectionVarno,
-												  &areShardKeysCollationAware);
-
-				/* add the shard key filter if the query's shard key value is */
-				/* not collation-sensitive. */
-				/* If it is, we ignore the filter and distribute the execution. */
-				if (shardKeyFilters != NULL &&
-					!(IsCollationApplicable(collationString) &&
-					  areShardKeysCollationAware))
-				{
-					hasShardKeyFilters = true;
-					quals = lappend(quals, shardKeyFilters);
-				}
-			}
-			else
-			{
-				hasShardKeyFilters = true;
-			}
-
-			/* When support function Id Pushdown is enable, we want to unify qual generation for _id even if there is no shard key filter so that we
-			 * update the old func exprs to the new object_id funcexprs. That way queries on _id remain consistent when there is no shard key filter.
-			 */
-			if (hasShardKeyFilters ||
-				(EnableSupportFunctionIdPushdown &&
-				 IsClusterVersionAtleast(DocDB_V0, 112, 1)))
-			{
-				/* Mongo allows collation on _id field. We need to make sure we do that as well. We can't
-				 * push the Id filter to primary key index if the type needs to be collation aware (e.g., _id contains UTF8 )*/
-				bool isCollationAware;
-				bool isPointRead;
-				bool hasObjectIdFuncExprs;
-				Expr *idFilter = CreateIdFilterForQuery(quals,
-														collectionVarno,
-														&isCollationAware,
-														&isPointRead,
-														&hasObjectIdFuncExprs);
-
-				/* include _id filter in quals */
-				if (idFilter != NULL &&
-					!(isCollationAware &&
-					  IsCollationApplicable(context.collationString)))
-				{
-					quals = lappend(quals, idFilter);
-				}
-			}
-		}
 	}
 
 	/* create a function and hide it. Make the function point to the parameterized value
