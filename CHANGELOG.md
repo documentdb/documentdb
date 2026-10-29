@@ -1,5 +1,6 @@
 ### documentdb v1.2-0 (Unreleased) ###
 * Use PostgreSQL `date_bin` for `$dateTrunc` with `unit: "day"`, preserving exact calendar days, reference-aligned bins, and timezone boundaries. Reject strides and results outside PostgreSQL's supported range. Controlled by the default-on `documentdb.enable_date_trunc_day_with_pg_bin` setting; turn it off to restore legacy interval-based behavior. *[Bugfix]*
+* Reject `dropUser` and `updateUser` user names of 64 bytes or more before PostgreSQL truncates them, so an overlong name can no longer drop or modify an existing user whose name is its 63-byte prefix (#734). *[Bugfix]*
 * Skip parallel scan plans for dynamic cursor queries without collection planner statistics by default, controlled by `documentdb.enable_skip_parallel_plans_without_stats`. *[Bugfix]*
 * Reject dynamic streaming paths early for `$unionWith` and SQL set operations so persistent cursors retain selective scan alternatives. *[Bugfix]*
 * Compress eligible remote single-document inserts on the shard before storing them. *[Bugfix]*
