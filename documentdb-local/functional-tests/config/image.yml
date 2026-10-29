@@ -1,6 +1,6 @@
 schema_version: 1
 # Pin the manifest list digest so Docker auto-selects the correct platform (amd64/arm64).
-image: ghcr.io/documentdb/functional-tests@sha256:4969a7f9b895b3b9ac457a4adfe67e0e687887e2b6e8ab1cb758e09798f3d60c
+image: ghcr.io/documentdb/functional-tests@sha256:7f93d379dc731ea17c6dcfb0944f5b86207b03ff7029070423bf4457ef8b2940
 source_ref: documentdb/functional-tests@main
-source_sha: 0fb88a1ed5f25874f77d575a80b96e0c1cb745fb
+source_sha: 364acd89ab6f67acf2a2a6fd9d7c3161f4c0ece7
 updated_by: guanzhousong
