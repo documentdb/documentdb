@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/utils/role_utils.c
  *
@@ -63,6 +64,7 @@ static void DeepFreePrivileges(List *consolidatedPrivileges);
 static void GrantTablePrivileges(uint64 collectionId, bool includeRetryTable,
 								 const char *privilegesSqlQueryString,
 								 const char *roleName);
+static bool HasAlwaysBlockedRoleNamePrefix(const char *name);
 
 /*
  * Static definitions for user privileges and roles
@@ -346,6 +348,32 @@ static const char *const AlwaysBlockedRoleNamePrefixes[] = {
 
 
 /*
+ * Reports whether the name begins with an always-blocked prefix while their
+ * enforcement is enabled. Name validation and user visibility both use this,
+ * so they always agree on which prefixed names are reserved.
+ */
+static bool
+HasAlwaysBlockedRoleNamePrefix(const char *name)
+{
+	if (!EnableFailureOnAlwaysBlockedRolePrefixes)
+	{
+		return false;
+	}
+
+	for (size_t i = 0; i < lengthof(AlwaysBlockedRoleNamePrefixes); i++)
+	{
+		const char *blockedPrefix = AlwaysBlockedRoleNamePrefixes[i];
+		if (strncmp(name, blockedPrefix, strlen(blockedPrefix)) == 0)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+
+/*
  * Check if the given name begins with a prefix that is always blocked, or with
  * any of the reserved pg role name prefixes listed in the blocked role prefix
  * list.
@@ -353,16 +381,9 @@ static const char *const AlwaysBlockedRoleNamePrefixes[] = {
 bool
 ContainsReservedPgRoleNamePrefix(const char *name)
 {
-	if (EnableFailureOnAlwaysBlockedRolePrefixes)
+	if (HasAlwaysBlockedRoleNamePrefix(name))
 	{
-		for (size_t i = 0; i < lengthof(AlwaysBlockedRoleNamePrefixes); i++)
-		{
-			const char *blockedPrefix = AlwaysBlockedRoleNamePrefixes[i];
-			if (strncmp(name, blockedPrefix, strlen(blockedPrefix)) == 0)
-			{
-				return true;
-			}
-		}
+		return true;
 	}
 
 	/* Split the blocked role prefix list */
@@ -820,6 +841,20 @@ IsReservedInternalRoleName(const char *name)
 	return IS_SYSTEM_LOGIN_ROLE(name) ||
 		   IS_BUILTIN_ROLE(name) ||
 		   IS_CUSTOM_RBAC_ROLE(name);
+}
+
+
+/*
+ * IsReservedUserName reports whether a login-role name is reserved for the
+ * extension's own use. Every name it reports is also rejected by the user
+ * commands under the current settings, so hiding it never hides a user that
+ * can still be managed.
+ */
+bool
+IsReservedUserName(const char *name)
+{
+	return IsReservedInternalRoleName(name) ||
+		   HasAlwaysBlockedRoleNamePrefix(name);
 }
 
 

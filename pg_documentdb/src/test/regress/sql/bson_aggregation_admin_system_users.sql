@@ -109,6 +109,47 @@ GRANT "systemUsersCustomRole" TO
 	"documentdb_rbac_hidden_user";
 GRANT documentdb_readonly_role TO "systemUsersRootReader";
 
+-- A role remains reserved even when it can log in and holds a custom role.
+BEGIN;
+ALTER ROLE documentdb_admin_role LOGIN;
+ALTER ROLE documentdb_readonly_role LOGIN;
+GRANT "systemUsersCustomRole" TO documentdb_admin_role, documentdb_bg_worker_role, documentdb_readonly_role;
+
+SELECT array_agg(user_document ->> 'user' ORDER BY user_document ->> 'user') AS visible_users
+FROM jsonb_array_elements(documentdb_core.bson_to_json_string(
+    documentdb_api.users_info('{"usersInfo":1, "$db":"admin"}'))::text::jsonb -> 'users') AS users(user_document)
+WHERE user_document ->> 'user' IN (
+    'documentdb_bg_worker_role', 'documentdb_admin_role', 'documentdb_readonly_role',
+    'documentdb_api_hidden_user', 'documentdb_rbac_hidden_user', 'systemUsersRootReader');
+SELECT documentdb_api.users_info('{"usersInfo":"documentdb_readonly_role", "$db":"admin"}');
+SELECT documentdb_api.users_info('{"usersInfo":"documentdb_api_hidden_user", "$db":"admin"}');
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+    'admin',
+    '{"find":"system.users", "filter":{"user":{"$in":["documentdb_bg_worker_role","documentdb_admin_role","documentdb_readonly_role","systemUsersRootReader"]}}, "sort":{"user":1}}');
+
+SET ROLE documentdb_readonly_role;
+SELECT documentdb_api.connection_status('{"connectionStatus":1, "$db":"admin"}');
+RESET ROLE;
+
+-- Disabling prefix enforcement allows customer users, not known internal roles.
+SET LOCAL documentdb.blockedRolePrefixList TO '';
+SET LOCAL documentdb.enable_failure_on_always_blocked_role_prefixes TO OFF;
+SELECT documentdb_api.create_user(
+    '{"createUser":"documentdb_api_flag_off_user", "pwd":"Valid$123Pass", "roles":[{"role":"systemUsersCustomRole","db":"admin"}], "$db":"admin"}');
+SELECT documentdb_api.users_info('{"usersInfo":"documentdb_api_flag_off_user", "$db":"admin"}');
+SELECT documentdb_api.users_info('{"usersInfo":"documentdb_readonly_role", "$db":"admin"}');
+SELECT array_agg(user_document ->> 'user' ORDER BY user_document ->> 'user') AS visible_users
+FROM jsonb_array_elements(documentdb_core.bson_to_json_string(
+    documentdb_api.users_info('{"usersInfo":1, "$db":"admin"}'))::text::jsonb -> 'users') AS users(user_document)
+WHERE user_document ->> 'user' IN (
+    'documentdb_api_flag_off_user', 'documentdb_readonly_role');
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+    'admin',
+    '{"find":"system.users", "filter":{"user":{"$in":["documentdb_api_flag_off_user","documentdb_readonly_role"]}}, "sort":{"user":1}}');
+ROLLBACK;
+
 SET ROLE "systemUsersRootReader";
 SET plan_cache_mode TO force_generic_plan;
 PREPARE system_users_query AS

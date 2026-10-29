@@ -117,20 +117,24 @@ SELECT user_name,
 FROM (VALUES
     ('documentdb_bg_worker_role'),
     ('documentdb_root_role'),
+    ('documentdb_admin_role'),
     ('documentdb_api_user'),
     ('documentdb_rbac_user'),
+    ('documentdb_rbacX_user'),
     ('documentdbXapi_user'),
     ('grantRoleUser')) AS users(user_name)
 ORDER BY user_name;
          user_name         | is_reserved 
 ---------------------------+-------------
+ documentdb_admin_role     | t
  documentdb_api_user       | t
  documentdb_bg_worker_role | t
  documentdb_rbac_user      | t
+ documentdb_rbacX_user     | t
  documentdb_root_role      | t
  documentdbXapi_user       | f
  grantRoleUser             | f
-(6 rows)
+(8 rows)
 
 SELECT documentdb_api_internal.is_reserved_user(NULL) IS NULL
     AS null_user_returns_null;
