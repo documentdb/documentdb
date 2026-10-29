@@ -42,8 +42,10 @@ SELECT user_name,
 FROM (VALUES
     ('documentdb_bg_worker_role'),
     ('documentdb_root_role'),
+    ('documentdb_admin_role'),
     ('documentdb_api_user'),
     ('documentdb_rbac_user'),
+    ('documentdb_rbacX_user'),
     ('documentdbXapi_user'),
     ('grantRoleUser')) AS users(user_name)
 ORDER BY user_name;

@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * include/utils/role_utils.h
  *
@@ -133,6 +134,9 @@ bool ContainsReservedPgRoleNamePrefix(const char *name);
 * (system login role, builtin role, or custom RBAC role).
 * Note: this function does not check against native built-in role names */
 bool IsReservedInternalRoleName(const char *name);
+
+/* Returns whether a login-role name is reserved for extension use. */
+bool IsReservedUserName(const char *name);
 
 /* Function to check whether a name is reserved for the extension's own roles,
  * a blocked prefix, or a built-in role name. Roles and users share one

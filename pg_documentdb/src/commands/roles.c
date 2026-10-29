@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/commands/roles.c
  *
@@ -192,12 +193,7 @@ documentdb_is_reserved_user(PG_FUNCTION_ARGS)
 {
 	char *roleName = text_to_cstring(PG_GETARG_TEXT_PP(0));
 
-	PG_RETURN_BOOL(
-		strcmp(roleName, ApiBgWorkerRole) == 0 ||
-		strcmp(roleName, ApiRootRole) == 0 ||
-		strcmp(roleName, ApiReplicationRole) == 0 ||
-		strncmp(roleName, "documentdb_api", strlen("documentdb_api")) == 0 ||
-		strncmp(roleName, "documentdb_rbac", strlen("documentdb_rbac")) == 0);
+	PG_RETURN_BOOL(IsReservedUserName(roleName));
 }
 
 

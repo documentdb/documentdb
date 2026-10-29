@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/commands/users.c
  *
@@ -197,7 +198,8 @@ static bool IsCallingUserExternal(void);
 static char * PrehashPassword(const char *password);
 static char * ValidateAndObtainUserRole(const bson_value_t *rolesDocument,
 										bool *hasCustomRole);
-static Datum GetSingleUserInfo(const char *userName, bool returnDocuments);
+static Datum GetSingleUserInfo(const char *userName, bool returnDocuments,
+							   bool validateReservedNames);
 static Datum GetAllUsersInfo(void);
 static void ParseUsersInfoDocument(const bson_value_t *usersInfoBson, GetUserSpec *spec);
 static void WriteSingleUserDocument(UserRoleHashEntry *userEntry, bool showPrivileges,
@@ -1106,7 +1108,9 @@ documentdb_extension_get_users(PG_FUNCTION_ARGS)
 	else
 	{
 		bool returnDocuments = true;
-		userInfoDatum = GetSingleUserInfo(userName, returnDocuments);
+		bool validateReservedNames = true;
+		userInfoDatum = GetSingleUserInfo(userName, returnDocuments,
+										  validateReservedNames);
 	}
 
 	pgbson_writer finalWriter;
@@ -1293,7 +1297,9 @@ connection_status(pgbson *showPrivilegesSpec)
 	char *currentUser = GetUserNameFromId(GetUserId(), noError);
 
 	bool returnDocuments = true;
-	Datum userInfoDatum = GetSingleUserInfo(currentUser, returnDocuments);
+	bool validateReservedNames = false;
+	Datum userInfoDatum = GetSingleUserInfo(currentUser, returnDocuments,
+											validateReservedNames);
 
 	if (userInfoDatum == (Datum) 0)
 	{
@@ -1931,12 +1937,17 @@ GetAllUsersInfo(void)
  * Returns the user info datum containing the query result.
  */
 static Datum
-GetSingleUserInfo(const char *userName, bool returnDocuments)
+GetSingleUserInfo(const char *userName, bool returnDocuments, bool validateReservedNames)
 {
 	if (userName == NULL)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
 						errmsg("Username is null")));
+	}
+
+	if (validateReservedNames && IsReservedUserName(userName))
+	{
+		return (Datum) 0;
 	}
 
 	const char *cmdStr;
@@ -2137,6 +2148,11 @@ BuildUserRoleEntryTable(Datum *userDatums, int userCount, bool queryAllUsers,
 		}
 
 		const char *user = bson_iter_utf8(&getIter, NULL);
+		if (IsReservedUserName(user))
+		{
+			continue;
+		}
+
 		UserRoleHashEntry *userEntry =
 			FindOrCreateUserRoleEntry(userRolesTable, user);
 
