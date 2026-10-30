@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- * SPDX-License-Identifier: MIT
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * include/utils/feature_counter.h
  *
@@ -20,7 +20,7 @@
 #include <port/atomics.h>
 
 #define MAX_FEATURE_NAME_LENGTH 255
-#define MAX_FEATURE_COUNT 481
+#define MAX_FEATURE_COUNT 482
 
 /* Internal features that are not exposed */
 #define INTERNAL_FEATURE_TYPE MAX_FEATURE_COUNT
@@ -556,6 +556,7 @@ typedef enum
 	FEATURE_USER_CREATE_CUSTOM_ROLE,
 	FEATURE_USER_DROP,
 	FEATURE_USER_GET,
+	FEATURE_USER_PASSWORD_EXPIRATION,
 	FEATURE_USER_UPDATE,
 
 	/* This value must appear at the end in the FeatureType definition. */

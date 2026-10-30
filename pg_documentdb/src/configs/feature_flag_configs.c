@@ -107,6 +107,10 @@ bool EnableRoleCrud = DEFAULT_ENABLE_ROLE_CRUD;
 #define DEFAULT_ENABLE_USERS_ADMIN_DB_CHECK false
 bool EnableUsersAdminDBCheck = DEFAULT_ENABLE_USERS_ADMIN_DB_CHECK;
 
+/* Added on v1.3, pending stabilization, enable on v1.5 */
+#define DEFAULT_ENABLE_USER_PASSWORD_EXPIRATION false
+bool EnableUserPasswordExpiration = DEFAULT_ENABLE_USER_PASSWORD_EXPIRATION;
+
 /* Added in v0.116, Pending stabilization, enable on v1.3 */
 #define DEFAULT_ENABLE_READWRITE_ANY_DATABASE_ROLE_ENFORCEMENT false
 bool EnableReadWriteAnyDatabaseRoleEnforcement =
@@ -1280,6 +1284,13 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Enables db admin requirement for user CRUD APIs through the data plane."),
 		NULL, &EnableUsersAdminDBCheck, DEFAULT_ENABLE_USERS_ADMIN_DB_CHECK,
 		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_user_password_expiration", newGucPrefix),
+		gettext_noop(
+			"Enables customData.validUntil in user management commands. Existing expirations remain enforced when disabled."),
+		NULL, &EnableUserPasswordExpiration, DEFAULT_ENABLE_USER_PASSWORD_EXPIRATION,
+		PGC_SUSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.enableRolesAdminDBCheck", newGucPrefix),

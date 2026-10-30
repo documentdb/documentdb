@@ -1,5 +1,5 @@
--- Copyright (c) Microsoft Corporation. All rights reserved.
--- SPDX-License-Identifier: MIT
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
 
 SET search_path TO documentdb_api_catalog, documentdb_core, documentdb_api, public;
 SET citus.next_shard_id TO 6750000;
@@ -38,6 +38,22 @@ SELECT documentdb_api.create_user('{"createUser":"featureCounterCustomUser", "pw
 SELECT documentdb_api.create_user('{"createUser":"featureCounterBuiltinUser", "pwd":"Valid$123Pass", "roles":[{"role":"readAnyDatabase","db":"admin"}], "$db":"admin"}');
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 
+-- Password expiration attempts count even when the feature flag rejects them.
+SET documentdb.enable_user_password_expiration TO OFF;
+SELECT documentdb_api.create_user('{"createUser":"featureCounterExpirationUser", "pwd":"Valid$123Pass", "roles":[{"role":"readAnyDatabase","db":"admin"}], "customData":{"validUntil":{"$date":"2500-01-01T00:00:00.123Z"}}, "$db":"admin"}');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+SELECT documentdb_api.update_user('{"updateUser":"featureCounterBuiltinUser", "customData":{"validUntil":null}, "$db":"admin"}');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+SET documentdb.enable_user_password_expiration TO ON;
+SELECT documentdb_api.create_user('{"createUser":"featureCounterExpirationUser", "pwd":"Valid$123Pass", "roles":[{"role":"readAnyDatabase","db":"admin"}], "customData":{"validUntil":{"$date":"2500-01-01T00:00:00.123Z"}}, "$db":"admin"}');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+SELECT documentdb_api.update_user('{"updateUser":"featureCounterExpirationUser", "customData":{"validUntil":{"$date":"2501-01-01T00:00:00.456Z"}}, "$db":"admin"}');
+SELECT documentdb_api.update_user('{"updateUser":"featureCounterExpirationUser", "customData":{"validUntil":null}, "$db":"admin"}');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+RESET documentdb.enable_user_password_expiration;
+
+SELECT documentdb_api.drop_user('{"dropUser":"featureCounterExpirationUser", "$db":"admin"}');
 SELECT documentdb_api.drop_user('{"dropUser":"featureCounterCustomUser", "$db":"admin"}');
 SELECT documentdb_api.drop_user('{"dropUser":"featureCounterBuiltinUser", "$db":"admin"}');
 SELECT documentdb_api.drop_role('{"dropRole":"featureCounterEmptyRole", "$db":"admin"}');
