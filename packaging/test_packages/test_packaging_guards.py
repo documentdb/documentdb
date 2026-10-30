@@ -273,5 +273,68 @@ class DebGuardTests(GuardTestCase):
         )
 
 
+class CoprSourceTests(unittest.TestCase):
+    def run_recipe(self, directory, *arguments):
+        return subprocess.run(
+            [
+                "make", "--dry-run", "-f", str(OSS_ROOT / ".copr/Makefile"),
+                "srpm", "INSTALL_BUILD_TOOLS=0", "outdir=/output", *arguments,
+            ],
+            cwd=directory,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    def test_source_inputs_are_tracked(self):
+        result = subprocess.run(
+            [
+                "git", "ls-files", "--error-unmatch", "--",
+                ".copr/Makefile", "packaging/copr/Makefile",
+                "packaging/copr/postgres18-documentdb.spec",
+                "packaging/copr/sources.sha256",
+                "packaging/copr/documentdb-gateway.logrotate",
+            ],
+            cwd=OSS_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_absolute_copr_invocation_outside_checkout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_recipe(
+                directory,
+                f"spec={OSS_ROOT / 'packaging/copr/postgres18-documentdb.spec'}",
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("/archive/refs/tags/v1.0-0.tar.gz", result.stdout)
+
+    def test_missing_spec_fails_before_download(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_recipe(directory, f"spec={directory}/missing.spec")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Required spec file not found", result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_missing_version_fails_before_download(self):
+        with tempfile.TemporaryDirectory() as directory:
+            spec = Path(directory) / "empty.spec"
+            spec.write_text("Name: documentdb\n")
+            result = self.run_recipe(directory, f"spec={spec}")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Missing Version in spec file", result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_copr_spec_argument_controls_source_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            spec = Path(directory) / "alternate.spec"
+            spec.write_text("Version: 9.8.7\n")
+            result = self.run_recipe(directory, f"spec={spec}")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("/archive/refs/tags/v9.8.7-0.tar.gz", result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -35,19 +35,19 @@
 #
 # Usage
 # -----
-#   ./packaging/test_copr_dynamic_br.sh [--chroot CHROOT] [--srpm PATH]
+#   ./packaging/copr/test_copr_dynamic_br.sh [--chroot CHROOT] [--srpm PATH]
 #
 # --chroot fedora-43-x86_64 (default) | fedora-42-x86_64 | fedora-45-x86_64 |
 #          fedora-rawhide-x86_64 | epel-9-x86_64
 # --srpm   Path to an already-built SRPM; default is the most recent
-#          DocumentDB SRPM in packaging/. If none exists, the
+#          DocumentDB SRPM in packaging/copr/. If none exists, the
 #          script invokes `test_copr_srpm.sh` on its default Fedora source
 #          builder, not the target chroot. Pass the same --srpm to each target.
 
 set -euo pipefail
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-packaging_dir="$script_dir/packaging"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+packaging_dir="$script_dir"
 
 CHROOT="fedora-43-x86_64"
 SRPM=""
@@ -89,7 +89,7 @@ if [[ -z "$SRPM" ]]; then
 fi
 if [[ -z "$SRPM" ]]; then
     echo "[dyn-br] No SRPM found; building one via test_copr_srpm.sh ..."
-    "$script_dir/packaging/test_copr_srpm.sh" >/dev/null
+    "$script_dir/test_copr_srpm.sh" >/dev/null
     SRPM="$(ls -t "$packaging_dir"/documentdb-*.src.rpm "$packaging_dir"/postgresql18-documentdb-*.src.rpm 2>/dev/null | head -1 || true)"
 fi
 if [[ ! -f "$SRPM" ]]; then

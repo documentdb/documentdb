@@ -24,7 +24,7 @@
 #
 # Usage
 # -----
-#   ./packaging/test_copr_rebuild.sh [--chroot CHROOT] [--srpm PATH] [--keep]
+#   ./packaging/copr/test_copr_rebuild.sh [--chroot CHROOT] [--srpm PATH] [--keep]
 #
 # --chroot fedora-43-x86_64 (default) | fedora-42-x86_64 | fedora-45-x86_64 |
 #          fedora-rawhide-x86_64 | epel-9-x86_64
@@ -39,7 +39,7 @@
 
 set -euo pipefail
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 CHROOT="fedora-43-x86_64"
 KEEP=0
@@ -70,7 +70,7 @@ esac
 
 if [[ -z "$SRPM" ]]; then
     srpm_dir=$(mktemp -d /tmp/docdb-rebuild-srpm.XXXXXX)
-    "$script_dir/packaging/test_copr_srpm.sh" --output-dir "$srpm_dir"
+    "$script_dir/test_copr_srpm.sh" --output-dir "$srpm_dir"
     SRPM=$(find "$srpm_dir" -name '*.src.rpm' -print -quit)
 fi
 if [[ ! -f "$SRPM" ]]; then

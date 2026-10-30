@@ -126,35 +126,13 @@ else
     echo "Skipping user creation."
 fi
 
-sourceTreeGatewayDir="$scriptDir/../pg_documentdb_gw"
-sourceTreeGatewayBinary="$sourceTreeGatewayDir/target/release-with-symbols/documentdb_gateway"
-packageWorkingDir="/var/lib/documentdb"
+cd $scriptDir/../pg_documentdb_gw/
 
 if [ -z "$configFile" ]; then
-    if [ -f "/etc/documentdb/SetupConfiguration.json" ]; then
-        configFile="/etc/documentdb/SetupConfiguration.json"
-    elif [ -f "$sourceTreeGatewayDir/SetupConfiguration.json" ]; then
-        configFile="$sourceTreeGatewayDir/SetupConfiguration.json"
-    fi
-fi
-
-if [ -x "/usr/bin/documentdb_gateway" ]; then
-    cd "$packageWorkingDir"
-    if [ -z "$configFile" ]; then
-        /usr/bin/documentdb_gateway
-    else
-        /usr/bin/documentdb_gateway "$configFile"
-    fi &
-elif [ -x "$sourceTreeGatewayBinary" ]; then
-    if [ -z "$configFile" ]; then
-        "$sourceTreeGatewayBinary"
-    else
-        "$sourceTreeGatewayBinary" "$configFile"
-    fi &
+    ./target/release-with-symbols/documentdb_gateway
 else
-    echo "Error: documentdb_gateway binary not found" >&2
-    exit 1
-fi
+    ./target/release-with-symbols/documentdb_gateway "$configFile"
+fi &
 
 gateway_pid=$!
 

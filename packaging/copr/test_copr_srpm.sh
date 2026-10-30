@@ -3,12 +3,13 @@
 # This replicates the Copr mock chroot environment to catch errors
 # before pushing to the remote Copr project.
 #
-# Usage: ./packaging/test_copr_srpm.sh [--chroot CHROOT] [--output-dir DIR]
+# Usage: ./packaging/copr/test_copr_srpm.sh [--chroot CHROOT] [--output-dir DIR]
 
 set -euo pipefail
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUTPUT_DIR="$script_dir/packaging"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/../.." && pwd)"
+OUTPUT_DIR="$script_dir"
 CHROOT="fedora-43-x86_64"
 
 # Parse arguments
@@ -30,7 +31,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --chroot CHROOT   fedora-43-x86_64 (default), fedora-42-x86_64,"
             echo "                    fedora-45-x86_64, fedora-rawhide-x86_64, epel-9-x86_64"
-            echo "  --output-dir DIR  Directory to place the built SRPM (default: packaging/)"
+            echo "  --output-dir DIR  Directory to place the built SRPM (default: packaging/copr/)"
             echo "  -h, --help        Show this help message"
             exit 0
             ;;
@@ -51,14 +52,26 @@ case "$CHROOT" in
     *) echo "Unsupported chroot: $CHROOT" >&2; exit 2 ;;
 esac
 
-abs_output_dir="$(cd "$script_dir" && mkdir -p "$OUTPUT_DIR" && cd "$OUTPUT_DIR" && pwd)"
+if ! git -C "$repo_root" ls-files --error-unmatch -- \
+    .copr/Makefile packaging/copr/Makefile \
+    packaging/copr/postgres18-documentdb.spec packaging/copr/sources.sha256 \
+    packaging/copr/documentdb-gateway.logrotate >/dev/null; then
+    echo "COPR source inputs must be tracked in Git and included in the submitted commit." >&2
+    exit 1
+fi
+
+make --dry-run -f "$repo_root/.copr/Makefile" srpm \
+    spec="$repo_root/packaging/copr/postgres18-documentdb.spec" \
+    INSTALL_BUILD_TOOLS=0 outdir=/output >/dev/null
+
+abs_output_dir="$(cd "$repo_root" && mkdir -p "$OUTPUT_DIR" && cd "$OUTPUT_DIR" && pwd)"
 
 echo "=== Testing Copr SRPM build: $CHROOT ($IMAGE) ==="
-echo "Source directory: $script_dir"
+echo "Source directory: $repo_root"
 echo "Output directory: $abs_output_dir"
 
 docker run --rm \
-    -v "$script_dir:/src:ro" \
+    -v "$repo_root:/src:ro" \
     -v "$abs_output_dir:/output:z" \
     -e CHROOT="$CHROOT" \
     "$IMAGE" \
@@ -73,7 +86,8 @@ docker run --rm \
 
         cd /src
         echo "--- Running .copr/Makefile srpm target ---"
-        make -f .copr/Makefile srpm TOPDIR=/tmp/rpmbuild outdir=/output
+        make -f /src/.copr/Makefile srpm TOPDIR=/tmp/rpmbuild outdir=/output \
+            spec=/src/packaging/copr/postgres18-documentdb.spec
 
         echo ""
         echo "=== SRPM build succeeded ==="

@@ -57,7 +57,7 @@ Source1:        https://github.com/mongodb/mongo-c-driver/releases/download/%{li
 # Generate: git clone --depth 1 -b applied/2.0u3-1 https://git.launchpad.net/ubuntu/+source/intelrdfpmath intelrdfpmath-2.0u3-1 && tar czf intelrdfpmath-2.0u3-1.tar.gz intelrdfpmath-2.0u3-1
 Source2:        intelrdfpmath-%{intelmathlib_version}.tar.gz
 # Gateway Cargo vendor tree (offline Rust build; see %%cargo_prep below).
-# Generate with .copr/Makefile to include Cargo's Git source replacements.
+# Generate with packaging/copr/Makefile to include Cargo's Git source replacements.
 Source3:        documentdb-gateway-vendor.tar.gz
 # Bundled: pg_cron (PostgreSQL License).  Only used on Fedora native PG,
 # where no pg_cron RPM exists in the distro repos.  PGDG builds get
@@ -153,14 +153,14 @@ framework.
 
 This package ships the PostgreSQL extension only (documentdb_core,
 documentdb, documentdb_extended_rum).  Install `documentdb-gateway` for
-the MongoDB wire-protocol daemon.  (TODO: a future `documentdb-local-N`
+the wire-protocol compatible daemon.  (TODO: a future `documentdb-local-N`
 appliance subpackage will bundle the extension + gateway + setup wizard;
 see packaging-design.md.)
 
 # ---------------------------------------------------------------------------
 # Subpackage: documentdb-gateway (see packaging-design.md §4.3).
 #
-# The "lean daemon" promise: this package ships the MongoDB wire-protocol
+# The "lean daemon" promise: this package ships the wire-protocol compatible
 # daemon and its systemd plumbing only.  It does NOT install PostgreSQL,
 # the documentdb extension, the setup wizard, or sample data.  TODO: those
 # will be pulled in by the planned `documentdb-local-N` appliance meta
@@ -174,9 +174,8 @@ see packaging-design.md.)
 # have their own provisioning -- exactly the surprise the design rules out.
 # ---------------------------------------------------------------------------
 %package -n documentdb-gateway
-Summary:        MongoDB wire protocol proxy for PostgreSQL
+Summary:        Wire-protocol compatible proxy for PostgreSQL
 Suggests:       %{name} = %{version}-%{release}
-Requires:       jq
 # The gateway invokes the `openssl` CLI at startup to auto-generate self-signed
 # TLS material when no certificate paths are configured (see docdb_openssl.rs).
 # Without this, gateway startup fails with "Failed to create TLS provider".
@@ -190,8 +189,8 @@ Requires(pre):  shadow-utils
 BuildRequires:  systemd
 
 %description -n documentdb-gateway
-The DocumentDB Gateway is a Rust-based proxy that implements the MongoDB
-wire protocol and translates requests to the DocumentDB PostgreSQL
+The DocumentDB Gateway is a Rust-based wire-protocol compatible proxy
+that translates requests to the DocumentDB PostgreSQL
 extensions.  This package ships the gateway daemon, its hardened systemd
 unit, a logrotate drop-in, and the example SetupConfiguration.json.
 
@@ -294,7 +293,6 @@ done
 %endif
 popd
 
-# Remove internal/ (proprietary pg_documentdb_distributed) from build targets
 sed -i '/internal/d' Makefile
 
 # Strip -Werror from all Makefiles to avoid build failures with newer GCC.
@@ -320,7 +318,7 @@ fi
 # `BuildRequires: crate(...)` lines would force dnf to install the crates
 # from distro repos instead -- that works on Fedora 43 (which has a
 # reasonably complete rust-* set) but fails on EPEL 9, which ships almost
-# no crate RPMs.  See packaging/test_copr_dynamic_br.sh for the local
+# no crate RPMs.  See packaging/copr/test_copr_dynamic_br.sh for the local
 # reproducer of that Copr failure mode.
 
 # ===========================================================================
@@ -439,11 +437,6 @@ popd
 # soname on disk and avoids OWASP A06 (vulnerable bundled component)
 # exposure for a shared library we'd otherwise have to track for CVEs.
 
-# ---- Bundle Intel Decimal Math Library static lib ----
-mkdir -p %{buildroot}%{_libdir}/intelmathlib/LIBRARY
-cp intelrdfpmath-%{intelmathlib_version}/LIBRARY/libbid.a \
-   %{buildroot}%{_libdir}/intelmathlib/LIBRARY/
-
 # ---- Install gateway runtime (binary, config, systemd unit, logrotate) ----
 # The gateway crate is one member of a Cargo workspace, so invoke
 # %%cargo_install from the specific crate directory rather than the workspace
@@ -458,6 +451,7 @@ cp intelrdfpmath-%{intelmathlib_version}/LIBRARY/libbid.a \
 pushd pg_documentdb_gw/documentdb_gateway
 %cargo_install -- --locked --config ../.cargo/vendor-config.toml
 popd
+install -d %{buildroot}%{_datadir}/documentdb
 install -d %{buildroot}%{_prefix}/lib/documentdb-gateway
 mv %{buildroot}%{_bindir}/documentdb_gateway \
     %{buildroot}%{_prefix}/lib/documentdb-gateway/documentdb-gateway-daemon
@@ -479,30 +473,6 @@ install -D -m 0644 packaging/gateway/systemd/documentdb-gateway.service \
 install -D -m 0644 %{SOURCE6} \
     %{buildroot}%{_sysconfdir}/logrotate.d/documentdb-gateway
 
-# ---- Bundle source code for make check ----
-%global docdb_srcdir %{_datadir}/documentdb/source
-mkdir -p %{buildroot}%{docdb_srcdir}
-cp -r . %{buildroot}%{docdb_srcdir}/
-# Clean up build artifacts and vendored build trees from the source copy
-find %{buildroot}%{docdb_srcdir} -name "*.o" -delete
-find %{buildroot}%{docdb_srcdir} -name "*.so" -delete
-find %{buildroot}%{docdb_srcdir} -name "*.bc" -delete
-rm -rf %{buildroot}%{docdb_srcdir}/.git*
-rm -rf %{buildroot}%{docdb_srcdir}/build
-rm -rf %{buildroot}%{docdb_srcdir}/_vendored
-rm -rf %{buildroot}%{docdb_srcdir}/mongo-c-driver-%{libbson_version}
-rm -rf %{buildroot}%{docdb_srcdir}/intelrdfpmath-%{intelmathlib_version}
-rm -rf %{buildroot}%{docdb_srcdir}/pg_documentdb_gw/target
-rm -rf %{buildroot}%{docdb_srcdir}/pg_documentdb_gw/vendor
-# Strip the .cargo/config.toml that %cargo_prep wrote with the absolute
-# buildroot path baked in (e.g. `root = "/root/rpmbuild/BUILDROOT/..."`).
-rm -rf %{buildroot}%{docdb_srcdir}/pg_documentdb_gw/.cargo
-%if %?postgresql_default
-rm -rf %{buildroot}%{docdb_srcdir}/pg_cron-%{pg_cron_version}
-%else
-rm -rf %{buildroot}%{docdb_srcdir}/pcre2-%{pcre2_version}
-%endif
-
 # Ensure extension shared objects are marked as executable ELF files.
 chmod 0755 %{buildroot}%{pg_libdir}/*.so
 
@@ -511,9 +481,7 @@ chmod 0755 %{buildroot}%{pg_libdir}/*.so
 # DocumentDB's regression suite (`make check`) requires
 # a running PostgreSQL cluster, the documentdb extensions to be loaded into
 # shared_preload_libraries, and a working pg_cron + pgvector + postgis stack
-# -- none of which are available in the rpmbuild/mock chroot.  The packaged
-# source tree under %%{_datadir}/documentdb/source lets a downstream operator
-# run the full suite post-install.
+# -- none of which are available in the rpmbuild/mock chroot.
 %files
 %license LICENSE NOTICE licenses/
 %doc README.md CHANGELOG.md
@@ -525,8 +493,6 @@ chmod 0755 %{buildroot}%{pg_libdir}/*.so
 # `documentdb-local-%%{pgversion}` appliance subpackage will also need to
 # claim ownership of this directory when it lands.
 %dir %{_datadir}/documentdb
-%{_datadir}/documentdb/source
-%{_libdir}/intelmathlib/LIBRARY/libbid.a
 
 %files -n documentdb-gateway
 %license LICENSE NOTICE pg_documentdb_gw/licenses

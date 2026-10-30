@@ -12,29 +12,10 @@ categories.workspace = true
 [package.metadata.deb]
 name = "documentdb_gateway"
 maintainer = "documentdb-packaging-maintainers@microsoft.com"
-depends = [
- "jq",
-]
-maintainer-scripts = "maintainer-scripts/"
+depends = []
 assets = [
  ["target/release-with-symbols/documentdb_gateway", "usr/bin/", "755"],
- ["../../documentdb-local/scripts/documentdb-setup.sh", "usr/bin/documentdb-setup", "755"],
- ["../SetupConfiguration.json", "etc/documentdb/SetupConfiguration.json", "644"],
- ["../../packaging/gateway/systemd/documentdb-postgresql.service", "lib/systemd/system/documentdb-postgresql.service", "644"],
- ["../../packaging/gateway/systemd/documentdb-gateway.service", "lib/systemd/system/documentdb-gateway.service", "644"],
- ["../../documentdb-local/scripts/documentdb_postgresql_service.sh", "usr/share/documentdb/scripts/documentdb_postgresql_service.sh", "755"],
- ["../../scripts/utils.sh", "usr/share/documentdb/scripts/utils.sh", "644"],
- ["../../scripts/start_oss_server.sh", "usr/share/documentdb/scripts/start_oss_server.sh", "755"],
- ["../../scripts/build_and_start_gateway.sh", "usr/share/documentdb/scripts/build_and_start_gateway.sh", "755"],
- ["../../documentdb-local/scripts/emulator_entrypoint.sh", "usr/share/documentdb/scripts/emulator_entrypoint.sh", "755"],
- ["../../documentdb-local/scripts/init_documentdb_data.sh", "usr/share/documentdb/scripts/init_documentdb_data.sh", "755"],
- ["../../scripts/setup_psqlrc.sh", "usr/share/documentdb/scripts/setup_psqlrc.sh", "755"],
- ["../../documentdb-local/sample-data/01-users.js", "usr/share/documentdb/sample-data/01-users.js", "644"],
- ["../../documentdb-local/sample-data/02-products.js", "usr/share/documentdb/sample-data/02-products.js", "644"],
- ["../../documentdb-local/sample-data/03-orders.js", "usr/share/documentdb/sample-data/03-orders.js", "644"],
- ["../../documentdb-local/sample-data/04-analytics.js", "usr/share/documentdb/sample-data/04-analytics.js", "644"],
- ["../../documentdb-local/sample-data/README.md", "usr/share/documentdb/sample-data/README.md", "644"],
- ]
+]
 
 [features]
 default = ["request-tracing"]
