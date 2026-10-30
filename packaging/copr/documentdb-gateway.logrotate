@@ -1,0 +1,11 @@
+/var/lib/documentdb-gateway/*.log /var/lib/documentdb-gateway/logs/*.log {
+    weekly
+    rotate 8
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su documentdb-gateway documentdb-gateway
+    create 0640 documentdb-gateway documentdb-gateway
+}
