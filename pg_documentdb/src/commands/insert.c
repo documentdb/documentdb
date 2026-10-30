@@ -638,12 +638,12 @@ SetCompressedDocumentParam(ParamExternData *documentParam)
  */
 static void
 DoMultiInsertWithoutTransactionIdCore(MongoCollection *collection, List *inserts,
-									  Oid shardOid, int insertIndex,
-									  int *insertCountResult, int *insertIncrIndex,
+									  Oid shardOid, int batchStartIndex,
+									  int *batchRowsInserted, int *batchEndIndex,
 									  ExprEvalState *evalState)
 {
-	int insertInnerIndex = insertIndex;
-	int insertCount = 0;
+	int nextInsertIndex = batchStartIndex;
+	int batchInputCount = 0;
 	List *valuesList = NIL;
 	ListCell *insertCell;
 
@@ -651,10 +651,10 @@ DoMultiInsertWithoutTransactionIdCore(MongoCollection *collection, List *inserts
 	int expectedNumParams = Min(list_length(inserts), BatchWriteSubTransactionCount);
 	ParamListInfo paramListInfo = makeParamList(expectedNumParams * 2);
 	int paramIndex = 0;
-	while (insertInnerIndex < list_length(inserts) &&
-		   insertCount < BatchWriteSubTransactionCount)
+	while (nextInsertIndex < list_length(inserts) &&
+		   batchInputCount < BatchWriteSubTransactionCount)
 	{
-		insertCell = list_nth_cell(inserts, insertInnerIndex);
+		insertCell = list_nth_cell(inserts, nextInsertIndex);
 		const bson_value_t *documentValue = lfirst(insertCell);
 
 		int64_t shardKeyValue;
@@ -682,11 +682,11 @@ DoMultiInsertWithoutTransactionIdCore(MongoCollection *collection, List *inserts
 												 mongoDataCreationTimeVarAttrNumber);
 
 		valuesList = lappend(valuesList, values);
-		insertCount++;
-		insertInnerIndex++;
+		batchInputCount++;
+		nextInsertIndex++;
 	}
 
-	*insertIncrIndex = insertInnerIndex;
+	*batchEndIndex = nextInsertIndex;
 	paramListInfo->numParams = paramIndex;
 
 	uint64_t rowsProcessed = 0;
@@ -706,7 +706,7 @@ DoMultiInsertWithoutTransactionIdCore(MongoCollection *collection, List *inserts
 	}
 
 	/* Merge inner batchResult with outer batchResult */
-	*insertCountResult = rowsProcessed;
+	*batchRowsInserted = rowsProcessed;
 	list_free_deep(valuesList);
 	pfree(paramListInfo);
 }
@@ -714,16 +714,17 @@ DoMultiInsertWithoutTransactionIdCore(MongoCollection *collection, List *inserts
 
 static void
 DoMultiInsertWithoutTransactionViaInsertWorker(MongoCollection *collection, List *inserts,
-											   int insertIndex, int *insertCountResult,
-											   int *insertIncrIndex)
+											   int batchStartIndex,
+											   int *batchRowsInserted,
+											   int *batchEndIndex)
 {
 	/* Serialize the batch to a worker spec */
 	Assert(collection->shardKey == NULL);
 	int batchCount = Min(BatchWriteSubTransactionCount, list_length(inserts) -
-						 insertIndex);
-	*insertIncrIndex = insertIndex + batchCount;
+						 batchStartIndex);
+	*batchEndIndex = batchStartIndex + batchCount;
 	pgbsonsequence *batchSequence = PgbsonSequenceBuildFromBsonValuesList(inserts,
-																		  insertIndex,
+																		  batchStartIndex,
 																		  batchCount);
 	text *transactionId = NULL;
 	int64 shardKeyHash = collection->collectionId;
@@ -748,7 +749,7 @@ DoMultiInsertWithoutTransactionViaInsertWorker(MongoCollection *collection, List
 							"insert_worker returned an unexpected batch insert count")));
 	}
 
-	*insertCountResult = resultElement.bsonValue.value.v_int32;
+	*batchRowsInserted = resultElement.bsonValue.value.v_int32;
 	pfree(result);
 	pfree(batchSequence);
 	pfree(specDocument);
@@ -758,11 +759,11 @@ DoMultiInsertWithoutTransactionViaInsertWorker(MongoCollection *collection, List
 static bool
 DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts,
 								  Oid shardOid,
-								  BatchInsertionResult *batchResult, int insertIndex,
-								  int *insertCountResult, int *insertIncrIndex,
+								  BatchInsertionResult *batchResult, int batchStartIndex,
+								  int *batchRowsInserted, int *batchEndIndex,
 								  ExprEvalState *evalState, WriteMode writeMode)
 {
-	*insertCountResult = 0;
+	*batchRowsInserted = 0;
 	MemoryContext oldContext = CurrentMemoryContext;
 	ResourceOwner oldOwner = CurrentResourceOwner;
 
@@ -782,18 +783,19 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts,
 		if (DoWorkerDispatchForInsertion(collection, transactionId, evalState))
 		{
 			DoMultiInsertWithoutTransactionViaInsertWorker(collection, inserts,
-														   insertIndex, insertCountResult,
-														   insertIncrIndex);
+														   batchStartIndex,
+														   batchRowsInserted,
+														   batchEndIndex);
 		}
 		else
 		{
 			DoMultiInsertWithoutTransactionIdCore(collection, inserts, shardOid,
-												  insertIndex, insertCountResult,
-												  insertIncrIndex, evalState);
+												  batchStartIndex, batchRowsInserted,
+												  batchEndIndex, evalState);
 		}
 
 		/* Commit the inner transaction, return to outer xact context */
-		batchResult->rowsInserted += *insertCountResult;
+		batchResult->rowsInserted += *batchRowsInserted;
 		ReleaseCurrentSubTransaction();
 		MemoryContextSwitchTo(oldContext);
 		CurrentResourceOwner = oldOwner;
@@ -807,7 +809,7 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts,
 		RollbackAndReleaseCurrentSubTransaction();
 		MemoryContextSwitchTo(oldContext);
 		CurrentResourceOwner = oldOwner;
-		*insertCountResult = 0;
+		*batchRowsInserted = 0;
 
 		if (IsOperatorInterventionError(errorData))
 		{
@@ -823,18 +825,18 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts,
 			 */
 			elog_unredacted(
 				"Batch insert failed; retrying sub-batch individually. Batch size: %d, start index: %d, DocumentDB error code: %d",
-				list_length(inserts), insertIndex, errorCode);
+				list_length(inserts), batchStartIndex, errorCode);
 		}
 		else
 		{
 			elog_unredacted(
 				"Batch insert failed; retrying sub-batch individually. Batch size: %d, start index: %d, SQL error code: %d",
-				list_length(inserts), insertIndex, errorCode);
+				list_length(inserts), batchStartIndex, errorCode);
 		}
 	}
 	PG_END_TRY();
 
-	return *insertCountResult != 0;
+	return *batchRowsInserted != 0;
 }
 
 
@@ -1042,17 +1044,17 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 	List *insertions = batchSpec->documents;
 	bool isOrdered = batchSpec->isOrdered;
 
-	int insertIndex = 0;
+	int nextInsertIndex = 0;
 	int singleInsertFailureCount = 0;
-	int insertIncrIndex = -1;
+	int retryBatchEndIndex = -1;
 	bool hasBatchedInsertFailed = false;
 
 	ListCell *insertCell = NULL;
-	while (insertIndex < list_length(insertions))
+	while (nextInsertIndex < list_length(insertions))
 	{
 		CHECK_FOR_INTERRUPTS();
 
-		if (writeMode == WriteMode_Bulk_Proc && insertIndex > 0)
+		if (writeMode == WriteMode_Bulk_Proc && nextInsertIndex > 0)
 		{
 			/* For each iteration of the loop, commit prior work */
 			bool setSnapshot = true;
@@ -1064,42 +1066,42 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 		if (list_length(insertions) > 1 && !hasBatchedInsertFailed)
 		{
 			/* Optimistically try to do multiple updates together, if it fails, try again one by one to figure out which one failed */
-			int incrementCount = 0;
-			int failedBatchIndexEnd = -1;
+			int batchRowsInserted = 0;
+			int batchEndIndex = -1;
 			bool performedBatchInsert = DoMultiInsertWithoutTransactionId(collection,
 																		  insertions,
 																		  batchSpec->
 																		  insertShardOid,
 																		  batchResult,
-																		  insertIndex,
-																		  &incrementCount,
+																		  nextInsertIndex,
 																		  &
-																		  failedBatchIndexEnd,
+																		  batchRowsInserted,
+																		  &batchEndIndex,
 																		  evalState,
 																		  writeMode);
 
-			Assert(!performedBatchInsert || incrementCount > 0);
+			Assert(!performedBatchInsert || batchRowsInserted > 0);
 			if (!performedBatchInsert)
 			{
 				/* Has a failure, set hasFailures and retry */
 				hasBatchedInsertFailed = true;
-				insertIncrIndex = failedBatchIndexEnd;
+				retryBatchEndIndex = batchEndIndex;
 			}
 			else
 			{
-				insertIndex += incrementCount;
+				nextInsertIndex += batchRowsInserted;
 				continue;
 			}
 		}
 
-		insertCell = list_nth_cell(insertions, insertIndex);
+		insertCell = list_nth_cell(insertions, nextInsertIndex);
 		const bson_value_t *document = lfirst(insertCell);
 		text *transactionId = NULL;
 		bool isSuccess = DoSingleInsertWithSubTxn(collection, batchSpec->insertShardOid,
 												  document,
 												  transactionId, batchResult,
-												  insertIndex, evalState);
-		insertIndex++;
+												  nextInsertIndex, evalState);
+		nextInsertIndex++;
 
 		if (!isSuccess)
 		{
@@ -1111,13 +1113,13 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 			}
 		}
 
-		if (hasBatchedInsertFailed && insertIndex >= insertIncrIndex)
+		if (hasBatchedInsertFailed && nextInsertIndex >= retryBatchEndIndex)
 		{
 			elog_unredacted(
 				"Single-insert retries for the current sub-batch encountered %d failures",
 				singleInsertFailureCount);
 
-			insertIncrIndex = -1;
+			retryBatchEndIndex = -1;
 			hasBatchedInsertFailed = false;
 			singleInsertFailureCount = 0;
 		}
@@ -1684,22 +1686,22 @@ command_insert_worker(PG_FUNCTION_ARGS)
 								"insertMany worker requires a nonempty document sequence")));
 		}
 
-		int insertIndex = 0;
+		int nextInsertIndex = 0;
 		int rowsInserted = 0;
 		ExprEvalState *evalState = NULL;
 
 		/* Consume the whole sequence even if this session uses a smaller batch limit. */
-		while (insertIndex < list_length(inserts))
+		while (nextInsertIndex < list_length(inserts))
 		{
 			CHECK_FOR_INTERRUPTS();
-			int insertCountResult = 0;
-			int insertIncrIndex = insertIndex;
+			int batchRowsInserted = 0;
+			int batchEndIndex = nextInsertIndex;
 			DoMultiInsertWithoutTransactionIdCore(collection, inserts, shardOid,
-												  insertIndex,
-												  &insertCountResult, &insertIncrIndex,
+												  nextInsertIndex,
+												  &batchRowsInserted, &batchEndIndex,
 												  evalState);
-			rowsInserted += insertCountResult;
-			insertIndex = insertIncrIndex;
+			rowsInserted += batchRowsInserted;
+			nextInsertIndex = batchEndIndex;
 		}
 
 		pgbson_writer resultWriter;
