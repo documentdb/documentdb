@@ -1291,3 +1291,293 @@ SELECT count(*) FROM pg_roles WHERE rolname LIKE 'uuuuuuuuuu%';
 
 DROP TABLE long_user_password_before;
 RESET documentdb.enableUsersAdminDBCheck;
+-- Password expiry is enforced during authentication, not role switching.
+CREATE FUNCTION documentdb_test_helpers.password_expiry_auth(text, text)
+RETURNS boolean LANGUAGE C AS 'pg_documentdb', 'command_authenticate_with_pwd';
+CREATE FUNCTION documentdb_test_helpers.password_expiry_proof(text, text)
+RETURNS documentdb_core.bson LANGUAGE C AS 'pg_documentdb', 'command_generate_auth_message_client_proof_for_test';
+-- All supplied deadlines require the feature flag, including null.
+SELECT documentdb_api.create_user('{"createUser":"expiry_user", "pwd":"Valid$123Pass", "roles":[{"role":"readAnyDatabase","db":"admin"}], "customData":{"validUntil":{"$date":"2500-01-01T00:00:00.123Z"}}, "$db":"admin"}');
+ERROR:  Password expiration is not enabled.
+SELECT documentdb_api.create_user('{"createUser":"expiry_user", "pwd":"Valid$123Pass", "roles":[{"role":"readAnyDatabase","db":"admin"}], "customData":{"validUntil":null}, "$db":"admin"}');
+ERROR:  Password expiration is not enabled.
+SELECT documentdb_api.create_user('{"createUser":"expiry_user", "pwd":"Valid$123Pass", "roles":[{"role":"readAnyDatabase","db":"admin"}], "$db":"admin"}');
+            create_user            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_core.bson_to_json_string(documentdb_api.users_info('{"usersInfo":"expiry_user", "$db":"admin"}'))::text
+    NOT LIKE '%"validUntil"%' AS non_expiring;
+ non_expiring 
+--------------
+ t
+(1 row)
+
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "customData":{"validUntil":{"$date":"2500-01-01T00:00:00.123Z"}}, "$db":"admin"}');
+ERROR:  Password expiration is not enabled.
+SET documentdb.enable_user_password_expiration TO ON;
+-- Reject invalid types and dates outside the SQL timestamp range.
+SELECT documentdb_api.create_user('{"createUser":"expiry_invalid", "pwd":"Valid$123Pass", "roles":[{"role":"readAnyDatabase","db":"admin"}], "customData":{"validUntil":"2500-01-01"}, "$db":"admin"}');
+ERROR:  The BSON field 'customData.validUntil' has an incorrect type 'string'; it should be of type 'date'.
+SELECT documentdb_api.create_user('{"createUser":"expiry_invalid", "roles":[{"role":"readAnyDatabase","db":"admin"}], "customData":{"IdentityProvider":{"type":"MicrosoftEntraID"},"validUntil":null}, "$db":"admin"}');
+ERROR:  Password expiration is not supported for an external identity provider.
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "customData":{"validUntil":1}, "$db":"admin"}');
+ERROR:  The BSON field 'customData.validUntil' has an incorrect type 'int'; it should be of type 'date'.
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "customData":{"validUntil":{"$date":{"$numberLong":"9223372036854775807"}}}, "$db":"admin"}');
+ERROR:  value 9223372036854775807 (milliseconds) is out of range for timestamps.
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "customData":{"validUntil":{"$date":{"$numberLong":"-9223372036854775808"}}}, "$db":"admin"}');
+ERROR:  value -9223372036854775808 (milliseconds) is out of range for timestamps.
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "$db":"admin"}');
+ERROR:  At least one of 'pwd' or 'customData.validUntil' must be specified.
+-- Deadlines belong inside a document-valued customData field.
+SELECT documentdb_api.create_user('{"createUser":"expiry_invalid", "pwd":"Valid$123Pass", "roles":[{"role":"readAnyDatabase","db":"admin"}], "validUntil":null, "$db":"admin"}');
+ERROR:  Unsupported field specified : 'validUntil'.
+SELECT documentdb_api.create_user('{"createUser":"expiry_invalid", "pwd":"Valid$123Pass", "roles":[{"role":"readAnyDatabase","db":"admin"}], "customData":null, "$db":"admin"}');
+ERROR:  The 'customData' parameter is required to be provided as a BSON document.
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "validUntil":null, "$db":"admin"}');
+ERROR:  Unsupported field specified : 'validUntil'.
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "customData":null, "$db":"admin"}');
+ERROR:  The 'customData' parameter is required to be provided as a BSON document.
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "customData":[], "$db":"admin"}');
+ERROR:  The 'customData' parameter is required to be provided as a BSON document.
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "customData":{"unsupported":true}, "$db":"admin"}');
+ERROR:  The specified field in customData is not supported: 'unsupported'.
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "customData":{}, "$db":"admin"}');
+ERROR:  At least one of 'pwd' or 'customData.validUntil' must be specified.
+-- The last occurrence wins, including an explicit null that clears expiration.
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "customData":{"validUntil":{"$date":"2000-01-01T00:00:00Z"}, "validUntil":{"$date":"2500-01-01T00:00:00.123Z"}}, "$db":"admin"}');
+            update_user            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT rolvaliduntil = timestamptz '2500-01-01T00:00:00.123Z' AS last_deadline_used
+FROM pg_authid WHERE rolname = 'expiry_user';
+ last_deadline_used 
+--------------------
+ t
+(1 row)
+
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "customData":{"validUntil":{"$date":"2000-01-01T00:00:00Z"}, "validUntil":null}, "$db":"admin"}');
+            update_user            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT rolvaliduntil = 'infinity'::timestamptz AS last_null_clears_deadline
+FROM pg_authid WHERE rolname = 'expiry_user';
+ last_null_clears_deadline 
+---------------------------
+ t
+(1 row)
+
+SELECT rolpassword AS expiry_original_password FROM pg_authid WHERE rolname = 'expiry_user' \gset
+SET timezone TO 'Asia/Kolkata';
+SET datestyle TO 'SQL, DMY';
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "customData":{"validUntil":{"$date":"2500-01-01T00:00:00.123Z"}}, "$db":"admin"}');
+            update_user            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT rolpassword = :'expiry_original_password' AS password_unchanged,
+       rolvaliduntil = timestamptz '2500-01-01T00:00:00.123Z' AS deadline_preserved
+FROM pg_authid WHERE rolname = 'expiry_user';
+ password_unchanged | deadline_preserved 
+--------------------+--------------------
+ t                  | t
+(1 row)
+
+SELECT documentdb_api.users_info('{"usersInfo":"expiry_user", "$db":"admin"}');
+                                                                                                                                                  users_info                                                                                                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "users" : [ { "_id" : "admin.expiry_user", "userId" : "admin.expiry_user", "user" : "expiry_user", "db" : "admin", "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ], "customData" : { "validUntil" : { "$date" : { "$numberLong" : "16725225600123" } } } } ], "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_core.bson_to_json_string(documentdb_api.users_info('{"usersInfo":1, "$db":"admin"}'))::text
+    LIKE '%"validUntil"%' AS all_users_includes_deadline;
+ all_users_includes_deadline 
+-----------------------------
+ t
+(1 row)
+
+RESET timezone;
+RESET datestyle;
+-- A proof captured before expiry must also fail when verified after expiry.
+SELECT documentdb_core.bson_to_json_string(documentdb_test_helpers.password_expiry_proof('expiry_user', 'Valid$123Pass'))::text::jsonb AS expiry_proof \gset
+SELECT documentdb_api_internal.authenticate_with_scram_sha256('expiry_user',
+    :'expiry_proof'::jsonb->>'AuthMessage', :'expiry_proof'::jsonb->>'ClientProof') OPERATOR(documentdb_api_catalog.@=) '{"ok":1}' AS scram_valid;
+ scram_valid 
+-------------
+ t
+(1 row)
+
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "customData":{"validUntil":{"$date":"2000-01-01T00:00:00.000Z"}}, "$db":"admin"}');
+            update_user            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.scram_sha256_get_salt_and_iterations('expiry_user') OPERATOR(documentdb_api_catalog.@=) '{"ok":0}' AS expired_challenge_rejected;
+ expired_challenge_rejected 
+----------------------------
+ t
+(1 row)
+
+SELECT documentdb_api_internal.authenticate_with_scram_sha256('expiry_user',
+    :'expiry_proof'::jsonb->>'AuthMessage', :'expiry_proof'::jsonb->>'ClientProof') OPERATOR(documentdb_api_catalog.@=) '{"ok":0}' AS expired_proof_rejected;
+ expired_proof_rejected 
+------------------------
+ t
+(1 row)
+
+SELECT documentdb_test_helpers.password_expiry_auth('expiry_user', 'Valid$123Pass') AS expired_password_valid;
+ expired_password_valid 
+------------------------
+ f
+(1 row)
+
+SET ROLE expiry_user;
+SELECT current_user = 'expiry_user' AS role_still_usable;
+ role_still_usable 
+-------------------
+ t
+(1 row)
+
+\set VERBOSITY sqlstate
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "customData":{"validUntil":null}, "$db":"admin"}');
+ERROR:  42501
+\set VERBOSITY terse
+RESET ROLE;
+-- Changing only the password preserves expiry; invalid renewal changes neither field.
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "pwd":"Renewed$123Pass", "$db":"admin"}');
+            update_user            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_test_helpers.password_expiry_auth('expiry_user', 'Renewed$123Pass') AS password_only_still_expired;
+ password_only_still_expired 
+-----------------------------
+ f
+(1 row)
+
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "pwd":"", "customData":{"validUntil":null}, "$db":"admin"}');
+ERROR:  The password field must not be left empty.
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "pwd":"Renewed$456Pass", "customData":{"validUntil":"invalid"}, "$db":"admin"}');
+ERROR:  The BSON field 'customData.validUntil' has an incorrect type 'string'; it should be of type 'date'.
+SELECT rolvaliduntil = timestamptz '2000-01-01T00:00:00Z' AS expiry_unchanged
+FROM pg_authid WHERE rolname = 'expiry_user';
+ expiry_unchanged 
+------------------
+ t
+(1 row)
+
+-- Disabling the field rejects renewal, rotation, and clearing without changing the user.
+SELECT rolpassword AS expiry_password_before_disabled FROM pg_authid WHERE rolname = 'expiry_user' \gset
+SET documentdb.enable_user_password_expiration TO OFF;
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "customData":{"validUntil":{"$date":"2500-01-01T00:00:00.123Z"}}, "$db":"admin"}');
+ERROR:  Password expiration is not enabled.
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "pwd":"Rotated$123Pass", "customData":{"validUntil":{"$date":"2501-01-01T00:00:00.456Z"}}, "$db":"admin"}');
+ERROR:  Password expiration is not enabled.
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "customData":{"validUntil":null}, "$db":"admin"}');
+ERROR:  Password expiration is not enabled.
+SELECT rolpassword = :'expiry_password_before_disabled' AS password_unchanged,
+       rolvaliduntil = timestamptz '2000-01-01T00:00:00Z' AS deadline_preserved
+FROM pg_authid WHERE rolname = 'expiry_user';
+ password_unchanged | deadline_preserved 
+--------------------+--------------------
+ t                  | t
+(1 row)
+
+SELECT documentdb_api.users_info('{"usersInfo":"expiry_user", "$db":"admin"}');
+                                                                                                                                                 users_info                                                                                                                                                 
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "users" : [ { "_id" : "admin.expiry_user", "userId" : "admin.expiry_user", "user" : "expiry_user", "db" : "admin", "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ], "customData" : { "validUntil" : { "$date" : { "$numberLong" : "946684800000" } } } } ], "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SET documentdb.enable_user_password_expiration TO ON;
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "customData":{"validUntil":{"$date":"2500-01-01T00:00:00.123Z"}}, "$db":"admin"}');
+            update_user            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_test_helpers.password_expiry_auth('expiry_user', 'Renewed$123Pass') AS renewed_password_valid,
+       documentdb_test_helpers.password_expiry_auth('expiry_user', 'Renewed$456Pass') AS invalid_update_password_valid;
+ renewed_password_valid | invalid_update_password_valid 
+------------------------+-------------------------------
+ t                      | f
+(1 row)
+
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "pwd":"Rotated$123Pass", "customData":{"validUntil":{"$date":"2501-01-01T00:00:00.456Z"}}, "$db":"admin"}');
+            update_user            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_test_helpers.password_expiry_auth('expiry_user', 'Rotated$123Pass') AS rotated_password_valid,
+       documentdb_test_helpers.password_expiry_auth('expiry_user', 'Renewed$123Pass') AS old_password_valid;
+ rotated_password_valid | old_password_valid 
+------------------------+--------------------
+ t                      | f
+(1 row)
+
+SELECT documentdb_api.users_info('{"usersInfo":"expiry_user", "$db":"admin"}');
+                                                                                                                                                  users_info                                                                                                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "users" : [ { "_id" : "admin.expiry_user", "userId" : "admin.expiry_user", "user" : "expiry_user", "db" : "admin", "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ], "customData" : { "validUntil" : { "$date" : { "$numberLong" : "16756761600456" } } } } ], "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "customData":{"validUntil":null}, "$db":"admin"}');
+            update_user            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_core.bson_to_json_string(documentdb_api.users_info('{"usersInfo":"expiry_user", "$db":"admin"}'))::text
+    NOT LIKE '%"validUntil"%' AS cleared_deadline_omitted;
+ cleared_deadline_omitted 
+--------------------------
+ t
+(1 row)
+
+SET documentdb.enable_user_password_expiration TO OFF;
+SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "customData":{"validUntil":{"$date":"2500-01-01T00:00:00Z"}}, "$db":"admin"}');
+ERROR:  Password expiration is not enabled.
+-- Creation with a deadline uses the same validation and storage as renewal.
+SET documentdb.enable_user_password_expiration TO ON;
+SELECT documentdb_api.create_user('{"createUser":"expiry_created", "pwd":"Valid$123Pass", "roles":[{"role":"readAnyDatabase","db":"admin"}], "customData":{"validUntil":null, "validUntil":{"$date":"2000-01-01T00:00:00.123Z"}}, "$db":"admin"}');
+            create_user            
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_test_helpers.password_expiry_auth('expiry_created', 'Valid$123Pass') AS created_expired_password_valid;
+ created_expired_password_valid 
+--------------------------------
+ f
+(1 row)
+
+SELECT documentdb_api.users_info('{"usersInfo":"expiry_created", "$db":"admin"}');
+                                                                                                                                                     users_info                                                                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "users" : [ { "_id" : "admin.expiry_created", "userId" : "admin.expiry_created", "user" : "expiry_created", "db" : "admin", "roles" : [ { "role" : "readAnyDatabase", "db" : "admin" } ], "customData" : { "validUntil" : { "$date" : { "$numberLong" : "946684800123" } } } } ], "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.drop_user('{"dropUser":"expiry_created", "$db":"admin"}');
+             drop_user             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.drop_user('{"dropUser":"expiry_user", "$db":"admin"}');
+             drop_user             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+DROP FUNCTION documentdb_test_helpers.password_expiry_auth(text, text);
+DROP FUNCTION documentdb_test_helpers.password_expiry_proof(text, text);
+RESET documentdb.enable_user_password_expiration;

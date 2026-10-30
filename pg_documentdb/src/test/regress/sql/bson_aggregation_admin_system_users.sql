@@ -228,6 +228,53 @@ FROM documentdb_api_catalog.bson_aggregation_find(
 
 RESET ROLE;
 
+SET documentdb.enable_user_password_expiration TO ON;
+SELECT documentdb_api.update_user(
+	'{"updateUser":"systemUsersReader", "customData":{"validUntil":{"$date":"2500-01-01T00:00:00.123Z"}}, "$db":"admin"}') AS update_result \gset
+
+-- Stored expirations remain visible with the feature disabled.
+SET documentdb.enable_user_password_expiration TO OFF;
+SET ROLE "systemUsersReader";
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.users", "filter": { "user": "systemUsersReader" } }');
+RESET ROLE;
+
+SET documentdb.enable_user_password_expiration TO ON;
+SELECT documentdb_api.update_user(
+	'{"updateUser":"systemUsersReader", "customData":{"validUntil":{"$date":"2000-01-01T00:00:00.123Z"}}, "$db":"admin"}') AS update_result \gset
+
+-- Expiration can be filtered through the aggregation surface.
+SET ROLE "systemUsersReader";
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_pipeline(
+	'admin',
+	'{ "aggregate": "system.users", "pipeline": [
+		{ "$match": { "customData.validUntil": { "$lt": { "$date": "2001-01-01T00:00:00Z" } } } },
+		{ "$project": { "_id": 0, "user": 1, "customData": 1 } }
+	] }');
+RESET ROLE;
+
+SELECT documentdb_api.update_user(
+	'{"updateUser":"systemUsersReader", "customData":{"validUntil":null}, "$db":"admin"}') AS update_result \gset
+SET ROLE "systemUsersReader";
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.users", "filter": { "customData": { "$exists": false } } }');
+RESET ROLE;
+
+-- Neither PostgreSQL infinity value can be serialized as a BSON date.
+ALTER ROLE "systemUsersReader" VALID UNTIL '-infinity';
+SET ROLE "systemUsersReader";
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.users" }');
+RESET ROLE;
+RESET documentdb.enable_user_password_expiration;
+
 SELECT documentdb_api.drop_user(
 	'{"dropUser":"systemUsersReader", "$db":"admin"}') AS drop_result \gset
 SELECT documentdb_api.drop_role('{"dropRole":"systemUsersCustomRole", "$db":"admin"}');

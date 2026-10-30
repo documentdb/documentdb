@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- * SPDX-License-Identifier: MIT
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/oss_backend/infrastructure/feature_counter.c
  *
@@ -587,6 +587,7 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_USER_CREATE_CUSTOM_ROLE] = "user_create_custom_role",
 	[FEATURE_USER_DROP] = "user_drop",
 	[FEATURE_USER_GET] = "user_get",
+	[FEATURE_USER_PASSWORD_EXPIRATION] = "user_password_expiration",
 	[FEATURE_USER_UPDATE] = "user_update",
 };
 

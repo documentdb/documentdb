@@ -9,6 +9,7 @@
  *-------------------------------------------------------------------------
  */
 #include "postgres.h"
+#include "catalog/pg_authid.h"
 #include "fmgr.h"
 #include "funcapi.h"
 #include "utils/documentdb_errors.h"
@@ -32,6 +33,9 @@
 #include "utils/string_view.h"
 #include "utils/role_utils.h"
 #include "utils/version_utils.h"
+#include "utils/date_utils.h"
+#include "utils/datetime.h"
+#include "utils/timestamp.h"
 
 #define SCRAM_MAX_SALT_LEN 64
 
@@ -85,6 +89,8 @@ extern bool IsNativeAuthEnabled;
 /* GUC that controls whether the DB admin check is enabled*/
 extern bool EnableUsersAdminDBCheck;
 
+extern bool EnableUserPasswordExpiration;
+
 PG_FUNCTION_INFO_V1(documentdb_extension_create_user);
 PG_FUNCTION_INFO_V1(documentdb_extension_drop_user);
 PG_FUNCTION_INFO_V1(documentdb_extension_update_user);
@@ -109,6 +115,9 @@ typedef struct
 
 	/* "pwd" field */
 	const char *pwd;
+
+	bool hasValidUntil;
+	TimestampTz validUntil;
 
 	/* "roles" field */
 	bson_value_t roles;
@@ -141,6 +150,9 @@ typedef struct
 
 	/* "pwd" field */
 	const char *pwd;
+
+	bool hasValidUntil;
+	TimestampTz validUntil;
 } UpdateUserSpec;
 
 typedef struct
@@ -183,8 +195,13 @@ typedef struct UserRoleHashEntry
 	char *user;
 	HTAB *roles;
 	bool isExternal;
+	bool hasValidUntil;
+	int64 validUntilMillis;
 } UserRoleHashEntry;
 
+static TimestampTz ParsePasswordValidUntil(bson_iter_t *iter);
+static void AppendPasswordValidUntil(StringInfo command, const char *userName,
+									 TimestampTz validUntil);
 static void ParseCreateUserSpec(pgbson *createUserSpec, CreateUserSpec *spec);
 static void CreateNativeUser(const CreateUserSpec *createUserSpec);
 static char * ParseDropUserSpec(pgbson *dropSpec);
@@ -204,6 +221,8 @@ static Datum GetAllUsersInfo(void);
 static void ParseUsersInfoDocument(const bson_value_t *usersInfoBson, GetUserSpec *spec);
 static void WriteSingleUserDocument(UserRoleHashEntry *userEntry, bool showPrivileges,
 									pgbson_array_writer *userArrayWriter);
+static void WriteCustomData(const UserRoleHashEntry *userEntry,
+							pgbson_writer *userWriter);
 static void WriteMultipleRoles(HTAB *rolesTable,
 							   pgbson_array_writer *roleArrayWriter);
 static void WriteBuiltInRoles(const char *parentRole,
@@ -548,6 +567,12 @@ ParseCreateUserSpec(pgbson *createSpec, CreateUserSpec *spec)
 							&customDataIterator);
 						spec->has_identity_provider = true;
 					}
+					else if (strcmp(customDataKey, "validUntil") == 0)
+					{
+						spec->hasValidUntil = true;
+						spec->validUntil = ParsePasswordValidUntil(
+							&customDataIterator);
+					}
 					else
 					{
 						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
@@ -577,6 +602,13 @@ ParseCreateUserSpec(pgbson *createSpec, CreateUserSpec *spec)
 
 	if (spec->has_identity_provider)
 	{
+		if (spec->hasValidUntil)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"Password expiration is not supported for an external identity provider.")));
+		}
+
 		if (!userFound || !rolesFound)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
@@ -633,9 +665,17 @@ CreateNativeUser(const CreateUserSpec *createUserSpec)
 
 	StringInfo createUserInfo = makeStringInfo();
 	appendStringInfo(createUserInfo,
-					 "CREATE ROLE %s WITH LOGIN PASSWORD %s;",
+					 "CREATE ROLE %s WITH LOGIN PASSWORD %s",
 					 quote_identifier(createUserSpec->createUser),
 					 quote_literal_cstr(PrehashPassword(createUserSpec->pwd)));
+
+	if (createUserSpec->hasValidUntil)
+	{
+		AppendPasswordValidUntil(createUserInfo, createUserSpec->createUser,
+								 createUserSpec->validUntil);
+	}
+
+	appendStringInfoChar(createUserInfo, ';');
 
 	bool readOnly = false;
 	bool isNull = false;
@@ -862,8 +902,18 @@ documentdb_extension_update_user(PG_FUNCTION_ARGS)
 
 	if (PG_ARGISNULL(0))
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-						errmsg("'updateUser' and 'pwd' are required fields.")));
+		if (EnableUserPasswordExpiration)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"'updateUser' and at least one of 'pwd' or 'customData.validUntil' are required.")));
+		}
+		else
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"'updateUser' and 'pwd' are required fields.")));
+		}
 	}
 
 	if (!IsMetadataCoordinator())
@@ -966,6 +1016,37 @@ ParseUpdateUserSpec(pgbson *updateSpec, UpdateUserSpec *spec)
 			uint32_t strLength = 0;
 			spec->pwd = bson_iter_utf8(&updateIter, &strLength);
 		}
+		else if (strcmp(key, "customData") == 0)
+		{
+			const bson_value_t *customDataDocument = bson_iter_value(&updateIter);
+			if (customDataDocument->value_type != BSON_TYPE_DOCUMENT)
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						 errmsg(
+							 "The 'customData' parameter is required to be provided as a BSON document.")));
+			}
+
+			bson_iter_t customDataIterator;
+			BsonValueInitIterator(customDataDocument, &customDataIterator);
+			while (bson_iter_next(&customDataIterator))
+			{
+				const char *customDataKey = bson_iter_key(&customDataIterator);
+				if (strcmp(customDataKey, "validUntil") == 0)
+				{
+					spec->hasValidUntil = true;
+					spec->validUntil = ParsePasswordValidUntil(
+						&customDataIterator);
+				}
+				else
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+									errmsg(
+										"The specified field in customData is not supported: '%s'.",
+										customDataKey)));
+				}
+			}
+		}
 		else if (strcmp(key, "$db") == 0 && EnableUsersAdminDBCheck)
 		{
 			EnsureTopLevelFieldType(key, &updateIter, BSON_TYPE_UTF8);
@@ -1034,24 +1115,52 @@ UpdateNativeUser(UpdateUserSpec *spec)
 							"Only native users can create other native users. Authenticate as a built-in native administrative user to perform native user management operations.")));
 	}
 
-	if (spec->pwd == NULL || spec->pwd[0] == '\0')
+	bool hasPasswordUpdate = spec->pwd != NULL;
+	if (!hasPasswordUpdate && !spec->hasValidUntil)
+	{
+		if (EnableUserPasswordExpiration)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"At least one of 'pwd' or 'customData.validUntil' must be specified.")));
+		}
+		else
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"The password field must not be left empty.")));
+		}
+	}
+
+	if (hasPasswordUpdate && spec->pwd[0] == '\0')
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 						errmsg("The password field must not be left empty.")));
 	}
 
 	/* Verify password meets complexity requirements */
-	if (EnableUsernamePasswordConstraints && !IsPasswordValid(spec->updateUser,
-															  spec->pwd))
+	if (hasPasswordUpdate && EnableUsernamePasswordConstraints &&
+		!IsPasswordValid(spec->updateUser, spec->pwd))
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 						errmsg("Invalid password, use a different password.")));
 	}
 
 	StringInfo updateUserInfo = makeStringInfo();
-	appendStringInfo(updateUserInfo, "ALTER USER %s WITH PASSWORD %s;", quote_identifier(
-						 spec->updateUser), quote_literal_cstr(PrehashPassword(
-																   spec->pwd)));
+	appendStringInfo(updateUserInfo, "ALTER USER %s WITH",
+					 quote_identifier(spec->updateUser));
+	if (hasPasswordUpdate)
+	{
+		appendStringInfo(updateUserInfo, " PASSWORD %s",
+						 quote_literal_cstr(PrehashPassword(spec->pwd)));
+	}
+
+	if (spec->hasValidUntil)
+	{
+		AppendPasswordValidUntil(updateUserInfo, spec->updateUser, spec->validUntil);
+	}
+
+	appendStringInfoChar(updateUserInfo, ';');
 
 	bool readOnly = false;
 	bool isNull = false;
@@ -1062,6 +1171,55 @@ UpdateNativeUser(UpdateUserSpec *spec)
 	PgbsonWriterInit(&finalWriter);
 	PgbsonWriterAppendInt32(&finalWriter, "ok", 2, 1);
 	PG_RETURN_POINTER(PgbsonWriterGetPgbson(&finalWriter));
+}
+
+
+static TimestampTz
+ParsePasswordValidUntil(bson_iter_t *iter)
+{
+	ReportFeatureUsage(FEATURE_USER_PASSWORD_EXPIRATION);
+
+	if (!EnableUserPasswordExpiration)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+						errmsg("Password expiration is not enabled.")));
+	}
+
+	if (BSON_ITER_HOLDS_NULL(iter))
+	{
+		return DT_NOEND;
+	}
+
+	EnsureTopLevelFieldType("customData.validUntil", iter, BSON_TYPE_DATE_TIME);
+	return DatumGetTimestampTz(GetPgTimestampFromUnixEpoch(
+								   bson_iter_date_time(iter)));
+}
+
+
+static void
+AppendPasswordValidUntil(StringInfo command, const char *userName,
+						 TimestampTz validUntil)
+{
+	if (TIMESTAMP_IS_NOEND(validUntil))
+	{
+		appendStringInfoString(command, " VALID UNTIL 'infinity'");
+		return;
+	}
+
+	struct pg_tm tm;
+	fsec_t fractionalSeconds;
+	char timestampString[MAXDATELEN + 1];
+	if (timestamp2tm(validUntil, NULL, &tm, &fractionalSeconds, NULL, NULL) != 0)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg(
+							"The 'customData.validUntil' datetime is outside the supported range.")));
+	}
+	tm.tm_isdst = 0;
+	bool printTimezone = true;
+	EncodeDateTime(&tm, fractionalSeconds, printTimezone, 0, NULL, USE_ISO_DATES,
+				   timestampString);
+	appendStringInfo(command, " VALID UNTIL %s", quote_literal_cstr(timestampString));
 }
 
 
@@ -1584,7 +1742,6 @@ WriteSingleUserDocument(UserRoleHashEntry *userEntry, bool showPrivileges,
 						   psprintf("admin.%s", userEntry->user));
 	PgbsonWriterAppendUtf8(&userWriter, "user", 4, userEntry->user);
 	PgbsonWriterAppendUtf8(&userWriter, "db", 2, "admin");
-
 	pgbson_array_writer roleArrayWriter;
 	PgbsonWriterStartArray(&userWriter, "roles", 5,
 						   &roleArrayWriter);
@@ -1600,15 +1757,39 @@ WriteSingleUserDocument(UserRoleHashEntry *userEntry, bool showPrivileges,
 		PgbsonWriterEndArray(&userWriter, &privilegesArrayWriter);
 	}
 
-	if (userEntry->isExternal)
-	{
-		PgbsonWriterAppendDocument(&userWriter, "customData", 10,
-								   GetUserInfoFromExternalIdentityProvider(
-									   userEntry->user));
-	}
+	WriteCustomData(userEntry, &userWriter);
 
 	PgbsonArrayWriterWriteDocument(userArrayWriter, PgbsonWriterGetPgbson(
 									   &userWriter));
+}
+
+
+static void
+WriteCustomData(const UserRoleHashEntry *userEntry, pgbson_writer *userWriter)
+{
+	if (!userEntry->isExternal && !userEntry->hasValidUntil)
+	{
+		return;
+	}
+
+	pgbson_writer customDataWriter;
+	PgbsonWriterStartDocument(userWriter, "customData", 10, &customDataWriter);
+
+	/* These two are mutually exclusive. */
+	if (userEntry->isExternal)
+	{
+		PgbsonWriterConcat(&customDataWriter,
+						   GetUserInfoFromExternalIdentityProvider(userEntry->user));
+	}
+	else if (userEntry->hasValidUntil)
+	{
+		bson_value_t validUntil = {
+			.value_type = BSON_TYPE_DATE_TIME,
+			.value.v_datetime = userEntry->validUntilMillis
+		};
+		PgbsonWriterAppendValue(&customDataWriter, "validUntil", 10, &validUntil);
+	}
+	PgbsonWriterEndDocument(userWriter, &customDataWriter);
 }
 
 
@@ -1906,6 +2087,8 @@ GetAllUsersInfo(void)
 	const char *cmdStr = FormatSqlQuery(
 		"WITH r AS ("
 		"  SELECT child.rolname::text AS child_role, "
+		"         CASE WHEN isfinite(child.rolvaliduntil) "
+		"              THEN child.rolvaliduntil END AS valid_until, "
 		"         CASE WHEN parent.rolname = '%s' "
 		"              THEN '%s' "
 		"              ELSE parent.rolname::text "
@@ -1957,6 +2140,8 @@ GetSingleUserInfo(const char *userName, bool returnDocuments, bool validateReser
 		cmdStr = FormatSqlQuery(
 			"WITH r AS ("
 			"  SELECT child.rolname::text AS child_role, "
+			"         CASE WHEN isfinite(child.rolvaliduntil) "
+			"              THEN child.rolvaliduntil END AS valid_until, "
 			"         CASE WHEN parent.rolname = '%s' "
 			"              THEN '%s' "
 			"              ELSE parent.rolname::text "
@@ -2155,6 +2340,14 @@ BuildUserRoleEntryTable(Datum *userDatums, int userCount, bool queryAllUsers,
 
 		UserRoleHashEntry *userEntry =
 			FindOrCreateUserRoleEntry(userRolesTable, user);
+
+		bson_iter_t validUntilIter;
+		if (PgbsonInitIteratorAtPath(bson_doc, "valid_until", &validUntilIter) &&
+			BSON_ITER_HOLDS_DATE_TIME(&validUntilIter))
+		{
+			userEntry->hasValidUntil = true;
+			userEntry->validUntilMillis = bson_iter_date_time(&validUntilIter);
+		}
 
 		AddMembershipRoleToUserEntry(userEntry, bson_doc, includeMembershipCustomRoles);
 	}

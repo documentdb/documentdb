@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/aggregation/bson_aggregation_config_queries.c
  *
@@ -712,6 +713,8 @@ GenerateUsersQuery(AggregationPipelineBuildContext *context)
 	AttrNumber usersOidAttnum = get_attnum(usersItem->p_rte->relid, "oid");
 	AttrNumber usersNameAttnum = get_attnum(usersItem->p_rte->relid, "rolname");
 	AttrNumber usersCanLoginAttnum = get_attnum(usersItem->p_rte->relid, "rolcanlogin");
+	AttrNumber usersValidUntilAttnum = get_attnum(usersItem->p_rte->relid,
+												  "rolvaliduntil");
 	AttrNumber memberAttnum = get_attnum(membersItem->p_rte->relid, "member");
 	AttrNumber roleIdAttnum = get_attnum(membersItem->p_rte->relid, "roleid");
 	AttrNumber parentOidAttnum = get_attnum(parentItem->p_rte->relid, "oid");
@@ -723,6 +726,8 @@ GenerateUsersQuery(AggregationPipelineBuildContext *context)
 							 DEFAULT_COLLATION_OID, 0);
 	Var *usersCanLogin = makeVar(usersItem->p_rtindex, usersCanLoginAttnum, BOOLOID,
 								 -1, InvalidOid, 0);
+	Var *usersValidUntil = makeVar(usersItem->p_rtindex, usersValidUntilAttnum,
+								   TIMESTAMPTZOID, -1, InvalidOid, 0);
 	Var *member = makeVar(membersItem->p_rtindex, memberAttnum, OIDOID, -1,
 						  InvalidOid, 0);
 	Var *roleId = makeVar(membersItem->p_rtindex, roleIdAttnum, OIDOID, -1,
@@ -858,9 +863,32 @@ GenerateUsersQuery(AggregationPipelineBuildContext *context)
 	query->jointree = makeFromExpr(list_make1(usersFromNode),
 								   (Node *) make_ands_explicit(usersQuals));
 
+	/*
+	 * Clearing expiration stores infinity, which BSON dates cannot represent.
+	 * Guard BSON conversion with CASE WHEN isfinite(rolvaliduntil).
+	 */
+	CaseWhen *finiteExpiration = makeNode(CaseWhen);
+	finiteExpiration->expr = (Expr *) makeFuncExpr(
+		F_ISFINITE_TIMESTAMPTZ, BOOLOID, list_make1(copyObject(usersValidUntil)),
+		InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+	finiteExpiration->result = (Expr *) makeFuncExpr(
+		BsonBuildDocumentFunctionOid(), BsonTypeId(),
+		list_make2(MakeTextConst("validUntil", 10), usersValidUntil),
+		InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+	finiteExpiration->location = -1;
+
+	bson_value_t nullValue = { .value_type = BSON_TYPE_NULL };
+	CaseExpr *customData = makeNode(CaseExpr);
+	customData->casetype = BsonTypeId();
+	customData->args = list_make1(finiteExpiration);
+	customData->defresult = (Expr *) MakeBsonConst(BsonValueToDocumentPgbson(&nullValue));
+	customData->location = -1;
+
 	List *buildDocumentArgs = list_make4(
 		MakeTextConst("user_name", 9), CoerceNameToText((Expr *) usersName),
 		MakeTextConst("roles", 5), copyObject(parentNameText));
+	buildDocumentArgs = lappend(buildDocumentArgs, MakeTextConst("customData", 10));
+	buildDocumentArgs = lappend(buildDocumentArgs, customData);
 	FuncExpr *buildDocument = makeFuncExpr(
 		BsonBuildDocumentFunctionOid(), BsonTypeId(), buildDocumentArgs,
 		InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
@@ -902,8 +930,12 @@ GenerateUsersQuery(AggregationPipelineBuildContext *context)
 	PgbsonWriterEndDocument(&rolesWriter, &pushWriter);
 	PgbsonWriterEndDocument(&groupWriter, &rolesWriter);
 
-	pgbson *groupSpec = PgbsonWriterGetPgbson(&groupWriter);
-	bson_value_t groupValue = ConvertPgbsonToBsonValue(groupSpec);
+	pgbson_writer customDataWriter;
+	PgbsonWriterStartDocument(&groupWriter, "customData", 10, &customDataWriter);
+	PgbsonWriterAppendUtf8(&customDataWriter, "$first", 6, "$customData");
+	PgbsonWriterEndDocument(&groupWriter, &customDataWriter);
+
+	bson_value_t groupValue = PgbsonWriterGetValue(&groupWriter);
 
 	query = HandleGroup(&groupValue, query, context);
 
@@ -915,6 +947,23 @@ GenerateUsersQuery(AggregationPipelineBuildContext *context)
 	 * of landing in a plan node that cannot evaluate an aggregate.
 	 */
 	query = MigrateQueryToSubQuery(query, context);
+
+	pgbson_writer addFieldsWriter;
+	PgbsonWriterInit(&addFieldsWriter);
+	pgbson_writer conditionalCustomDataWriter;
+	PgbsonWriterStartDocument(&addFieldsWriter, "customData", 10,
+							  &conditionalCustomDataWriter);
+	pgbson_array_writer ifNullWriter;
+	PgbsonWriterStartArray(&conditionalCustomDataWriter, "$ifNull", 7, &ifNullWriter);
+	PgbsonArrayWriterWriteUtf8(&ifNullWriter, "$customData");
+	PgbsonArrayWriterWriteUtf8(&ifNullWriter, "$$REMOVE");
+	PgbsonWriterEndArray(&conditionalCustomDataWriter, &ifNullWriter);
+	PgbsonWriterEndDocument(&addFieldsWriter, &conditionalCustomDataWriter);
+
+	bson_value_t addFieldsValue = PgbsonWriterGetValue(&addFieldsWriter);
+	query = HandleSimpleProjectionStage(
+		&addFieldsValue, query, context, "$addFields", BsonDollarAddFieldsFunctionOid(),
+		NULL, NULL);
 
 	return query;
 }

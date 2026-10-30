@@ -15,7 +15,7 @@ SELECT document
 FROM documentdb_api_catalog.bson_aggregation_find(
 	'admin',
 	'{ "find": "system.users" }');
- document
+ document 
 ----------
 (0 rows)
 
@@ -29,7 +29,7 @@ SELECT document
 FROM documentdb_api_catalog.bson_aggregation_find(
 	'admin',
 	'{ "find": "system.roles" }');
- document
+ document 
 ----------
 (0 rows)
 
@@ -49,7 +49,7 @@ SELECT documentdb_api_internal.is_custom_role('systemUsersCustomRole')
 	AS custom_role_is_catalog_backed,
 	NOT documentdb_api_internal.is_custom_role('documentdb_readonly_role')
 	AS built_in_role_is_not_catalog_backed;
- custom_role_is_catalog_backed | built_in_role_is_not_catalog_backed
+ custom_role_is_catalog_backed | built_in_role_is_not_catalog_backed 
 -------------------------------+-------------------------------------
  t                             | t
 (1 row)
@@ -63,7 +63,7 @@ SELECT has_table_privilege(
 		   'pg_catalog.pg_authid',
 		   'oid',
 		   'SELECT') AS pg_authid_select_not_granted;
- pg_roles_select_granted | pg_authid_select_not_granted
+ pg_roles_select_granted | pg_authid_select_not_granted 
 -------------------------+------------------------------
  t                       | t
 (1 row)
@@ -93,7 +93,7 @@ SELECT document
 FROM documentdb_api_catalog.bson_aggregation_find(
 	'admin',
 	'{ "find": "system.users" }');
- document
+ document 
 ----------
 (0 rows)
 
@@ -113,7 +113,7 @@ SELECT document
 FROM documentdb_api_catalog.bson_aggregation_find(
 	'admin',
 	'{ "find": "system.users", "filter": { "user": "systemUsersOtherReader" } }');
-                                                                             document
+                                                                             document                                                                              
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "_id" : "admin.systemUsersOtherReader", "user" : "systemUsersOtherReader", "db" : "admin", "roles" : [ { "db" : "admin", "role" : "systemUsersCustomRole" } ] }
 (1 row)
@@ -223,7 +223,7 @@ FROM documentdb_api_catalog.bson_aggregation_find(
 	'admin',
 	'{ "find": "system.users" }');
 EXECUTE system_users_query;
-                                                                             document
+                                                                             document                                                                              
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "_id" : "admin.systemUsersOtherReader", "user" : "systemUsersOtherReader", "db" : "admin", "roles" : [ { "db" : "admin", "role" : "systemUsersCustomRole" } ] }
  { "_id" : "admin.systemUsersRootReader", "user" : "systemUsersRootReader", "db" : "admin", "roles" : [ { "db" : "admin", "role" : "systemUsersCustomRole" } ] }
@@ -316,6 +316,67 @@ FROM documentdb_api_catalog.bson_aggregation_find(
 (1 row)
 
 RESET ROLE;
+SET documentdb.enable_user_password_expiration TO ON;
+SELECT documentdb_api.update_user(
+	'{"updateUser":"systemUsersReader", "customData":{"validUntil":{"$date":"2500-01-01T00:00:00.123Z"}}, "$db":"admin"}') AS update_result \gset
+-- Stored expirations remain visible with the feature disabled.
+SET documentdb.enable_user_password_expiration TO OFF;
+SET ROLE "systemUsersReader";
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.users", "filter": { "user": "systemUsersReader" } }');
+                                                                                                                   document                                                                                                                    
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : "admin.systemUsersReader", "user" : "systemUsersReader", "db" : "admin", "roles" : [ { "db" : "admin", "role" : "systemUsersCustomRole" } ], "customData" : { "validUntil" : { "$date" : { "$numberLong" : "16725225600123" } } } }
+(1 row)
+
+RESET ROLE;
+SET documentdb.enable_user_password_expiration TO ON;
+SELECT documentdb_api.update_user(
+	'{"updateUser":"systemUsersReader", "customData":{"validUntil":{"$date":"2000-01-01T00:00:00.123Z"}}, "$db":"admin"}') AS update_result \gset
+-- Expiration can be filtered through the aggregation surface.
+SET ROLE "systemUsersReader";
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_pipeline(
+	'admin',
+	'{ "aggregate": "system.users", "pipeline": [
+		{ "$match": { "customData.validUntil": { "$lt": { "$date": "2001-01-01T00:00:00Z" } } } },
+		{ "$project": { "_id": 0, "user": 1, "customData": 1 } }
+	] }');
+                                                       document                                                       
+----------------------------------------------------------------------------------------------------------------------
+ { "user" : "systemUsersReader", "customData" : { "validUntil" : { "$date" : { "$numberLong" : "946684800123" } } } }
+(1 row)
+
+RESET ROLE;
+SELECT documentdb_api.update_user(
+	'{"updateUser":"systemUsersReader", "customData":{"validUntil":null}, "$db":"admin"}') AS update_result \gset
+SET ROLE "systemUsersReader";
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.users", "filter": { "customData": { "$exists": false } } }');
+                                                                        document                                                                         
+---------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : "admin.systemUsersReader", "user" : "systemUsersReader", "db" : "admin", "roles" : [ { "db" : "admin", "role" : "systemUsersCustomRole" } ] }
+(1 row)
+
+RESET ROLE;
+-- Neither PostgreSQL infinity value can be serialized as a BSON date.
+ALTER ROLE "systemUsersReader" VALID UNTIL '-infinity';
+SET ROLE "systemUsersReader";
+SELECT document
+FROM documentdb_api_catalog.bson_aggregation_find(
+	'admin',
+	'{ "find": "system.users" }');
+                                                                        document                                                                         
+---------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : "admin.systemUsersReader", "user" : "systemUsersReader", "db" : "admin", "roles" : [ { "db" : "admin", "role" : "systemUsersCustomRole" } ] }
+(1 row)
+
+RESET ROLE;
+RESET documentdb.enable_user_password_expiration;
 SELECT documentdb_api.drop_user(
 	'{"dropUser":"systemUsersReader", "$db":"admin"}') AS drop_result \gset
 SELECT documentdb_api.drop_role('{"dropRole":"systemUsersCustomRole", "$db":"admin"}');
@@ -340,7 +401,7 @@ SELECT document
 FROM documentdb_api_catalog.bson_aggregation_find(
 	'admin',
 	'{ "find": "system.users" }');
-                                                                                    document
+                                                                                    document                                                                                    
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "_id" : "admin.systemUsersAdminOptionUser", "user" : "systemUsersAdminOptionUser", "db" : "admin", "roles" : [ { "db" : "admin", "role" : "systemUsersAdminOptionRole" } ] }
 (1 row)
@@ -392,7 +453,7 @@ SELECT document
 FROM documentdb_api_catalog.bson_aggregation_find(
 	'admin',
 	'{ "find": "system.users" }');
-                                                                              document
+                                                                              document                                                                              
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "_id" : "admin.systemUsersSetOnlyUser", "user" : "systemUsersSetOnlyUser", "db" : "admin", "roles" : [ { "db" : "admin", "role" : "systemUsersSetOnlyRole" } ] }
 (1 row)
