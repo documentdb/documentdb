@@ -275,6 +275,11 @@ pub async fn process_request(
             )
             .await
         }
+        RequestType::CustomAction => {
+            pg_data_client
+                .execute_custom_action(request_context, connection_context)
+                .await
+        }
         RequestType::KillCursors => {
             cursor::process_kill_cursors(request_context, connection_context, pg_data_client).await
         }
@@ -505,6 +510,27 @@ mod tests {
         let context = RequestContext::new("validation-guards-test", &request, &tracker);
         let client = DocumentDBDataClient::new_unauthorized(&connection.service_context)?;
         process_request(&context, connection, &client).await
+    }
+
+    #[tokio::test]
+    async fn custom_action_is_forwarded_without_action_value_validation() {
+        let config = Arc::new(TestDynamicConfiguration::default());
+        let mut connection = connection(config).await;
+        for document in [
+            rawdoc! { "customAction": "arbitraryAction", "$db": "admin" },
+            rawdoc! { "customAction": 42, "$db": "admin" },
+        ] {
+            let error = execute(&mut connection, &document)
+                .await
+                .expect_err("the test client has no authorized connection");
+            assert!(
+                error
+                    .error_message_internal()
+                    .unwrap_or_default()
+                    .contains("unauthorized data client"),
+                "custom actions must reach the data client: {error:?}"
+            );
+        }
     }
 
     #[tokio::test]

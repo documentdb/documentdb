@@ -982,6 +982,22 @@ impl PgDataClient for DocumentDBDataClient {
         .await
     }
 
+    async fn execute_custom_action(
+        &self,
+        request_context: &RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response> {
+        self.run_doc_only(
+            request_context,
+            connection_context,
+            self.service_context.query_catalog().custom_action(),
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+        )
+        .await
+    }
+
     async fn execute_kill_op(
         &self,
         request_context: &RequestContext<'_>,

@@ -1,0 +1,46 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+SET documentdb.next_collection_id TO 9050100;
+SET documentdb.next_collection_index_id TO 9050100;
+SELECT documentdb_api.custom_action(NULL);
+ERROR:  customAction requires a command specification
+SELECT documentdb_api.custom_action('{}');
+ERROR:  customAction is required
+SELECT documentdb_api.custom_action('{"customAction": 1, "$db": "admin"}');
+ERROR:  The BSON field 'customAction' has an incorrect type 'int'; it should be of type 'string'.
+SELECT documentdb_api.custom_action('{"customAction": "unknown"}');
+ERROR:  customAction may only be run against the admin database
+SELECT documentdb_api.custom_action('{"customAction": "unknown", "$db": 1}');
+ERROR:  The BSON field '$db' has an incorrect type 'int'; it should be of type 'string'.
+SELECT documentdb_api.custom_action('{"customAction": "unknown", "$db": "other"}');
+ERROR:  customAction may only be run against the admin database
+SELECT documentdb_api.custom_action('{"customAction": "unknown", "$db": "admin\u0000other"}');
+ERROR:  namespaces cannot have embedded null characters
+SELECT documentdb_api.custom_action('{"customAction": "unknown\u0000action", "$db": "admin"}');
+ERROR:  customAction must not contain null bytes
+SELECT documentdb_api.custom_action('{"customAction": "unknown", "customAction": "other", "$db": "admin"}');
+ERROR:  customAction must be specified only once
+SELECT documentdb_api.custom_action('{"customAction": "unknown", "$db": "admin", "$db": "other"}');
+ERROR:  $db must be specified only once
+SELECT documentdb_api.custom_action('{"customAction": "unknown", "$db": "admin"}');
+ERROR:  customAction is not supported
+CREATE ROLE custom_action_nonadmin;
+GRANT USAGE ON SCHEMA documentdb_api TO custom_action_nonadmin;
+SET ROLE custom_action_nonadmin;
+SELECT documentdb_api.custom_action('{"customAction": "unknown", "$db": "admin"}');
+ERROR:  permission denied for function custom_action
+RESET ROLE;
+-- Exercise the runtime check independently of the SQL execute privilege.
+GRANT EXECUTE ON FUNCTION documentdb_api.custom_action(documentdb_core.bson) TO custom_action_nonadmin;
+SET ROLE custom_action_nonadmin;
+SELECT documentdb_api.custom_action('{"customAction": "unknown", "$db": "admin"}');
+ERROR:  not authorized to execute customAction
+RESET ROLE;
+DROP OWNED BY custom_action_nonadmin;
+DROP ROLE custom_action_nonadmin;
+CREATE ROLE custom_action_admin IN ROLE documentdb_admin_role;
+SET ROLE custom_action_admin;
+SELECT documentdb_api.custom_action('{"customAction": "unknown", "$db": "admin"}');
+ERROR:  customAction is not supported
+RESET ROLE;
+DROP ROLE custom_action_admin;

@@ -9,6 +9,20 @@ NOTICE:  creating collection
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
+SELECT documentdb_api.custom_action(
+    '{"customAction":"unknown","$db":"admin\u0000suffix"}');
+ERROR:  namespaces cannot have embedded null characters
+SELECT documentdb_api.custom_action(
+    '{"customAction":"unknown","$db":"admin\u0000suffix","$db":"admin"}');
+ERROR:  namespaces cannot have embedded null characters
+SELECT documentdb_api.custom_action(
+    '{"customAction":"unknown","$db":"admin","$db":"admin\u0000suffix"}');
+ERROR:  namespaces cannot have embedded null characters
+SET documentdb.enable_null_collection_validation TO OFF;
+SELECT documentdb_api.custom_action(
+    '{"customAction":"unknown","$db":"admin\u0000suffix"}');
+ERROR:  customAction may only be run against the admin database
+RESET documentdb.enable_null_collection_validation;
 SELECT documentdb_api.insert(
     'null_collection_validation',
     '{"insert":"source\u0000suffix","documents":[{"_id":2}]}');

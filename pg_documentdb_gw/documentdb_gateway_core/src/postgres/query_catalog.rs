@@ -89,6 +89,7 @@ pub struct QueryCatalog {
     pub db_stats: String,
     pub current_op: String,
     pub get_parameter: String,
+    pub custom_action: String,
     pub compact: String,
     pub kill_op: String,
     pub balancer_start: String,
@@ -499,6 +500,12 @@ impl QueryCatalog {
         &self.connection_status
     }
 
+    /// Returns the custom action dispatch query.
+    #[must_use]
+    pub fn custom_action(&self) -> &str {
+        &self.custom_action
+    }
+
     #[must_use]
     pub fn create_role(&self) -> &str {
         &self.create_role
@@ -708,6 +715,7 @@ pub fn create_query_catalog() -> QueryCatalog {
             update_user: "SELECT documentdb_api.update_user($1)".to_owned(),
             users_info: "SELECT documentdb_api.users_info($1)".to_owned(),
             connection_status: "SELECT documentdb_api.connection_status($1)".to_owned(),
+            custom_action: "SELECT documentdb_api.custom_action($1)".to_owned(),
 
             // roles.rs
             create_role: "SELECT documentdb_api.create_role($1)".to_owned(),

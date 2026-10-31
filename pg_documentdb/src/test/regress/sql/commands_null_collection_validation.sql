@@ -5,6 +5,17 @@ SET documentdb.next_collection_index_id TO 2700;
 SELECT documentdb_api.insert_one(
     'null_collection_validation', 'source', '{"_id":1,"a":1}');
 
+SELECT documentdb_api.custom_action(
+    '{"customAction":"unknown","$db":"admin\u0000suffix"}');
+SELECT documentdb_api.custom_action(
+    '{"customAction":"unknown","$db":"admin\u0000suffix","$db":"admin"}');
+SELECT documentdb_api.custom_action(
+    '{"customAction":"unknown","$db":"admin","$db":"admin\u0000suffix"}');
+SET documentdb.enable_null_collection_validation TO OFF;
+SELECT documentdb_api.custom_action(
+    '{"customAction":"unknown","$db":"admin\u0000suffix"}');
+RESET documentdb.enable_null_collection_validation;
+
 SELECT documentdb_api.insert(
     'null_collection_validation',
     '{"insert":"source\u0000suffix","documents":[{"_id":2}]}');

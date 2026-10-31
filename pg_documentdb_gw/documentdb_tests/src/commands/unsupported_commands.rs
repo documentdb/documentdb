@@ -66,7 +66,6 @@ const UNSUPPORTED_COMMANDS: &[&str] = &[
     "copydbsaslstart",
     "createUniqueOrCompoundIndexOnNestedPath",
     "currentOpCtx",
-    "customAction",
     "dataSize",
     "dbHash",
     "deleteIndexes",
