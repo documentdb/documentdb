@@ -30,11 +30,13 @@
 #include "metadata/metadata_cache.h"
 #include "aggregation/bson_aggregation_pipeline.h"
 #include "aggregation/bson_aggregation_pipeline_private.h"
+#include "aggregation/extensible_metadata_view.h"
 #include "api_hooks.h"
 #include "rbac_hooks.h"
 #include "utils/version_utils.h"
 
 extern bool EnableAdminDatabaseQueries;
+extern bool EnableExtensibleMetadataViews;
 
 static Query * GenerateVersionQuery(AggregationPipelineBuildContext *context);
 static Query * GenerateDatabasesQuery(AggregationPipelineBuildContext *context);
@@ -73,48 +75,73 @@ static void AppendUsersJoinColumns(ParseNamespaceItem *sourceItem,
 								   ParseNamespaceColumn *joinColumns,
 								   int *joinColumnIndex);
 
+static const ExtensibleMetadataViewDefinition BuiltinMetadataViews[] = {
+	{
+		.name = { .databaseName = "config", .collectionName = "version" },
+		.function = GenerateVersionQuery,
+		.requiresPersistentCursor = true
+	},
+	{
+		.name = { .databaseName = "config", .collectionName = "databases" },
+		.function = GenerateDatabasesQuery,
+		.requiresPersistentCursor = true
+	},
+	{
+		.name = { .databaseName = "config", .collectionName = "collections" },
+		.function = GenerateCollectionsQuery,
+		.requiresPersistentCursor = true
+	},
+	{
+		.name = { .databaseName = "config", .collectionName = "chunks" },
+		.function = GenerateChunksQuery,
+		.requiresPersistentCursor = true
+	},
+	{
+		.name = { .databaseName = "config", .collectionName = "settings" },
+		.function = GenerateSettingsQuery,
+		.requiresPersistentCursor = true
+	},
+
+	/* TODO: Enabling this on shards requires a connection string in the query context. */
+	{
+		.name = { .databaseName = "config", .collectionName = "_shards" },
+		.function = GenerateShardsQuery,
+		.requiresPersistentCursor = true
+	},
+	{
+		.name = { .databaseName = "admin", .collectionName = "system.roles" },
+		.function = GenerateRolesQuery,
+		.requiresPersistentCursor = true
+	},
+	{
+		.name = { .databaseName = "admin", .collectionName = "system.users" },
+		.function = GenerateUsersQuery,
+		.requiresPersistentCursor = true
+	}
+};
+
 /*
  * Sets the RTE of a table in the Config database.
  */
 Query *
 GenerateConfigDatabaseQuery(AggregationPipelineBuildContext *context)
 {
-	if (StringViewEqualsCString(&context->collectionNameView, "version"))
-	{
-		return GenerateVersionQuery(context);
-	}
-	else if (StringViewEqualsCString(&context->collectionNameView, "databases"))
-	{
-		context->requiresPersistentCursor = true;
-		return GenerateDatabasesQuery(context);
-	}
-	else if (StringViewEqualsCString(&context->collectionNameView, "collections"))
-	{
-		context->requiresPersistentCursor = true;
-		return GenerateCollectionsQuery(context);
-	}
-	else if (StringViewEqualsCString(&context->collectionNameView, "chunks"))
-	{
-		context->requiresPersistentCursor = true;
-		return GenerateChunksQuery(context);
-	}
-	else if (StringViewEqualsCString(&context->collectionNameView, "settings"))
-	{
-		context->requiresPersistentCursor = true;
-		return GenerateSettingsQuery(context);
-	}
-	else if (StringViewEqualsCString(&context->collectionNameView, "_shards"))
-	{
-		/* TODO: We can't enable this on shards because there's a dependency */
-		/* on the "host" which requires a connection string. Once we can pass */
-		/* the MX connection string - reconsider adding this back. */
-		context->requiresPersistentCursor = true;
-		return GenerateShardsQuery(context);
-	}
-	else
+	StringView databaseName = CreateStringViewFromString("config");
+	const ExtensibleMetadataViewDefinition *view = FindBuiltinMetadataView(
+		&databaseName, &context->collectionNameView);
+	if (view == NULL)
 	{
 		return NULL;
 	}
+
+	Query *query = view->function(context);
+	if (query != NULL)
+	{
+		context->requiresPersistentCursor = context->requiresPersistentCursor ||
+											view->requiresPersistentCursor;
+	}
+
+	return query;
 }
 
 
@@ -125,22 +152,46 @@ GenerateAdminDatabaseQuery(AggregationPipelineBuildContext *context)
 	{
 		return NULL;
 	}
-	else if (StringViewEqualsCString(&context->collectionNameView, "system.roles") &&
-			 IsClusterVersionAtleast(DocDB_V0, 116, 0))
+
+	StringView databaseName = CreateStringViewFromString("admin");
+	const ExtensibleMetadataViewDefinition *view = FindBuiltinMetadataView(
+		&databaseName, &context->collectionNameView);
+	if (view == NULL)
 	{
-		context->requiresPersistentCursor = true;
-		return GenerateRolesQuery(context);
+		if (!EnableExtensibleMetadataViews)
+		{
+			return NULL;
+		}
+
+		return GenerateExtensibleMetadataViewQuery(&databaseName, context);
 	}
-	else if (StringViewEqualsCString(&context->collectionNameView, "system.users") &&
-			 IsClusterVersionAtleast(DocDB_V0, 116, 0))
+
+	Query *query = view->function(context);
+
+	if (query != NULL)
 	{
-		context->requiresPersistentCursor = true;
-		return GenerateUsersQuery(context);
+		context->requiresPersistentCursor = context->requiresPersistentCursor ||
+											view->requiresPersistentCursor;
 	}
-	else
+
+	return query;
+}
+
+
+const ExtensibleMetadataViewDefinition *
+FindBuiltinMetadataView(const StringView *databaseName, const StringView *collectionName)
+{
+	for (size_t i = 0; i < lengthof(BuiltinMetadataViews); i++)
 	{
-		return NULL;
+		const ExtensibleMetadataViewDefinition *view = &BuiltinMetadataViews[i];
+		if (StringViewEqualsCString(databaseName, view->name.databaseName) &&
+			StringViewEqualsCString(collectionName, view->name.collectionName))
+		{
+			return view;
+		}
 	}
+
+	return NULL;
 }
 
 
@@ -556,6 +607,11 @@ GenerateSettingsQuery(AggregationPipelineBuildContext *context)
 static Query *
 GenerateRolesQuery(AggregationPipelineBuildContext *context)
 {
+	if (!IsClusterVersionAtleast(DocDB_V0, 116, 0))
+	{
+		return NULL;
+	}
+
 	/* The system.roles collection is a collection that just maps into
 	 * the catalog roles table and mutates the spec.
 	 */
@@ -666,6 +722,11 @@ GenerateRolesQuery(AggregationPipelineBuildContext *context)
 static Query *
 GenerateUsersQuery(AggregationPipelineBuildContext *context)
 {
+	if (!IsClusterVersionAtleast(DocDB_V0, 116, 0))
+	{
+		return NULL;
+	}
+
 	context->mongoCollection = NULL;
 
 	ParseState *parseState = make_parsestate(NULL);

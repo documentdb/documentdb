@@ -34,6 +34,7 @@
 #include "utils/version_utils.h"
 
 #include "metadata/collection.h"
+#include "aggregation/extensible_metadata_view.h"
 #include "metadata/metadata_cache.h"
 #include "utils/documentdb_errors.h"
 #include "metadata/relation_utils.h"
@@ -147,9 +148,9 @@ static void UpdateCollectionOptions(MongoCollection *collection, const
 									pgbson *updateSpec);
 static void RemoveCollectionOptions(MongoCollection *collection, const
 									pgbson *removeSpec);
-static void ValidateSystemNamespace(const char *databaseName, const char *collectionName);
 static void CopyMongoCollectionInto(const MongoCollection *source, MongoCollection *dest,
 									bool copyByRefFields);
+static void ValidateSystemNamespace(const char *databaseName, const char *collectionName);
 
 
 /*
@@ -1372,22 +1373,41 @@ ValidateCollectionNameForUnauthorizedSystemNs(const char *collectionName,
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
 						errmsg("An invalid and empty namespace has been specified")));
 	}
+
+	bool nonWritable = false;
 	for (int i = 0; i < NonWritableSystemCollectionNamesLength; i++)
 	{
 		if (strcmp(collectionName, NonWritableSystemCollectionNames[i]) == 0)
 		{
-			text *databaseNameText = DatumGetTextPP(databaseNameDatum);
-			StringView databaseView = {
-				.length = VARSIZE_ANY_EXHDR(databaseNameText),
-				.string = VARDATA_ANY(databaseNameText)
-			};
-
-			/* Need to disallow user writes on NonWritableSystemCollectionNames */
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
-							errmsg("Unable to write data to specified location %.*s.%s",
-								   databaseView.length, databaseView.string,
-								   NonWritableSystemCollectionNames[i])));
+			nonWritable = true;
+			break;
 		}
+	}
+
+	text *databaseNameText = DatumGetTextPP(databaseNameDatum);
+	StringView databaseView = CreateStringViewFromText(databaseNameText);
+
+	if (!nonWritable && StringViewEqualsCString(&databaseView, "admin"))
+	{
+		StringView collectionView = {
+			.length = strlen(collectionName),
+			.string = collectionName
+		};
+		nonWritable = IsRegisteredExtensibleMetadataView(&databaseView, &collectionView);
+	}
+
+	if (nonWritable)
+	{
+		/* Need to disallow user writes on NonWritableSystemCollectionNames */
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
+						errmsg("Unable to write data to specified location %.*s.%s",
+							   databaseView.length, databaseView.string,
+							   collectionName)));
+	}
+
+	if ((Pointer) databaseNameText != DatumGetPointer(databaseNameDatum))
+	{
+		pfree(databaseNameText);
 	}
 }
 
@@ -1400,6 +1420,7 @@ ValidateCollectionNameForValidSystemNamespace(StringView *collectionView,
 											  Datum databaseNameDatum)
 {
 	char *collectionName = CreateStringFromStringView(collectionView);
+
 	if (StringViewStartsWithStringView(collectionView, &SystemPrefix))
 	{
 		bool found = false;
@@ -1416,11 +1437,8 @@ ValidateCollectionNameForValidSystemNamespace(StringView *collectionView,
 
 		if (!found)
 		{
-			text *databaseNameText = DatumGetTextPP(databaseNameDatum);
-			StringView databaseView = {
-				.length = VARSIZE_ANY_EXHDR(databaseNameText),
-				.string = VARDATA_ANY(databaseNameText)
-			};
+			StringView databaseView = CreateStringViewFromText(DatumGetTextPP(
+																   databaseNameDatum));
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
 							errmsg("System namespace provided is invalid: %.*s.%.*s",
 								   databaseView.length, databaseView.string,

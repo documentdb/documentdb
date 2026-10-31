@@ -54,6 +54,7 @@
 #include "planner/documentdb_planner.h"
 #include "planner/mongo_query_operator.h"
 #include "aggregation/bson_aggregation_pipeline.h"
+#include "aggregation/extensible_metadata_view.h"
 #include "aggregation/bson_aggregation_window_operators.h"
 #include "commands/parse_error.h"
 #include "commands/commands_common.h"
