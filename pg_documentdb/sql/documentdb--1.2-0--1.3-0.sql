@@ -4,3 +4,4 @@
 -- SPDX-License-Identifier: MIT
 #include "udfs/schema_mgmt/create_collection--1.3-0.sql"
 #include "udfs/schema_mgmt/create_collection_with_privs--1.3-0.sql"
+#include "udfs/commands_crud/custom_action--1.3-0.sql"

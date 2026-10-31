@@ -350,6 +350,16 @@ pub trait PgDataClient: Send + Sync {
         connection_context: &ConnectionContext,
     ) -> Result<Response>;
 
+    /// Dispatches a custom action using its unmodified command specification.
+    ///
+    /// # Errors
+    /// Returns an error if authorization, dispatch, or backend execution fails.
+    async fn execute_custom_action(
+        &self,
+        request_context: &RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response>;
+
     async fn execute_db_stats(
         &self,
         request_context: &RequestContext<'_>,

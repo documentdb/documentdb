@@ -27,7 +27,7 @@ struct CommandInfo {
     secondary_override_ok: Option<bool>,
 }
 
-static CORE_COMMANDS : [CommandInfo; 69] = [
+static CORE_COMMANDS : [CommandInfo; 70] = [
 	CommandInfo {
 		command_name: "abortTransaction",
 		admin_only: true,
@@ -152,6 +152,14 @@ static CORE_COMMANDS : [CommandInfo; 69] = [
 		command_name: "currentOp",
 		admin_only: true,
 		help: "Get information about currently running operations.",
+		secondary_ok: false,
+		requires_auth: true,
+		secondary_override_ok: None,
+	},
+	CommandInfo {
+		command_name: "customAction",
+		admin_only: true,
+		help: "Runs a registered administrative action.",
 		secondary_ok: false,
 		requires_auth: true,
 		secondary_override_ok: None,
@@ -696,7 +704,7 @@ mod tests {
             response.get_f64("ok").expect("ok").to_bits(),
             OK_SUCCEEDED.to_bits()
         );
-        assert_eq!(CORE_COMMANDS.len(), 69);
+        assert_eq!(CORE_COMMANDS.len(), 70);
         assert_eq!(commands.len(), CORE_COMMANDS.len());
 
         for ((actual_name, actual_info), expected) in commands.iter().zip(&CORE_COMMANDS) {

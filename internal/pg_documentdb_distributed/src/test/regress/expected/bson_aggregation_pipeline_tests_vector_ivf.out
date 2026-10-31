@@ -539,6 +539,11 @@ SELECT document FROM bson_aggregation_pipeline('vector_ivf_db', '{ "aggregate": 
  { "_id" : { "$numberInt" : "1" }, "a" : "some sentence", "v" : [ { "$numberInt" : "11" }, { "$numberInt" : "16" }, { "$numberDouble" : "2.1000000000000000888" } ], "__cosmos_meta__" : { "score" : { "$numberDouble" : "13.726616969513441902" } } }
 (1 row)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
+SET LOCAL documentdb.enableVectorCalculateDefaultSearchParam = off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_ivf_db', '{ "aggregate": "aggregation_pipeline_ivf_nprobes", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            QUERY PLAN
 ---------------------------------------------------------------------

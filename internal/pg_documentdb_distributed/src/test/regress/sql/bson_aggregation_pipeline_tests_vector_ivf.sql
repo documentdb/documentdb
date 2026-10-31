@@ -216,6 +216,12 @@ SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SET LOCAL documentdb.enableVectorCalculateDefaultSearchParam = off;
 SELECT document FROM bson_aggregation_pipeline('vector_ivf_db', '{ "aggregate": "aggregation_pipeline_ivf_nprobes", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }  } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
+SET LOCAL documentdb.enableVectorCalculateDefaultSearchParam = off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_ivf_db', '{ "aggregate": "aggregation_pipeline_ivf_nprobes", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }  } } ], "cursor": {} }');
 ROLLBACK;
 
