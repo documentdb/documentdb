@@ -26,6 +26,7 @@
 #include "api_hooks.h"
 
 extern bool EnableShardRebalancer;
+extern bool EnableRebalancerRawProgress;
 
 PG_FUNCTION_INFO_V1(command_rebalancer_status);
 PG_FUNCTION_INFO_V1(command_rebalancer_start);
@@ -72,6 +73,22 @@ command_rebalancer_status(PG_FUNCTION_ARGS)
 	else
 	{
 		PopulateRebalancerRowsFromResponse(&responseWriter, DatumGetPgBson(result));
+	}
+
+	/* Next we add the raw rebalance status results from get_rebalance_progress() */
+	if (EnableRebalancerRawProgress)
+	{
+		result = ExtensionExecuteQueryViaSPI(
+			FormatSqlQuery(
+				"WITH r1 AS (SELECT %s.bson_build_document('sessionid', sessionid, 'chunkid', shardid, 'chunkSize', shard_size, 'sourceChunkSize', source_shard_size, "
+				"'targetChunkSize', target_shard_size, 'status', status, 'operation_type', operation_type) AS document"
+				" FROM pg_catalog.get_rebalance_progress())"
+				" SELECT %s.bson_array_agg(document, 'rebalanceChunks') FROM r1",
+				CoreSchemaName, ApiCatalogSchemaName), readOnly, SPI_OK_SELECT, &isNull);
+		if (!isNull)
+		{
+			PgbsonWriterConcat(&responseWriter, DatumGetPgBson(result));
+		}
 	}
 
 	result = ExtensionExecuteQueryViaSPI(
