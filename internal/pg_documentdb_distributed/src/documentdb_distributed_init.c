@@ -25,6 +25,11 @@ bool EnableMetadataReferenceTableSync = DEFAULT_ENABLE_METADATA_REFERENCE_SYNC;
 #define DEFAULT_ENABLE_SHARD_REBALANCER false
 bool EnableShardRebalancer = DEFAULT_ENABLE_SHARD_REBALANCER;
 
+/* FeatureFlag */
+/* Added on v1.3, enabled on v1.3, remove after v1.6 */
+#define DEFAULT_ENABLE_REBALANCER_RAW_PROGRESS true
+bool EnableRebalancerRawProgress = DEFAULT_ENABLE_REBALANCER_RAW_PROGRESS;
+
 /* SystemConfig */
 #define DEFAULT_CLUSTER_ADMIN_ROLE ""
 char *ClusterAdminRole = DEFAULT_CLUSTER_ADMIN_ROLE;
@@ -71,6 +76,14 @@ InitDocumentDBDistributedConfigurations(const char *prefix)
 		gettext_noop(
 			"Determines whether or not to enable shard rebalancer APIs."),
 		NULL, &EnableShardRebalancer, DEFAULT_ENABLE_SHARD_REBALANCER,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_rebalancer_raw_progress", prefix),
+		gettext_noop(
+			"Determines whether rebalancer status includes the raw per-shard move "
+			"progress and whether that progress is emitted to telemetry."),
+		NULL, &EnableRebalancerRawProgress, DEFAULT_ENABLE_REBALANCER_RAW_PROGRESS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

@@ -20,3 +20,4 @@ test: multinode/bson_collation_collection_write_multinode
 test: multinode/collstats_nested_distribution
 test: multinode/commands_update_remote!PG16_OR_LOWER!
 test: multinode/commands_collmod_hidden_no_placement
+test: multinode/rebalancer_status_raw_progress
