@@ -13,6 +13,7 @@
 # 2026-09-29: removed 513 writeConcern field and sub-field validation cases now
 # enforced in the shared gateway core (write_concern.rs). Verified passing against
 # that shared validation path. Strict node-id count after removal: 13247.
+# 2026-10-30: removed 2 idIndex collation cases fixed in the shared create-command path. Strict node-id count after removal: 12967.
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/aggregation/commands/aggregate/test_aggregate_agnostic.py::test_aggregate_agnostic[documentdb-agnostic_empty_pipeline]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/aggregation/commands/aggregate/test_aggregate_agnostic.py::test_aggregate_agnostic[documentdb-agnostic_list_local_sessions]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/aggregation/commands/aggregate/test_aggregate_agnostic.py::test_aggregate_agnostic[documentdb-documents_with_string_collection]
@@ -2586,11 +2587,9 @@ docdb_functional_tests/documentdb_tests/compatibility/tests/core/collections/com
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collections/commands/create/test_create_expire_after_seconds.py::test_create_expire_after_seconds[documentdb-eas_zero]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collections/commands/create/test_create_id_index_acceptance.py::test_create_id_index_acceptance[documentdb-collation_matches_collection]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collections/commands/create/test_create_id_index_acceptance.py::test_create_id_index_acceptance[documentdb-collation_omitted_inherits_collection]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/collections/commands/create/test_create_id_index_acceptance.py::test_create_id_index_acceptance[documentdb-collation_simple_no_collection_collation]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collections/commands/create/test_create_id_index_acceptance.py::test_create_id_index_acceptance[documentdb-compatible_with_capped]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collections/commands/create/test_create_id_index_acceptance.py::test_create_id_index_acceptance[documentdb-null_treated_as_omitted]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collections/commands/create/test_create_id_index_validation.py::test_create_id_index_validation[documentdb-collation_mismatch]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/collections/commands/create/test_create_id_index_validation.py::test_create_id_index_validation[documentdb-collation_on_non_collated_collection]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collections/commands/create/test_create_id_index_validation.py::test_create_id_index_validation[documentdb-incompatible_with_clustered_index]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collections/commands/create/test_create_id_index_validation.py::test_create_id_index_validation[documentdb-incompatible_with_timeseries]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collections/commands/create/test_create_id_index_validation.py::test_create_id_index_validation[documentdb-key_descending]

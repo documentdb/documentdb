@@ -275,11 +275,13 @@ DecomposeViewDefinition(pgbson *viewSpec, ViewDefinition *viewDefinition)
 
 /*
  * Validates the "idIndex" field of a create() specification.
- * Today we only support { "_id": 1, name: "_id_", "v": 2 }
+ * Extracts an explicit collation for comparison after parsing the collection default.
  */
 static void
-ValidateIdIndexDocument(const bson_value_t *idIndexDocument)
+ValidateIdIndexDocument(const bson_value_t *idIndexDocument,
+						bson_value_t *idIndexCollation)
 {
+	idIndexCollation->value_type = BSON_TYPE_EOD;
 	bson_iter_t idIterator;
 	BsonValueInitIterator(idIndexDocument, &idIterator);
 
@@ -321,6 +323,12 @@ ValidateIdIndexDocument(const bson_value_t *idIndexDocument)
 		{
 			/* The specified namespace will be ignored. */
 		}
+		else if (strcmp(key, "collation") == 0)
+		{
+			EnsureTopLevelFieldType("create.idIndex.collation", &idIterator,
+									BSON_TYPE_DOCUMENT);
+			*idIndexCollation = *bson_iter_value(&idIterator);
+		}
 		else
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDINDEXSPECIFICATIONOPTION),
@@ -344,6 +352,7 @@ ParseCreateSpec(Datum *databaseDatum, pgbson *createSpec, bool *hasSchemaValidat
 
 	CreateSpec *spec = palloc0(sizeof(CreateSpec));
 	bool hasExplicitCollation = false;
+	bson_value_t idIndexCollation = { 0 };
 	while (bson_iter_next(&createIter))
 	{
 		const char *key = bson_iter_key(&createIter);
@@ -458,7 +467,7 @@ ParseCreateSpec(Datum *databaseDatum, pgbson *createSpec, bool *hasSchemaValidat
 			}
 
 			/* Validate that it is of the right format */
-			ValidateIdIndexDocument(&spec->idIndex);
+			ValidateIdIndexDocument(&spec->idIndex, &idIndexCollation);
 		}
 		else if (strcmp(key, "size") == 0 || strcmp(key, "max") == 0)
 		{
@@ -564,6 +573,23 @@ ParseCreateSpec(Datum *databaseDatum, pgbson *createSpec, bool *hasSchemaValidat
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
 						errmsg("Collation is not supported for views")));
+	}
+
+	if (idIndexCollation.value_type != BSON_TYPE_EOD)
+	{
+		char idIndexCollationString[MAX_ICU_COLLATION_LENGTH] = { 0 };
+		char collectionCollationString[MAX_ICU_COLLATION_LENGTH] = { 0 };
+		ParseAndGetCollationString(&idIndexCollation, idIndexCollationString);
+		if (spec->collation.value_type != BSON_TYPE_EOD)
+		{
+			ParseAndGetCollationString(&spec->collation, collectionCollationString);
+		}
+		if (strcmp(idIndexCollationString, collectionCollationString) != 0)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"'idIndex' must have the same collation as the collection.")));
+		}
 	}
 
 	if (*hasSchemaValidationSpec)
