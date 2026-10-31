@@ -483,6 +483,10 @@ bool EnableDateTruncDayWithPgBin = DEFAULT_ENABLE_DATE_TRUNC_DAY_WITH_PG_BIN;
 #define DEFAULT_ENABLE_ADMIN_DATABASE_QUERIES true
 bool EnableAdminDatabaseQueries = DEFAULT_ENABLE_ADMIN_DATABASE_QUERIES;
 
+/* Added on v1.3, enabled on v1.3, remove after v1.5 */
+#define DEFAULT_ENABLE_EXTENSIBLE_METADATA_VIEWS true
+bool EnableExtensibleMetadataViews = DEFAULT_ENABLE_EXTENSIBLE_METADATA_VIEWS;
+
 /* Added in v0.109, enabled in v0.115, remove after v1.4 */
 #define DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN true
 bool EnablePrimaryKeyCursorScan = DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN;
@@ -982,6 +986,13 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		gettext_noop(
 			"Whether to enable queries against supported collections in the admin database."),
 		NULL, &EnableAdminDatabaseQueries, DEFAULT_ENABLE_ADMIN_DATABASE_QUERIES,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_extensible_metadata_views", newGucPrefix),
+		gettext_noop(
+			"Whether to enable extensible metadata views."),
+		NULL, &EnableExtensibleMetadataViews, DEFAULT_ENABLE_EXTENSIBLE_METADATA_VIEWS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

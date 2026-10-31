@@ -219,7 +219,6 @@ void ValidateCollectionNameForUnauthorizedSystemNs(const char *collectionName,
 void ValidateCollectionNameForValidSystemNamespace(StringView *collectionView,
 												   Datum databaseNameDatum);
 
-
 /*
  * Data table for given MongoCollection has been created within the current
  * transaction ?
