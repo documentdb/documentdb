@@ -104,15 +104,6 @@ command_create_collection_core(PG_FUNCTION_ARGS)
 		PG_RETURN_BOOL(strcasecmp(text_to_cstring(result.response), "t") == 0);
 	}
 
-	bson_value_t collationValue = { 0 };
-	bson_value_t *collation = ParseCollectionCollationOptions(options, &collationValue);
-
-	/* Add collation-aware _id uniqueness while retaining the binary primary key. */
-	IndexSpec companionIdIndexSpec = { 0 };
-	IndexDef *companionIdIndexDef = collation == NULL ? NULL :
-									MakeCollatedBuiltinIdIndexDef(collation,
-																  &companionIdIndexSpec);
-
 	MongoCollection *collection = GetMongoCollectionByNameDatum(
 		PointerGetDatum(databaseDatum), PointerGetDatum(collectionDatum),
 		AccessShareLock);
@@ -122,6 +113,15 @@ command_create_collection_core(PG_FUNCTION_ARGS)
 		/* Collection already exists */
 		PG_RETURN_BOOL(false);
 	}
+
+	bson_value_t collationValue = { 0 };
+	bson_value_t *collation = ParseCollectionCollationOptions(options, &collationValue);
+
+	/* Add collation-aware _id uniqueness while retaining the binary primary key. */
+	IndexSpec companionIdIndexSpec = { 0 };
+	IndexDef *companionIdIndexDef = collation == NULL ? NULL :
+									MakeCollatedBuiltinIdIndexDef(collation,
+																  &companionIdIndexSpec);
 
 	/* Allow for checking if reference metadata tables are correctly handled */
 	EnsureMetadataTableReplicated("collections");

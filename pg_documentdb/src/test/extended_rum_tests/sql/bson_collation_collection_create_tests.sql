@@ -248,6 +248,51 @@ SELECT count(*) AS stale_collations FROM documentdb_api_catalog.collections
 SELECT documentdb_api.insert_one('collated_creation', 'simple_last', '{"_id":"Alpha"}');
 SELECT documentdb_api.insert_one('collated_creation', 'simple_last', '{"_id":"ALPHA"}');
 
+-- Restore metadata may include a source version and explicit default _id_ options.
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"restored","idIndex":{"v":2,"key":{"_id":1},"name":"_id_","collation":{"version":"57.1","strength":2,"locale":"en","caseLevel":false,"caseFirst":"off","numericOrdering":false,"alternate":"non-ignorable","maxVariable":"punct","normalization":false,"backwards":false}},"collation":{"locale":"en","strength":2,"version":"57.1"}}');
+SELECT documentdb_api.insert_one('collated_creation', 'restored', '{"_id":"Ada","name":"Ada"}');
+SELECT documentdb_api.insert_one('collated_creation', 'restored', '{"_id":"ADA","name":"ADA"}');
+SELECT document FROM bson_aggregation_find('collated_creation',
+    '{"find":"restored","filter":{"_id":"ada"},"hint":"_id_"}');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('collated_creation',
+    '{"createIndexes":"restored","indexes":[{"v":2,"key":{"name":1},"name":"name_1","storageEngine":{"enableOrderedIndex":true},"collation":{"locale":"en","strength":2,"version":"57.1"}}]}', true);
+SELECT document FROM bson_aggregation_find('collated_creation',
+    '{"find":"restored","filter":{"name":"ADA"},"hint":"name_1"}');
+
+-- Explicit simple _id_ collation matches an omitted collection default.
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"binary","idIndex":{"key":{"_id":1},"name":"_id_","collation":{"locale":"simple"}}}');
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"ids","collation":{"locale":"en","strength":2},"idIndex":{"key":{"_id":1},"name":"_id_","collation":{"locale":"en","strength":2}}}');
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"bad","collation":{"locale":"en","strength":2},"idIndex":{"key":{"_id":1},"name":"_id_","collation":{"locale":"en","strength":3}}}');
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"bad","idIndex":{"key":{"_id":1},"name":"_id_","collation":{"locale":"en","strength":2}}}');
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"bad","collation":{"locale":"en","strength":2},"idIndex":{"key":{"_id":1},"name":"_id_","collation":{"locale":"simple"}}}');
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"bad","idIndex":{"key":{"_id":1},"name":"_id_","collation":null}}');
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"bad","idIndex":{"key":{"_id":1},"name":"_id_","collation":{}}}');
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"bad","collation":{"locale":"en","version":1}}');
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"bad","idIndex":{"key":{"_id":1},"name":"_id_","collation":{"locale":"en","version":null}}}');
+SELECT documentdb_api.create_collection_view('collated_creation',
+    '{"create":"bad","idIndex":{"key":{"_id":1},"name":"_id_","collation":{"locale":"simple"},"unique":true}}');
+
+-- Core recreation ignores unused options, including when creation is disabled.
+SELECT documentdb_api.create_collection_with_options('collated_creation', 'ids',
+    '{"collation":null}');
+SET documentdb.enable_collation_with_create_collection TO off;
+SELECT documentdb_api.create_collection_with_options('collated_creation', 'ids',
+    '{"collation":{"locale":"en","strength":2}}');
+SET documentdb.enable_collation_with_create_collection TO on;
+SELECT options FROM documentdb_api_catalog.collections
+    WHERE database_name = 'collated_creation' AND collection_name = 'ids';
+SELECT documentdb_api.drop_collection('collated_creation', 'restored');
+
 SELECT documentdb_api.drop_collection('collated_creation', 'ids');
 SELECT documentdb_api.drop_collection('collated_creation', 'sensitive');
 SELECT documentdb_api.drop_collection('collated_creation', 'simple');

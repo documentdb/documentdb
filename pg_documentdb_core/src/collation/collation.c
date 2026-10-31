@@ -412,6 +412,12 @@ ParseAndGetCollationString(const bson_value_t *collationValue, const char *colat
 									maxVariable)));
 			}
 		}
+		else if (strcmp(key, "version") == 0)
+		{
+			CheckCollationInputParamType(BSON_TYPE_UTF8, value.value_type, "version");
+
+			/* Accept source metadata; comparisons use the installed ICU version. */
+		}
 		else
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_UNKNOWNBSONFIELD), errmsg(
