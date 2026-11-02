@@ -38,6 +38,9 @@ pub struct TestDynamicConfiguration {
     socket_connection_idle_timeout_sec: AtomicU64,
     enable_graceful_closure_on_cert_rotation: AtomicBool,
     connection_graceful_closure_interval_sec: AtomicU64,
+    endpoint_routable: AtomicBool,
+    report_endpoint_name: AtomicBool,
+    enable_change_streams: AtomicBool,
 }
 
 impl Default for TestDynamicConfiguration {
@@ -51,6 +54,9 @@ impl Default for TestDynamicConfiguration {
             socket_connection_idle_timeout_sec: AtomicU64::new(UNSET_U64),
             enable_graceful_closure_on_cert_rotation: AtomicBool::new(false),
             connection_graceful_closure_interval_sec: AtomicU64::new(UNSET_U64),
+            endpoint_routable: AtomicBool::new(true),
+            report_endpoint_name: AtomicBool::new(false),
+            enable_change_streams: AtomicBool::new(false),
         }
     }
 }
@@ -89,6 +95,18 @@ impl TestDynamicConfiguration {
     pub fn set_connection_graceful_closure_interval_sec(&self, value: u64) {
         self.connection_graceful_closure_interval_sec
             .store(value, Ordering::Relaxed);
+    }
+
+    pub fn set_endpoint_routable(&self, value: bool) {
+        self.endpoint_routable.store(value, Ordering::Relaxed);
+    }
+
+    pub fn set_report_endpoint_name(&self, value: bool) {
+        self.report_endpoint_name.store(value, Ordering::Relaxed);
+    }
+
+    pub fn set_enable_change_streams(&self, value: bool) {
+        self.enable_change_streams.store(value, Ordering::Relaxed);
     }
 }
 
@@ -179,6 +197,18 @@ impl DynamicConfiguration for TestDynamicConfiguration {
 
     fn enable_request_metrics(&self) -> bool {
         false
+    }
+
+    fn is_endpoint_routable(&self, _server_name: Option<&str>) -> bool {
+        self.endpoint_routable.load(Ordering::Relaxed)
+    }
+
+    fn report_endpoint_name(&self) -> bool {
+        self.report_endpoint_name.load(Ordering::Relaxed)
+    }
+
+    fn enable_change_streams(&self) -> bool {
+        self.enable_change_streams.load(Ordering::Relaxed)
     }
 }
 

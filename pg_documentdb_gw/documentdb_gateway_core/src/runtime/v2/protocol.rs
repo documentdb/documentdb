@@ -244,6 +244,7 @@ pub(super) struct GatewayWireProtocol {
     response_chunk_size: usize,
     connection_id: Option<Uuid>,
     server_certificate_thumbprint: Option<String>,
+    tls_server_name: Option<String>,
 }
 
 impl GatewayWireProtocol {
@@ -262,20 +263,24 @@ impl GatewayWireProtocol {
             response_chunk_size,
             connection_id: None,
             server_certificate_thumbprint: None,
+            tls_server_name: None,
         }
     }
 
     /// Creates a protocol instance scoped to one gateway connection, carrying
-    /// the certificate thumbprint captured on its TLS handshake.
+    /// the certificate thumbprint and SNI server name captured on its TLS
+    /// handshake.
     #[must_use]
     pub(super) fn for_connection(
         &self,
         connection_id: Uuid,
         server_certificate_thumbprint: Option<String>,
+        tls_server_name: Option<String>,
     ) -> Self {
         let mut protocol = self.clone();
         protocol.connection_id = Some(connection_id);
         protocol.server_certificate_thumbprint = server_certificate_thumbprint;
+        protocol.tls_server_name = tls_server_name;
         protocol
     }
 }
@@ -301,6 +306,7 @@ impl Protocol for GatewayWireProtocol {
                 connection,
                 self.connection_id.unwrap_or_else(Uuid::new_v4),
                 self.server_certificate_thumbprint.clone(),
+                self.tls_server_name.clone(),
             ),
             self.shutdown_token.clone(),
             self.response_chunk_size,
@@ -431,6 +437,7 @@ fn connection_context_from_info(
     connection: &ConnectionInfo,
     connection_id: Uuid,
     server_certificate_thumbprint: Option<String>,
+    tls_server_name: Option<String>,
 ) -> ConnectionContext {
     let ip_address = connection_peer_ip(connection);
     let transport_protocol = if connection.local_path.is_some() {
@@ -447,6 +454,8 @@ fn connection_context_from_info(
         connection_id,
         transport_protocol,
     );
+
+    connection_context.set_tls_server_name(tls_server_name);
 
     if let Some(tls) = connection.tls.as_ref() {
         connection_context.ssl_protocol = tls.protocol.clone().unwrap_or_default();

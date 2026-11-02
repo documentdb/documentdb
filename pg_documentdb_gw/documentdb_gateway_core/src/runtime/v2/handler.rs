@@ -67,6 +67,12 @@ impl GatewayConnectionState {
         self.connection_context.connection_id
     }
 
+    #[cfg(test)]
+    /// Returns the SNI server name recorded on the connection, if any.
+    pub(super) fn tls_server_name(&self) -> Option<&str> {
+        self.connection_context.tls_server_name()
+    }
+
     fn should_close_for_shutdown(&self) -> bool {
         self.shutdown_token.is_cancelled()
             && !self
