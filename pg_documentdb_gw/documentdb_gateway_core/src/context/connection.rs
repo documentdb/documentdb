@@ -12,7 +12,7 @@ use std::{
 };
 
 use bson::RawDocumentBuf;
-use openssl::ssl::SslRef;
+use openssl::ssl::{NameType, SslRef};
 use tokio::time::{Duration, Instant};
 use uuid::{Builder, Uuid};
 
@@ -47,6 +47,9 @@ pub struct ConnectionContext {
     user: UserAuthState,
     /// Thumbprint of the certificate captured on the TLS handshake; `None` for plaintext.
     server_certificate_thumbprint: Option<String>,
+    /// Server name the client requested via SNI on the TLS handshake; `None`
+    /// for plaintext or when the client sent no server name.
+    tls_server_name: Option<String>,
     /// Time of the last rotation check, used to rate-limit checks.
     last_cert_rotation_check: Option<Instant>,
     /// Set once a graceful closure has been sent so the loop closes after the response.
@@ -81,6 +84,10 @@ impl ConnectionContext {
             .and_then(SslRef::certificate)
             .and_then(TlsProvider::certificate_thumbprint);
 
+        let tls_server_name = tls_config
+            .and_then(|tls| tls.servername(NameType::HOST_NAME))
+            .map(str::to_owned);
+
         Self {
             start_time: Instant::now(),
             connection_id,
@@ -96,6 +103,7 @@ impl ConnectionContext {
             connection_id_hash: Self::get_uuid_hash(connection_id),
             user: UserAuthState::default(),
             server_certificate_thumbprint,
+            tls_server_name,
             last_cert_rotation_check: None,
             close_after_response: false,
         }
@@ -337,6 +345,19 @@ impl ConnectionContext {
     /// handshake completes.
     pub fn set_server_certificate_thumbprint(&mut self, thumbprint: Option<String>) {
         self.server_certificate_thumbprint = thumbprint;
+    }
+
+    /// Server name the client requested via SNI on the TLS handshake.
+    #[must_use]
+    pub fn tls_server_name(&self) -> Option<&str> {
+        self.tls_server_name.as_deref()
+    }
+
+    /// Records the SNI server name captured on this connection's TLS
+    /// handshake. Used on contexts that are built after the handshake has
+    /// already completed.
+    pub fn set_tls_server_name(&mut self, server_name: Option<String>) {
+        self.tls_server_name = server_name;
     }
 
     #[cfg(test)]

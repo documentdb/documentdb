@@ -43,7 +43,7 @@ async fn connection_protocol_preserves_gateway_connection_id() {
         CancellationToken::new(),
         1024,
     )
-    .for_connection(connection_id, None);
+    .for_connection(connection_id, None, None);
     let connection = NacelleConnectionMeta::tcp(None, None);
 
     assert_eq!(
@@ -51,6 +51,48 @@ async fn connection_protocol_preserves_gateway_connection_id() {
             .connection_state(&ConnectionInfo::from(&connection))
             .connection_id(),
         connection_id
+    );
+}
+
+#[tokio::test]
+async fn connection_protocol_records_tls_server_name() {
+    let protocol = GatewayWireProtocol::new(
+        test_service_context(TestDynamicConfiguration::default()).await,
+        None,
+        CancellationToken::new(),
+        1024,
+    )
+    .for_connection(
+        Uuid::new_v4(),
+        None,
+        Some("node.global.example.net".to_owned()),
+    );
+    let connection = NacelleConnectionMeta::tcp(None, None);
+
+    assert_eq!(
+        protocol
+            .connection_state(&ConnectionInfo::from(&connection))
+            .tls_server_name(),
+        Some("node.global.example.net")
+    );
+}
+
+#[tokio::test]
+async fn connection_protocol_leaves_tls_server_name_unset_without_sni() {
+    let protocol = GatewayWireProtocol::new(
+        test_service_context(TestDynamicConfiguration::default()).await,
+        None,
+        CancellationToken::new(),
+        1024,
+    )
+    .for_connection(Uuid::new_v4(), None, None);
+    let connection = NacelleConnectionMeta::tcp(None, None);
+
+    assert_eq!(
+        protocol
+            .connection_state(&ConnectionInfo::from(&connection))
+            .tls_server_name(),
+        None
     );
 }
 

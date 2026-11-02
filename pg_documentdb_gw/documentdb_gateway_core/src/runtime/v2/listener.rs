@@ -13,7 +13,7 @@
 use std::{net::IpAddr, pin::Pin, time::Duration};
 
 use nacelle::core::{NacelleConnectionMeta, NacelleConnectionTlsMeta, TrackedPermit};
-use openssl::ssl::Ssl;
+use openssl::ssl::{NameType, Ssl};
 use tokio::{
     net::{TcpStream, UnixListener, UnixStream},
     task::JoinSet,
@@ -197,6 +197,10 @@ where
             .ssl()
             .certificate()
             .and_then(TlsProvider::certificate_thumbprint);
+        let tls_server_name = tls_stream
+            .ssl()
+            .servername(NameType::HOST_NAME)
+            .map(str::to_owned);
         tracing::info!(
             activity_id = connection_activity_id.as_str(),
             "TLS TCP connection established - Connection Id {connection_id}, client IP {}, HostNameFromSni {}",
@@ -209,6 +213,7 @@ where
                 connection,
                 connection_id,
                 server_certificate_thumbprint,
+                tls_server_name,
             )
             .await
             .map_err(|error| wire::error_to_documentdb(&error))?;
@@ -219,7 +224,7 @@ where
             ip_address
         );
         runtime
-            .serve(tcp_stream, connection, connection_id, None)
+            .serve(tcp_stream, connection, connection_id, None, None)
             .await
             .map_err(|error| wire::error_to_documentdb(&error))?;
     }
@@ -270,7 +275,7 @@ async fn serve_unix_connection<T, R>(
         "Unix socket connection established - Connection Id {connection_id}"
     );
     let result = runtime
-        .serve(unix_stream, connection, connection_id, None)
+        .serve(unix_stream, connection, connection_id, None, None)
         .await
         .map_err(|error| wire::error_to_documentdb(&error));
     connection_log.finish(&result);

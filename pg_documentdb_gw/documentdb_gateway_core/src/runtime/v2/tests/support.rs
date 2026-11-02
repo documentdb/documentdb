@@ -88,7 +88,7 @@ pub(super) fn start_serial_test_connection_with_tls(
             shutdown_token,
             config.response_buffer_capacity,
         )
-        .for_connection(uuid::Uuid::new_v4(), server_certificate_thumbprint),
+        .for_connection(uuid::Uuid::new_v4(), server_certificate_thumbprint, None),
     );
     let (client, mut server) = tokio::io::duplex(64 * 1024);
     let handler = Arc::new(GatewayRuntimeHandler::<DocumentDBDataClient, _>::new(

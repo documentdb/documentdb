@@ -161,6 +161,22 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
         !self.get_bool(POSTGRES_RECOVERY_KEY, false)
     }
 
+    /// Whether this node should advertise itself in `hello` and `isMaster`
+    /// replies to a client that connected with the TLS server name
+    /// `server_name`. When `false`, the handshake reply carries `ok: 0` so the
+    /// client selects a different host. Defaults to `true`.
+    fn is_endpoint_routable(&self, _server_name: Option<&str>) -> bool {
+        true
+    }
+
+    /// Whether `hello` replies echo the TLS server name the client connected
+    /// with as `endpointName`. A deployment that publishes several endpoint
+    /// aliases for the same node can enable this so a client can confirm which
+    /// alias terminated its connection. Defaults to `false`.
+    fn report_endpoint_name(&self) -> bool {
+        false
+    }
+
     fn is_read_only_for_disk_full(&self) -> bool {
         self.get_bool("default_transaction_read_only", false)
     }

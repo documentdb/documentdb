@@ -104,16 +104,18 @@ where
         connection: NacelleConnectionMeta,
         connection_id: Uuid,
         server_certificate_thumbprint: Option<String>,
+        tls_server_name: Option<String>,
     ) -> std::result::Result<(), NacelleError>
     where
         IO: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
         serve_serial_stream_without_connection_limit(
             &mut io,
-            Arc::new(
-                self.protocol
-                    .for_connection(connection_id, server_certificate_thumbprint),
-            ),
+            Arc::new(self.protocol.for_connection(
+                connection_id,
+                server_certificate_thumbprint,
+                tls_server_name,
+            )),
             Arc::clone(&self.handler),
             Arc::clone(&self.handler),
             self.config.clone(),
