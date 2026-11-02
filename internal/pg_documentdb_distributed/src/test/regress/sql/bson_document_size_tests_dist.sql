@@ -48,8 +48,9 @@ SET documentdb.next_collection_index_id TO 27150000;
 --   runs on the node that owns the shard, with the shard table known, and the
 --   document is compressed right before it is written.
 -- * Eligible remote single-document and batch inserts are routed to insert_worker when
---   compression is enabled on the coordinator. The worker compresses the
---   document before inserting directly into the local shard.
+--   compression is enabled on the coordinator. They are also routed there
+--   when documentdb.enable_insert_worker_pushdown is enabled. The worker
+--   compresses the document before inserting directly into the local shard.
 --
 -- * Remote batches are sent as document sequences. The worker prepares and
 --   compresses each document before inserting into its local shard. Failed
@@ -357,6 +358,7 @@ ALTER ROLE doc_size_batch_user SET documentdb.document_toast_compression_thresho
 ALTER ROLE doc_size_batch_user SET documentdb.batchWriteSubTransactionCount TO 1;
 SET ROLE doc_size_batch_user;
 SET documentdb.document_toast_compression_threshold TO 1024;
+SET documentdb.enable_insert_worker_pushdown TO on;
 SET documentdb.useLocalExecutionShardQueries TO off;
 SET citus.enable_local_execution TO off;
 
@@ -371,6 +373,31 @@ BEGIN;
 SET LOCAL documentdb.document_toast_compression_threshold TO -1;
 SELECT documentdb_api.insert('doc_size_db',
     ('{"insert":"doc_size_short_batch","documents":[{"_id":3,"payload":"' || repeat('abc', 400) || '"},{"_id":4,"payload":"' || repeat('abc', 400) || '"}]}')::bson);
+COMMIT;
+SELECT document->>'_id' AS id, pg_column_size(document) < length(document::bytea) AS compressed
+FROM documentdb_api.collection('doc_size_db', 'doc_size_short_batch') ORDER BY object_id;
+
+-- Compression forces the batch to insert_worker even when insert worker
+-- pushdown is disabled.
+BEGIN;
+SET LOCAL documentdb.enable_insert_worker_pushdown TO off;
+SELECT documentdb_api.insert('doc_size_db',
+    ('{"insert":"doc_size_short_batch","documents":[{"_id":5,"payload":"' || repeat('abc', 400) || '"},{"_id":6,"payload":"' || repeat('abc', 400) || '"}]}')::bson);
+COMMIT;
+SELECT document->>'_id' AS id, pg_column_size(document) < length(document::bytea) AS compressed
+FROM documentdb_api.collection('doc_size_db', 'doc_size_short_batch') ORDER BY object_id;
+
+-- Single-document inserts follow the same routing: pushdown alone sends the
+-- insert to insert_worker, and compression alone still compresses it there.
+BEGIN;
+SET LOCAL documentdb.document_toast_compression_threshold TO -1;
+SELECT documentdb_api.insert('doc_size_db',
+    ('{"insert":"doc_size_short_batch","documents":[{"_id":7,"payload":"' || repeat('abc', 400) || '"}]}')::bson);
+COMMIT;
+BEGIN;
+SET LOCAL documentdb.enable_insert_worker_pushdown TO off;
+SELECT documentdb_api.insert('doc_size_db',
+    ('{"insert":"doc_size_short_batch","documents":[{"_id":8,"payload":"' || repeat('abc', 400) || '"}]}')::bson);
 COMMIT;
 SELECT document->>'_id' AS id, pg_column_size(document) < length(document::bytea) AS compressed
 FROM documentdb_api.collection('doc_size_db', 'doc_size_short_batch') ORDER BY object_id;

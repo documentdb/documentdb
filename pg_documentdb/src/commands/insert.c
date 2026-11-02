@@ -175,6 +175,7 @@ extern bool SkipFailOnCollation;
 extern int BatchUpdateLockTimeoutMs;
 extern int32_t DocumentToastCompressionThreshold;
 extern bool DefaultInlineWriteOperations;
+extern bool EnableInsertWorkerPushdown;
 
 
 inline static bool
@@ -182,7 +183,7 @@ DoWorkerDispatchForInsertion(MongoCollection *collection,
 							 text *transactionId,
 							 ExprEvalState *evalState)
 {
-	return DocumentToastCompressionThreshold > 0 &&
+	return (EnableInsertWorkerPushdown || DocumentToastCompressionThreshold > 0) &&
 		   transactionId == NULL &&
 		   evalState == NULL &&
 		   collection->shardKey == NULL &&
@@ -1334,12 +1335,13 @@ ProcessInsertion(MongoCollection *collection,
 
 	/* make sure the document has an _id and it is in the right place */
 
-	/* If there's compression required, and it's a remote *unsharded* collection,
-	 * use the insertOne path to let the insert go to the local shard so we can compress
-	 * before passing it on to PG.
+	/* If pushdown is enabled, or compression is required, and it's a remote *unsharded*
+	 * collection, use the insertOne path to let the insert go to the local shard so we
+	 * can compress before passing it on to PG.
 	 */
 	if (DoWorkerDispatchForInsertion(collection, transactionId, evalState) &&
-		DocumentDatumNeedsCompression(PointerGetDatum(insertDoc)))
+		(EnableInsertWorkerPushdown ||
+		 DocumentDatumNeedsCompression(PointerGetDatum(insertDoc))))
 	{
 		return CallInsertWorkerForInsertOne(collection, shardKeyHash, insertDoc,
 											transactionId);
