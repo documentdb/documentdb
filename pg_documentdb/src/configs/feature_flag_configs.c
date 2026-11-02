@@ -689,6 +689,10 @@ bool EnableUpdateWorkerSingleWriteNoSubTransaction =
 bool EnableArrayBsonStatsWithPlannerStatistics =
 	DEFAULT_ENABLE_ARRAY_BSON_STATS_WITH_PLANNER_STATISTICS;
 
+/* Added on v1.3, pending stabilization, enable on v1.4 */
+#define DEFAULT_ENABLE_INSERT_WORKER_PUSHDOWN false
+bool EnableInsertWorkerPushdown = DEFAULT_ENABLE_INSERT_WORKER_PUSHDOWN;
+
 /* Added on v1.2, enabled on v1.2, remove after v1.4 */
 #define DEFAULT_ENABLE_IN_GRANULAR_SELECTIVITY true
 bool EnableInGranularSelectivity = DEFAULT_ENABLE_IN_GRANULAR_SELECTIVITY;
@@ -1883,6 +1887,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableUpdateWorkerSingleWriteNoSubTransaction,
 		DEFAULT_ENABLE_UPDATE_WORKER_SINGLE_WRITE_NO_SUB_TRANSACTION,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_insert_worker_pushdown", newGucPrefix),
+		gettext_noop(
+			"Whether to push inserts into remote unsharded collections to the shard via the insert_worker UDF. Inserts are always pushed down when document compression is enabled."),
+		NULL,
+		&EnableInsertWorkerPushdown,
+		DEFAULT_ENABLE_INSERT_WORKER_PUSHDOWN,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
