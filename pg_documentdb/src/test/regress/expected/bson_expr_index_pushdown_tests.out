@@ -106,7 +106,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "fin
  Bitmap Heap Scan on documents_201 collection
    Filter: documentdb_api_internal.bson_dollar_expr(document, '{ "" : { "$gt" : [ { "$numberInt" : "10" }, "$a" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Bitmap Index Scan on a_1
-         Index Cond: (document @<= '{ "a" : { "$numberInt" : "10" } }'::bson)
+         Index Cond: (document @< '{ "a" : { "$numberInt" : "10" } }'::bson)
 (4 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$gte": [ "$a", 10 ] } } }');
@@ -124,7 +124,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "fin
  Bitmap Heap Scan on documents_201 collection
    Filter: documentdb_api_internal.bson_dollar_expr(document, '{ "" : { "$gte" : [ { "$numberInt" : "10" }, "$a" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Bitmap Index Scan on a_1
-         Index Cond: (document @< '{ "a" : { "$numberInt" : "10" } }'::bson)
+         Index Cond: (document @<= '{ "a" : { "$numberInt" : "10" } }'::bson)
 (4 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$lt": [ "$a", 10 ] } } }');
@@ -142,7 +142,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "fin
  Bitmap Heap Scan on documents_201 collection
    Filter: documentdb_api_internal.bson_dollar_expr(document, '{ "" : { "$lt" : [ { "$numberInt" : "10" }, "$a" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Bitmap Index Scan on a_1
-         Index Cond: (document @>= '{ "a" : { "$numberInt" : "10" } }'::bson)
+         Index Cond: (document @> '{ "a" : { "$numberInt" : "10" } }'::bson)
 (4 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$lte": [ "$a", 10 ] } } }');
@@ -160,7 +160,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "fin
  Bitmap Heap Scan on documents_201 collection
    Filter: documentdb_api_internal.bson_dollar_expr(document, '{ "" : { "$lte" : [ { "$numberInt" : "10" }, "$a" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Bitmap Index Scan on a_1
-         Index Cond: (document @> '{ "a" : { "$numberInt" : "10" } }'::bson)
+         Index Cond: (document @>= '{ "a" : { "$numberInt" : "10" } }'::bson)
 (4 rows)
 
 -- partial pushdown if it's conjunction
@@ -207,7 +207,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "fin
  Bitmap Heap Scan on documents_201 collection
    Filter: documentdb_api_internal.bson_dollar_expr(document, '{ "" : { "$lt" : [ { "$add" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }, "$a" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Bitmap Index Scan on a_1
-         Index Cond: (document @>= '{ "a" : { "$numberInt" : "5" } }'::bson)
+         Index Cond: (document @> '{ "a" : { "$numberInt" : "5" } }'::bson)
 (4 rows)
 
 -- Support pushdown of expressions that are variables.
@@ -217,7 +217,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "fin
  Bitmap Heap Scan on documents_201 collection
    Filter: documentdb_api_internal.bson_dollar_expr(document, '{ "" : { "$lt" : [ "$$myvar", "$a" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "myvar" : { "$literal" : { "$numberInt" : "3" } } } }'::bson)
    ->  Bitmap Index Scan on a_1
-         Index Cond: (document @>= '{ "a" : { "$numberInt" : "3" } }'::bson)
+         Index Cond: (document @> '{ "a" : { "$numberInt" : "3" } }'::bson)
 (4 rows)
 
 -- TODO: Support pushdown of expressions that evaluate to constants with variables.
@@ -241,14 +241,13 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
    indexName: a_1
    indexKey: {"a": 1}
    isMultiKey: false
-   indexBounds: ["a": [3, Infinity]]
+   indexBounds: ["a": (3, Infinity]]
    ->  Bitmap Heap Scan on documents_201 collection (actual rows=997 loops=1)
          Filter: documentdb_api_internal.bson_dollar_expr(document, '{ "" : { "$lt" : [ "$$myvar", "$a" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "myvar" : { "$literal" : { "$numberInt" : "3" } } } }'::bson)
-         Rows Removed by Filter: 1
          Heap Blocks: exact=11
-         ->  Bitmap Index Scan on a_1 (actual rows=998 loops=1)
-               Index Cond: (document @>= '{ "a" : { "$numberInt" : "3" } }'::bson)
-(12 rows)
+         ->  Bitmap Index Scan on a_1 (actual rows=997 loops=1)
+               Index Cond: (document @> '{ "a" : { "$numberInt" : "3" } }'::bson)
+(11 rows)
 
 -- now try with $lookup
 SELECT COUNT(documentdb_api.insert_one('exprdb', 'exprcollright', bson_build_document('_id'::text, i, 'a'::text, i, 'b'::text, i))) FROM generate_series(1, 1000) i;
@@ -1020,3 +1019,298 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "fin
 ERROR:  Could not find any valid index to push down for query
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$lte": [ 10, "$a" ] } } }');
 ERROR:  Could not find any valid index to push down for query
+-- Commuting a comparison must preserve whether its boundary is inclusive.
+BEGIN;
+SET LOCAL documentdb.forceDisableSeqScan TO off;
+SELECT insert_one('exprdb', 'expr_boundaries', '{"_id":1,"value":3}');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT insert_one('exprdb', 'expr_boundaries', '{"_id":2,"value":5}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT insert_one('exprdb', 'expr_boundaries', '{"_id":3,"value":8}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Before the ordered index exists.
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$gt":[5,"$value"]}}}');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "3" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$gte":[5,"$value"]}}}');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "2" }, "value" : { "$numberInt" : "5" } }
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$lt":[5,"$value"]}}}');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "value" : { "$numberInt" : "8" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$lte":[5,"$value"]}}}');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "value" : { "$numberInt" : "5" } }
+ { "_id" : { "$numberInt" : "3" }, "value" : { "$numberInt" : "8" } }
+(2 rows)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('exprdb',
+    '{"createIndexes":"expr_boundaries","indexes":[{"key":{"value":1},"name":"value_1","enableOrderedIndex":true}]}', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SET LOCAL documentdb.forceDisableSeqScan TO on;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$gte":[5,"$value"]}}}');
+                                                                                                  QUERY PLAN                                                                                                   
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   namespaceName: exprdb.expr_boundaries
+   indexName: documents_rum_index_213
+   indexKey: {"value": 1}
+   isMultiKey: false
+   indexBounds: ["value": [-Infinity, 5]]
+   ->  Index Scan using documents_rum_index_213 on documents_206 collection
+         Index Cond: (document @<= '{ "value" : { "$numberInt" : "5" } }'::bson)
+         Filter: documentdb_api_internal.bson_dollar_expr(document, '{ "" : { "$gte" : [ { "$numberInt" : "5" }, "$value" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+(9 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$lte":["$$bound","$value"]}},"let":{"bound":5}}');
+                                                                                                                           QUERY PLAN                                                                                                                            
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   namespaceName: exprdb.expr_boundaries
+   indexName: documents_rum_index_213
+   indexKey: {"value": 1}
+   isMultiKey: false
+   indexBounds: ["value": [5, Infinity]]
+   ->  Index Scan using documents_rum_index_213 on documents_206 collection
+         Index Cond: (document @>= '{ "value" : { "$numberInt" : "5" } }'::bson)
+         Filter: documentdb_api_internal.bson_dollar_expr(document, '{ "" : { "$lte" : [ "$$bound", "$value" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bound" : { "$literal" : { "$numberInt" : "5" } } } }'::bson)
+(9 rows)
+
+-- The identical queries must still include the equality boundary.
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$gt":[5,"$value"]}}}');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "3" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$gte":[5,"$value"]}}}');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "2" }, "value" : { "$numberInt" : "5" } }
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$lt":[5,"$value"]}}}');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "value" : { "$numberInt" : "8" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$lte":[5,"$value"]}}}');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "value" : { "$numberInt" : "5" } }
+ { "_id" : { "$numberInt" : "3" }, "value" : { "$numberInt" : "8" } }
+(2 rows)
+
+-- Field-first comparisons are unchanged.
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$gt":["$value",5]}}}');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "value" : { "$numberInt" : "8" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$gte":["$value",5]}}}');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "value" : { "$numberInt" : "5" } }
+ { "_id" : { "$numberInt" : "3" }, "value" : { "$numberInt" : "8" } }
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$lt":["$value",5]}}}');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "3" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$lte":["$value",5]}}}');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "2" }, "value" : { "$numberInt" : "5" } }
+(2 rows)
+
+-- Let variables use the same commutators as constants.
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$gt":["$$bound","$value"]}},"let":{"bound":5}}');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "3" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$gte":["$$bound","$value"]}},"let":{"bound":5}}');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "2" }, "value" : { "$numberInt" : "5" } }
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$lt":["$$bound","$value"]}},"let":{"bound":5}}');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "value" : { "$numberInt" : "8" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$lte":["$$bound","$value"]}},"let":{"bound":5}}');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "value" : { "$numberInt" : "5" } }
+ { "_id" : { "$numberInt" : "3" }, "value" : { "$numberInt" : "8" } }
+(2 rows)
+
+-- Constant folding and nested conjunctions must also retain the boundary.
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$gte":[{"$add":[2,3]},"$value"]}}}');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "2" }, "value" : { "$numberInt" : "5" } }
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$lte":[{"$add":[2,3]},"$value"]}}}');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "value" : { "$numberInt" : "5" } }
+ { "_id" : { "$numberInt" : "3" }, "value" : { "$numberInt" : "8" } }
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$and":[{"$gte":[5,"$value"]},{"$and":[{"$lte":[5,"$value"]}]}]}}}');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "value" : { "$numberInt" : "5" } }
+(1 row)
+
+-- Collated expressions retain their runtime fallback, including case-equivalent boundaries.
+SET LOCAL documentdb.forceDisableSeqScan TO off;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SELECT insert_one('exprdb', 'expr_collated_boundaries', '{"_id":1,"value":"a"}');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT insert_one('exprdb', 'expr_collated_boundaries', '{"_id":2,"value":"b"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT insert_one('exprdb', 'expr_collated_boundaries', '{"_id":3,"value":"c"}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_collated_boundaries","filter":{"$expr":{"$gte":["B","$value"]}},"collation":{"locale":"en","strength":2}}');
+                     document                      
+---------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : "a" }
+ { "_id" : { "$numberInt" : "2" }, "value" : "b" }
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_collated_boundaries","filter":{"$expr":{"$lte":["B","$value"]}},"collation":{"locale":"en","strength":2}}');
+                     document                      
+---------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "value" : "b" }
+ { "_id" : { "$numberInt" : "3" }, "value" : "c" }
+(2 rows)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('exprdb',
+    '{"createIndexes":"expr_collated_boundaries","indexes":[{"key":{"value":1},"name":"collated_value_1","enableOrderedIndex":true,"collation":{"locale":"en","strength":2}}]}', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_collated_boundaries","filter":{"$expr":{"$gte":["B","$value"]}},"collation":{"locale":"en","strength":2}}');
+                                                                                                         QUERY PLAN                                                                                                         
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   namespaceName: exprdb.expr_collated_boundaries
+   ->  Seq Scan on documents_207 collection
+         Filter: documentdb_api_internal.bson_dollar_expr(document, '{ "" : { "$gte" : [ "B", "$value" ] }, "collation" : "en-u-ks-level2" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+(4 rows)
+
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_collated_boundaries","filter":{"$expr":{"$gt":["B","$value"]}},"collation":{"locale":"en","strength":2}}');
+                     document                      
+---------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : "a" }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_collated_boundaries","filter":{"$expr":{"$gte":["B","$value"]}},"collation":{"locale":"en","strength":2}}');
+                     document                      
+---------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "value" : "a" }
+ { "_id" : { "$numberInt" : "2" }, "value" : "b" }
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_collated_boundaries","filter":{"$expr":{"$lt":["B","$value"]}},"collation":{"locale":"en","strength":2}}');
+                     document                      
+---------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "value" : "c" }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_collated_boundaries","filter":{"$expr":{"$lte":["B","$value"]}},"collation":{"locale":"en","strength":2}}');
+                     document                      
+---------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "value" : "b" }
+ { "_id" : { "$numberInt" : "3" }, "value" : "c" }
+(2 rows)
+
+ROLLBACK;
