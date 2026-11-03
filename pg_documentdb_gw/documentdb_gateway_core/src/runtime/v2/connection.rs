@@ -134,13 +134,9 @@ where
     /// Returns a resource-limit error when connection admission is denied.
     pub(super) fn acquire_connection(
         &self,
-        peer_ip: Option<IpAddr>,
+        _peer_ip: Option<IpAddr>,
     ) -> std::result::Result<TrackedPermit, NacelleError> {
-        if let Some(peer_ip) = peer_ip {
-            self.runtime_state.acquire_connection_for_peer(peer_ip)
-        } else {
-            self.runtime_state.acquire_connection_tracked()
-        }
+        self.runtime_state.acquire_connection_tracked()
     }
 
     /// Records that connection admission rejected a peer.
@@ -174,18 +170,25 @@ fn gateway_tcp_config(service_context: &ServiceContext) -> NacelleTcpConfig {
         .with_response_write_policy(ResponseWritePolicy::Immediate)
 }
 
-fn gateway_limits(_service_context: &ServiceContext) -> NacelleLimits {
+fn gateway_limits(service_context: &ServiceContext) -> NacelleLimits {
     let max_frame_len = gateway_max_frame_len();
 
-    // 1024 * 512 is 1/2 of the maximum file handlers that can be used for inbound connections
-    let max_gateway_connections = 1024 * 512;
+    let max_client_connections = service_context
+        .dynamic_configuration()
+        .gateway_max_client_connections();
+
+    let max_client_connections_per_second = service_context
+        .dynamic_configuration()
+        .gateway_max_client_connection_per_second();
 
     NacelleLimits::default()
-        .with_max_connections(max_gateway_connections)
-        .with_max_in_flight_requests(max_gateway_connections)
+        .with_max_connections(max_client_connections)
+        .with_max_connections_per_second(max_client_connections_per_second)
+        .with_max_in_flight_requests(max_client_connections)
+        .with_max_streaming_tasks(max_client_connections)
         .with_max_request_body_bytes(max_frame_len)
-        .without_handler_timeout()
         .with_max_response_body_bytes(max_frame_len)
+        .without_handler_timeout()
 }
 
 fn gateway_tcp_limits(service_context: &ServiceContext) -> NacelleTcpLimits {

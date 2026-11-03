@@ -31,7 +31,7 @@ use documentdb_gateway_core::{
     configuration::{DocumentDBSetupConfiguration, PgConfiguration, SetupConfiguration},
     error::DocumentDBError,
     postgres::{conn_mgmt, create_query_catalog, DocumentDBDataClient},
-    run_gateway, run_legacy_gateway,
+    run_gateway,
     service::{DefaultRequestRouter, TlsProvider},
     shutdown_controller::SHUTDOWN_CONTROLLER,
     startup::{create_postgres_object, get_service_context},
@@ -118,8 +118,6 @@ fn main() {
 }
 
 async fn start_gateway(mut setup_configuration: DocumentDBSetupConfiguration) {
-    let enable_v2_runtime = setup_configuration.enable_v2_runtime();
-
     // Initialize the telemetry adapter before constructing the tracing subscriber.
     // The manager owns provider resources and flushes them during shutdown.
     let telemetry_manager = match TelemetryManager::init_telemetry(
@@ -204,27 +202,15 @@ async fn start_gateway(mut setup_configuration: DocumentDBSetupConfiguration) {
         AuthenticationManager::new(),
     );
 
-    if enable_v2_runtime {
-        tracing::info!("Starting gateway v2 runtime");
-        run_gateway::<DocumentDBDataClient, _>(
-            service_context,
-            None,
-            DefaultRequestRouter {},
-            shutdown_token,
-        )
-        .await
-        .unwrap();
-    } else {
-        tracing::info!("Starting gateway v1 runtime");
-        run_legacy_gateway::<DocumentDBDataClient, _>(
-            service_context,
-            None,
-            DefaultRequestRouter {},
-            shutdown_token,
-        )
-        .await
-        .unwrap();
-    }
+    tracing::info!("Starting gateway runtime");
+    run_gateway::<DocumentDBDataClient, _>(
+        service_context,
+        None,
+        DefaultRequestRouter {},
+        shutdown_token,
+    )
+    .await
+    .unwrap();
 
     shutdown_telemetry(telemetry_manager);
 }
