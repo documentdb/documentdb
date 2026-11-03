@@ -53,6 +53,7 @@ import tempfile
 import time
 import unittest
 import uuid
+from unittest import mock
 
 # The shared backend-contract detector lives alongside this file. Make it
 # importable regardless of how the suite is launched: `unittest discover -s
@@ -217,9 +218,21 @@ def _wait_for_healthy(container: str, *, timeout: int = 120,
 def _start_container(image: str, *, extra_run_args: list[str] | None = None,
                      entrypoint_flags: list[str] | None = None,
                      name: str | None = None) -> str:
-    """Spawn a container and return its name. Caller owns cleanup."""
+    """Spawn a container and return its name. Caller owns cleanup.
+
+    Usage telemetry is disabled for every container started here. These are
+    test boots, not deployments, and counting them inflates the adoption
+    numbers the telemetry exists to measure. The emitter's own CI detection
+    cannot do this for us: it reads CI/GITHUB_ACTIONS/TF_BUILD inside the
+    container, and `docker run` does not forward them from the agent, so an
+    ADO or GitHub run looks exactly like a real deployment from in there.
+
+    Applied here rather than at the call sites so a new test cannot
+    reintroduce the problem by forgetting it.
+    """
     container = name or _random_container_name()
-    args = ["run", "-d", "--name", container]
+    args = ["run", "-d", "--name", container,
+            "-e", "DOCUMENTDB_USAGE_TELEMETRY=false"]
     if extra_run_args:
         args.extend(extra_run_args)
     args.append(image)
@@ -373,6 +386,36 @@ def _existing_documentdb_functions(container: str) -> set[str]:
 # ---------------------------------------------------------------------------
 # Base classes
 # ---------------------------------------------------------------------------
+
+class StartContainerTests(unittest.TestCase):
+    """Check launch arguments without building or starting an image."""
+
+    def test_default_launch_disables_telemetry(self):
+        with mock.patch(__name__ + "._docker") as docker, \
+                mock.patch(__name__ + "._random_container_name", return_value="test-container"):
+            container = _start_container("test-image")
+
+        self.assertEqual(container, "test-container")
+        docker.assert_called_once_with(
+            "run", "-d", "--name", "test-container",
+            "-e", "DOCUMENTDB_USAGE_TELEMETRY=false", "test-image", timeout=60,
+        )
+
+    def test_custom_launch_keeps_opt_out_before_image(self):
+        with mock.patch(__name__ + "._docker") as docker:
+            container = _start_container(
+                "test-image", name="custom-container",
+                extra_run_args=["-p", "10260:10260"],
+                entrypoint_flags=["--skip-init-data"],
+            )
+
+        self.assertEqual(container, "custom-container")
+        docker.assert_called_once_with(
+            "run", "-d", "--name", "custom-container",
+            "-e", "DOCUMENTDB_USAGE_TELEMETRY=false",
+            "-p", "10260:10260", "test-image", "--skip-init-data", timeout=60,
+        )
+
 
 class _ContainerTestBase(unittest.TestCase):
     """Test case base that spawns one container per class.
