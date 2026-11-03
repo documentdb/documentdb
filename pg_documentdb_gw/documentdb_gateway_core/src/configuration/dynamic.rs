@@ -25,6 +25,8 @@ pub const MAX_REQUEST_TIMEOUT_DEFAULT_SEC: u64 = 120;
 pub const MAX_REQUEST_TIMEOUT_SEC_KEY: &str = "max_request_timeout_sec";
 pub const TRANSACTION_TIMEOUT_DEFAULT_SEC: u64 = 30;
 pub const TRANSACTION_TIMEOUT_SEC_KEY: &str = "transaction_timeout_sec";
+pub const DEFAULT_GATEWAY_MAX_CLIENT_CONNECTIONS: u64 = 128_000;
+pub const DEFAULT_GATEWAY_MAX_CLIENT_CONNECTION_PER_SECOND: u64 = 1500;
 
 /// The deployed `documentdb` extension version parsed from the cluster topology,
 /// expressed as `major.minor-build` (for example, `1.114-0`).
@@ -246,6 +248,42 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
 
     fn cursor_resolution_interval(&self) -> u64 {
         self.get_u64("mongoCursorIdleResolutionIntervalSeconds", 5)
+    }
+
+    fn enable_gateway_connection_limits(&self) -> bool {
+        true
+    }
+
+    #[expect(clippy::cast_possible_truncation, reason = "value fits in u64")]
+    fn gateway_max_client_connections(&self) -> usize {
+        let enable_limits = self.enable_gateway_connection_limits();
+
+        let value = self.get_u64(
+            "gateway_max_client_connections",
+            DEFAULT_GATEWAY_MAX_CLIENT_CONNECTIONS,
+        ) as usize;
+
+        if !enable_limits || value == 0 {
+            return 1024 * 512;
+        }
+
+        value
+    }
+
+    #[expect(clippy::cast_possible_truncation, reason = "value fits in u64")]
+    fn gateway_max_client_connection_per_second(&self) -> usize {
+        let enable_limits = self.enable_gateway_connection_limits();
+
+        let value = self.get_u64(
+            "gateway_max_client_connection_per_second",
+            DEFAULT_GATEWAY_MAX_CLIENT_CONNECTION_PER_SECOND,
+        ) as usize;
+
+        if !enable_limits || value == 0 {
+            return self.gateway_max_client_connections();
+        }
+
+        value
     }
 
     #[expect(clippy::cast_possible_truncation, reason = "value fits in i32")]

@@ -1521,9 +1521,8 @@ dependencies = [
 
 [[package]]
 name = "nacelle"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f7c5d960a6a874e31fb2b695f0bcb3c7bda805f5e41915e5f862aea5c459f4f"
+version = "0.3.3"
+source = "git+https://github.com/microsoft/nacelle?rev=e25c5f2e39ce1d22f6ee43b04a7f349177fdc9c2#e25c5f2e39ce1d22f6ee43b04a7f349177fdc9c2"
 dependencies = [
  "bytes",
  "nacelle-codec",
@@ -1535,9 +1534,8 @@ dependencies = [
 
 [[package]]
 name = "nacelle-codec"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4500a5cbfed423a09944241d78e3257de7fdf867d395d25b057e1f515f580890"
+version = "0.3.3"
+source = "git+https://github.com/microsoft/nacelle?rev=e25c5f2e39ce1d22f6ee43b04a7f349177fdc9c2#e25c5f2e39ce1d22f6ee43b04a7f349177fdc9c2"
 dependencies = [
  "bytes",
  "tokio",
@@ -1545,9 +1543,8 @@ dependencies = [
 
 [[package]]
 name = "nacelle-core"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9d93bb9d074e6df80fb1f03e3ce6242ac8316fc213c899f53c1eed3875c6601"
+version = "0.3.3"
+source = "git+https://github.com/microsoft/nacelle?rev=e25c5f2e39ce1d22f6ee43b04a7f349177fdc9c2#e25c5f2e39ce1d22f6ee43b04a7f349177fdc9c2"
 dependencies = [
  "bytes",
  "futures-core",
@@ -1559,19 +1556,18 @@ dependencies = [
 
 [[package]]
 name = "nacelle-openssl"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "897154359561869cebcc3f198f4bff15ca0e6950565d31620bebbbff4e12de66"
+version = "0.3.3"
+source = "git+https://github.com/microsoft/nacelle?rev=e25c5f2e39ce1d22f6ee43b04a7f349177fdc9c2#e25c5f2e39ce1d22f6ee43b04a7f349177fdc9c2"
 dependencies = [
  "nacelle-core",
  "openssl",
+ "openssl-sys",
 ]
 
 [[package]]
 name = "nacelle-tcp"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "768db68478e061051d66f68e3c069c2af7c7a8b691fe6a4b33b553588f3c0810"
+version = "0.3.3"
+source = "git+https://github.com/microsoft/nacelle?rev=e25c5f2e39ce1d22f6ee43b04a7f349177fdc9c2#e25c5f2e39ce1d22f6ee43b04a7f349177fdc9c2"
 dependencies = [
  "bytes",
  "nacelle-codec",
@@ -2594,9 +2590,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.53.1"
+version = "1.54.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
+checksum = "b52fd3255258d26fac7264ab5a76b53c13367136dc011d3d6ad4f8ed070396a3"
 dependencies = [
  "bytes",
  "libc",
