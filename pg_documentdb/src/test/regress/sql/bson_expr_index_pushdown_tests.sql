@@ -531,3 +531,94 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "fin
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$lte": [ "$a", 10 ] } } }');
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$lte": [ 10, "$a" ] } } }');
+
+-- Commuting a comparison must preserve whether its boundary is inclusive.
+BEGIN;
+SET LOCAL documentdb.forceDisableSeqScan TO off;
+
+SELECT insert_one('exprdb', 'expr_boundaries', '{"_id":1,"value":3}');
+SELECT insert_one('exprdb', 'expr_boundaries', '{"_id":2,"value":5}');
+SELECT insert_one('exprdb', 'expr_boundaries', '{"_id":3,"value":8}');
+
+-- Before the ordered index exists.
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$gt":[5,"$value"]}}}');
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$gte":[5,"$value"]}}}');
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$lt":[5,"$value"]}}}');
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$lte":[5,"$value"]}}}');
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('exprdb',
+    '{"createIndexes":"expr_boundaries","indexes":[{"key":{"value":1},"name":"value_1","enableOrderedIndex":true}]}', TRUE);
+SET LOCAL documentdb.forceDisableSeqScan TO on;
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$gte":[5,"$value"]}}}');
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$lte":["$$bound","$value"]}},"let":{"bound":5}}');
+
+-- The identical queries must still include the equality boundary.
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$gt":[5,"$value"]}}}');
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$gte":[5,"$value"]}}}');
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$lt":[5,"$value"]}}}');
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$lte":[5,"$value"]}}}');
+
+-- Field-first comparisons are unchanged.
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$gt":["$value",5]}}}');
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$gte":["$value",5]}}}');
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$lt":["$value",5]}}}');
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$lte":["$value",5]}}}');
+
+-- Let variables use the same commutators as constants.
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$gt":["$$bound","$value"]}},"let":{"bound":5}}');
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$gte":["$$bound","$value"]}},"let":{"bound":5}}');
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$lt":["$$bound","$value"]}},"let":{"bound":5}}');
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$lte":["$$bound","$value"]}},"let":{"bound":5}}');
+
+-- Constant folding and nested conjunctions must also retain the boundary.
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$gte":[{"$add":[2,3]},"$value"]}}}');
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$lte":[{"$add":[2,3]},"$value"]}}}');
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_boundaries","filter":{"$expr":{"$and":[{"$gte":[5,"$value"]},{"$and":[{"$lte":[5,"$value"]}]}]}}}');
+
+-- Collated expressions retain their runtime fallback, including case-equivalent boundaries.
+SET LOCAL documentdb.forceDisableSeqScan TO off;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SELECT insert_one('exprdb', 'expr_collated_boundaries', '{"_id":1,"value":"a"}');
+SELECT insert_one('exprdb', 'expr_collated_boundaries', '{"_id":2,"value":"b"}');
+SELECT insert_one('exprdb', 'expr_collated_boundaries', '{"_id":3,"value":"c"}');
+
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_collated_boundaries","filter":{"$expr":{"$gte":["B","$value"]}},"collation":{"locale":"en","strength":2}}');
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_collated_boundaries","filter":{"$expr":{"$lte":["B","$value"]}},"collation":{"locale":"en","strength":2}}');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('exprdb',
+    '{"createIndexes":"expr_collated_boundaries","indexes":[{"key":{"value":1},"name":"collated_value_1","enableOrderedIndex":true,"collation":{"locale":"en","strength":2}}]}', TRUE);
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_collated_boundaries","filter":{"$expr":{"$gte":["B","$value"]}},"collation":{"locale":"en","strength":2}}');
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_collated_boundaries","filter":{"$expr":{"$gt":["B","$value"]}},"collation":{"locale":"en","strength":2}}');
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_collated_boundaries","filter":{"$expr":{"$gte":["B","$value"]}},"collation":{"locale":"en","strength":2}}');
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_collated_boundaries","filter":{"$expr":{"$lt":["B","$value"]}},"collation":{"locale":"en","strength":2}}');
+SELECT document FROM bson_aggregation_find('exprdb',
+    '{"find":"expr_collated_boundaries","filter":{"$expr":{"$lte":["B","$value"]}},"collation":{"locale":"en","strength":2}}');
+ROLLBACK;

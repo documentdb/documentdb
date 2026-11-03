@@ -329,28 +329,28 @@ WalkExprIterForSupportedQuals(bson_iter_t *exprIter,
 			inputQuals = PushBinaryExpressionQuals(exprIter, inputQuals, indexOptions,
 												   documentExpr, variableSpec,
 												   BsonGreaterThanMatchIndexFunctionId(),
-												   BsonLessThanEqualMatchIndexFunctionId());
+												   BsonLessThanMatchIndexFunctionId());
 		}
 		else if (strcmp(operatorKey, "$gte") == 0)
 		{
 			inputQuals = PushBinaryExpressionQuals(exprIter, inputQuals, indexOptions,
 												   documentExpr, variableSpec,
 												   BsonGreaterThanEqualMatchIndexFunctionId(),
-												   BsonLessThanMatchIndexFunctionId());
+												   BsonLessThanEqualMatchIndexFunctionId());
 		}
 		else if (strcmp(operatorKey, "$lt") == 0)
 		{
 			inputQuals = PushBinaryExpressionQuals(exprIter, inputQuals, indexOptions,
 												   documentExpr, variableSpec,
 												   BsonLessThanMatchIndexFunctionId(),
-												   BsonGreaterThanEqualMatchIndexFunctionId());
+												   BsonGreaterThanMatchIndexFunctionId());
 		}
 		else if (strcmp(operatorKey, "$lte") == 0)
 		{
 			inputQuals = PushBinaryExpressionQuals(exprIter, inputQuals, indexOptions,
 												   documentExpr, variableSpec,
 												   BsonLessThanEqualMatchIndexFunctionId(),
-												   BsonGreaterThanMatchIndexFunctionId());
+												   BsonGreaterThanEqualMatchIndexFunctionId());
 		}
 	}
 
