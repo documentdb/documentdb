@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """The documentdb-local usage-telemetry emitter (usage_telemetry.sh).
 
 Covers what the container is allowed to send and when it must stay silent:
@@ -18,6 +21,12 @@ SCRIPTS_DIR = OSS_ROOT / "documentdb-local" / "scripts"
 EMITTER = SCRIPTS_DIR / "usage_telemetry.sh"
 SETTINGS = SCRIPTS_DIR / "documentdb_local_settings.sh"
 ENTRYPOINT = SCRIPTS_DIR / "emulator_entrypoint.sh"
+ENTRYPOINT_LIBS = tuple(sorted((SCRIPTS_DIR / "lib").glob("*.sh")))
+
+
+def _entrypoint_text():
+    """The entrypoint and the lib/ files it sources."""
+    return "".join(p.read_text(encoding="utf-8") for p in (ENTRYPOINT, *ENTRYPOINT_LIBS))
 PRIVACY = OSS_ROOT / "documentdb-local" / "PRIVACY.md"
 DOCKERFILE = (OSS_ROOT / "packaging" / "gateway" / "docker"
               / "Dockerfile_documentdb_local")
@@ -299,7 +308,7 @@ class WiringTests(unittest.TestCase):
         self.assertEqual(rows, [("--usage-telemetry", "true", "boolish")])
 
     def test_the_entrypoint_starts_and_reaps_the_emitter(self):
-        text = ENTRYPOINT.read_text(encoding="utf-8")
+        text = _entrypoint_text()
         self.assertIn("usage_telemetry.sh", text)
         self.assertIn("--disable-usage-telemetry", text)
         # Started in the background and killed by cleanup(), so `docker stop`
@@ -308,7 +317,7 @@ class WiringTests(unittest.TestCase):
         self.assertRegex(text, r'kill \$USAGE_TELEMETRY_PID')
 
     def test_the_bare_disable_flag_turns_the_setting_off(self):
-        text = ENTRYPOINT.read_text(encoding="utf-8")
+        text = _entrypoint_text()
         block = re.search(r"--disable-usage-telemetry\)(.*?);;", text, re.S)
         self.assertIsNotNone(block, "the --disable-usage-telemetry case is gone")
         self.assertIn("export DOCUMENTDB_USAGE_TELEMETRY=false", block.group(1))
@@ -319,7 +328,7 @@ class WiringTests(unittest.TestCase):
         product: NO_ANALYTICS and DOCUMENTDB_USAGE_TELEMETRY. No
         vendor-specific variable is read at all, so the provider can be
         changed without touching anything an operator has configured."""
-        for path in (SETTINGS, EMITTER, ENTRYPOINT, PRIVACY):
+        for path in (SETTINGS, EMITTER, ENTRYPOINT, *ENTRYPOINT_LIBS, PRIVACY):
             names = set(re.findall(r"\bSCARF_[A-Z_]+\b", path.read_text(encoding="utf-8")))
             with self.subTest(file=path.name):
                 self.assertEqual(names, set())

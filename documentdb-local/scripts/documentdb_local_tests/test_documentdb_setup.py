@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 import re
 import secrets
 import shutil
@@ -5669,6 +5672,7 @@ class ShippedCommentProvenanceTests(unittest.TestCase):
     def _shipped_text_files():
         files = []
         files.extend((OSS_ROOT / "documentdb-local" / "scripts").glob("*.sh"))
+        files.extend((OSS_ROOT / "documentdb-local" / "scripts" / "lib").glob("*.sh"))
         files.extend((OSS_ROOT / "documentdb-local" / "maintainer-scripts" / "gateway").glob("*"))
         files.append(Path(__file__).resolve())
         files.extend(
@@ -9933,7 +9937,7 @@ class ToastCompressionTests(unittest.TestCase):
         self.assertIn('requested="${DOCUMENTDB_DEFAULT_TOAST_COMPRESSION}"', lib)
 
         entrypoint = (
-            OSS_ROOT / "documentdb-local" / "scripts" / "emulator_entrypoint.sh"
+            OSS_ROOT / "documentdb-local" / "scripts" / "lib" / "toast.sh"
         ).read_text(encoding="utf-8")
         # The env var is captured raw first (failure branches gate on what
         # was actually requested), then defaulted to lz4 — the same default
