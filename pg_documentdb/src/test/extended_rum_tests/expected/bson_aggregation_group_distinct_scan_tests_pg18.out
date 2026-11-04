@@ -664,10 +664,11 @@ $Q$, p_ignore_heap_fetches := true);
                      Output: (bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
                      Sort Key: (bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
                      Sort Method: quicksort  Memory: xxxkB
-                     ->  Index Scan using idx_x on documentdb_data.documents_20000 collection (actual rows=8 loops=1)
+                     ->  Index Only Scan using idx_x on documentdb_data.documents_20000 collection (actual rows=8 loops=1)
                            Output: bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
                            Index Cond: (collection.document @<> '{ "x" : { "fullScan" : true } }'::bson)
-(16 rows)
+                           Heap Fetches: xxx
+(17 rows)
 
 ROLLBACK;
 -- ============================================================

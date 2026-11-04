@@ -512,14 +512,16 @@ SELECT documentdb_api.update('db', '{"update": "updateMany", "updates":[{"q": {"
 SELECT documentdb_api.update('db', '{"update": "updateMany", "updates":[{"q": {"_id": {"$lte": 11}},"u":{"$set":{"b": "change" }},"multi":true}]}');
 
 -- index_only_scan_for_find_project_candidate: with enableIndexOnlyScanForFindProject
--- disabled (default) a find with a covered projection over an ordered index is
--- recorded as a candidate so accounts that would benefit can be identified.
+-- disabled a find with a covered projection over an ordered index is recorded as a
+-- candidate so accounts that would benefit can be identified.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "updateMany", "indexes": [ { "key": { "c": 1 }, "storageEngine": { "enableOrderedIndex": true }, "name": "iosfp_c_1" } ] }', true);
+SET documentdb.enableIndexOnlyScanForFindProject TO off;
 SET enable_seqscan TO off;
 SET enable_bitmapscan TO off;
 SELECT document FROM bson_aggregation_find('db', '{ "find": "updateMany", "filter": { "c": { "$gte": 1 } }, "projection": { "c": 1, "_id": 0 } }');
 RESET enable_seqscan;
 RESET enable_bitmapscan;
+RESET documentdb.enableIndexOnlyScanForFindProject;
 
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 
@@ -564,3 +566,14 @@ RESET documentdb.indexTermLimitOverride;
 RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
 RESET documentdb_core.enableCollation;
 SELECT documentdb_api.drop_collection('db', 'collatedTruncationCounter');
+
+-- An empty array marks a composite index without per-path multi-key tracking as
+-- multi-key, which is counted when the empty array is the only array value.
+SET documentdb.enableIndexMetadataGlobalTracking TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "emptyArrayMultiKey", "indexes": [ { "key": { "val": 1 }, "name": "val_1", "enableOrderedIndex": 1 } ] }', true);
+SELECT documentdb_api.insert_one('db', 'emptyArrayMultiKey', '{ "_id": 1, "val": 1 }');
+SELECT count(*) * 0 AS count FROM documentdb_api_internal.command_feature_counter_stats(true);
+SELECT documentdb_api.insert_one('db', 'emptyArrayMultiKey', '{ "_id": 2, "val": [] }');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+RESET documentdb.enableIndexMetadataGlobalTracking;
+SELECT documentdb_api.drop_collection('db', 'emptyArrayMultiKey');

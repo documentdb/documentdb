@@ -168,11 +168,11 @@ SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "scalar", "filte
 
 -- ----------------------------------------------------------------------------
 -- Fixture D: legacy (mkp=false) index with an empty array present. The empty
--- array is NOT reflected in the multi-key state (isMultiKey: false), yet the gate
--- must fall back to the conservative behavior and KEEP the recheck so the empty
--- array is still excluded from $eq null / $gte null / $lte null. Dropping the
--- recheck here would wrongly return the empty-array document -- this is the case
--- the mkp restriction protects.
+-- array marks the index multi-key (isMultiKey: true), and the gate must fall back
+-- to the conservative behavior and KEEP the recheck so the empty array is still
+-- excluded from $eq null / $gte null / $lte null. Dropping the recheck here would
+-- wrongly return the empty-array document -- this is the case the mkp restriction
+-- protects.
 -- ----------------------------------------------------------------------------
 set documentdb.enableIndexMetadataGlobalTracking to off;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('nrg_db', '{ "createIndexes": "legacy", "indexes": [ { "key": { "a.b": 1, "a.c": 1 }, "name": "ab_ac_1", "enableOrderedIndex": 1 } ] }');
@@ -182,17 +182,16 @@ SELECT documentdb_api.insert_one('nrg_db', 'legacy', '{ "_id": 2, "a": { "c": 1 
 SELECT documentdb_api.insert_one('nrg_db', 'legacy', '{ "_id": 3, "a": { "b": [ ], "c": 1 } }');
 SELECT documentdb_api.insert_one('nrg_db', 'legacy', '{ "_id": 4, "a": { "b": 5, "c": 1 } }');
 
--- isMultiKey: false (empty array untracked) but "Rows Removed by Index Recheck: 1"
--- still appears -- the conservative gate keeps the recheck and excludes the empty
--- array (_id 3). Result: literal null + missing (_id 1, 2).
+-- isMultiKey: true and "Rows Removed by Index Recheck: 1" -- the conservative gate
+-- keeps the recheck and excludes the empty array (_id 3). Result: literal null +
+-- missing (_id 1, 2).
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "legacy", "filter": { "a.b": null }, "hint": "ab_ac_1" }') $cmd$);
 SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "legacy", "filter": { "a.b": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "ab_ac_1" }');
 SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "legacy", "filter": { "a.b": { "$gte": null } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "ab_ac_1" }');
 SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "legacy", "filter": { "a.b": { "$lte": null } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "ab_ac_1" }');
 
--- $ne null / $nin over the empty-array-bearing a.b path. a.b is reported
--- non-multi-key (empty array untracked in legacy mode), but $ne / $nin always
+-- $ne null / $nin over the empty-array-bearing a.b path. $ne / $nin always
 -- force the runtime recheck (AddMultiBoundaryForDollarNotIn passes
 -- IndexMultiKeyStatus_Unknown), so the empty array (_id 3) -- which is NOT null --
 -- is correctly KEPT while literal null (_id 1) and missing (_id 2) are excluded.

@@ -301,6 +301,10 @@ typedef bool (*DefaultEnableStatsCreationOnNewCollections_HookType)(void);
 extern DefaultEnableStatsCreationOnNewCollections_HookType
 	default_enable_stats_creation_on_new_collections_hook;
 
+typedef bool (*DefaultEnableIndexOnlyScanForFindProject_HookType)(void);
+extern DefaultEnableIndexOnlyScanForFindProject_HookType
+	default_enable_index_only_scan_for_find_project_hook;
+
 /*
  * Hook for resolving a search operator definition by operator name.
  * Called when the built-in operator list does not contain a match,

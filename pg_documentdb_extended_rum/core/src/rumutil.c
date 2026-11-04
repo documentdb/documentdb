@@ -1258,6 +1258,30 @@ rumUpdateOpclassMetadataInMetapage(Relation index, uint64_t opClassMetadata,
 }
 
 
+/*
+ * Sets or clears the index level multi-key flag on the meta page.
+ * The caller must hold an exclusive lock on the meta page buffer.
+ */
+extern void
+rumWriteMultiKeyStatusInMetapage(Relation index, Buffer metaBuffer, bool isMultiKey)
+{
+	GenericXLogState *state = GenericXLogStart(index);
+	Page metapage = GenericXLogRegisterBuffer(state, metaBuffer, 0);
+	RumMetaPageData *metadata = RumPageGetMeta(metapage);
+
+	if (isMultiKey)
+	{
+		metadata->nPendingHeapTuples |= 1;
+	}
+	else
+	{
+		metadata->nPendingHeapTuples &= ~((int64) 1);
+	}
+
+	GenericXLogFinish(state);
+}
+
+
 Datum
 FunctionCall10Coll(FmgrInfo *flinfo, Oid collation, Datum arg1, Datum arg2,
 				   Datum arg3, Datum arg4, Datum arg5,

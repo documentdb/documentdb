@@ -3450,7 +3450,7 @@ $cmd$);
          indexName: idx_disjoint_en_strength1
          indexKey: {"a": 1}
          indexCollation: en-u-ks-level1
-         isMultiKey: false
+         isMultiKey: true
          startBounds: ["a": [MinKey, "cherry"]]
          rawBounds: ["a": [MinKey, "cherry"], ({ }, MaxKey]]
          innerScanLoops: 21 loops
@@ -3513,7 +3513,7 @@ $cmd$);
          indexName: idx_disjoint_en_strength1
          indexKey: {"a": 1}
          indexCollation: en-u-ks-level1
-         isMultiKey: false
+         isMultiKey: true
          startBounds: ["a": [MinKey, "avocado"]]
          rawBounds: ["a": [MinKey, "avocado"], ({ }, MaxKey]]
          innerScanLoops: 17 loops
@@ -3564,7 +3564,7 @@ $cmd$);
          indexName: idx_disjoint_en_strength1
          indexKey: {"a": 1}
          indexCollation: en-u-ks-level1
-         isMultiKey: false
+         isMultiKey: true
          startBounds: ["a": [MinKey, "aardvark"]]
          rawBounds: ["a": [MinKey, "aardvark"], ({ }, MaxKey]]
          innerScanLoops: 14 loops
@@ -3625,7 +3625,7 @@ $cmd$);
          indexName: idx_disjoint_en_strength1
          indexKey: {"a": 1}
          indexCollation: en-u-ks-level1
-         isMultiKey: false
+         isMultiKey: true
          startBounds: ["a": [MinKey, "")]
          rawBounds: ["a": [MinKey, ""), ["lemon", MaxKey]]
          innerScanLoops: 18 loops
@@ -3733,7 +3733,7 @@ $cmd$);
          indexName: idx_disjoint_en_strength1
          indexKey: {"a": 1}
          indexCollation: en-u-ks-level1
-         isMultiKey: false
+         isMultiKey: true
          indexBounds: ["a": [MinKey, MaxKey]]
          innerScanLoops: 32 loops
          scanType: ordered
@@ -3845,15 +3845,16 @@ $cmd$);
          indexName: idx_disjoint_en_strength1
          indexKey: {"a": 1}
          indexCollation: en-u-ks-level1
-         isMultiKey: false
-         startBounds: ["a": [MinKey, "")]
-         rawBounds: ["a": [MinKey, "grape"], ({ }, MaxKey]], ["a": [MinKey, ""), ["cantaloupe", MaxKey]]
-         innerScanLoops: 21 loops
+         isMultiKey: true
+         startBounds: ["a": [MinKey, "grape"]]
+         rawBounds: ["a": [MinKey, "grape"], ({ }, MaxKey]]
+         innerScanLoops: 26 loops
          scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 24)]
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 33)]
          ->  Index Scan using idx_disjoint_en_strength1 on documents_8117 collection (actual rows=24 loops=1)
                Index Cond: ((document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "grape", "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!<) '{ "a" : "cantaloupe", "collation" : "en-u-ks-level1" }'::bson))
-(16 rows)
+               Rows Removed by Index Recheck: 9
+(17 rows)
 
 -- ---------------------------------------------------------------------------
 -- 21i: Impossible band — excluded range consumes everything
@@ -3894,15 +3895,16 @@ $cmd$);
          indexName: idx_disjoint_en_strength1
          indexKey: {"a": 1}
          indexCollation: en-u-ks-level1
-         isMultiKey: false
-         startBounds: ["a": [MinKey, "")]
-         rawBounds: ["a": [MinKey, "avocado"], ({ }, MaxKey]], ["a": [MinKey, ""), ["lemon", MaxKey]]
-         innerScanLoops: 13 loops
+         isMultiKey: true
+         startBounds: ["a": [MinKey, "avocado"]]
+         rawBounds: ["a": [MinKey, "avocado"], ({ }, MaxKey]]
+         innerScanLoops: 17 loops
          scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 15)]
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 21)]
          ->  Index Scan using idx_disjoint_en_strength1 on documents_8117 collection (actual rows=15 loops=1)
                Index Cond: ((document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "avocado", "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!<) '{ "a" : "lemon", "collation" : "en-u-ks-level1" }'::bson))
-(16 rows)
+               Rows Removed by Index Recheck: 6
+(17 rows)
 
 -- ---------------------------------------------------------------------------
 -- 21j: $not $gte "cherry" — exclusive boundary (< cherry)
@@ -3958,7 +3960,7 @@ $cmd$);
          indexName: idx_disjoint_en_strength1
          indexKey: {"a": 1}
          indexCollation: en-u-ks-level1
-         isMultiKey: false
+         isMultiKey: true
          startBounds: ["a": [MinKey, "cherry")]
          rawBounds: ["a": [MinKey, "cherry"), ({ }, MaxKey]]
          innerScanLoops: 21 loops
@@ -4913,7 +4915,7 @@ $cmd$);
          indexName: idx_disjoint_desc_s1
          indexKey: {"a": -1}
          indexCollation: en-u-ks-level1
-         isMultiKey: false
+         isMultiKey: true
          startBounds: ["a": DESC({ }, MaxKey]]
          rawBounds: ["a": DESC({ }, MaxKey], DESC[MinKey, "cherry"]]
          innerScanLoops: 21 loops
@@ -5005,7 +5007,7 @@ $cmd$);
          indexName: idx_disjoint_desc_s1
          indexKey: {"a": -1}
          indexCollation: en-u-ks-level1
-         isMultiKey: false
+         isMultiKey: true
          indexBounds: ["a": DESC[MinKey, MaxKey]]
          innerScanLoops: 32 loops
          scanType: ordered

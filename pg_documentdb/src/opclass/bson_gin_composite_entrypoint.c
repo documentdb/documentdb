@@ -222,6 +222,7 @@ extern bool EnableReducedCorrelatedNonMultiKeyOrderBy;
 extern bool EnableOrderedSaopMultiRangeSkipAdvance;
 extern bool EnableUniqueNullMissingSemantics;
 extern bool EnableValueOnlyIndexTerms;
+extern bool EnableEmptyArrayMultiKeyMarking;
 
 static void InitializeCompositeTermGenerateState(CompositeTermGenerateState *termState,
 												 BsonGinCompositePathOptions *options);
@@ -233,7 +234,8 @@ static Datum * GenerateCompositeTermsCore(pgbson *doc,
 										  int32_t *nentries, bool addMetadataTerms,
 										  uint64_t *termBlobMetadata,
 										  const CompositeTermGenerationState *
-										  preparedState);
+										  preparedState,
+										  bool reportEmptyArrayAsMultiKey);
 static int32_t GetIndexPathsFromOptions(BsonGinCompositePathOptions *options,
 										const char **indexPaths,
 										int8_t *sortOrders);
@@ -415,9 +417,14 @@ gin_bson_composite_path_extract_value(PG_FUNCTION_ARGS)
 		(BsonGinCompositePathOptions *) PG_GET_OPCLASS_OPTIONS();
 
 	bool addMetadataTerms = true;
+
+	/* Report the empty array counter only on the index write path */
+	bool reportEmptyArrayAsMultiKey = true;
 	Datum *indexEntries = GenerateCompositeTermsCore(bson, options, nentries,
 													 addMetadataTerms,
-													 termBlobMetadata, NULL);
+													 termBlobMetadata, NULL,
+													 reportEmptyArrayAsMultiKey);
+
 	PG_RETURN_POINTER(indexEntries);
 }
 
@@ -2553,6 +2560,7 @@ GenerateCompositeTermsFromOptions(pgbson *document, CompositeTermGenerationState
 {
 	GinEntryPathData pathData = { 0 };
 	bool addMetadataTerms = false;
+	bool reportEmptyArrayAsMultiKey = false;
 	uint64_t termBlobMetadataIgnore = 0;
 
 	/* A volatile expression can change the term format within an execution. */
@@ -2562,7 +2570,8 @@ GenerateCompositeTermsFromOptions(pgbson *document, CompositeTermGenerationState
 														&pathData.terms.index,
 														addMetadataTerms,
 														&termBlobMetadataIgnore,
-														preparedState);
+														preparedState,
+														reportEmptyArrayAsMultiKey);
 	*numTerms = pathData.terms.index;
 	return pathData.terms.entries;
 }
@@ -2623,12 +2632,14 @@ gin_bson_get_composite_path_generated_terms(PG_FUNCTION_ARGS)
 
 		pathData = palloc0(sizeof(GinEntryPathData));
 		bool addMetadataTerms = true;
+		bool reportEmptyArrayAsMultiKey = false;
 		uint64_t termBlobMetadata = 0;
 		pathData->terms.entries = GenerateCompositeTermsCore(document, options,
 															 &pathData->
 															 terms.index,
 															 addMetadataTerms,
-															 &termBlobMetadata, NULL);
+															 &termBlobMetadata, NULL,
+															 reportEmptyArrayAsMultiKey);
 		pathData->terms.entryCapacity = pathData->terms.index;
 		pathData->terms.index = 0;
 		if (termBlobMetadata != 0)
@@ -5601,6 +5612,7 @@ BuildSinglePathTermsForCompositeTerms(pgbson *bson,
 									  uint32_t *pathCountOut,
 									  uint32_t *pathMultiKeyBitMask,
 									  uint32_t *pathTruncationBitMask,
+									  bool reportEmptyArrayAsMultiKey,
 									  List **correlatedTerms,
 									  const CompositeTermGenerationState *preparedState)
 {
@@ -5644,16 +5656,19 @@ BuildSinglePathTermsForCompositeTerms(pgbson *bson,
 	context.traverseOptionsFunc = &GetCompositePathGenerateTraverseOption;
 	SetGenerateTermsContextFlags(&context);
 
-	/* Empty arrays make a path multi-key. This is surfaced when the index tracks
-	 * per-path multi-key status via opclass metadata (the "mkp" reloption). For a
-	 * composite wildcard index we surface it in the default term-based mode as
-	 * well: a wildcard column can match any path, so an empty array anywhere makes
-	 * the wildcard path multi-key, and the index must report that status
-	 * consistently regardless of whether metadata-based tracking is enabled. */
-	context.markEmptyArrayAsMultiKey = options->enableMetadataBasedTracking ||
-									   options->wildcardPathIndex >= 0;
-
 	GenerateTermsForPath(bson, &context);
+
+	/* An empty array makes a path multi-key. Indexes with per-path multi-key
+	 * tracking (the "mkp" reloption) always surface it. A composite wildcard index
+	 * does too: a wildcard column can match any path, so an empty array anywhere
+	 * makes the wildcard path multi-key regardless of metadata-based tracking.
+	 * Other composite indexes surface it behind a kill switch. */
+	bool alwaysMarkEmptyArrayAsMultiKey = options->enableMetadataBasedTracking ||
+										  options->wildcardPathIndex >= 0;
+	bool markEmptyArrayAsMultiKey = alwaysMarkEmptyArrayAsMultiKey ||
+									EnableEmptyArrayMultiKeyMarking;
+	bool hasArrayMultiKeyPath = false;
+	bool hasEmptyArrayOnlyMultiKeyPath = false;
 
 	/* We will have at least 1 term */
 	uint32_t totalTermCount = 1;
@@ -5667,6 +5682,13 @@ BuildSinglePathTermsForCompositeTerms(pgbson *bson,
 			termState->pathData[i].hasArrayAncestors)
 		{
 			*pathMultiKeyBitMask |= (UINT32_C(1) << i);
+			hasArrayMultiKeyPath = true;
+		}
+		else if (markEmptyArrayAsMultiKey &&
+				 termState->pathData[i].hasEmptyArrayValues)
+		{
+			*pathMultiKeyBitMask |= (UINT32_C(1) << i);
+			hasEmptyArrayOnlyMultiKeyPath = true;
 		}
 
 		if (termState->pathData[i].hasTruncatedTerms)
@@ -5682,6 +5704,16 @@ BuildSinglePathTermsForCompositeTerms(pgbson *bson,
 							  termState->pathData[i].hasTruncatedTerms;
 
 		totalTermCount = totalTermCount * termState->pathData[i].terms.index;
+	}
+
+	/* Count each document once when only the empty array rule made it multi-key;
+	 * a multi-term entry is already multi-key, so the empty array isn't the cause
+	 * there. */
+	if (reportEmptyArrayAsMultiKey && !alwaysMarkEmptyArrayAsMultiKey &&
+		hasEmptyArrayOnlyMultiKeyPath && !hasArrayMultiKeyPath &&
+		totalTermCount == 1)
+	{
+		ReportFeatureUsage(FEATURE_INDEX_EMPTY_ARRAY_MARKED_MULTI_KEY);
 	}
 
 	*correlatedTerms = termState->correlatedTerms;
@@ -5879,7 +5911,8 @@ static Datum *
 GenerateCompositeTermsCore(pgbson *bson, BsonGinCompositePathOptions *options,
 						   int32_t *nentries, bool addMetadataTerms,
 						   uint64_t *termBlobMetadata,
-						   const CompositeTermGenerationState *preparedState)
+						   const CompositeTermGenerationState *preparedState,
+						   bool reportEmptyArrayAsMultiKey)
 {
 	CompositeTermGenerateState termState;
 	GinEntrySet entrySet[INDEX_MAX_KEYS];
@@ -5900,6 +5933,7 @@ GenerateCompositeTermsCore(pgbson *bson, BsonGinCompositePathOptions *options,
 														   &pathCount,
 														   &pathMultiKeyBitMask,
 														   &pathTruncationBitMask,
+														   reportEmptyArrayAsMultiKey,
 														   &correlatedTerms,
 														   preparedState);
 
@@ -6167,6 +6201,7 @@ GenerateCompositeExtractQueryUniqueEqual(pgbson *bson,
 	List *correlatedTerms = NIL;
 	uint32_t pathMultiKeyBitMask = 0;
 	uint32_t pathTruncationBitMask = 0;
+	bool reportEmptyArrayAsMultiKey = false;
 
 	totalTermCount = BuildSinglePathTermsForCompositeTerms(bson, options,
 														   entrySet,
@@ -6175,6 +6210,7 @@ GenerateCompositeExtractQueryUniqueEqual(pgbson *bson,
 														   &pathCount,
 														   &pathMultiKeyBitMask,
 														   &pathTruncationBitMask,
+														   reportEmptyArrayAsMultiKey,
 														   &correlatedTerms, NULL);
 
 	/* Now that we have the per term counts, generate the overall terms */

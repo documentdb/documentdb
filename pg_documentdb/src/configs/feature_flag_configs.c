@@ -229,9 +229,17 @@ bool EnableCollatedUniqueIndexes =
 bool EnableFailureOnParallelIndexArraysForMetadataTracking =
 	DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS_FOR_METADATA_TRACKING;
 
-/* Added in v0.114, Pending stabilization, enable in v1.2 */
-#define DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT false
+/* Added on v0.114, enabled on v1.3, remove after v1.9 */
+#define DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT true
 bool EnableIndexOnlyScanForFindProject = DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT;
+
+/*
+ * Kill switch for marking composite indexes without per-path multi-key tracking as
+ * multi-key when an indexed path holds an empty array.
+ * Added on v1.3, enabled on v1.3, remove after v1.5
+ */
+#define DEFAULT_ENABLE_EMPTY_ARRAY_MULTI_KEY_MARKING true
+bool EnableEmptyArrayMultiKeyMarking = DEFAULT_ENABLE_EMPTY_ARRAY_MULTI_KEY_MARKING;
 
 /* Added on v1.1, enabled on v1.1, remove after v1.3 */
 #define DEFAULT_ENABLE_MULTI_KEY_FILTER_INDEX_ONLY_SCAN true
@@ -1472,6 +1480,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether or not to enable index only scan for find with project operations."),
 		NULL, &EnableIndexOnlyScanForFindProject,
 		DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_empty_array_multi_key_marking", newGucPrefix),
+		gettext_noop(
+			"Whether an empty array marks a non-wildcard composite index without per-path multi-key tracking as multi-key."),
+		NULL, &EnableEmptyArrayMultiKeyMarking,
+		DEFAULT_ENABLE_EMPTY_ARRAY_MULTI_KEY_MARKING,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

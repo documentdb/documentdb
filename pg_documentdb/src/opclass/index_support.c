@@ -66,6 +66,7 @@
 #include "aggregation/bson_query_common.h"
 #include "index_am/documentdb_rum.h"
 #include "index_am/index_am_extend_query.h"
+#include "api_hooks.h"
 
 typedef struct
 {
@@ -345,7 +346,6 @@ typedef struct RctQualInfo
 extern bool EnableExtendedExplainPlans;
 extern bool EnableExplainScanIndexCosts;
 extern bool EnableOrderByIndexTerm;
-extern bool EnableIndexOnlyScanForFindProject;
 extern bool EnableMultiKeyFilterIndexOnlyScan;
 extern bool TrackIndexOnlyScanFindCandidate;
 extern bool EnableExtendedIndexes;
@@ -3143,6 +3143,8 @@ CheckFieldCoverage(Node *node, void *context)
 		/* Check if the first argument is the document Var and the second argument is a constant path. */
 		if (list_length(funcExpr->args) >= 2)
 		{
+			bool enableIndexOnlyScanForFindProject =
+				ShouldEnableIndexOnlyScanForFindProject();
 			Expr *firstArg = StripRelabels(linitial(funcExpr->args));
 			Expr *secondArg = StripRelabels(lsecond(funcExpr->args));
 			if (IsA(firstArg, Var) && IsCurrentScanDocumentVar((Var *) firstArg,
@@ -3159,14 +3161,14 @@ CheckFieldCoverage(Node *node, void *context)
 				{
 					fieldPath = TryExtractFieldPathFromConst(secondArg);
 				}
-				else if ((EnableIndexOnlyScanForFindProject ||
+				else if ((enableIndexOnlyScanForFindProject ||
 						  TrackIndexOnlyScanFindCandidate) &&
 						 IsProjectFunctionOid(funcExpr->funcid))
 				{
 					bool isProjectionCoveredByIndex = IsProjectionCoveredByIndex(
 						secondArg, state);
 
-					if (isProjectionCoveredByIndex && !EnableIndexOnlyScanForFindProject)
+					if (isProjectionCoveredByIndex && !enableIndexOnlyScanForFindProject)
 					{
 						/* Covered but feature off: count the candidate, but leave
 						 * the target uncovered so we don't do the index-only scan. */

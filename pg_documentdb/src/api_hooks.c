@@ -26,6 +26,7 @@
 extern bool DefaultUseCompositeOpClass;
 extern bool EnableExtendedIndexes;
 extern bool EnablePlannerStatisticsNewCollections;
+extern bool EnableIndexOnlyScanForFindProject;
 
 IsMetadataCoordinator_HookType is_metadata_coordinator_hook = NULL;
 IsClusterInitialized_HookType is_cluster_initialized_hook = NULL;
@@ -95,6 +96,9 @@ DefaultEnableCompositeOpClass_HookType
 
 DefaultEnableStatsCreationOnNewCollections_HookType
 	default_enable_stats_creation_on_new_collections_hook = NULL;
+
+DefaultEnableIndexOnlyScanForFindProject_HookType
+	default_enable_index_only_scan_for_find_project_hook = NULL;
 
 ExtendedSearchOperatorDefByName_HookType
 	extended_search_operator_def_by_name_hook = NULL;
@@ -787,6 +791,23 @@ ShouldEnablePlannerStatisticsNewCollections(void)
 	}
 
 	return EnablePlannerStatisticsNewCollections;
+}
+
+
+/*
+ * Returns whether a find with a projection that is fully covered by an index
+ * should be planned as an index-only scan. Extensions can override the default
+ * (e.g. to gate it on the cluster's initialized version) via the hook.
+ */
+bool
+ShouldEnableIndexOnlyScanForFindProject(void)
+{
+	if (default_enable_index_only_scan_for_find_project_hook != NULL)
+	{
+		return default_enable_index_only_scan_for_find_project_hook();
+	}
+
+	return EnableIndexOnlyScanForFindProject;
 }
 
 

@@ -1126,6 +1126,7 @@ GenerateTermsForPath(pgbson *bson, GenerateTermsContext *context)
 		pathData->hasTruncatedTerms = false;
 		pathData->hasArrayAncestors = false;
 		pathData->hasArrayValues = false;
+		pathData->hasEmptyArrayValues = false;
 	}
 
 	bool inArrayContext = false;
@@ -1604,11 +1605,12 @@ GenerateTermPath(bson_iter_t *bsonIter, const char *basePath,
 			GinEntryPathData *pathData = context->getPathDataFunc(context->pathDataState,
 																  pathIndex);
 
-			/* An empty array makes the path multi-key; record it when per-path
-			 * multi-key metadata tracking is enabled. */
-			if (isEmptyArrayMatch && context->markEmptyArrayAsMultiKey)
+			/* An empty array is indexed as undefined, so index only scans can't
+			 * reconstruct the original [] value. Record it so the caller can mark
+			 * the path multi-key. */
+			if (isEmptyArrayMatch)
 			{
-				pathData->hasArrayValues = true;
+				pathData->hasEmptyArrayValues = true;
 			}
 
 			if (pathData->skipGenerateTopLevelDocumentTerm &&

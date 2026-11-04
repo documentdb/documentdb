@@ -17,6 +17,7 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "access/xact.h"
 #include "miscadmin.h"
 #include "storage/indexfsm.h"
 #include "storage/lmgr.h"
@@ -36,6 +37,7 @@
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_prune_empty_entries_on_index);
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_repair_incomplete_split_on_index);
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_repair_revive_all_pages_and_tuples);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_repair_unset_multi_key_status);
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_test_set_incomplete_split_on_page);
 
 
@@ -145,6 +147,72 @@ RMGR_PG_FUNCTION_DEF(documentdb_rum_repair_revive_all_pages_and_tuples)
 
 	index_close(indrel, RowExclusiveLock);
 	PG_RETURN_VOID();
+}
+
+
+/*
+ * Given an index specified by the indexRelId, clears the index level multi-key
+ * flag on the meta page. Returns true if the flag was cleared.
+ * This is an emergency tool for indexes that were marked multi-key only because
+ * of empty arrays: the caller must ensure the index has no values that would mark
+ * it multi-key under the current setting (arrays, or empty arrays while empty array
+ * marking is on), since clearing the flag otherwise returns wrong query results.
+ * Indexes that track multi-key status in the opclass metadata on the meta page
+ * are rejected since the flag shares storage with that metadata, as are indexes
+ * that are not ready or not valid.
+ * The meta page change is not undone on rollback, so the array removal must be
+ * committed first: calls inside a transaction block or subtransaction, or in a
+ * transaction that has already written data (e.g. a DO block or function that
+ * removes the arrays and then calls this), are rejected.
+ */
+RMGR_PG_FUNCTION_DEF(documentdb_rum_repair_unset_multi_key_status)
+{
+	Oid indexRelId = PG_GETARG_OID(0);
+	bool cleared = false;
+
+	if (IsTransactionBlock() || IsSubTransaction() ||
+		GetTopTransactionIdIfAny() != InvalidTransactionId)
+	{
+		ereport(ERROR, (errmsg("clearing the multi-key status must run in its own "
+							   "transaction, after the array removal is committed")));
+	}
+
+	/* ShareLock blocks concurrent inserts from setting the flag while we clear it */
+	Relation indrel = index_open(indexRelId, ShareLock);
+	if (!indrel->rd_index->indisready || !indrel->rd_index->indisvalid)
+	{
+		ereport(ERROR, (errmsg("index \"%s\" is not ready or not valid; reindex instead",
+							   RelationGetRelationName(indrel))));
+	}
+
+	RumStatsData statsData;
+
+	/* This call at least validates the meta page state */
+	rumGetStats(indrel, &statsData);
+
+	Buffer metaBuffer = ReadBuffer(indrel, RUM_METAPAGE_BLKNO);
+	LockBuffer(metaBuffer, RUM_EXCLUSIVE);
+
+	RumMetaPageData *metadata = RumPageGetMeta(BufferGetPage(metaBuffer));
+	uint64 multiKeyStatus = (uint64) metadata->nPendingHeapTuples;
+	if (multiKeyStatus > 1)
+	{
+		UnlockReleaseBuffer(metaBuffer);
+		index_close(indrel, ShareLock);
+		ereport(ERROR, (errmsg("index tracks multi-key status in opclass "
+							   "metadata (%lu); reindex instead",
+							   (unsigned long) multiKeyStatus)));
+	}
+
+	if (multiKeyStatus == 1)
+	{
+		rumWriteMultiKeyStatusInMetapage(indrel, metaBuffer, false);
+		cleared = true;
+	}
+
+	UnlockReleaseBuffer(metaBuffer);
+	index_close(indrel, ShareLock);
+	PG_RETURN_BOOL(cleared);
 }
 
 

@@ -574,6 +574,8 @@ extern void rumUpdateStats(Relation index, const RumStatsData *stats,
 						   bool isBuild);
 extern void rumUpdateOpclassMetadataInMetapage(Relation index, uint64_t opClassMetadata,
 											   bool isBuild);
+extern void rumWriteMultiKeyStatusInMetapage(Relation index, Buffer metaBuffer,
+											 bool isMultiKey);
 
 /* ruminsert.c */
 extern BlockNumber rumCreatePostingTree(RumState *rumstate, OffsetNumber attnum,
