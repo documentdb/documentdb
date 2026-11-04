@@ -24,8 +24,8 @@ use documentdb_gateway_core::{
     error::{DocumentDBError, ErrorCode, ErrorKind},
     postgres::{
         conn_mgmt::{
-            run_request_with_retries, Connection, ConnectionSource, QueryOptions, RequestOptions,
-            StatementError,
+            run_request_with_retries, Connection, ConnectionPool, ConnectionSource, QueryOptions,
+            RequestOptions, StatementError,
         },
         ScopedTransaction, Transaction,
     },
@@ -465,9 +465,9 @@ async fn scoped_transaction_drop_clears_flag_after_rollback() {
 /// A connection released while a transaction is still open must never be handed
 /// to a later caller from inside that transaction.
 ///
-/// The primary pool recycles with `RecyclingMethod::Fast`, so nothing else
-/// resets the session, and the abandoned transaction's snapshot would silently
-/// serve stale reads to unrelated requests.
+/// The pool recycles with `RecyclingMethod::Fast`, and the session reset on
+/// checkout does not end a transaction, so the abandoned transaction's
+/// snapshot would silently serve stale reads to unrelated requests.
 #[tokio::test]
 async fn dropping_connection_in_transaction_rolls_back_before_pool_reuse() {
     let setup_config = setup_configuration();
@@ -1046,4 +1046,242 @@ async fn statements_after_an_abandoned_one_fail_without_waiting() {
         elapsed < Duration::from_secs(1),
         "it must fail immediately rather than waiting out the new deadline, took {elapsed:?}"
     );
+}
+
+/// Checks a connection out of `pool` outside any request.
+async fn checkout(pool: &ConnectionPool) -> Connection {
+    Connection::new(
+        pool.acquire_connection().await.unwrap(),
+        false,
+        pool.command_deadline(),
+    )
+}
+
+async fn backend_pid(connection: &Connection) -> i32 {
+    connection
+        .query("SELECT pg_backend_pid()", &[], &[])
+        .await
+        .unwrap()[0]
+        .get(0)
+}
+
+async fn statement_timeout(connection: &Connection) -> String {
+    connection
+        .query("SELECT current_setting('statement_timeout')", &[], &[])
+        .await
+        .unwrap()[0]
+        .get(0)
+}
+
+/// A temporary table survives for the life of the session unless the session
+/// is reset, so its presence shows whether a reset ran between two checkouts.
+async fn create_session_marker(connection: &Connection) {
+    connection
+        .batch_execute("CREATE TEMP TABLE session_marker ()")
+        .await
+        .unwrap();
+}
+
+async fn has_session_marker(connection: &Connection) -> bool {
+    connection
+        .query(
+            "SELECT to_regclass('pg_temp.session_marker') IS NOT NULL",
+            &[],
+            &[],
+        )
+        .await
+        .unwrap()[0]
+        .get(0)
+}
+
+/// Issues a session-level `SET statement_timeout` the way requests that cannot
+/// run inside a transaction do, and reports what the request observed.
+async fn run_session_timeout_request(
+    source: ConnectionSource<'_>,
+    timeout_ms: u64,
+) -> (i32, String, bool) {
+    let request_tracker = RequestTracker::new();
+    let ping = ping_request();
+    let ctx = RequestContext::new("", &ping, &request_tracker);
+
+    run_request_with_retries(
+        source,
+        QueryOptions::builder()
+            .retry_request(false)
+            .supports_backend_timeout(false)
+            .supports_transaction_timeout(false)
+            .build(),
+        RequestOptions::new(false, Some(timeout_ms)),
+        Duration::from_secs(30),
+        &TestConfiguration::default(),
+        &ctx,
+        |connection| async move {
+            assert!(!connection.in_transaction());
+            Ok::<_, StatementError>((
+                backend_pid(&connection).await,
+                statement_timeout(&connection).await,
+                connection.session_state_modified(),
+            ))
+        },
+    )
+    .await
+    .unwrap()
+}
+
+/// A session-level `statement_timeout` must not reach the next borrower, and
+/// removing it must reset the existing backend rather than replace it.
+#[tokio::test]
+async fn session_level_statement_timeout_is_reset_before_reuse() {
+    let setup_config = setup_configuration();
+    // A single connection guarantees every checkout reuses the same backend
+    // unless the pool discards it.
+    let pool =
+        build_connection_pool(&setup_config, &setup_config.postgres_system_user.clone(), 1).await;
+
+    let (pid, default_timeout) = {
+        let connection = checkout(&pool).await;
+        create_session_marker(&connection).await;
+        (
+            backend_pid(&connection).await,
+            statement_timeout(&connection).await,
+        )
+    };
+    assert_ne!(default_timeout, "4321ms");
+
+    let (request_pid, request_timeout, modified) =
+        run_session_timeout_request(ConnectionSource::Pool(&pool), 4321).await;
+    assert_eq!(request_pid, pid);
+    assert_eq!(request_timeout, "4321ms");
+    assert!(modified, "a session-level SET must request a session reset");
+
+    let reused = checkout(&pool).await;
+    assert_eq!(
+        backend_pid(&reused).await,
+        pid,
+        "the reset must reuse the backend rather than reconnect"
+    );
+    assert_eq!(statement_timeout(&reused).await, default_timeout);
+    assert!(
+        !has_session_marker(&reused).await,
+        "the session reset must run before the connection is reused"
+    );
+    assert!(!reused.session_state_modified());
+    assert_eq!(pool.status().connections_created(), 1);
+
+    // The reset runs once per modification, not on every later checkout.
+    create_session_marker(&reused).await;
+    drop(reused);
+    let unmodified = checkout(&pool).await;
+    assert_eq!(backend_pid(&unmodified).await, pid);
+    assert!(
+        has_session_marker(&unmodified).await,
+        "a connection whose session state was not modified must not be reset"
+    );
+}
+
+/// `SET LOCAL` reverts at COMMIT, so a transaction-scoped timeout leaves the
+/// connection on the no-reset fast path.
+#[tokio::test]
+async fn transaction_scoped_statement_timeout_does_not_reset_the_session() {
+    let setup_config = setup_configuration();
+    let pool =
+        build_connection_pool(&setup_config, &setup_config.postgres_system_user.clone(), 1).await;
+
+    let default_timeout = {
+        let connection = checkout(&pool).await;
+        create_session_marker(&connection).await;
+        statement_timeout(&connection).await
+    };
+
+    let request_tracker = RequestTracker::new();
+    let ping = ping_request();
+    let ctx = RequestContext::new("", &ping, &request_tracker);
+    let (request_timeout, modified) = run_request_with_retries(
+        ConnectionSource::Pool(&pool),
+        QueryOptions::builder()
+            .retry_request(false)
+            .supports_backend_timeout(false)
+            .supports_transaction_timeout(true)
+            .build(),
+        RequestOptions::new(false, Some(4321)),
+        Duration::from_secs(30),
+        &TestConfiguration::default(),
+        &ctx,
+        |connection| async move {
+            assert!(connection.in_transaction());
+            Ok::<_, StatementError>((
+                statement_timeout(&connection).await,
+                connection.session_state_modified(),
+            ))
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(request_timeout, "4321ms");
+    assert!(
+        !modified,
+        "a transaction-scoped SET must not request a reset"
+    );
+
+    let reused = checkout(&pool).await;
+    assert_eq!(statement_timeout(&reused).await, default_timeout);
+    assert!(
+        has_session_marker(&reused).await,
+        "a transaction-scoped timeout must not trigger a session reset"
+    );
+}
+
+/// A cursor holds its connection across requests, so the reset has to follow
+/// the connection back into the pool rather than the request that set it.
+#[tokio::test]
+async fn session_level_statement_timeout_on_a_held_connection_is_reset_after_release() {
+    let setup_config = setup_configuration();
+    let pool =
+        build_connection_pool(&setup_config, &setup_config.postgres_system_user.clone(), 1).await;
+
+    let held = Arc::new(checkout(&pool).await);
+    let pid = backend_pid(&held).await;
+    let default_timeout = statement_timeout(&held).await;
+
+    let (_, request_timeout, modified) =
+        run_session_timeout_request(ConnectionSource::Cursor(Arc::clone(&held)), 4321).await;
+    assert_eq!(request_timeout, "4321ms");
+    assert!(modified);
+    drop(held);
+
+    let reused = checkout(&pool).await;
+    assert_eq!(backend_pid(&reused).await, pid);
+    assert_eq!(statement_timeout(&reused).await, default_timeout);
+}
+
+/// A connection that cannot be reset must be replaced, never handed to the
+/// next borrower in an unknown state.
+#[tokio::test]
+async fn connection_whose_session_reset_fails_is_replaced() {
+    let setup_config = setup_configuration();
+    let pool =
+        build_connection_pool(&setup_config, &setup_config.postgres_system_user.clone(), 1).await;
+
+    let pid = {
+        let connection = checkout(&pool).await;
+        let pid = backend_pid(&connection).await;
+        // An aborted transaction the gateway did not track rejects every
+        // statement of the reset until it is rolled back.
+        connection.batch_execute("BEGIN").await.unwrap();
+        connection
+            .batch_execute("SELECT 1 / 0")
+            .await
+            .expect_err("division by zero must abort the transaction");
+        connection.mark_session_state_modified();
+        pid
+    };
+
+    let replacement = checkout(&pool).await;
+    assert_ne!(
+        backend_pid(&replacement).await,
+        pid,
+        "a connection whose reset failed must be discarded"
+    );
+    assert!(!replacement.session_state_modified());
+    assert_eq!(pool.status().connections_created(), 2);
 }

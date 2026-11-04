@@ -16,6 +16,7 @@ The full license texts for all dependencies are located in the 'pg_documentdb_gw
 - hex (MIT OR Apache-2.0)
 - metrics (MIT)
 - nacelle (MIT)
+- num_cpus (MIT OR Apache-2.0)
 - once_cell (MIT OR Apache-2.0)
 - openssl (Apache-2.0)
 - rand (MIT OR Apache-2.0)

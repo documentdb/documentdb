@@ -17,7 +17,7 @@ use crate::{
         ENABLE_WRITE_CONCERN_VALIDATION_KEY, SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS,
         SOCKET_CONNECTION_IDLE_TIMEOUT_KEY,
     },
-    postgres::conn_mgmt,
+    postgres::conn_mgmt::{self, get_fe_system_connection_budget},
 };
 
 pub const POSTGRES_RECOVERY_KEY: &str = "IsPostgresInRecovery";
@@ -25,6 +25,7 @@ pub const MAX_REQUEST_TIMEOUT_DEFAULT_SEC: u64 = 120;
 pub const MAX_REQUEST_TIMEOUT_SEC_KEY: &str = "max_request_timeout_sec";
 pub const TRANSACTION_TIMEOUT_DEFAULT_SEC: u64 = 30;
 pub const TRANSACTION_TIMEOUT_SEC_KEY: &str = "transaction_timeout_sec";
+const MIN_BACKEND_CONNECTION_BUDGET: usize = 7;
 pub const DEFAULT_GATEWAY_MAX_CLIENT_CONNECTIONS: u64 = 128_000;
 pub const DEFAULT_GATEWAY_MAX_CLIENT_CONNECTION_PER_SECOND: u64 = 1500;
 
@@ -78,6 +79,8 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
     fn get_bool(&self, key: &str, default: bool) -> bool;
     fn get_i32(&self, key: &str, default: i32) -> i32;
     fn get_u64(&self, key: &str, default: u64) -> u64;
+    /// Reads an unsigned machine-sized value, using the default when unset or invalid.
+    fn get_usize(&self, key: &str, default: usize) -> usize;
     fn equals_value(&self, key: &str, value: &str) -> bool;
     fn topology(&self) -> RawBson;
     // Determines the maximum number of connections used for the backend pools
@@ -286,17 +289,21 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
         value
     }
 
-    #[expect(clippy::cast_possible_truncation, reason = "value fits in i32")]
-    #[expect(clippy::cast_possible_wrap, reason = "value is small positive")]
-    #[expect(clippy::cast_sign_loss, reason = "value is always positive")]
-    fn system_connection_budget(&self) -> usize {
-        let min_system_connections = (conn_mgmt::SYSTEM_REQUESTS_MAX_CONNECTIONS
-            + conn_mgmt::AUTHENTICATION_MAX_CONNECTIONS)
-            as i32;
-        let system_connection_budget =
-            self.get_i32("systemConnectionBudget", min_system_connections);
+    /// Returns the configured backend reservation with the minimum budget enforced.
+    #[must_use]
+    fn be_connection_budget(&self) -> usize {
+        let backend_connection_budget =
+            self.get_usize("systemConnectionBudget", MIN_BACKEND_CONNECTION_BUDGET);
 
-        system_connection_budget as usize
+        backend_connection_budget.max(MIN_BACKEND_CONNECTION_BUDGET)
+    }
+
+    /// Returns the combined backend reservation and gateway authentication/system budget.
+    /// The total saturates at the maximum representable budget.
+    #[must_use]
+    fn system_connection_budget(&self) -> usize {
+        let fe_system_budget = get_fe_system_connection_budget();
+        self.be_connection_budget().saturating_add(fe_system_budget)
     }
 
     fn connect_timeout(&self) -> Option<Duration> {
@@ -389,6 +396,40 @@ mod tests {
         let config = TestDynamicConfiguration::default();
 
         assert!(config.enable_write_procedures());
+    }
+
+    #[test]
+    fn system_connection_budget_uses_default() {
+        let config = TestDynamicConfiguration::default();
+
+        assert_eq!(
+            config.system_connection_budget(),
+            MIN_BACKEND_CONNECTION_BUDGET + get_fe_system_connection_budget()
+        );
+    }
+
+    #[test]
+    fn system_connection_budget_cannot_reduce_default_capacity() {
+        let config = TestDynamicConfiguration::default();
+
+        for value in 0..MIN_BACKEND_CONNECTION_BUDGET as u64 {
+            config.set_u64("systemConnectionBudget", value);
+            assert_eq!(
+                config.system_connection_budget(),
+                MIN_BACKEND_CONNECTION_BUDGET + get_fe_system_connection_budget()
+            );
+        }
+    }
+
+    #[test]
+    fn system_connection_budget_allows_additional_capacity() {
+        let config = TestDynamicConfiguration::default();
+        config.set_u64("systemConnectionBudget", 100);
+
+        assert_eq!(
+            config.system_connection_budget(),
+            100 + get_fe_system_connection_budget()
+        );
     }
 
     #[test]

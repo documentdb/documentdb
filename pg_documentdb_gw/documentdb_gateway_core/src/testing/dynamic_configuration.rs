@@ -31,6 +31,8 @@ const UNSET_U64: u64 = u64::MAX;
 #[derive(Debug)]
 pub struct TestDynamicConfiguration {
     bool_overrides: RwLock<HashMap<&'static str, bool>>,
+    i32_overrides: RwLock<HashMap<&'static str, i32>>,
+    u64_overrides: RwLock<HashMap<&'static str, u64>>,
     send_shutdown_responses: AtomicBool,
     allow_transaction_snapshot: AtomicBool,
     enable_role_crud: AtomicBool,
@@ -47,6 +49,8 @@ impl Default for TestDynamicConfiguration {
     fn default() -> Self {
         Self {
             bool_overrides: RwLock::new(HashMap::new()),
+            i32_overrides: RwLock::new(HashMap::new()),
+            u64_overrides: RwLock::new(HashMap::new()),
             send_shutdown_responses: AtomicBool::new(false),
             allow_transaction_snapshot: AtomicBool::new(false),
             enable_role_crud: AtomicBool::new(false),
@@ -64,6 +68,20 @@ impl Default for TestDynamicConfiguration {
 impl TestDynamicConfiguration {
     pub fn set_bool(&self, key: &'static str, value: bool) {
         self.bool_overrides
+            .write()
+            .expect("test configuration lock")
+            .insert(key, value);
+    }
+
+    pub fn set_i32(&self, key: &'static str, value: i32) {
+        self.i32_overrides
+            .write()
+            .expect("test configuration lock")
+            .insert(key, value);
+    }
+
+    pub fn set_u64(&self, key: &'static str, value: u64) {
+        self.u64_overrides
             .write()
             .expect("test configuration lock")
             .insert(key, value);
@@ -137,11 +155,24 @@ impl DynamicConfiguration for TestDynamicConfiguration {
         }
     }
 
-    fn get_i32(&self, _: &str, default: i32) -> i32 {
-        default
+    fn get_i32(&self, key: &str, default: i32) -> i32 {
+        self.i32_overrides
+            .read()
+            .expect("test configuration lock")
+            .get(key)
+            .copied()
+            .unwrap_or(default)
     }
 
     fn get_u64(&self, key: &str, default: u64) -> u64 {
+        if let Some(value) = self
+            .u64_overrides
+            .read()
+            .expect("test configuration lock")
+            .get(key)
+        {
+            return *value;
+        }
         match key {
             SOCKET_CONNECTION_IDLE_TIMEOUT_KEY => {
                 let value = self
@@ -165,6 +196,10 @@ impl DynamicConfiguration for TestDynamicConfiguration {
             }
             _ => default,
         }
+    }
+
+    fn get_usize(&self, key: &str, default: usize) -> usize {
+        usize::try_from(self.get_u64(key, default as u64)).unwrap_or(default)
     }
 
     fn equals_value(&self, _: &str, _: &str) -> bool {
@@ -215,6 +250,48 @@ impl DynamicConfiguration for TestDynamicConfiguration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsigned_configuration_uses_defaults() {
+        let config = TestDynamicConfiguration::default();
+
+        assert_eq!(config.get_u64("systemConnectionBudget", u64::MAX), u64::MAX);
+        assert_eq!(
+            config.get_usize("systemConnectionBudget", usize::MAX),
+            usize::MAX
+        );
+    }
+
+    #[test]
+    fn unsigned_configuration_uses_overrides() {
+        let config = TestDynamicConfiguration::default();
+
+        for value in [0, 42, usize::MAX] {
+            config.set_u64("systemConnectionBudget", value as u64);
+
+            assert_eq!(config.get_u64("systemConnectionBudget", 10), value as u64);
+            assert_eq!(config.get_usize("systemConnectionBudget", 10), value);
+        }
+    }
+
+    #[test]
+    fn unsigned_configuration_does_not_read_signed_overrides() {
+        let config = TestDynamicConfiguration::default();
+        config.set_i32("systemConnectionBudget", -1);
+
+        assert_eq!(config.get_i32("systemConnectionBudget", 10), -1);
+        assert_eq!(config.get_u64("systemConnectionBudget", 10), 10);
+        assert_eq!(config.get_usize("systemConnectionBudget", 10), 10);
+    }
+
+    #[cfg(target_pointer_width = "32")]
+    #[test]
+    fn usize_configuration_uses_default_when_override_is_too_large() {
+        let config = TestDynamicConfiguration::default();
+        config.set_u64("systemConnectionBudget", u64::from(u32::MAX) + 1);
+
+        assert_eq!(config.get_usize("systemConnectionBudget", 10), 10);
+    }
 
     #[test]
     fn socket_connection_idle_timeout_uses_default() {

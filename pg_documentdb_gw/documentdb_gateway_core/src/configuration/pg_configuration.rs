@@ -382,6 +382,9 @@ impl DynamicConfiguration for PgConfiguration {
             .get(key)
             .map_or(default, |v| v.parse::<u64>().unwrap_or(default))
     }
+    fn get_usize(&self, key: &str, default: usize) -> usize {
+        usize::try_from(self.get_u64(key, default as u64)).unwrap_or(default)
+    }
     fn equals_value(&self, key: &str, value: &str) -> bool {
         self.values.load_full().get(key).is_some_and(|v| v == value)
     }

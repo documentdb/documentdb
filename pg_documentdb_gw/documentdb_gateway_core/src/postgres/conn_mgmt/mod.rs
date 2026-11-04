@@ -19,8 +19,8 @@ pub use connection::{
 };
 pub use connection_pool::{command_deadline_for, ConnectionPool, PoolConnection};
 pub use pool_manager::{
-    clean_unused_pools, create_connection_pool_manager, sample_pool_metrics, PoolManager,
-    AUTHENTICATION_MAX_CONNECTIONS, SYSTEM_REQUESTS_MAX_CONNECTIONS,
+    clean_unused_pools, create_connection_pool_manager, get_fe_system_connection_budget,
+    get_max_auth_connections, get_max_system_connections, sample_pool_metrics, PoolManager,
 };
 pub use pool_metrics::{ConnectionPoolMetricSnapshot, ConnectionPoolStatus};
 pub use pool_settings::{

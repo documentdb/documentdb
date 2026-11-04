@@ -31,8 +31,10 @@ use crate::{
 
 type ClientKey = (String, PgPoolSettings);
 
-pub const SYSTEM_REQUESTS_MAX_CONNECTIONS: usize = 2;
-pub const AUTHENTICATION_MAX_CONNECTIONS: usize = 5;
+const DEFAULT_SYSTEM_CONNECTIONS: usize = 2;
+const AUTH_CONNECTIONS_PER_CORE: usize = 2;
+const MAX_AUTH_CONNECTIONS: usize = 5;
+const MIN_AUTH_CONNECTIONS: usize = 1;
 
 /// How often we need to cleanup the old connection pools
 const POSTGRES_POOL_CLEANUP_INTERVAL_SEC: u64 = 300;
@@ -50,6 +52,40 @@ async fn acquire_pooled_connection(pool: &ConnectionPool) -> Result<Connection> 
         false,
         pool.command_deadline(),
     ))
+}
+
+/// Returns the CPU-scaled authentication pool size within its default bounds.
+#[must_use]
+pub fn get_max_auth_connections() -> usize {
+    max_auth_connections_for_cpu_count(num_cpus::get())
+}
+
+fn max_auth_connections_for_cpu_count(cpu_count: usize) -> usize {
+    // SKU's with 1 core or less will only get 1 auth connection and this preserves the maximum
+    // number of connections possible to use for the data pool.
+    if cpu_count <= 1 {
+        return 1;
+    }
+
+    let auth_connections = cpu_count * AUTH_CONNECTIONS_PER_CORE;
+    auth_connections.clamp(MIN_AUTH_CONNECTIONS, MAX_AUTH_CONNECTIONS)
+}
+
+/// Returns the default capacity for system requests that are internal to the fe.
+#[must_use]
+pub const fn get_max_system_connections() -> usize {
+    DEFAULT_SYSTEM_CONNECTIONS
+}
+
+/// Returns the combined default capacity for authentication and system requests.
+#[must_use]
+pub fn get_fe_system_connection_budget() -> usize {
+    fe_system_connection_budget_for_cpu_count(num_cpus::get())
+}
+
+/// Returns the authentication and system capacity for an explicit CPU count.
+pub(super) fn fe_system_connection_budget_for_cpu_count(cpu_count: usize) -> usize {
+    max_auth_connections_for_cpu_count(cpu_count) + get_max_system_connections()
 }
 
 #[derive(Debug)]
@@ -480,7 +516,7 @@ pub async fn create_connection_pool_manager(
         setup_configuration.as_ref(),
         &query_catalog,
         PoolRole::SystemRequests,
-        SYSTEM_REQUESTS_MAX_CONNECTIONS,
+        get_max_system_connections(),
     )?;
 
     tracing::info!("SystemRequests pool configured.");
@@ -489,7 +525,7 @@ pub async fn create_connection_pool_manager(
         setup_configuration.as_ref(),
         &query_catalog,
         PoolRole::PreAuthRequests,
-        AUTHENTICATION_MAX_CONNECTIONS,
+        get_max_auth_connections(),
     )?;
 
     tracing::info!("PreAuthRequests pool configured.");
@@ -521,6 +557,40 @@ mod tests {
         telemetry::consts::{labels, metric_names},
         testing::RecordingMetricsRecorder,
     };
+
+    #[test]
+    fn default_connection_limits_are_valid() {
+        const {
+            assert!(MIN_AUTH_CONNECTIONS < MAX_AUTH_CONNECTIONS);
+            assert!(AUTH_CONNECTIONS_PER_CORE > 0);
+            assert!(DEFAULT_SYSTEM_CONNECTIONS > 0);
+        }
+    }
+
+    #[test]
+    fn system_budget_covers_default_pools() {
+        let auth_connections = get_max_auth_connections();
+        assert!(
+            auth_connections == 1
+                || (MIN_AUTH_CONNECTIONS..=MAX_AUTH_CONNECTIONS).contains(&auth_connections)
+        );
+        assert_eq!(get_max_system_connections(), DEFAULT_SYSTEM_CONNECTIONS);
+        assert_eq!(
+            get_fe_system_connection_budget(),
+            auth_connections + DEFAULT_SYSTEM_CONNECTIONS
+        );
+    }
+
+    #[test]
+    fn auth_connection_limits_by_cpu_count() {
+        for (cpu_count, expected_auth) in [(0, 1), (1, 1), (2, 4), (3, 5), (32, 5)] {
+            assert_eq!(
+                max_auth_connections_for_cpu_count(cpu_count),
+                expected_auth,
+                "CPU count: {cpu_count}"
+            );
+        }
+    }
 
     #[derive(Debug)]
     struct MaxConnectionConfig {
@@ -571,6 +641,10 @@ mod tests {
 
         fn get_u64(&self, _: &str, _: u64) -> u64 {
             u64::default()
+        }
+
+        fn get_usize(&self, _: &str, default: usize) -> usize {
+            default
         }
 
         fn equals_value(&self, _: &str, _: &str) -> bool {
@@ -656,7 +730,7 @@ mod tests {
             postgres_system_user,
             None,
             &format!("{}-SystemRequests", setup_config.application_name()),
-            PgPoolSettings::system_pool_settings(SYSTEM_REQUESTS_MAX_CONNECTIONS),
+            PgPoolSettings::system_pool_settings(get_max_system_connections()),
         )
         .expect("Failed to create system requests pool");
 
@@ -666,7 +740,7 @@ mod tests {
             postgres_system_user,
             None,
             &format!("{}-PreAuthRequests", setup_config.application_name()),
-            PgPoolSettings::system_pool_settings(AUTHENTICATION_MAX_CONNECTIONS),
+            PgPoolSettings::system_pool_settings(get_max_auth_connections()),
         )
         .expect("Failed to create authentication pool");
 
@@ -704,7 +778,7 @@ mod tests {
                 setup_config.postgres_system_user(),
                 None,
                 name,
-                PgPoolSettings::system_pool_settings(SYSTEM_REQUESTS_MAX_CONNECTIONS),
+                PgPoolSettings::system_pool_settings(get_max_system_connections()),
             )
             .expect("the pool should build")
         };
@@ -745,11 +819,10 @@ mod tests {
             );
 
             let shared_pool = shared_pool_result.unwrap();
-            // max_size is the combined capacity of the primary + timeout pools
             assert_eq!(
-                dynamic_configuration.max_conn() * 2,
+                dynamic_configuration.max_conn(),
                 shared_pool.status().status().max_size,
-                "Should have the combined size of primary and timeout pools"
+                "Should have the configured pool capacity"
             );
 
             assert_eq!(
@@ -880,7 +953,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            dynamic_configuration.max_conn() * 2,
+            dynamic_configuration.max_conn(),
             user_pool.status().status().max_size
         );
     }
@@ -1177,11 +1250,21 @@ mod tests {
 
         assert_eq!(
             max(PoolRole::Data),
-            Some(600.0),
+            Some(300.0),
             "the data role sums the capacity of every data pool, per-user or shared"
         );
-        assert_eq!(max(PoolRole::SystemRequests), Some(4.0));
-        assert_eq!(max(PoolRole::PreAuthRequests), Some(10.0));
+        assert_eq!(
+            max(PoolRole::SystemRequests),
+            Some(f64::from(
+                u32::try_from(get_max_system_connections()).unwrap(),
+            ))
+        );
+        assert_eq!(
+            max(PoolRole::PreAuthRequests),
+            Some(f64::from(
+                u32::try_from(get_max_auth_connections()).unwrap(),
+            ))
+        );
         assert_eq!(connections(PoolRole::Data, "used"), Some(0.0));
         assert_eq!(connections(PoolRole::Data, "idle"), Some(0.0));
 
