@@ -471,17 +471,18 @@ class EntrypointGatewaySelfExitPgStopTests(unittest.TestCase):
         m = re.search(r"cleanup\(\)\s*\{(?P<body>[\s\S]*?)\n\}", text)
         self.assertIsNotNone(m)
         body = m.group("body")
-        # The clean stop stays in cleanup (docker-stop path)...
-        self.assertIn('stop -D "${DATA_PATH}" -m fast', body)
-        # ...guarded against a double stop when a signal lands while the
-        # self-exit path is already running cleanup.
-        self.assertIn('if [ "${POSTGRES_STOPPED:-false}" != "true" ]', body)
-        self.assertIn("POSTGRES_STOPPED=true", body)
-        # cleanup propagates a caller-supplied exit code (0 for the trap).
-        self.assertIn('exit "${1:-0}"', body)
+        stop = re.search(r"stop_owned_postgresql\(\)\s*\{(?P<body>[\s\S]*?)\n\}", text)
+        self.assertIsNotNone(stop)
+        self.assertIn("stop_owned_postgresql", body)
+        self.assertIn('stop -D "${DATA_PATH}" -m fast', stop.group("body"))
+        # One handler for every exit; signals only exit, so it runs once and
+        # leaves the pending exit status alone.
+        self.assertIn("trap cleanup EXIT", text)
+        self.assertIn("trap 'exit 0' TERM INT", text)
+        self.assertNotRegex(body, r"(?m)^\s*exit\b")
 
     def test_gateway_self_exit_path_runs_cleanup(self):
-        text = ENTRYPOINT.read_text(encoding="utf-8")
+        text = ENTRYPOINT.with_name("lib").joinpath("serve.sh").read_text(encoding="utf-8")
         m = re.search(r"\nwait \$gateway_pid(?P<after>[\s\S]*)$", text)
         self.assertIsNotNone(m)
         after = m.group("after")
@@ -490,9 +491,9 @@ class EntrypointGatewaySelfExitPgStopTests(unittest.TestCase):
         self.assertIn("|| gateway_rc=$?", after,
                       "wait must capture a nonzero gateway status without "
                       "tripping set -e before the clean stop runs")
-        self.assertIn('cleanup "$gateway_rc"', after,
-                      "the post-wait (gateway self-exit) path must run the "
-                      "same cleanup as the signal trap, stopping PG cleanly")
+        self.assertIn('exit "$gateway_rc"', after,
+                      "the post-wait (gateway self-exit) path must exit with "
+                      "the gateway's status, through the cleanup EXIT trap")
 
 
 class EntrypointAdminPasswordHardeningTests(unittest.TestCase):
@@ -504,7 +505,7 @@ class EntrypointAdminPasswordHardeningTests(unittest.TestCase):
     build_and_start_gateway.sh and stays unchanged."""
 
     def test_entrypoint_defines_hardened_shadow(self):
-        text = ENTRYPOINT.read_text(encoding="utf-8")
+        text = ENTRYPOINT.with_name("lib").joinpath("serve.sh").read_text(encoding="utf-8")
         # Shadow only the stock (insecure) implementation; stubs/overrides
         # sourced from utils.sh keep working.
         self.assertIn("declare -f SetupCustomAdminUser", text)
@@ -524,7 +525,7 @@ class EntrypointAdminPasswordHardeningTests(unittest.TestCase):
         # it, a failed documentdb_api.create_user would slip past the
         # caller's error guard and the container would report ready with no
         # usable admin login.
-        text = ENTRYPOINT.read_text(encoding="utf-8")
+        text = ENTRYPOINT.with_name("lib").joinpath("serve.sh").read_text(encoding="utf-8")
         shadow = text[text.index("SetupCustomAdminUser() {"):]
         shadow = shadow[:shadow.index("\n        }")]
         create_stmt_idx = shadow.index("documentdb_api.create_user")
