@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """The two shared authorities behind every DocumentDB settings block.
 
 render_documentdb_pg_conf spells the settings and
@@ -349,17 +352,22 @@ class SiblingHelperCopyTests(unittest.TestCase):
     ENTRYPOINT = SCRIPTS_DIR / "emulator_entrypoint.sh"
 
     def test_dockerfile_copies_every_helper_the_entrypoint_invokes(self):
-        invoked = set(re.findall(
-            r'\$\(dirname "\$\{BASH_SOURCE\[0\]\}"\)/([A-Za-z0-9_]+\.sh)',
-            self.ENTRYPOINT.read_text(encoding="utf-8"),
-        ))
+        libs = sorted((SCRIPTS_DIR / "lib").glob("*.sh"))
+        invoked = set()
+        for source in (self.ENTRYPOINT, *libs):
+            invoked |= set(re.findall(
+                r'\$entrypoint_dir/([A-Za-z0-9_]+\.sh)', source.read_text(encoding="utf-8"),
+            ))
         self.assertGreaterEqual(len(invoked), 4, invoked)
-        copied = set(re.findall(
-            r'(?m)^COPY documentdb-local/scripts/([A-Za-z0-9_]+\.sh) ',
-            DOCKERFILE.read_text(encoding="utf-8"),
-        ))
+        dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+        copied = set(re.findall(r'(?m)^COPY documentdb-local/scripts/([A-Za-z0-9_]+\.sh) ', dockerfile))
         self.assertEqual(invoked - copied, set(),
                          "helpers the entrypoint invokes but the Dockerfile does not COPY")
+        # Every lib/ file is sourced from beside the entrypoint and shipped.
+        entrypoint = self.ENTRYPOINT.read_text(encoding="utf-8")
+        for lib in libs:
+            self.assertIn(f'. "$entrypoint_dir/lib/{lib.name}"', entrypoint)
+        self.assertRegex(dockerfile, r'(?m)^COPY documentdb-local/scripts/lib/ /home/documentdb/gateway/scripts/lib/$')
 
 
 class ImageDefaultPinTests(unittest.TestCase):
@@ -429,10 +437,14 @@ class ImageDefaultPinTests(unittest.TestCase):
 
     def test_readers_carry_no_copy_of_a_table_default(self):
         table = self._table()
-        for path in self.READERS:
+        # The entrypoint's lib/ files read the table the entrypoint sources.
+        entrypoint_libs = tuple(sorted((SCRIPTS_DIR / "lib").glob("*.sh")))
+        self.assertTrue(entrypoint_libs)
+        for path in self.READERS + entrypoint_libs:
             text = path.read_text(encoding="utf-8")
             with self.subTest(file=path.name):
-                self.assertIn("documentdb_local_settings.sh", text, f"{path.name} does not source the table")
+                if path not in entrypoint_libs:
+                    self.assertIn("documentdb_local_settings.sh", text, f"{path.name} does not source the table")
                 for var, (flag, default, typ) in table.items():
                     if not default:
                         continue

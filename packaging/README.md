@@ -508,7 +508,7 @@ operator-only env knobs (`DOCUMENTDB_PG_READY_*`,
 `DOCUMENTDB_FORCE_REMOVE_STALE_POSTMASTER_PID`,
 `DOCUMENTDB_ALLOW_DEFAULT_PASSWORD`) are handled by the entrypoint and its
 data-directory claim helper. The Dockerfile `ENV` block mirrors the defaults.
-`emulator_entrypoint.sh` parses flags into the same env vars,
+`emulator_entrypoint.sh` (its steps live in `documentdb-local/scripts/lib/`) parses flags into the same env vars,
 applies defaults and validates from the table, then hands values on: the
 PostgreSQL port and data directory to `scripts/start_oss_server.sh` as
 arguments (no credentials; the entrypoint creates the admin user), the resolved
