@@ -825,9 +825,9 @@ SELECT documentdb_api.coll_mod('mkpq_db', 'mkpq_uniq_reindex', '{ "collMod": "mk
 
 -- The reindex request is queued as a concurrent rebuild.
 SELECT cmd_type, index_cmd FROM documentdb_api_catalog.documentdb_index_queue WHERE collection_id = :mkpq_urx_cid ORDER BY index_id;
- cmd_type |                                                                                                                                                                                                                                                    index_cmd                                                                                                                                                                                                                                                    
-----------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- R        | CREATE INDEX CONCURRENTLY documents_rum_index_13115_ccnew ON documentdb_data.documents_13107 USING  documentdb_extended_rum ( document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops(pathspec='[ "a", "b" ]',tl=2691,mkp=true),documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, 'BSONHEX13000000106100010000001062000100000000'::documentdb_core.bson, false, true) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops(cmp=true)) 
+ cmd_type |                                                                                                                                                                                                                                                           index_cmd
+----------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ R        | CREATE INDEX CONCURRENTLY documents_rum_index_13115_ccnew ON documentdb_data.documents_13107 USING  documentdb_extended_rum ( document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops(pathspec='[ "a", "b" ]',tl=2691,mkp=true),documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, 'BSONHEX13000000106100010000001062000100000000'::documentdb_core.bson, false, true) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops(cmp=true,optsk='13107'))
 (1 row)
 
 -- Drain the queue using the build components directly (no cron job).
@@ -1086,7 +1086,7 @@ VACUUM (ANALYZE ON, FREEZE ON) documentdb_data.documents_13108
 -- multi-key tracking gates index-only eligibility per column, not index-wide.
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('mkpq_db', '{ "aggregate" : "mkpq_ios", "pipeline" : [{ "$match" : { "country": { "$eq": "USA" } } }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
                                                run_explain_and_trim                                                
--------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, documentdb_api_internal.bsoncount(1))
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)

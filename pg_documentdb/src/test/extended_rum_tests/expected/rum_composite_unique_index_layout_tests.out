@@ -27,8 +27,8 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('uniquedb', '{ "c
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_701" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_702" EXCLUDE USING documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "a" ]', tl='2691') WITH =?=, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" } }'::bson, false) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops WITH OPERATOR(documentdb_api_internal.=#=))
-    "documents_rum_index_703" EXCLUDE USING documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "b", "c" ]', tl='2691') WITH =?=, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "b" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" } }'::bson, false) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops WITH OPERATOR(documentdb_api_internal.=#=))
+    "documents_rum_index_702" EXCLUDE USING documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "a" ]', tl='2691', mkp='true') WITH =?=, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" } }'::bson, false) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops WITH OPERATOR(documentdb_api_internal.=#=))
+    "documents_rum_index_703" EXCLUDE USING documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "b", "c" ]', tl='2691', mkp='true') WITH =?=, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "b" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" } }'::bson, false) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops WITH OPERATOR(documentdb_api_internal.=#=))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '701'::bigint)
 
@@ -42,13 +42,13 @@ VACUUM (FREEZE ON, INDEX_CLEANUP ON) documentdb_data.documents_701;
 -- now query the layout of both indexes
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page('documentdb_data.documents_rum_index_702', 0));
                              documentdb_rum_get_meta_page_info                             
--------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------------------------
  {"entries": 20, "dataPages": 0, "entryPages": 1, "totalPages": 2, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
 (1 row)
 
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page('documentdb_data.documents_rum_index_703', 0));
                              documentdb_rum_get_meta_page_info                             
--------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------------------------
  {"entries": 30, "dataPages": 0, "entryPages": 1, "totalPages": 2, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
 (1 row)
 
@@ -139,13 +139,13 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('uniquedb', '{ "c
 -- now query the layout of both indexes
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page('documentdb_data.documents_rum_index_704', 0));
                              documentdb_rum_get_meta_page_info                             
--------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------------------------
  {"entries": 20, "dataPages": 0, "entryPages": 1, "totalPages": 2, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
 (1 row)
 
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page('documentdb_data.documents_rum_index_705', 0));
                              documentdb_rum_get_meta_page_info                             
--------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------------------------
  {"entries": 20, "dataPages": 0, "entryPages": 1, "totalPages": 2, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
 (1 row)
 

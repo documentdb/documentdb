@@ -607,7 +607,10 @@ SELECT COUNT(documentdb_api.insert_one('compterm', 'compterm_sorted', data)) FRO
 
 -- now create an index over the 2 columns and verify the ordering matches the runtime sort.
 SET documentdb.enableComparableTerms TO on;
+-- The Cartesian-product fixture includes parallel arrays and needs the legacy layout.
+SET documentdb.enableIndexMetadataGlobalTracking TO off;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('compterm', '{ "createIndexes": "comptermcoll", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_1_b_1" } ] }', TRUE);
+RESET documentdb.enableIndexMetadataGlobalTracking;
 
 -- ensure sort uses the index
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('compterm', '{ "find": "comptermcoll", "sort": { "a": 1, "b": 1 }, "hint": "a_1_b_1" }');

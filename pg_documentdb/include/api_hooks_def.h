@@ -297,6 +297,14 @@ extern GetOperationCancellationQuery_HookType get_operation_cancellation_query_h
 typedef bool (*DefaultEnableCompositeOpClass_HookType)(void);
 extern DefaultEnableCompositeOpClass_HookType default_enable_composite_op_class_hook;
 
+typedef bool (*DefaultEnableCompositeUniqueOptionalKey_HookType)(void);
+extern DefaultEnableCompositeUniqueOptionalKey_HookType
+	default_enable_composite_unique_optional_key_hook;
+
+typedef bool (*DefaultEnableIndexMetadataGlobalTracking_HookType)(void);
+extern DefaultEnableIndexMetadataGlobalTracking_HookType
+	default_enable_index_metadata_global_tracking_hook;
+
 typedef bool (*DefaultEnableStatsCreationOnNewCollections_HookType)(void);
 extern DefaultEnableStatsCreationOnNewCollections_HookType
 	default_enable_stats_creation_on_new_collections_hook;

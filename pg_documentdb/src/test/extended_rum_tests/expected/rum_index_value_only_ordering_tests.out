@@ -229,12 +229,11 @@ SELECT entry->> 'offset',
         FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_302', 1), 'documentdb_data.documents_rum_index_302'::regclass) entry;
  ?column? | ?column? | length |   substring    
 ----------+----------+--------+----------------
- 1        | 1        |     19 | 
- 2        | 0        |     41 | abcdezzzzzzzzz
- 3        | 6        |   2699 | abcdezzzzzzzzz
- 4        | 5        |     41 | zyxwvzzzzzzzzz
- 5        | 1        |   2699 | zyxwvzzzzzzzzz
-(5 rows)
+ 1        | 0        |     41 | abcdezzzzzzzzz
+ 2        | 6        |   2699 | abcdezzzzzzzzz
+ 3        | 5        |     41 | zyxwvzzzzzzzzz
+ 4        | 1        |   2699 | zyxwvzzzzzzzzz
+(4 rows)
 
 SELECT entry->> 'offset',
     value_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) ->> '$flags',
@@ -243,12 +242,11 @@ SELECT entry->> 'offset',
         FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_303', 1), 'documentdb_data.documents_rum_index_303'::regclass) entry;
  ?column? | ?column? | length |   substring    
 ----------+----------+--------+----------------
- 1        | 1        |     19 | 
- 2        | 129      |   2699 | zyxwvzzzzzzzzz
- 3        | 133      |     41 | zyxwvzzzzzzzzz
- 4        | 134      |   2699 | abcdezzzzzzzzz
- 5        | 128      |     41 | abcdezzzzzzzzz
-(5 rows)
+ 1        | 129      |   2699 | zyxwvzzzzzzzzz
+ 2        | 133      |     41 | zyxwvzzzzzzzzz
+ 3        | 134      |   2699 | abcdezzzzzzzzz
+ 4        | 128      |     41 | abcdezzzzzzzzz
+(4 rows)
 
 -- ensure value only truncation works the same with > 16 paths
 set documentdb.enableValueOnlyIndexTerms to off;

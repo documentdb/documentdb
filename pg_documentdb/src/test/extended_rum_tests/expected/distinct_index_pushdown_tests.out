@@ -1396,13 +1396,14 @@ $cmd$, p_ignore_heap_fetches => true);
                            indexName: idx_a
                            indexKey: {"a": 1}
                            isMultiKey: true
+                           multiKeyPaths: a
                            indexBounds: ["a": [MinKey, MaxKey]]
                            innerScanLoops: 11 loops
                            scanType: ordered
                            scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 200)]
                            ->  Index Scan using idx_a on documents_19900 collection (actual rows=200 loops=1)
                                  Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-(17 rows)
+(18 rows)
 
 ROLLBACK;
 -- ============================================================
@@ -1431,13 +1432,14 @@ $cmd$, p_ignore_heap_fetches => true);
                            indexName: idx_a
                            indexKey: {"a": 1}
                            isMultiKey: true
+                           multiKeyPaths: a
                            indexBounds: ["a": [5, Infinity]], ["a": [MinKey, MaxKey]]
                            innerScanLoops: 200 loops
                            scanType: regular
                            scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100), (isInequality: true, estimatedEntryCount: 200)]
                            ->  Index Scan using idx_a on documents_19900 collection (actual rows=100 loops=1)
                                  Index Cond: ((document @>= '{ "a" : { "$numberInt" : "5" } }'::bson) AND (document @>= '{ "a" : { "$minKey" : 1 } }'::bson))
-(17 rows)
+(18 rows)
 
 ROLLBACK;
 -- ============================================================
@@ -1539,13 +1541,14 @@ $cmd$, p_ignore_heap_fetches => true);
                            indexName: idx_a
                            indexKey: {"a": 1}
                            isMultiKey: true
+                           multiKeyPaths: a
                            indexBounds: ["a": [MinKey, MaxKey]]
                            innerScanLoops: 11 loops
                            scanType: ordered
                            scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 200)]
                            ->  Index Scan using idx_a on documents_19900 collection (actual rows=200 loops=1)
                                  Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-(17 rows)
+(18 rows)
 
 ROLLBACK;
 -- ============================================================
@@ -1683,6 +1686,7 @@ $cmd$, p_ignore_heap_fetches => true);
                            indexName: idx_a_b
                            indexKey: {"a": 1,"b": 1}
                            isMultiKey: true
+                           multiKeyPaths: a
                            indexBounds: ["a": [MinKey, MaxKey], "b": ["C", { })]
                            numDuplicates: 2 entries
                            innerScanLoops: 13 loops
@@ -1690,7 +1694,7 @@ $cmd$, p_ignore_heap_fetches => true);
                            scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 123)]
                            ->  Index Scan using idx_a_b on documents_19900 collection (actual rows=121 loops=1)
                                  Index Cond: ((document @>= '{ "b" : "C" }'::bson) AND (document @>= '{ "a" : { "$minKey" : 1 } }'::bson))
-(18 rows)
+(19 rows)
 
 ROLLBACK;
 -- ============================================================
@@ -1720,13 +1724,14 @@ $cmd$, p_ignore_heap_fetches => true);
                            indexName: idx_a_b
                            indexKey: {"a": 1,"b": 1}
                            isMultiKey: true
+                           multiKeyPaths: a
                            indexBounds: ["a": (5, Infinity], "b": ["C", { })], ["a": [MinKey, MaxKey], "b": ["C", { })]
                            innerScanLoops: 121 loops
                            scanType: regular
                            scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 63), (isInequality: true, estimatedEntryCount: 123)]
                            ->  Index Scan using idx_a_b on documents_19900 collection (actual rows=61 loops=1)
                                  Index Cond: ((document @> '{ "a" : { "$numberInt" : "5" } }'::bson) AND (document @>= '{ "b" : "C" }'::bson) AND (document @>= '{ "a" : { "$minKey" : 1 } }'::bson))
-(17 rows)
+(18 rows)
 
 ROLLBACK;
 -- ============================================================

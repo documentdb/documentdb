@@ -41,7 +41,7 @@ SELECT collection_id FROM documentdb_api_catalog.collections WHERE collection_na
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_68001" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_68002" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "a", "c" ]', tl='2691'))
+    "documents_rum_index_68002" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "a", "c" ]', tl='2691', mkp='true'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '68001'::bigint)
 
@@ -343,13 +343,14 @@ $cmd$);
          indexName: a_1_id_1
          indexKey: {"a": 1,"_id": 1}
          isMultiKey: true
+         multiKeyPaths: a
          indexBounds: ["a": [-Infinity, 3), "_id": (MinKey, MaxKey)]
          innerScanLoops: 8 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5)]
          ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=5 loops=1)
                Index Cond: (document @< '{ "a" : { "$numberInt" : "3" } }'::bson)
-(13 rows)
+(14 rows)
 
 -- now check the performance
 SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$in": [ 3, 49, 90 ] }}, "sort": { "a": 1 } }');
@@ -411,13 +412,14 @@ $cmd$);
          indexName: a_1_id_1
          indexKey: {"a": 1,"_id": 1}
          isMultiKey: true
+         multiKeyPaths: a
          indexBounds: ["a": [3, 3], "_id": (MinKey, MaxKey)], ["a": [49, 49], "_id": (MinKey, MaxKey)], ["a": [90, 90], "_id": (MinKey, MaxKey)]
          innerScanLoops: 6 loops
          scanType: regular
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2), (isInequality: true, estimatedEntryCount: 2), (isInequality: true, estimatedEntryCount: 2)]
          ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=6 loops=1)
                Index Cond: (document @*= '{ "a" : [ { "$numberInt" : "3" }, { "$numberInt" : "49" }, { "$numberInt" : "90" } ] }'::bson)
-(13 rows)
+(14 rows)
 
 -- scans 1 loop for checking multi-key - then scans 4 loops for entries 0, 1, 2, 3.
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
@@ -432,13 +434,14 @@ $cmd$);
          indexName: a_1_id_1
          indexKey: {"a": 1,"_id": 1}
          isMultiKey: true
+         multiKeyPaths: a
          indexBounds: ["a": [-Infinity, 3), "_id": (MinKey, MaxKey)]
          innerScanLoops: 8 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5)]
          ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=5 loops=1)
                Index Cond: (document @< '{ "a" : { "$numberInt" : "3" } }'::bson)
-(13 rows)
+(14 rows)
 
 -- scans 1 loop for checking multi-key - then scans 5 loops for entries 96, 97, 98, 99, 100.
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
@@ -453,13 +456,14 @@ $cmd$);
          indexName: a_1_id_1
          indexKey: {"a": 1,"_id": 1}
          isMultiKey: true
+         multiKeyPaths: a
          indexBounds: ["a": (96, Infinity], "_id": (MinKey, MaxKey)]
          innerScanLoops: 10 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 7)]
          ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=7 loops=1)
                Index Cond: (document @> '{ "a" : { "$numberInt" : "96" } }'::bson)
-(13 rows)
+(14 rows)
 
 -- only pushes filter down
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
@@ -474,13 +478,14 @@ $cmd$);
          indexName: a_1_id_1
          indexKey: {"a": 1,"_id": 1}
          isMultiKey: true
+         multiKeyPaths: a
          indexBounds: ["a": [-Infinity, 3), "_id": (MinKey, MaxKey)], ["a": (96, Infinity], "_id": (MinKey, MaxKey)]
          innerScanLoops: 7 loops
          scanType: regular
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5), (isInequality: true, estimatedEntryCount: 7)]
          ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=5 loops=1)
                Index Cond: ((document @< '{ "a" : { "$numberInt" : "3" } }'::bson) AND (document @> '{ "a" : { "$numberInt" : "96" } }'::bson))
-(13 rows)
+(14 rows)
 
 -- test the same for non multi-key index
 ---------------------------------------------------------------------
@@ -863,6 +868,7 @@ $cmd$);
          indexName: a_1_id_1
          indexKey: {"a": 1,"_id": 1}
          isMultiKey: true
+         multiKeyPaths: a
          indexBounds: ["a": [MinKey, MaxKey], "_id": (MinKey, MaxKey)]
          numDuplicates: 100 entries
          innerScanLoops: 201 loops
@@ -870,7 +876,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 201)]
          ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=101 loops=1)
                Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-(14 rows)
+(15 rows)
 
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
 psql:sql/bson_composite_order_by_index_tests_core.sql:228: ERROR:  Could not find any valid index to push down for query
@@ -1014,13 +1020,14 @@ $cmd$);
          indexName: a_1_id_1
          indexKey: {"a": 1,"_id": 1}
          isMultiKey: true
+         multiKeyPaths: a
          indexBounds: ["a": [1, 1], "_id": (MinKey, MaxKey)], ["a": [2, 2], "_id": (MinKey, MaxKey)]
          innerScanLoops: 4 loops
          scanType: regular
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2), (isInequality: true, estimatedEntryCount: 2)]
          ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=4 loops=1)
                Index Cond: (document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson)
-(13 rows)
+(14 rows)
 
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
     SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$sort": { "_id": 1 } } ] }');
@@ -1036,6 +1043,7 @@ $cmd$);
    indexName: a_1_id_1
    indexKey: {"a": 1,"_id": 1}
    isMultiKey: true
+   multiKeyPaths: a
    indexBounds: ["a": [1, 1], "_id": (MinKey, MaxKey)]
    innerScanLoops: 3 loops
    scanType: ordered
@@ -1043,7 +1051,7 @@ $cmd$);
    ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=2 loops=1)
          Index Cond: (document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
          Order By: (document |-<> '{ "_id" : { "$numberInt" : "1" } }'::bson)
-(11 rows)
+(12 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
@@ -1055,6 +1063,7 @@ $cmd$);
    indexName: a_1_id_1
    indexKey: {"a": 1,"_id": 1}
    isMultiKey: true
+   multiKeyPaths: a
    indexBounds: ["a": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
    numDuplicates: 100 entries
    innerScanLoops: 201 loops
@@ -1063,7 +1072,7 @@ $cmd$);
    ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=101 loops=1)
          Index Cond: ((document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (document @<> '{ "_id" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
          Order By: ((document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document |-<> '{ "_id" : { "$numberInt" : "1" } }'::bson))
-(12 rows)
+(13 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
@@ -1075,6 +1084,7 @@ $cmd$);
    indexName: a_1_id_1
    indexKey: {"a": 1,"_id": 1}
    isMultiKey: true
+   multiKeyPaths: a
    indexBounds: ["a": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
    numDuplicates: 100 entries
    innerScanLoops: 201 loops
@@ -1083,7 +1093,7 @@ $cmd$);
    ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=101 loops=1)
          Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
-(12 rows)
+(13 rows)
 
 -- but not these
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
@@ -1099,13 +1109,14 @@ $cmd$);
          indexName: a_1_id_1
          indexKey: {"a": 1,"_id": 1}
          isMultiKey: true
+         multiKeyPaths: a
          indexBounds: ["a": [1, 1], "_id": (MinKey, MaxKey)], ["a": [2, 2], "_id": (MinKey, MaxKey)]
          innerScanLoops: 4 loops
          scanType: regular
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2), (isInequality: true, estimatedEntryCount: 2)]
          ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=4 loops=1)
                Index Cond: (document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson)
-(13 rows)
+(14 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
@@ -1120,6 +1131,7 @@ $cmd$);
          indexName: a_1_id_1
          indexKey: {"a": 1,"_id": 1}
          isMultiKey: true
+         multiKeyPaths: a
          indexBounds: ["a": [1, Infinity], "_id": (MinKey, MaxKey)]
          numDuplicates: 98 entries
          innerScanLoops: 199 loops
@@ -1127,7 +1139,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 198)]
          ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=100 loops=1)
                Index Cond: (document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
-(14 rows)
+(15 rows)
 
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
     SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$sort": { "_id": 1, "a": 1 } } ] }');
@@ -1161,11 +1173,12 @@ $cmd$);
    indexKey: {"b": 1,"c": 1}
    isMultiKey: false
    hasTruncation: true
+   truncatedPaths: b
    indexBounds: ["b": [MinKey, MaxKey], "c": (MinKey, MaxKey)]
    ->  Index Scan using b_1 on documents_68004_680008 collection
          Index Cond: (document @>= '{ "b" : { "$minKey" : 1 } }'::bson)
          Order By: (document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson)
-(9 rows)
+(10 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, BUFFERS OFF) WITH s1 AS (SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": 1 } } ] }')),
@@ -1182,11 +1195,12 @@ $cmd$, false, false, true);
                      indexKey: {"b": 1,"c": 1}
                      isMultiKey: false
                      hasTruncation: true
+                     truncatedPaths: b
                      indexBounds: ["b": [MinKey, MaxKey], "c": (MinKey, MaxKey)]
                      ->  Index Scan using b_1 on documents_68004_680008 collection
                            Index Cond: (document @>= '{ "b" : { "$minKey" : 1 } }'::bson)
                            Order By: (document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson)
-(12 rows)
+(13 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": -1 } } ] }')
@@ -1198,11 +1212,12 @@ $cmd$);
    indexKey: {"b": 1,"c": 1}
    isMultiKey: false
    hasTruncation: true
+   truncatedPaths: b
    indexBounds: ["b": [MinKey, MaxKey], "c": (MinKey, MaxKey)]
    ->  Index Scan using b_1 on documents_68004_680008 collection
          Index Cond: (document @>= '{ "b" : { "$minKey" : 1 } }'::bson)
          Order By: (document <>-| '{ "b" : { "$numberInt" : "-1" } }'::bson)
-(9 rows)
+(10 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, BUFFERS OFF) WITH s1 AS (SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": -1 } } ] }')),
@@ -1219,11 +1234,12 @@ $cmd$, false, false, true);
                      indexKey: {"b": 1,"c": 1}
                      isMultiKey: false
                      hasTruncation: true
+                     truncatedPaths: b
                      indexBounds: ["b": [MinKey, MaxKey], "c": (MinKey, MaxKey)]
                      ->  Index Scan using b_1 on documents_68004_680008 collection
                            Index Cond: (document @>= '{ "b" : { "$minKey" : 1 } }'::bson)
                            Order By: (document <>-| '{ "b" : { "$numberInt" : "-1" } }'::bson)
-(12 rows)
+(13 rows)
 
 -- validate the order is correct
 WITH s1 AS (SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": 1 } } ] }')),
@@ -1392,6 +1408,7 @@ $cmd$);
    indexName: a.b_1
    indexKey: {"a.b": 1,"_id": 1}
    isMultiKey: true
+   multiKeyPaths: a.b
    indexBounds: ["a.b": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
    numDuplicates: 12 entries
    innerScanLoops: 33 loops
@@ -1400,7 +1417,7 @@ $cmd$);
    ->  Index Scan using "a.b_1" on documents_68005_680010 collection (actual rows=21 loops=1)
          Index Cond: (document @<> '{ "a.b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (document |-<> '{ "a.b" : { "$numberInt" : "1" } }'::bson)
-(12 rows)
+(13 rows)
 
 SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$sort": { "a.b": 1 } } ] }');
                                                             document                                                             
@@ -1470,6 +1487,7 @@ $cmd$);
          indexName: a.b_1
          indexKey: {"a.b": 1,"_id": 1}
          isMultiKey: true
+         multiKeyPaths: a.b
          indexBounds: ["a.b": [MinKey, MaxKey], "_id": (MinKey, MaxKey)]
          numDuplicates: 12 entries
          innerScanLoops: 33 loops
@@ -1477,7 +1495,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 29)]
          ->  Index Scan using "a.b_1" on documents_68005_680010 collection (actual rows=17 loops=1)
                Index Cond: (document @>= '{ "a.b" : { "$minKey" : 1 } }'::bson)
-(14 rows)
+(15 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$gt": 5 } } }, { "$sort": { "_id": 1 } } ] }')
@@ -1491,13 +1509,14 @@ $cmd$);
          indexName: a.b_1
          indexKey: {"a.b": 1,"_id": 1}
          isMultiKey: true
+         multiKeyPaths: a.b
          indexBounds: ["a.b": (5, Infinity], "_id": (MinKey, MaxKey)]
          innerScanLoops: 1 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
          ->  Index Scan using "a.b_1" on documents_68005_680010 collection (actual rows=0 loops=1)
                Index Cond: (document @> '{ "a.b" : { "$numberInt" : "5" } }'::bson)
-(13 rows)
+(14 rows)
 
 -- but this is okay
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
@@ -1509,6 +1528,7 @@ $cmd$);
    indexName: a.b_1
    indexKey: {"a.b": 1,"_id": 1}
    isMultiKey: true
+   multiKeyPaths: a.b
    indexBounds: ["a.b": [1, 1], "_id": (MinKey, MaxKey)]
    innerScanLoops: 5 loops
    scanType: ordered
@@ -1516,7 +1536,7 @@ $cmd$);
    ->  Index Scan using "a.b_1" on documents_68005_680010 collection (actual rows=4 loops=1)
          Index Cond: (document @= '{ "a.b" : { "$numberInt" : "1" } }'::bson)
          Order By: (document |-<> '{ "_id" : { "$numberInt" : "1" } }'::bson)
-(11 rows)
+(12 rows)
 
 -- this one isn't okay since we need to resort across a.b
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
@@ -1531,13 +1551,14 @@ $cmd$);
          indexName: a.b_1
          indexKey: {"a.b": 1,"_id": 1}
          isMultiKey: true
+         multiKeyPaths: a.b
          indexBounds: ["a.b": [1, 1], "_id": (MinKey, MaxKey)], ["a.b": [2, 2], "_id": (MinKey, MaxKey)]
          innerScanLoops: 4 loops
          scanType: regular
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4), (isInequality: true, estimatedEntryCount: 1)]
          ->  Index Scan using "a.b_1" on documents_68005_680010 collection (actual rows=4 loops=1)
                Index Cond: (document @*= '{ "a.b" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson)
-(13 rows)
+(14 rows)
 
 -- but this is fine:
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
@@ -1549,6 +1570,7 @@ $cmd$);
    indexName: a.b_1
    indexKey: {"a.b": 1,"_id": 1}
    isMultiKey: true
+   multiKeyPaths: a.b
    indexBounds: ["a.b": [1, 1], "_id": (MinKey, MaxKey)]
    innerScanLoops: 5 loops
    scanType: ordered
@@ -1556,7 +1578,7 @@ $cmd$);
    ->  Index Scan using "a.b_1" on documents_68005_680010 collection (actual rows=4 loops=1)
          Index Cond: (document @= '{ "a.b" : { "$numberInt" : "1" } }'::bson)
          Order By: (document |-<> '{ "_id" : { "$numberInt" : "1" } }'::bson)
-(11 rows)
+(12 rows)
 
 -- allows incremental sorting
 set enable_sort to off;
@@ -1573,6 +1595,7 @@ $cmd$);
          indexName: a.b_1
          indexKey: {"a.b": 1,"_id": 1}
          isMultiKey: true
+         multiKeyPaths: a.b
          indexBounds: ["a.b": [1, 1], "_id": (MinKey, MaxKey)]
          innerScanLoops: 5 loops
          scanType: ordered
@@ -1580,7 +1603,7 @@ $cmd$);
          ->  Index Scan using "a.b_1" on documents_68005_680010 collection (actual rows=4 loops=1)
                Index Cond: (document @= '{ "a.b" : { "$numberInt" : "1" } }'::bson)
                Order By: (document |-<> '{ "_id" : { "$numberInt" : "1" } }'::bson)
-(15 rows)
+(16 rows)
 
 -- forced order by pushdown respects ordering when there is none.
 set documentdb_rum.forceRumOrderedIndexScan to on;
@@ -1593,6 +1616,7 @@ $cmd$);
    indexName: a.b_1
    indexKey: {"a.b": 1,"_id": 1}
    isMultiKey: true
+   multiKeyPaths: a.b
    indexBounds: ["a.b": [MinKey, MaxKey], "_id": (MinKey, MaxKey)]
    numDuplicates: 12 entries
    innerScanLoops: 33 loops
@@ -1600,7 +1624,7 @@ $cmd$);
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 29)]
    ->  Index Scan using "a.b_1" on documents_68005_680010 collection (actual rows=17 loops=1)
          Index Cond: (document @>= '{ "a.b" : { "$minKey" : 1 } }'::bson)
-(11 rows)
+(12 rows)
 
 SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$exists": true } } } ] }');
                                                             document                                                             
@@ -1826,6 +1850,7 @@ $cmd$);
    indexKey: {"a": 1}
    isMultiKey: false
    hasTruncation: true
+   truncatedPaths: a
    indexBounds: ["a": ["", { })], ["a": [{ "$regularExpression" : { "pattern" : ".+b$", "options" : "" } }, { "$regularExpression" : { "pattern" : ".+b$", "options" : "" } }]]
    innerScanLoops: 1 loops
    scanType: ordered
@@ -1834,7 +1859,7 @@ $cmd$);
          Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : ".+b$", "options" : "" } } }'::bson)
          Rows Removed by Index Recheck: 1
          Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
-(13 rows)
+(14 rows)
 
 SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "large_keys", "pipeline": [ { "$match": { "a": { "$regex": ".+b$" } } }, { "$sort": { "a": 1 } }, { "$project": { "_id": 1 } } ] }');
               document              
@@ -1867,6 +1892,7 @@ $cmd$);
    indexName: a.b.c_-1
    indexKey: {"a.b.c": -1,"_id": -1}
    isMultiKey: true
+   multiKeyPaths: a.b.c
    indexBounds: ["a.b.c": DESC(MinKey, MaxKey), "_id": DESC(MinKey, MaxKey)]
    numDuplicates: 6 entries
    innerScanLoops: 19 loops
@@ -1875,7 +1901,7 @@ $cmd$);
    ->  Index Scan using "a.b.c_-1" on documents_68007_680014 collection (actual rows=13 loops=1)
          Index Cond: ((document @<> '{ "a.b.c" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson) AND (document @<> '{ "_id" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson))
          Order By: ((document |-<> '{ "a.b.c" : { "$numberInt" : "-1" } }'::bson) AND (document |-<> '{ "_id" : { "$numberInt" : "-1" } }'::bson))
-(12 rows)
+(13 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "filter": {}, "sort": { "a.b": -1, "_id": -1 } }')
@@ -1886,6 +1912,7 @@ $cmd$);
    indexName: a.b_-1
    indexKey: {"a.b": -1,"_id": -1}
    isMultiKey: true
+   multiKeyPaths: a.b
    indexBounds: ["a.b": DESC(MinKey, MaxKey), "_id": DESC(MinKey, MaxKey)]
    numDuplicates: 12 entries
    innerScanLoops: 33 loops
@@ -1894,7 +1921,7 @@ $cmd$);
    ->  Index Scan using "a.b_-1" on documents_68005_680010 collection (actual rows=21 loops=1)
          Index Cond: ((document @<> '{ "a.b" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson) AND (document @<> '{ "_id" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson))
          Order By: ((document |-<> '{ "a.b" : { "$numberInt" : "-1" } }'::bson) AND (document |-<> '{ "_id" : { "$numberInt" : "-1" } }'::bson))
-(12 rows)
+(13 rows)
 
 SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll3", "filter": {}, "sort": { "a.b.c": -1, "_id": -1 } }');
                                                                document                                                               
@@ -1954,6 +1981,7 @@ $cmd$);
          indexName: a.b.c_-1
          indexKey: {"a.b.c": -1,"_id": -1}
          isMultiKey: true
+         multiKeyPaths: a.b.c
          indexBounds: ["a.b.c": DESC(MinKey, MaxKey), "_id": DESC(MinKey, MaxKey)]
          numDuplicates: 6 entries
          innerScanLoops: 19 loops
@@ -1962,7 +1990,7 @@ $cmd$);
          ->  Index Scan using "a.b.c_-1" on documents_68007_680014 collection (actual rows=13 loops=1)
                Index Cond: ((document @<> '{ "a.b.c" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson) AND (document @<> '{ "_id" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
                Order By: (document |-<> '{ "a.b.c" : { "$numberInt" : "-1" } }'::bson)
-(16 rows)
+(17 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "filter": {}, "sort": { "a.b": -1, "_id": 1 } }')
@@ -1977,6 +2005,7 @@ $cmd$);
          indexName: a.b_-1
          indexKey: {"a.b": -1,"_id": -1}
          isMultiKey: true
+         multiKeyPaths: a.b
          indexBounds: ["a.b": DESC(MinKey, MaxKey), "_id": DESC(MinKey, MaxKey)]
          numDuplicates: 12 entries
          innerScanLoops: 33 loops
@@ -1985,7 +2014,7 @@ $cmd$);
          ->  Index Scan using "a.b_-1" on documents_68005_680010 collection (actual rows=21 loops=1)
                Index Cond: ((document @<> '{ "a.b" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson) AND (document @<> '{ "_id" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
                Order By: (document |-<> '{ "a.b" : { "$numberInt" : "-1" } }'::bson)
-(16 rows)
+(17 rows)
 
 -- mixed asc/desc indexes
 reset documentdb.forceDisableSeqScan;
@@ -2024,6 +2053,7 @@ $cmd$);
    indexName: a.b.c_1_id-1
    indexKey: {"a.b.c": 1,"_id": -1}
    isMultiKey: true
+   multiKeyPaths: a.b.c
    indexBounds: ["a.b.c": (MinKey, MaxKey), "_id": DESC(MinKey, MaxKey)]
    numDuplicates: 6 entries
    innerScanLoops: 19 loops
@@ -2032,7 +2062,7 @@ $cmd$);
    ->  Index Scan using "a.b.c_1_id-1" on documents_68007_680014 collection (actual rows=13 loops=1)
          Index Cond: ((document @<> '{ "a.b.c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (document @<> '{ "_id" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson))
          Order By: ((document |-<> '{ "a.b.c" : { "$numberInt" : "1" } }'::bson) AND (document |-<> '{ "_id" : { "$numberInt" : "-1" } }'::bson))
-(12 rows)
+(13 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "filter": {}, "sort": { "a.b": -1, "_id": 1 } }')
@@ -2043,6 +2073,7 @@ $cmd$);
    indexName: a.b_-1_id_1
    indexKey: {"a.b": -1,"_id": 1}
    isMultiKey: true
+   multiKeyPaths: a.b
    indexBounds: ["a.b": DESC(MinKey, MaxKey), "_id": (MinKey, MaxKey)]
    numDuplicates: 12 entries
    innerScanLoops: 33 loops
@@ -2051,7 +2082,7 @@ $cmd$);
    ->  Index Scan using "a.b_-1_id_1" on documents_68005_680010 collection (actual rows=21 loops=1)
          Index Cond: ((document @<> '{ "a.b" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson) AND (document @<> '{ "_id" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
          Order By: ((document |-<> '{ "a.b" : { "$numberInt" : "-1" } }'::bson) AND (document |-<> '{ "_id" : { "$numberInt" : "1" } }'::bson))
-(12 rows)
+(13 rows)
 
 SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll3", "filter": {}, "sort": { "a.b.c": 1, "_id": -1 } }');
                                                                document                                                               
@@ -2220,13 +2251,14 @@ $cmd$);
          indexName: idx1
          indexKey: {"a": 1,"b": 1,"c": 1,"d": 1}
          isMultiKey: true
+         multiKeyPaths: a
          indexBounds: ["a": [1, 1], "b": [2, 2], "c": [2, 2], "d": (MinKey, MaxKey)], ["a": [2, 2], "b": [2, 2], "c": [2, 2], "d": (MinKey, MaxKey)], ["a": [1, 1], "b": [3, 3], "c": [2, 2], "d": (MinKey, MaxKey)], ["a": [2, 2], "b": [3, 3], "c": [2, 2], "d": (MinKey, MaxKey)]
          innerScanLoops: 2 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1), (isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0)]
          ->  Index Scan using idx1 on documents_68010_680020 collection (actual rows=1 loops=1)
                Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson) AND (document @*= '{ "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }'::bson) AND (document @= '{ "c" : { "$numberInt" : "2" } }'::bson))
-(13 rows)
+(14 rows)
 
 --composite index selection with order by.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db', '{ "createIndexes": "index_orderby_selection", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1, "d": 1 }, "enableOrderedIndex": true, "name": "a_b_c_d_1" }] }', true);
@@ -2619,7 +2651,7 @@ SELECT collection_id AS collection_id_7 FROM documentdb_api_catalog.collections 
  object_id       | bson   |           | not null | 
  document        | bson   |           | not null | 
 Indexes:
-    "documents_rum_index_68035" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "b", "c", "a" ]', tl='2691'))
+    "documents_rum_index_68035" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "b", "c", "a" ]', tl='2691', mkp='true'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '68013'::bigint)
 

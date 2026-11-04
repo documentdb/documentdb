@@ -24,6 +24,8 @@
 #include "customscan/bson_custom_query_scan.h"
 
 extern bool DefaultUseCompositeOpClass;
+extern bool EnableCompositeUniqueOptionalKey;
+extern bool EnableIndexMetadataGlobalTracking;
 extern bool EnableExtendedIndexes;
 extern bool EnablePlannerStatisticsNewCollections;
 extern bool EnableIndexOnlyScanForFindProject;
@@ -93,6 +95,12 @@ PasswordValidation_HookType
 
 DefaultEnableCompositeOpClass_HookType
 	default_enable_composite_op_class_hook = NULL;
+
+DefaultEnableCompositeUniqueOptionalKey_HookType
+	default_enable_composite_unique_optional_key_hook = NULL;
+
+DefaultEnableIndexMetadataGlobalTracking_HookType
+	default_enable_index_metadata_global_tracking_hook = NULL;
 
 DefaultEnableStatsCreationOnNewCollections_HookType
 	default_enable_stats_creation_on_new_collections_hook = NULL;
@@ -779,6 +787,30 @@ ShouldUseCompositeOpClassByDefault(void)
 	}
 
 	return DefaultUseCompositeOpClass;
+}
+
+
+bool
+ShouldEnableCompositeUniqueOptionalKey(void)
+{
+	if (default_enable_composite_unique_optional_key_hook != NULL)
+	{
+		return default_enable_composite_unique_optional_key_hook();
+	}
+
+	return EnableCompositeUniqueOptionalKey;
+}
+
+
+bool
+ShouldEnableIndexMetadataGlobalTracking(void)
+{
+	if (default_enable_index_metadata_global_tracking_hook != NULL)
+	{
+		return default_enable_index_metadata_global_tracking_hook();
+	}
+
+	return EnableIndexMetadataGlobalTracking;
 }
 
 

@@ -47,7 +47,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_601" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_602" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "a" ]', tl='2691'))
+    "documents_rum_index_602" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "a" ]', tl='2691', mkp='true'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '601'::bigint)
 
@@ -270,6 +270,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim(
    indexName: a_1
    indexKey: {"a": 1}
    isMultiKey: true
+   multiKeyPaths: a
    indexBounds: ["a": [MinKey, MaxKey]]
    innerScanLoops: 20000 loops
    scanType: ordered
@@ -279,7 +280,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim(
          Heap Blocks: exact=114
          ->  Bitmap Index Scan on a_1 (actual rows=30000 loops=1)
                Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-(14 rows)
+(15 rows)
 
 -- here we leave behind index tuples 1 to 10, even numbers and multiples of 3 until 30.
 reset documentdb.forceDisableSeqScan;
@@ -304,6 +305,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim(
    indexName: a_1
    indexKey: {"a": 1}
    isMultiKey: true
+   multiKeyPaths: a
    indexBounds: ["a": [MinKey, MaxKey]]
    numDuplicates: 20000 entries
    innerScanLoops: 20000 loops
@@ -311,26 +313,6 @@ SELECT documentdb_test_helpers.run_explain_and_trim(
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 30000)]
    ->  Index Scan using a_1 on documents_601 collection (actual rows=9 loops=1)
          Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-(12 rows)
-
--- this will only clean up even more occurrences (since duplicate TID bitmap won't track kill_prior_tuple).
-SELECT documentdb_test_helpers.run_explain_and_trim(
-    $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('pvacuum_db_2', '{ "find": "p_dead_tup", "filter": { "a": { "$exists": true } } }') $cmd$);
-                              run_explain_and_trim                              
---------------------------------------------------------------------------------
- Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=9 loops=1)
-   namespaceName: pvacuum_db_2.p_dead_tup
-   indexName: a_1
-   indexKey: {"a": 1}
-   isMultiKey: true
-   indexBounds: ["a": [MinKey, MaxKey]]
-   numDuplicates: 16488 entries
-   innerScanLoops: 16575 loops
-   deadEntriesOrPagesSkipped: 3425 items
-   scanType: ordered
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 26462)]
-   ->  Index Scan using a_1 on documents_601 collection (actual rows=9 loops=1)
-         Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
 (13 rows)
 
 -- this will only clean up even more occurrences (since duplicate TID bitmap won't track kill_prior_tuple).
@@ -343,15 +325,16 @@ SELECT documentdb_test_helpers.run_explain_and_trim(
    indexName: a_1
    indexKey: {"a": 1}
    isMultiKey: true
+   multiKeyPaths: a
    indexBounds: ["a": [MinKey, MaxKey]]
-   numDuplicates: 11348 entries
-   innerScanLoops: 13146 loops
-   deadEntriesOrPagesSkipped: 6854 items
+   numDuplicates: 16479 entries
+   innerScanLoops: 16569 loops
+   deadEntriesOrPagesSkipped: 3431 items
    scanType: ordered
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 21237)]
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 26448)]
    ->  Index Scan using a_1 on documents_601 collection (actual rows=9 loops=1)
          Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-(13 rows)
+(14 rows)
 
 -- this will only clean up even more occurrences (since duplicate TID bitmap won't track kill_prior_tuple).
 SELECT documentdb_test_helpers.run_explain_and_trim(
@@ -363,15 +346,37 @@ SELECT documentdb_test_helpers.run_explain_and_trim(
    indexName: a_1
    indexKey: {"a": 1}
    isMultiKey: true
+   multiKeyPaths: a
    indexBounds: ["a": [MinKey, MaxKey]]
-   numDuplicates: 7687 entries
-   innerScanLoops: 8143 loops
-   deadEntriesOrPagesSkipped: 11857 items
+   numDuplicates: 11345 entries
+   innerScanLoops: 13145 loops
+   deadEntriesOrPagesSkipped: 6855 items
    scanType: ordered
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 14241)]
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 21232)]
    ->  Index Scan using a_1 on documents_601 collection (actual rows=9 loops=1)
          Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-(13 rows)
+(14 rows)
+
+-- this will only clean up even more occurrences (since duplicate TID bitmap won't track kill_prior_tuple).
+SELECT documentdb_test_helpers.run_explain_and_trim(
+    $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('pvacuum_db_2', '{ "find": "p_dead_tup", "filter": { "a": { "$exists": true } } }') $cmd$);
+                              run_explain_and_trim
+--------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=9 loops=1)
+   namespaceName: pvacuum_db_2.p_dead_tup
+   indexName: a_1
+   indexKey: {"a": 1}
+   isMultiKey: true
+   multiKeyPaths: a
+   indexBounds: ["a": [MinKey, MaxKey]]
+   numDuplicates: 7684 entries
+   innerScanLoops: 8141 loops
+   deadEntriesOrPagesSkipped: 11859 items
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 14235)]
+   ->  Index Scan using a_1 on documents_601 collection (actual rows=9 loops=1)
+         Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+(14 rows)
 
 -- recovers the dead tuple values as is.
 set documentdb_rum.enable_support_dead_index_items to off;
@@ -384,15 +389,16 @@ SELECT documentdb_test_helpers.run_explain_and_trim(
    indexName: a_1
    indexKey: {"a": 1}
    isMultiKey: true
+   multiKeyPaths: a
    indexBounds: ["a": [MinKey, MaxKey]]
    numDuplicates: 20000 entries
    innerScanLoops: 20000 loops
-   eligibleDeadItems: 24385 items
+   eligibleDeadItems: 24386 items
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 30000)]
    ->  Index Scan using a_1 on documents_601 collection (actual rows=9 loops=1)
          Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-(13 rows)
+(14 rows)
 
 -- now resurrect multiple terms (should resurrect even when flag is off)
 set documentdb_rum.enable_support_dead_index_items to off;
@@ -405,26 +411,26 @@ SELECT entry->> 'offset' AS offset,
     LIMIT 20;
  offset | flags | index_value 
 --------+-------+-------------
- 1      | 1     | 
- 2      | 1     | 1
- 3      | 1     | 2
- 4      | 1     | 3
- 5      | 1     | 4
- 6      | 1     | 5
- 7      | 1     | 6
- 8      | 1     | 7
- 9      | 1     | 8
- 10     | 1     | 9
- 11     | 1     | 10
- 12     | 3     | 11
- 13     | 1     | 12
- 14     | 3     | 13
- 15     | 1     | 14
- 16     | 1     | 15
- 17     | 1     | 16
- 18     | 3     | 17
- 19     | 1     | 18
- 20     | 3     | 19
+ 1      | 1     | 1
+ 2      | 1     | 2
+ 3      | 1     | 3
+ 4      | 1     | 4
+ 5      | 1     | 5
+ 6      | 1     | 6
+ 7      | 1     | 7
+ 8      | 1     | 8
+ 9      | 1     | 9
+ 10     | 1     | 10
+ 11     | 3     | 11
+ 12     | 1     | 12
+ 13     | 3     | 13
+ 14     | 1     | 14
+ 15     | 1     | 15
+ 16     | 1     | 16
+ 17     | 3     | 17
+ 18     | 1     | 18
+ 19     | 3     | 19
+ 20     | 3     | 20
 (20 rows)
 
 -- update a single node and write to it. The index term is "revived"
@@ -442,26 +448,26 @@ SELECT entry->> 'offset' AS offset,
     LIMIT 20;
  offset | flags | index_value 
 --------+-------+-------------
- 1      | 1     | 
- 2      | 1     | 1
- 3      | 1     | 2
- 4      | 1     | 3
- 5      | 1     | 4
- 6      | 1     | 5
- 7      | 1     | 6
- 8      | 1     | 7
- 9      | 1     | 8
- 10     | 1     | 9
- 11     | 1     | 10
- 12     | 3     | 11
- 13     | 1     | 12
- 14     | 3     | 13
- 15     | 1     | 14
- 16     | 1     | 15
- 17     | 1     | 16
- 18     | 1     | 17
- 19     | 1     | 18
- 20     | 1     | 19
+ 1      | 1     | 1
+ 2      | 1     | 2
+ 3      | 1     | 3
+ 4      | 1     | 4
+ 5      | 1     | 5
+ 6      | 1     | 6
+ 7      | 1     | 7
+ 8      | 1     | 8
+ 9      | 1     | 9
+ 10     | 1     | 10
+ 11     | 3     | 11
+ 12     | 1     | 12
+ 13     | 3     | 13
+ 14     | 1     | 14
+ 15     | 1     | 15
+ 16     | 1     | 16
+ 17     | 1     | 17
+ 18     | 1     | 18
+ 19     | 1     | 19
+ 20     | 3     | 20
 (20 rows)
 
 -- now revive all the tuples using the repair function

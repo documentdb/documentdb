@@ -58,7 +58,7 @@ FROM generate_series(1, 2000) i;
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_2101" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_2102" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "c", "a" ]', tl='2691'))
+    "documents_rum_index_2102" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "c", "a" ]', tl='2691', mkp='true'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '2101'::bigint)
 
@@ -153,7 +153,7 @@ FROM generate_series(1, 2000) i;
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_2102" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_2104" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "c", "a" ]', tl='2691', cl='en-u-ks-level1'))
+    "documents_rum_index_2104" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "c", "a" ]', tl='2691', mkp='true', cl='en-u-ks-level1'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '2102'::bigint)
 
@@ -279,7 +279,7 @@ FROM generate_series(1, 2000) i;
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_2103" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_2106" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "c", "a" ]', tl='2691'))
+    "documents_rum_index_2106" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "c", "a" ]', tl='2691', mkp='true'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '2103'::bigint)
 
@@ -375,7 +375,7 @@ FROM generate_series(1, 2000) i;
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_2104" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_2108" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "c", "a" ]', tl='2691', cl='en-u-ks-level1'))
+    "documents_rum_index_2108" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "c", "a" ]', tl='2691', mkp='true', cl='en-u-ks-level1'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '2104'::bigint)
 
@@ -475,7 +475,7 @@ FROM generate_series(1, 1000) i;
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_2105" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_2110" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "c", "a" ]', tl='2691', cl='en-u-ks-level3-kn-true'))
+    "documents_rum_index_2110" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "c", "a" ]', tl='2691', mkp='true', cl='en-u-ks-level3-kn-true'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '2105'::bigint)
 

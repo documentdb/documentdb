@@ -592,7 +592,8 @@ from documentdb_api_catalog.collection_indexes ci
 JOIN documentdb_api_catalog.collections c
 ON  c.collection_id = ci.collection_id 
 where (index_spec).index_expire_after_seconds > 0
-AND c.database_name = 'ttl_default_composite';
+AND c.database_name = 'ttl_default_composite'
+ORDER BY c.collection_name;
 
 
 -- 22. Test skipRepeatDeleteForUnOrderedIndex GUC

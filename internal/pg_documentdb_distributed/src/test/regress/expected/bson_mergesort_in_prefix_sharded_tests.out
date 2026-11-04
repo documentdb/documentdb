@@ -814,7 +814,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
-RESET documentdb.enableIndexMetadataGlobalTracking;
+SET documentdb.enableIndexMetadataGlobalTracking TO off;
 -- Pre-shard, the coordinator index carries the marker. Reported as
 -- <marked>/<in-scope> so that the index vanishing shows up as 0/0 rather than
 -- silently satisfying the assertion. Expected 1/1.
@@ -833,6 +833,7 @@ SELECT documentdb_api.shard_collection('{ "shardCollection": "msdb.coll_mk_pp_of
  
 (1 row)
 
+RESET documentdb.enableIndexMetadataGlobalTracking;
 ANALYZE documentdb_data.documents_79005;
 -- After resharding with the GUC off, the shard indexes have lost it: the
 -- composite index is still there (denominator 1) but carries no marker.
@@ -907,22 +908,14 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim(
                      Node: host=localhost port=58070 dbname=regression
                      ->  Limit (actual rows=3 loops=1)
                            Output: document, (documentdb_api_catalog.bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::documentdb_core.bson))
-                           ->  Custom Scan (DocumentDBApiTidDedup) (actual rows=3 loops=1)
+                           ->  Sort (actual rows=3 loops=1)
+                                 Output: document, (documentdb_api_catalog.bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::documentdb_core.bson))
+                                 Sort Key: (documentdb_api_catalog.bson_orderby(collection.document, '{ "b" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
+                                 Sort Method: quicksort  Memory: xxxkB
+                                 ->  Index Scan using a_1_b_1 on documentdb_data.documents_x_x collection (actual rows=3 loops=1)
                                  Output: document, documentdb_api_catalog.bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-                                 Duplicate Rows Removed: 0
-                                 ->  Result (actual rows=3 loops=1)
-                                       Output: document, ctid
-                                       ->  Merge Append (actual rows=3 loops=1)
-                                             Sort Key: (documentdb_api_catalog.bson_orderby(collection.document, '{ "b" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
-                                             ->  Index Scan using a_1_b_1 on documentdb_data.documents_x_x collection (actual rows=1 loops=1)
-                                                   Output: document, ctid, documentdb_api_catalog.bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-                                                   Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-                                                   Order By: (collection.document OPERATOR(documentdb_api_catalog.|-<>) '{ "b" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-                                             ->  Index Scan using a_1_b_1 on documentdb_data.documents_x_x collection (actual rows=2 loops=1)
-                                                   Output: document, ctid, documentdb_api_catalog.bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-                                                   Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "4" } }'::documentdb_core.bson)
-                                                   Order By: (collection.document OPERATOR(documentdb_api_catalog.|-<>) '{ "b" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-(32 rows)
+                                       Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@*=) '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "4" } ] }'::documentdb_core.bson)
+(24 rows)
 
 ROLLBACK;
 -- cleanup

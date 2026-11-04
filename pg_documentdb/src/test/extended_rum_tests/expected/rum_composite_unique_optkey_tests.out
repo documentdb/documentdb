@@ -46,8 +46,8 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_30101" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_30102" EXCLUDE USING documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "a" ]', tl='2691') WITH =?=, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" } }'::bson, false, true) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops (cmp='true', optsk='30101') WITH OPERATOR(documentdb_api_internal.=#=))
-    "documents_rum_index_30103" EXCLUDE USING documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "b", "c" ]', tl='2691') WITH =?=, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "b" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" } }'::bson, false, true) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops (cmp='true', optsk='30101') WITH OPERATOR(documentdb_api_internal.=#=))
+    "documents_rum_index_30102" EXCLUDE USING documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "a" ]', tl='2691', mkp='true') WITH =?=, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" } }'::bson, false, true) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops (cmp='true', optsk='30101') WITH OPERATOR(documentdb_api_internal.=#=))
+    "documents_rum_index_30103" EXCLUDE USING documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "b", "c" ]', tl='2691', mkp='true') WITH =?=, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "b" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" } }'::bson, false, true) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops (cmp='true', optsk='30101') WITH OPERATOR(documentdb_api_internal.=#=))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '30101'::bigint)
 
@@ -306,8 +306,8 @@ SELECT documentdb_api.shard_collection('optkeydb', 'optkeyColl', '{ "b": "hashed
 Indexes:
     "collection_pk_30101" PRIMARY KEY, btree (shard_key_value, object_id)
     "documents_rum_index_30104" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=_id, tl='2699'))
-    "documents_rum_index_30105" EXCLUDE USING documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "a" ]', tl='2691') WITH =?=, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" } }'::bson, false, true) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops (cmp='true', optsk='30101') WITH OPERATOR(documentdb_api_internal.=#=))
-    "documents_rum_index_30106" EXCLUDE USING documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "b", "c" ]', tl='2691') WITH =?=, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "b" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" } }'::bson, false, true) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops (cmp='true', optsk='30101') WITH OPERATOR(documentdb_api_internal.=#=))
+    "documents_rum_index_30105" EXCLUDE USING documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "a" ]', tl='2691', mkp='true') WITH =?=, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" } }'::bson, false, true) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops (cmp='true', optsk='30101') WITH OPERATOR(documentdb_api_internal.=#=))
+    "documents_rum_index_30106" EXCLUDE USING documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "b", "c" ]', tl='2691', mkp='true') WITH =?=, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "b" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" } }'::bson, false, true) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops (cmp='true', optsk='30101') WITH OPERATOR(documentdb_api_internal.=#=))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = documentdb_api_internal.get_shard_key_value('{ "b" : "hashed" }'::bson, 30101::bigint, document))
 
@@ -335,7 +335,7 @@ SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(
 FROM idx;
                                              documentdb_rum_get_meta_page_info                                             
 ---------------------------------------------------------------------------------------------------------------------------
- {"entries": 238, "dataPages": 0, "entryPages": 4, "totalPages": 5, "pendingHeapTuples": 1, "pendingHeapTuplesHex": "0x1"}
+ {"entries": 237, "dataPages": 0, "entryPages": 4, "totalPages": 5, "pendingHeapTuples": 3, "pendingHeapTuplesHex": "0x3"}
 (1 row)
 
 -- After sharding, the indexes are recreated. Find the current rum index for {a:1}.
@@ -372,7 +372,7 @@ SELECT
 FROM all_entries;
  path_entries | shard_entries |                 sharded_optkey_check                 
 --------------+---------------+------------------------------------------------------
-          119 |           122 | PASS: shard exclusion terms generated after sharding
+          118 |           122 | PASS: shard exclusion terms generated after sharding
 (1 row)
 
 -- ===== Section 8: Unique constraint is per-shard-key after sharding =====
@@ -1562,6 +1562,83 @@ ORDER BY optional_key, comparable_terms, direction;
 
 DROP TABLE null_undefined_order_results;
 RESET documentdb.enableComparableTerms;
+-- Section 20: optional shard keys apply only to composite indexes.
+-- Single-path indexes retain their shard-hash check for truncated keys.
+SET documentdb.defaultUseCompositeOpClass TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
+    '{"createIndexes":"single_path_trunc","indexes":[{"key":{"k":1},"name":"k_1","unique":true}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT pg_get_indexdef(i.indexrelid) ~ 'single_path_ops' AS is_single_path,
+       pg_get_indexdef(i.indexrelid) ~ 'optsk=' AS has_optsk
+FROM pg_index i
+WHERE i.indrelid = (SELECT ('documentdb_data.documents_' || collection_id)::regclass
+                    FROM documentdb_api_catalog.collections
+                    WHERE database_name = 'optkeydb' AND collection_name = 'single_path_trunc')
+  AND i.indexrelid::regclass::text LIKE '%rum_index%';
+ is_single_path | has_optsk
+----------------+-----------
+ t              | f
+(1 row)
+
+SELECT i, 32 * (1 << i) AS key_length,
+       NOT (documentdb_api.insert_one('optkeydb', 'single_path_trunc',
+           bson_build_document('_id'::text, i, 'k'::text,
+               repeat('aaaabbbbccccddddeeeeffffgggghhhh', 1 << i))) @? '{"writeErrors":1}') AS inserted
+FROM generate_series(0, 9) i;
+ i | key_length | inserted
+---+------------+----------
+ 0 |         32 | t
+ 1 |         64 | t
+ 2 |        128 | t
+ 3 |        256 | t
+ 4 |        512 | t
+ 5 |       1024 | t
+ 6 |       2048 | t
+ 7 |       4096 | t
+ 8 |       8192 | t
+ 9 |      16384 | t
+(10 rows)
+
+-- A genuine duplicate still conflicts.
+SELECT documentdb_api.insert_one('optkeydb', 'single_path_trunc',
+    bson_build_document('_id'::text, 10, 'k'::text,
+        repeat('aaaabbbbccccddddeeeeffffgggghhhh', 256)));
+                                                                                                                       insert_one
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "319029277" }, "errmsg" : "Duplicate key violation on the requested collection: Index 'k_1'" } ] }
+(1 row)
+
+-- Array elements with the same truncated prefix remain distinct full values.
+SELECT documentdb_api.insert_one('optkeydb', 'single_path_trunc',
+    format('{"_id":11,"k":["%sA","%sB"]}',
+        repeat('aaaabbbbccccddddeeeeffffgggghhhh', 512),
+        repeat('aaaabbbbccccddddeeeeffffgggghhhh', 512))::bson);
+                              insert_one
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('optkeydb', 'single_path_trunc',
+    format('{"_id":12,"k":["%sA","%s"]}',
+        repeat('aaaabbbbccccddddeeeeffffgggghhhh', 512),
+        repeat('aaaabbbbccccddddeeeeffffgggghhhh', 256))::bson);
+                                                                                                                       insert_one
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "319029277" }, "errmsg" : "Duplicate key violation on the requested collection: Index 'k_1'" } ] }
+(1 row)
+
+SELECT count(*) AS single_path_trunc_rows
+FROM documentdb_api.collection('optkeydb', 'single_path_trunc');
+ single_path_trunc_rows
+------------------------
+                     11
+(1 row)
+
 RESET documentdb.enable_composite_unique_optional_key;
 RESET documentdb.enableCompositeUniqueHash;
 RESET documentdb.defaultUseCompositeOpClass;

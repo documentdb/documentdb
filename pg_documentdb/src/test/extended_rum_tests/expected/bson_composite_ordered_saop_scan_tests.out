@@ -133,7 +133,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('ordered_saop_sca
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_1202" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_1206" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "a", "b" ]', tl='2691'))
+    "documents_rum_index_1206" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "a", "b" ]', tl='2691', mkp='true'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '1202'::bigint)
 
@@ -146,7 +146,7 @@ Check constraints:
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_1203" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_1207" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ { "a" : -1 }, { "b" : -1 } ]', tl='2691'))
+    "documents_rum_index_1207" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ { "a" : -1 }, { "b" : -1 } ]', tl='2691', mkp='true'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '1203'::bigint)
 
@@ -159,7 +159,7 @@ Check constraints:
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_1204" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_1208" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ { "a" : -1 }, "b" ]', tl='2691'))
+    "documents_rum_index_1208" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ { "a" : -1 }, "b" ]', tl='2691', mkp='true'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '1204'::bigint)
 
@@ -172,7 +172,7 @@ Check constraints:
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_1205" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_1209" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "a", { "b" : -1 } ]', tl='2691'))
+    "documents_rum_index_1209" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "a", { "b" : -1 } ]', tl='2691', mkp='true'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '1205'::bigint)
 

@@ -14,6 +14,7 @@
 # enforced in the shared gateway core (write_concern.rs). Verified passing against
 # that shared validation path. Strict node-id count after removal: 13247.
 # 2026-10-30: removed 2 idIndex collation cases fixed in the shared create-command path. Strict node-id count after removal: 12967.
+# 2026-11-02: removed 6 parallel-array rejection cases that started passing on CI after multikey index validation was fixed for inserts, updates, and index builds. Count: 12961.
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/aggregation/commands/aggregate/test_aggregate_agnostic.py::test_aggregate_agnostic[documentdb-agnostic_empty_pipeline]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/aggregation/commands/aggregate/test_aggregate_agnostic.py::test_aggregate_agnostic[documentdb-agnostic_list_local_sessions]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/aggregation/commands/aggregate/test_aggregate_agnostic.py::test_aggregate_agnostic[documentdb-documents_with_string_collection]
@@ -4446,7 +4447,6 @@ docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/c
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/compound/test_compound_creation.py::test_compound_different_order_creates_two[documentdb]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/compound/test_compound_creation.py::test_compound_different_sort_creates_two[documentdb]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/compound/test_compound_creation.py::test_compound_idempotent[documentdb]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/compound/test_compound_errors.py::test_compound_parallel_arrays_fail[documentdb]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/geospatial/test_geospatial_bson_type_validation.py::test_geospatial_index_option_accepted[documentdb-accept_decimal_for_max]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/geospatial/test_geospatial_bson_type_validation.py::test_geospatial_index_option_accepted[documentdb-accept_decimal_for_min]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/geospatial/test_geospatial_bson_type_validation.py::test_geospatial_index_option_rejected[documentdb-reject_decimal_for_2dsphereIndexVersion]
@@ -4477,11 +4477,6 @@ docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/g
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/geospatial/test_geospatial_creation.py::test_geospatial_sparse[documentdb-sparse_2dsphere]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/hashed/test_smoke_hashed.py::test_smoke_indexes_hashed[documentdb]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/multikey/test_multikey_creation.py::test_multikey_creation_with_existing_array[documentdb]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/multikey/test_multikey_errors.py::test_multikey_rejects_parallel_array_insert[documentdb]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/multikey/test_multikey_errors.py::test_multikey_rejects_parallel_arrays_at_build_time[documentdb]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/multikey/test_multikey_errors.py::test_multikey_rejects_update_creating_parallel_arrays[documentdb]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/multikey/test_multikey_errors.py::test_multikey_rejects_update_creating_parallel_arrays_deeply_nested[documentdb]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/multikey/test_multikey_errors.py::test_multikey_rejects_update_creating_parallel_arrays_nested[documentdb]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/single/test_single_bson_type_validation.py::test_single_key_sort_order_accepted[documentdb-accept_decimal_for_sort_order]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/single/test_single_creation.py::test_single_creation_multiple_fields_one_call[documentdb]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/single/test_single_creation.py::test_single_creation_success[documentdb-creation_ascending]

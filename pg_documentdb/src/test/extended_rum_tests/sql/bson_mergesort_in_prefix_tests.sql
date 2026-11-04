@@ -1568,19 +1568,15 @@ RESET documentdb.enableIndexOnlyScanForFindProject;
 RESET documentdb.enable_merge_sort_for_in_prefix;
 
 -- =====================================================================
--- Multi-key index (per-path tracked) whose array column is NOT referenced by
+-- Legacy multi-key index whose array column is NOT referenced by
 -- the query, combined with index-only scans enabled. The index (a, b, c) is
 -- multi-key because c holds arrays, but the query only touches the scalar
 -- columns a ($in prefix) and b (sort) and projects {a, b}.
 --
--- Because the index is multi-key the MergeAppend is wrapped in the heap-TID
--- de-dup CustomScan, and that de-dup reads each row's heap ctid -- which an
--- index-only scan cannot supply. The rewrite therefore keeps heap (ctid-bearing)
--- Index Scan children here rather than converting them to Index Only Scans, so
--- the de-dup always has a ctid to read. This must hold even with index-only
--- scans enabled and a covered {a, b} projection. Results must match the
--- feature-off result (a is scalar, so no document matches more than one branch;
--- nothing is actually de-duplicated, but the wrap is present and correct).
+-- Without per-path metadata, the planner cannot prove that the filtered and
+-- sorted paths are scalar. It keeps a blocking Sort and heap Index Scan rather
+-- than using Merge Append or Index Only Scan, even with a covered projection.
+-- Results must match the feature-off result.
 -- =====================================================================
 SELECT documentdb_api.create_collection('msdb','coll_ios_mk');
 SELECT documentdb_api.insert_one('msdb','coll_ios_mk','{ "_id": 1, "a": 1, "b": 2, "c": [100, 200] }');
@@ -1589,8 +1585,10 @@ SELECT documentdb_api.insert_one('msdb','coll_ios_mk','{ "_id": 3, "a": 1, "b": 
 SELECT documentdb_api.insert_one('msdb','coll_ios_mk','{ "_id": 4, "a": 4, "b": 5, "c": [100, 400] }');
 SELECT documentdb_api.insert_one('msdb','coll_ios_mk','{ "_id": 5, "a": 2, "b": 1, "c": [100] }');
 SELECT documentdb_api.insert_one('msdb','coll_ios_mk','{ "_id": 6, "a": 1, "b": 3, "c": [500] }');
+SET documentdb.enableIndexMetadataGlobalTracking TO off;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
   '{ "createIndexes": "coll_ios_mk", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1 }, "name": "ios_mk_a_1_b_1_c_1", "enableOrderedIndex": 1 } ] }', true);
+RESET documentdb.enableIndexMetadataGlobalTracking;
 
 SET documentdb.forceDisableSeqScan TO on;
 SET enable_indexonlyscan TO on;
@@ -1605,10 +1603,7 @@ SET documentdb.enable_merge_sort_for_in_prefix TO on;
 SELECT document FROM bson_aggregation_find('msdb',
   '{ "find": "coll_ios_mk", "filter": { "a": { "$in": [1, 4] } }, "projection": { "a": 1, "b": 1, "_id": 0 }, "sort": { "b": 1 } }');
 
--- Plan (enable_sort off to isolate the path): a Merge Append wrapped in the
--- de-dup CustomScan, whose children are heap Index Scans (NOT Index Only Scans)
--- because the de-dup needs the heap ctid. No planner error despite index-only
--- being enabled with a covered projection.
+-- A disabled Sort preference must not bypass the conservative multi-key guard.
 SET enable_sort TO off;
 SELECT bool_or(line ~ 'Merge Append') AS has_merge_append,
        bool_or(line ~ 'DocumentDBApiTidDedup') AS has_tid_dedup,
@@ -1749,8 +1744,11 @@ SELECT documentdb_api.insert_one('msdb','coll_mk_sort','{ "_id": 3, "a": 1, "b":
 SELECT documentdb_api.insert_one('msdb','coll_mk_sort','{ "_id": 4, "a": 4, "b": [1, 9] }');
 SELECT documentdb_api.insert_one('msdb','coll_mk_sort','{ "_id": 5, "a": 2, "b": 3 }');
 SELECT documentdb_api.insert_one('msdb','coll_mk_sort','{ "_id": 6, "a": [1, 4], "b": [0, 20] }');
+-- Preserve coverage of the legacy layout that permits parallel arrays.
+SET documentdb.enableIndexMetadataGlobalTracking TO off;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
   '{ "createIndexes": "coll_mk_sort", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_1_b_1", "enableOrderedIndex": 1 } ] }', true);
+RESET documentdb.enableIndexMetadataGlobalTracking;
 
 -- Ascending: order by the min b element. Expected _id 6,4,1,2,3 (min b 0,1,2,5,6).
 SET documentdb.enable_merge_sort_for_in_prefix TO off;
@@ -1777,10 +1775,8 @@ SET documentdb.enable_merge_sort_for_in_prefix TO on;
 SELECT document FROM bson_aggregation_find('msdb',
   '{ "find": "coll_mk_sort", "filter": { "a": { "$in": [1, 4] }, "b": { "$gte": 6 } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }');
 
--- Plan (ascending): a Merge Append wrapped in the de-dup CustomScan. Only _id 6
--- (a is [1,4]) reaches both branches, so exactly one duplicate is dropped; the
--- multi-key sort column b needs no extra de-dup because each per-value ordered
--- scan already emits a document once at its min b.
+-- Without per-path metadata, filtering another potentially multi-key path
+-- prevents sort pushdown. The blocking Sort preserves whole-document ordering.
 SET enable_sort TO off;
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
@@ -1979,8 +1975,8 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
       '{ "find": "coll_mk_pp_sort", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }')
 $cmd$);
 
--- With the per-path bitmask ignored the planner falls back to the whole-index
--- answer, so the de-dup node comes back even though it drops nothing.
+-- Ignoring the per-path bitmask makes both paths potentially multi-key, so the
+-- planner must fall back to a blocking Sort.
 SET documentdb.enablePerPathMultiKeySortPushdown TO off;
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)

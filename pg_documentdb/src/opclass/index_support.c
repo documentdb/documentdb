@@ -469,9 +469,7 @@ static void PrimaryKeyLookupUnableToFindIndex(void);
 static bool IndexClauseIsValidForIndexOnlyScan(const IndexClause *clause,
 											   bytea *indexOptions,
 											   const IndexOnlyScanMultiKeyState *
-											   multiKeyState,
-											   int32_t perPathMultiKeyQualsCount[
-												   INDEX_MAX_KEYS]);
+											   multiKeyState);
 static OpExpr * CreateMergeSortInPrefixMarkerOpExpr(Expr *documentExpr);
 static List * RemoveMergeSortInPrefixMarkerClauses(List *indexClauses,
 												   bool *removedMarker);
@@ -2589,8 +2587,7 @@ ExprIsValidForIndexOnlyScan(Expr *expr, bytea *indexOptions, bool *isShardKeyExp
 
 static bool
 IndexClauseIsValidForIndexOnlyScan(const IndexClause *clause, bytea *indexOptions,
-								   const IndexOnlyScanMultiKeyState *multiKeyState,
-								   int32_t perPathMultiKeyQualsCount[INDEX_MAX_KEYS])
+								   const IndexOnlyScanMultiKeyState *multiKeyState)
 {
 	if (clause->lossy)
 	{
@@ -2609,6 +2606,7 @@ IndexClauseIsValidForIndexOnlyScan(const IndexClause *clause, bytea *indexOption
 	/* We ignore if it is a shard key expression or not as for rum indexes a shard key value opExpr will never be valid to be pushed down. */
 	bool isShardKeyExpr = false;
 	int64_t *shardKeyValue = NULL;
+	int32_t *perPathMultiKeyQualsCount = NULL;
 	return ExprIsValidForIndexOnlyScan(rinfo->clause, indexOptions, &isShardKeyExpr,
 									   shardKeyValue, multiKeyState,
 									   perPathMultiKeyQualsCount);
@@ -2620,7 +2618,8 @@ IndexRestrictInfoSupportIndexOnlyScan(const RestrictInfo *rinfo,
 									  bytea *indexOptions,
 									  const RestrictInfo **shardKeyRestrictInfo,
 									  int64 *shardKeyValue,
-									  const IndexOnlyScanMultiKeyState *multiKeyState)
+									  const IndexOnlyScanMultiKeyState *multiKeyState,
+									  int32_t perPathMultiKeyQualsCount[INDEX_MAX_KEYS])
 {
 	if (indexOptions == NULL)
 	{
@@ -2628,15 +2627,30 @@ IndexRestrictInfoSupportIndexOnlyScan(const RestrictInfo *rinfo,
 	}
 
 	bool isShardKeyExpr = false;
-	int32_t *perPathMultiKeyState = NULL;
 	bool supportsIndexOnlyScan = ExprIsValidForIndexOnlyScan(rinfo->clause, indexOptions,
 															 &isShardKeyExpr,
 															 shardKeyValue,
 															 multiKeyState,
-															 perPathMultiKeyState);
+															 perPathMultiKeyQualsCount);
 	if (isShardKeyExpr && shardKeyRestrictInfo != NULL)
 	{
 		*shardKeyRestrictInfo = rinfo;
+	}
+
+	/* Pruned index quals remain restrictions that can match different array elements. */
+	if (supportsIndexOnlyScan && multiKeyState->isMultiKeyIndex &&
+		multiKeyState->isPerPathMultiKeyTracked)
+	{
+		int32_t totalMultiKeyQuals = 0;
+		for (int32_t i = 0; i < INDEX_MAX_KEYS; i++)
+		{
+			totalMultiKeyQuals += perPathMultiKeyQualsCount[i];
+		}
+
+		if (totalMultiKeyQuals > 1)
+		{
+			return false;
+		}
 	}
 
 	return supportsIndexOnlyScan;
@@ -2656,6 +2670,7 @@ IndexRestrictInfosSupportIndexOnlyScan(IndexPath *indexPath,
 		return false;
 	}
 
+	int32_t perPathMultiKeyQualsCount[INDEX_MAX_KEYS] = { 0 };
 	ListCell *rinfoCell;
 	foreach(rinfoCell, indexPath->indexinfo->indrestrictinfo)
 	{
@@ -2666,7 +2681,8 @@ IndexRestrictInfosSupportIndexOnlyScan(IndexPath *indexPath,
 		/* at the planner layer these are trimmed out so we shouldn't see them for index only scan here. */
 		if (!IndexRestrictInfoSupportIndexOnlyScan(baseRestrictInfo, indexOptions,
 												   &shardKeyRestrictInfo, NULL,
-												   multiKeyState))
+												   multiKeyState,
+												   perPathMultiKeyQualsCount))
 		{
 			return false;
 		}
@@ -2701,34 +2717,17 @@ IndexClausesSupportIndexOnlyScan(IndexPath *indexPath,
 	}
 
 	ListCell *clauseCell;
-	int32_t perPathMultiKeyQualsCount[INDEX_MAX_KEYS] = { 0 };
 	foreach(clauseCell, indexPath->indexclauses)
 	{
 		IndexClause *clause = (IndexClause *) lfirst(clauseCell);
 
-		if (!IndexClauseIsValidForIndexOnlyScan(clause, indexOptions, multiKeyState,
-												perPathMultiKeyQualsCount))
+		if (!IndexClauseIsValidForIndexOnlyScan(clause, indexOptions, multiKeyState))
 		{
 			return false;
 		}
 	}
 
-	/* For a multi-key index, we can't support index only scans if there's > 1 qual
-	 * on the same path because that would require a runtime recheck.  This is only
-	 * relevant for per-path multi-key tracking, since that's the only path that allows
-	 * index only scans on multi-key paths.
-	 */
-	if (multiKeyState->isMultiKeyIndex && multiKeyState->isPerPathMultiKeyTracked)
-	{
-		for (int32_t i = 0; i < INDEX_MAX_KEYS; i++)
-		{
-			if (perPathMultiKeyQualsCount[i] > 1)
-			{
-				return false;
-			}
-		}
-	}
-
+	int32_t perPathMultiKeyQualsCount[INDEX_MAX_KEYS] = { 0 };
 	ListCell *rinfoCell;
 	foreach(rinfoCell, indexPath->indexinfo->indrestrictinfo)
 	{
@@ -2739,7 +2738,8 @@ IndexClausesSupportIndexOnlyScan(IndexPath *indexPath,
 		/* at the planner layer these are trimmed out so we shouldn't see them for index only scan here. */
 		if (!IndexRestrictInfoSupportIndexOnlyScan(baseRestrictInfo, indexOptions,
 												   &shardKeyRestrictInfo, NULL,
-												   multiKeyState))
+												   multiKeyState,
+												   perPathMultiKeyQualsCount))
 		{
 			return false;
 		}
@@ -6780,6 +6780,35 @@ ProcessOrderByStatements(PlannerInfo *root,
 			{
 				break;
 			}
+
+			/* Another multi-key filter can prune correlated elements that determine
+			 * this array path's sort key, even though this path has no filter.
+			 */
+			bool hasOtherMultiKeyFilter = false;
+			if (isMultiKeyPath && pathSortOrders[i] != 0)
+			{
+				for (int otherCol = 0; otherCol < INDEX_MAX_KEYS; otherCol++)
+				{
+					if (otherCol == i ||
+						!(equalityPrefixes[otherCol] ||
+						  nonEqualityPrefixes[otherCol]))
+					{
+						continue;
+					}
+
+					if (!EnablePerPathMultiKeySortPushdown || multiKeyBitMask == 0 ||
+						(multiKeyBitMask & (UINT32_C(1) << otherCol)) != 0)
+					{
+						hasOtherMultiKeyFilter = true;
+						break;
+					}
+				}
+			}
+
+			if (hasOtherMultiKeyFilter)
+			{
+				break;
+			}
 		}
 
 		if (mayHaveReducedCorrelatedTerms && !prunedCorrelatedIndexQuals &&
@@ -8002,14 +8031,12 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 	 * this path already owns a private copy. See EnsureIndexClausesOwned.
 	 */
 	List *sharedIndexClauses = indexPath->indexclauses;
-	int32_t perPathMultiKeyQualsCount[INDEX_MAX_KEYS] = { 0 };
 	foreach(cell, indexPath->indexclauses)
 	{
 		IndexClause *clause = (IndexClause *) lfirst(cell);
 
 		if (indexOnlyScanPossible &&
-			!IndexClauseIsValidForIndexOnlyScan(clause, indexOptions, &multiKeyState,
-												perPathMultiKeyQualsCount))
+			!IndexClauseIsValidForIndexOnlyScan(clause, indexOptions, &multiKeyState))
 		{
 			indexOnlyScanPossible = false;
 		}
@@ -8117,19 +8144,6 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 		}
 	}
 
-	if (indexOnlyScanPossible && multiKeyState.isMultiKeyIndex &&
-		multiKeyState.isPerPathMultiKeyTracked)
-	{
-		for (int i = 0; i < INDEX_MAX_KEYS; i++)
-		{
-			if (perPathMultiKeyQualsCount[i] > 1)
-			{
-				indexOnlyScanPossible = false;
-				break;
-			}
-		}
-	}
-
 	/* One final pass to add the appropriate order by clauses to the index path */
 	if (indexCanOrder && maxOrderByColumn >= 0)
 	{
@@ -8175,6 +8189,7 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 	{
 		const RestrictInfo *shardKeyExpr = NULL;
 		int64 shardKeyValue = 0;
+		int32_t perPathMultiKeyQualsCount[INDEX_MAX_KEYS] = { 0 };
 		ListCell *rinfoCell;
 		foreach(rinfoCell, indexPath->indexinfo->indrestrictinfo)
 		{
@@ -8182,7 +8197,7 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 
 			if (indexOnlyScanPossible && !IndexRestrictInfoSupportIndexOnlyScan(
 					baseRestrictInfo, indexOptions, &shardKeyExpr, &shardKeyValue,
-					&multiKeyState))
+					&multiKeyState, perPathMultiKeyQualsCount))
 			{
 				indexOnlyScanPossible = false;
 				break;

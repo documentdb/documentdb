@@ -5635,6 +5635,13 @@ static bool
 TrySkipScanToNextDistinctKey(IndexScanDesc scan, RumScanOpaque so,
 							 RumScanEntry entry)
 {
+	/* A previous re-seek may have exhausted the ordered scan. */
+	if (so->orderByScanData->orderStack == NULL ||
+		so->orderByScanData->orderByEntryPageCopy == NULL)
+	{
+		return false;
+	}
+
 	/* Fetch the current index key value for the ordered entry. */
 	Page page = so->orderByScanData->orderByEntryPageCopy;
 	OffsetNumber off = so->orderByScanData->orderStack->off - so->orderScanDirection;

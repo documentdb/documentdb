@@ -820,7 +820,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          Index Cond: (collection.document @= '{ "country" : "Mexico" }'::bson)
 (12 rows)
 
--- negation, elemMatch, type and size queries should not use index only scan
+-- Check index-only eligibility for negation, type, size and element predicates.
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$ne": "Mexico"}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
                                                  run_explain_and_trim                                                 
 ---------------------------------------------------------------------
@@ -834,9 +834,10 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          innerScanLoops: 7 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 12)]
-         ->  Index Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=12 loops=1)
+         ->  Index Only Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=12 loops=1)
                Index Cond: (collection.document @!= '{ "country" : "Mexico" }'::bson)
-(12 rows)
+               Heap Fetches: xxx
+(13 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$type": "string"}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
                                                  run_explain_and_trim                                                 
@@ -892,7 +893,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
                Rows Removed by Filter: 4
 (14 rows)
 
--- null/empty array and mixed $in predicates need runtime recheck and should not use index only scan
+-- Null, empty-array and mixed $in predicates depend on the index's metadata capabilities.
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$eq": null}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
                                                 run_explain_and_trim                                                 
 ---------------------------------------------------------------------
@@ -906,9 +907,10 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          innerScanLoops: 1 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
-         ->  Index Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=0 loops=1)
+         ->  Index Only Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=0 loops=1)
                Index Cond: (collection.document @= '{ "country" : null }'::bson)
-(12 rows)
+               Heap Fetches: xxx
+(13 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$eq": []}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
                                                      run_explain_and_trim                                                     
@@ -920,12 +922,13 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          indexKey: {"country": 1}
          isMultiKey: false
          indexBounds: ["country": [[  ], [  ]]], ["country": (MinKey, null]]
-         innerScanLoops: 0 loops
-         scanType: regular
+         innerScanLoops: 1 loops
+         scanType: ordered
          scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0)]
-         ->  Index Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=0 loops=1)
+         ->  Index Only Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=0 loops=1)
                Index Cond: (collection.document @= '{ "country" : [  ] }'::bson)
-(12 rows)
+               Heap Fetches: xxx
+(13 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$in": ["USA", null]}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
                                                      run_explain_and_trim                                                     
@@ -937,12 +940,13 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          indexKey: {"country": 1}
          isMultiKey: false
          indexBounds: ["country": ["USA", "USA"]], ["country": (MinKey, null]]
-         innerScanLoops: 3 loops
-         scanType: regular
+         innerScanLoops: 2 loops
+         scanType: ordered
          scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 3), (isInequality: true, estimatedEntryCount: 0)]
-         ->  Index Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=3 loops=1)
+         ->  Index Only Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=3 loops=1)
                Index Cond: (collection.document @*= '{ "country" : [ "USA", null ] }'::bson)
-(12 rows)
+               Heap Fetches: xxx
+(13 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$in": ["USA", []]}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
                                                                             run_explain_and_trim                                                                             
@@ -954,12 +958,13 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          indexKey: {"country": 1}
          isMultiKey: false
          indexBounds: ["country": ["USA", "USA"]], ["country": [[  ], [  ]]], ["country": (MinKey, null]]
-         innerScanLoops: 3 loops
-         scanType: regular
+         innerScanLoops: 2 loops
+         scanType: ordered
          scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 3), (isInequality: false, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0)]
-         ->  Index Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=3 loops=1)
+         ->  Index Only Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=3 loops=1)
                Index Cond: (collection.document @*= '{ "country" : [ "USA", [  ] ] }'::bson)
-(12 rows)
+               Heap Fetches: xxx
+(13 rows)
 
 -- if we turn index only scan off it shouldn't use index only scan
 set enable_indexonlyscan to off;
@@ -1018,6 +1023,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          indexName: country_provider_1
          indexKey: {"country": 1,"provider": 1}
          isMultiKey: true
+         multiKeyPaths: provider
          indexBounds: ["country": ["Mexico", "Mexico"], "provider": [[ "AWS", "GCP" ], [ "AWS", "GCP" ]]], ["country": ["Mexico", "Mexico"], "provider": ["AWS", "AWS"]]
          innerScanLoops: 4 loops
          scanType: regular
@@ -1025,7 +1031,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          ->  Index Scan using country_provider_1 on documentdb_data.documents_69001_690002 collection (actual rows=1 loops=1)
                Index Cond: ((collection.document @= '{ "country" : "Mexico" }'::bson) AND (collection.document @= '{ "provider" : [ "AWS", "GCP" ] }'::bson))
                Rows Removed by Index Recheck: 3
-(13 rows)
+(14 rows)
 
 CALL documentdb_api.drop_indexes('idx_only_scan_db', '{ "dropIndexes": "idx_only_scan_coll", "index": "country_provider_1" }');
                           retval                          
@@ -1050,15 +1056,17 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          indexKey: {"country": 1}
          isMultiKey: false
          hasTruncation: true
+         truncatedPaths: country
          indexBounds: ["country": ["Mexico", "Mexico"]]
          innerScanLoops: 5 loops
          scanType: regular
          scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 5)]
          ->  Index Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=5 loops=1)
                Index Cond: (collection.document @= '{ "country" : "Mexico" }'::bson)
-(13 rows)
+(14 rows)
 
--- if we delete it and vacuum it should use index only scan again
+-- After deletion and vacuum, legacy indexes can use index-only scans again.
+-- Metadata-backed indexes conservatively retain truncation state.
 SELECT documentdb_api.delete('idx_only_scan_db', '{ "delete": "idx_only_scan_coll", "deletes": [ {"q": {"_id": {"$eq": 18} }, "limit": 0} ]}');
                                          delete                                         
 ---------------------------------------------------------------------
@@ -1068,7 +1076,7 @@ SELECT documentdb_api.delete('idx_only_scan_db', '{ "delete": "idx_only_scan_col
 CALL documentdb_distributed_test_helpers.wait_for_vacuum_horizon();
 set client_min_messages to DEBUG1;
 VACUUM (FREEZE ON) documentdb_data.documents_69001;
-LOG:  Vacuum[index=22150,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=0, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+LOG:  Vacuum[index=22174,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=0, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
 reset client_min_messages;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$eq": "Mexico"}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
                                                    run_explain_and_trim                                                   
@@ -1079,14 +1087,15 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          indexName: country_1
          indexKey: {"country": 1}
          isMultiKey: false
+         hasTruncation: true
+         truncatedPaths: country
          indexBounds: ["country": ["Mexico", "Mexico"]]
-         innerScanLoops: 2 loops
-         scanType: ordered
+         innerScanLoops: 5 loops
+         scanType: regular
          scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 5)]
-         ->  Index Only Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=5 loops=1)
+         ->  Index Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=5 loops=1)
                Index Cond: (collection.document @= '{ "country" : "Mexico" }'::bson)
-               Heap Fetches: xxx
-(13 rows)
+(14 rows)
 
 -- test _id index only scans
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"_id": {"$gt": 5 }} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
@@ -1122,6 +1131,8 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          indexName: country_1
          indexKey: {"country": 1}
          isMultiKey: false
+         hasTruncation: true
+         truncatedPaths: country
          indexBounds: ["country": [MinKey, MaxKey]]
          innerScanLoops: 8 loops
          scanType: ordered
@@ -1130,7 +1141,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
                Index Cond: (collection.document @< '{ "country" : { "$maxKey" : 1 } }'::bson)
                Filter: ((collection.document @> '{ "_id" : { "$numberInt" : "5" } }'::bson) AND (collection.document @< '{ "_id" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id > '{ "" : { "$numberInt" : "5" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
                Rows Removed by Filter: 15
-(14 rows)
+(16 rows)
 
 -- Sharded collections can't be supported with a shard key filter because in RUM indexes the shard_key_value becomes a runtime filter and for index only scans everything needs to be satisfied by the index. 
 SELECT COUNT(documentdb_api.insert_one('idx_only_scan_db', 'idx_only_scan_sharded', bson_build_document('_id'::text, i, 'shardKey'::text, i % 10, 'value'::text, i))) FROM generate_series(1, 1000) i;

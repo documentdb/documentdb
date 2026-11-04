@@ -180,9 +180,7 @@ extern bool CreateTTLIndexAsCompositeByDefault;
 extern bool EnableCompositeShardDocumentTerms;
 extern bool EnablePerCollectionPlannerStatistics;
 extern bool EnableCompositeReducedCorrelatedTermsOnCommonSubPath;
-extern bool EnableIndexMetadataGlobalTracking;
 extern bool EnableNewNamespaceValidation;
-extern bool EnableCompositeUniqueOptionalKey;
 extern bool EnableCollatedUniqueIndexes;
 
 extern bool EnableCollationWithNonUniqueOrderedIndexes;
@@ -227,6 +225,22 @@ SupportsUniqueShardOptionalKey(void)
 {
 	return IsClusterVersionAtleast(DocDB_V1, 0, 1) ||
 		   IsClusterVersionAtLeastPatch(DocDB_V0, 117, 6);
+}
+
+
+static inline bool
+SupportsIndexMetadataTracking(const BsonIndexAmEntry *indexAm)
+{
+	if (indexAm->get_opclass_metadata == NULL)
+	{
+		return false;
+	}
+
+	/* The composite configuration procedure (number 6) enables metadata writes. */
+	const int configSupportProc = 6;
+	Oid bsonTypeId = BsonTypeId();
+	return OidIsValid(get_opfamily_proc(indexAm->get_composite_path_op_family_oid(),
+										bsonTypeId, bsonTypeId, configSupportProc));
 }
 
 
@@ -5635,7 +5649,7 @@ IndexDef *
 MakeCollatedBuiltinIdIndexDef(const bson_value_t *collation, IndexSpec *indexSpec)
 {
 	if (!EnableCollationWithNonUniqueOrderedIndexes ||
-		!EnableCompositeUniqueOptionalKey)
+		!ShouldEnableCompositeUniqueOptionalKey())
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
 						errmsg(
@@ -6009,7 +6023,7 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 		pg_snprintf(collectionIdString, sizeof(collectionIdString), "%lu", collectionId);
 
 		const char *optionalCollectionId = NULL;
-		if (EnableCompositeUniqueOptionalKey && indexAm->supports_optional_key)
+		if (indexAm->supports_optional_key && ShouldEnableCompositeUniqueOptionalKey())
 		{
 			optionalCollectionId = collectionIdString;
 		}
@@ -6034,7 +6048,7 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 											  indexAm->get_opclass_internal_catalog_schema(),
 											  indexDef->collationString,
 											  optionalCollectionId,
-											  indexAm->get_opclass_metadata != NULL),
+											  SupportsIndexMetadataTracking(indexAm)),
 						 indexDef->partialFilterExpr ? "WHERE (" : "",
 						 indexDef->partialFilterExpr ?
 						 GenerateIndexFilterStr(collectionId,
@@ -6175,7 +6189,7 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 		pg_snprintf(collectionIdString, sizeof(collectionIdString), "%lu", collectionId);
 
 		const char *optionalCollectionId = NULL;
-		if (EnableCompositeUniqueOptionalKey && indexAm->supports_optional_key)
+		if (indexAm->supports_optional_key && ShouldEnableCompositeUniqueOptionalKey())
 		{
 			optionalCollectionId = collectionIdString;
 		}
@@ -6198,7 +6212,7 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 											  indexAm->get_opclass_internal_catalog_schema(),
 											  indexDef->collationString,
 											  optionalCollectionId,
-											  indexAm->get_opclass_metadata != NULL),
+											  SupportsIndexMetadataTracking(indexAm)),
 						 indexDef->partialFilterExpr ? "WHERE (" : "",
 						 indexDef->partialFilterExpr ?
 						 GenerateIndexFilterStr(collectionId,
@@ -6585,10 +6599,10 @@ AppendUniqueColumnExpr(StringInfo indexExprStr, IndexDefKey *indexDefKey,
 		hasWrittenOptions = true;
 	}
 
-	if (EnableCompositeUniqueOptionalKey &&
-		optionalCollectionId != NULL &&
+	if (optionalCollectionId != NULL &&
 		strlen(optionalCollectionId) > 0 &&
-		SupportsUniqueShardOptionalKey())
+		SupportsUniqueShardOptionalKey() &&
+		ShouldEnableCompositeUniqueOptionalKey())
 	{
 		appendStringInfoString(indexExprStr,
 							   hasWrittenOptions ? "," : "(");
@@ -6696,10 +6710,14 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 	{
 		bool buildAsUniqueOverride = false;
 		bool generateCompositeHash = false;
+
+		/* Optional shard key is only supported for composite. */
+		char *optionalCollectionIdNonComposite = NULL;
+
 		AppendUniqueColumnExpr(indexExprStr, indexDefKey, sparse, indexAmSuffix,
 							   indexAmOpClassInternalCatalogSchema, firstColumnWritten,
 							   buildAsUniqueOverride, generateCompositeHash,
-							   collationString, optionalCollectionId);
+							   collationString, optionalCollectionIdNonComposite);
 		firstColumnWritten = true;
 	}
 
@@ -6847,6 +6865,9 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 		PgbsonWriterStartArray(&elementListWriter, "", 0, &arrayWriter);
 
 		bool useReducedCorrelatedTerms = false;
+		bool hasParentChildPaths = false;
+		bool enableMetadataBasedTracking = supportsMetadataBasedTracking &&
+										   ShouldEnableIndexMetadataGlobalTracking();
 
 		int32_t wildcardTermIndex = -1;
 		int32_t numPathsWithCommonPrefix = 0;
@@ -6872,6 +6893,19 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 			ListCell *keyPathCell = NULL;
 			int numPaths = 0;
 			HTAB *pathHash = CreateStringViewHashSet();
+			HTAB *indexedPaths = NULL;
+			if (enableMetadataBasedTracking)
+			{
+				indexedPaths = CreateStringViewHashSet();
+				foreach(keyPathCell, indexDefKey->keyPathList)
+				{
+					const IndexDefKeyPath *indexKeyPath = lfirst(keyPathCell);
+					StringView keyPathView = CreateStringViewFromString(
+						indexKeyPath->path);
+					hash_search(indexedPaths, &keyPathView, HASH_ENTER, NULL);
+				}
+			}
+
 			foreach(keyPathCell, indexDefKey->keyPathList)
 			{
 				IndexDefKeyPath *indexKeyPath = (IndexDefKeyPath *) lfirst(keyPathCell);
@@ -6889,9 +6923,25 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 					wildcardTermIndex = foreach_current_index(keyPathCell);
 				}
 
-				/* Track number of index paths with dots*/
 				StringView keyPathView = CreateStringViewFromString(keyPath);
 				StringView dottedPrefix = StringViewFindPrefix(&keyPathView, '.');
+				if (enableMetadataBasedTracking)
+				{
+					StringView remainingPath = keyPathView;
+					StringView parentPath = dottedPrefix;
+					StringView currentPrefix = dottedPrefix;
+					while (currentPrefix.length > 0 && !hasParentChildPaths)
+					{
+						hasParentChildPaths = hash_search(indexedPaths, &parentPath,
+														  HASH_FIND, NULL) != NULL;
+						remainingPath = StringViewSubstring(&remainingPath,
+															currentPrefix.length + 1);
+						currentPrefix = StringViewFindPrefix(&remainingPath, '.');
+						parentPath.length += currentPrefix.length + 1;
+					}
+				}
+
+				/* Track number of index paths with dots*/
 				if (dottedPrefix.length > 0 && !StringViewEqualsCString(&dottedPrefix,
 																		"_id"))
 				{
@@ -6943,6 +6993,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 			}
 
 			hash_destroy(pathHash);
+			hash_destroy(indexedPaths);
 		}
 
 		PgbsonWriterEndArray(&elementListWriter, &arrayWriter);
@@ -6968,7 +7019,9 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 			reducedCorrelatedTermString = ",rct=true";
 		}
 
-		if (EnableIndexMetadataGlobalTracking && supportsMetadataBasedTracking)
+		/* Parent-child paths are not yet supported by metadata-backed array validation.
+		 * We might incorrectly block parallel arrays during an insertion. */
+		if (enableMetadataBasedTracking && !hasParentChildPaths)
 		{
 			metadataPerPathTrackingString = ",mkp=true";
 		}

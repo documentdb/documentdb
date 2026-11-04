@@ -804,14 +804,13 @@ BEGIN
             END IF;
 
             -- $ne: a != 250 → 1000 - 2 = 998 rows
-            -- $ne cannot use index-only scan, always uses IXS (type 3)
             v_test_label := v_proj_label || '/$ne';
             v_filter := '{ "a": { "$ne": 250 } }';
             v_expected := 998;
             SELECT drain_cursor_checked(
                 FORMAT('{ "find": "drain_scans", "filter": %s, "projection": %s, "batchSize": %s }', v_filter, v_proj, v_bs),
                 FORMAT('{ "getMore": { "$numberLong": "536" }, "collection": "drain_scans", "batchSize": %s }', v_bs),
-                3,  -- $ne always uses IXS
+                v_expected_type,
                 v_bs,
                 v_expected
             ) INTO v_count;

@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * include/opclass/bson_gin_index_mgmt.h
  *
@@ -13,6 +14,41 @@
 
  #include "io/bson_core.h"
  #include "opclass/bson_gin_index_term.h"
+
+/*
+ * Metadata blob reservation for the composite index.
+ * bit0 - isMultiKey
+ * bit1-32 - pathWiseMultiKey
+ * bit33 - Unused
+ * bit34 - reduced correlated
+ * bit35 - truncated
+ * bit36-41 - perPathTruncated
+ * 42-63 -> Unused
+ */
+typedef uint64_t RumCompositeIndexMetadataBitMask;
+
+/* The multikey bit is the LSB which just globally says if the index is multikey. */
+#define CompositeIndexMetadata_MultiKeyBitMask 0x1
+
+/* The next 32 bits store the path-wise multikey information. */
+#define CompositeIndexMetadata_PathWiseMultiKeyBitPosition 1
+
+/* The next bit (34) indicates if the index is reduced and correlated. */
+#define CompositeIndexMetadata_ReducedCorrelatedBitPosition 34
+#define CompositeIndexMetadata_ReducedCorrelatedBitMask (1ULL << \
+														 CompositeIndexMetadata_ReducedCorrelatedBitPosition)
+
+/* The next bit (35) indicates if the index is truncated. */
+#define CompositeIndexMetadata_TruncatedBitPosition 35
+#define CompositeIndexMetadata_TruncationBitMask (1ULL << \
+												  CompositeIndexMetadata_TruncatedBitPosition)
+
+/* The next 6 bits (36-41) store the path-wise truncated information. Only the
+ * first 6 paths are tracked per-path; truncation on any later path is lossy and
+ * is reflected only in the global truncated bit (35) above. */
+#define CompositeIndexMetadata_PerPathTruncatedBitPosition 36
+#define CompositeIndexMetadata_PerPathTruncatedBitCount 6
+#define CompositeIndexMetadata_PerPathTruncatedBitMask 0x3F
 
 /* Internal marker shared by the planner and composite $elemMatch bounds parser. */
 #define ReducedCorrelatedBoundsPlanAppliedKey "rctBoundsPlanApplied"
@@ -172,13 +208,23 @@ typedef struct CompositeOrderedScanEntryData
 	CompositePerPathEntries perPathEntries[INDEX_MAX_KEYS];
 } CompositeOrderedScanEntryData;
 
+typedef enum CompositeQueryTruncationFlags
+{
+	CompositeQueryTruncation_None = 0,
+	CompositeQueryTruncation_RequiresCompleteValue = 1 << 0,
+	CompositeQueryTruncation_BoundTruncated = 1 << 1
+} CompositeQueryTruncationFlags;
+
 typedef struct CompositeQueryMetaInfo
 {
 	int32_t numIndexPaths;
-	bool hasTruncation;
+	CompositeQueryTruncationFlags queryTruncationFlags;
 	int32_t truncationTermIndex;
 	bool requiresRuntimeRecheck;
+
+	/* Truncation fallback required by path metadata or legacy marker terms. */
 	bool requiresRecheckOnTruncatedIndex;
+
 	int32_t numScanKeys;
 	bool hasMultipleScanKeysPerPath;
 	bool isBackwardScan;
@@ -234,10 +280,14 @@ bytea * BuildLowerBoundTermFromIndexBounds(CompositeQueryRunData *runData,
 										   uint32_t *indexPathLengths,
 										   int8_t *sortOrders);
 
-bool UpdateBoundsForTruncation(CompositeQueryRunData *runData,
-							   IndexTermCreateMetadata *metadata,
-							   const char **indexPaths, uint32_t *indexPathLengths,
-							   int8_t *sortOrders);
+CompositeQueryTruncationFlags UpdateBoundsForTruncation(CompositeQueryRunData *runData,
+														IndexTermCreateMetadata *metadata,
+														const char **indexPaths,
+														uint32_t *indexPathLengths,
+														int8_t *sortOrders, bool
+														hasTruncatedIndexTerms,
+														uint32_t truncatedPathBitMask,
+														bool enableMetadataBasedTracking);
 
 void ParseOperatorStrategy(const char **indexPaths, uint32_t *indexPathLengths,
 						   int8_t *sortOrders, int32_t numPaths, int32_t wildcardIndex,

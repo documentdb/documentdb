@@ -204,8 +204,8 @@ bool EnableValueOnlyIndexTerms = DEFAULT_ENABLE_VALUE_ONLY_INDEX_TERMS;
 #define DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS false
 bool EnableFailureOnParallelIndexArrays = DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS;
 
-/* Added in v1.2, Pending stabilization, enable in v1.4 */
-#define DEFAULT_ENABLE_COMPOSITE_UNIQUE_OPTIONAL_KEY false
+/* Added on v1.2, enabled on v1.3, remove after v1.9 */
+#define DEFAULT_ENABLE_COMPOSITE_UNIQUE_OPTIONAL_KEY true
 bool EnableCompositeUniqueOptionalKey =
 	DEFAULT_ENABLE_COMPOSITE_UNIQUE_OPTIONAL_KEY;
 
@@ -280,8 +280,8 @@ bool EnableReducedCorrelatedNonMultiKeyOrderBy =
 bool EnableSingleBoundaryForDollarNotIn =
 	DEFAULT_ENABLE_SINGLE_BOUNDARY_FOR_DOLLAR_NOT_IN;
 
-/* Added in v0.115, Pending stabilization, enable in v1.3 */
-#define DEFAULT_ENABLE_INDEX_METADATA_GLOBAL_TRACKING false
+/* Added on v0.115, enabled on v1.3, remove after v1.9 */
+#define DEFAULT_ENABLE_INDEX_METADATA_GLOBAL_TRACKING true
 bool EnableIndexMetadataGlobalTracking = DEFAULT_ENABLE_INDEX_METADATA_GLOBAL_TRACKING;
 
 /* Added on v1.0, enabled on v1.0, remove after v1.3 */

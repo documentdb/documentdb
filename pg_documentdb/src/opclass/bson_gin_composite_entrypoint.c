@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- * SPDX-License-Identifier: MIT
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/opclass/bson_gin_composite_entrypoint.c
  *
@@ -161,40 +161,6 @@ typedef struct IndexProjectionCache
 	int numPaths;
 } IndexProjectionCache;
 
-/*
- * Metadata blob reservation for the composite index.
- * bit0 - isMultiKey
- * bit1-33 - pathWiseMultiKey
- * bit34 - reduced correlated
- * bit35 - truncated
- * bit36-42 - perPathTruncated
- * 43-63 -> Unused
- */
-typedef uint64_t RumCompositeIndexMetadataBitMask;
-
-/* The multikey bit is the LSB which just globally says if the index is multikey. */
-#define CompositeIndexMetadata_MultiKeyBitMask 0x1
-
-/* The next 32 bits store the path-wise multikey information. */
-#define CompositeIndexMetadata_PathWiseMultiKeyBitPosition 1
-
-/* The next bit (34) indicates if the index is reduced and correlated. */
-#define CompositeIndexMetadata_ReducedCorrelatedBitPosition 34
-#define CompositeIndexMetadata_ReducedCorrelatedBitMask (1ULL << \
-														 CompositeIndexMetadata_ReducedCorrelatedBitPosition)
-
-/* The next bit (35) indicates if the index is truncated. */
-#define CompositeIndexMetadata_TruncatedBitPosition 35
-#define CompositeIndexMetadata_TruncationBitMask (1ULL << \
-												  CompositeIndexMetadata_TruncatedBitPosition)
-
-/* The next 6 bits (36-41) store the path-wise truncated information. Only the
- * first 6 paths are tracked per-path; truncation on any later path is lossy and
- * is reflected only in the global truncated bit (35) above. */
-#define CompositeIndexMetadata_PerPathTruncatedBitPosition 36
-#define CompositeIndexMetadata_PerPathTruncatedBitCount 6
-#define CompositeIndexMetadata_PerPathTruncatedBitMask 0x3F
-
 /* --------------------------------------------------------- */
 /* Top level exports */
 /* --------------------------------------------------------- */
@@ -265,19 +231,28 @@ static bytea * BuildTermForBounds(CompositeQueryRunData *runData,
 								  IndexTermCreateMetadata *compositeMetadata,
 								  CompositeRowBounds *minBounds,
 								  bool *partialMatch, const char **indexPaths,
-								  uint32_t *indexPathLengths, int8_t *sortOrders);
+								  uint32_t *indexPathLengths, int8_t *sortOrders,
+								  bool hasTruncatedIndexTerms,
+								  uint32_t truncatedPathBitMask,
+								  bool enableMetadataBasedTracking);
 static void ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElement,
 									bool *isMultiKey,
 									bool *hasCorrelatedReducedTerms,
 									bool *supportsOrderedOperatorScans,
 									uint32_t *multiKeyBitMask,
-									bool *projectRawIndexTuple);
+									bool *projectRawIndexTuple,
+									bool *hasTruncatedIndexTerms,
+									uint32_t *truncatedPathBitMask);
 static int32_t RunCompareOnBounds(CompositeIndexBounds *bounds,
 								  SerializedCompositeTermPair *termPair,
 								  bool hasEqualityPrefix, bool isBackwardScan,
 								  bool isWildcardMatch, bool allowSkipScanBoundaries,
 								  bool *priorMatchesEquality, bool *hasUnspecifiedPrefix,
-								  const char *collation);
+								  const char *collation, bool *requiresRecheck);
+static int32_t CompareIndexTermToBound(SerializedCompositeTermPair *termPair,
+									   CompositeSingleBound *bound, bool isWildCardMatch,
+									   const char *collation, bool *isComparisonValid,
+									   bool *requiresRecheck);
 static int AdvanceOrderedScanData(CompositeQueryRunData *runData,
 								  SerializedCompositeTermPair *serializedTermsSet,
 								  int compareIndex, bool *hasNoScalarArrayBounds);
@@ -293,7 +268,7 @@ static void OptimizeVariableBoundsForOrderedScans(CompositeQueryRunData *runData
 												  bool hasArrayPaths);
 static int RunCompareOnOrderedIndexSet(CompositeQueryRunData *runData,
 									   SerializedCompositeTermPair *serializedTermsSet,
-									   bool *hasTruncation);
+									   bool *requiresRecheck);
 static Datum * GenerateCompositeExtractQueryUniqueEqual(pgbson *bson,
 														BsonGinCompositePathOptions *
 														options,
@@ -315,7 +290,10 @@ static Datum * ProcessStandardCompositeQueryEntries(int32_t totalPathTerms,
 													const char **indexPaths,
 													uint32_t *indexPathLengths,
 													int8_t *sortOrders, bool
-													isOrderedScan);
+													isOrderedScan,
+													bool hasTruncatedIndexTerms,
+													uint32_t truncatedPathBitMask,
+													bool enableMetadataBasedTracking);
 static Datum * ProcessOrderedCompositeQueryEntries(IndexTermCreateMetadata *
 												   singlePathMetadata,
 												   IndexTermCreateMetadata *
@@ -328,12 +306,15 @@ static Datum * ProcessOrderedCompositeQueryEntries(IndexTermCreateMetadata *
 												   uint32_t *indexPathLengths,
 												   int8_t *sortOrders, bool hasArrayPaths,
 												   bool isOrderedScan,
-												   int32_t *searchMode);
+												   int32_t *searchMode,
+												   bool hasTruncatedIndexTerms,
+												   uint32_t truncatedPathBitMask,
+												   bool enableMetadataBasedTracking);
 static int RunCompareOnStandardIndexSet(CompositeQueryRunData *runData,
 										SerializedCompositeTermPair *serializedTermsSet,
 										int32_t precheckedPaths,
 										uint32_t highKeyMatchState,
-										bool *hasTruncation);
+										bool *requiresRecheck);
 
 inline static IndexTermCreateMetadata
 GetSinglePathTermCreateMetadata(void *options, int32_t numPaths)
@@ -562,6 +543,8 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	bool isCorrelatedReducedScan = false;
 	bool supportsOrderedOperatorScans = false;
 	uint32_t multiKeyBitMask = 0;
+	bool hasTruncatedIndexTerms = false;
+	uint32_t truncatedPathBitMask = 0;
 
 	bool projectRawIndexTuple = false;
 
@@ -607,7 +590,9 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 								&isCorrelatedReducedScan,
 								&supportsOrderedOperatorScans,
 								&multiKeyBitMask,
-								&projectRawIndexTuple);
+								&projectRawIndexTuple,
+								&hasTruncatedIndexTerms,
+								&truncatedPathBitMask);
 		ParseBoundsForCompositeOperator(&singleElement, indexPaths, indexPathLengths,
 										sortOrders, numPaths,
 										metaInfo->wildcardPathIndex,
@@ -796,7 +781,10 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 													  indexPathLengths, sortOrders,
 													  hasArrayPaths,
 													  metaInfo->isOrderedScan,
-													  searchMode);
+													  searchMode,
+													  hasTruncatedIndexTerms,
+													  truncatedPathBitMask,
+													  options->enableMetadataBasedTracking);
 	}
 	else if (termPathsOverflowed)
 	{
@@ -823,7 +811,11 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 													   runData, &variableBounds,
 													   indexPaths,
 													   indexPathLengths, sortOrders,
-													   metaInfo->isOrderedScan);
+													   metaInfo->isOrderedScan,
+													   hasTruncatedIndexTerms,
+													   truncatedPathBitMask,
+													   options->
+													   enableMetadataBasedTracking);
 	}
 
 	PG_RETURN_POINTER(entries);
@@ -840,7 +832,10 @@ ProcessStandardCompositeQueryEntries(int32_t totalPathTerms,
 									 CompositeQueryRunData *runData,
 									 VariableIndexBounds *variableBounds,
 									 const char **indexPaths, uint32_t *indexPathLengths,
-									 int8_t *sortOrders, bool isOrderedScan)
+									 int8_t *sortOrders, bool isOrderedScan,
+									 bool hasTruncatedIndexTerms,
+									 uint32_t truncatedPathBitMask,
+									 bool enableMetadataBasedTracking)
 {
 	*nentries = totalPathTerms;
 	*partialmatch = (bool *) palloc0(sizeof(bool) * (totalPathTerms + 1));
@@ -853,7 +848,9 @@ ProcessStandardCompositeQueryEntries(int32_t totalPathTerms,
 		bytea *term = BuildTermForBounds(runData, singlePathMetadata, compositeMetadata,
 										 variableBounds->minBounds,
 										 &(*partialmatch)[0], indexPaths,
-										 indexPathLengths, sortOrders);
+										 indexPathLengths, sortOrders,
+										 hasTruncatedIndexTerms, truncatedPathBitMask,
+										 enableMetadataBasedTracking);
 		extraDataArray[0] = (Pointer) runData;
 		entries[0] = PointerGetDatum(term);
 	}
@@ -875,15 +872,21 @@ ProcessStandardCompositeQueryEntries(int32_t totalPathTerms,
 											 compositeMetadata,
 											 variableBounds->minBounds,
 											 &(*partialmatch)[i], indexPaths,
-											 indexPathLengths, sortOrders);
+											 indexPathLengths, sortOrders,
+											 hasTruncatedIndexTerms,
+											 truncatedPathBitMask,
+											 enableMetadataBasedTracking);
 
 			extraDataArray[i] = (Pointer) runDataCopy;
 			entries[i] = PointerGetDatum(term);
 		}
 	}
 
-	if ((runData->metaInfo->hasTruncation ||
-		 runData->metaInfo->requiresRecheckOnTruncatedIndex) &&
+	/*
+	 * Ordered scans must have one entry, so it cannot also carry the
+	 * root truncated term. Ordered callbacks handle truncated matches directly.
+	 */
+	if (runData->metaInfo->queryTruncationFlags != CompositeQueryTruncation_None &&
 		!isOrderedScan)
 	{
 		*nentries = totalPathTerms + 1;
@@ -966,7 +969,10 @@ ProcessOrderedCompositeQueryEntries(IndexTermCreateMetadata *singlePathMetadata,
 									const char **indexPaths, uint32_t *indexPathLengths,
 									int8_t *sortOrders, bool hasArrayPaths, bool
 									isOrderedScan,
-									int32_t *searchMode)
+									int32_t *searchMode,
+									bool hasTruncatedIndexTerms,
+									uint32_t truncatedPathBitMask,
+									bool enableMetadataBasedTracking)
 {
 	*nentries = 1;
 	*partialmatch = (bool *) palloc0(sizeof(bool) * 1);
@@ -980,7 +986,9 @@ ProcessOrderedCompositeQueryEntries(IndexTermCreateMetadata *singlePathMetadata,
 		bytea *term = BuildTermForBounds(runData, singlePathMetadata, compositeMetadata,
 										 variableBounds->minBounds,
 										 &(*partialmatch)[0], indexPaths,
-										 indexPathLengths, sortOrders);
+										 indexPathLengths, sortOrders,
+										 hasTruncatedIndexTerms, truncatedPathBitMask,
+										 enableMetadataBasedTracking);
 		extraDataArray[0] = (Pointer) runData;
 		entries[0] = PointerGetDatum(term);
 	}
@@ -1108,7 +1116,9 @@ ProcessOrderedCompositeQueryEntries(IndexTermCreateMetadata *singlePathMetadata,
 										 compositeMetadata,
 										 variableBounds->minBounds,
 										 &partialMatchInnerIgnore, indexPaths,
-										 indexPathLengths, sortOrders);
+										 indexPathLengths, sortOrders,
+										 hasTruncatedIndexTerms, truncatedPathBitMask,
+										 enableMetadataBasedTracking);
 
 		/* Set partialMatch */
 		(*partialmatch)[0] = true;
@@ -1327,7 +1337,7 @@ gin_bson_composite_path_compare_partial(PG_FUNCTION_ARGS)
 	}
 
 	int compareResult;
-	bool hasTruncation = false;
+	bool requiresRecheck = false;
 	if (EnableHighKeyOptimization &&
 		precheckedPaths == runData->metaInfo->numIndexPaths)
 	{
@@ -1339,7 +1349,7 @@ gin_bson_composite_path_compare_partial(PG_FUNCTION_ARGS)
 		compareResult = RunCompareOnStandardIndexSet(runData, serializedTerms,
 													 precheckedPaths,
 													 highKeyMatchState,
-													 &hasTruncation);
+													 &requiresRecheck);
 	}
 	else
 	{
@@ -1349,11 +1359,11 @@ gin_bson_composite_path_compare_partial(PG_FUNCTION_ARGS)
 		 */
 		Assert(precheckedPaths == 0);
 		compareResult = RunCompareOnOrderedIndexSet(runData, serializedTerms,
-													&hasTruncation);
+													&requiresRecheck);
 	}
 
 	if (recheckEntry && compareResult == 0 &&
-		(hasTruncation || runData->metaInfo->requiresRuntimeRecheck))
+		(requiresRecheck || runData->metaInfo->requiresRuntimeRecheck))
 	{
 		/* With extended comparePartial on ordered scans, we can return 2 to signify recheck */
 		*recheckEntry = true;
@@ -1369,7 +1379,7 @@ RunCompareOnPathIndex(CompositeQueryRunData *runData,
 					  SerializedCompositeTermPair serializedTerms[INDEX_MAX_KEYS],
 					  bool allowSkipScanBoundaries,
 					  bool *priorMatchesEquality, bool *hasUnspecifiedPrefix,
-					  bool *hasEqualityPrefix, int compareIndex)
+					  bool *hasEqualityPrefix, int compareIndex, bool *requiresRecheck)
 {
 	/* No early-return for empty bounds: RunCompareOnBounds already handles the
 	 * EOD case (sets *hasUnspecifiedPrefix = true and returns 0), so we always
@@ -1381,7 +1391,7 @@ RunCompareOnPathIndex(CompositeQueryRunData *runData,
 		*hasEqualityPrefix,
 		runData->metaInfo->isBackwardScan, runData->wildcardPath != NULL,
 		allowSkipScanBoundaries, priorMatchesEquality, hasUnspecifiedPrefix,
-		runData->metaInfo->collation);
+		runData->metaInfo->collation, requiresRecheck);
 	if (compareInBounds != 0)
 	{
 		return compareInBounds;
@@ -1400,6 +1410,10 @@ RunCompareOnPathIndex(CompositeQueryRunData *runData,
 		}
 	}
 
+	*requiresRecheck |=
+		runData->indexBounds[compareIndex].requiresRecheckOnTruncatedIndex &&
+		IsSerializedIndexTermTruncated(serializedTerms[compareIndex].serializedTerm);
+
 	return 0;
 }
 
@@ -1409,7 +1423,7 @@ RunCompareOnStandardIndexSet(CompositeQueryRunData *runData,
 							 SerializedCompositeTermPair *serializedTerms,
 							 int32_t precheckedPaths,
 							 uint32_t highKeyMatchState,
-							 bool *hasTruncation)
+							 bool *requiresRecheck)
 {
 	bool priorMatchesEquality = true;
 	bool hasEqualityPrefix = true;
@@ -1430,15 +1444,12 @@ RunCompareOnStandardIndexSet(CompositeQueryRunData *runData,
 		int cmp = RunCompareOnPathIndex(runData, serializedTerms,
 										allowSkipScanBoundaries, &priorMatchesEquality,
 										&hasUnspecifiedPrefix, &hasEqualityPrefix,
-										compareIndex);
+										compareIndex, requiresRecheck);
 		if (cmp != 0)
 		{
 			return cmp;
 		}
 
-		*hasTruncation = *hasTruncation ||
-						 IsSerializedIndexTermTruncated(
-			serializedTerms[compareIndex].serializedTerm);
 		allowSkipScanBoundaries = allowSkipScanBoundaries || hasUnspecifiedPrefix;
 	}
 
@@ -1592,7 +1603,7 @@ PinEqualityBoundForRange(CompositeQueryRunData *runData,
 static int
 RunCompareOnOrderedIndexSet(CompositeQueryRunData *runData,
 							SerializedCompositeTermPair *serializedTerms,
-							bool *hasTruncation)
+							bool *requiresRecheck)
 {
 	bool hasUnspecifiedPrefix = false;
 	bool hasSkipScanBoundary = false;
@@ -1610,7 +1621,8 @@ RunCompareOnOrderedIndexSet(CompositeQueryRunData *runData,
 											  allowSkipScanBoundaries,
 											  &priorMatchesEquality,
 											  &hasUnspecifiedPrefix,
-											  &hasOrderedEqualityPrefix, compareIndex);
+											  &hasOrderedEqualityPrefix, compareIndex,
+											  requiresRecheck);
 
 		/* If the compare Result was a mismatch, check whether it hit termination */
 		if (compareResult == 1)
@@ -1645,9 +1657,6 @@ RunCompareOnOrderedIndexSet(CompositeQueryRunData *runData,
 		}
 		else
 		{
-			*hasTruncation = *hasTruncation ||
-							 IsSerializedIndexTermTruncated(
-				serializedTerms[compareIndex].serializedTerm);
 			priorMatchesEquality = true;
 			hasSkipScanBoundary = false;
 			if (!runData->indexBounds[compareIndex].isEqualityBound &&
@@ -1788,13 +1797,16 @@ CompareOnBoundsForSearch(const void *a, const void *b, void *arg)
 	bool isEqualityPrefix = true;
 	bool priorMatchesEquality = true;
 	bool hasUnspecifiedPrefix = false;
+
+	/* This locates a bound; the scan validates candidate entries separately. */
+	bool requiresRecheckIgnore = false;
 	int compareResult = RunCompareOnBounds(
 		bound, termPair, isEqualityPrefix,
 		metadata->isBackwardScan,
 		metadata->isWildcardScan,
 		allowSkipScansOnBoundary, &priorMatchesEquality,
 		&hasUnspecifiedPrefix,
-		metadata->collation);
+		metadata->collation, &requiresRecheckIgnore);
 
 	return compareResult == 0 ? 0 : (compareResult < 0 ? 1 : -1);
 }
@@ -1826,6 +1838,9 @@ AdvanceOrderedScanData(CompositeQueryRunData *runData,
 	ListCell *pathCell;
 	CompositeOrderedScanEntryData *entryData = runData->metaInfo->orderedScanEntryData;
 	IndexTermCreateMetadata metadata;
+
+	/* Cursor advancement does not accept entries; the scan validates them afterward. */
+	bool requiresRecheckIgnore = false;
 
 	PopulateTermMetadataForTruncation(&metadata, &entryData->basePathMetadata,
 									  runData, entryData->indexPaths[compareIndex],
@@ -1872,7 +1887,7 @@ advance_ordered_scan_data_start:
 			runData->metaInfo->isBackwardScan,
 			entry->boundsSet->wildcardPath != NULL, allowSkipScansOnBoundary,
 			&priorMatchesEquality, &hasUnspecifiedPrefix,
-			runData->metaInfo->collation);
+			runData->metaInfo->collation, &requiresRecheckIgnore);
 		hasScalarArrayMismatch = hasScalarArrayMismatch || compareResult != 0;
 		if (compareResult == 1)
 		{
@@ -1941,7 +1956,7 @@ advance_ordered_scan_data_start:
 		int combinedCompareResult = RunCompareOnPathIndex(
 			runData, serializedTermsSet, allowSkipScanBoundaries,
 			&priorMatchesEquality, &hasUnspecifiedPrefix, &hasEqualityPrefix,
-			compareIndex);
+			compareIndex, &requiresRecheckIgnore);
 
 		/*
 		 * The scalar-array cursor may already have advanced while runData still
@@ -2116,6 +2131,38 @@ CompareSerializedTermsNaturalOrder(bytea *indexTerm, bytea *boundTerm,
 }
 
 
+static int32_t
+CompareIndexTermToBound(SerializedCompositeTermPair *termPair,
+						CompositeSingleBound *bound, bool isWildCardMatch,
+						const char *collation, bool *isComparisonValid,
+						bool *requiresRecheck)
+{
+	int32_t comparison;
+	bool isTruncated = IsSerializedIndexTermTruncated(termPair->serializedTerm);
+	if (EnableComparableTerms && !isWildCardMatch)
+	{
+		comparison = CompareSerializedTermsNaturalOrder(
+			termPair->serializedTerm, bound->serializedTerm,
+			collation, isComparisonValid);
+	}
+	else
+	{
+		InitializeBsonIndexTermIfNeeded(termPair);
+		comparison = CompareBsonValueAndTypeWithCollation(
+			&termPair->term.element.bsonValue,
+			&bound->indexTermValue.element.bsonValue,
+			isComparisonValid, collation);
+	}
+
+	if (comparison == 0)
+	{
+		*requiresRecheck |= isTruncated;
+	}
+
+	return comparison;
+}
+
+
 /*
  * When running compare_partial, we first check if the current term matches
  * based purely on the lower and upper bounds.
@@ -2127,27 +2174,16 @@ static int32_t
 RunCompareOnBounds(CompositeIndexBounds *bounds, SerializedCompositeTermPair *termPair,
 				   bool hasEqualityPrefix, bool isBackwardScan, bool isWildCardMatch,
 				   bool allowSkipScanBoundaries, bool *priorMatchesEquality,
-				   bool *hasUnspecifiedPrefix, const char *collation)
+				   bool *hasUnspecifiedPrefix, const char *collation,
+				   bool *requiresRecheck)
 {
 	if (bounds->isEqualityBound)
 	{
 		/* We have an equality on a term - if not equal - we can bail */
 		bool isComparisonValid = false;
-		int32_t compareBounds;
-		if (EnableComparableTerms && !isWildCardMatch)
-		{
-			compareBounds = CompareSerializedTermsNaturalOrder(
-				termPair->serializedTerm, bounds->lowerBound.serializedTerm,
-				collation, &isComparisonValid);
-		}
-		else
-		{
-			InitializeBsonIndexTermIfNeeded(termPair);
-			compareBounds = CompareBsonValueAndTypeWithCollation(
-				&termPair->term.element.bsonValue,
-				&bounds->lowerBound.indexTermValue.element.bsonValue,
-				&isComparisonValid, collation);
-		}
+		int32_t compareBounds = CompareIndexTermToBound(
+			termPair, &bounds->lowerBound, isWildCardMatch,
+			collation, &isComparisonValid, requiresRecheck);
 
 		/* If we're an equality and we're less than the lower bound, this
 		 * is an order by situation, and we need to keep searching.
@@ -2211,21 +2247,9 @@ RunCompareOnBounds(CompositeIndexBounds *bounds, SerializedCompositeTermPair *te
 	if (bounds->lowerBound.bound.value_type != BSON_TYPE_EOD)
 	{
 		bool isComparisonValid = false;
-		int32_t compareBounds;
-		if (EnableComparableTerms && !isWildCardMatch)
-		{
-			compareBounds = CompareSerializedTermsNaturalOrder(
-				termPair->serializedTerm, bounds->lowerBound.serializedTerm,
-				collation, &isComparisonValid);
-		}
-		else
-		{
-			InitializeBsonIndexTermIfNeeded(termPair);
-			compareBounds = CompareBsonValueAndTypeWithCollation(
-				&termPair->term.element.bsonValue,
-				&bounds->lowerBound.indexTermValue.element.bsonValue,
-				&isComparisonValid, collation);
-		}
+		int32_t compareBounds = CompareIndexTermToBound(
+			termPair, &bounds->lowerBound, isWildCardMatch,
+			collation, &isComparisonValid, requiresRecheck);
 
 		if (!isComparisonValid)
 		{
@@ -2290,21 +2314,9 @@ RunCompareOnBounds(CompositeIndexBounds *bounds, SerializedCompositeTermPair *te
 	if (bounds->upperBound.bound.value_type != BSON_TYPE_EOD)
 	{
 		bool isComparisonValid = false;
-		int32_t compareBounds;
-		if (EnableComparableTerms && !isWildCardMatch)
-		{
-			compareBounds = CompareSerializedTermsNaturalOrder(
-				termPair->serializedTerm, bounds->upperBound.serializedTerm,
-				collation, &isComparisonValid);
-		}
-		else
-		{
-			InitializeBsonIndexTermIfNeeded(termPair);
-			compareBounds = CompareBsonValueAndTypeWithCollation(
-				&termPair->term.element.bsonValue,
-				&bounds->upperBound.indexTermValue.element.bsonValue,
-				&isComparisonValid, collation);
-		}
+		int32_t compareBounds = CompareIndexTermToBound(
+			termPair, &bounds->upperBound, isWildCardMatch,
+			collation, &isComparisonValid, requiresRecheck);
 
 		if (!isComparisonValid)
 		{
@@ -2428,7 +2440,6 @@ gin_bson_composite_path_consistent(PG_FUNCTION_ARGS)
 
 	/* If operators specifically required runtime recheck honor it */
 	*recheck = runData->metaInfo->requiresRuntimeRecheck;
-
 	if (runData->metaInfo->orderedScanEntryData != NULL)
 	{
 		/* For ordered scans, we can also return early since the scan keys
@@ -2437,15 +2448,19 @@ gin_bson_composite_path_consistent(PG_FUNCTION_ARGS)
 		PG_RETURN_BOOL(true);
 	}
 
-	if ((runData->metaInfo->hasTruncation ||
-		 runData->metaInfo->requiresRecheckOnTruncatedIndex) &&
-		check[runData->metaInfo->truncationTermIndex])
+	bool hasTruncation = (runData->metaInfo->queryTruncationFlags &
+						  CompositeQueryTruncation_BoundTruncated) != 0;
+	if (!runData->metaInfo->isOrderedScan &&
+		(hasTruncation || runData->metaInfo->requiresRecheckOnTruncatedIndex))
 	{
-		*recheck = true;
+		BsonGinCompositePathOptions *options =
+			(BsonGinCompositePathOptions *) PG_GET_OPCLASS_OPTIONS();
+		*recheck |= options->enableMetadataBasedTracking ?
+					runData->metaInfo->requiresRecheckOnTruncatedIndex :
+					check[runData->metaInfo->truncationTermIndex];
 	}
 
-	if (!runData->metaInfo->hasMultipleScanKeysPerPath &&
-		!runData->metaInfo->hasTruncation)
+	if (!runData->metaInfo->hasMultipleScanKeysPerPath && !hasTruncation)
 	{
 		/* No truncation and each path has exactly 1 scan key to it
 		 * At this point, any matching entry matches the top level query
@@ -2911,6 +2926,8 @@ CompositeIndexTermGenerateSkipBound(PG_FUNCTION_ARGS)
 	bool allowSkipScansOnBoundary = false;
 	bool foundSkipPath = false;
 	bool isMinBound = false;
+
+	bool requiresRecheckIgnore = false;
 	int32_t compareIndex = 0;
 	for (; compareIndex < runData->metaInfo->numIndexPaths;
 		 compareIndex++)
@@ -2925,7 +2942,7 @@ CompositeIndexTermGenerateSkipBound(PG_FUNCTION_ARGS)
 			runData->metaInfo->isBackwardScan, runData->wildcardPath != NULL,
 			allowSkipScansOnBoundary,
 			&priorMatchesEquality, &hasUnspecifiedPrefix,
-			runData->metaInfo->collation);
+			runData->metaInfo->collation, &requiresRecheckIgnore);
 		if (compareInBounds < -1)
 		{
 			foundSkipPath = true;
@@ -3153,8 +3170,7 @@ PageLevelStatsScalarCheck(PG_FUNCTION_ARGS, bool pageIsolated)
 	Pointer extraData = PG_GETARG_POINTER(3);
 	CompositeQueryRunData *runData = (CompositeQueryRunData *) extraData;
 
-	if (runData->metaInfo->requiresRuntimeRecheck ||
-		runData->metaInfo->requiresRecheckOnTruncatedIndex)
+	if (runData->metaInfo->requiresRuntimeRecheck)
 	{
 		return (Datum) 0;
 	}
@@ -3229,11 +3245,12 @@ PageLevelStatsScalarCheck(PG_FUNCTION_ARGS, bool pageIsolated)
 		}
 
 		bool hasUnspecifiedPrefix = false;
+		bool requiresRecheck = false;
 		int cmp = RunCompareOnPathIndex(runData, serializedTerms,
 										allowSkipScanBoundaries, &priorMatchesEquality,
 										&hasUnspecifiedPrefix, &hasEqualityPrefix,
-										compareIndex);
-		if (cmp != 0)
+										compareIndex, &requiresRecheck);
+		if (cmp != 0 || requiresRecheck)
 		{
 			break;
 		}
@@ -3244,8 +3261,8 @@ PageLevelStatsScalarCheck(PG_FUNCTION_ARGS, bool pageIsolated)
 			int lowCmp = RunCompareOnPathIndex(
 				runData, lowKeyTerms, allowSkipScanBoundaries,
 				&lowPriorMatchesEquality, &lowHasUnspecifiedPrefix,
-				&lowHasEqualityPrefix, compareIndex);
-			if (lowCmp != 0)
+				&lowHasEqualityPrefix, compareIndex, &requiresRecheck);
+			if (lowCmp != 0 || requiresRecheck)
 			{
 				break;
 			}
@@ -4657,6 +4674,7 @@ void
 DecodeCompositeOpClassMetadata(void *options, uint64_t opclassMetadata, bool *hasMultiKey,
 							   uint32_t *multiKeyBitMask, List **multiKeyPerPathList,
 							   bool *hasCorrelatedReducedTerms, bool *hasTruncation,
+							   uint32_t *truncatedPathBitMask,
 							   List **truncatedPerPathList)
 {
 	BsonGinCompositePathOptions *pathOptions = (BsonGinCompositePathOptions *) options;
@@ -4669,10 +4687,9 @@ DecodeCompositeOpClassMetadata(void *options, uint64_t opclassMetadata, bool *ha
 		indexPaths, indexPathsLengths, sortOrders);
 
 	uint32_t multiKeyPerPathStatus = 0;
-	uint32_t truncatedPerPathStatus = 0;
 	DecodeCompositeOpClassQueryMetadata(options, opclassMetadata, hasMultiKey,
 										&multiKeyPerPathStatus, hasCorrelatedReducedTerms,
-										hasTruncation, &truncatedPerPathStatus);
+										hasTruncation, truncatedPathBitMask);
 	*multiKeyPerPathList = NIL;
 	*multiKeyBitMask = multiKeyPerPathStatus;
 	for (int i = 0; i < numPaths; i++)
@@ -4690,7 +4707,7 @@ DecodeCompositeOpClassMetadata(void *options, uint64_t opclassMetadata, bool *ha
 	*truncatedPerPathList = NIL;
 	for (int i = 0; i < maxTruncatedPaths; i++)
 	{
-		if (truncatedPerPathStatus & (UINT32_C(1) << i))
+		if (*truncatedPathBitMask & (UINT32_C(1) << i))
 		{
 			*truncatedPerPathList = lappend(*truncatedPerPathList,
 											pstrdup(indexPaths[i]));
@@ -4909,7 +4926,8 @@ SerializeBoundsStringForExplain(bytea *entry, void *extraData, PG_FUNCTION_ARGS,
 Datum
 FormCompositeDatumFromQuals(List *indexQuals, bool isMultiKey, bool
 							hasCorrelatedReducedTerm, bool supportsOperatorOrderedScans,
-							uint32_t multiKeyBitMask)
+							uint32_t multiKeyBitMask, bool hasTruncatedIndexTerms,
+							uint32_t truncatedPathBitMask)
 {
 	ScanKeyData *scanKeys = palloc0(sizeof(ScanKeyData) * list_length(indexQuals));
 	ScanKeyData targetScanKey = { 0 };
@@ -4978,7 +4996,8 @@ FormCompositeDatumFromQuals(List *indexQuals, bool isMultiKey, bool
 	/* TODO: Extract order by scan direction from index orderby */
 	if (!ModifyScanKeysForCompositeScan(scanKeys, list_length(indexQuals), &targetScanKey,
 										isMultiKey, hasCorrelatedReducedTerm,
-										supportsOperatorOrderedScans, multiKeyBitMask))
+										supportsOperatorOrderedScans, multiKeyBitMask,
+										hasTruncatedIndexTerms, truncatedPathBitMask))
 	{
 		return (Datum) 0;
 	}
@@ -5001,7 +5020,9 @@ bool
 ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey targetScanKey,
 							   bool hasArrayKeys, bool hasCorrelatedReducedTerms,
 							   bool supportsOrderedOperatorScans, uint32_t
-							   multiKeyBitMask)
+							   multiKeyBitMask,
+							   bool hasTruncatedIndexTerms,
+							   uint32_t truncatedPathBitMask)
 {
 	pgbson_writer querySpecWriter;
 	PgbsonWriterInit(&querySpecWriter);
@@ -5061,6 +5082,17 @@ ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey targetSca
 
 	PgbsonWriterEndArray(&querySpecWriter, &queryWriter);
 	PgbsonWriterAppendBool(&querySpecWriter, "m", 1, hasArrayKeys);
+	if (hasTruncatedIndexTerms)
+	{
+		PgbsonWriterAppendBool(&querySpecWriter, "t", 1, true);
+	}
+
+	if (truncatedPathBitMask != 0)
+	{
+		PgbsonWriterAppendInt64(&querySpecWriter, "tp", 2,
+								(int64_t) truncatedPathBitMask);
+	}
+
 	if (hasCorrelatedReducedTerms)
 	{
 		PgbsonWriterAppendBool(&querySpecWriter, "cr", 2, hasCorrelatedReducedTerms);
@@ -5154,7 +5186,9 @@ ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElement,
 						bool *hasCorrelatedReducedTerms,
 						bool *supportsOrderedOperatorScans,
 						uint32_t *multiKeyBitMask,
-						bool *projectRawIndexTuple)
+						bool *projectRawIndexTuple,
+						bool *hasTruncatedIndexTerms,
+						uint32_t *truncatedPathBitMask)
 {
 	bson_iter_t queryIter;
 	PgbsonInitIterator(querySpec, &queryIter);
@@ -5173,6 +5207,14 @@ ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElement,
 		else if (strcmp(key, "m") == 0)
 		{
 			*isMultiKey = bson_iter_bool(&queryIter);
+		}
+		else if (strcmp(key, "t") == 0)
+		{
+			*hasTruncatedIndexTerms = bson_iter_bool(&queryIter);
+		}
+		else if (strcmp(key, "tp") == 0)
+		{
+			*truncatedPathBitMask = (uint32_t) bson_iter_int64(&queryIter);
 		}
 		else if (strcmp(key, "cr") == 0)
 		{
@@ -6427,13 +6469,16 @@ BuildTermForBounds(CompositeQueryRunData *runData,
 				   IndexTermCreateMetadata *compositeMetadata,
 				   CompositeRowBounds *minBounds,
 				   bool *partialMatch, const char **indexPaths,
-				   uint32_t *indexPathLengths, int8_t *sortOrders)
+				   uint32_t *indexPathLengths, int8_t *sortOrders,
+				   bool hasTruncatedIndexTerms, uint32_t truncatedPathBitMask,
+				   bool enableMetadataBasedTracking)
 {
 	/* For the next phase, process each term and handle truncation */
-	bool hasTruncation = UpdateBoundsForTruncation(
-		runData, singlePathMetadata, indexPaths, indexPathLengths, sortOrders);
-	runData->metaInfo->hasTruncation = runData->metaInfo->hasTruncation ||
-									   hasTruncation;
+	CompositeQueryTruncationFlags truncationFlags = UpdateBoundsForTruncation(
+		runData, singlePathMetadata, indexPaths, indexPathLengths, sortOrders,
+		hasTruncatedIndexTerms, truncatedPathBitMask,
+		enableMetadataBasedTracking);
+	runData->metaInfo->queryTruncationFlags |= truncationFlags;
 
 	bool hasInequalityMatch = false;
 	bytea *lowerBoundTerm = BuildLowerBoundTermFromIndexBounds(runData,
