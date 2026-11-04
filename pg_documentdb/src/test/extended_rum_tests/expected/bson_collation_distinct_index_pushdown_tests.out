@@ -280,6 +280,7 @@ $cmd$, p_ignore_heap_fetches => true);
                      indexCollation: en-u-ks-level1
                      isMultiKey: false
                      hasTruncation: true
+                     truncatedPaths: value
                      indexBounds: ["value": [MinKey, MaxKey]]
                      innerScanLoops: 1 loops
                      scanType: ordered
@@ -288,7 +289,7 @@ $cmd$, p_ignore_heap_fetches => true);
                            ->  Index Scan using idx_value_en_s1_truncated on documents_20201 collection (actual rows=3 loops=1)
                                  Index Cond: (document @>= '{ "value" : { "$minKey" : 1 } }'::bson)
                                  Order By: (document |-<> '{ "value" : { "$numberInt" : "1" } }'::bson)
-(18 rows)
+(19 rows)
 
 WITH result AS (
   SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_truncated", "key": "value", "collation": { "locale": "en", "strength": 1 } }')

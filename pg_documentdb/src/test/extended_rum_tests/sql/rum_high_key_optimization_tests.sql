@@ -697,3 +697,121 @@ RESET documentdb.enable_high_key_optimization;
 RESET max_parallel_workers_per_gather;
 RESET enable_bitmapscan;
 SELECT documentdb_api.drop_collection('highkeydb', 'exists_mod_recheck');
+
+-- A safe numeric prefix may be prechecked, but a truncated regex suffix still
+-- needs heap evaluation to distinguish values with identical stored prefixes.
+-- A string-valued SQL regex operand uses one bound; command regex operands use
+-- multiple scalar-array bounds, which are not eligible for page-level checks.
+SET documentdb.enableIndexMetadataGlobalTracking TO on;
+SET documentdb.indexTermLimitOverride TO 200;
+SELECT documentdb_api.create_collection('highkeydb', 'truncated_suffix');
+SELECT COUNT(documentdb_api.insert_one(
+    'highkeydb', 'truncated_suffix',
+    bson_build_document('_id', i, 'a', i,
+        'b', repeat('x', 200) || CASE WHEN i % 2 = 0 THEN 'keep' ELSE 'drop' END)))
+FROM generate_series(1, 4000) i;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'highkeydb',
+    '{"createIndexes":"truncated_suffix","indexes":[
+        {"key":{"a":1,"b":1},"name":"a_b","enableCompositeTerm":true}]}',
+    TRUE);
+SELECT format('ALTER TABLE documentdb_data.documents_%s SET (parallel_workers = 2)', collection_id)
+FROM documentdb_api_catalog.collections
+WHERE database_name = 'highkeydb' AND collection_name = 'truncated_suffix' \gexec
+SELECT format('VACUUM (FREEZE, ANALYZE) documentdb_data.documents_%s', collection_id)
+FROM documentdb_api_catalog.collections
+WHERE database_name = 'highkeydb' AND collection_name = 'truncated_suffix' \gexec
+
+BEGIN;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.forceDisableSeqScan TO on;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL documentdb.enableIndexOnlyScanForFindProject TO off;
+SET LOCAL documentdb.enablePartialMatchHasRecheck TO on;
+SET LOCAL documentdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO on;
+SET LOCAL min_parallel_index_scan_size TO 0;
+SET LOCAL min_parallel_table_scan_size TO 0;
+SET LOCAL parallel_setup_cost TO 0;
+SET LOCAL parallel_tuple_cost TO 0;
+SET LOCAL parallel_leader_participation TO on;
+SET LOCAL track_functions TO 'all';
+CREATE TEMP TABLE truncated_suffix_results (
+    mode text, high_key_enabled boolean, results_match boolean,
+    uses_high_key boolean, uses_parallel boolean, suffix_rechecked boolean,
+    serial_heap_rechecks bigint);
+DO $truncated_suffix$
+DECLARE
+    mode record; high_key_enabled boolean; query_sql text;
+    plan_line text; plan_lines text[]; uses_index boolean; uses_high_key boolean;
+    uses_parallel boolean; suffix_rechecked boolean;
+    expected_ids int[]; actual_ids int[]; calls_before bigint; calls_after bigint;
+BEGIN
+    FOR mode IN SELECT * FROM (VALUES
+        ('forward', 1, false), ('backward', -1, false), ('parallel', 1, true)
+    ) AS modes(label, direction, is_parallel) LOOP
+        PERFORM set_config('documentdb.enableCompositeParallelIndexScan', mode.is_parallel::text, true);
+        PERFORM set_config('documentdb.forceParallelScanIfAvailable', mode.is_parallel::text, true);
+        PERFORM set_config('max_parallel_workers_per_gather', CASE WHEN mode.is_parallel THEN '2' ELSE '0' END, true);
+        SELECT array_agg(i ORDER BY i * mode.direction) INTO expected_ids
+        FROM generate_series(2, 4000, 2) i;
+        query_sql := format($query$
+            SELECT document FROM documentdb_api.collection('highkeydb', 'truncated_suffix')
+            WHERE document @>= '{"a":1}'::bson AND document @~ '{"b":"keep$"}'::bson
+            ORDER BY document %s %L::bson
+        $query$, CASE WHEN mode.direction = 1 THEN '|-<>'
+            ELSE 'OPERATOR(documentdb_api_internal.<>-|)' END,
+            format('{"a":%s}', mode.direction));
+        FOREACH high_key_enabled IN ARRAY ARRAY[false, true] LOOP
+            PERFORM set_config('documentdb.enable_high_key_optimization', high_key_enabled::text, true);
+            uses_index := false;
+            uses_high_key := false;
+            uses_parallel := false;
+            suffix_rechecked := false;
+            plan_lines := '{}';
+            FOR plan_line IN EXECUTE
+                'EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) ' ||
+                query_sql LOOP
+                plan_lines := array_append(plan_lines, plan_line);
+                uses_index := uses_index OR plan_line LIKE '%Index Scan using%a_b%';
+                uses_high_key := uses_high_key OR plan_line ~ 'highKeyEligiblePages: [1-9][0-9]* pages';
+                uses_parallel := uses_parallel OR plan_line ~ 'Workers Launched: [1-9][0-9]*';
+                suffix_rechecked := suffix_rechecked OR plan_line ~ 'Rows Removed by Index Recheck: [1-9][0-9]*';
+            END LOOP;
+            SELECT coalesce(sum(pg_stat_get_xact_function_calls(oid)), 0) INTO calls_before
+            FROM pg_proc WHERE pronamespace = 'documentdb_api_catalog'::regnamespace
+                AND proname = 'bson_dollar_regex';
+            EXECUTE 'CREATE TEMP TABLE truncated_suffix_actual AS ' || query_sql;
+            SELECT coalesce(sum(pg_stat_get_xact_function_calls(oid)), 0) INTO calls_after
+            FROM pg_proc WHERE pronamespace = 'documentdb_api_catalog'::regnamespace
+                AND proname = 'bson_dollar_regex';
+            ALTER TABLE truncated_suffix_actual
+                ADD COLUMN result_order bigint GENERATED ALWAYS AS IDENTITY;
+            SELECT array_agg((document->>'_id')::int ORDER BY result_order)
+                INTO actual_ids FROM truncated_suffix_actual;
+            DROP TABLE truncated_suffix_actual;
+            IF actual_ids IS DISTINCT FROM expected_ids OR NOT uses_index OR
+                uses_high_key != high_key_enabled OR uses_parallel != mode.is_parallel OR
+                NOT suffix_rechecked THEN
+                RAISE EXCEPTION 'Truncated suffix validation failed for %, high key %: results %, index %, high key %, parallel %, suffix recheck %, plan %',
+                    mode.label, high_key_enabled, actual_ids = expected_ids,
+                    uses_index, uses_high_key, uses_parallel, suffix_rechecked,
+                    array_to_string(plan_lines, E'\n');
+            END IF;
+            -- Transaction-local function counters do not include parallel workers.
+            IF NOT mode.is_parallel AND calls_after - calls_before != 4000 THEN
+                RAISE EXCEPTION 'Expected 4000 suffix heap rechecks for %, high key %, got %',
+                    mode.label, high_key_enabled, calls_after - calls_before;
+            END IF;
+            INSERT INTO truncated_suffix_results VALUES (
+                mode.label, high_key_enabled, actual_ids = expected_ids,
+                uses_high_key, uses_parallel, suffix_rechecked,
+                CASE WHEN NOT mode.is_parallel THEN calls_after - calls_before END);
+        END LOOP;
+    END LOOP;
+END
+$truncated_suffix$;
+SELECT * FROM truncated_suffix_results ORDER BY mode, high_key_enabled;
+ROLLBACK;
+RESET documentdb.indexTermLimitOverride;
+RESET documentdb.enableIndexMetadataGlobalTracking;
+SELECT documentdb_api.drop_collection('highkeydb', 'truncated_suffix');

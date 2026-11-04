@@ -170,6 +170,18 @@ static CompositeIndexBoundsSet * AddMultiBoundaryForDollarRegex(int32_t indexAtt
 																indexBounds,
 																bool isNegationOp);
 
+inline static void
+RequireRuntimeRecheckForPath(CompositeQueryRunData *runData, int32_t pathIndex)
+{
+	/*
+	 * Keep the path requirement as well as the scan-wide cache so SAOP
+	 * resets cannot forget predicates left for the heap.
+	 */
+	runData->metaInfo->requiresRuntimeRecheck = true;
+	runData->indexBounds[pathIndex].requiresRuntimeRecheck = true;
+}
+
+
 inline static CompositeSingleBound
 GetTypeLowerBound(bson_type_t type)
 {
@@ -186,6 +198,23 @@ GetTypeUpperBound(bson_type_t type)
 	CompositeSingleBound bound = { 0 };
 	bound.bound = GetUpperBound(type, &bound.isBoundInclusive);
 	return bound;
+}
+
+
+/*
+ * requiresRuntimeRecheck tracks predicates that need a heap recheck even
+ * with untruncated index terms. requiresRecheckOnTruncatedIndex tracks
+ * predicates that need a heap recheck when the relevant terms are truncated.
+ * Keeping these separate avoids unconditional heap rechecks for predicates
+ * that are exact on untruncated index terms.
+ */
+inline static void
+MergeBoundsRecheckFlags(const CompositeIndexBounds *sourceBounds,
+						CompositeIndexBounds *targetBounds)
+{
+	targetBounds->requiresRuntimeRecheck |= sourceBounds->requiresRuntimeRecheck;
+	targetBounds->requiresRecheckOnTruncatedIndex |=
+		sourceBounds->requiresRecheckOnTruncatedIndex;
 }
 
 
@@ -221,11 +250,6 @@ BuildLowerBoundTermFromIndexBounds(CompositeQueryRunData *runData,
 			runData->metaInfo->requiresRuntimeRecheck ||
 			runData->indexBounds[i].
 			requiresRuntimeRecheck;
-
-		runData->metaInfo->requiresRecheckOnTruncatedIndex =
-			runData->metaInfo->requiresRecheckOnTruncatedIndex ||
-			runData->indexBounds[i].
-			requiresRecheckOnTruncatedIndex;
 
 		/* If both lower and upper bound match it's equality */
 		if (runData->indexBounds[i].lowerBound.bound.value_type != BSON_TYPE_EOD &&
@@ -365,9 +389,7 @@ MergeSingleCompositeIndexBounds(CompositeIndexBounds *sourceBound,
 						sourceBound->indexRecheckFunctions);
 	}
 
-	targetBound->requiresRuntimeRecheck =
-		targetBound->requiresRuntimeRecheck ||
-		sourceBound->requiresRuntimeRecheck;
+	MergeBoundsRecheckFlags(sourceBound, targetBound);
 }
 
 
@@ -461,9 +483,7 @@ UpdateRunDataForVariableBounds(CompositeQueryRunData *runData,
 			runData->metaInfo->requiresRuntimeRecheck ||
 			bound->requiresRuntimeRecheck;
 
-		runData->metaInfo->requiresRecheckOnTruncatedIndex =
-			runData->metaInfo->requiresRecheckOnTruncatedIndex ||
-			bound->requiresRecheckOnTruncatedIndex;
+		MergeBoundsRecheckFlags(bound, &runData->indexBounds[set->indexAttribute]);
 	}
 }
 
@@ -499,13 +519,14 @@ UpdateRunDataForOrderedBounds(CompositeQueryRunData *runData,
 							  int32_t *unsatisfiablePathIndex)
 {
 	*unsatisfiablePathIndex = -1;
+
+	/*
+	 * A new SAOP range may need rechecks even when the previous one did not.
+	 * Recompute here so legacy callbacks can use the cached result per entry.
+	 */
+	runData->metaInfo->requiresRuntimeRecheck = false;
 	for (int i = 0; i < runData->metaInfo->numIndexPaths; i++)
 	{
-		/* Reset rundata before starting with the new bounds */
-		runData->indexBounds[i].requiresRuntimeRecheck = false;
-		runData->indexBounds[i].isEqualityBound = false;
-		runData->indexBounds[i].requiresRecheckOnTruncatedIndex = false;
-
 		/* Free if we have a dupe */
 		if (runData->indexBounds[i].indexRecheckFunctions !=
 			orderedScanEntryData->baseIndexBounds[i].indexRecheckFunctions)
@@ -524,6 +545,8 @@ UpdateRunDataForOrderedBounds(CompositeQueryRunData *runData,
 		/* No variable entries for this path, use the base bounds */
 		if (entriesForPath == NIL)
 		{
+			runData->metaInfo->requiresRuntimeRecheck |=
+				runData->indexBounds[i].requiresRuntimeRecheck;
 			continue;
 		}
 
@@ -572,25 +595,15 @@ UpdateRunDataForOrderedBounds(CompositeQueryRunData *runData,
 			}
 			else
 			{
+				CompositeIndexBounds *activeBounds =
+					&entry->boundsSet->bounds[entry->currentOperatorIndex];
 				SetLowerBound(&runData->indexBounds[i].lowerBound,
-							  &entry->boundsSet->bounds[entry->currentOperatorIndex].
-							  lowerBound, indexCollation);
+							  &activeBounds->lowerBound, indexCollation);
 				SetUpperBound(&runData->indexBounds[i].upperBound,
-							  &entry->boundsSet->bounds[entry->currentOperatorIndex].
-							  upperBound, indexCollation);
-				runData->indexBounds[i].requiresRuntimeRecheck =
-					runData->indexBounds[i].requiresRuntimeRecheck ||
-					entry->boundsSet->bounds[entry
-											 ->currentOperatorIndex].
-					requiresRuntimeRecheck;
-				runData->indexBounds[i].requiresRecheckOnTruncatedIndex =
-					runData->indexBounds[i].requiresRecheckOnTruncatedIndex ||
-					entry->boundsSet->bounds[entry->
-											 currentOperatorIndex].
-					requiresRecheckOnTruncatedIndex;
+							  &activeBounds->upperBound, indexCollation);
+				MergeBoundsRecheckFlags(activeBounds, &runData->indexBounds[i]);
 
-				if (entry->boundsSet->bounds[entry->currentOperatorIndex].
-					indexRecheckFunctions != NIL)
+				if (activeBounds->indexRecheckFunctions != NIL)
 				{
 					MemoryContext oldContext =
 						MemoryContextSwitchTo(orderedScanEntryData->scanKeyMemoryContext);
@@ -599,16 +612,13 @@ UpdateRunDataForOrderedBounds(CompositeQueryRunData *runData,
 					{
 						runData->indexBounds[i].indexRecheckFunctions = list_concat_copy(
 							orderedScanEntryData->baseIndexBounds[i].indexRecheckFunctions,
-							entry->boundsSet->bounds[entry->currentOperatorIndex].
-							indexRecheckFunctions);
+							activeBounds->indexRecheckFunctions);
 					}
 					else
 					{
 						runData->indexBounds[i].indexRecheckFunctions =
 							list_concat(runData->indexBounds[i].indexRecheckFunctions,
-										entry->boundsSet->bounds[entry->
-																 currentOperatorIndex].
-										indexRecheckFunctions);
+										activeBounds->indexRecheckFunctions);
 					}
 
 					MemoryContextSwitchTo(oldContext);
@@ -638,6 +648,9 @@ UpdateRunDataForOrderedBounds(CompositeQueryRunData *runData,
 				runData->indexBounds[i].upperBound.isBoundInclusive &&
 				boundsCompare == 0;
 		}
+
+		runData->metaInfo->requiresRuntimeRecheck |=
+			runData->indexBounds[i].requiresRuntimeRecheck;
 	}
 }
 
@@ -689,9 +702,7 @@ MergeBoundsForBoundsSet(CompositeIndexBoundsSet *set, CompositeIndexBounds *merg
 					  &bound->upperBound, indexCollation);
 	}
 
-	mergedBounds[set->indexAttribute].requiresRuntimeRecheck =
-		mergedBounds[set->indexAttribute].requiresRuntimeRecheck ||
-		set->bounds->requiresRuntimeRecheck;
+	MergeBoundsRecheckFlags(bound, &mergedBounds[set->indexAttribute]);
 
 	if (set->bounds->indexRecheckFunctions != NIL)
 	{
@@ -962,7 +973,7 @@ TrimSecondaryVariableBounds(VariableIndexBounds *variableBounds,
 										   HASH_FIND, &found);
 		if (found && attr != entry->bsonValue.value.v_int32)
 		{
-			runData->metaInfo->requiresRuntimeRecheck = true;
+			RequireRuntimeRecheckForPath(runData, attr);
 			variableBounds->variableBoundsList = foreach_delete_current(
 				variableBounds->variableBoundsList, cell);
 
@@ -1001,7 +1012,7 @@ PickVariableBoundsForWildcardOrderedScan(VariableIndexBounds *variableBounds,
 
 		if (strcmp(runData->wildcardPath, set->wildcardPath) != 0)
 		{
-			runData->metaInfo->requiresRuntimeRecheck = true;
+			RequireRuntimeRecheckForPath(runData, set->indexAttribute);
 			variableBounds->variableBoundsList = foreach_delete_current(
 				variableBounds->variableBoundsList, cell);
 			continue;
@@ -1037,8 +1048,7 @@ PickVariableBoundsForOrderedScan(VariableIndexBounds *variableBounds,
 								  otherSet->bounds[0].isEqualityBound;
 		bool currentIsEquality = set->numBounds == 1 && set->bounds[0].isEqualityBound;
 
-		/* There's already a condition on the path - requires runtime recheck */
-		runData->metaInfo->requiresRuntimeRecheck = true;
+		RequireRuntimeRecheckForPath(runData, set->indexAttribute);
 
 		if (currentIsEquality && !otherSetIsEquality)
 		{
@@ -1112,9 +1122,14 @@ TryUpdateBoundsForTruncation(CompositeQueryRunData *runData,
 							 const char **indexPaths, uint32_t *indexPathLengths,
 							 int8_t *sortOrders)
 {
-	bool hasTruncation = false;
+	CompositeQueryTruncationFlags truncationFlags = CompositeQueryTruncation_None;
 	for (int i = 0; i < runData->metaInfo->numIndexPaths; i++)
 	{
+		if (runData->indexBounds[i].requiresRecheckOnTruncatedIndex)
+		{
+			truncationFlags |= CompositeQueryTruncation_RequiresCompleteValue;
+		}
+
 		bool hasProcessedLowerBound =
 			runData->indexBounds[i].lowerBound.bound.value_type == BSON_TYPE_EOD ||
 			runData->indexBounds[i].lowerBound.serializedTerm != NULL;
@@ -1124,11 +1139,13 @@ TryUpdateBoundsForTruncation(CompositeQueryRunData *runData,
 
 		if (hasProcessedLowerBound && hasProcessedUpperBound)
 		{
-			hasTruncation = hasTruncation ||
-							(IsIndexTermTruncated(
-								 &runData->indexBounds[i].lowerBound.indexTermValue) ||
-							 IsIndexTermTruncated(
-								 &runData->indexBounds[i].upperBound.indexTermValue));
+			if (IsIndexTermTruncated(
+					&runData->indexBounds[i].lowerBound.indexTermValue) ||
+				IsIndexTermTruncated(
+					&runData->indexBounds[i].upperBound.indexTermValue))
+			{
+				truncationFlags |= CompositeQueryTruncation_BoundTruncated;
+			}
 			continue;
 		}
 
@@ -1139,20 +1156,28 @@ TryUpdateBoundsForTruncation(CompositeQueryRunData *runData,
 
 		bool currentHasTruncation = UpdateSingleBoundForTruncation(
 			runData, i, &runData->indexBounds[i], &metadata);
-		hasTruncation = hasTruncation || currentHasTruncation;
+		if (currentHasTruncation)
+		{
+			truncationFlags |= CompositeQueryTruncation_BoundTruncated;
+		}
 	}
 
-	return hasTruncation;
+	runData->metaInfo->queryTruncationFlags = truncationFlags;
+	return (truncationFlags & CompositeQueryTruncation_BoundTruncated) != 0;
 }
 
 
-bool
+CompositeQueryTruncationFlags
 UpdateBoundsForTruncation(CompositeQueryRunData *runData,
 						  IndexTermCreateMetadata *basePathMetadata,
 						  const char **indexPaths, uint32_t *indexPathLengths,
-						  int8_t *sortOrders)
+						  int8_t *sortOrders,
+						  bool hasTruncatedIndexTerms,
+						  uint32_t truncatedPathBitMask,
+						  bool enableMetadataBasedTracking)
 {
-	bool hasTruncation = false;
+	CompositeQueryMetaInfo *metaInfo = runData->metaInfo;
+	CompositeQueryTruncationFlags truncationFlags = CompositeQueryTruncation_None;
 	for (int i = 0; i < runData->metaInfo->numIndexPaths; i++)
 	{
 		IndexTermCreateMetadata metadata;
@@ -1160,12 +1185,45 @@ UpdateBoundsForTruncation(CompositeQueryRunData *runData,
 										  indexPaths[i], indexPathLengths[i],
 										  sortOrders[i]);
 
+		CompositeIndexBounds *bounds = &runData->indexBounds[i];
 		bool currentHasTruncation = UpdateSingleBoundForTruncation(
-			runData, i, &runData->indexBounds[i], &metadata);
-		hasTruncation = hasTruncation || currentHasTruncation;
+			runData, i, bounds, &metadata);
+
+		/*
+		 * Preserve root-marker generation regardless of index truncation metadata:
+		 * omitting this extra entry could enable RUM's single-entry ordered scan
+		 * promotion even when only the heap-recheck requirement should change.
+		 */
+		if (currentHasTruncation)
+		{
+			truncationFlags |= CompositeQueryTruncation_BoundTruncated;
+		}
+		if (bounds->requiresRecheckOnTruncatedIndex)
+		{
+			truncationFlags |= CompositeQueryTruncation_RequiresCompleteValue;
+		}
+
+		if (!enableMetadataBasedTracking)
+		{
+			metaInfo->requiresRecheckOnTruncatedIndex |=
+				bounds->requiresRecheckOnTruncatedIndex;
+		}
+		else if (hasTruncatedIndexTerms &&
+				 (currentHasTruncation || bounds->requiresRecheckOnTruncatedIndex))
+		{
+			/* Current index has truncated terms.
+			 * A zero mask is unknown; paths beyond the first six use the global bit.
+			 */
+			if (truncatedPathBitMask == 0 ||
+				i >= CompositeIndexMetadata_PerPathTruncatedBitCount ||
+				(truncatedPathBitMask & (UINT32_C(1) << i)) != 0)
+			{
+				metaInfo->requiresRecheckOnTruncatedIndex = true;
+			}
+		}
 	}
 
-	return hasTruncation;
+	return truncationFlags;
 }
 
 
@@ -3747,10 +3805,16 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 			/* hasArrays is false here since it's per element of the array check */
 			bool hasArrays = false;
 			uint32_t multiKeyBitMask = 0;
+
+			/* The merge addresses bounds by index attribute, not by set position. */
+			CompositeIndexBounds *attributeBounds = palloc0(
+				(indexAttribute + 1) * sizeof(CompositeIndexBounds));
 			localBounds.variableBoundsList =
 				MergeSingleVariableBounds(localBounds.variableBoundsList,
-										  &nestedWildcardPath, singleBounds->bounds,
+										  &nestedWildcardPath, attributeBounds,
 										  indexCollation, hasArrays, multiKeyBitMask);
+			singleBounds->bounds[0] = attributeBounds[indexAttribute];
+			pfree(attributeBounds);
 
 			if (list_length(localBounds.variableBoundsList) == initialVariableBoundsCount)
 			{

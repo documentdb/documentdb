@@ -342,7 +342,7 @@ SELECT documentdb_api.insert_one('msdb','coll_mk_pp_off','{ "_id": 4, "a": 4, "b
 SET documentdb.enableIndexMetadataGlobalTracking TO on;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
   '{ "createIndexes": "coll_mk_pp_off", "indexes": [ { "key": { "a": 1, "b": 1 }, "enableCompositeTerm": true, "name": "a_1_b_1" } ] }', true);
-RESET documentdb.enableIndexMetadataGlobalTracking;
+SET documentdb.enableIndexMetadataGlobalTracking TO off;
 
 -- Pre-shard, the coordinator index carries the marker. Reported as
 -- <marked>/<in-scope> so that the index vanishing shows up as 0/0 rather than
@@ -353,6 +353,7 @@ FROM pg_index WHERE indrelid = 'documentdb_data.documents_79005'::regclass
   AND strpos(pg_get_indexdef(indexrelid), 'composite_path_ops') > 0;
 
 SELECT documentdb_api.shard_collection('{ "shardCollection": "msdb.coll_mk_pp_off", "key": { "_id": "hashed" }, "numInitialChunks": 2 }');
+RESET documentdb.enableIndexMetadataGlobalTracking;
 
 ANALYZE documentdb_data.documents_79005;
 

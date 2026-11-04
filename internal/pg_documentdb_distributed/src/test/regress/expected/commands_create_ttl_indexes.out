@@ -992,7 +992,7 @@ from documentdb_api_catalog.collection_indexes where (index_spec).index_expire_a
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_20006" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_20023" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691'))
+    "documents_rum_index_20023" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691', mkp='true'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '20006'::bigint)
 
@@ -1081,6 +1081,7 @@ $cmd$);
          indexName: ttl_index
          indexKey: {"ttl": 1}
          isMultiKey: true
+         multiKeyPaths: ttl
          indexBounds: ["ttl": [{ "$date" : { "$numberLong" : "-9223372036854775808" } }, { "$date" : "2025-08-06T21:22:45Z" })]
          innerScanLoops: 4 loops
          eligibleDeadItems: 200 items
@@ -1089,7 +1090,7 @@ $cmd$);
          ->  Index Scan using ttl_index on documentdb_data.documents_20006_2000105 (actual rows=100 loops=1)
                Output: ctid
                Index Cond: (documents_20006_2000105.document @< '{ "ttl" : { "$date" : { "$numberLong" : "1754515365000" } } }'::bson)
-(15 rows)
+(16 rows)
 
 END;
 --  Shard collection
@@ -1284,7 +1285,7 @@ NOTICE:  creating collection
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_20009" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_20030" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691'))
+    "documents_rum_index_20030" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691', mkp='true'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '20009'::bigint)
 
@@ -1309,7 +1310,7 @@ END;
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_20010" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_20032" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691'))
+    "documents_rum_index_20032" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691', mkp='true'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '20010'::bigint)
 
@@ -1334,7 +1335,7 @@ END;
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_20011" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_20034" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691'))
+    "documents_rum_index_20034" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691', mkp='true'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '20011'::bigint)
 
@@ -1359,7 +1360,7 @@ END;
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_20012" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_20036" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691'))
+    "documents_rum_index_20036" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691', mkp='true'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '20012'::bigint)
 
@@ -1383,7 +1384,7 @@ END;
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_20013" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_20038" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691'))
+    "documents_rum_index_20038" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691', mkp='true'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '20013'::bigint)
 
@@ -1425,7 +1426,8 @@ from documentdb_api_catalog.collection_indexes ci
 JOIN documentdb_api_catalog.collections c
 ON  c.collection_id = ci.collection_id 
 where (index_spec).index_expire_after_seconds > 0
-AND c.database_name = 'ttl_default_composite';
+AND c.database_name = 'ttl_default_composite'
+ORDER BY c.collection_name;
  collection_name | index_name | is_ordered | ttl_expiry | index_name |                                                         index_spec                                                         
 ---------------------------------------------------------------------
  ttlcoll         | ttl_index  | f          |          5 | ttl_index  | (ttl_index,"{ ""ttl"" : { ""$numberInt"" : ""1"" } }",,,,,1,5,,)

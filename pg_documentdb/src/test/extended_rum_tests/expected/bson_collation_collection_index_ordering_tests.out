@@ -34,7 +34,7 @@ WHERE database_name = 'collation_collection_ordering_db'
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_3101" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_3101" EXCLUDE USING documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "_id" ]', tl='2691', cl='fr-u-ks-level1') WITH =?=, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "_id" : { "$numberInt" : "1" } }'::bson, false, true, 'fr-u-ks-level1'::text) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops (cmp='true', optsk='3101') WITH OPERATOR(documentdb_api_internal.=#=))
+    "documents_rum_index_3101" EXCLUDE USING documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "_id" ]', tl='2691', mkp='true', cl='fr-u-ks-level1') WITH =?=, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "_id" : { "$numberInt" : "1" } }'::bson, false, true, 'fr-u-ks-level1'::text) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops (cmp='true', optsk='3101') WITH OPERATOR(documentdb_api_internal.=#=))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '3101'::bigint)
 
@@ -110,10 +110,10 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_3101" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_3101" EXCLUDE USING documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "_id" ]', tl='2691', cl='fr-u-ks-level1') WITH =?=, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "_id" : { "$numberInt" : "1" } }'::bson, false, true, 'fr-u-ks-level1'::text) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops (cmp='true', optsk='3101') WITH OPERATOR(documentdb_api_internal.=#=))
-    "documents_rum_index_3102" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "value" ]', tl='2691', cl='fr-u-ks-level1'))
-    "documents_rum_index_3103" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "value" ]', tl='2691', cl='fr-u-ks-level2'))
-    "documents_rum_index_3104" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "value" ]', tl='2691'))
+    "documents_rum_index_3101" EXCLUDE USING documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "_id" ]', tl='2691', mkp='true', cl='fr-u-ks-level1') WITH =?=, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "_id" : { "$numberInt" : "1" } }'::bson, false, true, 'fr-u-ks-level1'::text) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops (cmp='true', optsk='3101') WITH OPERATOR(documentdb_api_internal.=#=))
+    "documents_rum_index_3102" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "value" ]', tl='2691', mkp='true', cl='fr-u-ks-level1'))
+    "documents_rum_index_3103" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "value" ]', tl='2691', mkp='true', cl='fr-u-ks-level2'))
+    "documents_rum_index_3104" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "value" ]', tl='2691', mkp='true'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '3101'::bigint)
 

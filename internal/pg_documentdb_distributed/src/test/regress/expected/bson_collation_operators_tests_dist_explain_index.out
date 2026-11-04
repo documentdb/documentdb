@@ -786,11 +786,12 @@ $cmd$);
                      indexKey: {"items": 1}
                      indexCollation: en-u-ks-level1
                      isMultiKey: true
+                     multiKeyPaths: items
                      indexBounds: ["items": ["APPLE", "APPLE"]]
                      ->  Index Scan using idx_items_en_s1_d on documents_95213_95210024 collection
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@<>) '{ "items" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "APPLE", "isTopLevel" : true } ] } }'::documentdb_core.bson)
                            Filter: (document OPERATOR(documentdb_api_catalog.@#?) '{ "items" : { "$eq" : "APPLE" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(16 rows)
+(17 rows)
 
 END;
 -- 9.2: numeric needle bypasses collation — index still used across shards
@@ -816,11 +817,12 @@ $cmd$);
                      indexKey: {"items": 1}
                      indexCollation: en-u-ks-level1
                      isMultiKey: true
+                     multiKeyPaths: items
                      indexBounds: ["items": [42, 42]]
                      ->  Index Scan using idx_items_en_s1_d on documents_95213_95210024 collection
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@<>) '{ "items" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "42" }, "isTopLevel" : true } ] } }'::documentdb_core.bson)
                            Filter: (document OPERATOR(documentdb_api_catalog.@#?) '{ "items" : { "$eq" : { "$numberInt" : "42" } }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(16 rows)
+(17 rows)
 
 END;
 -- 9.3: mixed-case range across shards — both bounds collation-aware
@@ -846,11 +848,12 @@ $cmd$);
                      indexKey: {"items": 1}
                      indexCollation: en-u-ks-level1
                      isMultiKey: true
+                     multiKeyPaths: items
                      indexBounds: ["items": ["Banana", "Dog"]]
                      ->  Index Scan using idx_items_en_s1_d on documents_95213_95210024 collection
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@<>) '{ "items" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "3" }, "value" : "Banana", "isTopLevel" : true }, { "op" : { "$numberInt" : "5" }, "value" : "Dog", "isTopLevel" : true } ] } }'::documentdb_core.bson)
                            Filter: (document OPERATOR(documentdb_api_catalog.@#?) '{ "items" : { "$gte" : "Banana", "$lte" : "Dog" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(16 rows)
+(17 rows)
 
 END;
 -- 9.4: mismatched query collation — index pushdown declined; runtime fallback

@@ -217,8 +217,11 @@ SELECT documentdb_api.create_collection('msdb','em_or');
 SELECT documentdb_api.insert_one('msdb','em_or','{ "_id": 1, "tags": [ { "k": "x", "v": 1 } ], "rank": 10 }');
 SELECT documentdb_api.insert_one('msdb','em_or','{ "_id": 2, "tags": [ { "k": "x", "v": 1 }, { "k": "y", "v": 2 } ], "rank": 20 }');
 SELECT documentdb_api.insert_one('msdb','em_or','{ "_id": 3, "tags": [ { "k": "y", "v": 2 } ], "rank": 30 }');
+-- Preserve coverage of the legacy layout without reduced correlated terms.
+SET documentdb.enableIndexMetadataGlobalTracking TO off;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
   '{ "createIndexes": "em_or", "indexes": [ { "key": { "tags.k": 1, "tags.v": 1, "rank": 1 }, "name": "em_or_idx", "enableOrderedIndex": 1 } ] }', true);
+RESET documentdb.enableIndexMetadataGlobalTracking;
 
 SET documentdb.enable_merge_sort_for_bitmap_or TO off;
 SELECT count(*) AS em_or_off FROM (

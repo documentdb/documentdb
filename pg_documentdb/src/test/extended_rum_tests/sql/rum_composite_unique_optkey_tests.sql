@@ -723,6 +723,43 @@ ORDER BY optional_key, comparable_terms, direction;
 DROP TABLE null_undefined_order_results;
 RESET documentdb.enableComparableTerms;
 
+-- Section 20: optional shard keys apply only to composite indexes.
+-- Single-path indexes retain their shard-hash check for truncated keys.
+SET documentdb.defaultUseCompositeOpClass TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeydb',
+    '{"createIndexes":"single_path_trunc","indexes":[{"key":{"k":1},"name":"k_1","unique":true}]}', true);
+
+SELECT pg_get_indexdef(i.indexrelid) ~ 'single_path_ops' AS is_single_path,
+       pg_get_indexdef(i.indexrelid) ~ 'optsk=' AS has_optsk
+FROM pg_index i
+WHERE i.indrelid = (SELECT ('documentdb_data.documents_' || collection_id)::regclass
+                    FROM documentdb_api_catalog.collections
+                    WHERE database_name = 'optkeydb' AND collection_name = 'single_path_trunc')
+  AND i.indexrelid::regclass::text LIKE '%rum_index%';
+
+SELECT i, 32 * (1 << i) AS key_length,
+       NOT (documentdb_api.insert_one('optkeydb', 'single_path_trunc',
+           bson_build_document('_id'::text, i, 'k'::text,
+               repeat('aaaabbbbccccddddeeeeffffgggghhhh', 1 << i))) @? '{"writeErrors":1}') AS inserted
+FROM generate_series(0, 9) i;
+
+-- A genuine duplicate still conflicts.
+SELECT documentdb_api.insert_one('optkeydb', 'single_path_trunc',
+    bson_build_document('_id'::text, 10, 'k'::text,
+        repeat('aaaabbbbccccddddeeeeffffgggghhhh', 256)));
+
+-- Array elements with the same truncated prefix remain distinct full values.
+SELECT documentdb_api.insert_one('optkeydb', 'single_path_trunc',
+    format('{"_id":11,"k":["%sA","%sB"]}',
+        repeat('aaaabbbbccccddddeeeeffffgggghhhh', 512),
+        repeat('aaaabbbbccccddddeeeeffffgggghhhh', 512))::bson);
+SELECT documentdb_api.insert_one('optkeydb', 'single_path_trunc',
+    format('{"_id":12,"k":["%sA","%s"]}',
+        repeat('aaaabbbbccccddddeeeeffffgggghhhh', 512),
+        repeat('aaaabbbbccccddddeeeeffffgggghhhh', 256))::bson);
+SELECT count(*) AS single_path_trunc_rows
+FROM documentdb_api.collection('optkeydb', 'single_path_trunc');
+
 RESET documentdb.enable_composite_unique_optional_key;
 RESET documentdb.enableCompositeUniqueHash;
 RESET documentdb.defaultUseCompositeOpClass;

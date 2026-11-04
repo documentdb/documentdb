@@ -26,6 +26,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
    indexName: a_b_c_1
    indexKey: {"a.b": 1,"a.c": 1}
    isMultiKey: true
+   multiKeyPaths: a.b, a.c
    hasCorrelatedTerms: true
    indexBounds: ["a.b": (0, Infinity], "a.c": (MinKey, MaxKey)]
    numDuplicates: 1 entries
@@ -34,7 +35,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
    ->  Index Scan using a_b_c_1 on documents_1001 collection (actual rows=1 loops=1)
          Index Cond: ((document @> '{ "a.b" : { "$numberInt" : "0" } }'::bson) AND (document @= '{ "a.c" : { "$numberInt" : "2" } }'::bson))
-(13 rows)
+(14 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkey_db', '{ "find": "mkey_coll", "filter": { "a.b": 1, "a.c": 2 }}') $cmd$);
@@ -45,6 +46,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
    indexName: a_b_c_1
    indexKey: {"a.b": 1,"a.c": 1}
    isMultiKey: true
+   multiKeyPaths: a.b, a.c
    hasCorrelatedTerms: true
    indexBounds: ["a.b": [1, 1], "a.c": (MinKey, MaxKey)]
    innerScanLoops: 2 loops
@@ -52,7 +54,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
    ->  Index Scan using a_b_c_1 on documents_1001 collection (actual rows=1 loops=1)
          Index Cond: ((document @= '{ "a.b" : { "$numberInt" : "1" } }'::bson) AND (document @= '{ "a.c" : { "$numberInt" : "2" } }'::bson))
-(12 rows)
+(13 rows)
 
 -- order by doesn't work on secondary path (but works on the first one)
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -67,6 +69,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
          indexName: a_b_c_1
          indexKey: {"a.b": 1,"a.c": 1}
          isMultiKey: true
+         multiKeyPaths: a.b, a.c
          hasCorrelatedTerms: true
          indexBounds: ["a.b": [MinKey, MaxKey], "a.c": (MinKey, MaxKey)]
          numDuplicates: 1 entries
@@ -76,7 +79,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
          ->  Index Scan using a_b_c_1 on documents_1001 collection (actual rows=1 loops=1)
                Index Cond: (document @>= '{ "a.b" : { "$minKey" : 1 } }'::bson)
                Order By: (document |-<> '{ "a.b" : { "$numberInt" : "1" } }'::bson)
-(17 rows)
+(18 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkey_db', '{ "find": "mkey_coll", "filter": { "a.b": { "$exists": true } }, "sort": { "a.b": -1 }, "hint": "a_b_c_1" }') $cmd$);
@@ -87,17 +90,18 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
    indexName: a_b_c_1
    indexKey: {"a.b": 1,"a.c": 1}
    isMultiKey: true
+   multiKeyPaths: a.b, a.c
    hasCorrelatedTerms: true
    indexBounds: ["a.b": [MinKey, MaxKey], "a.c": (MinKey, MaxKey)]
    numDuplicates: 1 entries
    isBackwardScan: true
-   innerScanLoops: 3 loops
+   innerScanLoops: 2 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
    ->  Index Scan using a_b_c_1 on documents_1001 collection (actual rows=1 loops=1)
          Index Cond: (document @>= '{ "a.b" : { "$minKey" : 1 } }'::bson)
          Order By: (document OPERATOR(documentdb_api_internal.<>-|) '{ "a.b" : { "$numberInt" : "-1" } }'::bson)
-(15 rows)
+(16 rows)
 
 -- multikey on a.b - query on a.c can be pushed
 TRUNCATE documentdb_data.documents_801;
@@ -117,6 +121,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
    indexName: a_b_c_1
    indexKey: {"a.b": 1,"a.c": 1}
    isMultiKey: true
+   multiKeyPaths: a.b, a.c
    hasCorrelatedTerms: true
    indexBounds: ["a.b": (0, Infinity], "a.c": (MinKey, MaxKey)]
    numDuplicates: 1 entries
@@ -125,7 +130,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
    ->  Index Scan using a_b_c_1 on documents_1001 collection (actual rows=1 loops=1)
          Index Cond: ((document @> '{ "a.b" : { "$numberInt" : "0" } }'::bson) AND (document @= '{ "a.c" : { "$numberInt" : "2" } }'::bson))
-(13 rows)
+(14 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkey_db', '{ "find": "mkey_coll", "filter": { "a.b": 1, "a.c": 2 }}') $cmd$);
@@ -136,6 +141,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
    indexName: a_b_c_1
    indexKey: {"a.b": 1,"a.c": 1}
    isMultiKey: true
+   multiKeyPaths: a.b, a.c
    hasCorrelatedTerms: true
    indexBounds: ["a.b": [1, 1], "a.c": (MinKey, MaxKey)]
    innerScanLoops: 2 loops
@@ -143,7 +149,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
    ->  Index Scan using a_b_c_1 on documents_1001 collection (actual rows=1 loops=1)
          Index Cond: ((document @= '{ "a.b" : { "$numberInt" : "1" } }'::bson) AND (document @= '{ "a.c" : { "$numberInt" : "2" } }'::bson))
-(12 rows)
+(13 rows)
 
 -- same behavior for order by.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -158,6 +164,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
          indexName: a_b_c_1
          indexKey: {"a.b": 1,"a.c": 1}
          isMultiKey: true
+         multiKeyPaths: a.b, a.c
          hasCorrelatedTerms: true
          indexBounds: ["a.b": [MinKey, MaxKey], "a.c": (MinKey, MaxKey)]
          numDuplicates: 1 entries
@@ -167,7 +174,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
          ->  Index Scan using a_b_c_1 on documents_1001 collection (actual rows=1 loops=1)
                Index Cond: (document @>= '{ "a.b" : { "$minKey" : 1 } }'::bson)
                Order By: (document |-<> '{ "a.b" : { "$numberInt" : "1" } }'::bson)
-(17 rows)
+(18 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkey_db', '{ "find": "mkey_coll", "filter": { "a.b": { "$exists": true } }, "sort": { "a.b": -1 }, "hint": "a_b_c_1" }') $cmd$);
@@ -178,15 +185,16 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
    indexName: a_b_c_1
    indexKey: {"a.b": 1,"a.c": 1}
    isMultiKey: true
+   multiKeyPaths: a.b, a.c
    hasCorrelatedTerms: true
    indexBounds: ["a.b": [MinKey, MaxKey], "a.c": (MinKey, MaxKey)]
    numDuplicates: 1 entries
    isBackwardScan: true
-   innerScanLoops: 3 loops
+   innerScanLoops: 2 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
    ->  Index Scan using a_b_c_1 on documents_1001 collection (actual rows=1 loops=1)
          Index Cond: (document @>= '{ "a.b" : { "$minKey" : 1 } }'::bson)
          Order By: (document OPERATOR(documentdb_api_internal.<>-|) '{ "a.b" : { "$numberInt" : "-1" } }'::bson)
-(15 rows)
+(16 rows)
 

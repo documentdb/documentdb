@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- * SPDX-License-Identifier: MIT
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/index_am/rum.c
  *
@@ -74,6 +74,10 @@ typedef struct DocumentDBRumIndexState
 	IndexMultiKeyStatus multiKeyStatus;
 
 	bool hasCorrelatedReducedTerms;
+
+	bool hasTruncatedIndexTerms;
+
+	uint32_t truncatedPathBitMask;
 
 	uint32_t multiKeyPerPathStatus;
 } DocumentDBRumIndexState;
@@ -661,10 +665,8 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 			if (options->enableMetadataBasedTracking &&
 				getopclassMetadataFunc != NULL)
 			{
-				uint32_t truncatedPerPathStatus = 0;
 				bool hasReducedCorrelatedTerms = false;
 				bool indexHasArrays = false;
-				bool indexHasTruncation = false;
 				uint64_t opclassMetadata = DatumGetUInt64(DirectFunctionCall1(
 															  getopclassMetadataFunc,
 															  PointerGetDatum(
@@ -673,8 +675,9 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 													&indexHasArrays,
 													&outerScanState->multiKeyPerPathStatus,
 													&hasReducedCorrelatedTerms,
-													&indexHasTruncation,
-													&truncatedPerPathStatus);
+													&outerScanState->
+													hasTruncatedIndexTerms,
+													&outerScanState->truncatedPathBitMask);
 				outerScanState->multiKeyStatus = indexHasArrays ?
 												 IndexMultiKeyStatus_HasArrays :
 												 IndexMultiKeyStatus_HasNoArrays;
@@ -726,7 +729,9 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 										   IndexMultiKeyStatus_HasArrays,
 										   outerScanState->hasCorrelatedReducedTerms,
 										   supportsOrderedOperatorScans,
-										   outerScanState->multiKeyPerPathStatus))
+										   outerScanState->multiKeyPerPathStatus,
+										   outerScanState->hasTruncatedIndexTerms,
+										   outerScanState->truncatedPathBitMask))
 		{
 			innerScanKey = &outerScanState->compositeKey;
 			nInnerScanKeys = 1;
@@ -800,12 +805,12 @@ extension_documentdb_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nsc
 			(BsonGinCompositePathOptions *) scan->indexRelation->rd_opcoptions[0];
 		IndexMultiKeyStatus indexHasArrays = IndexMultiKeyStatus_Unknown;
 		bool hasCorrelatedReducedTerms = false;
+		bool hasTruncatedIndexTerms = false;
 		uint32_t multiKeyPerPathStatus = 0;
+		uint32_t truncatedPathBitMask = 0;
 		if (options->enableMetadataBasedTracking)
 		{
 			bool indexHasArraysBool = false;
-			bool indexHasTruncation = false;
-			uint32_t truncatedPerPathStatus = 0;
 			uint64_t opclassMetadata = DatumGetUInt64(DirectFunctionCall1(
 														  getopclassMetadataFunc,
 														  PointerGetDatum(
@@ -814,8 +819,8 @@ extension_documentdb_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nsc
 												&indexHasArraysBool,
 												&multiKeyPerPathStatus,
 												&hasCorrelatedReducedTerms,
-												&indexHasTruncation,
-												&truncatedPerPathStatus);
+												&hasTruncatedIndexTerms,
+												&truncatedPathBitMask);
 			indexHasArrays = indexHasArraysBool ? IndexMultiKeyStatus_HasArrays :
 							 IndexMultiKeyStatus_HasNoArrays;
 		}
@@ -856,7 +861,9 @@ extension_documentdb_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nsc
 										   IndexMultiKeyStatus_HasArrays,
 										   hasCorrelatedReducedTerms,
 										   supportsOrderedOperatorScans,
-										   multiKeyPerPathStatus))
+										   multiKeyPerPathStatus,
+										   hasTruncatedIndexTerms,
+										   truncatedPathBitMask))
 		{
 			int numscankeys = 1;
 			coreRoutine->amrescan(scan, &compositeKey, numscankeys, orderbys, norderbys);
@@ -1163,6 +1170,7 @@ ExplainCompositeProperties(void *state, PGFunction multiKeyStatusFunc,
 	bool isTruncated = false;
 	List *truncatedPerPathList = NIL;
 	uint32_t multiKeyBitMask = 0;
+	uint32_t truncatedPathBitMask = 0;
 	if (getOpclassMetadataFunc != NULL && options != NULL &&
 		options->enableMetadataBasedTracking)
 	{
@@ -1173,7 +1181,7 @@ ExplainCompositeProperties(void *state, PGFunction multiKeyStatusFunc,
 		DecodeCompositeOpClassMetadata(options, opclassMetadata, &isMultiKey,
 									   &multiKeyBitMask, &multiKeyPerPathList,
 									   &hasCorrelatedTerms, &isTruncated,
-									   &truncatedPerPathList);
+									   &truncatedPathBitMask, &truncatedPerPathList);
 	}
 	else
 	{
@@ -1215,7 +1223,8 @@ ExplainCompositeProperties(void *state, PGFunction multiKeyStatusFunc,
 	Datum compositeDatum = FormCompositeDatumFromQuals(indexQuals,
 													   isMultiKey, hasCorrelatedTerms,
 													   supportsOrderedOperatorScans,
-													   multiKeyBitMask);
+													   multiKeyBitMask, isTruncated,
+													   truncatedPathBitMask);
 	if (compositeDatum != 0)
 	{
 		ScanDirection scanDir = NoMovementScanDirection;
@@ -1432,6 +1441,7 @@ ExplainCompositeScanCore(IndexScanDesc scan, void *state,
 	bool hasTruncation = false;
 	List *truncatedPerPathList = NIL;
 	uint32_t multiKeyBitMask = 0;
+	uint32_t truncatedPathBitMask = 0;
 
 	bool supportsOrderedOperatorScans = false;
 	PGFunction multiKeyStatusFunc = NULL;
@@ -1450,7 +1460,7 @@ ExplainCompositeScanCore(IndexScanDesc scan, void *state,
 		DecodeCompositeOpClassMetadata(options, opclassMetadata, &hasMultiKey,
 									   &multiKeyBitMask, &multiKeyPerPathList,
 									   &hasCorrelatedReducedTerms, &hasTruncation,
-									   &truncatedPerPathList);
+									   &truncatedPathBitMask, &truncatedPerPathList);
 	}
 	else
 	{

@@ -302,12 +302,8 @@ SELECT document FROM bson_aggregation_find('iosmkl_db', '{ "find": "trunc_coll",
 -- The boundary comparand truncates to the same stored prefix as _id 1 and _id 2,
 -- so those two are false-positive candidates that only the document can rule out.
 --
--- TODO: this is a separate defect from the index-only-scan gap this file is
--- about. The index scan below returns _id 1, 2 and 3, but only _id 3 actually
--- has a "grouping.code" equal to the comparand: the truncated candidates are
--- never rechecked against the document. The sequential scan immediately after
--- shows the correct answer. Once the recheck is fixed, the first result set
--- below collapses to _id 3 and matches the second.
+-- Recheck the truncated candidates against the document, so both scans return
+-- only _id 3.
 SELECT document FROM bson_aggregation_find('iosmkl_db', '{ "find": "trunc_coll", "filter": { "grouping.code": "aaaaaaaaa" }, "projection": { "_id": 1 } }');
 
 set enable_seqscan to on;
@@ -719,3 +715,59 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosmkl_db', '{ "find": "multiqual_coll", "filter": { "grouping.code": { "$gte": 5, "$lte": 9 } }, "projection": { "_id": 0, "detail.label": 1 } }') $cmd$, p_ignore_heap_fetches => true);
+
+-- Pruned secondary bounds still require checking the complete array.
+SET documentdb.enable_composite_reduced_correlated_bounds_planning TO on;
+SET documentdb.enableExtendedExplainPlans TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'iosmkl_db', '{"createIndexes":"count_recheck","indexes":[{"key":{"a.b":1,"a.c":1},"name":"a_b_c","enableOrderedIndex":1}]}');
+SELECT documentdb_api.insert_one(
+    'iosmkl_db', 'count_recheck', '{"_id":1,"a":[{"b":3,"c":6},{"b":1,"c":1}]}');
+
+SELECT document FROM bson_aggregation_count(
+    'iosmkl_db', '{"count":"count_recheck","query":{"a.b":{"$gt":2},"a.c":{"$lt":4}},"hint":"a_b_c"}');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_count(
+        'iosmkl_db', '{"count":"count_recheck","query":{"a.b":{"$gt":2},"a.c":{"$lt":4}},"hint":"a_b_c"}')
+$cmd$);
+
+SET documentdb.forceIndexOnlyScanIfAvailable TO on;
+SELECT document FROM bson_aggregation_count(
+    'iosmkl_db', '{"count":"count_recheck","query":{"a.b":{"$gt":2},"a.c":{"$lt":4}},"hint":"a_b_c"}');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_count(
+        'iosmkl_db', '{"count":"count_recheck","query":{"a.b":{"$gt":2},"a.c":{"$lt":4}},"hint":"a_b_c"}')
+$cmd$);
+
+-- A single multikey predicate remains eligible for an index-only scan.
+SELECT document FROM bson_aggregation_count(
+    'iosmkl_db', '{"count":"count_recheck","query":{"a.b":{"$gt":2}},"hint":"a_b_c"}');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_count(
+        'iosmkl_db', '{"count":"count_recheck","query":{"a.b":{"$gt":2}},"hint":"a_b_c"}')
+$cmd$);
+
+SELECT document FROM bson_aggregation_count(
+    'iosmkl_db', '{"count":"count_recheck","query":{"a":{"$elemMatch":{"b":{"$gt":2},"c":{"$lt":4}}}},"hint":"a_b_c"}');
+RESET documentdb.forceIndexOnlyScanIfAvailable;
+
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'iosmkl_db', '{"createIndexes":"count_recheck_collation","indexes":[{"key":{"a.b":1,"a.c":1},"name":"a_b_c","enableOrderedIndex":1,"collation":{"locale":"en","strength":2}}]}');
+SELECT documentdb_api.insert_one(
+    'iosmkl_db', 'count_recheck_collation', '{"_id":1,"a":[{"b":"Z","c":"Z"},{"b":"A","c":"A"}]}');
+SELECT document FROM bson_aggregation_count(
+    'iosmkl_db', '{"count":"count_recheck_collation","query":{"a.b":{"$gt":"m"},"a.c":{"$lt":"m"}},"hint":"a_b_c","collation":{"locale":"en","strength":2}}');
+SET documentdb.forceIndexOnlyScanIfAvailable TO on;
+SELECT document FROM bson_aggregation_count(
+    'iosmkl_db', '{"count":"count_recheck_collation","query":{"a.b":{"$gt":"m"},"a.c":{"$lt":"m"}},"hint":"a_b_c","collation":{"locale":"en","strength":2}}');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_count(
+        'iosmkl_db', '{"count":"count_recheck_collation","query":{"a.b":{"$gt":"m"},"a.c":{"$lt":"m"}},"hint":"a_b_c","collation":{"locale":"en","strength":2}}')
+$cmd$);
+
+RESET documentdb.forceIndexOnlyScanIfAvailable;
+RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
+RESET documentdb_core.enableCollation;
+RESET documentdb.enable_composite_reduced_correlated_bounds_planning;

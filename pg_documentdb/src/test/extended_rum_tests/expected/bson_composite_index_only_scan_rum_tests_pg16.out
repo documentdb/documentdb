@@ -1,4 +1,6 @@
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+-- Preserve conservative index-only-scan coverage without per-path metadata.
+SET documentdb.enableIndexMetadataGlobalTracking TO off;
 -- enableGroupByDistinctScan and enableDistinctScanForGroupFirst are enabled by
 -- default starting in v116. Pin them off here so this suite keeps exercising the
 -- non-distinct-scan plan shapes. Remove these pins when the flags are retired.

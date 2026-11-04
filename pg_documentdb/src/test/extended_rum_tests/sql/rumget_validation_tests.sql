@@ -218,3 +218,270 @@ SELECT document FROM bson_aggregation_find(
     '{ "find": "rumget_singleton_left_leaf", "filter": { "a": 5 }, "projection": { "_id": 1 }, "hint": "a_1", "limit": 1 }');
 
 RESET documentdb_rum.forcerumorderedindexscan;
+
+-- Per-path truncation uses the global fallback beyond the first six paths.
+SET documentdb.enableIndexMetadataGlobalTracking TO on;
+SET documentdb.defaultUseCompositeOpClass TO on;
+SET documentdb_rum.forcerumorderedindexscan TO off;
+SET documentdb.max_non_ordered_term_scan_threshold TO 0;
+SET documentdb.indexTermLimitOverride TO 200;
+SELECT documentdb_api.insert_one('rumget_db', 'truncated_paths',
+    format('{"_id":1,"a":1,"b":"keep","c":1,"d":1,"e":1,"f":1,"g":"%s"}',
+    repeat('a', 120) || '1')::bson);
+SELECT documentdb_api.insert_one('rumget_db', 'truncated_paths',
+    format('{"_id":2,"a":1,"b":"keep","c":1,"d":1,"e":1,"f":1,"g":"%s"}',
+    repeat('a', 120) || '2')::bson);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('rumget_db',
+    '{"createIndexes":"truncated_paths","indexes":[{"key":{"a":1,"b":1,"c":1,"d":1,"e":1,"f":1,"g":1},"name":"all_paths"}]}', true);
+SELECT format('{"find":"truncated_paths","filter":{"g":"%s"},"projection":{"_id":1},"hint":"all_paths"}',
+    repeat('a', 120) || '2') AS seventh_path_query \gset
+
+-- Only path seven is truncated, so the tracked mask is zero.
+SELECT document FROM bson_aggregation_find('rumget_db', :'seventh_path_query'::bson);
+
+-- A known truncated path must not suppress the fallback for path seven.
+SELECT documentdb_api.insert_one('rumget_db', 'truncated_paths',
+    format('{"_id":3,"a":"%s","b":"keep","c":1,"d":1,"e":1,"f":1,"g":"%s"}',
+    repeat('x', 120), repeat('a', 120) || '3')::bson);
+SELECT document FROM bson_aggregation_find('rumget_db', :'seventh_path_query'::bson);
+SELECT plan FROM documentdb_test_helpers.run_explain_and_trim(format($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('rumget_db', %L::bson)
+$cmd$, :'seventh_path_query')) AS explain_output(plan)
+WHERE plan LIKE '%scanType:%' OR plan LIKE '%truncatedPaths:%'
+    OR plan LIKE '%Rows Removed by Index Recheck:%';
+
+-- The sixth path is the final path represented by the tracked mask.
+SELECT documentdb_api.insert_one('rumget_db', 'truncated_paths',
+    format('{"_id":4,"a":1,"b":"keep","c":1,"d":1,"e":1,"f":"%s","g":1}',
+    repeat('b', 120) || '4')::bson);
+SELECT documentdb_api.insert_one('rumget_db', 'truncated_paths',
+    format('{"_id":5,"a":1,"b":"keep","c":1,"d":1,"e":1,"f":"%s","g":1}',
+    repeat('b', 120) || '5')::bson);
+SELECT format('{"find":"truncated_paths","filter":{"f":"%s"},"projection":{"_id":1},"hint":"all_paths"}',
+    repeat('b', 120) || '5') AS sixth_path_query \gset
+SELECT document FROM bson_aggregation_find('rumget_db', :'sixth_path_query'::bson);
+
+-- Matching on an untruncated path remains exact despite other truncated paths.
+BEGIN;
+SET LOCAL track_functions TO 'all';
+SELECT document FROM bson_aggregation_find('rumget_db',
+    '{"find":"truncated_paths","filter":{"b":{"$regex":"^keep$"}},"projection":{"_id":1},"hint":"all_paths","sort":{"_id":1}}');
+SELECT coalesce(sum(pg_stat_get_xact_function_calls(oid)), 0) AS regex_heap_rechecks
+FROM pg_proc
+WHERE pronamespace = 'documentdb_api_catalog'::regnamespace
+    AND proname = 'bson_dollar_regex';
+
+-- A truncated untracked path still needs full-document regex evaluation.
+SELECT document FROM bson_aggregation_find('rumget_db',
+    '{"find":"truncated_paths","filter":{"g":{"$regex":"2$"}},"projection":{"_id":1},"hint":"all_paths"}');
+SELECT coalesce(sum(pg_stat_get_xact_function_calls(oid)), 0) AS regex_heap_rechecks
+FROM pg_proc
+WHERE pronamespace = 'documentdb_api_catalog'::regnamespace
+    AND proname = 'bson_dollar_regex';
+COMMIT;
+
+-- Variable bounds must retain truncation rechecks in each generated query term.
+SELECT format('{"find":"truncated_paths","filter":{"g":{"$in":["%s","%s"]}},"projection":{"_id":1},"hint":"all_paths","sort":{"_id":1}}',
+    repeat('a', 120) || '2', repeat('a', 120) || '3') AS variable_path_query \gset
+SELECT document FROM bson_aggregation_find('rumget_db', :'variable_path_query'::bson);
+SELECT plan FROM documentdb_test_helpers.run_explain_and_trim(format($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('rumget_db', %L::bson)
+$cmd$, :'variable_path_query')) AS explain_output(plan)
+WHERE plan LIKE '%scanType:%' OR plan LIKE '%Rows Removed by Index Recheck:%';
+
+BEGIN;
+SET LOCAL track_functions TO 'all';
+SELECT coalesce(sum(pg_stat_get_xact_function_calls(oid)), 0) AS in_calls_before
+FROM pg_proc
+WHERE pronamespace = 'documentdb_api_catalog'::regnamespace
+    AND proname = 'bson_dollar_in' \gset
+SELECT document FROM bson_aggregation_find('rumget_db',
+    '{"find":"truncated_paths","filter":{"b":{"$in":[{"$regularExpression":{"pattern":"^keep$","options":""}},"absent"]}},"projection":{"_id":1},"hint":"all_paths","sort":{"_id":1}}');
+SELECT coalesce(sum(pg_stat_get_xact_function_calls(oid)), 0) - :in_calls_before AS in_heap_rechecks
+FROM pg_proc
+WHERE pronamespace = 'documentdb_api_catalog'::regnamespace
+    AND proname = 'bson_dollar_in';
+SELECT document FROM bson_aggregation_find('rumget_db',
+    '{"find":"truncated_paths","filter":{"g":{"$in":[{"$regularExpression":{"pattern":"2$","options":""}},"absent"]}},"projection":{"_id":1},"hint":"all_paths"}');
+SELECT coalesce(sum(pg_stat_get_xact_function_calls(oid)), 0) - :in_calls_before AS in_heap_rechecks
+FROM pg_proc
+WHERE pronamespace = 'documentdb_api_catalog'::regnamespace
+    AND proname = 'bson_dollar_in';
+COMMIT;
+
+-- The final tracked path also needs rechecks for an untruncated regex bound.
+SELECT document FROM bson_aggregation_find('rumget_db',
+    '{"find":"truncated_paths","filter":{"f":{"$regex":"5$"}},"projection":{"_id":1},"hint":"all_paths"}');
+
+-- Recheck colliding truncated terms before applying range bounds or aggregation.
+SELECT format('{"find":"truncated_paths","filter":{"g":{"$gt":"%s","$lt":"%s"}},"projection":{"_id":1},"hint":"all_paths"}',
+    repeat('a', 120) || '2', repeat('a', 120) || '4') AS bounded_path_query \gset
+SELECT document FROM bson_aggregation_find('rumget_db', :'bounded_path_query'::bson);
+SELECT format('{"aggregate":"truncated_paths","pipeline":[{"$match":{"g":"%s"}},{"$group":{"_id":"$b","n":{"$sum":1}}}],"hint":"all_paths"}',
+    repeat('a', 120) || '2') AS grouped_path_query \gset
+SELECT document FROM bson_aggregation_pipeline('rumget_db', :'grouped_path_query'::bson);
+
+-- Bitmap scans must also use metadata-backed full-value rechecks.
+SELECT documentdb_api.insert_one('rumget_db', 'truncated_paths',
+    format('{"_id":6,"a":"%s","b":"drop","c":1,"d":1,"e":1,"f":1,"g":1}',
+    repeat('x', 120) || 'other')::bson);
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_indexscan TO off;
+SET LOCAL enable_indexonlyscan TO off;
+SET LOCAL enable_bitmapscan TO on;
+SELECT format('{"find":"truncated_paths","filter":{"a":"%s"},"projection":{"_id":1}}',
+    repeat('x', 120)) AS bitmap_path_query \gset
+SELECT document FROM bson_aggregation_find('rumget_db', :'bitmap_path_query'::bson);
+SELECT plan FROM documentdb_test_helpers.run_explain_and_trim(format($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('rumget_db', %L::bson)
+$cmd$, :'bitmap_path_query')) AS explain_output(plan)
+WHERE plan LIKE '%Bitmap%' OR plan LIKE '%Rows Removed by Index Recheck:%';
+COMMIT;
+
+-- A zero path mask is not unknown when the global truncation bit is clear.
+SELECT documentdb_api.insert_one('rumget_db', 'untruncated_paths', '{"_id":1,"a":"keep","b":1}');
+SELECT documentdb_api.insert_one('rumget_db', 'untruncated_paths', '{"_id":2,"a":"drop","b":2}');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('rumget_db',
+    '{"createIndexes":"untruncated_paths","indexes":[{"key":{"a":1,"b":1},"name":"a_b"}]}', true);
+SELECT plan FROM documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('rumget_db',
+        '{"find":"untruncated_paths","filter":{"a":{"$regex":"keep$"}},"projection":{"_id":1},"hint":"a_b"}')
+$cmd$) AS explain_output(plan)
+WHERE plan LIKE '%hasTruncation:%' OR plan LIKE '%scanType:%';
+BEGIN;
+SET LOCAL track_functions TO 'all';
+SELECT coalesce(sum(pg_stat_get_xact_function_calls(oid)), 0) AS regex_calls_before
+FROM pg_proc
+WHERE pronamespace = 'documentdb_api_catalog'::regnamespace
+    AND proname = 'bson_dollar_regex' \gset
+SELECT document FROM bson_aggregation_find('rumget_db',
+    '{"find":"untruncated_paths","filter":{"a":{"$regex":"keep$"}},"projection":{"_id":1},"hint":"a_b"}');
+SELECT coalesce(sum(pg_stat_get_xact_function_calls(oid)), 0) - :regex_calls_before AS regex_heap_rechecks
+FROM pg_proc
+WHERE pronamespace = 'documentdb_api_catalog'::regnamespace
+    AND proname = 'bson_dollar_regex';
+COMMIT;
+
+-- Only the active null alternative needs a heap recheck on the array-bearing path.
+SELECT documentdb_api.insert_one('rumget_db', 'saop_runtime_recheck', '{"_id":1,"a":[]}');
+SELECT documentdb_api.insert_one('rumget_db', 'saop_runtime_recheck', '{"_id":2,"a":null}');
+SELECT documentdb_api.insert_one('rumget_db', 'saop_runtime_recheck', '{"_id":3,"a":"z"}');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('rumget_db',
+    '{"createIndexes":"saop_runtime_recheck","indexes":[{"key":{"a":1,"_id":1},"name":"null_asc"},{"key":{"a":-1,"_id":1},"name":"null_desc"},{"key":{"b":1,"a":1,"_id":1},"name":"scalar_path"}]}', true);
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('rumget_db',
+    '{"createIndexes":"saop_runtime_recheck","indexes":[{"key":{"a":1,"_id":1},"name":"collated_asc","collation":{"locale":"en","strength":2}},{"key":{"a":-1,"_id":1},"name":"collated_desc","collation":{"locale":"en","strength":2}}]}', true);
+
+SET documentdb.max_non_ordered_term_scan_threshold TO 1;
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+SET documentdb.enableIndexOnlyScanForFindProject TO off;
+SET track_functions TO 'all';
+
+CREATE TEMP TABLE bounds_recheck_results (
+    label text, result_ids int[], expected_ids int[], heap_rechecks bigint);
+DO $bounds_rechecks$
+DECLARE
+    comparable text; partial_recheck text; force_ordered text; direction text;
+    q record; query_spec bson; result_ids int[]; calls_before bigint; calls_after bigint;
+    plan_line text; has_index_scan boolean;
+BEGIN
+    FOREACH comparable IN ARRAY ARRAY['off', 'on'] LOOP
+        PERFORM set_config('documentdb.enableComparableTerms', comparable, true);
+        FOREACH partial_recheck IN ARRAY ARRAY['off', 'on'] LOOP
+            PERFORM set_config('documentdb.enablePartialMatchHasRecheck', partial_recheck, true);
+            FOREACH force_ordered IN ARRAY ARRAY['off', 'on'] LOOP
+                PERFORM set_config('documentdb_rum.forcerumorderedindexscan', force_ordered, true);
+                FOREACH direction IN ARRAY ARRAY['asc', 'desc'] LOOP
+                    FOR q IN SELECT * FROM (VALUES
+                        ('nullable_in', 'saop_runtime_recheck',
+                            '{"a":{"$in":["z",null]}}', ARRAY[2,3], 'null_' || direction, ''),
+                        ('scalar_path_in', 'saop_runtime_recheck',
+                            '{"b":{"$in":["z",null]}}', ARRAY[1,2,3], 'scalar_path', ''),
+                        ('collated_nullable_in', 'saop_runtime_recheck',
+                            '{"a":{"$in":["Z",null]}}', ARRAY[2,3], 'collated_' || direction,
+                            ',"collation":{"locale":"en","strength":2}'),
+                        ('collated_limit', 'saop_runtime_recheck',
+                            '{"a":{"$in":["Z",null]}}',
+                            CASE direction WHEN 'asc' THEN ARRAY[2] ELSE ARRAY[3] END,
+                            'collated_' || direction,
+                            format(',"collation":{"locale":"en","strength":2},"sort":{"a":%s},"limit":1',
+                                CASE direction WHEN 'asc' THEN 1 ELSE -1 END))
+                    ) AS cases(label, collection_name, filter, expected_ids, index_name, extra_spec) LOOP
+                        query_spec := format('{"find":"%s","filter":%s,"hint":"%s"%s}',
+                            q.collection_name, q.filter, q.index_name, q.extra_spec)::bson;
+                        has_index_scan := false;
+                        FOR plan_line IN EXECUTE
+                            'EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find($1, $2)'
+                            USING 'rumget_db', query_spec LOOP
+                            has_index_scan := has_index_scan OR
+                                (plan_line LIKE '%Index Scan using%' AND
+                                 position(q.index_name IN plan_line) > 0);
+                        END LOOP;
+                        IF NOT has_index_scan THEN
+                            RAISE EXCEPTION 'Expected secondary index % for %', q.index_name, query_spec;
+                        END IF;
+                        SELECT coalesce(sum(pg_stat_get_xact_function_calls(oid)), 0)
+                            INTO calls_before FROM pg_proc
+                            WHERE pronamespace = 'documentdb_api_catalog'::regnamespace
+                                AND proname = 'bson_dollar_in';
+                        EXECUTE
+                            'SELECT array_agg((d->>''_id'')::int ORDER BY (d->>''_id'')::int)
+                             FROM (SELECT document AS d FROM bson_aggregation_find($1, $2)) AS results'
+                            USING 'rumget_db', query_spec INTO result_ids;
+                        SELECT coalesce(sum(pg_stat_get_xact_function_calls(oid)), 0)
+                            INTO calls_after FROM pg_proc
+                            WHERE pronamespace = 'documentdb_api_catalog'::regnamespace
+                                AND proname = 'bson_dollar_in';
+                        INSERT INTO bounds_recheck_results
+                            VALUES (q.label, coalesce(result_ids, '{}'), q.expected_ids,
+                                calls_after - calls_before);
+                    END LOOP;
+                END LOOP;
+            END LOOP;
+        END LOOP;
+    END LOOP;
+END
+$bounds_rechecks$;
+SELECT label, bool_and(result_ids = expected_ids) AS all_results_match,
+    min(heap_rechecks) AS min_heap_rechecks, max(heap_rechecks) AS max_heap_rechecks
+FROM bounds_recheck_results GROUP BY label ORDER BY label;
+RESET track_functions;
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+RESET documentdb.enableIndexOnlyScanForFindProject;
+RESET documentdb_core.enableCollation;
+RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
+
+-- Ordered entry-level rechecks must ignore truncation on unrelated paths.
+BEGIN;
+SET LOCAL documentdb_rum.forcerumorderedindexscan TO on;
+SET LOCAL documentdb.enablePartialMatchHasRecheck TO on;
+SET LOCAL track_functions TO 'all';
+SELECT coalesce(sum(pg_stat_get_xact_function_calls(oid)), 0) AS ordered_regex_calls_before
+FROM pg_proc WHERE pronamespace = 'documentdb_api_catalog'::regnamespace
+    AND proname = 'bson_dollar_regex' \gset
+SELECT document FROM bson_aggregation_find('rumget_db',
+    '{"find":"truncated_paths","filter":{"b":{"$regex":"^keep$"}},"projection":{"_id":1},"hint":"all_paths","sort":{"_id":1}}');
+SELECT coalesce(sum(pg_stat_get_xact_function_calls(oid)), 0) - :ordered_regex_calls_before
+    AS untruncated_path_heap_rechecks
+FROM pg_proc WHERE pronamespace = 'documentdb_api_catalog'::regnamespace
+    AND proname = 'bson_dollar_regex';
+SELECT document FROM bson_aggregation_find('rumget_db',
+    '{"find":"truncated_paths","filter":{"g":{"$regex":"2$"}},"projection":{"_id":1},"hint":"all_paths"}');
+SELECT coalesce(sum(pg_stat_get_xact_function_calls(oid)), 0) - :ordered_regex_calls_before
+    AS truncated_path_heap_rechecks
+FROM pg_proc WHERE pronamespace = 'documentdb_api_catalog'::regnamespace
+    AND proname = 'bson_dollar_regex';
+COMMIT;
+
+RESET documentdb.indexTermLimitOverride;
+RESET documentdb.max_non_ordered_term_scan_threshold;
+RESET documentdb_rum.forcerumorderedindexscan;
+RESET documentdb.defaultUseCompositeOpClass;

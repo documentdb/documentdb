@@ -292,6 +292,8 @@ const char * GetOperationCancellationQuery(int64 shardId, StringView *opIdString
 																			argNulls));
 
 bool ShouldUseCompositeOpClassByDefault(void);
+bool ShouldEnableCompositeUniqueOptionalKey(void);
+bool ShouldEnableIndexMetadataGlobalTracking(void);
 bool ShouldEnablePlannerStatisticsNewCollections(void);
 bool ShouldEnableIndexOnlyScanForFindProject(void);
 
