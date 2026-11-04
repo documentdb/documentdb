@@ -15,8 +15,8 @@ use documentdb_gateway_core::{
     error::Result,
     postgres::{
         conn_mgmt::{
-            ConnectionPool, PgPoolSettings, PoolManager, AUTHENTICATION_MAX_CONNECTIONS,
-            SYSTEM_REQUESTS_MAX_CONNECTIONS,
+            get_max_auth_connections, get_max_system_connections, ConnectionPool, PgPoolSettings,
+            PoolManager,
         },
         create_query_catalog, QueryCatalog,
     },
@@ -54,7 +54,7 @@ fn create_pool_manager_with_query_catalog(
         postgres_system_user,
         None,
         &format!("{}-SystemRequests", setup_config.application_name()),
-        PgPoolSettings::system_pool_settings(SYSTEM_REQUESTS_MAX_CONNECTIONS),
+        PgPoolSettings::system_pool_settings(get_max_system_connections()),
     )?;
     let authentication_pool = ConnectionPool::new_with_user(
         setup_config,
@@ -62,7 +62,7 @@ fn create_pool_manager_with_query_catalog(
         postgres_system_user,
         None,
         &format!("{}-PreAuthRequests", setup_config.application_name()),
-        PgPoolSettings::system_pool_settings(AUTHENTICATION_MAX_CONNECTIONS),
+        PgPoolSettings::system_pool_settings(get_max_auth_connections()),
     )?;
 
     Ok(Arc::new(PoolManager::new(

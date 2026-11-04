@@ -13,8 +13,8 @@ use documentdb_gateway_core::{
     error::Result,
     postgres::{
         conn_mgmt::{
-            ConnectionPool, PgPoolSettings, PoolManager, StatementError,
-            AUTHENTICATION_MAX_CONNECTIONS, SYSTEM_REQUESTS_MAX_CONNECTIONS,
+            get_max_auth_connections, get_max_system_connections, ConnectionPool, PgPoolSettings,
+            PoolManager, StatementError,
         },
         create_query_catalog,
     },
@@ -48,7 +48,7 @@ pub fn get_pool_manager() -> Arc<PoolManager> {
             postgres_system_user,
             None,
             &format!("{}-SystemRequests", setup_config.application_name()),
-            PgPoolSettings::system_pool_settings(SYSTEM_REQUESTS_MAX_CONNECTIONS),
+            PgPoolSettings::system_pool_settings(get_max_system_connections()),
         )
         .expect("Failed to create system-requests connection pool");
 
@@ -62,7 +62,7 @@ pub fn get_pool_manager() -> Arc<PoolManager> {
             postgres_system_user,
             None,
             &format!("{}-PreAuthRequests", setup_config.application_name()),
-            PgPoolSettings::system_pool_settings(AUTHENTICATION_MAX_CONNECTIONS),
+            PgPoolSettings::system_pool_settings(get_max_auth_connections()),
         )
         .expect("Failed to create authentication connection pool");
 

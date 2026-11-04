@@ -31,6 +31,7 @@ either.workspace = true
 hex.workspace = true
 metrics.workspace = true
 nacelle.workspace = true
+num_cpus.workspace = true
 once_cell.workspace = true
 openssl.workspace = true
 rand.workspace = true

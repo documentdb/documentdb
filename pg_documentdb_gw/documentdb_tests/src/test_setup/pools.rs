@@ -28,8 +28,8 @@ use documentdb_gateway_core::{
     },
     postgres::{
         conn_mgmt::{
-            ConnectionPool, PgPoolSettings, PoolManager, AUTHENTICATION_MAX_CONNECTIONS,
-            SYSTEM_REQUESTS_MAX_CONNECTIONS,
+            get_max_auth_connections, get_max_system_connections, ConnectionPool, PgPoolSettings,
+            PoolManager,
         },
         create_query_catalog,
     },
@@ -67,6 +67,10 @@ impl DynamicConfiguration for TestConfiguration {
     }
 
     fn get_u64(&self, _: &str, default: u64) -> u64 {
+        default
+    }
+
+    fn get_usize(&self, _: &str, default: usize) -> usize {
         default
     }
 
@@ -176,7 +180,7 @@ pub fn build_pool_manager_with_command_timeout(
         None,
         &format!("{}-SystemRequests", setup_config.application_name()),
         PgPoolSettings::system_pool_settings_with_command_timeout(
-            SYSTEM_REQUESTS_MAX_CONNECTIONS,
+            get_max_system_connections(),
             command_timeout_sec,
         ),
     )
@@ -189,7 +193,7 @@ pub fn build_pool_manager_with_command_timeout(
         None,
         &format!("{}-PreAuthRequests", setup_config.application_name()),
         PgPoolSettings::system_pool_settings_with_command_timeout(
-            AUTHENTICATION_MAX_CONNECTIONS,
+            get_max_auth_connections(),
             command_timeout_sec,
         ),
     )

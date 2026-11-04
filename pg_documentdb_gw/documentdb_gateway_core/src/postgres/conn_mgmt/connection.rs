@@ -152,6 +152,22 @@ impl Connection {
             .is_ok()
     }
 
+    /// Requests a session reset before this connection serves another pool
+    /// borrower.
+    ///
+    /// Call before issuing a session-level statement whose effect must not
+    /// outlive the current borrower, such as `SET statement_timeout`. Marking
+    /// first keeps the reset armed when the statement is cancelled or fails.
+    /// Transaction-scoped state (`SET LOCAL`) does not need it.
+    pub fn mark_session_state_modified(&self) {
+        self.client().mark_session_state_modified();
+    }
+
+    /// Whether a session reset is pending before this connection's next borrower.
+    pub fn session_state_modified(&self) -> bool {
+        self.client().session_state_modified()
+    }
+
     /// The pooled connection backing this handle.
     ///
     /// Only [`Drop`] ever clears the slot, and it takes `&mut self`, so no
@@ -290,8 +306,9 @@ impl Connection {
 }
 
 impl Drop for Connection {
-    /// `RecyclingMethod::Fast` only checks that the socket is open, so this is
-    /// the last place a connection unsafe to reuse can be caught.
+    /// `RecyclingMethod::Fast` only checks that the socket is open, and the
+    /// session reset on checkout does not end a transaction, so this is the
+    /// last place a connection unsafe to reuse can be caught.
     ///
     /// An abandoned statement is closed — that aborts the backend's work,
     /// including any open transaction. An open transaction alone is rolled back

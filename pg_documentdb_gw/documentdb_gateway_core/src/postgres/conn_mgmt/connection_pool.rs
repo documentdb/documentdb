@@ -9,8 +9,9 @@
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
+    ops::Deref,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
 };
@@ -18,12 +19,13 @@ use std::{
 use deadpool::{
     managed::{
         Manager as DeadpoolManager, Metrics as DeadpoolMetrics, Object as DeadpoolObject,
-        Pool as DeadpoolPool, RecycleResult as DeadpoolRecycleResult,
+        Pool as DeadpoolPool, RecycleError as DeadpoolRecycleError,
+        RecycleResult as DeadpoolRecycleResult,
     },
-    Runtime,
+    Runtime, Status,
 };
 use deadpool_postgres::{
-    ClientWrapper, Manager as PostgresManager, ManagerConfig, RecyclingMethod, Status,
+    ClientWrapper, Manager as PostgresManager, ManagerConfig, RecyclingMethod,
 };
 use openssl::sha::Sha256;
 use tokio::{
@@ -158,22 +160,93 @@ fn credential_fingerprint(password: Option<&str>) -> [u8; 32] {
     hasher.finish()
 }
 
-/// Internal deadpool manager wrapper that records connection creation metrics.
+/// Restores a connection whose session state a borrower modified.
+///
+/// The statements are those `RecyclingMethod::Clean` runs, preceded by
+/// `RESET statement_timeout`. `PostgreSQL` arms the statement timeout for each
+/// statement of a multi-statement string, so resetting it first keeps a tight
+/// timeout left by the previous borrower from cancelling the reset itself.
+/// `DISCARD ALL` is avoided because it deallocates prepared statements that the
+/// client-side statement cache still references.
+const SESSION_RESET_SQL: &str = "RESET statement_timeout; \
+    CLOSE ALL; \
+    SET SESSION AUTHORIZATION DEFAULT; \
+    RESET ALL; \
+    UNLISTEN *; \
+    SELECT pg_advisory_unlock_all(); \
+    DISCARD TEMP; \
+    DISCARD SEQUENCES;";
+
+/// Pooled backend client that tracks whether a borrower changed session state
+/// that must not reach the next borrower.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct PooledClient {
+    client: ClientWrapper,
+    /// Set by a borrower before it issues session-level state, and cleared
+    /// once [`SESSION_RESET_SQL`] succeeds when the connection is next
+    /// checked out.
+    session_state_modified: AtomicBool,
+}
+
+impl PooledClient {
+    const fn new(client: ClientWrapper) -> Self {
+        Self {
+            client,
+            session_state_modified: AtomicBool::new(false),
+        }
+    }
+
+    /// Requests a session reset before the connection serves another borrower.
+    ///
+    /// Call before issuing the statement that changes session state, so the
+    /// reset still runs if that statement is cancelled or fails part-way.
+    pub fn mark_session_state_modified(&self) {
+        self.session_state_modified.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether a session reset is pending for this connection.
+    pub fn session_state_modified(&self) -> bool {
+        self.session_state_modified.load(Ordering::Relaxed)
+    }
+}
+
+impl Deref for PooledClient {
+    type Target = ClientWrapper;
+
+    fn deref(&self) -> &Self::Target {
+        &self.client
+    }
+}
+
+/// Internal deadpool manager wrapper that records connection creation metrics
+/// and resets connections whose session state a borrower modified.
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct InstrumentedManager {
     inner: PostgresManager,
     metrics: Arc<ConnectionPoolMetrics>,
+    /// Bound on [`SESSION_RESET_SQL`]. Recycling runs before a `Connection`
+    /// exists, so no command deadline covers it otherwise.
+    session_reset_timeout: Duration,
 }
 
 impl InstrumentedManager {
-    const fn new(inner: PostgresManager, metrics: Arc<ConnectionPoolMetrics>) -> Self {
-        Self { inner, metrics }
+    const fn new(
+        inner: PostgresManager,
+        metrics: Arc<ConnectionPoolMetrics>,
+        session_reset_timeout: Duration,
+    ) -> Self {
+        Self {
+            inner,
+            metrics,
+            session_reset_timeout,
+        }
     }
 }
 
 impl DeadpoolManager for InstrumentedManager {
-    type Type = ClientWrapper;
+    type Type = PooledClient;
     type Error = tokio_postgres::Error;
 
     async fn create(&self) -> std::result::Result<Self::Type, Self::Error> {
@@ -183,19 +256,52 @@ impl DeadpoolManager for InstrumentedManager {
             .inspect_err(|error| self.metrics.record_connection_failed(error))?;
         self.metrics
             .record_connection_created(create_start.elapsed());
-        Ok(client)
+        Ok(PooledClient::new(client))
     }
 
+    /// Checks liveness on every checkout, and resets session state only for a
+    /// connection whose previous borrower modified it, so unmodified
+    /// connections pay no round trip.
+    ///
+    /// A failed or timed-out reset discards the connection; deadpool then
+    /// serves another one or creates a replacement.
     async fn recycle(
         &self,
         obj: &mut Self::Type,
         metrics: &DeadpoolMetrics,
     ) -> DeadpoolRecycleResult<Self::Error> {
-        DeadpoolManager::recycle(&self.inner, obj, metrics).await
+        DeadpoolManager::recycle(&self.inner, &mut obj.client, metrics).await?;
+
+        if !*obj.session_state_modified.get_mut() {
+            return Ok(());
+        }
+
+        match tokio::time::timeout(
+            self.session_reset_timeout,
+            obj.client.batch_execute(SESSION_RESET_SQL),
+        )
+        .await
+        {
+            Ok(Ok(())) => {
+                *obj.session_state_modified.get_mut() = false;
+                Ok(())
+            }
+            Ok(Err(error)) => {
+                tracing::warn!("Discarding connection whose session reset failed: {error}");
+                Err(DeadpoolRecycleError::Backend(error))
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "Discarding connection whose session reset exceeded {:?}",
+                    self.session_reset_timeout
+                );
+                Err(DeadpoolRecycleError::message("session reset timed out"))
+            }
+        }
     }
 
-    fn detach(&self, client: &mut Self::Type) {
-        DeadpoolManager::detach(&self.inner, client);
+    fn detach(&self, obj: &mut Self::Type) {
+        DeadpoolManager::detach(&self.inner, &mut obj.client);
     }
 }
 
@@ -203,14 +309,11 @@ pub type PoolConnection = DeadpoolObject<InstrumentedManager>;
 
 #[derive(Debug)]
 pub struct ConnectionPool {
+    /// Recycles with `RecyclingMethod::Fast`, plus a session reset for
+    /// connections whose borrower modified session state; see
+    /// [`InstrumentedManager::recycle`]. The reset does not roll back an open
+    /// transaction, which is why `Connection` rolls back on drop.
     pool: DeadpoolPool<InstrumentedManager>,
-    /// Secondary pool for connections that may have session-level state
-    /// (e.g. `SET statement_timeout`) modified per-request. Uses
-    /// `RecyclingMethod::Clean`, which runs its reset when a connection is
-    /// handed back *out* of the pool, not when it is returned. That reset
-    /// covers GUCs, temp objects, cursors and advisory locks; it does not roll
-    /// back an open transaction, which is why `Connection` rolls back on drop.
-    timeout_pool: DeadpoolPool<InstrumentedManager>,
     /// Nanosecond offset from `EPOCH` of the last `acquire_connection` call.
     /// Always written through [`now_epoch_nanos`].
     /// Uses `AtomicU64` instead of `RwLock<Instant>` to avoid async lock
@@ -256,7 +359,7 @@ impl ConnectionPool {
     ///
     /// # Errors
     ///
-    /// Returns error if either underlying pool fails to build.
+    /// Returns error if the underlying pool fails to build.
     #[expect(
         clippy::too_many_arguments,
         reason = "mirrors `new_with_user` plus the transport the caller supplies"
@@ -278,6 +381,7 @@ impl ConnectionPool {
         <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
     {
         let command_timeout = command_timeout_for(pool_settings);
+        let max_connections = pool_settings.data_pool_max_connections();
         let connection = BackendConnectionConfig {
             command_timeout,
             transaction_timeout: pool_settings.transaction_timeout(),
@@ -296,42 +400,31 @@ impl ConnectionPool {
         );
 
         let metrics = Arc::new(ConnectionPoolMetrics::default());
-        let build_pool = |pg_config: tokio_postgres::Config,
-                          recycling_method: RecyclingMethod,
-                          metrics: Arc<ConnectionPoolMetrics>| {
-            let manager = InstrumentedManager::new(
-                PostgresManager::from_config(
-                    pg_config,
-                    T::clone(tls),
-                    ManagerConfig { recycling_method },
-                ),
-                metrics,
-            );
+        let command_deadline = command_timeout.saturating_add(COMMAND_DEADLINE_SLACK);
+        let manager = InstrumentedManager::new(
+            PostgresManager::from_config(
+                config,
+                T::clone(tls),
+                ManagerConfig {
+                    recycling_method: RecyclingMethod::Fast,
+                },
+            ),
+            Arc::clone(&metrics),
+            // The same bound `Connection` applies to its own housekeeping.
+            command_deadline,
+        );
 
-            DeadpoolPool::builder(manager)
-                .runtime(Runtime::Tokio1)
-                .max_size(pool_settings.adjusted_max_connections())
-                .wait_timeout(Some(command_timeout))
-                // A second, outer bound: the client-side connect timeout covers
-                // the socket only, leaving negotiation and startup unbounded.
-                .create_timeout(pool_settings.connect_timeout())
-                .build()
-        };
-
-        // Primary pool — RecyclingMethod::Fast (liveness check only, no reset)
-        let pool = build_pool(config.clone(), RecyclingMethod::Fast, Arc::clone(&metrics))?;
-
-        // Timeout pool — RecyclingMethod::Clean (resets session state on
-        // checkout). Used for requests that SET statement_timeout at session
-        // level.
-        let timeout_pool = build_pool(config, RecyclingMethod::Clean, Arc::clone(&metrics))?;
+        let pool = DeadpoolPool::builder(manager)
+            .runtime(Runtime::Tokio1)
+            .max_size(max_connections)
+            .wait_timeout(Some(command_timeout))
+            // A second, outer bound: the client-side connect timeout covers
+            // the socket only, leaving negotiation and startup unbounded.
+            .create_timeout(pool_settings.connect_timeout())
+            .build()?;
 
         // `Pool` is internally `Arc`-wrapped, so cloning shares state with the pruner.
         let pool_copy = pool.clone();
-        let timeout_pool_copy = timeout_pool.clone();
-        // Timeout pool connections are pruned more aggressively on idleness
-        // to free slots back to the primary pool for general use.
-        let timeout_idle_lifetime = command_timeout;
 
         let prune_task = tokio::spawn(async move {
             let mut prune_interval =
@@ -345,11 +438,6 @@ impl ConnectionPool {
                     conn_metrics.last_used() < pool_settings.connection_idle_lifetime()
                         && conn_metrics.age() < pool_settings.connection_lifetime()
                 });
-
-                timeout_pool_copy.retain(|_, conn_metrics| {
-                    conn_metrics.last_used() < timeout_idle_lifetime
-                        && conn_metrics.age() < pool_settings.connection_lifetime()
-                });
             }
         });
 
@@ -358,14 +446,11 @@ impl ConnectionPool {
         let pool_identifier = format!(
             "{:x}-{application_name}-{}",
             hasher.finish(),
-            pool_settings.adjusted_max_connections()
+            max_connections
         );
-
-        let command_deadline = command_timeout.saturating_add(COMMAND_DEADLINE_SLACK);
 
         Ok(Self {
             pool,
-            timeout_pool,
             last_used_nanos: AtomicU64::new(now_epoch_nanos()),
             metrics,
             identifier: pool_identifier,
@@ -375,7 +460,10 @@ impl ConnectionPool {
         })
     }
 
-    /// Acquires a connection from the primary pool.
+    /// Acquires a connection from the pool.
+    ///
+    /// A connection whose previous borrower modified session state is reset
+    /// before it is returned; see [`InstrumentedManager::recycle`].
     ///
     /// On a deadpool acquisition timeout, the pool's `connection_timeouts`
     /// metric is incremented before the error is returned.
@@ -388,7 +476,7 @@ impl ConnectionPool {
         tracing::instrument(
             name = "postgres.acquire_connection",
             skip_all,
-            fields(span.kind = "client", db.system.name = "postgresql", pool = "primary")
+            fields(span.kind = "client", db.system.name = "postgresql")
         )
     )]
     pub async fn acquire_connection(
@@ -397,38 +485,6 @@ impl ConnectionPool {
         self.touch();
 
         self.pool.get().await.inspect_err(|error| {
-            self.metrics.record_timeout_if_pool_timeout(error);
-        })
-    }
-
-    /// Acquires a connection from the timeout pool.
-    ///
-    /// Connections from this pool have their session state reset (via
-    /// `RecyclingMethod::Clean`) when they are checked back out, preventing
-    /// session-level `SET statement_timeout` from leaking to subsequent
-    /// requests. That reset covers GUCs, temp objects, cursors and advisory
-    /// locks; it does not roll back an open transaction.
-    ///
-    /// On a deadpool acquisition timeout, the pool's `connection_timeouts`
-    /// metric is incremented before the error is returned.
-    ///
-    /// # Errors
-    /// Returns a [`deadpool_postgres::PoolError`] if the pool is exhausted or
-    /// the connection cannot be established.
-    #[cfg_attr(
-        feature = "request-tracing",
-        tracing::instrument(
-            name = "postgres.acquire_connection",
-            skip_all,
-            fields(span.kind = "client", db.system.name = "postgresql", pool = "timeout")
-        )
-    )]
-    pub async fn acquire_timeout_connection(
-        &self,
-    ) -> std::result::Result<PoolConnection, deadpool_postgres::PoolError> {
-        self.touch();
-
-        self.timeout_pool.get().await.inspect_err(|error| {
             self.metrics.record_timeout_if_pool_timeout(error);
         })
     }
@@ -446,7 +502,7 @@ impl ConnectionPool {
     /// Records one pool-acquisition timeout for this logical pool.
     ///
     /// Visible to in-crate tests; production paths record automatically from
-    /// [`Self::acquire_connection`] / [`Self::acquire_timeout_connection`].
+    /// [`Self::acquire_connection`].
     #[cfg(test)]
     pub(crate) fn record_connection_timeout(&self) {
         self.metrics.record_connection_timeout();
@@ -469,7 +525,7 @@ impl ConnectionPool {
     /// these counters with eventual consistency, so this only ever keeps a pool
     /// alive — a stale reading costs one extra sweep, never a live eviction.
     pub(crate) fn has_checked_out_connections(&self) -> bool {
-        let status = self.combined_status();
+        let status = self.pool.status();
         status.size.saturating_sub(status.available) > 0
     }
 
@@ -493,7 +549,7 @@ impl ConnectionPool {
     pub fn status(&self) -> ConnectionPoolStatus {
         ConnectionPoolStatus::new_with_metric_snapshot(
             self.identifier.clone(),
-            self.combined_status(),
+            self.pool.status(),
             self.metrics.snapshot(),
         )
     }
@@ -503,7 +559,7 @@ impl ConnectionPool {
     pub fn report_status(&self) -> ConnectionPoolStatus {
         ConnectionPoolStatus::new_with_metric_snapshot(
             self.identifier.clone(),
-            self.combined_status(),
+            self.pool.status(),
             self.metrics.flush(),
         )
     }
@@ -519,17 +575,9 @@ impl ConnectionPool {
         self.metrics.role()
     }
 
-    /// Returns the deadpool status summed over the primary and timeout pools.
+    /// Returns the deadpool status for this logical pool.
     pub(super) fn combined_status(&self) -> Status {
-        let primary = self.pool.status();
-        let timeout = self.timeout_pool.status();
-
-        Status {
-            max_size: primary.max_size + timeout.max_size,
-            size: primary.size + timeout.size,
-            available: primary.available + timeout.available,
-            waiting: primary.waiting + timeout.waiting,
-        }
+        self.pool.status()
     }
 }
 
@@ -567,7 +615,7 @@ mod tests {
         .await;
 
         let status = pool.status();
-        assert_eq!(status.status().max_size, 10 * 2); // accounts for both primary and timeout pools
+        assert_eq!(status.status().max_size, 10);
         assert_eq!(status.status().size, 0);
         assert_eq!(status.status().available, 0);
         assert_eq!(status.connections_created(), 0);
@@ -575,8 +623,10 @@ mod tests {
         assert_eq!(status.connection_timeouts(), 0);
     }
 
+    /// A single pool serves every request, so the reported capacity is the
+    /// configured maximum rather than a multiple of it.
     #[tokio::test]
-    async fn test_status_with_dual_pools_reports_combined_max_size() {
+    async fn test_status_reports_configured_max_size() {
         yield_now().await;
 
         let setup_config = test_setup_configuration();
@@ -585,7 +635,7 @@ mod tests {
                 .await;
 
         let status = pool.status();
-        assert_eq!(status.status().max_size, 10);
+        assert_eq!(status.status().max_size, 5);
     }
 
     #[tokio::test]
@@ -690,8 +740,8 @@ mod tests {
         );
     }
 
-    /// `last_used` feeds `PoolManager::clean_unused_pools`, so both acquire
-    /// paths must record activity in the domain `last_used` decodes from.
+    /// `last_used` feeds `PoolManager::clean_unused_pools`, so every acquire
+    /// must record activity in the domain `last_used` decodes from.
     #[tokio::test]
     async fn test_acquire_connection_advances_last_used_with_elapsed_time() {
         let setup_config = test_setup_configuration();
@@ -712,7 +762,7 @@ mod tests {
         );
 
         tokio::time::sleep(Duration::from_millis(200)).await;
-        let _ = pool.acquire_timeout_connection().await;
+        let _ = pool.acquire_connection().await;
 
         let advance = pool.last_used().saturating_duration_since(first_use);
         assert!(

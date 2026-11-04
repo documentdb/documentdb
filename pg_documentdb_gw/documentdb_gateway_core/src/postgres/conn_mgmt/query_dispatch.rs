@@ -311,6 +311,9 @@ async fn set_statement_timeout(
     let set_cmd = if use_transaction {
         format!("set local statement_timeout to {max_time_ms}")
     } else {
+        // A session-level setting outlives this request, so the pool must
+        // reset it before the connection serves another borrower.
+        connection.mark_session_state_modified();
         format!("set statement_timeout to {max_time_ms}")
     };
 
@@ -389,24 +392,12 @@ where
         && !in_transaction
         && !query_options.supports_backend_timeout();
 
-    // Use the timeout pool only when session-level SET statement_timeout will
-    // be issued (no transaction wrapping). SET LOCAL auto-reverts on COMMIT so
-    // the primary pool is safe for that path.
-    let needs_timeout_pool = needs_gateway_timeout && !query_options.supports_transaction_timeout();
-
     loop {
         let result: std::result::Result<T, DocumentDBError> = 'attempt: {
             let connection = match &source {
-                // Use the timeout pool when session-level
-                // SET statement_timeout will be issued, so the connection state
-                // is reset on return and won't leak the setting to other requests.
                 ConnectionSource::Pool(pool) => {
                     let open_backend_connection_start = Instant::now();
-                    let acquire = if needs_timeout_pool {
-                        pool.acquire_timeout_connection().await
-                    } else {
-                        pool.acquire_connection().await
-                    };
+                    let acquire = pool.acquire_connection().await;
                     request_context.tracker.record_duration(
                         RequestIntervalKind::OpenBackendConnection,
                         open_backend_connection_start,
@@ -416,15 +407,7 @@ where
                         Ok(pool_conn) => {
                             Arc::new(Connection::new(pool_conn, false, pool.command_deadline()))
                         }
-                        Err(e) => {
-                            if needs_timeout_pool {
-                                tracing::warn!(
-                                    "Failed to acquire connection from timeout pool: {e:?}"
-                                );
-                            }
-
-                            break 'attempt Err(DocumentDBError::from(e));
-                        }
+                        Err(e) => break 'attempt Err(DocumentDBError::from(e)),
                     }
                 }
                 ConnectionSource::Cursor(conn) | ConnectionSource::Transaction(conn) => {

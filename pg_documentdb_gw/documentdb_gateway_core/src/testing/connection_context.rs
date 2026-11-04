@@ -28,8 +28,8 @@ use crate::{
     context::{ConnectionContext, ServiceContext},
     postgres::{
         conn_mgmt::{
-            ConnectionPool, PgPoolSettings, PoolManager, AUTHENTICATION_MAX_CONNECTIONS,
-            SYSTEM_REQUESTS_MAX_CONNECTIONS,
+            get_max_auth_connections, get_max_system_connections, ConnectionPool, PgPoolSettings,
+            PoolManager,
         },
         create_query_catalog,
     },
@@ -76,7 +76,7 @@ pub async fn test_connection_context_with_authentication_manager(
         &postgres_system_user,
         None,
         &format!("{application_name}-SystemRequests"),
-        PgPoolSettings::system_pool_settings(SYSTEM_REQUESTS_MAX_CONNECTIONS),
+        PgPoolSettings::system_pool_settings(get_max_system_connections()),
     )
     .expect("system requests pool should initialize for tests");
 
@@ -86,7 +86,7 @@ pub async fn test_connection_context_with_authentication_manager(
         &postgres_system_user,
         None,
         &format!("{application_name}-PreAuthRequests"),
-        PgPoolSettings::system_pool_settings(AUTHENTICATION_MAX_CONNECTIONS),
+        PgPoolSettings::system_pool_settings(get_max_auth_connections()),
     )
     .expect("authentication pool should initialize for tests");
 

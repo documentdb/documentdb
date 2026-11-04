@@ -9,8 +9,11 @@
 
 use tokio::time::Duration;
 
-use crate::configuration::{
-    DynamicConfiguration, MAX_REQUEST_TIMEOUT_DEFAULT_SEC, TRANSACTION_TIMEOUT_DEFAULT_SEC,
+use crate::{
+    configuration::{
+        DynamicConfiguration, MAX_REQUEST_TIMEOUT_DEFAULT_SEC, TRANSACTION_TIMEOUT_DEFAULT_SEC,
+    },
+    telemetry::event_id::EventId,
 };
 
 /// Data connection buffer size (in bytes).
@@ -18,6 +21,7 @@ pub const CONN_BUFFER_SIZE: usize = 262_144;
 pub const CONN_PRUNE_INTERVAL_SECS: u64 = 10;
 pub const CONN_IDLE_LIFETIME_SECS: u64 = 300;
 pub const CONN_LIFETIME_SECS: u64 = 3600;
+const DEFAULT_UNCHECKED_DATA_POOL_SIZE: usize = 2;
 
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PgPoolSettings {
@@ -97,23 +101,30 @@ impl PgPoolSettings {
         self.connect_timeout
     }
 
+    /// Returns the capacity remaining after reserving the system budget.
+    /// If none remains, logs a warning and uses the fallback data pool size.
     #[must_use]
-    pub const fn adjusted_max_connections(&self) -> usize {
-        // Reserve the system budget out of the total, but never let the data
-        // pool fall below the budget itself. `saturating_sub` is required
-        // because the budget can exceed `max_connections` (e.g. when the
-        // backend client-connection limit is configured below the budget); an
-        // unchecked `usize` subtraction would wrap to a near-`usize::MAX`
-        // value and blow up the downstream pool capacity allocation.
-        let real_max_connections = self
+    pub fn data_pool_max_connections(&self) -> usize {
+        let data_pool_max_connections = self
             .max_connections
             .saturating_sub(self.system_connection_budget);
 
-        if real_max_connections < self.system_connection_budget {
-            self.system_connection_budget
-        } else {
-            real_max_connections
+        if data_pool_max_connections == 0 {
+            tracing::warn!(
+                event_id = EventId::ConnectionPool.code(),
+                max_connections = self.max_connections,
+                system_connection_budget = self.system_connection_budget,
+                data_pool_max_connections,
+                fallback_data_pool_size = DEFAULT_UNCHECKED_DATA_POOL_SIZE,
+                "Configured connection limit leaves no capacity for data connections \
+                 after reserving the system budget; using the fallback data pool size, \
+                 which may exceed the configured total connection limit"
+            );
+
+            return DEFAULT_UNCHECKED_DATA_POOL_SIZE;
         }
+
+        data_pool_max_connections
     }
 
     #[must_use]
@@ -152,6 +163,10 @@ impl PgPoolSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        postgres::conn_mgmt::pool_manager::fe_system_connection_budget_for_cpu_count,
+        testing::TestDynamicConfiguration,
+    };
 
     fn settings(max_connections: usize, system_connection_budget: usize) -> PgPoolSettings {
         PgPoolSettings {
@@ -168,23 +183,88 @@ mod tests {
     }
 
     #[test]
-    fn adjusted_max_connections_reserves_budget() {
-        assert_eq!(settings(25, 10).adjusted_max_connections(), 15);
+    fn data_pool_max_connections_reserves_budget() {
+        assert_eq!(settings(25, 10).data_pool_max_connections(), 15);
+        assert_eq!(settings(20, 15).data_pool_max_connections(), 5);
+        assert_eq!(settings(20, 10).data_pool_max_connections(), 10);
+        assert_eq!(settings(13, 10).data_pool_max_connections(), 3);
+        assert_eq!(settings(12, 10).data_pool_max_connections(), 2);
+        assert_eq!(settings(11, 10).data_pool_max_connections(), 1);
+        assert_eq!(settings(1, 0).data_pool_max_connections(), 1);
+        assert_eq!(
+            settings(usize::MAX, 0).data_pool_max_connections(),
+            usize::MAX
+        );
     }
 
     #[test]
-    fn adjusted_max_connections_floors_to_budget_when_remainder_is_small() {
-        // 12 - 10 = 2, which is below the budget, so it floors to the budget.
-        assert_eq!(settings(12, 10).adjusted_max_connections(), 10);
+    fn default_reservation_and_data_capacity_by_cpu_count() {
+        let config = TestDynamicConfiguration::default();
+        let backend_budget = config.be_connection_budget();
+        assert_eq!(backend_budget, 7);
+
+        for (cpu_count, expected_reservation, expected_data_capacity) in [
+            (0, 10, 10),
+            (1, 10, 10),
+            (2, 13, 7),
+            (3, 14, 6),
+            (32, 14, 6),
+        ] {
+            let reservation = backend_budget + fe_system_connection_budget_for_cpu_count(cpu_count);
+            assert_eq!(reservation, expected_reservation, "CPU count: {cpu_count}");
+            assert_eq!(
+                settings(20, reservation).data_pool_max_connections(),
+                expected_data_capacity,
+                "CPU count: {cpu_count}"
+            );
+            assert_eq!(
+                settings(expected_reservation + 1, reservation).data_pool_max_connections(),
+                1
+            );
+            assert_eq!(
+                settings(expected_reservation, reservation).data_pool_max_connections(),
+                2
+            );
+            assert_eq!(
+                settings(expected_reservation - 1, reservation).data_pool_max_connections(),
+                2
+            );
+        }
     }
 
     #[test]
-    fn adjusted_max_connections_does_not_underflow_when_budget_exceeds_max() {
+    fn data_pool_max_connections_does_not_underflow_when_budget_exceeds_max() {
         // Regression: when the client-connection limit is below the system
         // budget, the unsigned subtraction must not wrap to a near-`usize::MAX`
         // value (which previously caused a capacity-overflow panic when the
         // result was used as a connection-pool capacity).
-        assert_eq!(settings(5, 10).adjusted_max_connections(), 10);
-        assert_eq!(settings(0, 10).adjusted_max_connections(), 10);
+        assert_eq!(
+            settings(5, 10).data_pool_max_connections(),
+            DEFAULT_UNCHECKED_DATA_POOL_SIZE
+        );
+        assert_eq!(
+            settings(0, 10).data_pool_max_connections(),
+            DEFAULT_UNCHECKED_DATA_POOL_SIZE
+        );
+        assert_eq!(
+            settings(0, usize::MAX).data_pool_max_connections(),
+            DEFAULT_UNCHECKED_DATA_POOL_SIZE
+        );
+    }
+
+    #[test]
+    fn data_pool_max_connections_uses_fallback_when_budget_exhausts_max() {
+        assert_eq!(
+            settings(10, 10).data_pool_max_connections(),
+            DEFAULT_UNCHECKED_DATA_POOL_SIZE
+        );
+        assert_eq!(
+            settings(0, 0).data_pool_max_connections(),
+            DEFAULT_UNCHECKED_DATA_POOL_SIZE
+        );
+        assert_eq!(
+            settings(usize::MAX, usize::MAX).data_pool_max_connections(),
+            DEFAULT_UNCHECKED_DATA_POOL_SIZE
+        );
     }
 }
