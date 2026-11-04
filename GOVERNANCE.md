@@ -121,6 +121,27 @@ c. The TSC may approve the use of an alternative license or licenses for inbound
 
 d. Contributed files should contain license information, such as SPDX short form identifiers, indicating the open source license or licenses pertaining to the file.
 
-## 8. Amendments
+
+## 8. Roles and Privileges
+
+The DocumentDB project recognizes the following formal roles, each with specific responsibilities and privileges to ensure effective governance and project management:
+
+| Role                   | Responsibilities                                 | Privileges                                        |
+|------------------------|--------------------------------------------------|---------------------------------------------------|
+| documentdb-admin       | Manage repository settings, users, and releases. | Full administrative control over the repository, including settings and release management. |
+| documentdb-maintainer  | Code reviews, bug fixes, feature integration.    | Write access, merge pull requests, manage issues and releases. |
+| documentdb-coordinator | Project and issue management.                    | Manage and assign issues and pull requests.        |
+
+**documentdb-admin**: Responsible for the overall administration of the repository, including managing settings, user permissions, and overseeing the release process. Holds the highest level of privileges.
+
+**documentdb-maintainer**: Reviews code, integrates new features, and addresses bug fixes. Has write access, can merge pull requests, and manages issues and releases.
+
+**documentdb-coordinator**: Focuses on project management and issue triage. Manages and assigns issues and pull requests to appropriate contributors or maintainers.
+
+For the current list of individuals in each role, refer to the [MAINTAINERS.md](./MAINTAINERS.md) file.
+
+---
+
+## 9. Amendments
 
 a. This charter may be amended by a two-thirds vote of the entire TSC and is subject to approval by LF Projects.
