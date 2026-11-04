@@ -147,6 +147,8 @@ static uint64 CallInsertWorkerForInsertOne(MongoCollection *collection, int64
 static pgbson * CallInsertWorkerForInsert(MongoCollection *collection, int64 shardKeyHash,
 										  pgbson *document, text *transactionId,
 										  pgbsonsequence *documentsequence);
+static pgbson * CallInsertWorkerForBatch(MongoCollection *collection,
+										 BatchInsertionSpec *batchSpec);
 static Datum CommandInsertCore(PG_FUNCTION_ARGS, WriteMode writeMode, MemoryContext
 							   allocContext);
 static inline List * CreateValuesListForInsert(Const *shardKey, Expr *objectId,
@@ -179,7 +181,7 @@ extern bool EnableInsertWorkerPushdown;
 
 
 inline static bool
-DoWorkerDispatchForInsertion(MongoCollection *collection,
+ShouldDispatchInsertSubBatch(MongoCollection *collection,
 							 text *transactionId,
 							 ExprEvalState *evalState)
 {
@@ -188,6 +190,18 @@ DoWorkerDispatchForInsertion(MongoCollection *collection,
 		   evalState == NULL &&
 		   collection->shardKey == NULL &&
 		   collection->isShardRemote;
+}
+
+
+inline static bool
+ShouldDispatchFullInsertBatch(MongoCollection *collection,
+							  BatchInsertionSpec *batchSpec, WriteMode writeMode)
+{
+	return (EnableInsertWorkerPushdown || DocumentToastCompressionThreshold > 0) &&
+		   collection->shardKey == NULL &&
+		   collection->isShardRemote &&
+		   list_length(batchSpec->documents) > 1 &&
+		   writeMode != WriteMode_Bulk_Proc;
 }
 
 
@@ -781,7 +795,7 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts,
 		}
 
 		text *transactionId = NULL;
-		if (DoWorkerDispatchForInsertion(collection, transactionId, evalState))
+		if (ShouldDispatchInsertSubBatch(collection, transactionId, evalState))
 		{
 			DoMultiInsertWithoutTransactionViaInsertWorker(collection, inserts,
 														   batchStartIndex,
@@ -1339,7 +1353,7 @@ ProcessInsertion(MongoCollection *collection,
 	 * collection, use the insertOne path to let the insert go to the local shard so we
 	 * can compress before passing it on to PG.
 	 */
-	if (DoWorkerDispatchForInsertion(collection, transactionId, evalState) &&
+	if (ShouldDispatchInsertSubBatch(collection, transactionId, evalState) &&
 		(EnableInsertWorkerPushdown ||
 		 DocumentDatumNeedsCompression(PointerGetDatum(insertDoc))))
 	{
@@ -1408,6 +1422,8 @@ CommandInsertCore(PG_FUNCTION_ARGS, WriteMode writeMode, MemoryContext allocCont
 	batchResult.resultMemoryContext = allocContext;
 	batchResult.indexNameCache = NULL;
 	MemoryContextSwitchTo(oldContext);
+	pgbson *response = NULL;
+	bool success = false;
 	if (list_length(batchSpec->documents) == 0)
 	{
 		/* Don't create the collection if there are no documents to insert */
@@ -1433,17 +1449,32 @@ CommandInsertCore(PG_FUNCTION_ARGS, WriteMode writeMode, MemoryContext allocCont
 			batchSpec->insertShardOid = TryGetCollectionShardTable(collection,
 																   RowExclusiveLock);
 		}
+		if (ShouldDispatchFullInsertBatch(collection, batchSpec, writeMode))
+		{
+			response = CallInsertWorkerForBatch(collection, batchSpec);
+			bson_iter_t responseIter;
+			PgbsonInitIterator(response, &responseIter);
+			success = !bson_iter_find(&responseIter, "writeErrors");
+		}
+		else
+		{
+			/* execute data inserts */
+			ProcessBatchInsertion(collection, batchSpec, transactionId, &batchResult,
+								  writeMode);
+		}
+	}
 
-		/* execute data inserts */
-		ProcessBatchInsertion(collection, batchSpec, transactionId, &batchResult,
-							  writeMode);
+	if (response == NULL)
+	{
+		response = BuildResponseMessage(&batchResult);
+		success = batchResult.writeErrors == NIL;
 	}
 
 	Datum values[2];
 	bool isNulls[2] = { false, false };
 
-	values[0] = PointerGetDatum(BuildResponseMessage(&batchResult));
-	values[1] = BoolGetDatum(batchResult.writeErrors == NIL);
+	values[0] = PointerGetDatum(response);
+	values[1] = BoolGetDatum(success);
 	HeapTuple resultTuple = heap_form_tuple(resultTupDesc, values, isNulls);
 	return HeapTupleGetDatum(resultTuple);
 }
@@ -1531,6 +1562,33 @@ CallInsertWorkerForInsertOne(MongoCollection *collection, int64 shardKeyHash,
 	pfree(specDocument);
 	pfree(bson);
 	return 1;
+}
+
+
+static pgbson *
+CallInsertWorkerForBatch(MongoCollection *collection, BatchInsertionSpec *batchSpec)
+{
+	pgbsonsequence *documents = PgbsonSequenceBuildFromBsonValuesList(
+		batchSpec->documents, 0, list_length(batchSpec->documents));
+	pgbson_writer writer;
+	pgbson_writer batchWriter;
+	PgbsonWriterInit(&writer);
+	PgbsonWriterStartDocument(&writer, "insertBatch", 11, &batchWriter);
+	PgbsonWriterAppendBool(&batchWriter, "ordered", 7, batchSpec->isOrdered);
+	bool validateDocuments = CheckSchemaValidationEnabled(collection,
+														  batchSpec->
+														  bypassDocumentValidation);
+	PgbsonWriterAppendBool(&batchWriter, "validateDocuments", 17, validateDocuments);
+	PgbsonWriterEndDocument(&writer, &batchWriter);
+	pgbson *workerSpec = PgbsonWriterGetPgbson(&writer);
+	text *transactionId = NULL;
+	int64 shardKeyHash = collection->collectionId;
+
+	pgbson *response = CallInsertWorkerForInsert(collection, shardKeyHash, workerSpec,
+												 transactionId, documents);
+	pfree(workerSpec);
+	pfree(documents);
+	return response;
 }
 
 
@@ -1710,6 +1768,92 @@ command_insert_worker(PG_FUNCTION_ARGS)
 		PgbsonWriterInit(&resultWriter);
 		PgbsonWriterAppendInt32(&resultWriter, "n", 1, rowsInserted);
 		PG_RETURN_POINTER(PgbsonWriterGetPgbson(&resultWriter));
+	}
+	else if (strcmp(element.path, "insertBatch") == 0)
+	{
+		if (PG_ARGISNULL(4) || transactionId != NULL ||
+			element.bsonValue.value_type != BSON_TYPE_DOCUMENT)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg("Invalid insertBatch worker specification")));
+		}
+
+		bson_iter_t batchIter;
+		BsonValueInitIterator(&element.bsonValue, &batchIter);
+		if (!bson_iter_next(&batchIter) ||
+			strcmp(bson_iter_key(&batchIter), "ordered") != 0 ||
+			!BSON_ITER_HOLDS_BOOL(&batchIter))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg("insertBatch worker requires an ordered flag")));
+		}
+
+		BatchInsertionSpec batchSpec = { 0 };
+		batchSpec.isOrdered = bson_iter_bool(&batchIter);
+		batchSpec.insertShardOid = shardOid;
+		if (!bson_iter_next(&batchIter) ||
+			strcmp(bson_iter_key(&batchIter), "validateDocuments") != 0 ||
+			!BSON_ITER_HOLDS_BOOL(&batchIter))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg("insertBatch worker requires a validation flag")));
+		}
+
+		bool validateDocuments = bson_iter_bool(&batchIter);
+		if (bson_iter_next(&batchIter))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg("Unexpected insertBatch worker specification field")));
+		}
+
+		pgbsonsequence *documents = PG_GETARG_PGBSON_SEQUENCE(4);
+		batchSpec.documents = PgbsonSequenceGetDocumentBsonValues(documents);
+		if (batchSpec.documents == NIL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg(
+								"insertBatch worker requires a nonempty document sequence")));
+		}
+
+		LockRelationOid(shardOid, RowExclusiveLock);
+		MongoCollection *collection = GetMongoCollectionByColId(collectionId, NoLock);
+		if (collection == NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg("Collection not found for insertBatch worker")));
+		}
+
+		/* Keep all batching and individual retries on the already selected shard. */
+		MongoCollection localCollection = *collection;
+		UpdateMongoCollectionUsingIds(&localCollection, collectionId, shardOid);
+		localCollection.isShardRemote = false;
+		BatchInsertionResult batchResult = {
+			.ok = 1,
+			.resultMemoryContext = CurrentMemoryContext
+		};
+		ExprEvalState *evalState = NULL;
+		if (validateDocuments)
+		{
+			if (localCollection.schemaValidator.validator == NULL)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+								errmsg(
+									"Schema validator not found for insertBatch worker")));
+			}
+
+			evalState = PrepareForSchemaValidation(
+				localCollection.schemaValidator.validator,
+				batchResult.resultMemoryContext, localCollection.options.collationString);
+		}
+
+		DoBatchInsertNoTransactionId(&localCollection, &batchSpec, &batchResult,
+									 evalState, WriteMode_Txn_Func);
+		if (evalState != NULL)
+		{
+			FreeExprEvalState(evalState, batchResult.resultMemoryContext);
+		}
+
+		PG_RETURN_POINTER(BuildResponseMessage(&batchResult));
 	}
 	else
 	{
