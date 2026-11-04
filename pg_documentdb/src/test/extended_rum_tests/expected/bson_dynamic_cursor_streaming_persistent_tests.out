@@ -65,6 +65,7 @@ DECLARE
     v_cursor_page documentdb_core.bson;
     v_continuation documentdb_core.bson;
     v_persist bool;
+    v_is_file_cursor bool;
     v_batch_count bigint;
     v_cursor_type int;
     v_page int := 1;
@@ -78,6 +79,8 @@ BEGIN
         cursorId => 538
     ) fp;
 
+    v_is_file_cursor := COALESCE(v_continuation::text::jsonb ? 'qf', false);
+
     SELECT (bson_dollar_project(v_cursor_page,
         '{ "c": { "$size": { "$ifNull": ["$cursor.firstBatch", []] } } }')
         ->> 'c')::bigint INTO v_batch_count;
@@ -86,8 +89,8 @@ BEGIN
         SELECT (bson_dollar_project(v_continuation, '{ "dc.type": 1 }') ->> 'dc.type')::int
             INTO v_cursor_type;
 
-        -- For streaming cursors, validate dc.type is set and matches expected
-        IF NOT v_persist THEN
+        -- For streaming cursors, validate dc.type is set and matches expected.
+        IF NOT (v_persist OR v_is_file_cursor) THEN
             IF v_cursor_type IS NULL THEN
                 RAISE EXCEPTION 'Page 1: streaming cursor but dc.type is NULL';
             END IF;
@@ -122,8 +125,8 @@ BEGIN
             SELECT (bson_dollar_project(v_continuation, '{ "dc.type": 1 }') ->> 'dc.type')::int
                 INTO v_cursor_type;
 
-            -- For streaming cursors, validate dc.type is set and matches expected
-            IF NOT v_persist THEN
+            -- For streaming cursors, validate dc.type is set and matches expected.
+            IF NOT (v_persist OR v_is_file_cursor) THEN
                 IF v_cursor_type IS NULL THEN
                     RAISE EXCEPTION 'Page %: streaming cursor but dc.type is NULL', v_page;
                 END IF;
@@ -232,10 +235,10 @@ SELECT * FROM sp_drain_and_report(
     3);
  page_num | batch_count | cursor_type | persist_conn 
 ----------+-------------+-------------+--------------
-        1 |           3 |             | t
-        2 |           3 |             | t
-        3 |           3 |             | t
-        4 |           1 |          -1 | t
+        1 |           3 |             | f
+        2 |           3 |             | f
+        3 |           3 |             | f
+        4 |           1 |          -1 | f
 (4 rows)
 
 -- ---------------------------------------------------------------------------
@@ -249,11 +252,11 @@ SELECT * FROM sp_drain_and_report(
     3);
  page_num | batch_count | cursor_type | persist_conn 
 ----------+-------------+-------------+--------------
-        1 |           3 |             | t
-        2 |           3 |             | t
-        3 |           3 |             | t
-        4 |           3 |             | t
-        5 |           3 |          -1 | t
+        1 |           3 |             | f
+        2 |           3 |             | f
+        3 |           3 |             | f
+        4 |           3 |             | f
+        5 |           3 |          -1 | f
 (5 rows)
 
 -- ---------------------------------------------------------------------------
@@ -267,10 +270,10 @@ SELECT * FROM sp_drain_and_report(
     2);
  page_num | batch_count | cursor_type | persist_conn 
 ----------+-------------+-------------+--------------
-        1 |           2 |             | t
-        2 |           2 |             | t
-        3 |           2 |             | t
-        4 |           1 |          -1 | t
+        1 |           2 |             | f
+        2 |           2 |             | f
+        3 |           2 |             | f
+        4 |           1 |          -1 | f
 (4 rows)
 
 -- ---------------------------------------------------------------------------
@@ -299,10 +302,10 @@ SELECT * FROM sp_drain_and_report(
     5);
  page_num | batch_count | cursor_type | persist_conn 
 ----------+-------------+-------------+--------------
-        1 |           5 |             | t
-        2 |           5 |             | t
-        3 |           5 |             | t
-        4 |           5 |          -1 | t
+        1 |           5 |             | f
+        2 |           5 |             | f
+        3 |           5 |             | f
+        4 |           5 |          -1 | f
 (4 rows)
 
 -- ===========================================================================
@@ -320,9 +323,9 @@ SELECT * FROM sp_drain_and_report(
     2);
  page_num | batch_count | cursor_type | persist_conn 
 ----------+-------------+-------------+--------------
-        1 |           2 |             | t
-        2 |           2 |             | t
-        3 |           1 |          -1 | t
+        1 |           2 |             | f
+        2 |           2 |             | f
+        3 |           1 |          -1 | f
 (3 rows)
 
 -- ---------------------------------------------------------------------------
@@ -336,10 +339,10 @@ SELECT * FROM sp_drain_and_report(
     2);
  page_num | batch_count | cursor_type | persist_conn 
 ----------+-------------+-------------+--------------
-        1 |           2 |             | t
-        2 |           2 |             | t
-        3 |           2 |             | t
-        4 |           1 |          -1 | t
+        1 |           2 |             | f
+        2 |           2 |             | f
+        3 |           2 |             | f
+        4 |           1 |          -1 | f
 (4 rows)
 
 -- ---------------------------------------------------------------------------
@@ -353,8 +356,8 @@ SELECT * FROM sp_drain_and_report(
     2);
  page_num | batch_count | cursor_type | persist_conn 
 ----------+-------------+-------------+--------------
-        1 |           2 |             | t
-        2 |           2 |          -1 | t
+        1 |           2 |             | f
+        2 |           2 |          -1 | f
 (2 rows)
 
 -- ===========================================================================
@@ -511,11 +514,25 @@ SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.fi
 FROM find_cursor_first_page(database => 'dyncur_sp_db',
     commandSpec => '{ "find": "sp_coll", "sort": { "val": 1 }, "projection": { "_id": 1, "val": 1 }, "skip": 5, "batchSize": 3 }',
     cursorId => 538);
--- persistconnection should be true for persistent cursor
-SELECT cp, persistconnection FROM sp_skip_response;
-                                                                                                                                          cp                                                                                                                                           | persistconnection 
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------
- { "cursor" : { "id" : { "$numberLong" : "538" }, "firstBatch" : [ { "_id" : { "$numberInt" : "6" }, "val" : { "$numberInt" : "60" } }, { "_id" : { "$numberInt" : "7" }, "val" : { "$numberInt" : "70" } }, { "_id" : { "$numberInt" : "8" }, "val" : { "$numberInt" : "80" } } ] } } | t
+-- Report connection and file persistence separately.
+SELECT cp,
+       persistconnection,
+       continuation::text::jsonb ? 'qf' AS file_cursor
+FROM sp_skip_response;
+                                                                                                                                          cp                                                                                                                                           | persistconnection | file_cursor
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------+-------------
+ { "cursor" : { "id" : { "$numberLong" : "538" }, "firstBatch" : [ { "_id" : { "$numberInt" : "6" }, "val" : { "$numberInt" : "60" } }, { "_id" : { "$numberInt" : "7" }, "val" : { "$numberInt" : "70" } }, { "_id" : { "$numberInt" : "8" }, "val" : { "$numberInt" : "80" } } ] } } | f                 | t
+(1 row)
+
+-- Drain the file before reusing cursor id 538 in the next test.
+SELECT continuation IS NULL AS fully_drained
+FROM cursor_get_more(
+    database => 'dyncur_sp_db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "538" }, "collection": "sp_coll", "batchSize": 100 }',
+    continuationSpec => (SELECT continuation FROM sp_skip_response));
+ fully_drained
+---------------
+ t
 (1 row)
 
 DROP TABLE sp_skip_response;
@@ -528,12 +545,11 @@ SELECT * FROM sp_drain_and_report(
     '{ "find": "sp_coll", "sort": { "val": 1 }, "projection": { "_id": 1, "val": 1 }, "limit": 7, "batchSize": 3 }',
     '{ "getMore": { "$numberLong": "538" }, "collection": "sp_coll", "batchSize": 3 }',
     3);
-NOTICE:  There are open held portals. Closing them
  page_num | batch_count | cursor_type | persist_conn 
 ----------+-------------+-------------+--------------
-        1 |           3 |             | t
-        2 |           3 |             | t
-        3 |           1 |          -1 | t
+        1 |           3 |             | f
+        2 |           3 |             | f
+        3 |           1 |          -1 | f
 (3 rows)
 
 -- ===========================================================================
@@ -668,12 +684,12 @@ SELECT * FROM sp_drain_and_report(
     5);
  page_num | batch_count | cursor_type | persist_conn 
 ----------+-------------+-------------+--------------
-        1 |           5 |             | t
-        2 |           5 |             | t
-        3 |           5 |             | t
-        4 |           5 |             | t
-        5 |           5 |             | t
-        6 |           5 |          -1 | t
+        1 |           5 |             | f
+        2 |           5 |             | f
+        3 |           5 |             | f
+        4 |           5 |             | f
+        5 |           5 |             | f
+        6 |           5 |          -1 | f
 (6 rows)
 
 -- ---------------------------------------------------------------------------
@@ -687,12 +703,12 @@ SELECT * FROM sp_drain_and_report(
     5);
  page_num | batch_count | cursor_type | persist_conn 
 ----------+-------------+-------------+--------------
-        1 |           5 |             | t
-        2 |           5 |             | t
-        3 |           5 |             | t
-        4 |           5 |             | t
-        5 |           5 |             | t
-        6 |           5 |          -1 | t
+        1 |           5 |             | f
+        2 |           5 |             | f
+        3 |           5 |             | f
+        4 |           5 |             | f
+        5 |           5 |             | f
+        6 |           5 |          -1 | f
 (6 rows)
 
 -- ---------------------------------------------------------------------------
@@ -707,12 +723,12 @@ SELECT * FROM sp_drain_and_report(
     5);
  page_num | batch_count | cursor_type | persist_conn 
 ----------+-------------+-------------+--------------
-        1 |           5 |             | t
-        2 |           5 |             | t
-        3 |           5 |             | t
-        4 |           5 |             | t
-        5 |           5 |             | t
-        6 |           5 |          -1 | t
+        1 |           5 |             | f
+        2 |           5 |             | f
+        3 |           5 |             | f
+        4 |           5 |             | f
+        5 |           5 |             | f
+        6 |           5 |          -1 | f
 (6 rows)
 
 -- ---------------------------------------------------------------------------
@@ -727,11 +743,11 @@ SELECT * FROM sp_drain_and_report(
     5);
  page_num | batch_count | cursor_type | persist_conn 
 ----------+-------------+-------------+--------------
-        1 |           5 |             | t
-        2 |           5 |             | t
-        3 |           5 |             | t
-        4 |           5 |             | t
-        5 |           3 |          -1 | t
+        1 |           5 |             | f
+        2 |           5 |             | f
+        3 |           5 |             | f
+        4 |           5 |             | f
+        5 |           3 |          -1 | f
 (5 rows)
 
 -- ---------------------------------------------------------------------------
@@ -762,11 +778,11 @@ SELECT * FROM sp_drain_and_report(
     5);
  page_num | batch_count | cursor_type | persist_conn 
 ----------+-------------+-------------+--------------
-        1 |           5 |             | t
-        2 |           5 |             | t
-        3 |           5 |             | t
-        4 |           5 |             | t
-        5 |           3 |          -1 | t
+        1 |           5 |             | f
+        2 |           5 |             | f
+        3 |           5 |             | f
+        4 |           5 |             | f
+        5 |           3 |          -1 | f
 (5 rows)
 
 -- ---------------------------------------------------------------------------
@@ -854,12 +870,12 @@ SELECT * FROM sp_drain_and_report(
     5);
  page_num | batch_count | cursor_type | persist_conn 
 ----------+-------------+-------------+--------------
-        1 |           5 |             | t
-        2 |           5 |             | t
-        3 |           5 |             | t
-        4 |           5 |             | t
-        5 |           5 |             | t
-        6 |           5 |          -1 | t
+        1 |           5 |             | f
+        2 |           5 |             | f
+        3 |           5 |             | f
+        4 |           5 |             | f
+        5 |           5 |             | f
+        6 |           5 |          -1 | f
 (6 rows)
 
 -- ---------------------------------------------------------------------------
@@ -1629,9 +1645,9 @@ SELECT * FROM sp_drain_and_report(
     3);
  page_num | batch_count | cursor_type | persist_conn 
 ----------+-------------+-------------+--------------
-        1 |           3 |             | t
-        2 |           3 |             | t
-        3 |           1 |          -1 | t
+        1 |           3 |             | f
+        2 |           3 |             | f
+        3 |           1 |          -1 | f
 (3 rows)
 
 -- Recreating the required index with an incompatible definition invalidates
@@ -1817,9 +1833,9 @@ SELECT * FROM sp_drain_and_report(
     5, 2);
  page_num | batch_count | cursor_type | persist_conn 
 ----------+-------------+-------------+--------------
-        1 |           5 |             | t
-        2 |           5 |             | t
-        3 |           5 |          -1 | t
+        1 |           5 |             | f
+        2 |           5 |             | f
+        3 |           5 |          -1 | f
 (3 rows)
 
 -- ---------------------------------------------------------------------------
@@ -1833,8 +1849,8 @@ SELECT * FROM sp_drain_and_report(
     5, 2);
  page_num | batch_count | cursor_type | persist_conn 
 ----------+-------------+-------------+--------------
-        1 |           5 |             | t
-        2 |           5 |          -1 | t
+        1 |           5 |             | f
+        2 |           5 |          -1 | f
 (2 rows)
 
 -- ---------------------------------------------------------------------------
@@ -2647,7 +2663,11 @@ BEGIN
         database => 'dyncur_grp_db', commandSpec => p_agg::documentdb_core.bson,
         cursorId => p_cursor_id) fp;
 
-    cursor_kind := CASE WHEN v_persist THEN 'persistent' ELSE 'streaming' END;
+    cursor_kind := CASE
+        WHEN v_persist OR COALESCE(v_cont::text::jsonb ? 'qf', false)
+        THEN 'persistent'
+        ELSE 'streaming'
+    END;
 
     SELECT (bson_dollar_project(v_page,
         '{ "c": { "$size": { "$ifNull": ["$cursor.firstBatch", []] } } }') ->> 'c')::bigint

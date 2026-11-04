@@ -73,25 +73,73 @@ FROM aggregate_cursor_first_page(
     cursorId => 92003);
 
 -- ===========================================================================
--- Parallel case: a query with no streaming path (a blocking sort on an
--- unindexed field) falls back to a persisted cursor. With parallel scans
--- forced, that plan uses a parallel scan and the continuation reports it
--- ("qp": true, "pp": true).
+-- Persistent connection case: a query with no streaming path falls back to a
+-- persisted cursor. The fallback retains the initially selected dynamic plan.
 -- ===========================================================================
 
-SELECT bson_dollar_project(continuation, '{ "qp": 1, "pp": 1 }') AS continuation_flags
+SET documentdb.use_file_based_persisted_dynamic_cursors TO off;
+SELECT persistConnection,
+       bson_dollar_project(continuation,
+           '{ "qp": 1, "pp": 1, "file_qf": { "$cond": [ "$qf", true, false ] } }') AS continuation_flags
 FROM aggregate_cursor_first_page(
     database => 'parallel_cursor_db',
     commandSpec => '{ "aggregate": "pcoll", "pipeline": [ { "$sort": { "b": 1, "_id": 1 } } ], "cursor": { "batchSize": 3 } }',
     cursorId => 92004);
 
--- With the report GUC off, the parallel case must not add "pp" to the continuation.
+-- The local file-backed fallback does not require a persistent connection.
+SET documentdb.use_file_based_persisted_dynamic_cursors TO on;
+SELECT persistConnection,
+       bson_dollar_project(continuation,
+           '{ "qp": 1, "pp": 1, "file_qf": { "$cond": [ "$qf", true, false ] } }') AS continuation_flags
+FROM aggregate_cursor_first_page(
+    database => 'parallel_cursor_db',
+    commandSpec => '{ "aggregate": "pcoll", "pipeline": [ { "$sort": { "b": 1, "_id": 1 } } ], "cursor": { "batchSize": 3 } }',
+    cursorId => 92005);
+
+-- The worker request option is authoritative even though the ambient file
+-- cursor GUC is off. A non-streamable query must use a file continuation and
+-- retain the parallel persistent plan.
+SELECT r[3] AS worker_continuation
+FROM documentdb_api_internal.cursor_dynamic_drain_page(
+    'parallel_cursor_db',
+    '{ "aggregate": "pcoll", "pipeline": [ { "$sort": { "b": 1, "_id": 1 } } ], "cursor": { "batchSize": 3 } }'::bson,
+    FORMAT('documentdb_data.documents_%s', :p_col)::regclass,
+    '{}'::bson,
+    2,
+    '{ "p_use_file_based_cursor": true, "p_batch_size": 3, "p_namespace": "parallel_cursor_db.pcoll" }'::bson) AS r \gset
+SELECT bson_dollar_project(
+    :'worker_continuation'::bson,
+    '{ "qp": 1, "pp": 1, "file_qf": { "$cond": [ "$qf", true, false ] } }')
+    AS worker_persistent_flags;
+
+-- Existing file continuations remain usable after file creation is disabled.
+SELECT r[3] IS NULL AS worker_cursor_drained,
+       jsonb_array_length(r[1]::text::jsonb #> '{cursor,nextBatch}') AS remaining_documents,
+       ARRAY(
+           SELECT (document -> '_id' ->> '$numberInt')::integer
+           FROM jsonb_array_elements(r[1]::text::jsonb #> '{cursor,nextBatch}')
+               WITH ORDINALITY AS batch(document, ordinal)
+           ORDER BY ordinal
+       ) = ARRAY(
+           SELECT id FROM generate_series(1, 2000) AS documents(id)
+           ORDER BY id % 5, id OFFSET 3
+       ) AS remaining_documents_match
+FROM documentdb_api_internal.cursor_dynamic_drain_page(
+    'parallel_cursor_db',
+    '{ "aggregate": "pcoll", "pipeline": [ { "$sort": { "b": 1, "_id": 1 } } ], "cursor": { "batchSize": 5000 } }'::bson,
+    FORMAT('documentdb_data.documents_%s', :p_col)::regclass,
+    :'worker_continuation'::bson,
+    2,
+    '{ "p_use_file_based_cursor": false, "p_batch_size": 5000, "p_namespace": "parallel_cursor_db.pcoll" }'::bson) AS r;
+
+-- With the report GUC off, the file-backed case must not add "pp".
 SET documentdb.reportParallelPlanInCursorContinuation TO off;
 SELECT bson_dollar_project(continuation, '{ "qp": 1, "pp": 1 }') AS continuation_flags
 FROM aggregate_cursor_first_page(
     database => 'parallel_cursor_db',
     commandSpec => '{ "aggregate": "pcoll", "pipeline": [ { "$sort": { "b": 1, "_id": 1 } } ], "cursor": { "batchSize": 3 } }',
-    cursorId => 92005);
+    cursorId => 92006);
+RESET documentdb.use_file_based_persisted_dynamic_cursors;
 
 -- ===========================================================================
 -- EXPLAIN via the aggregation query rewrite path must mirror the same decision:

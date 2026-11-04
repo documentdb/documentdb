@@ -499,9 +499,14 @@ bool EnableExtensibleMetadataViews = DEFAULT_ENABLE_EXTENSIBLE_METADATA_VIEWS;
 #define DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN true
 bool EnablePrimaryKeyCursorScan = DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN;
 
-/* Added in v0.108, Pending stabilization, enable in v1.3 */
+/* Added in v0.108, Pending stabilization, enable in v1.5 */
 #define DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS false
 bool UseFileBasedPersistedCursors = DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS;
+
+/* Added on v1.3, Enabled in v1.3, remove after v1.5 */
+#define DEFAULT_USE_FILE_BASED_PERSISTED_DYNAMIC_CURSORS true
+bool UseFileBasedPersistedDynamicCursors =
+	DEFAULT_USE_FILE_BASED_PERSISTED_DYNAMIC_CURSORS;
 
 /* Added in v0.114, Enabled in v0.114, remove after v1.4 */
 #define DEFAULT_CLEANUP_CURSOR_FILES true
@@ -1180,6 +1185,15 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether or not to use file based persisted cursors."),
 		NULL, &UseFileBasedPersistedCursors,
 		DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.use_file_based_persisted_dynamic_cursors",
+				 newGucPrefix),
+		gettext_noop(
+			"Whether dynamic persistent cursors use file-based storage."),
+		NULL, &UseFileBasedPersistedDynamicCursors,
+		DEFAULT_USE_FILE_BASED_PERSISTED_DYNAMIC_CURSORS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

@@ -115,7 +115,7 @@ NOTICE:  interleaved limit cursor = [1,2] [3,4] [5,6]
 -- A failed request must not retain authorization for later queries.
 SET documentdb.enable_dynamic_cursor_with_skiplimit TO off;
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('resadv', '{ "find": "coll", "skip": 3 }');
-                            QUERY PLAN                            
+                            QUERY PLAN
 ------------------------------------------------------------------
  Limit
    ->  Bitmap Heap Scan on documents_25940001 collection
@@ -136,7 +136,7 @@ $$;
 NOTICE:  hint error: index specified by index hint is not found: hint provided does not correspond to an existing index
 SET documentdb.enable_dynamic_cursor_with_skiplimit TO off;
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('resadv', '{ "find": "coll", "skip": 3 }');
-                            QUERY PLAN                            
+                            QUERY PLAN
 ------------------------------------------------------------------
  Limit
    ->  Bitmap Heap Scan on documents_25940001 collection
@@ -165,7 +165,7 @@ $$;
 NOTICE:  injected remaining limit rejected [M0000]: Cannot resume dynamic cursor with invalid remaining skip/limit state.
 SET documentdb.enable_dynamic_cursor_with_skiplimit TO off;
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('resadv', '{ "find": "coll", "skip": 3 }');
-                            QUERY PLAN                            
+                            QUERY PLAN
 ------------------------------------------------------------------
  Limit
    ->  Bitmap Heap Scan on documents_25940001 collection
@@ -184,27 +184,27 @@ SELECT bson_dollar_project(cursorpage, '{ "_id": 0, "ids": "$cursor.nextBatch._i
 FROM cursor_get_more('resadv',
     '{ "getMore": { "$numberLong": "8405" }, "collection": "coll", "batchSize": 2 }'::bson, $1);
 EXECUTE resume_page(:'gcont'::bson);
-                      generic_plan_resume                       
+                      generic_plan_resume
 ----------------------------------------------------------------
  { "ids" : [ { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }
 (1 row)
 
 SET plan_cache_mode TO force_generic_plan;
 EXECUTE resume_page(:'gcont'::bson);
-                      generic_plan_resume                       
+                      generic_plan_resume
 ----------------------------------------------------------------
  { "ids" : [ { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }
 (1 row)
 
 EXECUTE resume_page(:'gcont'::bson);
-                      generic_plan_resume                       
+                      generic_plan_resume
 ----------------------------------------------------------------
  { "ids" : [ { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }
 (1 row)
 
 SET plan_cache_mode TO auto;
 EXECUTE resume_page(:'gcont'::bson);
-                      generic_plan_resume                       
+                      generic_plan_resume
 ----------------------------------------------------------------
  { "ids" : [ { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }
 (1 row)
@@ -216,14 +216,14 @@ SELECT bson_dollar_project(cursorpage, '{ "_id": 0, "ids": "$cursor.firstBatch._
        persistconnection
 FROM find_cursor_first_page('resadv', $1, 8406);
 EXECUTE first_page('{ "find": "coll", "sort": { "_id": 1 }, "skip": 3, "limit": 6, "batchSize": 2 }'::bson);
-                    generic_plan_first_page                     | persistconnection 
+                    generic_plan_first_page                     | persistconnection
 ----------------------------------------------------------------+-------------------
  { "ids" : [ { "$numberInt" : "4" }, { "$numberInt" : "5" } ] } | f
 (1 row)
 
 SET plan_cache_mode TO force_generic_plan;
 EXECUTE first_page('{ "find": "coll", "sort": { "_id": 1 }, "skip": 3, "limit": 6, "batchSize": 2 }'::bson);
-                    generic_plan_first_page                     | persistconnection 
+                    generic_plan_first_page                     | persistconnection
 ----------------------------------------------------------------+-------------------
  { "ids" : [ { "$numberInt" : "4" }, { "$numberInt" : "5" } ] } | f
 (1 row)
@@ -307,7 +307,7 @@ SELECT COUNT(documentdb_api.insert_one('resadv', 'big',
     FORMAT('{ "_id": %s, "p": "%s" }', i, repeat('x', 6000000))::bson))
 FROM generate_series(1, 5) i;
 NOTICE:  creating collection
- count 
+ count
 -------
      5
 (1 row)
@@ -315,7 +315,7 @@ NOTICE:  creating collection
 SELECT res_drain('{ "find": "big", "sort": { "_id": 1 }, "skip": 2, "batchSize": 50 }',
     '{ "getMore": { "$numberLong": "8601" }, "collection": "big", "batchSize": 50 }',
     8601) AS size_capped_skip;
-            size_capped_skip             
+            size_capped_skip
 -----------------------------------------
  persist=f pages=2 total=3 ids=[3,4] [5]
 (1 row)
@@ -323,7 +323,7 @@ SELECT res_drain('{ "find": "big", "sort": { "_id": 1 }, "skip": 2, "batchSize":
 SELECT res_drain('{ "find": "big", "sort": { "_id": 1 }, "skip": 1, "limit": 3, "batchSize": 50 }',
     '{ "getMore": { "$numberLong": "8602" }, "collection": "big", "batchSize": 50 }',
     8602) AS size_capped_skip_limit;
-         size_capped_skip_limit          
+         size_capped_skip_limit
 -----------------------------------------
  persist=f pages=2 total=3 ids=[2,3] [4]
 (1 row)
@@ -374,7 +374,7 @@ NOTICE:  unconsumed continuation replay: first=7,8 second=7,8
 SELECT bson_dollar_project(continuation, '{ "lim": 1 }') AS batch0_limit_untouched
 FROM find_cursor_first_page('resadv',
     '{ "find": "coll", "sort": { "_id": 1 }, "skip": 3, "limit": 5, "batchSize": 0 }'::bson, 8703);
-       batch0_limit_untouched        
+       batch0_limit_untouched
 -------------------------------------
  { "lim" : { "$numberLong" : "5" } }
 (1 row)
@@ -383,7 +383,7 @@ SELECT res_drain(
     '{ "find": "coll", "sort": { "_id": 1 }, "skip": 3, "limit": 5, "batchSize": 0 }',
     '{ "getMore": { "$numberLong": "8704" }, "collection": "coll", "batchSize": 2 }',
     8704) AS batch0_skip_limit_drain;
-             batch0_skip_limit_drain              
+             batch0_skip_limit_drain
 --------------------------------------------------
  persist=f pages=4 total=5 ids=[] [4,5] [6,7] [8]
 (1 row)
@@ -411,7 +411,7 @@ NOTICE:  skip-only resume with the flag off = 16,17,18
 -- A multi-branch filter remains streamable after collapsing to one ordered scan.
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('resadv',
     '{ "find": "coll", "filter": { "$or": [ { "_id": { "$lt": 5 } }, { "_id": { "$gt": 15 } } ] }, "sort": { "_id": 1 }, "skip": 2, "limit": 5 }');
-                                                                             QUERY PLAN                                                                              
+                                                                             QUERY PLAN
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    Output: document, (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
@@ -429,7 +429,7 @@ SELECT res_drain(
     '{ "find": "coll", "filter": { "$or": [ { "_id": { "$lt": 5 } }, { "_id": { "$gt": 15 } } ] }, "sort": { "_id": 1 }, "skip": 2, "limit": 5, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "8701" }, "collection": "coll", "batchSize": 2 }',
     8701) AS or_branches_skip_limit;
-              or_branches_skip_limit              
+              or_branches_skip_limit
 --------------------------------------------------
  persist=f pages=3 total=5 ids=[3,4] [16,17] [18]
 (1 row)
@@ -438,7 +438,7 @@ SELECT res_drain(
     '{ "find": "coll", "filter": { "_id": { "$in": [2,4,6,8,10,12,14] } }, "sort": { "_id": 1 }, "skip": 2, "limit": 4, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "8702" }, "collection": "coll", "batchSize": 2 }',
     8702) AS in_list_skip_limit;
-             in_list_skip_limit              
+             in_list_skip_limit
 ---------------------------------------------
  persist=f pages=2 total=4 ids=[6,8] [10,12]
 (1 row)
@@ -448,9 +448,9 @@ SELECT res_drain(
     '{ "find": "coll", "sort": { "$natural": -1 }, "skip": 3, "limit": 6, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "8703" }, "collection": "coll", "batchSize": 2 }',
     8703) AS natural_desc_skip_limit;
-                natural_desc_skip_limit                
+                natural_desc_skip_limit
 -------------------------------------------------------
- persist=t pages=3 total=6 ids=[17,16] [15,14] [13,12]
+ persist=f pages=3 total=6 ids=[17,16] [15,14] [13,12]
 (1 row)
 
 -- singleBatch closes without a continuation.
@@ -458,7 +458,7 @@ SELECT (cursorpage::text::jsonb)->'cursor'->'firstBatch' AS single_batch_ids,
        (continuation IS NULL) AS single_batch_closed
 FROM find_cursor_first_page('resadv',
     '{ "find": "coll", "sort": { "_id": 1 }, "skip": 3, "limit": 4, "batchSize": 2, "singleBatch": true }'::bson, 8704);
-                                                 single_batch_ids                                                 | single_batch_closed 
+                                                 single_batch_ids                                                 | single_batch_closed
 ------------------------------------------------------------------------------------------------------------------+---------------------
  [{"a": {"$numberInt": "4"}, "_id": {"$numberInt": "4"}}, {"a": {"$numberInt": "5"}, "_id": {"$numberInt": "5"}}] | t
 (1 row)
@@ -467,7 +467,7 @@ FROM find_cursor_first_page('resadv',
 SELECT res_drain('{ "find": "coll", "sort": { "_id": 1 }, "skip": 15, "limit": 10, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "8705" }, "collection": "coll", "batchSize": 2 }',
     8705) AS limit_exceeds_remaining;
-              limit_exceeds_remaining               
+              limit_exceeds_remaining
 ----------------------------------------------------
  persist=f pages=3 total=5 ids=[16,17] [18,19] [20]
 (1 row)
@@ -477,7 +477,7 @@ SELECT (cursorpage::text::jsonb)->'cursor'->'firstBatch' AS int64_ceiling_batch,
        (continuation IS NULL) AS int64_ceiling_closed
 FROM find_cursor_first_page('resadv',
     '{ "find": "coll", "skip": 9223372036854775806, "limit": 9223372036854775807, "batchSize": 2 }'::bson, 8706);
- int64_ceiling_batch | int64_ceiling_closed 
+ int64_ceiling_batch | int64_ceiling_closed
 ---------------------+----------------------
  []                  | t
 (1 row)
@@ -487,14 +487,14 @@ FROM find_cursor_first_page('resadv',
 ------------------------------------------------------------
 -- Sharded collections use a persistent cursor and apply skip globally.
 SELECT documentdb_api.shard_collection('resadv', 'sh', '{ "sk": "hashed" }'::bson, false);
- shard_collection 
+ shard_collection
 ------------------
- 
+
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('resadv',
     '{ "find": "sh", "sort": { "_id": 1 }, "skip": 3, "limit": 6 }');
-                                             QUERY PLAN                                             
+                                             QUERY PLAN
 ----------------------------------------------------------------------------------------------------
  Limit
    ->  Sort
@@ -505,26 +505,26 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('resadv',
 SELECT res_drain('{ "find": "sh", "sort": { "_id": 1 }, "skip": 3, "limit": 6, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "8801" }, "collection": "sh", "batchSize": 2 }',
     8801) AS sharded_skip_limit;
-               sharded_skip_limit                
+               sharded_skip_limit
 -------------------------------------------------
- persist=t pages=3 total=6 ids=[4,5] [6,7] [8,9]
+ persist=f pages=3 total=6 ids=[4,5] [6,7] [8,9]
 (1 row)
 
 SELECT res_drain('{ "find": "sh", "sort": { "_id": 1 }, "skip": 5, "batchSize": 3 }',
     '{ "getMore": { "$numberLong": "8802" }, "collection": "sh", "batchSize": 3 }',
     8802) AS sharded_skip_only;
-                                 sharded_skip_only                                 
+                                 sharded_skip_only
 -----------------------------------------------------------------------------------
- persist=t pages=5 total=15 ids=[6,7,8] [9,10,11] [12,13,14] [15,16,17] [18,19,20]
+ persist=f pages=5 total=15 ids=[6,7,8] [9,10,11] [12,13,14] [15,16,17] [18,19,20]
 (1 row)
 
 -- Shard-key equality applies skip to the filtered result.
 SELECT res_drain('{ "find": "sh", "filter": { "sk": 7 }, "sort": { "_id": 1 }, "skip": 1, "limit": 3, "batchSize": 1 }',
     '{ "getMore": { "$numberLong": "8803" }, "collection": "sh", "batchSize": 1 }',
     8803) AS sharded_shardkey_eq_skip;
-     sharded_shardkey_eq_skip     
+     sharded_shardkey_eq_skip
 ----------------------------------
- persist=t pages=1 total=0 ids=[]
+ persist=f pages=1 total=0 ids=[]
 (1 row)
 
 -- After inter-page DML, replanning must still satisfy the tracked limit.
@@ -555,19 +555,19 @@ NOTICE:  delete+update across resume boundary = [3,4] [5,7] [8,9]
 -- Cleanup
 ------------------------------------------------------------
 SELECT documentdb_api.drop_collection('resadv', 'coll');
- drop_collection 
+ drop_collection
 -----------------
  t
 (1 row)
 
 SELECT documentdb_api.drop_collection('resadv', 'sh');
- drop_collection 
+ drop_collection
 -----------------
  t
 (1 row)
 
 SELECT documentdb_api.drop_collection('resadv', 'big');
- drop_collection 
+ drop_collection
 -----------------
  t
 (1 row)

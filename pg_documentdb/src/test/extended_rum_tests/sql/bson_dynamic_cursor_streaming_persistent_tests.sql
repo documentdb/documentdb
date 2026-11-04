@@ -49,6 +49,7 @@ DECLARE
     v_cursor_page documentdb_core.bson;
     v_continuation documentdb_core.bson;
     v_persist bool;
+    v_is_file_cursor bool;
     v_batch_count bigint;
     v_cursor_type int;
     v_page int := 1;
@@ -62,6 +63,8 @@ BEGIN
         cursorId => 538
     ) fp;
 
+    v_is_file_cursor := COALESCE(v_continuation::text::jsonb ? 'qf', false);
+
     SELECT (bson_dollar_project(v_cursor_page,
         '{ "c": { "$size": { "$ifNull": ["$cursor.firstBatch", []] } } }')
         ->> 'c')::bigint INTO v_batch_count;
@@ -70,8 +73,8 @@ BEGIN
         SELECT (bson_dollar_project(v_continuation, '{ "dc.type": 1 }') ->> 'dc.type')::int
             INTO v_cursor_type;
 
-        -- For streaming cursors, validate dc.type is set and matches expected
-        IF NOT v_persist THEN
+        -- For streaming cursors, validate dc.type is set and matches expected.
+        IF NOT (v_persist OR v_is_file_cursor) THEN
             IF v_cursor_type IS NULL THEN
                 RAISE EXCEPTION 'Page 1: streaming cursor but dc.type is NULL';
             END IF;
@@ -106,8 +109,8 @@ BEGIN
             SELECT (bson_dollar_project(v_continuation, '{ "dc.type": 1 }') ->> 'dc.type')::int
                 INTO v_cursor_type;
 
-            -- For streaming cursors, validate dc.type is set and matches expected
-            IF NOT v_persist THEN
+            -- For streaming cursors, validate dc.type is set and matches expected.
+            IF NOT (v_persist OR v_is_file_cursor) THEN
                 IF v_cursor_type IS NULL THEN
                     RAISE EXCEPTION 'Page %: streaming cursor but dc.type is NULL', v_page;
                 END IF;
@@ -359,8 +362,18 @@ FROM find_cursor_first_page(database => 'dyncur_sp_db',
     commandSpec => '{ "find": "sp_coll", "sort": { "val": 1 }, "projection": { "_id": 1, "val": 1 }, "skip": 5, "batchSize": 3 }',
     cursorId => 538);
 
--- persistconnection should be true for persistent cursor
-SELECT cp, persistconnection FROM sp_skip_response;
+-- Report connection and file persistence separately.
+SELECT cp,
+       persistconnection,
+       continuation::text::jsonb ? 'qf' AS file_cursor
+FROM sp_skip_response;
+
+-- Drain the file before reusing cursor id 538 in the next test.
+SELECT continuation IS NULL AS fully_drained
+FROM cursor_get_more(
+    database => 'dyncur_sp_db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "538" }, "collection": "sp_coll", "batchSize": 100 }',
+    continuationSpec => (SELECT continuation FROM sp_skip_response));
 
 DROP TABLE sp_skip_response;
 
@@ -1804,7 +1817,11 @@ BEGIN
         database => 'dyncur_grp_db', commandSpec => p_agg::documentdb_core.bson,
         cursorId => p_cursor_id) fp;
 
-    cursor_kind := CASE WHEN v_persist THEN 'persistent' ELSE 'streaming' END;
+    cursor_kind := CASE
+        WHEN v_persist OR COALESCE(v_cont::text::jsonb ? 'qf', false)
+        THEN 'persistent'
+        ELSE 'streaming'
+    END;
 
     SELECT (bson_dollar_project(v_page,
         '{ "c": { "$size": { "$ifNull": ["$cursor.firstBatch", []] } } }') ->> 'c')::bigint

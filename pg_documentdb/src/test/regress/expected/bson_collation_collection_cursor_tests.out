@@ -231,11 +231,11 @@ SELECT * FROM collation_find_cursor_test.drain_cursor_pages(
     true);
  page_number | cursor_kind |                                       batch                                       | has_continuation 
 -------------+-------------+-----------------------------------------------------------------------------------+------------------
-           1 | persistent  | { "ids" : [ { "$numberInt" : "1" } ], "cursorId" : { "$numberLong" : "782302" } } | t
-           2 | persistent  | { "ids" : [ { "$numberInt" : "2" } ], "cursorId" : { "$numberLong" : "782302" } } | t
-           3 | persistent  | { "ids" : [ { "$numberInt" : "3" } ], "cursorId" : { "$numberLong" : "782302" } } | t
-           4 | persistent  | { "ids" : [ { "$numberInt" : "4" } ], "cursorId" : { "$numberLong" : "782302" } } | t
-           5 | persistent  | { "ids" : [ { "$numberInt" : "5" } ], "cursorId" : { "$numberLong" : "0" } }      | f
+           1 | file        | { "ids" : [ { "$numberInt" : "1" } ], "cursorId" : { "$numberLong" : "782302" } } | t
+           2 | file        | { "ids" : [ { "$numberInt" : "2" } ], "cursorId" : { "$numberLong" : "782302" } } | t
+           3 | file        | { "ids" : [ { "$numberInt" : "3" } ], "cursorId" : { "$numberLong" : "782302" } } | t
+           4 | file        | { "ids" : [ { "$numberInt" : "4" } ], "cursorId" : { "$numberLong" : "782302" } } | t
+           5 | file        | { "ids" : [ { "$numberInt" : "5" } ], "cursorId" : { "$numberLong" : "0" } }      | f
 (5 rows)
 
 -- The legacy streaming continuation preserves the same retained default.
@@ -292,10 +292,10 @@ SELECT * FROM collation_find_cursor_test.drain_cursor_pages(
     1);
  page_number | cursor_kind |                                       batch                                       | has_continuation 
 -------------+-------------+-----------------------------------------------------------------------------------+------------------
-           1 | persistent  | { "ids" : [ { "$numberInt" : "1" } ], "cursorId" : { "$numberLong" : "782303" } } | t
-           2 | persistent  | { "ids" : [ { "$numberInt" : "2" } ], "cursorId" : { "$numberLong" : "782303" } } | t
-           3 | persistent  | { "ids" : [ { "$numberInt" : "4" } ], "cursorId" : { "$numberLong" : "782303" } } | t
-           4 | persistent  | { "ids" : [ { "$numberInt" : "5" } ], "cursorId" : { "$numberLong" : "0" } }      | f
+           1 | file        | { "ids" : [ { "$numberInt" : "1" } ], "cursorId" : { "$numberLong" : "782303" } } | t
+           2 | file        | { "ids" : [ { "$numberInt" : "2" } ], "cursorId" : { "$numberLong" : "782303" } } | t
+           3 | file        | { "ids" : [ { "$numberInt" : "4" } ], "cursorId" : { "$numberLong" : "782303" } } | t
+           4 | file        | { "ids" : [ { "$numberInt" : "5" } ], "cursorId" : { "$numberLong" : "0" } }      | f
 (4 rows)
 
 SELECT * FROM collation_find_cursor_test.drain_cursor_pages(
@@ -308,9 +308,9 @@ SELECT * FROM collation_find_cursor_test.drain_cursor_pages(
     1);
  page_number | cursor_kind |                                       batch                                       | has_continuation 
 -------------+-------------+-----------------------------------------------------------------------------------+------------------
-           1 | persistent  | { "ids" : [ { "$numberInt" : "1" } ], "cursorId" : { "$numberLong" : "782304" } } | t
-           2 | persistent  | { "ids" : [ { "$numberInt" : "4" } ], "cursorId" : { "$numberLong" : "782304" } } | t
-           3 | persistent  | { "ids" : [ { "$numberInt" : "5" } ], "cursorId" : { "$numberLong" : "0" } }      | f
+           1 | file        | { "ids" : [ { "$numberInt" : "1" } ], "cursorId" : { "$numberLong" : "782304" } } | t
+           2 | file        | { "ids" : [ { "$numberInt" : "4" } ], "cursorId" : { "$numberLong" : "782304" } } | t
+           3 | file        | { "ids" : [ { "$numberInt" : "5" } ], "cursorId" : { "$numberLong" : "0" } }      | f
 (3 rows)
 
 SELECT * FROM collation_find_cursor_test.drain_cursor_pages(
@@ -328,10 +328,10 @@ SELECT * FROM collation_find_cursor_test.drain_cursor_pages(
     true);
  page_number | cursor_kind |                                       batch                                       | has_continuation 
 -------------+-------------+-----------------------------------------------------------------------------------+------------------
-           1 | persistent  | { "ids" : [ { "$numberInt" : "1" } ], "cursorId" : { "$numberLong" : "782318" } } | t
-           2 | persistent  | { "ids" : [ { "$numberInt" : "2" } ], "cursorId" : { "$numberLong" : "782318" } } | t
-           3 | persistent  | { "ids" : [ { "$numberInt" : "4" } ], "cursorId" : { "$numberLong" : "782318" } } | t
-           4 | persistent  | { "ids" : [ { "$numberInt" : "5" } ], "cursorId" : { "$numberLong" : "0" } }      | f
+           1 | file        | { "ids" : [ { "$numberInt" : "1" } ], "cursorId" : { "$numberLong" : "782318" } } | t
+           2 | file        | { "ids" : [ { "$numberInt" : "2" } ], "cursorId" : { "$numberLong" : "782318" } } | t
+           3 | file        | { "ids" : [ { "$numberInt" : "4" } ], "cursorId" : { "$numberLong" : "782318" } } | t
+           4 | file        | { "ids" : [ { "$numberInt" : "5" } ], "cursorId" : { "$numberLong" : "0" } }      | f
 (4 rows)
 
 SELECT * FROM collation_find_cursor_test.drain_cursor_pages(
@@ -349,9 +349,9 @@ SELECT * FROM collation_find_cursor_test.drain_cursor_pages(
     true);
  page_number | cursor_kind |                                       batch                                       | has_continuation 
 -------------+-------------+-----------------------------------------------------------------------------------+------------------
-           1 | persistent  | { "ids" : [ { "$numberInt" : "1" } ], "cursorId" : { "$numberLong" : "782319" } } | t
-           2 | persistent  | { "ids" : [ { "$numberInt" : "4" } ], "cursorId" : { "$numberLong" : "782319" } } | t
-           3 | persistent  | { "ids" : [ { "$numberInt" : "5" } ], "cursorId" : { "$numberLong" : "0" } }      | f
+           1 | file        | { "ids" : [ { "$numberInt" : "1" } ], "cursorId" : { "$numberLong" : "782319" } } | t
+           2 | file        | { "ids" : [ { "$numberInt" : "4" } ], "cursorId" : { "$numberLong" : "782319" } } | t
+           3 | file        | { "ids" : [ { "$numberInt" : "5" } ], "cursorId" : { "$numberLong" : "0" } }      | f
 (3 rows)
 
 -- A non-streamable find materializes its original collated results.
@@ -368,10 +368,10 @@ SELECT * FROM collation_find_cursor_test.drain_cursor_pages(
     true);
  page_number | cursor_kind |                                       batch                                       | has_continuation 
 -------------+-------------+-----------------------------------------------------------------------------------+------------------
-           1 | persistent  | { "ids" : [ { "$numberInt" : "2" } ], "cursorId" : { "$numberLong" : "782309" } } | t
-           2 | persistent  | { "ids" : [ { "$numberInt" : "3" } ], "cursorId" : { "$numberLong" : "782309" } } | t
-           3 | persistent  | { "ids" : [ { "$numberInt" : "4" } ], "cursorId" : { "$numberLong" : "782309" } } | t
-           4 | persistent  | { "ids" : [ { "$numberInt" : "5" } ], "cursorId" : { "$numberLong" : "0" } }      | f
+           1 | file        | { "ids" : [ { "$numberInt" : "2" } ], "cursorId" : { "$numberLong" : "782309" } } | t
+           2 | file        | { "ids" : [ { "$numberInt" : "3" } ], "cursorId" : { "$numberLong" : "782309" } } | t
+           3 | file        | { "ids" : [ { "$numberInt" : "4" } ], "cursorId" : { "$numberLong" : "782309" } } | t
+           4 | file        | { "ids" : [ { "$numberInt" : "5" } ], "cursorId" : { "$numberLong" : "0" } }      | f
 (4 rows)
 
 RESET documentdb.enable_dynamic_cursor_with_skiplimit;
@@ -387,11 +387,11 @@ SELECT * FROM collation_find_cursor_test.drain_cursor_pages(
     true);
  page_number | cursor_kind |                                       batch                                       | has_continuation 
 -------------+-------------+-----------------------------------------------------------------------------------+------------------
-           1 | persistent  | { "ids" : [ { "$numberInt" : "1" } ], "cursorId" : { "$numberLong" : "782305" } } | t
-           2 | persistent  | { "ids" : [ { "$numberInt" : "2" } ], "cursorId" : { "$numberLong" : "782305" } } | t
-           3 | persistent  | { "ids" : [ { "$numberInt" : "3" } ], "cursorId" : { "$numberLong" : "782305" } } | t
-           4 | persistent  | { "ids" : [ { "$numberInt" : "4" } ], "cursorId" : { "$numberLong" : "782305" } } | t
-           5 | persistent  | { "ids" : [ { "$numberInt" : "5" } ], "cursorId" : { "$numberLong" : "0" } }      | f
+           1 | file        | { "ids" : [ { "$numberInt" : "1" } ], "cursorId" : { "$numberLong" : "782305" } } | t
+           2 | file        | { "ids" : [ { "$numberInt" : "2" } ], "cursorId" : { "$numberLong" : "782305" } } | t
+           3 | file        | { "ids" : [ { "$numberInt" : "3" } ], "cursorId" : { "$numberLong" : "782305" } } | t
+           4 | file        | { "ids" : [ { "$numberInt" : "4" } ], "cursorId" : { "$numberLong" : "782305" } } | t
+           5 | file        | { "ids" : [ { "$numberInt" : "5" } ], "cursorId" : { "$numberLong" : "0" } }      | f
 (5 rows)
 
 -- Planner-rewritten streaming getMore restores the retained default before
@@ -645,9 +645,9 @@ SELECT * FROM collation_find_cursor_test.drain_cursor_pages(
     1);
  page_number | cursor_kind |                                       batch                                        | has_continuation 
 -------------+-------------+------------------------------------------------------------------------------------+------------------
-           1 | persistent  | { "ids" : [  ], "cursorId" : { "$numberLong" : "782306" } }                        | t
-           2 | persistent  | { "ids" : [ { "$numberInt" : "11" } ], "cursorId" : { "$numberLong" : "782306" } } | t
-           3 | persistent  | { "ids" : [ { "$numberInt" : "13" } ], "cursorId" : { "$numberLong" : "0" } }      | f
+           1 | file        | { "ids" : [  ], "cursorId" : { "$numberLong" : "782306" } }                        | t
+           2 | file        | { "ids" : [ { "$numberInt" : "11" } ], "cursorId" : { "$numberLong" : "782306" } } | t
+           3 | file        | { "ids" : [ { "$numberInt" : "13" } ], "cursorId" : { "$numberLong" : "0" } }      | f
 (3 rows)
 
 SELECT * FROM collation_find_cursor_test.drain_cursor_pages(
@@ -664,9 +664,9 @@ SELECT * FROM collation_find_cursor_test.drain_cursor_pages(
     true);
  page_number | cursor_kind |                                       batch                                        | has_continuation 
 -------------+-------------+------------------------------------------------------------------------------------+------------------
-           1 | persistent  | { "ids" : [  ], "cursorId" : { "$numberLong" : "782320" } }                        | t
-           2 | persistent  | { "ids" : [ { "$numberInt" : "11" } ], "cursorId" : { "$numberLong" : "782320" } } | t
-           3 | persistent  | { "ids" : [ { "$numberInt" : "13" } ], "cursorId" : { "$numberLong" : "0" } }      | f
+           1 | file        | { "ids" : [  ], "cursorId" : { "$numberLong" : "782320" } }                        | t
+           2 | file        | { "ids" : [ { "$numberInt" : "11" } ], "cursorId" : { "$numberLong" : "782320" } } | t
+           3 | file        | { "ids" : [ { "$numberInt" : "13" } ], "cursorId" : { "$numberLong" : "0" } }      | f
 (3 rows)
 
 -- Planner-rewritten getMore also restores the retained binary semantics before

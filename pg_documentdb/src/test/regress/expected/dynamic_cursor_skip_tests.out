@@ -92,7 +92,7 @@ $$;
 ------------------------------------------------------------
 SET documentdb.enable_dynamic_cursor_with_skiplimit TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('skiptest', '{ "find": "coll", "skip": 3 }');
-                                     QUERY PLAN                                     
+                                     QUERY PLAN
 ------------------------------------------------------------------------------------
  Limit
    Output: document
@@ -107,7 +107,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('skip
 
 SET documentdb.enable_dynamic_cursor_with_skiplimit TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('skiptest', '{ "find": "coll", "skip": 3 }');
-                                 QUERY PLAN                                  
+                                 QUERY PLAN
 -----------------------------------------------------------------------------
  Limit
    Output: document
@@ -123,7 +123,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('skip
 -- flag authorizes the pair, so they stream as a unit and fall back as a unit.
 SET documentdb.enable_dynamic_cursor_with_skiplimit TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('skiptest', '{ "find": "coll", "skip": 3, "limit": 6 }');
-                                     QUERY PLAN                                     
+                                     QUERY PLAN
 ------------------------------------------------------------------------------------
  Limit
    Output: document
@@ -148,7 +148,7 @@ FROM find_cursor_first_page(
 SELECT persistconnection,
        bson_dollar_project(continuation, '{ "lim": 1 }') AS authorization_state
 FROM skip_limit_authorization;
- persistconnection |         authorization_state         
+ persistconnection |         authorization_state
 -------------------+-------------------------------------
  f                 | { "lim" : { "$numberLong" : "4" } }
 (1 row)
@@ -156,7 +156,7 @@ FROM skip_limit_authorization;
 DROP TABLE skip_limit_authorization;
 SET documentdb.enable_dynamic_cursor_with_skiplimit TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('skiptest', '{ "find": "coll", "skip": 3, "limit": 6 }');
-                                 QUERY PLAN                                  
+                                 QUERY PLAN
 -----------------------------------------------------------------------------
  Limit
    Output: document
@@ -177,7 +177,7 @@ SELECT drain_skip_report(
     '{ "find": "coll", "skip": 3, "limit": 6, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "9001" }, "collection": "coll", "batchSize": 2 }',
     9001) AS skip3_limit6_batch2;
-           skip3_limit6_batch2           
+           skip3_limit6_batch2
 -----------------------------------------
  persist=f pages=3 ids=[4,5] [6,7] [8,9]
 (1 row)
@@ -187,7 +187,7 @@ SELECT drain_skip_report(
     '{ "find": "coll", "skip": 8, "limit": 5, "batchSize": 3 }',
     '{ "getMore": { "$numberLong": "9002" }, "collection": "coll", "batchSize": 3 }',
     9002) AS skip8_limit5_batch3;
-           skip8_limit5_batch3           
+           skip8_limit5_batch3
 -----------------------------------------
  persist=f pages=2 ids=[9,10,11] [12,13]
 (1 row)
@@ -198,7 +198,7 @@ SELECT drain_skip_report(
     '{ "find": "coll", "skip": 17, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "9003" }, "collection": "coll", "batchSize": 2 }',
     9003) AS skip17_nolimit_batch2;
-       skip17_nolimit_batch2        
+       skip17_nolimit_batch2
 ------------------------------------
  persist=f pages=2 ids=[18,19] [20]
 (1 row)
@@ -208,7 +208,7 @@ SELECT drain_skip_report(
     '{ "find": "coll", "filter": { "a": { "$gte": 5 } }, "skip": 2, "limit": 4, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "9004" }, "collection": "coll", "batchSize": 2 }',
     9004) AS filter_skip2_limit4;
-        filter_skip2_limit4         
+        filter_skip2_limit4
 ------------------------------------
  persist=f pages=2 ids=[7,8] [9,10]
 (1 row)
@@ -218,7 +218,7 @@ SELECT drain_skip_report(
     '{ "find": "coll", "sort": { "_id": -1 }, "skip": 3, "limit": 4, "projection": { "a": 1 }, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "9005" }, "collection": "coll", "batchSize": 2 }',
     9005) AS sorted_desc_skip3_limit4_projection;
-                                                sorted_desc_skip3_limit4_projection                                                 
+                                                sorted_desc_skip3_limit4_projection
 ------------------------------------------------------------------------------------------------------------------------------------
  persist=f pages=2 ids=[17,16] [15,14] docs=[{"a": 17, "_id": 17},{"a": 16, "_id": 16}] [{"a": 15, "_id": 15},{"a": 14, "_id": 14}]
 (1 row)
@@ -228,7 +228,7 @@ SELECT drain_skip_report(
     '{ "find": "coll", "skip": 25, "limit": 3, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "9006" }, "collection": "coll", "batchSize": 2 }',
     9006) AS skip_past_end;
-      skip_past_end       
+      skip_past_end
 --------------------------
  persist=f pages=1 ids=[]
 (1 row)
@@ -236,7 +236,7 @@ SELECT drain_skip_report(
 -- batchSize 0 leaves an empty state, preserving the offset for getMore.
 SELECT persistconnection AS batch0_persistconnection
 FROM find_cursor_first_page('skiptest', '{ "find": "coll", "skip": 3, "limit": 4, "batchSize": 0 }', 9008);
- batch0_persistconnection 
+ batch0_persistconnection
 --------------------------
  f
 (1 row)
@@ -265,7 +265,7 @@ SELECT drain_skip_report(
     '{ "find": "coll", "skip": 3, "limit": 4, "batchSize": 0 }',
     '{ "getMore": { "$numberLong": "9009" }, "collection": "coll", "batchSize": 4 }',
     9009) AS batch0_drain;
-            batch0_drain            
+            batch0_drain
 ------------------------------------
  persist=f pages=2 ids=[] [4,5,6,7]
 (1 row)
@@ -277,7 +277,7 @@ SELECT drain_skip_report(
     '{ "find": "coll", "skip": 3, "limit": 6 }',
     '{ "getMore": { "$numberLong": "9022" }, "collection": "coll", "batchSize": 2 }',
     9022) AS no_batchsize_skip6;
-           no_batchsize_skip6            
+           no_batchsize_skip6
 -----------------------------------------
  persist=f pages=3 ids=[4,5] [6,7] [8,9]
 (1 row)
@@ -304,7 +304,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('skip
 (11 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('skiptest', '{ "find": "coll", "skip": 3, "limit": 6, "projection": { "a": 1 } }');
-                                                                                                   QUERY PLAN                                                                                                   
+                                                                                                   QUERY PLAN
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Subquery Scan on agg_stage_2
    Output: documentdb_api_internal.bson_dollar_project_find(agg_stage_2.document, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -323,7 +323,7 @@ SELECT drain_skip_report(
     '{ "find": "coll", "skip": 3, "limit": 4, "projection": { "a": 1 }, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "9007" }, "collection": "coll", "batchSize": 2 }',
     9007) AS projection_streamed;
-                                                  projection_streamed                                                   
+                                                  projection_streamed
 ------------------------------------------------------------------------------------------------------------------------
  persist=f pages=2 ids=[4,5] [6,7] docs=[{"a": 4, "_id": 4},{"a": 5, "_id": 5}] [{"a": 6, "_id": 6},{"a": 7, "_id": 7}]
 (1 row)
@@ -333,7 +333,7 @@ SELECT drain_skip_report(
     '{ "find": "coll", "skip": 3, "limit": 4, "projection": { "a": 1 }, "batchSize": 0 }',
     '{ "getMore": { "$numberLong": "9024" }, "collection": "coll", "batchSize": 2 }',
     9024) AS projection_batchsize0;
-                                                    projection_batchsize0                                                     
+                                                    projection_batchsize0
 ------------------------------------------------------------------------------------------------------------------------------
  persist=f pages=3 ids=[] [4,5] [6,7] docs=[] [{"a": 4, "_id": 4},{"a": 5, "_id": 5}] [{"a": 6, "_id": 6},{"a": 7, "_id": 7}]
 (1 row)
@@ -348,7 +348,7 @@ FROM find_cursor_first_page(
 SELECT persistconnection,
        bson_dollar_project(continuation, '{ "lim": 1 }') AS projection_limit_state
 FROM projection_limit_state;
- persistconnection |       projection_limit_state        
+ persistconnection |       projection_limit_state
 -------------------+-------------------------------------
  f                 | { "lim" : { "$numberLong" : "2" } }
 (1 row)
@@ -359,7 +359,7 @@ FROM cursor_get_more(
     'skiptest',
     '{ "getMore": { "$numberLong": "9025" }, "collection": "coll", "batchSize": 2 }',
     (SELECT continuation FROM projection_limit_state));
-                                                                projection_final_page                                                                | cursor_closed 
+                                                                projection_final_page                                                                | cursor_closed
 -----------------------------------------------------------------------------------------------------------------------------------------------------+---------------
  { "docs" : [ { "_id" : { "$numberInt" : "6" }, "a" : { "$numberInt" : "6" } }, { "_id" : { "$numberInt" : "7" }, "a" : { "$numberInt" : "7" } } ] } | t
 (1 row)
@@ -369,13 +369,13 @@ DROP TABLE projection_limit_state;
 -- document does not surface an error.
 SELECT documentdb_api.insert_one('skiptest', 'projection_error', '{ "_id": 1, "a": [1, 2], "b": [10] }');
 NOTICE:  creating collection
-                              insert_one                              
+                              insert_one
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('skiptest', 'projection_error', '{ "_id": 2, "a": [1, 2], "b": [20, 21] }');
-                              insert_one                              
+                              insert_one
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -386,7 +386,7 @@ FROM find_cursor_first_page(
     'skiptest',
     '{ "find": "projection_error", "filter": { "a": 2 }, "sort": { "_id": 1 }, "skip": 1, "limit": 1, "projection": { "b.$": 1 }, "batchSize": 1 }',
     9026);
-                             projection_skips_invalid_value                             
+                             projection_skips_invalid_value
 ----------------------------------------------------------------------------------------
  { "docs" : [ { "_id" : { "$numberInt" : "2" }, "b" : [ { "$numberInt" : "21" } ] } ] }
 (1 row)
@@ -411,7 +411,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON)
         '{ "getMore": { "$numberLong": "9023" }, "collection": "coll", "batchSize": 2 }',
         $cmd$ || quote_literal(:'explain_cont') || $cmd$::documentdb_core.bson);
 $cmd$);
-                                run_explain_and_trim                                
+                                run_explain_and_trim
 ------------------------------------------------------------------------------------
  Limit
    Output: document
@@ -427,7 +427,7 @@ $cmd$);
 DROP TABLE skip_getmore_explain;
 -- skip 0 is a no-op and must not enter the skip streaming path.
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('skiptest', '{ "find": "coll", "skip": 0, "limit": 6 }');
-                                     QUERY PLAN                                     
+                                     QUERY PLAN
 ------------------------------------------------------------------------------------
  Limit
    Output: document
@@ -443,7 +443,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('skip
 -- singleBatch owns cursor lifetime and must not create a continuation.
 SELECT cursorpage AS page, continuation IS NULL AS no_continuation FROM find_cursor_first_page('skiptest', '{ "find": "coll", "skip": 3, "limit": 4, "singleBatch": true, "batchSize": 2 }') \gset
 SELECT bson_dollar_project(:'page'::bson, '{ "_id": 0, "ids": "$cursor.firstBatch._id" }'::bson) AS single_batch_skip, :'no_continuation'::bool AS no_continuation;
-                       single_batch_skip                        | no_continuation 
+                       single_batch_skip                        | no_continuation
 ----------------------------------------------------------------+-----------------
  { "ids" : [ { "$numberInt" : "4" }, { "$numberInt" : "5" } ] } | t
 (1 row)
@@ -459,7 +459,7 @@ END;
 $$;
 NOTICE:  creating collection
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('skiptest', '{ "find": "sharded", "skip": 3, "limit": 4 }');
-                           QUERY PLAN                            
+                           QUERY PLAN
 -----------------------------------------------------------------
  Limit
    Output: document
@@ -469,7 +469,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('skip
 
 -- Aggregation skip/limit remains outside the find-only streaming path.
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('skiptest', '{ "aggregate": "coll", "pipeline": [ { "$skip": 3 }, { "$limit": 4 }, { "$project": { "a": 1 } } ], "cursor": {} }');
-                                                                                          QUERY PLAN                                                                                          
+                                                                                          QUERY PLAN
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Subquery Scan on agg_stage_2
    Output: documentdb_api_internal.bson_dollar_project(agg_stage_2.document, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -494,7 +494,7 @@ SET documentdb.enable_dynamic_cursor_with_skiplimit TO on;
 SELECT cursorpage AS page, continuation AS cont, persistconnection AS persist, cursorid AS cid
 FROM find_cursor_first_page('skiptest', '{ "find": "coll", "skip": 3, "limit": 6, "projection": { "a": 1 }, "batchSize": 2 }') \gset
 SELECT bson_dollar_project(:'page'::bson, '{ "_id": 0, "docs": "$cursor.firstBatch" }'::bson) AS guc_toggle_page1, :'persist'::bool AS persist;
-                                                                  guc_toggle_page1                                                                   | persist 
+                                                                  guc_toggle_page1                                                                   | persist
 -----------------------------------------------------------------------------------------------------------------------------------------------------+---------
  { "docs" : [ { "_id" : { "$numberInt" : "4" }, "a" : { "$numberInt" : "4" } }, { "_id" : { "$numberInt" : "5" }, "a" : { "$numberInt" : "5" } } ] } | f
 (1 row)
@@ -502,7 +502,7 @@ SELECT bson_dollar_project(:'page'::bson, '{ "_id": 0, "docs": "$cursor.firstBat
 SET documentdb.enable_dynamic_cursor_with_skiplimit TO off;
 SELECT cursorpage AS page, continuation AS cont FROM cursor_get_more('skiptest', ('{ "getMore": ' || :'cid' || ', "collection": "coll", "batchSize": 2 }')::bson, :'cont'::bson) \gset
 SELECT bson_dollar_project(:'page'::bson, '{ "_id": 0, "docs": "$cursor.nextBatch" }'::bson) AS guc_toggle_page2_guc_off;
-                                                              guc_toggle_page2_guc_off                                                               
+                                                              guc_toggle_page2_guc_off
 -----------------------------------------------------------------------------------------------------------------------------------------------------
  { "docs" : [ { "_id" : { "$numberInt" : "6" }, "a" : { "$numberInt" : "6" } }, { "_id" : { "$numberInt" : "7" }, "a" : { "$numberInt" : "7" } } ] }
 (1 row)
@@ -515,9 +515,9 @@ SELECT drain_skip_report(
     '{ "find": "coll", "skip": 3, "limit": 6, "projection": { "a": 1 }, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "9010" }, "collection": "coll", "batchSize": 2 }',
     9010) AS guc_off_same_results;
-                                                                         guc_off_same_results                                                                         
+                                                                         guc_off_same_results
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------
- persist=t pages=3 ids=[4,5] [6,7] [8,9] docs=[{"a": 4, "_id": 4},{"a": 5, "_id": 5}] [{"a": 6, "_id": 6},{"a": 7, "_id": 7}] [{"a": 8, "_id": 8},{"a": 9, "_id": 9}]
+ persist=f pages=3 ids=[4,5] [6,7] [8,9] docs=[{"a": 4, "_id": 4},{"a": 5, "_id": 5}] [{"a": 6, "_id": 6},{"a": 7, "_id": 7}] [{"a": 8, "_id": 8},{"a": 9, "_id": 9}]
 (1 row)
 
 ------------------------------------------------------------
@@ -528,7 +528,7 @@ SELECT drain_skip_report(
 SET documentdb.enable_dynamic_cursor_with_skiplimit TO on;
 -- A limit-only find authorizes its top-level Limit node. Must stream.
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('skiptest', '{ "find": "coll", "limit": 6 }');
-                                     QUERY PLAN                                     
+                                     QUERY PLAN
 ------------------------------------------------------------------------------------
  Limit
    Output: document
@@ -545,14 +545,14 @@ SELECT drain_skip_report(
     '{ "find": "coll", "limit": 6, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "9011" }, "collection": "coll", "batchSize": 2 }',
     9011) AS limit_only_tracked_limit;
-        limit_only_tracked_limit         
+        limit_only_tracked_limit
 -----------------------------------------
  persist=f pages=3 ids=[1,2] [3,4] [5,6]
 (1 row)
 
 -- A skip-only find uses the same top-level Limit-node authorization. Must stream.
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('skiptest', '{ "find": "coll", "skip": 14 }');
-                                     QUERY PLAN                                     
+                                     QUERY PLAN
 ------------------------------------------------------------------------------------
  Limit
    Output: document
@@ -569,7 +569,7 @@ SELECT drain_skip_report(
     '{ "find": "coll", "skip": 14, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "9012" }, "collection": "coll", "batchSize": 2 }',
     9012) AS skip_only_tracked_skip;
-            skip_only_tracked_skip             
+            skip_only_tracked_skip
 -----------------------------------------------
  persist=f pages=3 ids=[15,16] [17,18] [19,20]
 (1 row)
@@ -578,7 +578,7 @@ SELECT drain_skip_report(
 -- streaming threshold (> 1) so the limit is never tracked, while the offset is.
 -- The limit node is served natively, so the plan still streams and returns _id 4.
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('skiptest', '{ "find": "coll", "skip": 3, "limit": 1 }');
-                                     QUERY PLAN                                     
+                                     QUERY PLAN
 ------------------------------------------------------------------------------------
  Limit
    Output: document
@@ -595,14 +595,14 @@ SELECT drain_skip_report(
     '{ "find": "coll", "skip": 3, "limit": 1, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "9013" }, "collection": "coll", "batchSize": 2 }',
     9013) AS skip_with_limit1;
-     skip_with_limit1      
+     skip_with_limit1
 ---------------------------
  persist=f pages=1 ids=[4]
 (1 row)
 
 -- A projection moves the tracked counts into its generated subquery.
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('skiptest', '{ "find": "coll", "skip": 3, "limit": 6, "projection": { "a": 1 } }');
-                                                                                                   QUERY PLAN                                                                                                   
+                                                                                                   QUERY PLAN
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Subquery Scan on agg_stage_2
    Output: documentdb_api_internal.bson_dollar_project_find(agg_stage_2.document, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -621,7 +621,7 @@ SELECT drain_skip_report(
     '{ "find": "coll", "skip": 3, "limit": 6, "projection": { "a": 1 }, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "9014" }, "collection": "coll", "batchSize": 2 }',
     9014) AS skip_limit_projection_tracked;
-                                                                    skip_limit_projection_tracked                                                                     
+                                                                    skip_limit_projection_tracked
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------
  persist=f pages=3 ids=[4,5] [6,7] [8,9] docs=[{"a": 4, "_id": 4},{"a": 5, "_id": 5}] [{"a": 6, "_id": 6},{"a": 7, "_id": 7}] [{"a": 8, "_id": 8},{"a": 9, "_id": 9}]
 (1 row)
@@ -633,7 +633,7 @@ SELECT drain_skip_report(
     '{ "find": "coll", "skip": 5, "limit": 7, "batchSize": 3 }',
     '{ "getMore": { "$numberLong": "9015" }, "collection": "coll", "batchSize": 3 }',
     9015) AS getmore_limit_tracked_skip_not;
-        getmore_limit_tracked_skip_not        
+        getmore_limit_tracked_skip_not
 ----------------------------------------------
  persist=f pages=3 ids=[6,7,8] [9,10,11] [12]
 (1 row)
@@ -649,7 +649,7 @@ SELECT drain_skip_report(
     '{ "find": "coll", "skip": 3, "limit": 6, "batchSize": 0 }',
     '{ "getMore": { "$numberLong": "9016" }, "collection": "coll", "batchSize": 3 }',
     9016) AS gate_batchsize0;
-             gate_batchsize0              
+             gate_batchsize0
 ------------------------------------------
  persist=f pages=3 ids=[] [4,5,6] [7,8,9]
 (1 row)
@@ -667,9 +667,9 @@ SELECT drain_skip_report(
     '{ "find": "sharded", "sort": { "_id": 1 }, "skip": 3, "limit": 6, "projection": { "sk": 1 }, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "9018" }, "collection": "sharded", "batchSize": 2 }',
     9018) AS gate_sharded;
-                                                                                gate_sharded                                                                                
+                                                                                gate_sharded
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- persist=t pages=3 ids=[4,5] [6,7] [8,9] docs=[{"sk": 4, "_id": 4},{"sk": 5, "_id": 5}] [{"sk": 6, "_id": 6},{"sk": 7, "_id": 7}] [{"sk": 8, "_id": 8},{"sk": 9, "_id": 9}]
+ persist=f pages=3 ids=[4,5] [6,7] [8,9] docs=[{"sk": 4, "_id": 4},{"sk": 5, "_id": 5}] [{"sk": 6, "_id": 6},{"sk": 7, "_id": 7}] [{"sk": 8, "_id": 8},{"sk": 9, "_id": 9}]
 (1 row)
 
 -- Gate: collection exists. A missing collection has no offset to mistrack.
@@ -677,7 +677,7 @@ SELECT drain_skip_report(
     '{ "find": "missing_coll", "skip": 3, "limit": 6, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "9019" }, "collection": "missing_coll", "batchSize": 2 }',
     9019) AS gate_missing_collection;
- gate_missing_collection  
+ gate_missing_collection
 --------------------------
  persist=t pages=1 ids=[]
 (1 row)
@@ -688,7 +688,7 @@ SELECT drain_skip_report(
     '{ "find": "coll", "skip": 0, "limit": 6, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "9020" }, "collection": "coll", "batchSize": 2 }',
     9020) AS gate_skip_zero;
-             gate_skip_zero              
+             gate_skip_zero
 -----------------------------------------
  persist=f pages=3 ids=[1,2] [3,4] [5,6]
 (1 row)
@@ -696,7 +696,7 @@ SELECT drain_skip_report(
 -- Gate: the dynamic cursor param kind. An aggregation $skip is not the find
 -- path, so neither count is tracked.
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('skiptest', '{ "aggregate": "coll", "pipeline": [ { "$skip": 3 }, { "$limit": 6 } ], "cursor": { "batchSize": 2 } }');
-                                    QUERY PLAN                                     
+                                    QUERY PLAN
 -----------------------------------------------------------------------------------
  Limit
    Output: collection.document
@@ -715,9 +715,9 @@ SELECT drain_skip_report(
     '{ "find": "coll", "skip": 3, "limit": 6, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "9021" }, "collection": "coll", "batchSize": 2 }',
     9021) AS gate_guc_off;
-              gate_guc_off               
+              gate_guc_off
 -----------------------------------------
- persist=t pages=3 ids=[4,5] [6,7] [8,9]
+ persist=f pages=3 ids=[4,5] [6,7] [8,9]
 (1 row)
 
 SET documentdb.enable_dynamic_cursor_with_skiplimit TO on;

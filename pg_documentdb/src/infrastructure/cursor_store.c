@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/infrastructure/cursor_store.c
  *
@@ -54,7 +55,6 @@
 extern char *ApiGucPrefix;
 extern bool EnableBackgroundWorker;
 extern bool EnableCursorCleanupInRecovery;
-extern bool UseFileBasedPersistedCursors;
 extern bool CleanupCursorFiles;
 extern int MaxAllowedCursorIntermediateFileSizeMB;
 extern int DefaultCursorExpiryTimeLimitSeconds;
@@ -456,8 +456,7 @@ void
 GetCurrentCursorCount(int32_t *currentCursorCount, int32_t *measuredCursorCount,
 					  int64_t *lastCursorSize)
 {
-	if (!cursor_set_initialized || !UseFileBasedPersistedCursors ||
-		!CleanupCursorFiles)
+	if (!cursor_set_initialized || !CleanupCursorFiles)
 	{
 		*currentCursorCount = 0;
 		*measuredCursorCount = 0;
@@ -473,7 +472,7 @@ GetCurrentCursorCount(int32_t *currentCursorCount, int32_t *measuredCursorCount,
 void
 DeletePendingCursorFiles(void)
 {
-	if (!UseFileBasedPersistedCursors || !cursor_set_initialized)
+	if (!cursor_set_initialized)
 	{
 		return;
 	}

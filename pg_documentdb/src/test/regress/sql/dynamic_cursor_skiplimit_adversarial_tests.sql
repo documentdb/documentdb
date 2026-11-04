@@ -43,6 +43,23 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION adv_cursor_mode(
+    p_cont bson,
+    p_persist_connection bool)
+RETURNS text LANGUAGE plpgsql IMMUTABLE AS $$
+BEGIN
+    IF p_persist_connection THEN
+        RETURN 'persisted_connection';
+    ELSIF p_cont IS NULL THEN
+        RETURN 'closed';
+    ELSIF p_cont::text::jsonb ? 'qf' THEN
+        RETURN 'persisted_file';
+    ELSE
+        RETURN 'streaming';
+    END IF;
+END;
+$$;
+
 -- Drains a find across pages, reporting the ids seen per page plus the total.
 -- The per-page ids are what make an over-skip or an over-return detectable; the
 -- total is what makes a silent early stop detectable.
@@ -60,10 +77,12 @@ DECLARE
     v_count int;
     v_total int := 0;
     v_all text := '';
+    v_cursor_mode text;
 BEGIN
     SELECT cursorpage, continuation, persistconnection
     INTO v_page, v_cont, v_persist
     FROM find_cursor_first_page('advskiplim', p_find_spec::bson, p_cursor_id);
+    v_cursor_mode := adv_cursor_mode(v_cont, v_persist);
 
     SELECT COALESCE(string_agg(value->'_id'->>'$numberInt', ',' ORDER BY ordinality), ''),
            count(*)
@@ -87,8 +106,8 @@ BEGIN
         v_total := v_total + v_count;
     END LOOP;
 
-    RETURN FORMAT('persist=%s pages=%s total=%s ids=%s',
-                  v_persist, v_pages, v_total, v_all);
+    RETURN FORMAT('cursor=%s pages=%s total=%s ids=%s',
+                  v_cursor_mode, v_pages, v_total, v_all);
 END;
 $$;
 
@@ -106,10 +125,12 @@ DECLARE
     v_pages int := 1;
     v_count int;
     v_total int := 0;
+    v_cursor_mode text;
 BEGIN
     SELECT cursorpage, continuation, persistconnection
     INTO v_page, v_cont, v_persist
     FROM find_cursor_first_page('advskiplim', p_find_spec::bson, p_cursor_id);
+    v_cursor_mode := adv_cursor_mode(v_cont, v_persist);
 
     SELECT count(*) INTO v_count
     FROM jsonb_array_elements((v_page::text::jsonb)->'cursor'->'firstBatch');
@@ -124,7 +145,8 @@ BEGIN
         v_total := v_total + v_count;
     END LOOP;
 
-    RETURN FORMAT('persist=%s pages=%s total=%s', v_persist, v_pages, v_total);
+    RETURN FORMAT('cursor=%s pages=%s total=%s',
+                  v_cursor_mode, v_pages, v_total);
 END;
 $$;
 
@@ -446,7 +468,8 @@ $$;
 SET documentdb.enable_dynamic_cursor_with_skiplimit TO off;
 SELECT continuation AS dropcont2, persistconnection AS persist2
 FROM find_cursor_first_page('advskiplim', '{ "find": "dropme2", "limit": 8, "batchSize": 3 }', 9803) \gset
-SELECT :'persist2'::bool AS guc_off_first_page_persistent;
+SELECT adv_cursor_mode(:'dropcont2'::bson, :'persist2'::bool)
+    AS guc_off_first_page_cursor_mode;
 SELECT documentdb_api.drop_collection('advskiplim', 'dropme2');
 SELECT bson_dollar_project(cursorpage, '{ "_id": 0, "ids": "$cursor.nextBatch._id" }') AS guc_off_resume_after_collection_dropped
 FROM cursor_get_more('advskiplim', '{ "getMore": { "$numberLong": "9803" }, "collection": "dropme2", "batchSize": 3 }'::bson, :'dropcont2'::bson);
@@ -468,7 +491,8 @@ END;
 $$;
 SELECT continuation AS shardcont, persistconnection AS shardpersist
 FROM find_cursor_first_page('advskiplim', '{ "find": "shardme", "sort": { "_id": 1 }, "skip": 2, "limit": 8, "batchSize": 3 }', 9804) \gset
-SELECT :'shardpersist'::bool AS shard_first_page_persistconnection;
+SELECT adv_cursor_mode(:'shardcont'::bson, :'shardpersist'::bool)
+    AS shard_first_page_cursor_mode;
 SELECT documentdb_api.shard_collection('advskiplim', 'shardme', '{ "sk": "hashed" }'::documentdb_core.bson, false);
 SELECT bson_dollar_project(cursorpage, '{ "_id": 0, "ids": "$cursor.nextBatch._id" }') AS resume_after_collection_sharded
 FROM cursor_get_more('advskiplim', '{ "getMore": { "$numberLong": "9804" }, "collection": "shardme", "batchSize": 3 }'::bson, :'shardcont'::bson);
@@ -544,3 +568,4 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 
 DROP FUNCTION adv_drain(text, text, bigint);
 DROP FUNCTION adv_drain_shape(text, text, bigint);
+DROP FUNCTION adv_cursor_mode(bson, bool);

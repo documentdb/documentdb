@@ -58,6 +58,7 @@
 extern int32_t MaxWorkerCursorSize;
 extern bool EnablePrimaryKeyCursorScan;
 extern bool UseFileBasedPersistedCursors;
+extern bool UseFileBasedPersistedDynamicCursors;
 extern bool EnableDebugQueryText;
 extern bool EnableDynamicCursorParallelPlans;
 extern bool EnableNonDynamicCursorParallelPlans;
@@ -356,6 +357,29 @@ uint32_t ContiunationTokenLength = 16;
 #define TAILABLE_CURSOR_CONTINUATION_ATTRIB_NUM 2
 
 
+bool
+ShouldUseFileBasedPersistedCursor(QueryCursorType cursorType)
+{
+	switch (cursorType)
+	{
+		case QueryCursorType_Persistent:
+		{
+			return UseFileBasedPersistedCursors;
+		}
+
+		case QueryCursorType_Dynamic:
+		{
+			return UseFileBasedPersistedDynamicCursors;
+		}
+
+		default:
+		{
+			return false;
+		}
+	}
+}
+
+
 /*
  * Executes a query that returns a single row (e.g. Count/Distinct)
  * And returns the first datum.
@@ -389,10 +413,11 @@ DrainSingleResultQuery(Query *query)
 	uint32_t accumulatedSize = 0;
 	bool closeCursor = true;
 	bool isSingleResult = true;
+	bool useFileBasedPersistedCursorForSingleBatch = false;
 	PersistentTupleDestReceiver *receiver = CreatePersistentTupleDestReceiver(
 		arrayWriter, currentContext, batchSize, cursorName,
 		accumulatedSize, closeCursor, isSingleResult,
-		UseFileBasedPersistedCursors);
+		useFileBasedPersistedCursorForSingleBatch);
 
 	UpdateCustomScanState stateFunc = NULL;
 	bool drainQuery = true;
@@ -982,10 +1007,15 @@ DrainTailableQuery(pgbson *cursorSpec, Query *query, int batchSize,
 
 
 QueryCursorPlanResult *
-PlanForcedPersistentQuery(Query *query, bool isHoldCursor)
+PlanForcedPersistentQuery(Query *query, bool isHoldCursor, bool useFileBasedCursors)
 {
 	/* Set up cursor flags */
 	int cursorOptions = CURSOR_OPT_BINARY;
+
+	/*
+	 * A hold cursor option is set here, however it will be ignored when file-based
+	 * cursors are used.
+	 */
 	if (isHoldCursor)
 	{
 		cursorOptions = cursorOptions | CURSOR_OPT_HOLD;
@@ -1005,7 +1035,7 @@ PlanForcedPersistentQuery(Query *query, bool isHoldCursor)
 	 * Gather leader-only — correct, just not parallel.
 	 */
 	if (EnableNonDynamicCursorParallelPlans &&
-		isHoldCursor && UseFileBasedPersistedCursors &&
+		isHoldCursor && useFileBasedCursors &&
 		query->commandType == CMD_SELECT && !query->hasModifyingCTE)
 	{
 		cursorOptions |= CURSOR_OPT_PARALLEL_OK;
@@ -1077,6 +1107,7 @@ CreateAndDrainSingleBatchQuery(const char *cursorName, Query *query,
 	ParamListInfo paramList = NULL;
 	PlannedStmt *queryPlan = PgPlanQueryCompat(query, NULL, cursorOptions, paramList);
 	bool isSingleResult = false;
+	bool useFileBasedPersistedCursorForSingleBatch = false;
 	PersistentTupleDestReceiver *receiver = CreatePersistentTupleDestReceiver(
 		arrayWriter,
 		CurrentMemoryContext,
@@ -1085,7 +1116,7 @@ CreateAndDrainSingleBatchQuery(const char *cursorName, Query *query,
 		accumulatedSize,
 		closeCursor,
 		isSingleResult,
-		UseFileBasedPersistedCursors);
+		useFileBasedPersistedCursorForSingleBatch);
 	UpdateCustomScanState stateFunc = NULL;
 	bool drainQuery = true;
 	DrainStatementViaExecutor(queryPlan, paramList, sourceText, (DestReceiver *) receiver,
@@ -1291,6 +1322,7 @@ CreateAndDrainPointReadQuery(const char *cursorName, Query *query,
 	int32_t batchSize = INT32_MAX;
 	bool closeCursor = true;
 	bool isSingleResult = false;
+	bool useFileBasedPersistedCursorForPointRead = false;
 	PersistentTupleDestReceiver *receiver = CreatePersistentTupleDestReceiver(
 		arrayWriter,
 		CurrentMemoryContext,
@@ -1298,7 +1330,7 @@ CreateAndDrainPointReadQuery(const char *cursorName, Query *query,
 		accumulatedSize,
 		closeCursor,
 		isSingleResult,
-		UseFileBasedPersistedCursors);
+		useFileBasedPersistedCursorForPointRead);
 	UpdateCustomScanState stateFunc = NULL;
 	bool drainQuery = true;
 	DrainStatementViaExecutor(queryPlan, paramList, sourceText,

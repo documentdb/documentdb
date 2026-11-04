@@ -1,9 +1,13 @@
 \i sql/bson_group_by_dynamic_streaming_tests.sql
 SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog, documentdb_api_internal, public;
+-- enableGroupByDistinctScan is enabled by default starting in v116. Pin it off here
+-- so this suite keeps exercising the non-distinct-scan plan shape for accumulator-less
+-- $group. Remove this pin when the flag is retired.
+SET documentdb.enableGroupByDistinctScan TO off;
 -- Ensure database 'gbstream_db' exists so that the system.dbSentinel collection
 -- does not consume a test collection id when running in standalone mode.
 SELECT documentdb_api.insert_one('gbstream_db', 'setup_sentinel', '{ "_id": 0 }');
-psql:sql/bson_group_by_dynamic_streaming_tests.sql:5: NOTICE:  creating collection
+psql:sql/bson_group_by_dynamic_streaming_tests.sql:10: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -21,7 +25,7 @@ SET documentdb.next_collection_index_id TO 79000;
 SELECT COUNT(documentdb_api.insert_one('gbstream_db', 'gstream',
     FORMAT('{ "_id": %s, "a": %s, "b": %s }', i, i % 5, i)::documentdb_core.bson))
 FROM generate_series(1, 50) i;
-psql:sql/bson_group_by_dynamic_streaming_tests.sql:14: NOTICE:  creating collection
+psql:sql/bson_group_by_dynamic_streaming_tests.sql:19: NOTICE:  creating collection
  count 
 -------
     50
@@ -177,6 +181,7 @@ DECLARE
     v_cursor_page documentdb_core.bson;
     v_continuation documentdb_core.bson;
     v_persist bool;
+    v_is_file_cursor bool;
     v_ids text := '';
     v_batch text;
 BEGIN
@@ -190,11 +195,15 @@ BEGIN
         commandSpec => FORMAT('{ "aggregate": "gstream", "hint": "a_1", "pipeline": [ { "$group": { "_id": "$a" } } ], "cursor": { "batchSize": %s } }', p_batch_size)::documentdb_core.bson,
         cursorId => 79500) fp;
 
-    IF p_streaming AND v_persist THEN
-        RAISE EXCEPTION 'batchSize=%: expected streaming (persistConnection=false)', p_batch_size;
+    v_is_file_cursor := COALESCE(v_continuation::text::jsonb ? 'qf', false);
+
+    IF p_streaming AND (v_persist OR v_is_file_cursor) THEN
+        RAISE EXCEPTION 'batchSize=%: expected streaming cursor', p_batch_size;
     END IF;
-    IF (NOT p_streaming) AND (NOT v_persist) THEN
-        RAISE EXCEPTION 'batchSize=%: expected persisted cursor (persistConnection=true)', p_batch_size;
+    IF (NOT p_streaming) AND v_continuation IS NOT NULL AND
+       NOT (v_persist OR v_is_file_cursor) THEN
+        RAISE EXCEPTION 'batchSize=%: expected held-portal or file-persisted cursor',
+            p_batch_size;
     END IF;
 
     v_batch := bson_dollar_project(v_cursor_page, '{ "x": "$cursor.firstBatch._id" }') ->> 'x';
@@ -255,7 +264,7 @@ BEGIN
     RAISE NOTICE 'Group-by dynamic streaming: batch sizes 1..7 stream all 5 groups and match the persisted cursor';
 END;
 $$;
-psql:sql/bson_group_by_dynamic_streaming_tests.sql:211: NOTICE:  Group-by dynamic streaming: batch sizes 1..7 stream all 5 groups and match the persisted cursor
+psql:sql/bson_group_by_dynamic_streaming_tests.sql:221: NOTICE:  Group-by dynamic streaming: batch sizes 1..7 stream all 5 groups and match the persisted cursor
 DROP FUNCTION gstream_drain_group(int, bool);
 -- ===========================================================================
 -- Stages layered on top of a fully pushable $group (a trailing $project or a
@@ -357,5 +366,5 @@ BEGIN
     RAISE NOTICE 'Group-by dynamic streaming: $group with trailing $project/$match stages matches the persisted cursor across batch sizes';
 END;
 $$;
-psql:sql/bson_group_by_dynamic_streaming_tests.sql:315: NOTICE:  Group-by dynamic streaming: $group with trailing $project/$match stages matches the persisted cursor across batch sizes
+psql:sql/bson_group_by_dynamic_streaming_tests.sql:325: NOTICE:  Group-by dynamic streaming: $group with trailing $project/$match stages matches the persisted cursor across batch sizes
 DROP FUNCTION gstream_drain_pipeline(text, int, bool);

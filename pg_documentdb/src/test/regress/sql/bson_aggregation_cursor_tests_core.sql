@@ -1,5 +1,7 @@
 
 CREATE SCHEMA aggregation_cursor_test;
+CREATE SEQUENCE aggregation_cursor_test.cursor_id_seq
+    AS bigint START WITH 5000000000;
 
 DO $$
 DECLARE i int;
@@ -35,6 +37,7 @@ $$
         cont bson;
         contProcessed bson;
         persistConn bool;
+        v_cursor_id bigint := nextval('aggregation_cursor_test.cursor_id_seq');
         findSpec bson;
         getMoreSpec bson;
     BEGIN
@@ -42,11 +45,11 @@ $$
     WITH r1 AS (SELECT 'get_aggregation_cursor_test' AS "find", filter AS "filter", sort AS "sort", project AS "projection", skipVal AS "skip", limitVal as "limit", pageSize AS "batchSize")
     SELECT row_get_bson(r1) INTO findSpec FROM r1;
 
-    WITH r1 AS (SELECT 'get_aggregation_cursor_test' AS "collection", 4294967294::int8 AS "getMore", pageSize AS "batchSize")
+    WITH r1 AS (SELECT 'get_aggregation_cursor_test' AS "collection", v_cursor_id AS "getMore", pageSize AS "batchSize")
     SELECT row_get_bson(r1) INTO getMoreSpec FROM r1;
 
     SELECT cursorPage, continuation, persistConnection INTO STRICT doc, cont, persistConn FROM
-                    documentdb_api.find_cursor_first_page(database => 'db', commandSpec => findSpec, cursorId => 4294967294);
+                    documentdb_api.find_cursor_first_page(database => 'db', commandSpec => findSpec, cursorId => v_cursor_id);
     SELECT documentdb_api_catalog.bson_dollar_project(doc,
         ('{ "ok": 1, "cursor.id": 1, "cursor.ns": 1, "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } }, ' ||
         ' "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }')::documentdb_core.bson), length(doc::bytea)::int INTO STRICT doc, docSize;
@@ -55,7 +58,7 @@ $$
         SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
     END IF;
     
-    SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+    SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0, "qf": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
     RETURN NEXT ROW(doc, docSize, contProcessed, persistConn)::aggregation_cursor_test.drain_result;
 
     FOR i IN 1..loopCount LOOP
@@ -69,7 +72,7 @@ $$
             SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
         END IF;
 
-        SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+        SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0, "qf": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
         RETURN NEXT ROW(doc, docSize, contProcessed, FALSE)::aggregation_cursor_test.drain_result;
     END LOOP;
 END;
@@ -85,6 +88,7 @@ $$
         cont bson;
         contProcessed bson;
         persistConn bool;
+        v_cursor_id bigint := nextval('aggregation_cursor_test.cursor_id_seq');
         aggregateSpec bson;
         getMoreSpec bson;
     BEGIN
@@ -97,11 +101,11 @@ $$
     r1 AS (SELECT collection_name AS "aggregate", pipeline AS "pipeline", row_get_bson(r0) AS "cursor" FROM r0)
     SELECT row_get_bson(r1) INTO aggregateSpec FROM r1;
 
-    WITH r1 AS (SELECT collection_name AS "collection", 4294967294::int8 AS "getMore", pageSize AS "batchSize" )
+    WITH r1 AS (SELECT collection_name AS "collection", v_cursor_id AS "getMore", pageSize AS "batchSize" )
     SELECT row_get_bson(r1) INTO getMoreSpec FROM r1;
 
     SELECT cursorPage, continuation, persistConnection INTO STRICT doc, cont, persistConn FROM
-                    documentdb_api.aggregate_cursor_first_page(database => 'db', commandSpec => aggregateSpec, cursorId => 4294967294);
+                    documentdb_api.aggregate_cursor_first_page(database => 'db', commandSpec => aggregateSpec, cursorId => v_cursor_id);
     SELECT documentdb_api_catalog.bson_dollar_project(doc,
         ('{ "ok": 1, "cursor.id": 1, "cursor.ns": 1, "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } }, ' ||
         ' "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }')::documentdb_core.bson), length(doc::bytea)::int INTO STRICT doc, docSize;
@@ -110,7 +114,7 @@ $$
         SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
     END IF;
     
-    SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+    SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0, "qf": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
     RETURN NEXT ROW(doc, docSize, contProcessed, persistConn)::aggregation_cursor_test.drain_result;
 
     FOR i IN 1..loopCount LOOP
@@ -124,7 +128,7 @@ $$
             SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
         END IF;
 
-        SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+        SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0, "qf": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
         RETURN NEXT ROW(doc, docSize, contProcessed, FALSE)::aggregation_cursor_test.drain_result;
     END LOOP;
 END;
