@@ -27,6 +27,9 @@
 #include "index_am/documentdb_rum.h"
 #include "query/bson_dollar_selectivity.h"
 #include "index_am/documentdb_rum_impl.h"
+#include "io/bson_core.h"
+#include "index_am/index_am_utils.h"
+#include "opclass/bson_gin_index_mgmt.h"
 
 #include "documentdb_extended_rum_function_catalog.h"
 
@@ -85,6 +88,7 @@ PG_FUNCTION_INFO_V1(documentdb_extended_rum_page_get_stats);
 PG_FUNCTION_INFO_V1(documentdb_extended_rum_page_get_entries);
 PG_FUNCTION_INFO_V1(documentdb_extended_rum_page_get_data_items);
 PG_FUNCTION_INFO_V1(documentdb_extended_rum_repair_revive_all_pages_and_tuples);
+PG_FUNCTION_INFO_V1(documentdb_extended_rum_repair_unset_multi_key_status);
 PG_FUNCTION_INFO_V1(documentdb_extended_rum_test_set_incomplete_split_on_page);
 PG_FUNCTION_INFO_V1(documentdb_extended_rum_get_meta_page_info_index);
 PG_FUNCTION_INFO_V1(documentdb_extended_rum_page_get_stats_index);
@@ -474,6 +478,42 @@ documentdb_extended_rum_repair_revive_all_pages_and_tuples(PG_FUNCTION_ARGS)
 	EnsureDocumentDBExtendedRumLib();
 	return core_function_catalog.documentdb_rum_repair_revive_all_pages_and_tuples(
 		fcinfo);
+}
+
+
+/*
+ * Only composite indexes without a wildcard path or per-path multi-key tracking keep
+ * the multi-key status in the index level flag that the repair clears. Wildcard
+ * indexes always need the flag, per-path tracked indexes store their status in the
+ * metapage metadata instead, and other index kinds don't get marked multi-key by
+ * empty arrays.
+ */
+PGDLLEXPORT Datum
+documentdb_extended_rum_repair_unset_multi_key_status(PG_FUNCTION_ARGS)
+{
+	EnsureDocumentDBExtendedRumLib();
+
+	Oid indexRelId = PG_GETARG_OID(0);
+	Relation indrel = index_open(indexRelId, AccessShareLock);
+
+	BsonGinCompositePathOptions *options = NULL;
+	if (indrel->rd_rel->relam == DocumentDBExtendedRumIndexAmId() &&
+		IsCompositeOpClass(indrel) && indrel->rd_opcoptions != NULL)
+	{
+		options = (BsonGinCompositePathOptions *) indrel->rd_opcoptions[0];
+	}
+
+	if (options == NULL || options->wildcardPathIndex >= 0 ||
+		options->enableMetadataBasedTracking)
+	{
+		ereport(ERROR, (errmsg("index \"%s\" is not a composite index without "
+							   "wildcard paths or per-path multi-key tracking; "
+							   "reindex instead",
+							   RelationGetRelationName(indrel))));
+	}
+
+	index_close(indrel, AccessShareLock);
+	return core_function_catalog.documentdb_rum_repair_unset_multi_key_status(fcinfo);
 }
 
 

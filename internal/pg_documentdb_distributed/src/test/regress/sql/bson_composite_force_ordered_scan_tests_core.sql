@@ -28,7 +28,7 @@ SELECT document FROM bson_aggregation_find(
 $cmd$) AS plan(query_plan)
 WHERE query_plan ~ '^\s*Sort( \(actual rows=[0-9.]+ loops=[0-9]+\))?$'
 	OR query_plan ~ '^\s*Task Count: 8$'
-	OR query_plan ~ 'Index Scan using a_1'
+	OR query_plan ~ 'Index (Only )?Scan using a_1'
 	OR query_plan ~ 'Index Cond:.*orderByScan';
 SELECT document FROM bson_aggregation_find(
 	'comp_ordind_db',

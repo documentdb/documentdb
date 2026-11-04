@@ -209,22 +209,12 @@ RMGR_PG_FUNCTION_DEF(documentdb_rum_update_multi_key_status)
 		PG_RETURN_VOID();
 	}
 
-	Buffer metaBuffer;
-	Page metapage;
-	RumMetaPageData *metadata;
-	GenericXLogState *state;
-
-	metaBuffer = ReadBuffer(index, RUM_METAPAGE_BLKNO);
+	Buffer metaBuffer = ReadBuffer(index, RUM_METAPAGE_BLKNO);
 	LockBuffer(metaBuffer, RUM_EXCLUSIVE);
 
-	state = GenericXLogStart(index);
-	metapage = GenericXLogRegisterBuffer(state, metaBuffer, 0);
-	metadata = RumPageGetMeta(metapage);
-
 	/* Set pending heap tuples to 1 to indicate this is a multi-key index */
-	metadata->nPendingHeapTuples |= 1;
+	rumWriteMultiKeyStatusInMetapage(index, metaBuffer, true);
 
-	GenericXLogFinish(state);
 	UnlockReleaseBuffer(metaBuffer);
 	PG_RETURN_VOID();
 }

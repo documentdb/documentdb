@@ -35,6 +35,11 @@ RETURNS void
 LANGUAGE c
 AS '$libdir/pg_documentdb_extended_rum', 'documentdb_extended_rum_repair_revive_all_pages_and_tuples';
 
+CREATE OR REPLACE FUNCTION documentdb_api_internal.documentdb_rum_repair_unset_multi_key_status(index_relid regclass)
+RETURNS bool
+LANGUAGE c
+AS '$libdir/pg_documentdb_extended_rum', 'documentdb_extended_rum_repair_unset_multi_key_status';
+
 CREATE OR REPLACE FUNCTION documentdb_api_internal.documentdb_rum_test_set_incomplete_split_on_page(index_relid regclass, block_number integer, set_incomplete_split boolean)
 RETURNS void
 LANGUAGE c

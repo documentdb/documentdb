@@ -169,6 +169,9 @@ typedef struct GinEntryPathData
 	/* OUTPUT: Whether array values were encountered during term generation */
 	bool hasArrayValues;
 
+	/* OUTPUT: Whether an empty array was encountered at the path */
+	bool hasEmptyArrayValues;
+
 	/*
 	 * OUTPUT: Whether or not the path has array ancestors in the pre paths:
 	 * for a path a.b.c
@@ -198,13 +201,6 @@ typedef struct
 
 	/* Whether or not to skip generating the top level array term */
 	bool skipGenerateTopLevelArrayTerm;
-
-	/*
-	 * Whether or not an empty array encountered at an indexed path should mark
-	 * the path as multi-key. Enabled for indexes that track per-path multi-key
-	 * status via opclass metadata (the "mkp" reloption).
-	 */
-	bool markEmptyArrayAsMultiKey;
 
 	bool enableCompositeReducedCorrelatedTerms;
 

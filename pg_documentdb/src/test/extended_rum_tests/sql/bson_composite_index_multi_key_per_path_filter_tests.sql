@@ -246,8 +246,8 @@ set documentdb.enablePerPathMultiKeySortPushdown to on;
 -- arrays at all. On such a path the bound is exact and the runtime recheck can be
 -- skipped. The optimization is therefore gated on mkp: only a metadata-tracked
 -- index may drop the recheck; a legacy (mkp=false) index conservatively keeps it,
--- because without tracking an empty array would not be reflected in the multi-key
--- state and would leak through.
+-- because it has no per-path multi-key state (and with empty array marking off an
+-- empty array is not reflected in the multi-key state at all).
 --
 -- The negations $ne / $nin also match undefined index terms (missing fields and
 -- empty arrays). They register a term-level recheck that, on a NON-multi-key path,
@@ -306,9 +306,9 @@ SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "null_mk_coll", 
 
 -- ----------------------------------------------------------------------------
 -- Case R3 (mkp=false, empty array present -> recheck PRESERVED by the gate). The
--- index is built with metadata tracking OFF, so the empty array is NOT reflected
--- in the multi-key state and the path still reports isMultiKey: false. The gate
--- must therefore fall back to the conservative behavior and keep the recheck --
+-- index is built with metadata tracking OFF; the empty array marks the index
+-- multi-key (isMultiKey: true) but there is no per-path breakdown. The gate must
+-- therefore fall back to the conservative behavior and keep the recheck --
 -- "Rows Removed by Index Recheck: 1" -- so the empty array is still excluded from
 -- $eq null. This is the case the mkp restriction protects: dropping the recheck
 -- here would wrongly return the empty-array document.
@@ -323,7 +323,7 @@ SELECT documentdb_api.insert_one('mkf_db', 'null_legacy_coll', '{ "_id": 4, "a":
 
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "null_legacy_coll", "filter": { "a": null }, "hint": "a_b_1" }') $cmd$);
--- Despite isMultiKey: false, the recheck still runs and excludes the empty array
+-- The recheck still runs and excludes the empty array
 -- (_id 3): only literal null and missing match (_id 1, 2).
 SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "null_legacy_coll", "filter": { "a": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "a_b_1" }');
 
