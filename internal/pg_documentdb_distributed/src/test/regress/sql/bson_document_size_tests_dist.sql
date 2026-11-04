@@ -56,6 +56,12 @@ SET documentdb.next_collection_index_id TO 27150000;
 --   compresses each document before inserting into its local shard. Failed
 --   batches are rolled back before individual retries, preserving ordered
 --   and unordered error handling.
+--   Non-bulk inserts send the entire batch in one worker call when insert
+--   worker pushdown or compression is enabled. Bulk procedures retain bounded
+--   coordinator-side batches.
+--   Whole-batch workers also handle individual retries and return write errors.
+--   They prepare schema validation on the shard using the caller's effective
+--   validation decision and the collection's validator and collation.
 
 -- Run every write without local shard execution so that the commands are sent
 -- to the shards through the distributed executor.
@@ -412,27 +418,147 @@ SELECT count(*) AS stored_count, count(DISTINCT document->>'_id') AS distinct_id
 FROM documentdb_api.collection('doc_size_db', 'doc_size_sequence_boundary');
 SELECT documentdb_api.drop_collection('doc_size_db', 'doc_size_sequence_boundary');
 
--- Two full sub-batches followed by a single-document tail, with generated IDs.
+-- Five documents with generated IDs cross a two-document coordinator batch limit.
 SET documentdb.batchWriteSubTransactionCount TO 2;
 SELECT documentdb_api.create_collection('doc_size_db', 'doc_size_partial_batch');
+-- Non-bulk inserts each dispatch all five documents once.
+SET client_min_messages TO DEBUG1;
 SELECT documentdb_api.insert('doc_size_db', '{"insert":"doc_size_partial_batch","documents":[{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}]}');
+RESET client_min_messages;
 SELECT document->>'v' AS v FROM documentdb_api.collection('doc_size_db', 'doc_size_partial_batch') ORDER BY v;
+SET client_min_messages TO DEBUG1;
 CALL documentdb_api.insert_txn_proc('doc_size_db', '{"insert":"doc_size_partial_batch","documents":[{"v":6},{"v":7},{"v":8},{"v":9},{"v":10}]}');
+RESET client_min_messages;
+-- Bulk inserts still dispatch three batches so the coordinator can commit.
+SET client_min_messages TO DEBUG1;
 CALL documentdb_api.insert_bulk('doc_size_db', '{"insert":"doc_size_partial_batch","documents":[{"v":11},{"v":12},{"v":13},{"v":14},{"v":15}]}');
+RESET client_min_messages;
+-- Explicit transactions dispatch the full batch once and remain atomic.
+BEGIN;
+SET LOCAL client_min_messages TO DEBUG1;
+SELECT documentdb_api.insert('doc_size_db', '{"insert":"doc_size_partial_batch","documents":[{"v":16},{"v":17},{"v":18},{"v":19},{"v":20}]}');
+ROLLBACK;
 SELECT (document->>'v')::integer AS v FROM documentdb_api.collection('doc_size_db', 'doc_size_partial_batch') ORDER BY v;
+-- Compression dispatches the full batch even when insert worker pushdown is off.
+SET documentdb.enable_insert_worker_pushdown TO off;
+SET client_min_messages TO DEBUG1;
+SELECT documentdb_api.insert('doc_size_db', '{"insert":"doc_size_partial_batch","documents":[{"v":16},{"v":17},{"v":18},{"v":19},{"v":20}]}');
+RESET client_min_messages;
+SET documentdb.enable_insert_worker_pushdown TO on;
+SELECT count(*) FROM documentdb_api.collection('doc_size_db', 'doc_size_partial_batch');
 SELECT documentdb_api.drop_collection('doc_size_db', 'doc_size_partial_batch');
 
 -- Failed sub-batches retain ordered and unordered duplicate-key behavior.
 SELECT documentdb_api.create_collection('doc_size_db', 'doc_size_batch_errors');
+-- A write error must not trigger individual dispatches from the coordinator.
+SET client_min_messages TO DEBUG1;
 SELECT documentdb_api.insert('doc_size_db', '{"insert":"doc_size_batch_errors","ordered":true,"documents":[{"_id":1},{"_id":2},{"_id":3},{"_id":3},{"_id":4}]}');
+RESET client_min_messages;
 SELECT document->>'_id' AS id FROM documentdb_api.collection('doc_size_db', 'doc_size_batch_errors') ORDER BY object_id;
+SET client_min_messages TO DEBUG1;
 SELECT documentdb_api.insert('doc_size_db', '{"insert":"doc_size_batch_errors","ordered":false,"documents":[{"_id":5},{"_id":6},{"_id":3},{"_id":7},{"_id":8}]}');
+RESET client_min_messages;
 SELECT document->>'_id' AS id FROM documentdb_api.collection('doc_size_db', 'doc_size_batch_errors') ORDER BY object_id;
 SELECT documentdb_api.drop_collection('doc_size_db', 'doc_size_batch_errors');
 
+-- A batch larger than the default 512-document limit uses one worker call.
+SELECT documentdb_api.create_collection('doc_size_db', 'doc_size_full_batch');
+SELECT json_build_object('insert', 'doc_size_full_batch',
+    'documents', json_agg(json_build_object('_id', id)))::text AS full_batch
+FROM generate_series(1, 513) AS docs(id) \gset
+SET client_min_messages TO DEBUG1;
+SELECT documentdb_api.insert('doc_size_db', :'full_batch'::bson);
+RESET client_min_messages;
+SELECT count(*) AS stored_count, count(DISTINCT document->>'_id') AS distinct_ids
+FROM documentdb_api.collection('doc_size_db', 'doc_size_full_batch');
+SELECT documentdb_api.drop_collection('doc_size_db', 'doc_size_full_batch');
+
+-- Validation belongs to the whole-batch worker, including collated validators.
+-- Its validation GUC differs deliberately from the coordinator's setting.
+CREATE ROLE doc_size_validation_user WITH LOGIN SUPERUSER IN ROLE :original_test_user;
+ALTER ROLE doc_size_validation_user SET documentdb_core.enableCollation TO on;
+ALTER ROLE doc_size_validation_user SET documentdb.enableSchemaValidation TO off;
+ALTER ROLE doc_size_validation_user SET documentdb.batchWriteSubTransactionCount TO 4;
+SET ROLE doc_size_validation_user;
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableSchemaValidation TO on;
+SET documentdb.enableBypassDocumentValidation TO on;
+SELECT documentdb_api.create_collection_view('doc_size_db',
+    '{"create":"doc_size_batch_validation","validator":{"$expr":{"$eq":["$value","cafe"]}},"validationAction":"error"}');
+UPDATE documentdb_api_catalog.collections
+SET options = '{"collation":{"locale":"en","strength":1}}'::bson
+WHERE database_name = 'doc_size_db' AND collection_name = 'doc_size_batch_validation';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+
+SET client_min_messages TO DEBUG1;
+SELECT documentdb_api.insert('doc_size_db', '{"insert":"doc_size_batch_validation","documents":[{"_id":1,"value":"CAFE"},{"_id":2,"value":"different"},{"_id":3,"value":"cafe"}]}');
+RESET client_min_messages;
+SET client_min_messages TO DEBUG1;
+SELECT documentdb_api.insert('doc_size_db', '{"insert":"doc_size_batch_validation","ordered":false,"documents":[{"_id":4,"value":"CAFE"},{"_id":5,"value":"different"},{"_id":6,"value":"cafe"}]}');
+RESET client_min_messages;
+SET client_min_messages TO DEBUG1;
+SELECT documentdb_api.insert('doc_size_db', '{"insert":"doc_size_batch_validation","bypassDocumentValidation":true,"documents":[{"_id":7,"value":"different"},{"_id":8,"value":"different"}]}');
+RESET client_min_messages;
+
+-- A disabled coordinator setting must also win over an enabled worker setting.
+SET ROLE doc_size_batch_user;
+SET documentdb.enableSchemaValidation TO off;
+SET client_min_messages TO DEBUG1;
+SELECT documentdb_api.insert('doc_size_db', '{"insert":"doc_size_batch_validation","documents":[{"_id":9,"value":"different"},{"_id":10,"value":"different"}]}');
+RESET client_min_messages;
+SET documentdb.enableSchemaValidation TO on;
+SET ROLE doc_size_validation_user;
+
+SELECT documentdb_api.coll_mod('doc_size_db', 'doc_size_batch_validation',
+    '{"collMod":"doc_size_batch_validation","validationAction":"warn"}');
+SET client_min_messages TO DEBUG1;
+SELECT documentdb_api.insert('doc_size_db', '{"insert":"doc_size_batch_validation","documents":[{"_id":11,"value":"different"},{"_id":12,"value":"different"}]}');
+RESET client_min_messages;
+SELECT documentdb_api.coll_mod('doc_size_db', 'doc_size_batch_validation',
+    '{"collMod":"doc_size_batch_validation","validationAction":"error","validationLevel":"off"}');
+SET client_min_messages TO DEBUG1;
+SELECT documentdb_api.insert('doc_size_db', '{"insert":"doc_size_batch_validation","documents":[{"_id":13,"value":"different"},{"_id":14,"value":"different"}]}');
+RESET client_min_messages;
+SELECT document->>'_id' AS id
+FROM documentdb_api.collection('doc_size_db', 'doc_size_batch_validation') ORDER BY object_id;
+SELECT documentdb_api.drop_collection('doc_size_db', 'doc_size_batch_validation');
+
+-- Eight documents with a duplicate in the second position cross a four-document limit.
+SET documentdb.batchWriteSubTransactionCount TO 4;
+SELECT documentdb_api.create_collection('doc_size_db', 'doc_size_dispatch_function');
+SELECT documentdb_api.create_collection('doc_size_db', 'doc_size_dispatch_bulk');
+\set dispatch_documents '[{"_id":1},{"_id":1},{"_id":3},{"_id":4},{"_id":5},{"_id":6},{"_id":7},{"_id":8}]'
+SELECT json_build_object('insert', 'doc_size_dispatch_function', 'ordered', false,
+    'documents', :'dispatch_documents'::json)::text AS dispatch_function \gset
+SELECT json_build_object('insert', 'doc_size_dispatch_bulk', 'ordered', false,
+    'documents', :'dispatch_documents'::json)::text AS dispatch_bulk \gset
+
+-- One worker request handles both sub-batches and all individual retries.
+SET client_min_messages TO DEBUG1;
+SELECT documentdb_api.insert('doc_size_db', :'dispatch_function'::bson);
+RESET client_min_messages;
+
+-- Six requests: a failed sub-batch, four individual retries, then a successful sub-batch.
+SET client_min_messages TO DEBUG1;
+CALL documentdb_api.insert_bulk('doc_size_db', :'dispatch_bulk'::bson);
+RESET client_min_messages;
+SELECT 'function' AS execution, count(*) AS stored_count,
+    count(DISTINCT document->>'_id') AS distinct_ids
+FROM documentdb_api.collection('doc_size_db', 'doc_size_dispatch_function')
+UNION ALL
+SELECT 'bulk', count(*), count(DISTINCT document->>'_id')
+FROM documentdb_api.collection('doc_size_db', 'doc_size_dispatch_bulk') ORDER BY execution;
+SELECT documentdb_api.drop_collection('doc_size_db', 'doc_size_dispatch_function');
+SELECT documentdb_api.drop_collection('doc_size_db', 'doc_size_dispatch_bulk');
+
 RESET ROLE;
+REASSIGN OWNED BY doc_size_validation_user TO :original_test_user;
+DROP ROLE doc_size_validation_user;
 REASSIGN OWNED BY doc_size_batch_user TO :original_test_user;
 DROP ROLE doc_size_batch_user;
+RESET documentdb_core.enableCollation;
+RESET documentdb.enableSchemaValidation;
+RESET documentdb.enableBypassDocumentValidation;
 RESET documentdb.batchWriteSubTransactionCount;
 RESET documentdb.document_toast_compression_threshold;
 RESET citus.enable_local_execution;
