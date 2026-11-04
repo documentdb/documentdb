@@ -155,7 +155,7 @@ SELECT persistconnection,
 FROM mismatching_collation_limit;
  persistconnection | continuation_flags 
 -------------------+--------------------
- t                 | { }
+ f                 | { }
 (1 row)
 
 SELECT bson_dollar_project(cursorpage, '{ "cursor.nextBatch._id": 1 }')

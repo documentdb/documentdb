@@ -181,6 +181,7 @@ DECLARE
     v_cursor_page documentdb_core.bson;
     v_continuation documentdb_core.bson;
     v_persist bool;
+    v_is_file_cursor bool;
     v_ids text := '';
     v_batch text;
 BEGIN
@@ -194,11 +195,15 @@ BEGIN
         commandSpec => FORMAT('{ "aggregate": "gstream", "hint": "a_1", "pipeline": [ { "$group": { "_id": "$a" } } ], "cursor": { "batchSize": %s } }', p_batch_size)::documentdb_core.bson,
         cursorId => 79500) fp;
 
-    IF p_streaming AND v_persist THEN
-        RAISE EXCEPTION 'batchSize=%: expected streaming (persistConnection=false)', p_batch_size;
+    v_is_file_cursor := COALESCE(v_continuation::text::jsonb ? 'qf', false);
+
+    IF p_streaming AND (v_persist OR v_is_file_cursor) THEN
+        RAISE EXCEPTION 'batchSize=%: expected streaming cursor', p_batch_size;
     END IF;
-    IF (NOT p_streaming) AND (NOT v_persist) THEN
-        RAISE EXCEPTION 'batchSize=%: expected persisted cursor (persistConnection=true)', p_batch_size;
+    IF (NOT p_streaming) AND v_continuation IS NOT NULL AND
+       NOT (v_persist OR v_is_file_cursor) THEN
+        RAISE EXCEPTION 'batchSize=%: expected held-portal or file-persisted cursor',
+            p_batch_size;
     END IF;
 
     v_batch := bson_dollar_project(v_cursor_page, '{ "x": "$cursor.firstBatch._id" }') ->> 'x';
@@ -259,7 +264,7 @@ BEGIN
     RAISE NOTICE 'Group-by dynamic streaming: batch sizes 1..7 stream all 5 groups and match the persisted cursor';
 END;
 $$;
-psql:sql/bson_group_by_dynamic_streaming_tests.sql:216: NOTICE:  Group-by dynamic streaming: batch sizes 1..7 stream all 5 groups and match the persisted cursor
+psql:sql/bson_group_by_dynamic_streaming_tests.sql:221: NOTICE:  Group-by dynamic streaming: batch sizes 1..7 stream all 5 groups and match the persisted cursor
 DROP FUNCTION gstream_drain_group(int, bool);
 -- ===========================================================================
 -- Stages layered on top of a fully pushable $group (a trailing $project or a
@@ -361,5 +366,5 @@ BEGIN
     RAISE NOTICE 'Group-by dynamic streaming: $group with trailing $project/$match stages matches the persisted cursor across batch sizes';
 END;
 $$;
-psql:sql/bson_group_by_dynamic_streaming_tests.sql:320: NOTICE:  Group-by dynamic streaming: $group with trailing $project/$match stages matches the persisted cursor across batch sizes
+psql:sql/bson_group_by_dynamic_streaming_tests.sql:325: NOTICE:  Group-by dynamic streaming: $group with trailing $project/$match stages matches the persisted cursor across batch sizes
 DROP FUNCTION gstream_drain_pipeline(text, int, bool);

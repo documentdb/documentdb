@@ -92,7 +92,7 @@ CROSS JOIN LATERAL documentdb_api.cursor_get_more('parallel_cursor_db',
     '{"getMore":{"$numberLong":"28971000"},"collection":"parallel_toast","batchSize":10}', fp.continuation) AS gm;
  persistconnection | parallel_plan | persistent | fully_drained |                                          result                                          
 -------------------+---------------+------------+---------------+------------------------------------------------------------------------------------------
- t                 | f             | t          | t             | { "batch" : [ { "_id" : { "$numberInt" : "1" }, "count" : { "$numberInt" : "100" } } ] }
+ f                 | f             | t          | t             | { "batch" : [ { "_id" : { "$numberInt" : "1" }, "count" : { "$numberInt" : "100" } } ] }
 (1 row)
 
 -- The escape hatch restores the original no-statistics parallel plan.
@@ -118,7 +118,7 @@ CROSS JOIN LATERAL documentdb_api.cursor_get_more('parallel_cursor_db',
     '{"getMore":{"$numberLong":"28971000"},"collection":"parallel_toast","batchSize":10}', fp.continuation) AS gm;
  persistconnection | parallel_plan | persistent | fully_drained |                                          result                                          
 -------------------+---------------+------------+---------------+------------------------------------------------------------------------------------------
- t                 | t             | t          | t             | { "batch" : [ { "_id" : { "$numberInt" : "1" }, "count" : { "$numberInt" : "100" } } ] }
+ f                 | t             | t          | t             | { "batch" : [ { "_id" : { "$numberInt" : "1" }, "count" : { "$numberInt" : "100" } } ] }
 (1 row)
 
 RESET documentdb.enable_skip_parallel_plans_without_stats;
@@ -144,7 +144,7 @@ CROSS JOIN LATERAL documentdb_api.cursor_get_more('parallel_cursor_db',
     '{"getMore":{"$numberLong":"28971000"},"collection":"parallel_toast","batchSize":10}', fp.continuation) AS gm;
  persistconnection | parallel_plan | persistent | fully_drained |                                          result                                          
 -------------------+---------------+------------+---------------+------------------------------------------------------------------------------------------
- t                 | f             | t          | t             | { "batch" : [ { "_id" : { "$numberInt" : "1" }, "count" : { "$numberInt" : "100" } } ] }
+ f                 | f             | t          | t             | { "batch" : [ { "_id" : { "$numberInt" : "1" }, "count" : { "$numberInt" : "100" } } ] }
 (1 row)
 
 SELECT documentdb_api.coll_mod('parallel_cursor_db', 'parallel_toast',
@@ -180,7 +180,7 @@ CROSS JOIN LATERAL documentdb_api.cursor_get_more('parallel_cursor_db',
     '{"getMore":{"$numberLong":"28971000"},"collection":"parallel_toast","batchSize":10}', fp.continuation) AS gm;
  persistconnection | parallel_plan | persistent | fully_drained |                                  result                                  
 -------------------+---------------+------------+---------------+--------------------------------------------------------------------------
- t                 | t             | t          | t             | { "batch" : [ { "_id" : null, "count" : { "$numberInt" : "10000" } } ] }
+ f                 | t             | t          | t             | { "batch" : [ { "_id" : null, "count" : { "$numberInt" : "10000" } } ] }
 (1 row)
 
 -- The dynamic parallel flag independently disables the statistics-backed plan.
@@ -203,7 +203,7 @@ CROSS JOIN LATERAL documentdb_api.cursor_get_more('parallel_cursor_db',
     '{"getMore":{"$numberLong":"28971000"},"collection":"parallel_toast","batchSize":10}', fp.continuation) AS gm;
  persistconnection | parallel_plan | persistent | fully_drained |                                  result                                  
 -------------------+---------------+------------+---------------+--------------------------------------------------------------------------
- t                 | f             | t          | t             | { "batch" : [ { "_id" : null, "count" : { "$numberInt" : "10000" } } ] }
+ f                 | f             | t          | t             | { "batch" : [ { "_id" : null, "count" : { "$numberInt" : "10000" } } ] }
 (1 row)
 
 -- Restore the no-statistics setup for the separate non-dynamic controls.

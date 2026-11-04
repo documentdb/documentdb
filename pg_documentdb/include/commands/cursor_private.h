@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * include/commands/cursor_private.h
  *
@@ -12,7 +13,11 @@
 #ifndef CURSOR_PRIVATE_H
 #define CURSOR_PRIVATE_H
 
+#include "aggregation/bson_aggregation_pipeline.h"
+
 typedef struct QueryCursorPlanResult QueryCursorPlanResult;
+
+bool ShouldUseFileBasedPersistedCursor(QueryCursorType cursorType);
 
 bool DrainStreamingQuery(HTAB *cursorMap, Query *query, int batchSize,
 						 int32_t *numIterations, uint32_t accumulatedSize,
@@ -50,7 +55,8 @@ void CreateAndDrainPointReadQuery(const char *cursorName, Query *query,
 								  accumulatedSize,
 								  pgbson_array_writer *arrayWriter);
 
-QueryCursorPlanResult * PlanForcedPersistentQuery(Query *query, bool isHoldCursor);
+QueryCursorPlanResult * PlanForcedPersistentQuery(Query *query, bool isHoldCursor,
+												  bool useFileBasedCursors);
 
 bool PlanResultHasParallelPlan(QueryCursorPlanResult *planResult);
 

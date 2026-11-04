@@ -38,7 +38,6 @@
 #include "api_hooks.h"
 
 
-extern bool UseFileBasedPersistedCursors;
 extern bool EnableDynamicCursors;
 extern int DefaultTailableCursorMaxAwaitTimeMs;
 extern bool ReportParallelPlanInCursorContinuation;
@@ -51,6 +50,8 @@ extern bool ReportParallelPlanInCursorContinuation;
 static const int64_t CursorAcceptableBitsMask = 0x1FFFFFFFFFFFFF;
 
 static const int64_t NoMaxAwaitTimeMs = 0;
+
+static const char CursorNameFormat[] = "cursor_" INT64_FORMAT;
 
 static uint32_t current_cursor_count = 0;
 
@@ -259,6 +260,9 @@ static Datum HandleLocalFirstPageRequest(text *database, pgbson *querySpec,
 static bool CanDispatchRemoteUnshardedFirstPage(MongoCollection *collection);
 
 static int64_t GenerateCursorId(int64_t inputValue);
+
+inline static const char * FormatCursorName(StringInfo cursorStringInfo, int64_t
+											cursorId);
 
 static void ReportCursorTopologyFeatureUsage(CursorTopology topology);
 
@@ -601,16 +605,16 @@ command_cursor_get_more(PG_FUNCTION_ARGS)
  * special (re-dispatch / post-batch resume token) and are handled inline by the
  * coordinator rather than here.
  *
- * useFileBasedCursors selects whether file-based persisted cursors are allowed:
- * the session GUC on the coordinator, the coordinator-supplied option on the
- * worker (whose session GUC is not authoritative). isWorker selects the
- * worker-specific getMore feature counters.
+ * useFileBasedCursors selects whether new file-based persisted cursors are
+ * allowed by the session or worker request. An existing "qf" continuation is
+ * authoritative for getMore because its file was already created by the first
+ * page. isWorker selects the worker-specific getMore feature counters.
  */
 static pgbson *
 DrainLocalCursorGetMorePage(text *database, pgbson *cursorSpec,
 							QueryGetMoreInfo *getMoreInfo,
 							pgbson_array_writer *arrayWriter,
-							uint32_t accumulatedSize, bool useFileBasedCursors,
+							uint32_t accumulatedSize,
 							bool isWorker, bool *queryFullyDrained)
 {
 	pgbson *continuationDoc = NULL;
@@ -627,6 +631,7 @@ DrainLocalCursorGetMorePage(text *database, pgbson *cursorSpec,
 
 			int numIterations = 0;
 			bool hasParallelPlan = false;
+			bool useFileBasedCursors = true;
 			getMoreInfo->cursorFileState = DrainPersistedFileCursor(
 				getMoreInfo->cursorName, getMoreInfo->queryData.batchSize,
 				&numIterations, accumulatedSize, arrayWriter,
@@ -833,8 +838,7 @@ aggregation_cursor_get_more(text *database, pgbson *getMoreSpec,
 			bool isWorker = false;
 			continuationDoc = DrainLocalCursorGetMorePage(
 				database, cursorSpec, &getMoreInfo, &arrayWriter,
-				accumulatedSize, UseFileBasedPersistedCursors, isWorker,
-				&queryFullyDrained);
+				accumulatedSize, isWorker, &queryFullyDrained);
 			break;
 		}
 
@@ -1057,7 +1061,7 @@ inline static const char *
 FormatCursorName(StringInfo cursorStringInfo, int64_t cursorId)
 {
 	resetStringInfo(cursorStringInfo);
-	appendStringInfo(cursorStringInfo, "cursor_%ld", cursorId);
+	appendStringInfo(cursorStringInfo, CursorNameFormat, cursorId);
 	return cursorStringInfo->data;
 }
 
@@ -1068,11 +1072,6 @@ delete_cursors(ArrayType *cursorArray)
 	Datum *cursorIds;
 	bool *nulls;
 	int nelems;
-	if (!UseFileBasedPersistedCursors)
-	{
-		return PointerGetDatum(PgbsonInitEmpty());
-	}
-
 	deconstruct_array(cursorArray, INT8OID, sizeof(int64_t), true, TYPALIGN_INT,
 					  &cursorIds, &nulls, &nelems);
 
@@ -1225,7 +1224,8 @@ HandlePersistentCursorCore(int64_t *cursorId, QueryCursorPlanResult *planResult,
 	int32_t numIterations = 0;
 
 	/*
-	 * isHoldCursor indicates the cursor must outlive the current transaction.
+	 * isHoldCursor indicates that the cursor must outlive
+	 * the current transaction.
 	 * IsInTransactionBlock() is true only inside an explicit BEGIN...COMMIT
 	 * block, where the cursor lives within that transaction and a later getMore
 	 * runs in the same transaction. Outside such a block (the common case) each
@@ -1241,6 +1241,13 @@ HandlePersistentCursorCore(int64_t *cursorId, QueryCursorPlanResult *planResult,
 	 * client-facing cursor id. Such files must therefore be named after that id
 	 * (and not after a backend-local id), otherwise killCursors cannot locate
 	 * the file to remove it.
+	 *
+	 * Inside an explicit transaction, the transaction already pins the
+	 * connection and its portal can serve getMore. A cursor file would provide
+	 * no connection-release benefit, would eagerly drain the query even if the
+	 * client never calls getMore, and would require transaction-aware cleanup
+	 * on commit or abort. Reserve file cursors for results that must survive the
+	 * transaction boundary.
 	 */
 	bool useHoldFileCursor = isHoldCursor && useFileBasedCursors;
 
@@ -1503,7 +1510,8 @@ HandleLocalFirstPageRequestCore(text *database, pgbson *querySpec, int64_t curso
 			bool isTopLevel = true;
 			bool isHoldCursor = !IsInTransactionBlock(isTopLevel);
 			QueryCursorPlanResult *planResult = PlanForcedPersistentQuery(query,
-																		  isHoldCursor);
+																		  isHoldCursor,
+																		  useFileBasedPersistentCursors);
 			continuationDoc = HandlePersistentCursorCore(&cursorId, planResult,
 														 &queryFullyDrained,
 														 &persistConnection, queryData,
@@ -1633,7 +1641,8 @@ HandleLocalFirstPageRequest(text *database, pgbson *querySpec, int64_t cursorId,
 	LocalFirstPageResult firstPageResult =
 		HandleLocalFirstPageRequestCore(database, querySpec, cursorId, queryData,
 										queryKind, query,
-										UseFileBasedPersistedCursors);
+										ShouldUseFileBasedPersistedCursor(
+											queryData->cursorKind));
 	return FormFinalCursorResultTuple(firstPageResult.resultDocument,
 									  firstPageResult.continuationDoc,
 									  firstPageResult.persistConnection,
@@ -2255,6 +2264,7 @@ ParseGetMoreSpec(text **databaseName, pgbson *getMoreSpec, pgbson *cursorSpec,
 	bool isTailableCursor = (getMoreInfo->cursorKind == CursorKind_Tailable);
 	int64_t cursorId = ParseGetMore(databaseName, getMoreSpec, &getMoreInfo->queryData,
 									setStatementTimeout, isTailableCursor);
+
 	if (cursorId != getMoreInfo->cursorId)
 	{
 		ereport(ERROR, (errmsg(
@@ -2648,7 +2658,7 @@ command_cursor_dynamic_drain_page(PG_FUNCTION_ARGS)
 	 *   "p_namespace": the "<database>.<collection>" cursor-page namespace,
 	 *     computed once by the coordinator from the collection metadata.
 	 */
-	bool useFileBasedCursor = true;
+	bool useFileBasedCursorOnRemote = true;
 	int32 extraBatchSize = INT_MAX;
 	const char *namespaceName = NULL;
 	if (!PG_ARGISNULL(5))
@@ -2657,7 +2667,7 @@ command_cursor_dynamic_drain_page(PG_FUNCTION_ARGS)
 		bson_iter_t extraIter;
 		if (PgbsonInitIteratorAtPath(extra, "p_use_file_based_cursor", &extraIter))
 		{
-			useFileBasedCursor = BsonValueAsBool(bson_iter_value(&extraIter));
+			useFileBasedCursorOnRemote = BsonValueAsBool(bson_iter_value(&extraIter));
 		}
 		if (PgbsonInitIteratorAtPath(extra, "p_batch_size", &extraIter))
 		{
@@ -2754,7 +2764,7 @@ command_cursor_dynamic_drain_page(PG_FUNCTION_ARGS)
 		bool drained = false;
 		continuationOut = DrainLocalCursorGetMorePage(
 			database, continuation, &workerGetMore, &batchArrayWriter,
-			accumulatedSize, useFileBasedCursor, isWorker, &drained);
+			accumulatedSize, isWorker, &drained);
 		if (!drained)
 		{
 			/* Non-zero signals the coordinator that the cursor has more data. */
@@ -2793,11 +2803,10 @@ command_cursor_dynamic_drain_page(PG_FUNCTION_ARGS)
 													 setStatementTimeout);
 
 		int64_t cursorId = 0;
-		bool useFileBasedPersistentCursors = useFileBasedCursor;
 		LocalFirstPageResult firstPageResult =
 			HandleLocalFirstPageRequestCore(database, querySpec, cursorId,
 											&queryData, queryKind, dynQuery,
-											useFileBasedPersistentCursors);
+											useFileBasedCursorOnRemote);
 		pageBson = firstPageResult.resultDocument;
 		continuationOut = firstPageResult.continuationDoc;
 		if (continuationOut != NULL)

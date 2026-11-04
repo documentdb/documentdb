@@ -76,8 +76,9 @@ ANALYZE;
 -- ===========================================================================
 -- Core drain helpers: drain a find/aggregate cursor across all pages and
 -- return the ordered concatenation of returned _id values (",1,2,3"), the total
--- count, the persistConnection flag, the first-page dc.type (NULL for
--- persistent cursors), and the number of round trips.
+-- count, the observable cursor persistence mode, the first-page dc.type (NULL
+-- for persistent cursors), and the number of round trips. Persistence is NULL
+-- when a file cursor fully drains before producing a continuation.
 -- ===========================================================================
 CREATE OR REPLACE FUNCTION slc_drain(p_find text, p_getmore text)
 RETURNS TABLE(ids text, total bigint, persist bool, first_type int, pages int) AS $body$
@@ -85,6 +86,8 @@ DECLARE
     v_page documentdb_core.bson;
     v_cont documentdb_core.bson;
     v_persist bool;
+    v_is_file_cursor bool := false;
+    v_mode_observable bool := false;
     v_ids text := '';
     v_total bigint := 0;
     v_type int := NULL;
@@ -102,6 +105,8 @@ BEGIN
         '{ "c": { "$size": { "$ifNull": ["$cursor.firstBatch", []] } } }') ->> 'c')::bigint INTO v_n;
     v_total := v_total + COALESCE(v_n, 0);
     IF v_cont IS NOT NULL THEN
+        v_mode_observable := true;
+        v_is_file_cursor := COALESCE(v_cont::text::jsonb ? 'qf', false);
         v_type := (bson_dollar_project(v_cont, '{ "dc.type": 1 }') ->> 'dc.type')::int;
     END IF;
 
@@ -117,7 +122,13 @@ BEGIN
         v_total := v_total + COALESCE(v_n, 0);
     END LOOP;
 
-    ids := v_ids; total := v_total; persist := v_persist; first_type := v_type; pages := v_pages;
+    ids := v_ids; total := v_total;
+    persist := CASE
+        WHEN v_persist OR v_is_file_cursor THEN true
+        WHEN v_mode_observable THEN false
+        ELSE NULL
+    END;
+    first_type := v_type; pages := v_pages;
     RETURN NEXT;
 END;
 $body$ LANGUAGE plpgsql;
@@ -128,6 +139,8 @@ DECLARE
     v_page documentdb_core.bson;
     v_cont documentdb_core.bson;
     v_persist bool;
+    v_is_file_cursor bool := false;
+    v_mode_observable bool := false;
     v_ids text := '';
     v_total bigint := 0;
     v_type int := NULL;
@@ -145,6 +158,8 @@ BEGIN
         '{ "c": { "$size": { "$ifNull": ["$cursor.firstBatch", []] } } }') ->> 'c')::bigint INTO v_n;
     v_total := v_total + COALESCE(v_n, 0);
     IF v_cont IS NOT NULL THEN
+        v_mode_observable := true;
+        v_is_file_cursor := COALESCE(v_cont::text::jsonb ? 'qf', false);
         v_type := (bson_dollar_project(v_cont, '{ "dc.type": 1 }') ->> 'dc.type')::int;
     END IF;
 
@@ -160,7 +175,13 @@ BEGIN
         v_total := v_total + COALESCE(v_n, 0);
     END LOOP;
 
-    ids := v_ids; total := v_total; persist := v_persist; first_type := v_type; pages := v_pages;
+    ids := v_ids; total := v_total;
+    persist := CASE
+        WHEN v_persist OR v_is_file_cursor THEN true
+        WHEN v_mode_observable THEN false
+        ELSE NULL
+    END;
+    first_type := v_type; pages := v_pages;
     RETURN NEXT;
 END;
 $body$ LANGUAGE plpgsql;
@@ -171,6 +192,7 @@ $body$ LANGUAGE plpgsql;
 -- Also asserts the cursor classification (persist / dc.type) is identical
 -- across all batch sizes. p_expected_type / p_expected_persist are optional
 -- extra assertions. Returns a compact one-line summary for the .out.
+-- Empty windows additionally probe a zero-sized first batch to expose cursor mode.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION slc_ordered(
     p_label text, p_find_tmpl text, p_getmore_tmpl text,
@@ -184,11 +206,14 @@ DECLARE
     v_expected_count bigint :=
         length(p_expected_ids) - length(replace(p_expected_ids, ',', ''));
 BEGIN
+    IF v_expected_count = 0 THEN
+        p_batch_sizes := array_append(p_batch_sizes, 0);
+    END IF;
     FOREACH v_bs IN ARRAY p_batch_sizes LOOP
         IF p_is_agg THEN
-            SELECT * INTO r FROM slc_drain_agg(format(p_find_tmpl, v_bs), format(p_getmore_tmpl, v_bs));
+            SELECT * INTO r FROM slc_drain_agg(format(p_find_tmpl, v_bs), format(p_getmore_tmpl, GREATEST(v_bs, 1)));
         ELSE
-            SELECT * INTO r FROM slc_drain(format(p_find_tmpl, v_bs), format(p_getmore_tmpl, v_bs));
+            SELECT * INTO r FROM slc_drain(format(p_find_tmpl, v_bs), format(p_getmore_tmpl, GREATEST(v_bs, 1)));
         END IF;
 
         IF r.ids IS DISTINCT FROM p_expected_ids THEN
@@ -199,7 +224,11 @@ BEGIN
             RAISE EXCEPTION '%: batchSize=%: expected pagination for % rows, got % page',
                 p_label, v_bs, v_expected_count, r.pages;
         END IF;
-        IF p_expected_persist IS NOT NULL AND r.persist IS DISTINCT FROM p_expected_persist THEN
+        IF v_bs = 0 AND r.persist IS NULL THEN
+            RAISE EXCEPTION '%: zero-batch probe did not expose cursor mode', p_label;
+        END IF;
+        IF p_expected_persist IS NOT NULL AND r.persist IS NOT NULL AND
+           r.persist IS DISTINCT FROM p_expected_persist THEN
             RAISE EXCEPTION '%: batchSize=%: expected persist=%, got %', p_label, v_bs, p_expected_persist, r.persist;
         END IF;
         -- dc.type is only observable when a continuation exists (multi-page).
@@ -208,18 +237,22 @@ BEGIN
             RAISE EXCEPTION '%: batchSize=%: expected dc.type=%, got %', p_label, v_bs, p_expected_type, r.first_type;
         END IF;
 
-        -- persistConnection must be stable across batch sizes; capture the first
-        -- observable (non-NULL) dc.type for the summary.
-        IF v_first THEN
-            v_rp := r.persist; v_first := false;
-        ELSIF r.persist IS DISTINCT FROM v_rp THEN
-            RAISE EXCEPTION '%: persistConnection changed across batch sizes (%/%)', p_label, v_rp, r.persist;
+        -- Capture and compare cursor mode only when a continuation exposes it.
+        IF r.persist IS NOT NULL THEN
+            IF v_first THEN
+                v_rp := r.persist; v_first := false;
+            ELSIF r.persist IS DISTINCT FROM v_rp THEN
+                RAISE EXCEPTION '%: cursor mode changed across batch sizes (%/%)',
+                    p_label, v_rp, r.persist;
+            END IF;
         END IF;
         IF v_rt IS NULL AND r.first_type IS NOT NULL THEN v_rt := r.first_type; END IF;
     END LOOP;
 
     RETURN format('%s: OK  count=%s  persist=%s  dc.type=%s', p_label,
-        v_expected_count, v_rp, COALESCE(v_rt::text, '-'));
+        v_expected_count,
+        CASE v_rp WHEN true THEN 't' WHEN false THEN 'f' ELSE 'unobserved' END,
+        COALESCE(v_rt::text, '-'));
 END;
 $body$ LANGUAGE plpgsql;
 
@@ -239,11 +272,14 @@ DECLARE
     v_bs int; r record; v_first bool := true; v_rp bool; v_rt int;
     v_arr text[]; v_distinct bigint;
 BEGIN
+    IF p_expected_count = 0 THEN
+        p_batch_sizes := array_append(p_batch_sizes, 0);
+    END IF;
     FOREACH v_bs IN ARRAY p_batch_sizes LOOP
         IF p_is_agg THEN
-            SELECT * INTO r FROM slc_drain_agg(format(p_find_tmpl, v_bs), format(p_getmore_tmpl, v_bs));
+            SELECT * INTO r FROM slc_drain_agg(format(p_find_tmpl, v_bs), format(p_getmore_tmpl, GREATEST(v_bs, 1)));
         ELSE
-            SELECT * INTO r FROM slc_drain(format(p_find_tmpl, v_bs), format(p_getmore_tmpl, v_bs));
+            SELECT * INTO r FROM slc_drain(format(p_find_tmpl, v_bs), format(p_getmore_tmpl, GREATEST(v_bs, 1)));
         END IF;
 
         IF r.total IS DISTINCT FROM p_expected_count THEN
@@ -261,7 +297,11 @@ BEGIN
                     p_label, v_bs, v_distinct, r.total;
             END IF;
         END IF;
-        IF p_expected_persist IS NOT NULL AND r.persist IS DISTINCT FROM p_expected_persist THEN
+        IF v_bs = 0 AND r.persist IS NULL THEN
+            RAISE EXCEPTION '%: zero-batch probe did not expose cursor mode', p_label;
+        END IF;
+        IF p_expected_persist IS NOT NULL AND r.persist IS NOT NULL AND
+           r.persist IS DISTINCT FROM p_expected_persist THEN
             RAISE EXCEPTION '%: batchSize=%: expected persist=%, got %', p_label, v_bs, p_expected_persist, r.persist;
         END IF;
         -- dc.type is only observable when a continuation exists (multi-page).
@@ -270,18 +310,22 @@ BEGIN
             RAISE EXCEPTION '%: batchSize=%: expected dc.type=%, got %', p_label, v_bs, p_expected_type, r.first_type;
         END IF;
 
-        -- persistConnection must be stable across batch sizes; capture the first
-        -- observable (non-NULL) dc.type for the summary.
-        IF v_first THEN
-            v_rp := r.persist; v_first := false;
-        ELSIF r.persist IS DISTINCT FROM v_rp THEN
-            RAISE EXCEPTION '%: persistConnection changed across batch sizes (%/%)', p_label, v_rp, r.persist;
+        -- Capture and compare cursor mode only when a continuation exposes it.
+        IF r.persist IS NOT NULL THEN
+            IF v_first THEN
+                v_rp := r.persist; v_first := false;
+            ELSIF r.persist IS DISTINCT FROM v_rp THEN
+                RAISE EXCEPTION '%: cursor mode changed across batch sizes (%/%)',
+                    p_label, v_rp, r.persist;
+            END IF;
         END IF;
         IF v_rt IS NULL AND r.first_type IS NOT NULL THEN v_rt := r.first_type; END IF;
     END LOOP;
 
     RETURN format('%s: OK  count=%s  persist=%s  dc.type=%s  (no dups)', p_label,
-        p_expected_count, v_rp, COALESCE(v_rt::text, '-'));
+        p_expected_count,
+        CASE v_rp WHEN true THEN 't' WHEN false THEN 'f' ELSE 'unobserved' END,
+        COALESCE(v_rt::text, '-'));
 END;
 $body$ LANGUAGE plpgsql;
 
@@ -841,7 +885,7 @@ SELECT slc_ordered('P2-10b secondary boundary val[1..10]',
 SELECT slc_count('P2-10c empty PK ({_id>100000})',
     '{ "find": "slc_coll", "filter": { "_id": { "$gt": 100000 } }, "projection": { "_id": 1 }, "batchSize": %s }',
     '{ "getMore": { "$numberLong": "600" }, "collection": "slc_coll", "batchSize": %s }',
-    ARRAY[1,5], 0::bigint);
+    ARRAY[1,5], 0::bigint, false, false);
 
 -- P2-10 empty secondary: sorted, empty window.
 SELECT slc_count('P2-10d empty secondary ({val>100000})',
@@ -865,7 +909,7 @@ SELECT slc_count('P2-10e bitmap-AND boundary {x:5,y:3}',
 SELECT slc_count('P2-10f empty bitmap ({x:5,y:99})',
     '{ "find": "slc_bm", "filter": { "x": 5, "y": 99 }, "projection": { "_id": 1 }, "batchSize": %s }',
     '{ "getMore": { "$numberLong": "600" }, "collection": "slc_bm", "batchSize": %s }',
-    ARRAY[1,5], 0::bigint);
+    ARRAY[1,5], 0::bigint, false, false);
 
 RESET enable_indexscan;
 RESET enable_bitmapscan;

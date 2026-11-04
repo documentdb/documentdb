@@ -1178,7 +1178,7 @@ FROM aggregate_cursor_first_page(
     2601);
  persistconnection | fully_drained |                  result                   
 -------------------+---------------+-------------------------------------------
- t                 | t             | { "batchCount" : { "$numberInt" : "2" } }
+ f                 | t             | { "batchCount" : { "$numberInt" : "2" } }
 (1 row)
 
 SET documentdb.enableDynamicCursors TO off;
@@ -2829,7 +2829,7 @@ CROSS JOIN LATERAL pg_temp.drain_unwind_eq_cursor(fp.cursorPage, fp.continuation
 
  persistent | rows | correct_ids | correct_items 
 ------------+------+-------------+---------------
- t          |  100 | t           | t
+ f          |  100 | t           | t
 (1 row)
 
 SET documentdb.enableDynamicCursors TO 'on';
@@ -2875,7 +2875,7 @@ CROSS JOIN LATERAL pg_temp.drain_unwind_eq_cursor(fp.cursorPage, fp.continuation
 
  persistent | rows | correct_ids | correct_items 
 ------------+------+-------------+---------------
- t          |  100 | t           | t
+ f          |  100 | t           | t
 (1 row)
 
 SET documentdb.enableDynamicCursors TO 'off';
@@ -3272,7 +3272,7 @@ CROSS JOIN LATERAL pg_temp.drain_unwind_eq_cursor(fp.cursorPage, fp.continuation
 
  persistent | rows | correct_ids | correct_items 
 ------------+------+-------------+---------------
- t          |  100 | t           | t
+ f          |  100 | t           | t
 (1 row)
 
 SET documentdb.enableDynamicCursors TO 'on';
@@ -3319,7 +3319,7 @@ CROSS JOIN LATERAL pg_temp.drain_unwind_eq_cursor(fp.cursorPage, fp.continuation
 
  persistent | rows | correct_ids | correct_items 
 ------------+------+-------------+---------------
- t          |  100 | t           | t
+ f          |  100 | t           | t
 (1 row)
 
 SET documentdb.enableDynamicCursors TO 'off';
@@ -3968,7 +3968,7 @@ CROSS JOIN LATERAL pg_temp.drain_unwind_eq_cursor(fp.cursorPage, fp.continuation
 
  persistent | rows | correct_ids | correct_items 
 ------------+------+-------------+---------------
- t          |  100 | t           | t
+ f          |  100 | t           | t
 (1 row)
 
 SET documentdb.enableDynamicCursors TO 'on';
@@ -4013,7 +4013,7 @@ CROSS JOIN LATERAL pg_temp.drain_unwind_eq_cursor(fp.cursorPage, fp.continuation
 
  persistent | rows | correct_ids | correct_items 
 ------------+------+-------------+---------------
- t          |  100 | t           | t
+ f          |  100 | t           | t
 (1 row)
 
 SET documentdb.enableDynamicCursors TO 'off';
@@ -4410,7 +4410,7 @@ CROSS JOIN LATERAL pg_temp.drain_unwind_eq_cursor(fp.cursorPage, fp.continuation
 
  persistent | rows | correct_ids | correct_items 
 ------------+------+-------------+---------------
- t          |  100 | t           | t
+ f          |  100 | t           | t
 (1 row)
 
 SET documentdb.enableDynamicCursors TO 'on';
@@ -4457,7 +4457,7 @@ CROSS JOIN LATERAL pg_temp.drain_unwind_eq_cursor(fp.cursorPage, fp.continuation
 
  persistent | rows | correct_ids | correct_items 
 ------------+------+-------------+---------------
- t          |  100 | t           | t
+ f          |  100 | t           | t
 (1 row)
 
 SET documentdb.enableDynamicCursors TO 'off';
@@ -4789,12 +4789,12 @@ FROM unwind_eq_cursor_results ORDER BY mode;
               mode              | persistent | rows | correct_ids | correct_items 
 --------------------------------+------------+------+-------------+---------------
  stats_off_dynamic_off          | t          |  200 | t           | t
- stats_off_dynamic_on           | t          |  200 | t           | t
- stats_off_dynamic_on_all_rows  | t          |  200 | t           | t
- stats_off_dynamic_on_collation | t          |  200 | t           | t
+ stats_off_dynamic_on           | f          |  200 | t           | t
+ stats_off_dynamic_on_all_rows  | f          |  200 | t           | t
+ stats_off_dynamic_on_collation | f          |  200 | t           | t
  stats_on_dynamic_off           | t          |  200 | t           | t
- stats_on_dynamic_on            | t          |  200 | t           | t
- stats_on_dynamic_on_all_rows   | t          |  200 | t           | t
+ stats_on_dynamic_on            | f          |  200 | t           | t
+ stats_on_dynamic_on_all_rows   | f          |  200 | t           | t
 (7 rows)
 
 DROP FUNCTION pg_temp.drain_unwind_eq_cursor(documentdb_core.bson, documentdb_core.bson, boolean);

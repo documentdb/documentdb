@@ -42,49 +42,49 @@ NOTICE:  creating collection
 -- different path and must keep working).
 SELECT documentdb_api.create_collection_view('fallbackskiplim',
     '{ "create": "v_skip1", "viewOn": "coll", "pipeline": [ { "$skip": 1 } ] }'::documentdb_core.bson);
-         create_collection_view         
+         create_collection_view
 ----------------------------------------
  { "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.create_collection_view('fallbackskiplim',
     '{ "create": "v_skip2", "viewOn": "coll", "pipeline": [ { "$skip": 2 } ] }'::documentdb_core.bson);
-         create_collection_view         
+         create_collection_view
 ----------------------------------------
  { "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.create_collection_view('fallbackskiplim',
     '{ "create": "v_match_skip", "viewOn": "coll", "pipeline": [ { "$match": { "a": { "$gte": 3 } } }, { "$skip": 1 } ] }'::documentdb_core.bson);
-         create_collection_view         
+         create_collection_view
 ----------------------------------------
  { "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.create_collection_view('fallbackskiplim',
     '{ "create": "v_skiplimit", "viewOn": "coll", "pipeline": [ { "$skip": 2 }, { "$limit": 10 } ] }'::documentdb_core.bson);
-         create_collection_view         
+         create_collection_view
 ----------------------------------------
  { "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.create_collection_view('fallbackskiplim',
     '{ "create": "v_nested", "viewOn": "v_skiplimit", "pipeline": [ { "$skip": 1 } ] }'::documentdb_core.bson);
-         create_collection_view         
+         create_collection_view
 ----------------------------------------
  { "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.create_collection_view('fallbackskiplim',
     '{ "create": "v_limit5", "viewOn": "coll", "pipeline": [ { "$limit": 5 } ] }'::documentdb_core.bson);
-         create_collection_view         
+         create_collection_view
 ----------------------------------------
  { "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.create_collection_view('fallbackskiplim',
     '{ "create": "v_limit_then_skip", "viewOn": "coll", "pipeline": [ { "$limit": 9 }, { "$skip": 1 } ] }'::documentdb_core.bson);
-         create_collection_view         
+         create_collection_view
 ----------------------------------------
  { "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -178,7 +178,7 @@ $$;
 ------------------------------------------------------------
 -- A plain collection find with a streamable limit: no view, no stray offset.
 SELECT fb_cursor_kind('{ "find": "coll", "limit": 6, "batchSize": 2 }', 100) AS control_plain_limit_streams;
-          control_plain_limit_streams          
+          control_plain_limit_streams
 -----------------------------------------------
  streamedLimit=t resumePosition=t cursorName=f
 (1 row)
@@ -187,14 +187,14 @@ SELECT fb_drain(
     '{ "find": "coll", "limit": 6, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "101" }, "collection": "coll", "batchSize": 2 }',
     101) AS control_plain_limit_drain;
-       control_plain_limit_drain       
+       control_plain_limit_drain
 ---------------------------------------
  pages=3 total=6 ids=[1,2] [3,4] [5,6]
 (1 row)
 
 -- A plain collection find with a streamable skip and limit.
 SELECT fb_cursor_kind('{ "find": "coll", "skip": 3, "limit": 6, "batchSize": 2 }', 102) AS control_plain_skip_limit_streams;
-       control_plain_skip_limit_streams        
+       control_plain_skip_limit_streams
 -----------------------------------------------
  streamedLimit=t resumePosition=t cursorName=f
 (1 row)
@@ -203,7 +203,7 @@ SELECT fb_drain(
     '{ "find": "coll", "skip": 3, "limit": 6, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "103" }, "collection": "coll", "batchSize": 2 }',
     103) AS control_plain_skip_limit_drain;
-    control_plain_skip_limit_drain     
+    control_plain_skip_limit_drain
 ---------------------------------------
  pages=3 total=6 ids=[4,5] [6,7] [8,9]
 (1 row)
@@ -215,7 +215,7 @@ SELECT fb_drain(
 -- No find skip at all; the view's $skip still forces persistent fallback.
 -- View drops _id 1, so limit 3 yields 2,3,4.
 SELECT fb_cursor_kind('{ "find": "v_skip1", "limit": 3, "batchSize": 2 }', 200) AS view_skip_find_limit_only_kind;
-        view_skip_find_limit_only_kind         
+        view_skip_find_limit_only_kind
 -----------------------------------------------
  streamedLimit=f resumePosition=f cursorName=t
 (1 row)
@@ -224,8 +224,7 @@ SELECT fb_drain(
     '{ "find": "v_skip1", "limit": 3, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "201" }, "collection": "v_skip1", "batchSize": 2 }',
     201) AS view_skip_find_limit_only;
-NOTICE:  There are open held portals. Closing them
-   view_skip_find_limit_only   
+   view_skip_find_limit_only
 -------------------------------
  pages=2 total=3 ids=[2,3] [4]
 (1 row)
@@ -233,7 +232,7 @@ NOTICE:  There are open held portals. Closing them
 -- The find supplies a skip too; the view is still excluded from streaming.
 -- View yields 2-20, skip 2 yields 4-20, limit 4 yields 4,5,6,7.
 SELECT fb_cursor_kind('{ "find": "v_skip1", "skip": 2, "limit": 4, "batchSize": 2 }', 202) AS view_skip_plus_find_skip_kind;
-         view_skip_plus_find_skip_kind         
+         view_skip_plus_find_skip_kind
 -----------------------------------------------
  streamedLimit=f resumePosition=f cursorName=t
 (1 row)
@@ -242,8 +241,7 @@ SELECT fb_drain(
     '{ "find": "v_skip1", "skip": 2, "limit": 4, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "203" }, "collection": "v_skip1", "batchSize": 2 }',
     203) AS view_skip_plus_find_skip;
-NOTICE:  There are open held portals. Closing them
-    view_skip_plus_find_skip     
+    view_skip_plus_find_skip
 ---------------------------------
  pages=2 total=4 ids=[4,5] [6,7]
 (1 row)
@@ -254,7 +252,7 @@ SELECT fb_drain(
     '{ "find": "v_skip2", "skip": 3, "limit": 5, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "204" }, "collection": "v_skip2", "batchSize": 2 }',
     204) AS larger_offsets;
-            larger_offsets            
+            larger_offsets
 --------------------------------------
  pages=3 total=5 ids=[6,7] [8,9] [10]
 (1 row)
@@ -265,7 +263,7 @@ SELECT fb_drain(
     '{ "find": "v_match_skip", "skip": 2, "limit": 3, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "205" }, "collection": "v_match_skip", "batchSize": 2 }',
     205) AS match_then_skip;
-        match_then_skip        
+        match_then_skip
 -------------------------------
  pages=2 total=3 ids=[6,7] [8]
 (1 row)
@@ -274,7 +272,7 @@ SELECT fb_drain(
 -- Inner view yields 3-12, outer drops one more to 4-12, skip 2 limit 3 yields
 -- 6,7,8.
 SELECT fb_cursor_kind('{ "find": "v_nested", "skip": 2, "limit": 3, "batchSize": 2 }', 206) AS view_over_view_kind;
-              view_over_view_kind              
+              view_over_view_kind
 -----------------------------------------------
  streamedLimit=f resumePosition=f cursorName=t
 (1 row)
@@ -283,8 +281,7 @@ SELECT fb_drain(
     '{ "find": "v_nested", "skip": 2, "limit": 3, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "207" }, "collection": "v_nested", "batchSize": 2 }',
     207) AS view_over_view;
-NOTICE:  There are open held portals. Closing them
-        view_over_view         
+        view_over_view
 -------------------------------
  pages=2 total=3 ids=[6,7] [8]
 (1 row)
@@ -296,7 +293,7 @@ SELECT fb_drain(
     '{ "find": "v_limit_then_skip", "skip": 2, "limit": 4, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "208" }, "collection": "v_limit_then_skip", "batchSize": 2 }',
     208) AS view_limit_then_skip;
-      view_limit_then_skip       
+      view_limit_then_skip
 ---------------------------------
  pages=2 total=4 ids=[4,5] [6,7]
 (1 row)
@@ -308,7 +305,7 @@ SELECT fb_drain(
     '{ "find": "v_skip1", "limit": 9, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "209" }, "collection": "v_skip1", "batchSize": 2 }',
     209) AS limit_exceeding_view;
-               limit_exceeding_view               
+               limit_exceeding_view
 --------------------------------------------------
  pages=5 total=9 ids=[2,3] [4,5] [6,7] [8,9] [10]
 (1 row)
@@ -320,7 +317,7 @@ SELECT fb_drain(
     '{ "find": "v_skip1", "sort": { "_id": -1 }, "skip": 2, "limit": 4, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "210" }, "collection": "v_skip1", "batchSize": 2 }',
     210) AS sorted_untracked_offset;
-       sorted_untracked_offset       
+       sorted_untracked_offset
 -------------------------------------
  pages=2 total=4 ids=[18,17] [16,15]
 (1 row)
@@ -333,7 +330,7 @@ SELECT fb_drain(
     '{ "find": "v_limit5", "skip": 2, "limit": 3, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "300" }, "collection": "v_limit5", "batchSize": 2 }',
     300) AS view_limit_with_find_skip_limit;
- view_limit_with_find_skip_limit 
+ view_limit_with_find_skip_limit
 ---------------------------------
  pages=2 total=3 ids=[3,4] [5]
 (1 row)
@@ -343,7 +340,7 @@ SELECT fb_drain(
     '{ "find": "v_limit5", "limit": 3, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "301" }, "collection": "v_limit5", "batchSize": 2 }',
     301) AS view_limit_with_find_limit;
-  view_limit_with_find_limit   
+  view_limit_with_find_limit
 -------------------------------
  pages=2 total=3 ids=[1,2] [3]
 (1 row)
@@ -353,7 +350,7 @@ SELECT fb_drain(
     '{ "find": "v_skip1", "skip": 16, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "302" }, "collection": "v_skip1", "batchSize": 2 }',
     302) AS view_skip_no_limit;
-        view_skip_no_limit        
+        view_skip_no_limit
 ----------------------------------
  pages=2 total=3 ids=[18,19] [20]
 (1 row)
@@ -363,7 +360,7 @@ SELECT fb_drain(
     '{ "find": "v_skip1", "skip": 2, "limit": 1, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "303" }, "collection": "v_skip1", "batchSize": 2 }',
     303) AS view_skip_limit_one;
-   view_skip_limit_one   
+   view_skip_limit_one
 -------------------------
  pages=1 total=1 ids=[4]
 (1 row)
@@ -373,7 +370,7 @@ SELECT fb_drain(
     '{ "find": "v_skip1", "skip": 2, "limit": 4, "batchSize": 0 }',
     '{ "getMore": { "$numberLong": "304" }, "collection": "v_skip1", "batchSize": 2 }',
     304) AS view_skip_batchsize_zero;
-      view_skip_batchsize_zero      
+      view_skip_batchsize_zero
 ------------------------------------
  pages=3 total=4 ids=[] [4,5] [6,7]
 (1 row)
@@ -383,7 +380,7 @@ SELECT fb_drain(
     '{ "find": "v_skip1", "skip": 2, "limit": 4, "projection": { "a": 1 }, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "305" }, "collection": "v_skip1", "batchSize": 2 }',
     305) AS view_skip_with_projection;
-                                              view_skip_with_projection                                               
+                                              view_skip_with_projection
 ----------------------------------------------------------------------------------------------------------------------
  pages=2 total=4 ids=[4,5] [6,7] docs=[{"a": 4, "_id": 4},{"a": 5, "_id": 5}] [{"a": 6, "_id": 6},{"a": 7, "_id": 7}]
 (1 row)
@@ -398,7 +395,7 @@ SELECT fb_drain(
     '{ "find": "v_skip1", "limit": 3, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "400" }, "collection": "v_skip1", "batchSize": 2 }',
     400) AS guc_off_view_skip_find_limit_only;
- guc_off_view_skip_find_limit_only 
+ guc_off_view_skip_find_limit_only
 -----------------------------------
  pages=2 total=3 ids=[2,3] [4]
 (1 row)
@@ -407,7 +404,7 @@ SELECT fb_drain(
     '{ "find": "v_skip1", "skip": 2, "limit": 4, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "401" }, "collection": "v_skip1", "batchSize": 2 }',
     401) AS guc_off_view_skip_plus_find_skip;
- guc_off_view_skip_plus_find_skip 
+ guc_off_view_skip_plus_find_skip
 ----------------------------------
  pages=2 total=4 ids=[4,5] [6,7]
 (1 row)
@@ -416,7 +413,7 @@ SELECT fb_drain(
     '{ "find": "v_skip2", "skip": 3, "limit": 5, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "402" }, "collection": "v_skip2", "batchSize": 2 }',
     402) AS guc_off_larger_offsets;
-        guc_off_larger_offsets        
+        guc_off_larger_offsets
 --------------------------------------
  pages=3 total=5 ids=[6,7] [8,9] [10]
 (1 row)
@@ -425,7 +422,7 @@ SELECT fb_drain(
     '{ "find": "v_match_skip", "skip": 2, "limit": 3, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "403" }, "collection": "v_match_skip", "batchSize": 2 }',
     403) AS guc_off_match_then_skip;
-    guc_off_match_then_skip    
+    guc_off_match_then_skip
 -------------------------------
  pages=2 total=3 ids=[6,7] [8]
 (1 row)
@@ -434,7 +431,7 @@ SELECT fb_drain(
     '{ "find": "v_nested", "skip": 2, "limit": 3, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "404" }, "collection": "v_nested", "batchSize": 2 }',
     404) AS guc_off_view_over_view;
-    guc_off_view_over_view     
+    guc_off_view_over_view
 -------------------------------
  pages=2 total=3 ids=[6,7] [8]
 (1 row)
@@ -443,7 +440,7 @@ SELECT fb_drain(
     '{ "find": "v_limit_then_skip", "skip": 2, "limit": 4, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "405" }, "collection": "v_limit_then_skip", "batchSize": 2 }',
     405) AS guc_off_view_limit_then_skip;
-  guc_off_view_limit_then_skip   
+  guc_off_view_limit_then_skip
 ---------------------------------
  pages=2 total=4 ids=[4,5] [6,7]
 (1 row)
@@ -452,7 +449,7 @@ SELECT fb_drain(
     '{ "find": "v_skip1", "limit": 9, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "406" }, "collection": "v_skip1", "batchSize": 2 }',
     406) AS guc_off_limit_exceeding_view;
-           guc_off_limit_exceeding_view           
+           guc_off_limit_exceeding_view
 --------------------------------------------------
  pages=5 total=9 ids=[2,3] [4,5] [6,7] [8,9] [10]
 (1 row)
@@ -461,7 +458,7 @@ SELECT fb_drain(
     '{ "find": "v_skip1", "sort": { "_id": -1 }, "skip": 2, "limit": 4, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "407" }, "collection": "v_skip1", "batchSize": 2 }',
     407) AS guc_off_sorted_untracked_offset;
-   guc_off_sorted_untracked_offset   
+   guc_off_sorted_untracked_offset
 -------------------------------------
  pages=2 total=4 ids=[18,17] [16,15]
 (1 row)
@@ -470,7 +467,7 @@ SELECT fb_drain(
     '{ "find": "coll", "limit": 6, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "408" }, "collection": "coll", "batchSize": 2 }',
     408) AS guc_off_control_plain_limit;
-      guc_off_control_plain_limit      
+      guc_off_control_plain_limit
 ---------------------------------------
  pages=3 total=6 ids=[1,2] [3,4] [5,6]
 (1 row)
@@ -479,7 +476,7 @@ SELECT fb_drain(
     '{ "find": "coll", "skip": 3, "limit": 6, "batchSize": 2 }',
     '{ "getMore": { "$numberLong": "409" }, "collection": "coll", "batchSize": 2 }',
     409) AS guc_off_control_plain_skip_limit;
-   guc_off_control_plain_skip_limit    
+   guc_off_control_plain_skip_limit
 ---------------------------------------
  pages=3 total=6 ids=[4,5] [6,7] [8,9]
 (1 row)

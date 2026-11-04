@@ -1375,8 +1375,8 @@ SELECT * FROM dcsub_drain_agg_cursortype(
     'flights', 2);
  page_num | batch_count | cursor_type | is_persistent 
 ----------+-------------+-------------+---------------
-        1 |           2 |          -1 | t
-        2 |           1 |          -1 | t
+        1 |           2 |          -1 | f
+        2 |           1 |          -1 | f
 (2 rows)
 
 -- Cleanup J helper

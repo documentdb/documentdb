@@ -135,6 +135,7 @@ DECLARE
     v_cursor_page documentdb_core.bson;
     v_continuation documentdb_core.bson;
     v_persist bool;
+    v_is_file_cursor bool;
     v_ids text := '';
     v_batch text;
 BEGIN
@@ -148,11 +149,15 @@ BEGIN
         commandSpec => FORMAT('{ "aggregate": "gstream", "hint": "a_1", "pipeline": [ { "$group": { "_id": "$a" } } ], "cursor": { "batchSize": %s } }', p_batch_size)::documentdb_core.bson,
         cursorId => 79500) fp;
 
-    IF p_streaming AND v_persist THEN
-        RAISE EXCEPTION 'batchSize=%: expected streaming (persistConnection=false)', p_batch_size;
+    v_is_file_cursor := COALESCE(v_continuation::text::jsonb ? 'qf', false);
+
+    IF p_streaming AND (v_persist OR v_is_file_cursor) THEN
+        RAISE EXCEPTION 'batchSize=%: expected streaming cursor', p_batch_size;
     END IF;
-    IF (NOT p_streaming) AND (NOT v_persist) THEN
-        RAISE EXCEPTION 'batchSize=%: expected persisted cursor (persistConnection=true)', p_batch_size;
+    IF (NOT p_streaming) AND v_continuation IS NOT NULL AND
+       NOT (v_persist OR v_is_file_cursor) THEN
+        RAISE EXCEPTION 'batchSize=%: expected held-portal or file-persisted cursor',
+            p_batch_size;
     END IF;
 
     v_batch := bson_dollar_project(v_cursor_page, '{ "x": "$cursor.firstBatch._id" }') ->> 'x';

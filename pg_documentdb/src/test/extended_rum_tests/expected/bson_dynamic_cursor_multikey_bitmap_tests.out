@@ -67,7 +67,6 @@ FROM find_cursor_first_page(
 DEBUG:  executing "SELECT index_id, index_spec, FALSE AS index_build_in_progress FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND (index_spec).index_name = $2 AND index_is_valid" via SPI
 DEBUG:  executing "SELECT (index_spec).index_name FROM documentdb_api_catalog.collection_indexes WHERE index_id = $1" via SPI
 DEBUG:  executing "SELECT (index_spec).index_name FROM documentdb_api_catalog.collection_indexes WHERE index_id = $1" via SPI
-DEBUG:  rehashing catalog cache id 44 for pg_proc; 33 lists, 16 buckets
 DEBUG:  dynamic cursor released 1 unused planner index lock(s)
                       continuation_flags                      
 --------------------------------------------------------------
@@ -162,7 +161,7 @@ FROM find_cursor_first_page(
     cursorId => 93505);
  persistconnection | continuation_flags 
 -------------------+--------------------
- t                 | { }
+ f                 | { }
 (1 row)
 
 SET documentdb.enable_dynamic_cursor_multikey_bitmap TO off;
