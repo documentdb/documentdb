@@ -1,4 +1,5 @@
 ### documentdb v1.3-0 (Unreleased) ###
+* Avoid repeated evaluation of computed input across group keys and accumulators when `documentdb.enable_subquery_pushdown_for_group` is enabled. *[Bugfix]*
 * Convert supported insert and update errors to wire-protocol codes, including batched inserts, controlled by the default-on `documentdb.enable_write_error_code_conversion` setting. *[Feature]*
 * Release transient insert and update processing memory after each subtransaction instead of retaining it for the full request. *[Bugfix]*
 * Enable optional shard-key terms for supported unique indexes and global per-path index metadata tracking by default for newly created indexes. Metadata-tracked indexes reject parallel arrays by default. Existing index definitions are unchanged. *[Perf]*
