@@ -62,6 +62,50 @@ extern int ArrayStatisticsMaxSampleCount;
 /* See analyze.c in postgres for details on the limit */
 #define MAX_SCALAR_TYPE_ANALYZE_SIZE 1024
 
+static inline double
+ExecSelectivityFunc4(PGFunction func, Datum arg1, Datum arg2, Datum arg3, Datum arg4,
+					 MemoryContext selectivityContext)
+{
+	MemoryContext oldContext = MemoryContextSwitchTo(selectivityContext);
+	double selectivity = DatumGetFloat8(DirectFunctionCall4(func, arg1, arg2, arg3,
+															arg4));
+	MemoryContextSwitchTo(oldContext);
+	MemoryContextReset(selectivityContext);
+	return selectivity;
+}
+
+
+static inline double
+ExecSelectivityFunc5(PGFunction func, Datum arg1, Datum arg2, Datum arg3, Datum arg4,
+					 Datum arg5, MemoryContext selectivityContext)
+{
+	MemoryContext oldContext = MemoryContextSwitchTo(selectivityContext);
+	double selectivity = DatumGetFloat8(DirectFunctionCall5(func, arg1, arg2, arg3,
+															arg4, arg5));
+	MemoryContextSwitchTo(oldContext);
+	MemoryContextReset(selectivityContext);
+	return selectivity;
+}
+
+
+/* Require the context-aware wrappers instead of direct calls in this file. */
+#undef DirectFunctionCall4
+#undef DirectFunctionCall5
+
+static inline double
+ExecGenericRestrictionSelectivity(PlannerInfo *planner, Oid opOid, Oid collation,
+								  List *args, int varRelId, double defaultSel,
+								  MemoryContext selectivityContext)
+{
+	MemoryContext oldContext = MemoryContextSwitchTo(selectivityContext);
+	double selectivity = generic_restriction_selectivity(planner, opOid, collation,
+														 args, varRelId, defaultSel);
+	MemoryContextSwitchTo(oldContext);
+	MemoryContextReset(selectivityContext);
+	return selectivity;
+}
+
+
 typedef struct StatsProjectState
 {
 	bson_value_t samples[ARRAY_STATISTICS_MAX_SAMPLE_COUNT];
@@ -77,6 +121,9 @@ static double GetStatisticsNoStatsData(List *args, Oid selectivityOpExpr, double
 static double GetDisableStatisticSelectivity(List *args, double
 											 defaultDisabledSelectivity);
 
+static void GetCorrelationFromStatisticsCore(PlannerInfo *root, IndexPath *path,
+											 double *indexCorrelation);
+
 static Oid GetNativeStatsBtreeOperatorForIndexStrategy(BsonIndexStrategy strategy);
 
 static bool TryBuildElemMatchStatsClauses(List *clauses,
@@ -89,14 +136,16 @@ static bool TryGetElemMatchSelectivity(PlannerInfo *planner,
 									   Node *documentExpr,
 									   const pgbsonelement *elemMatchElement,
 									   int varRelId, Oid collation,
-									   double *selectivity);
+									   double *selectivity,
+									   MemoryContext selectivityContext);
 
 static bool TryGetElemMatchIndexSelectivity(PlannerInfo *planner,
 											Node *documentExpr,
 											const pgbsonelement *elemMatchElement,
 											const DollarRangeParams *rangeParams,
 											int varRelId,
-											double *selectivity);
+											double *selectivity,
+											MemoryContext selectivityContext);
 
 static bool StatsProjectVisitTopLevelField(pgbsonelement *element, const
 										   StringView *traversePath,
@@ -184,9 +233,13 @@ bson_dollar_selectivity(PG_FUNCTION_ARGS)
 
 	/* The default selectivity Postgres applies for matching clauses. */
 	const double defaultOperatorSelectivity = 0.5;
+	MemoryContext selectivityContext = AllocSetContextCreate(CurrentMemoryContext,
+															 "Operator selectivity",
+															 ALLOCSET_DEFAULT_SIZES);
 	double selectivity = GetDollarOperatorSelectivity(
 		planner, selectivityOpExpr, args, collation, varRelId,
-		defaultOperatorSelectivity);
+		defaultOperatorSelectivity, selectivityContext);
+	MemoryContextDelete(selectivityContext);
 
 	PG_RETURN_FLOAT8(selectivity);
 }
@@ -291,18 +344,20 @@ EnablePlannerCostSelectivity(PlannerInfo *planner, List *args)
  */
 static double
 GetDollarExistsSelectivity(PlannerInfo *planner, Oid selectivityOpExpr, Node *leftOperand,
-						   bson_value_t *rightValue, int varRelId, bool isExistsTrue)
+						   bson_value_t *rightValue, int varRelId, bool isExistsTrue,
+						   MemoryContext selectivityContext)
 {
 	rightValue->value_type = BSON_TYPE_NULL;
 	List *args = list_make2(leftOperand, MakeBsonConst(BsonValueToDocumentPgbson(
 														   rightValue)));
-	double selectivity = DatumGetFloat8(DirectFunctionCall4(eqsel,
-															PointerGetDatum(planner),
-															ObjectIdGetDatum(
-																selectivityOpExpr),
-															PointerGetDatum(args),
-															Int32GetDatum(
-																varRelId)));
+	double selectivity = ExecSelectivityFunc4(eqsel,
+											  PointerGetDatum(planner),
+											  ObjectIdGetDatum(
+												  selectivityOpExpr),
+											  PointerGetDatum(args),
+											  Int32GetDatum(
+												  varRelId),
+											  selectivityContext);
 
 	if (isExistsTrue)
 	{
@@ -310,6 +365,10 @@ GetDollarExistsSelectivity(PlannerInfo *planner, Oid selectivityOpExpr, Node *le
 	}
 
 	CLAMP_PROBABILITY(selectivity);
+
+	Const *rightConst = lsecond(args);
+	pfree(DatumGetPointer(rightConst->constvalue));
+	pfree(rightConst);
 	list_free(args);
 	return selectivity;
 }
@@ -333,7 +392,7 @@ double
 GetCustomStatisticsSelectivityForLookup(Oid funcExpr, List *funcArgs,
 										SpecialJoinInfo *sjinfo,
 										PlannerInfo *planner, JoinType joinType,
-										int varRelid)
+										int varRelid, MemoryContext selectivityContext)
 {
 	if (!EnableLookupJoinSelectivityFromStats)
 	{
@@ -395,32 +454,41 @@ GetCustomStatisticsSelectivityForLookup(Oid funcExpr, List *funcArgs,
 												   DEFAULT_COLLATION_OID,
 												   COERCE_EXPLICIT_CALL);
 
+				List *joinArgs = list_make2(leftFunc, rightFunc);
 				float8 joinSelectivity;
 				if (sjinfo != NULL)
 				{
-					Datum joinSel = DirectFunctionCall5(eqjoinsel,
-														PointerGetDatum(planner),
-														ObjectIdGetDatum(
-															BsonEqualOperatorId()),
-														PointerGetDatum(
-															list_make2(leftFunc,
-																	   rightFunc)),
-														Int32GetDatum(
-															joinType),
-														PointerGetDatum(
-															sjinfo));
-					joinSelectivity = DatumGetFloat8(joinSel);
+					joinSelectivity = ExecSelectivityFunc5(eqjoinsel,
+														   PointerGetDatum(planner),
+														   ObjectIdGetDatum(
+															   BsonEqualOperatorId()),
+														   PointerGetDatum(joinArgs),
+														   Int32GetDatum(
+															   joinType),
+														   PointerGetDatum(
+															   sjinfo),
+														   selectivityContext);
 				}
 				else
 				{
-					joinSelectivity = DatumGetFloat8(
-						DirectFunctionCall4(eqsel, PointerGetDatum(planner),
-											ObjectIdGetDatum(
-												BsonEqualOperatorId()),
-											PointerGetDatum(list_make2(leftFunc,
-																	   rightFunc)),
-											Int32GetDatum(varRelid)));
+					joinSelectivity = ExecSelectivityFunc4(eqsel, PointerGetDatum(
+															   planner),
+														   ObjectIdGetDatum(
+															   BsonEqualOperatorId()),
+														   PointerGetDatum(joinArgs),
+														   Int32GetDatum(varRelid),
+														   selectivityContext);
 				}
+
+				list_free(joinArgs);
+
+				/* The function argument lists contain borrowed planner expressions. */
+				list_free(leftFunc->args);
+				list_free(rightFunc->args);
+				pfree(leftFunc);
+				pfree(rightFunc);
+				pfree(DatumGetPointer(rightFilterConst->constvalue));
+				pfree(rightFilterConst);
 
 				CLAMP_PROBABILITY(joinSelectivity);
 				return joinSelectivity;
@@ -450,7 +518,8 @@ GetDollarInCustomSelectivity(PlannerInfo *planner,
 							 Oid collation,
 							 int varRelId,
 							 double defaultInputSelectivity,
-							 bool isNotIn)
+							 bool isNotIn,
+							 MemoryContext selectivityContext)
 {
 	if (rightValue->value_type != BSON_TYPE_ARRAY)
 	{
@@ -514,22 +583,23 @@ GetDollarInCustomSelectivity(PlannerInfo *planner,
 				}
 
 				const double defaultPerItemRegexSelectivity = 0.0;
-				perItemSelectivity = generic_restriction_selectivity(
+				perItemSelectivity = ExecGenericRestrictionSelectivity(
 					planner, regexOperatorOid, collation, args, varRelId,
-					defaultPerItemRegexSelectivity);
+					defaultPerItemRegexSelectivity, selectivityContext);
 				hasRegex = true;
 			}
 			else
 			{
-				perItemSelectivity = DatumGetFloat8(DirectFunctionCall4(eqsel,
-																		PointerGetDatum(
-																			planner),
-																		ObjectIdGetDatum(
-																			BsonEqualOperatorId()),
-																		PointerGetDatum(
-																			args),
-																		Int32GetDatum(
-																			varRelId)));
+				perItemSelectivity = ExecSelectivityFunc4(eqsel,
+														  PointerGetDatum(
+															  planner),
+														  ObjectIdGetDatum(
+															  BsonEqualOperatorId()),
+														  PointerGetDatum(
+															  args),
+														  Int32GetDatum(
+															  varRelId),
+														  selectivityContext);
 			}
 
 			selectivity = selectivity + perItemSelectivity - selectivity *
@@ -568,20 +638,24 @@ GetDollarInCustomSelectivity(PlannerInfo *planner,
 
 	List *args = list_make2(leftOperand, MakeBsonConst(BsonValueToDocumentPgbson(
 														   rightValue)));
-	double selectivity = generic_restriction_selectivity(planner, selectivityOpExpr,
-														 collation, args, varRelId,
-														 defaultInputSelectivity);
+	double selectivity = ExecGenericRestrictionSelectivity(planner, selectivityOpExpr,
+														   collation, args, varRelId,
+														   defaultInputSelectivity,
+														   selectivityContext);
+	Const *rightConst = lsecond(args);
+	pfree(DatumGetPointer(rightConst->constvalue));
+	pfree(rightConst);
 	list_free(args);
 	return selectivity;
 }
 
 
 static double
-GetCustomStatisticsSelectivity(PlannerInfo *planner, BsonIndexStrategy
-							   indexStrategy, Oid selectivityOpExpr,
-							   Node *leftOperand, bson_value_t *rightValue,
-							   int varRelId, Oid collation,
-							   double defaultInputSelectivity)
+GetCustomStatisticsSelectivity(PlannerInfo *planner, BsonIndexStrategy indexStrategy,
+							   Oid selectivityOpExpr, Node *leftOperand,
+							   bson_value_t *rightValue, int varRelId, Oid collation,
+							   double defaultInputSelectivity, MemoryContext
+							   selectivityContext)
 {
 	/*
 	 * TODO Selectivity:
@@ -600,12 +674,13 @@ GetCustomStatisticsSelectivity(PlannerInfo *planner, BsonIndexStrategy
 		{
 			args = list_make2(leftOperand, MakeBsonConst(BsonValueToDocumentPgbson(
 															 rightValue)));
-			selectivity = DatumGetFloat8(DirectFunctionCall4(eqsel, PointerGetDatum(
-																 planner),
-															 ObjectIdGetDatum(
-																 selectivityOpExpr),
-															 PointerGetDatum(args),
-															 Int32GetDatum(varRelId)));
+			selectivity = ExecSelectivityFunc4(eqsel, PointerGetDatum(
+												   planner),
+											   ObjectIdGetDatum(
+												   selectivityOpExpr),
+											   PointerGetDatum(args),
+											   Int32GetDatum(varRelId),
+											   selectivityContext);
 			break;
 		}
 
@@ -613,12 +688,13 @@ GetCustomStatisticsSelectivity(PlannerInfo *planner, BsonIndexStrategy
 		{
 			args = list_make2(leftOperand, MakeBsonConst(BsonValueToDocumentPgbson(
 															 rightValue)));
-			selectivity = DatumGetFloat8(DirectFunctionCall4(scalargtsel, PointerGetDatum(
-																 planner),
-															 ObjectIdGetDatum(
-																 selectivityOpExpr),
-															 PointerGetDatum(args),
-															 Int32GetDatum(varRelId)));
+			selectivity = ExecSelectivityFunc4(scalargtsel, PointerGetDatum(
+												   planner),
+											   ObjectIdGetDatum(
+												   selectivityOpExpr),
+											   PointerGetDatum(args),
+											   Int32GetDatum(varRelId),
+											   selectivityContext);
 			break;
 		}
 
@@ -629,17 +705,19 @@ GetCustomStatisticsSelectivity(PlannerInfo *planner, BsonIndexStrategy
 			{
 				bool isExistsTrue = true;
 				return GetDollarExistsSelectivity(planner, selectivityOpExpr, leftOperand,
-												  rightValue, varRelId, isExistsTrue);
+												  rightValue, varRelId, isExistsTrue,
+												  selectivityContext);
 			}
 
 			args = list_make2(leftOperand, MakeBsonConst(BsonValueToDocumentPgbson(
 															 rightValue)));
-			selectivity = DatumGetFloat8(DirectFunctionCall4(scalargesel, PointerGetDatum(
-																 planner),
-															 ObjectIdGetDatum(
-																 selectivityOpExpr),
-															 PointerGetDatum(args),
-															 Int32GetDatum(varRelId)));
+			selectivity = ExecSelectivityFunc4(scalargesel, PointerGetDatum(
+												   planner),
+											   ObjectIdGetDatum(
+												   selectivityOpExpr),
+											   PointerGetDatum(args),
+											   Int32GetDatum(varRelId),
+											   selectivityContext);
 			break;
 		}
 
@@ -647,19 +725,21 @@ GetCustomStatisticsSelectivity(PlannerInfo *planner, BsonIndexStrategy
 		{
 			bool isExistsTrue = BsonValueAsBool(rightValue);
 			return GetDollarExistsSelectivity(planner, selectivityOpExpr, leftOperand,
-											  rightValue, varRelId, isExistsTrue);
+											  rightValue, varRelId, isExistsTrue,
+											  selectivityContext);
 		}
 
 		case BSON_INDEX_STRATEGY_DOLLAR_LESS:
 		{
 			args = list_make2(leftOperand, MakeBsonConst(BsonValueToDocumentPgbson(
 															 rightValue)));
-			selectivity = DatumGetFloat8(DirectFunctionCall4(scalarltsel, PointerGetDatum(
-																 planner),
-															 ObjectIdGetDatum(
-																 selectivityOpExpr),
-															 PointerGetDatum(args),
-															 Int32GetDatum(varRelId)));
+			selectivity = ExecSelectivityFunc4(scalarltsel, PointerGetDatum(
+												   planner),
+											   ObjectIdGetDatum(
+												   selectivityOpExpr),
+											   PointerGetDatum(args),
+											   Int32GetDatum(varRelId),
+											   selectivityContext);
 
 			break;
 		}
@@ -668,12 +748,13 @@ GetCustomStatisticsSelectivity(PlannerInfo *planner, BsonIndexStrategy
 		{
 			args = list_make2(leftOperand, MakeBsonConst(BsonValueToDocumentPgbson(
 															 rightValue)));
-			selectivity = DatumGetFloat8(DirectFunctionCall4(scalarlesel, PointerGetDatum(
-																 planner),
-															 ObjectIdGetDatum(
-																 selectivityOpExpr),
-															 PointerGetDatum(args),
-															 Int32GetDatum(varRelId)));
+			selectivity = ExecSelectivityFunc4(scalarlesel, PointerGetDatum(
+												   planner),
+											   ObjectIdGetDatum(
+												   selectivityOpExpr),
+											   PointerGetDatum(args),
+											   Int32GetDatum(varRelId),
+											   selectivityContext);
 			break;
 		}
 
@@ -681,12 +762,13 @@ GetCustomStatisticsSelectivity(PlannerInfo *planner, BsonIndexStrategy
 		{
 			args = list_make2(leftOperand, MakeBsonConst(BsonValueToDocumentPgbson(
 															 rightValue)));
-			selectivity = DatumGetFloat8(DirectFunctionCall4(neqsel, PointerGetDatum(
-																 planner),
-															 ObjectIdGetDatum(
-																 selectivityOpExpr),
-															 PointerGetDatum(args),
-															 Int32GetDatum(varRelId)));
+			selectivity = ExecSelectivityFunc4(neqsel, PointerGetDatum(
+												   planner),
+											   ObjectIdGetDatum(
+												   selectivityOpExpr),
+											   PointerGetDatum(args),
+											   Int32GetDatum(varRelId),
+											   selectivityContext);
 			break;
 		}
 
@@ -696,7 +778,7 @@ GetCustomStatisticsSelectivity(PlannerInfo *planner, BsonIndexStrategy
 			selectivity = GetDollarInCustomSelectivity(planner, leftOperand, rightValue,
 													   selectivityOpExpr, collation,
 													   varRelId, defaultInputSelectivity,
-													   isNotIn);
+													   isNotIn, selectivityContext);
 			break;
 		}
 
@@ -706,7 +788,7 @@ GetCustomStatisticsSelectivity(PlannerInfo *planner, BsonIndexStrategy
 			selectivity = GetDollarInCustomSelectivity(planner, leftOperand, rightValue,
 													   selectivityOpExpr, collation,
 													   varRelId, defaultInputSelectivity,
-													   isNotIn);
+													   isNotIn, selectivityContext);
 			break;
 		}
 
@@ -715,11 +797,19 @@ GetCustomStatisticsSelectivity(PlannerInfo *planner, BsonIndexStrategy
 		{
 			args = list_make2(leftOperand, MakeBsonConst(BsonValueToDocumentPgbson(
 															 rightValue)));
-			selectivity = generic_restriction_selectivity(planner, selectivityOpExpr,
-														  collation, args, varRelId,
-														  defaultInputSelectivity);
+			selectivity = ExecGenericRestrictionSelectivity(planner, selectivityOpExpr,
+															collation, args, varRelId,
+															defaultInputSelectivity,
+															selectivityContext);
 			break;
 		}
+	}
+
+	if (args != NIL)
+	{
+		Const *rightConst = lsecond(args);
+		pfree(DatumGetPointer(rightConst->constvalue));
+		pfree(rightConst);
 	}
 
 	list_free(args);
@@ -901,18 +991,14 @@ static bool
 TryGetElemMatchSelectivity(PlannerInfo *planner, Node *documentExpr,
 						   const pgbsonelement *elemMatchElement,
 						   int varRelId, Oid collation,
-						   double *selectivity)
+						   double *selectivity, MemoryContext selectivityContext)
 {
 	if (elemMatchElement->bsonValue.value_type != BSON_TYPE_DOCUMENT)
 	{
 		return false;
 	}
 
-	MemoryContext oldContext = CurrentMemoryContext;
-	MemoryContext tempContext = AllocSetContextCreate(oldContext,
-													  "ElemMatch selectivity",
-													  ALLOCSET_DEFAULT_SIZES);
-	MemoryContextSwitchTo(tempContext);
+	MemoryContext oldContext = MemoryContextSwitchTo(selectivityContext);
 	bool foundSelectivity = false;
 
 	BsonQueryOperatorContext context = { 0 };
@@ -940,7 +1026,7 @@ TryGetElemMatchSelectivity(PlannerInfo *planner, Node *documentExpr,
 	}
 
 	MemoryContextSwitchTo(oldContext);
-	MemoryContextDelete(tempContext);
+	MemoryContextReset(selectivityContext);
 	return foundSelectivity;
 }
 
@@ -954,7 +1040,8 @@ static bool
 TryGetElemMatchIndexSelectivity(PlannerInfo *planner, Node *documentExpr,
 								const pgbsonelement *elemMatchElement,
 								const DollarRangeParams *rangeParams,
-								int varRelId, double *selectivity)
+								int varRelId, double *selectivity,
+								MemoryContext selectivityContext)
 {
 	if (rangeParams->elemMatchValue.value_type != BSON_TYPE_ARRAY)
 	{
@@ -1081,8 +1168,12 @@ TryGetElemMatchIndexSelectivity(PlannerInfo *planner, Node *documentExpr,
 
 	if (foundOperation)
 	{
+		MemoryContext oldContext = MemoryContextSwitchTo(selectivityContext);
 		*selectivity = clauselist_selectivity(planner, operationClauses, varRelId,
 											  JOIN_INNER, NULL);
+		MemoryContextSwitchTo(oldContext);
+		MemoryContextReset(selectivityContext);
+
 		CLAMP_PROBABILITY(*selectivity);
 		if (EnableElemMatchSelectivityLowerBound)
 		{
@@ -1090,9 +1181,20 @@ TryGetElemMatchIndexSelectivity(PlannerInfo *planner, Node *documentExpr,
 		}
 	}
 
-	list_free(operationClauses);
+	ListCell *operationCell;
+	foreach(operationCell, operationClauses)
+	{
+		OpExpr *operationClause = lfirst(operationCell);
+		Const *rightConst = lsecond(operationClause->args);
+		pfree(DatumGetPointer(rightConst->constvalue));
+		pfree(rightConst);
+		list_free(operationClause->args);
+	}
+	list_free_deep(operationClauses);
 	list_free(pathArgs);
+	pfree(DatumGetPointer(pathValue->constvalue));
 	pfree(pathValue);
+	pfree(statsExpr);
 	return foundOperation;
 }
 
@@ -1100,7 +1202,8 @@ TryGetElemMatchIndexSelectivity(PlannerInfo *planner, Node *documentExpr,
 double
 GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
 							 List *args, Oid collation, int varRelId,
-							 double defaultExprSelectivity)
+							 double defaultExprSelectivity,
+							 MemoryContext selectivityContext)
 {
 	/* Special case, check if it's a full scan */
 	DollarRangeParams params = { 0 };
@@ -1143,9 +1246,9 @@ GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
 			return defaultInputSelectivity;
 		}
 
-		return generic_restriction_selectivity(
+		return ExecGenericRestrictionSelectivity(
 			planner, selectivityOpExpr, collation, args, varRelId,
-			defaultInputSelectivity);
+			defaultInputSelectivity, selectivityContext);
 	}
 
 	if (params.isElemMatch)
@@ -1155,7 +1258,8 @@ GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
 			TryGetElemMatchIndexSelectivity(planner, linitial(args),
 											&dollarElement, &params,
 											varRelId,
-											&elemMatchSelectivity))
+											&elemMatchSelectivity,
+											selectivityContext))
 		{
 			return elemMatchSelectivity;
 		}
@@ -1169,7 +1273,8 @@ GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
 		double elemMatchSelectivity;
 		if (TryGetElemMatchSelectivity(planner, linitial(args), &dollarElement,
 									   varRelId, collation,
-									   &elemMatchSelectivity))
+									   &elemMatchSelectivity,
+									   selectivityContext))
 		{
 			return elemMatchSelectivity;
 		}
@@ -1199,16 +1304,19 @@ GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
 													 updatedExpr,
 													 &dollarElement.bsonValue,
 													 varRelId, collation,
-													 defaultInputSelectivity);
+													 defaultInputSelectivity,
+													 selectivityContext);
 
 		list_free(pathArgs);
+		pfree(DatumGetPointer(pathValue->constvalue));
 		pfree(pathValue);
+		pfree(updatedExpr);
 	}
 	else
 	{
-		selectivity = generic_restriction_selectivity(
+		selectivity = ExecGenericRestrictionSelectivity(
 			planner, selectivityOpExpr, collation, args, varRelId,
-			defaultInputSelectivity);
+			defaultInputSelectivity, selectivityContext);
 	}
 
 	return selectivity;
@@ -1242,28 +1350,41 @@ GetObjectIdOperatorSelectivity(PlannerInfo *planner, Oid funcId,
 		return DEFAULT_INEQ_SEL;
 	}
 
+	MemoryContext selectivityContext = AllocSetContextCreate(CurrentMemoryContext,
+															 "ObjectId SelectivityContext",
+															 ALLOCSET_DEFAULT_SIZES);
+
+	double selectivity = DEFAULT_INEQ_SEL;
 	if (IsA(querySpecExpr, Const) && !((Const *) querySpecExpr)->constisnull)
 	{
 		pgbson *queryBson = DatumGetPgBson(((Const *) querySpecExpr)->constvalue);
 		pgbsonelement queryElement;
 		PgbsonToSinglePgbsonElement(queryBson, &queryElement);
 
-		return GetCustomStatisticsSelectivity(planner,
-											  operatorInfo->indexOperator.indexStrategy,
-											  operatorOid,
-											  (Node *) objectIdExpr,
-											  &queryElement.bsonValue,
-											  varRelId,
-											  collation,
-											  DEFAULT_INEQ_SEL);
+		selectivity = GetCustomStatisticsSelectivity(planner,
+													 operatorInfo->indexOperator.
+													 indexStrategy,
+													 operatorOid,
+													 (Node *) objectIdExpr,
+													 &queryElement.bsonValue,
+													 varRelId,
+													 collation,
+													 DEFAULT_INEQ_SEL,
+													 selectivityContext);
+	}
+	else
+	{
+		List *newArgs = list_make2(objectIdExpr, querySpecExpr);
+		selectivity = ExecGenericRestrictionSelectivity(planner, operatorOid,
+														collation,
+														newArgs, varRelId,
+														DEFAULT_INEQ_SEL,
+														selectivityContext);
+
+		list_free(newArgs);
 	}
 
-	List *newArgs = list_make2(objectIdExpr, querySpecExpr);
-	double selectivity = generic_restriction_selectivity(planner, operatorOid,
-														 collation,
-														 newArgs, varRelId,
-														 DEFAULT_INEQ_SEL);
-	list_free(newArgs);
+	MemoryContextDelete(selectivityContext);
 	return selectivity;
 }
 
@@ -1694,6 +1815,22 @@ test_bson_stats_project_with_memcheck(PG_FUNCTION_ARGS)
 void
 GetCorrelationFromStatistics(PlannerInfo *root, IndexPath *path,
 							 double *indexCorrelation)
+{
+	MemoryContext parentContext = CurrentMemoryContext;
+	MemoryContext correlationContext = AllocSetContextCreate(parentContext,
+															 "BSON index correlation",
+															 ALLOCSET_SMALL_SIZES);
+
+	MemoryContextSwitchTo(correlationContext);
+	GetCorrelationFromStatisticsCore(root, path, indexCorrelation);
+	MemoryContextSwitchTo(parentContext);
+	MemoryContextDelete(correlationContext);
+}
+
+
+static void
+GetCorrelationFromStatisticsCore(PlannerInfo *root, IndexPath *path,
+								 double *indexCorrelation)
 {
 	if (!EnableIndexCorrelationFromStatistics)
 	{

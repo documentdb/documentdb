@@ -308,9 +308,14 @@ bson_distinct_unwind_support(PG_FUNCTION_ARGS)
 								BsonGreaterThanEqualMatchIndexFunctionId());
 						List *selectivityArgs =
 							list_make2(documentVar, arrayBoundConst);
+
+						MemoryContext selectivityContext = AllocSetContextCreate(
+							CurrentMemoryContext,
+							"Unwind SelectivityContext",
+							ALLOCSET_SMALL_SIZES);
 						double arraySelectivity = GetDollarOperatorSelectivity(
 							req->root, GetMongoQueryOperatorOid(gteOperator),
-							selectivityArgs, InvalidOid, 0, 1.0);
+							selectivityArgs, InvalidOid, 0, 1.0, selectivityContext);
 
 						/*
 						 * Estimate how often the unwound path is null via an
@@ -338,7 +343,9 @@ bson_distinct_unwind_support(PG_FUNCTION_ARGS)
 							list_make2(documentVar, nullBoundConst);
 						double nullSelectivity = GetDollarOperatorSelectivity(
 							req->root, GetMongoQueryOperatorOid(eqOperator),
-							nullSelectivityArgs, InvalidOid, 0, 0.0);
+							nullSelectivityArgs, InvalidOid, 0, 0.0, selectivityContext);
+
+						MemoryContextDelete(selectivityContext);
 
 						/*
 						 * The unwind expands only documents whose path holds an

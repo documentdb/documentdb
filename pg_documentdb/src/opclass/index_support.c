@@ -398,7 +398,7 @@ static bool IsMatchingPathForQueryOperator(RelOptInfo *rel, Path *path,
 										   void *matchContext);
 static RestrictInfo * MarkReducedCorrelatedIndexQualPlanned(RestrictInfo *indexQual);
 static bool HasMultipleRangeConditionsForOrderedIndexPath(IndexPath *indexPath);
-static RestrictInfo * GetNativeStatsRangeQual(RestrictInfo *rinfo, List **itemsToFree);
+static RestrictInfo * GetNativeStatsRangeQual(RestrictInfo *rinfo);
 static bool PruneReducedCorrelatedIndexQuals(IndexPath *indexPath, bytea *indexOptions,
 											 uint32_t multiKeyPathBitMask);
 static Expr * ProcessFullScanForOrderBy(SupportRequestIndexCondition *req, List *args);
@@ -644,14 +644,21 @@ dollar_support(PG_FUNCTION_ARGS)
 			if (indexOperator != NULL && indexOperator->indexStrategy !=
 				BSON_INDEX_STRATEGY_INVALID)
 			{
+				MemoryContext selectivityContext = AllocSetContextCreate(
+					CurrentMemoryContext,
+					"SelectivityContext",
+					ALLOCSET_DEFAULT_SIZES);
+
 				/* See plancat.c function_selectivity */
 				const double defaultFuncExprSelectivity = 0.3333333;
 				Oid selectivityOpExpr = GetMongoQueryOperatorOid(indexOperator);
 				double selectivity = GetDollarOperatorSelectivity(
 					req->root, selectivityOpExpr, req->args, req->inputcollid,
-					req->varRelid, defaultFuncExprSelectivity);
+					req->varRelid, defaultFuncExprSelectivity,
+					selectivityContext);
 				req->selectivity = selectivity;
 				responsePointer = (Pointer) req;
+				MemoryContextDelete(selectivityContext);
 			}
 		}
 		else if (req->funcid == BsonRangeMatchFunctionId())
@@ -792,13 +799,19 @@ bson_dollar_lookup_filter_support(PG_FUNCTION_ARGS)
 		if (req->funcid == BsonDollarLookupJoinFilterFunctionOid() &&
 			list_length(req->args) >= 3)
 		{
+			MemoryContext selectivityContext = AllocSetContextCreate(CurrentMemoryContext,
+																	 "SelectivityContext",
+																	 ALLOCSET_DEFAULT_SIZES);
+
 			/* Estimate the join from the collected statistics where possible. */
 			selectivity = GetCustomStatisticsSelectivityForLookup(req->funcid,
 																  req->args,
 																  req->sjinfo,
 																  req->root,
 																  req->jointype,
-																  req->varRelid);
+																  req->varRelid,
+																  selectivityContext);
+			MemoryContextDelete(selectivityContext);
 		}
 
 		req->selectivity = selectivity;
@@ -8249,8 +8262,7 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
  * for a query that has EQ(A), EQ(C) -> the boundary is "EQ(A)"
  */
 List *
-ExtractBoundaryQualsForOrderedIndexPath(IndexPath *indexPath, int *num_sa_scans,
-										List **itemsToFree)
+ExtractBoundaryQualsForOrderedIndexPath(IndexPath *indexPath, int *num_sa_scans)
 {
 	List *validRestrictInfos[INDEX_MAX_KEYS] = { 0 };
 	bool equalityPrefixesGlobal[INDEX_MAX_KEYS] = { 0 };
@@ -8347,7 +8359,7 @@ ExtractBoundaryQualsForOrderedIndexPath(IndexPath *indexPath, int *num_sa_scans,
 			RestrictInfo *rinfo = lfirst_node(RestrictInfo, cell);
 			if (rewriteRanges)
 			{
-				rinfo = GetNativeStatsRangeQual(rinfo, itemsToFree);
+				rinfo = GetNativeStatsRangeQual(rinfo);
 			}
 
 			finalBoundaryClauses = lappend(finalBoundaryClauses, rinfo);
@@ -8355,22 +8367,10 @@ ExtractBoundaryQualsForOrderedIndexPath(IndexPath *indexPath, int *num_sa_scans,
 
 		*num_sa_scans += numSaopScans[i];
 
-		list_free(validRestrictInfos[i]);
-		validRestrictInfos[i] = NIL;
-
 		/* If the current path does not have an equality match then subsequent paths cannot be considered */
 		if (!equalityPrefixesGlobal[i])
 		{
 			break;
-		}
-	}
-
-	for (; i <= maxGlobalColumnNumber; i++)
-	{
-		/* Free any remaining clauses that are not being considered */
-		if (validRestrictInfos[i] != NIL)
-		{
-			list_free(validRestrictInfos[i]);
 		}
 	}
 
@@ -8381,11 +8381,11 @@ ExtractBoundaryQualsForOrderedIndexPath(IndexPath *indexPath, int *num_sa_scans,
 /*
  * Builds temporary index clauses that use the native statistics operators for
  * range bounds. The returned list aliases the original clauses unless at
- * least one qual is replaced. Every allocation retained by the returned clauses
- * is added to itemsToFree for shallow deallocation with list_free_deep.
+ * least one qual is replaced. Temporary allocations belong to the caller's
+ * costing memory context.
  */
 List *
-GetModifiedClauseListForOrderedIndexPath(IndexPath *indexPath, List **itemsToFree)
+GetModifiedClauseListForOrderedIndexPath(IndexPath *indexPath)
 {
 	ListCell *cell;
 	bool hasModifiedClauses = false;
@@ -8424,7 +8424,7 @@ GetModifiedClauseListForOrderedIndexPath(IndexPath *indexPath, List **itemsToFre
 				continue;
 			}
 
-			RestrictInfo *modifiedQual = GetNativeStatsRangeQual(rinfo, itemsToFree);
+			RestrictInfo *modifiedQual = GetNativeStatsRangeQual(rinfo);
 			modifiedIndexQuals = lappend(modifiedIndexQuals, modifiedQual);
 			qualsModified |= modifiedQual != rinfo;
 		}
@@ -8433,26 +8433,21 @@ GetModifiedClauseListForOrderedIndexPath(IndexPath *indexPath, List **itemsToFre
 		{
 			hasModifiedClauses = true;
 			IndexClause *clauseCopy = palloc(sizeof(IndexClause));
-			*itemsToFree = lappend(*itemsToFree, modifiedIndexQuals);
-			*itemsToFree = lappend(*itemsToFree, clauseCopy);
 			memcpy(clauseCopy, iclause, sizeof(IndexClause));
 			clauseCopy->indexquals = modifiedIndexQuals;
 			modifiedClauses = lappend(modifiedClauses, clauseCopy);
 		}
 		else
 		{
-			list_free(modifiedIndexQuals);
 			modifiedClauses = lappend(modifiedClauses, iclause);
 		}
 	}
 
 	if (hasModifiedClauses)
 	{
-		*itemsToFree = lappend(*itemsToFree, modifiedClauses);
 		return modifiedClauses;
 	}
 
-	list_free(modifiedClauses);
 	return indexPath->indexclauses;
 }
 
@@ -8514,7 +8509,7 @@ HasMultipleRangeConditionsForOrderedIndexPath(IndexPath *indexPath)
 
 
 static RestrictInfo *
-GetNativeStatsRangeQual(RestrictInfo *rinfo, List **itemsToFree)
+GetNativeStatsRangeQual(RestrictInfo *rinfo)
 {
 	if (!IsA(rinfo->clause, OpExpr))
 	{
@@ -8598,27 +8593,18 @@ GetNativeStatsRangeQual(RestrictInfo *rinfo, List **itemsToFree)
 	}
 
 	Const *pathValue = MakeTextConst(dollarElement.path, dollarElement.pathLength);
-	*itemsToFree = lappend(*itemsToFree, DatumGetPointer(pathValue->constvalue));
-	*itemsToFree = lappend(*itemsToFree, pathValue);
 	List *pathArgs = list_make2(firstArg, pathValue);
-	*itemsToFree = lappend(*itemsToFree, pathArgs);
 	Expr *projectedValue = (Expr *) makeFuncExpr(
 		BsonStatsProjectFuncOid(), BsonTypeId(),
 		pathArgs, InvalidOid,
 		DEFAULT_COLLATION_OID, COERCE_EXPLICIT_CALL);
-	*itemsToFree = lappend(*itemsToFree, projectedValue);
 	pgbson *queryDocument = BsonValueToDocumentPgbson(&dollarElement.bsonValue);
-	*itemsToFree = lappend(*itemsToFree, queryDocument);
 	Const *queryValue = MakeBsonConst(queryDocument);
-	*itemsToFree = lappend(*itemsToFree, queryValue);
 	queryValue->consttype = BsonQueryTypeId();
 	Expr *modifiedOpExpr = make_opclause(opNo, BOOLOID, false,
 										 projectedValue, (Expr *) queryValue,
 										 opExpr->opcollid, opExpr->inputcollid);
-	*itemsToFree = lappend(*itemsToFree, ((OpExpr *) modifiedOpExpr)->args);
-	*itemsToFree = lappend(*itemsToFree, modifiedOpExpr);
 	RestrictInfo *rinfoCopy = makeNode(RestrictInfo);
-	*itemsToFree = lappend(*itemsToFree, rinfoCopy);
 	memcpy(rinfoCopy, rinfo, sizeof(RestrictInfo));
 	rinfoCopy->clause = modifiedOpExpr;
 
@@ -11292,10 +11278,17 @@ HandleDistinctExistsSupportRequest(Node *supportRequest)
 				GetMongoIndexOperatorInfoByPostgresFuncId(
 					BsonGreaterThanEqualMatchIndexFunctionId());
 			List *selectivityArgs = list_make2(linitial(req->args), minKeyConst);
+
+			MemoryContext selectivityContext = AllocSetContextCreate(CurrentMemoryContext,
+																	 "Distinct Exists SelectivityContext",
+																	 ALLOCSET_DEFAULT_SIZES);
 			req->selectivity = GetDollarOperatorSelectivity(
 				req->root, GetMongoQueryOperatorOid(gteOperator),
 				selectivityArgs, req->inputcollid, req->varRelid,
-				defaultFuncExprSelectivity);
+				defaultFuncExprSelectivity,
+				selectivityContext);
+
+			MemoryContextDelete(selectivityContext);
 			return (Pointer) req;
 		}
 	}
