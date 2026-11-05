@@ -22,7 +22,8 @@ static const double HighSelectivity = 0.9;
 
 double GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
 									List *args, Oid collation, int varRelId, double
-									defaultExprSelectivity);
+									defaultExprSelectivity, MemoryContext
+									selectivityContext);
 
 double GetObjectIdOperatorSelectivity(PlannerInfo *planner, Oid funcId,
 									  Expr *objectIdExpr, Expr *querySpecExpr,
@@ -41,5 +42,6 @@ void GetCorrelationFromStatistics(PlannerInfo *root, IndexPath *path,
 double GetCustomStatisticsSelectivityForLookup(Oid funcExpr, List *funcArgs,
 											   SpecialJoinInfo *sjinfo,
 											   PlannerInfo *planner, JoinType joinType,
-											   int varRelid);
+											   int varRelid, MemoryContext
+											   selectivityContext);
 #endif
