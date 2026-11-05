@@ -1,6 +1,7 @@
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 SET documentdb.next_collection_id TO 1500;
 SET documentdb.next_collection_index_id TO 1500;
+SET documentdb.enable_write_error_code_conversion TO on;
 
 select 1 from documentdb_api.insert_one('db', 'updateme', '{"a":1,"_id":1,"b":1}');
 select 1 from documentdb_api.insert_one('db', 'updateme', '{"a":2,"_id":2,"b":2}');
@@ -719,4 +720,17 @@ select documentdb_api.update('db', '{"update":"update_index_name_cache","ordered
 ]}');
 RESET client_min_messages;
 
+SET documentdb.enable_write_error_code_conversion TO off;
+select documentdb_api.update('db', '{"update":"update_index_name_cache","updates":[
+    {"q":{"_id":2},"u":{"$set":{"a":1}}}
+]}');
+SET documentdb.enable_write_error_code_conversion TO on;
+
+-- A mixed response must keep every original code for downstream translation.
+select documentdb_api.update('db', '{"update":"update_index_name_cache","ordered":false,"updates":[
+    {"q":{"_id":2},"u":{"$set":{"a":1}}},
+    {"q":{"$invalid":2},"u":{"$set":{"a":4}}}
+]}');
+
 select documentdb_api.drop_collection('db', 'update_index_name_cache');
+RESET documentdb.enable_write_error_code_conversion;

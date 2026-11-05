@@ -1,6 +1,7 @@
 SET search_path TO documentdb_core, documentdb_api, documentdb_api_catalog, documentdb_api_internal;
 SET documentdb.next_collection_id TO 25830000;
 SET documentdb.next_collection_index_id TO 25830000;
+SET documentdb.enable_write_error_code_conversion TO on;
 
 -- ============================================================
 -- Tests for bulk insert behavior with duplicate _id values.
@@ -15,9 +16,8 @@ CREATE OR REPLACE FUNCTION pg_temp.do_insert(db text, cmd documentdb_core.bson)
 RETURNS TABLE(n int, write_errors int, success bool) AS $$
     SELECT
         (regexp_match((p_result -> 'n')::text, '"(\d+)"'))[1]::int,
-        CASE WHEN p_success THEN 0
-             ELSE (length(p_result::text) - length(replace(p_result::text, '"index"', ''))) / length('"index"')
-        END,
+        (length(p_result::text) - length(replace(p_result::text, '"index"', ''))) /
+            length('"index"'),
         p_success
     FROM documentdb_api.insert(db, cmd)
 $$ LANGUAGE SQL;
@@ -221,10 +221,51 @@ FROM documentdb_api.insert(
 RESET client_min_messages;
 RESET documentdb.enable_request_index_name_cache;
 
+SELECT p_result -> 'writeErrors.0.code' AS error_code, p_success
+FROM documentdb_api.insert(
+    'insertdupdb',
+    '{"insert": "secondary_dup_test", "ordered": false, "documents": [
+        {"_id": 8, "a": 1, "b": 8}
+    ]}');
+
+SET documentdb.enable_write_error_code_conversion TO off;
+SELECT p_result -> 'writeErrors.0.code' AS error_code, p_success
+FROM documentdb_api.insert(
+    'insertdupdb',
+    '{"insert": "secondary_dup_test", "ordered": false, "documents": [
+        {"_id": 8, "a": 1, "b": 8}
+    ]}');
+SET documentdb.enable_write_error_code_conversion TO on;
+
+-- A mixed response must keep every original code for downstream translation.
+SELECT p_result -> 'writeErrors' AS write_errors, p_success
+FROM documentdb_api.insert(
+    'insertdupdb',
+    '{"insert": "secondary_dup_test", "ordered": false, "documents": [
+        {"_id": 9, "a": 1, "b": 9},
+        {"_id": {"$regex": "^invalid"}}
+    ]}');
+
 SELECT documentdb_api.drop_collection('insertdupdb', 'secondary_dup_test');
+
+CREATE FUNCTION documentdb_api_internal.test_try_get_wire_error_code(text)
+RETURNS int LANGUAGE C STRICT AS 'pg_documentdb', $$test_try_get_wire_error_code$$;
+
+SELECT sqlstate,
+       documentdb_api_internal.test_try_get_wire_error_code(sqlstate) AS wire_error_code
+FROM (VALUES
+    ('M001C'),
+    ('M00E8'),
+    ('23505'),
+    ('23P01'),
+    ('M0001')
+) AS error_codes(sqlstate);
+
+DROP FUNCTION documentdb_api_internal.test_try_get_wire_error_code(text);
 
 
 -- ============================================================
 -- Cleanup
 -- ============================================================
 SELECT documentdb_api.drop_database('insertdupdb');
+RESET documentdb.enable_write_error_code_conversion;

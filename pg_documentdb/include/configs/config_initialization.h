@@ -11,6 +11,8 @@
 #ifndef DOCUMENTS_CONFIG_INITIALIZATION_H
 #define DOCUMENTS_CONFIG_INITIALIZATION_H
 
+extern bool EnableWriteErrorCodeConversion;
+
 void InitializeTestConfigurations(const char *prefix, const char *newGucPrefix);
 void InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix);
 void InitializeBackgroundJobConfigurations(const char *prefix, const char *newGucPrefix);

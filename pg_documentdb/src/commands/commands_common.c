@@ -26,9 +26,11 @@
 #include "collation/collation.h"
 #include "commands/commands_common.h"
 #include "commands/parse_error.h"
+#include "configs/config_initialization.h"
 #include "opclass/bson_text_gin.h"
 #include "query/query_operator.h"
 #include "utils/error_utils.h"
+#include "utils/documentdb_conversion_codes.h"
 #include "utils/documentdb_errors.h"
 #include "utils/hsearch.h"
 #include "aggregation/bson_query.h"
@@ -37,7 +39,6 @@
 #include "planner/documentdb_planner.h"
 #include "utils/hashset_utils.h"
 #include "utils/timeout.h"
-
 
 extern bool ThrowDeadlockOnCrud;
 extern bool EnableBackendStatementTimeout;
@@ -705,6 +706,40 @@ GetWriteErrorFromErrorData(ErrorData *errorData, int writeErrorIdx,
 	}
 
 	return writeError;
+}
+
+
+bool
+TryGetWireErrorCode(int errorCode, int *wireErrorCode)
+{
+	if (!EnableWriteErrorCodeConversion)
+	{
+		return false;
+	}
+
+	switch (errorCode)
+	{
+		case ERRCODE_EXCLUSION_VIOLATION:
+		case ERRCODE_UNIQUE_VIOLATION:
+		{
+			errorCode = ERRCODE_DOCUMENTDB_DUPLICATEKEY;
+			break;
+		}
+
+		case ERRCODE_DOCUMENTDB_DUPLICATEKEY:
+		case ERRCODE_DOCUMENTDB_NOTWRITABLEPRIMARY:
+		{
+			break;
+		}
+
+		default:
+		{
+			return false;
+		}
+	}
+
+	*wireErrorCode = ConvertDocumentDBErrorToWireError(errorCode);
+	return true;
 }
 
 

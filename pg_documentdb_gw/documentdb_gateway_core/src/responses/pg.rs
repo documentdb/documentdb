@@ -687,12 +687,22 @@ fn transform_error(
 #[derive(Debug)]
 pub struct PgResponse {
     rows: Vec<Row>,
+    has_write_errors: bool,
 }
 
 impl PgResponse {
     #[must_use]
     pub const fn new(rows: Vec<Row>) -> Self {
-        Self { rows }
+        Self {
+            rows,
+            has_write_errors: false,
+        }
+    }
+
+    /// Returns whether a write response contains already-translated errors.
+    #[must_use]
+    pub const fn has_write_errors(&self) -> bool {
+        self.has_write_errors
     }
 
     /// Gets the first row
@@ -784,35 +794,75 @@ impl PgResponse {
 
     /// If the `PostgreSQL` UDF signals failure via `p_success` (column 1) and
     /// `writeErrors` is present, transforms each error by mapping to known
-    /// error codes.  When `p_success` is `true` the response is returned
-    /// without inspecting `writeErrors`.
+    /// error codes. When `p_success` is `true`, records diagnostic codes and
+    /// error presence without rebuilding or remapping the BSON response.
     ///
     /// # Errors
     ///
     /// Returns an error if the operation fails.
     pub fn transform_write_errors(
-        self,
+        mut self,
         connection_context: &ConnectionContext,
         activity_id: &str,
     ) -> Result<Response> {
         let success = self.write_success()?;
 
-        if !success {
-            if let Ok(Some(_)) = self.as_raw_document()?.get("writeErrors") {
-                let mut response = Document::try_from(self.as_raw_document()?)?;
-                let write_errors = response.get_array_mut("writeErrors").map_err(|e| {
-                    DocumentDBError::internal_error(pg_returned_invalid_response_message(e))
-                })?;
+        if success {
+            self.has_write_errors = self.trace_translated_write_errors(activity_id)?;
+        } else if let Ok(Some(_)) = self.as_raw_document()?.get("writeErrors") {
+            let mut response = Document::try_from(self.as_raw_document()?)?;
+            let write_errors = response.get_array_mut("writeErrors").map_err(|e| {
+                DocumentDBError::internal_error(pg_returned_invalid_response_message(e))
+            })?;
 
-                for value in write_errors {
-                    transform_error(connection_context, value, activity_id)?;
-                }
-                let raw = RawDocumentBuf::from_document(&response)?;
-                return Ok(Response::Raw(RawResponse::new(raw).with_write_errors()));
+            for value in write_errors {
+                transform_error(connection_context, value, activity_id)?;
             }
+            let raw = RawDocumentBuf::from_document(&response)?;
+            return Ok(Response::Raw(RawResponse::new(raw).with_write_errors()));
         }
 
         Ok(Response::Pg(self))
+    }
+
+    fn trace_translated_write_errors(&self, activity_id: &str) -> Result<bool> {
+        const MAX_SAMPLED_WRITE_ERRORS: usize = 10;
+
+        let Some(errors) = self.as_raw_document()?.get("writeErrors")? else {
+            return Ok(false);
+        };
+        let errors = errors.as_array().ok_or_else(|| {
+            DocumentDBError::internal_error("Expected an array in writeErrors.".to_owned())
+        })?;
+        let mut write_error_codes = None;
+        let mut write_error_count = 0;
+        for error in errors {
+            let error = error?;
+            let error = error.as_document().ok_or_else(|| {
+                DocumentDBError::internal_error("Expected a document in writeErrors.".to_owned())
+            })?;
+            let code = error
+                .get_i32("code")
+                .map_err(DocumentDBError::pg_response_invalid)?;
+            write_error_count += 1;
+            let codes = write_error_codes
+                .get_or_insert_with(|| Vec::with_capacity(MAX_SAMPLED_WRITE_ERRORS));
+            if codes.len() < MAX_SAMPLED_WRITE_ERRORS || code == ErrorCode::InternalError as i32 {
+                codes.push(code);
+            }
+        }
+
+        if let Some(codes) = write_error_codes {
+            tracing::warn!(
+                activity_id,
+                write_error_count,
+                write_error_codes = ?codes,
+                "Translated write errors."
+            );
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 }
 
@@ -857,13 +907,129 @@ impl<'a> PostgresErrorMappedResult<'a> {
 mod tests {
     use std::sync::{Arc, Once};
 
+    use tokio_postgres::types::{Kind, Type};
+    use tracing_subscriber::layer::SubscriberExt;
+
     use super::*;
     use crate::{
         responses::{register_custom_error_mapper, CustomPostgresErrorMapper},
-        testing::{test_connection_context, TestDynamicConfiguration},
+        testing::{
+            logs::LogCapture, test_connection_context, test_postgres_row, TestDynamicConfiguration,
+        },
     };
 
     static REGISTER_TEST_MAPPER: Once = Once::new();
+
+    async fn test_write_response(document: &RawDocument) -> PgResponse {
+        let bson_type = Type::new("bson".to_owned(), 90001, Kind::Simple, "public".to_owned());
+        PgResponse::new(vec![
+            test_postgres_row(bson_type, document.as_bytes().to_vec()).await,
+        ])
+    }
+
+    #[tokio::test]
+    async fn translated_write_errors_preserve_payload_and_diagnostics() {
+        let context =
+            test_connection_context(false, Arc::new(TestDynamicConfiguration::default()), None)
+                .await;
+        for all_internal in [false, true] {
+            let errors: Vec<_> = (0..32)
+                .map(|index| {
+                    bson::doc! {
+                        "index": index,
+                        "code": if all_internal || [5, 15, 31].contains(&index) { 1 } else { 11000 },
+                        "errmsg": "not copied",
+                    }
+                })
+                .collect();
+            let document = RawDocumentBuf::from_document(&bson::doc! {
+                "ok": 1.0, "n": 0, "nModified": 0, "upserted": [], "writeErrors": errors,
+            })
+            .expect("valid response BSON");
+            let response = test_write_response(&document).await;
+            let original_bytes = response
+                .as_raw_document()
+                .expect("response BSON")
+                .as_bytes()
+                .as_ptr();
+            let capture = LogCapture::new("documentdb_gateway_core::responses::pg");
+            let subscriber = tracing_subscriber::registry().with(capture.clone());
+            let response = tracing::subscriber::with_default(subscriber, || {
+                response.transform_write_errors(&context, "translated-write-test")
+            })
+            .expect("translated write response");
+
+            assert!(matches!(&response, Response::Pg(_)));
+            assert!(response.has_write_errors());
+            let actual_bytes = response
+                .as_raw_document()
+                .expect("response BSON")
+                .as_bytes();
+            assert_eq!(actual_bytes.as_ptr(), original_bytes);
+            assert_eq!(actual_bytes, document.as_bytes());
+            let events = capture.events();
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].fields["write_error_count"], "32");
+            let expected_codes = if all_internal {
+                vec![1; 32]
+            } else {
+                vec![
+                    11000, 11000, 11000, 11000, 11000, 1, 11000, 11000, 11000, 11000, 1, 1,
+                ]
+            };
+            assert_eq!(
+                events[0].fields["write_error_codes"],
+                format!("{expected_codes:?}")
+            );
+            assert!(!events[0]
+                .fields
+                .values()
+                .any(|value| value.contains("not copied")));
+        }
+    }
+
+    #[tokio::test]
+    async fn translated_write_without_errors_keeps_success_and_does_not_log() {
+        let context =
+            test_connection_context(false, Arc::new(TestDynamicConfiguration::default()), None)
+                .await;
+        for document in [
+            bson::rawdoc! { "ok": 1.0, "n": 1 },
+            bson::rawdoc! { "ok": 1.0, "n": 1, "writeErrors": [] },
+        ] {
+            let response = test_write_response(&document).await;
+            let capture = LogCapture::new("documentdb_gateway_core::responses::pg");
+            let subscriber = tracing_subscriber::registry().with(capture.clone());
+            let response = tracing::subscriber::with_default(subscriber, || {
+                response.transform_write_errors(&context, "translated-write-test")
+            })
+            .expect("successful write response");
+
+            assert!(!response.has_write_errors());
+            assert_eq!(
+                response.as_raw_document().expect("response BSON"),
+                &*document
+            );
+            assert!(capture.events().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn translated_write_rejects_malformed_error_metadata() {
+        let context =
+            test_connection_context(false, Arc::new(TestDynamicConfiguration::default()), None)
+                .await;
+        for document in [
+            bson::rawdoc! { "ok": 1.0, "writeErrors": "invalid" },
+            bson::rawdoc! { "ok": 1.0, "writeErrors": [false] },
+            bson::rawdoc! { "ok": 1.0, "writeErrors": [{ "code": "invalid" }] },
+        ] {
+            test_write_response(&document)
+                .await
+                .transform_write_errors(&context, "translated-write-test")
+                .expect_err("malformed write-error metadata must fail");
+        }
+    }
 
     fn register_test_mapper() {
         REGISTER_TEST_MAPPER.call_once(|| {
