@@ -39,6 +39,11 @@ static relopt_kind rum_relopt_kind;
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rumhandler);
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_get_index_stats);
 static char * rumbuildphasename(int64 phasenum);
+#ifdef DOCUMENTDB_HAVE_AMCOMPAREDATUMS
+static bool rumcomparedatums(Relation index, IndexInfo *indexInfo, int attnum,
+							 Oid typid, int16 typlen, bool typbyval,
+							 Datum oldValue, Datum newValue);
+#endif
 
 
 /*
@@ -103,8 +108,112 @@ RMGR_PG_FUNCTION_DEF(documentdb_rumhandler)
 	/* Allow operator classes to define custom opclass-options */
 	amroutine->amoptsprocnum = RUM_INDEX_CONFIG_PROC;
 
+#ifdef DOCUMENTDB_HAVE_AMCOMPAREDATUMS
+	amroutine->amcomparedatums = rumcomparedatums;
+#endif
+
 	PG_RETURN_POINTER(amroutine);
 }
+
+
+#ifdef DOCUMENTDB_HAVE_AMCOMPAREDATUMS
+
+/*
+ * rumcomparedatums -- would newValue give the same index entries as oldValue?
+ *
+ * PostgreSQL calls this during UPDATE, for an index column whose value
+ * changed, to decide whether the update can be heap-only (HOT): if every
+ * index says its entries would be the same, none gets new entries and the
+ * new row version is reached through the old ones.  Returning false is
+ * always safe.
+ *
+ * A RUM index stores, for each row, the keys the operator class extracts
+ * from the value, and scans see the row only through them, so the entries
+ * are the same if the keys are the same as RUM compares them (keys equal
+ * under the compare function share one entry).  For DocumentDB, the keys
+ * are the terms for the paths the index covers, so an update that leaves
+ * those paths alone gives the same keys.  That holds for DocumentDB's
+ * index-only scans too: they rebuild the document from the stored key,
+ * which rows whose keys compare equal already share.
+ *
+ * The entries depend only on the value, so typid, typlen and typbyval are
+ * not needed: the operator class reads the value itself.
+ *
+ * Be conservative where a RUM entry holds more than its key: per-item
+ * additional information (text indexes store positions), and columns
+ * attached to or added to other columns.  And an update must not set
+ * opclass metadata bits (such as a composite index's multi-key paths) that
+ * insertion would have recorded in the metapage: the old value's insertion
+ * recorded its own bits, so the new value's bits must be among them.
+ *
+ * An exclusion constraint's index (DocumentDB's unique indexes) is answered
+ * like any other: the answer is only about the entries.  With the form of
+ * the API this is built for (see Makefile.global), the server itself checks
+ * an immediate constraint against the new values after an update that
+ * keeps its index's entries, and does not ask about a deferrable one's.
+ */
+static bool
+rumcomparedatums(Relation index, IndexInfo *indexInfo, int attnum,
+				 Oid typid, int16 typlen, bool typbyval,
+				 Datum oldValue, Datum newValue)
+{
+	RumState *rumstate = (RumState *) indexInfo->ii_AmCache;
+	Datum *oldEntries, *newEntries;
+	RumNullCategory *oldCategories, *newCategories;
+	Datum *oldAddInfo, *newAddInfo;
+	bool *oldAddInfoIsNull, *newAddInfoIsNull;
+	int32 noldEntries = 0, nnewEntries = 0;
+	uint64_t oldMetadata = 0, newMetadata = 0;
+
+	/* The same cache ruminsert() builds, for the same statement */
+	if (rumstate == NULL)
+	{
+		MemoryContext oldCtx;
+
+		rumValidateIndexVersion(index);
+		oldCtx = MemoryContextSwitchTo(indexInfo->ii_Context);
+		rumstate = palloc_object(RumState);
+		initRumState(rumstate, index);
+		indexInfo->ii_AmCache = rumstate;
+		MemoryContextSwitchTo(oldCtx);
+	}
+
+	if (AttributeNumberIsValid(rumstate->attrnAttachColumn) ||
+		AttributeNumberIsValid(rumstate->attrnAddToColumn) ||
+		OidIsValid(rumstate->rumConfig[attnum - 1].addInfoTypeOid))
+	{
+		return false;
+	}
+
+	oldEntries = rumExtractEntries(rumstate, (OffsetNumber) attnum,
+								   oldValue, false, &noldEntries,
+								   &oldCategories, &oldAddInfo,
+								   &oldAddInfoIsNull, &oldMetadata);
+	newEntries = rumExtractEntries(rumstate, (OffsetNumber) attnum,
+								   newValue, false, &nnewEntries,
+								   &newCategories, &newAddInfo,
+								   &newAddInfoIsNull, &newMetadata);
+
+	if ((newMetadata & ~oldMetadata) != 0 || noldEntries != nnewEntries)
+	{
+		return false;
+	}
+
+	for (int32 i = 0; i < noldEntries; i++)
+	{
+		if (rumCompareEntries(rumstate, (OffsetNumber) attnum,
+							  oldEntries[i], oldCategories[i],
+							  newEntries[i], newCategories[i]) != 0)
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+
+#endif
 
 
 /*

@@ -1,0 +1,379 @@
+SET search_path TO documentdb_api_catalog, documentdb_core, public;
+SET documentdb.next_collection_id TO 3200;
+SET documentdb.next_collection_index_id TO 3200;
+-- Updates that leave the terms of every index on a collection unchanged can
+-- be heap-only (HOT) when the server lets index access methods compare the
+-- entries an old and a new document give (amcomparedatums).  On servers
+-- without that, every update to an indexed collection makes new index
+-- entries.  Either way, every query must find exactly the documents a
+-- sequential scan finds.
+SELECT documentdb_api.drop_collection('hot_db', 'hot_upd');
+ drop_collection 
+-----------------
+ f
+(1 row)
+
+SELECT documentdb_api.create_collection('hot_db', 'hot_upd');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT collection_id AS hot_col FROM documentdb_api_catalog.collections
+  WHERE database_name = 'hot_db' AND collection_name = 'hot_upd' \gset
+-- Leave room on every page for every update in this test, so that whether
+-- an update is HOT depends only on the indexes.
+SELECT FORMAT('ALTER TABLE documentdb_data.documents_%s SET (fillfactor = 10, autovacuum_enabled = off)', :hot_col) \gexec
+ALTER TABLE documentdb_data.documents_3201 SET (fillfactor = 10, autovacuum_enabled = off)
+SELECT documentdb_api_internal.create_indexes_non_concurrently('hot_db',
+  '{ "createIndexes": "hot_upd", "indexes": [
+     { "key": { "a": 1 }, "name": "a_1" },
+     { "key": { "b": 1, "c": 1 }, "name": "b_1_c_1", "enableCompositeTerm": true },
+     { "key": { "h": "hashed" }, "name": "h_hashed" } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one('hot_db', 'hot_upd',
+  FORMAT('{ "_id": %s, "a": %s, "b": %s, "c": "c%s", "h": %s, "n": 0 }', i, i, i % 10, i, i)::bson))
+  FROM generate_series(1, 200) i;
+ count 
+-------
+   200
+(1 row)
+
+CREATE FUNCTION hot_counts(OUT updated bigint, OUT hot bigint) LANGUAGE sql AS $$
+  SELECT n_tup_upd, n_tup_hot_upd FROM pg_stat_xact_user_tables
+   WHERE relname = 'documents_' || current_setting('hot.col') $$;
+SELECT set_config('hot.col', :'hot_col', false) IS NOT NULL AS ok;
+ ok 
+----
+ t
+(1 row)
+
+-- pg_stat_xact_* shows what this backend has not yet reported, which can
+-- include earlier transactions: report everything before each count.
+-- Every index sees the same terms: HOT where the server supports it.
+SELECT pg_stat_force_next_flush();
+ pg_stat_force_next_flush 
+--------------------------
+ 
+(1 row)
+
+BEGIN;
+SELECT documentdb_api.update('hot_db', '{ "update": "hot_upd", "updates": [
+  { "q": {}, "u": { "$inc": { "n": 1 } }, "multi": true } ] }');
+                                                                 update                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""200"" }, ""n"" : { ""$numberInt"" : ""200"" } }",t)
+(1 row)
+
+SELECT updated, hot IN (0, updated) AS hot_all_or_none FROM hot_counts();
+ updated | hot_all_or_none 
+---------+-----------------
+     200 | t
+(1 row)
+
+-- One document at a time (updateOne): the new document is computed in C
+-- and written back whole.
+SELECT COUNT(documentdb_api.update('hot_db', FORMAT('{ "update": "hot_upd", "updates": [
+  { "q": { "_id": %s }, "u": { "$set": { "x": "y" } } } ] }', i)::bson))
+  FROM generate_series(1, 50) i;
+ count 
+-------
+    50
+(1 row)
+
+SELECT updated, hot IN (0, updated) AS hot_all_or_none FROM hot_counts();
+ updated | hot_all_or_none 
+---------+-----------------
+     250 | t
+(1 row)
+
+COMMIT;
+-- Updates that change indexed paths are never HOT.
+SELECT pg_stat_force_next_flush();
+ pg_stat_force_next_flush 
+--------------------------
+ 
+(1 row)
+
+BEGIN;
+SELECT documentdb_api.update('hot_db', '{ "update": "hot_upd", "updates": [
+  { "q": { "_id": { "$lte": 20 } }, "u": { "$inc": { "a": 1000 } }, "multi": true } ] }');
+                                                                update                                                                
+--------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""20"" }, ""n"" : { ""$numberInt"" : ""20"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('hot_db', '{ "update": "hot_upd", "updates": [
+  { "q": { "_id": { "$gt": 20, "$lte": 40 } }, "u": { "$set": { "c": "changed" } }, "multi": true } ] }');
+                                                                update                                                                
+--------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""20"" }, ""n"" : { ""$numberInt"" : ""20"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('hot_db', '{ "update": "hot_upd", "updates": [
+  { "q": { "_id": { "$gt": 40, "$lte": 60 } }, "u": { "$set": { "h": -1 } }, "multi": true } ] }');
+                                                                update                                                                
+--------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""20"" }, ""n"" : { ""$numberInt"" : ""20"" } }",t)
+(1 row)
+
+-- a scalar becomes an array: new terms, and the composite index becomes
+-- multi-key on b
+SELECT documentdb_api.update('hot_db', '{ "update": "hot_upd", "updates": [
+  { "q": { "_id": 61 }, "u": { "$set": { "b": [ 1, 2 ] } } } ] }');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+-- None of these 61 updates is HOT, on any server.
+SELECT updated, hot FROM hot_counts();
+ updated | hot 
+---------+-----
+      61 |   0
+(1 row)
+
+COMMIT;
+-- Every index finds what a sequential scan finds.
+-- Each filter's count through the indexes (where one applies), then with
+-- a sequential scan: they must agree.
+SET documentdb.forceDisableSeqScan TO on;
+SELECT document FROM bson_aggregation_count('hot_db', '{ "count": "hot_upd", "query": { "a": { "$gte": 0 } } }');
+                                document                                
+------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "200" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET documentdb.forceDisableSeqScan;
+SET enable_indexscan TO off; SET enable_bitmapscan TO off;
+SELECT document FROM bson_aggregation_count('hot_db', '{ "count": "hot_upd", "query": { "a": { "$gte": 0 } } }');
+                                document                                
+------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "200" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET enable_indexscan; RESET enable_bitmapscan;
+SET documentdb.forceDisableSeqScan TO on;
+SELECT document FROM bson_aggregation_count('hot_db', '{ "count": "hot_upd", "query": { "a": { "$gte": 1000 } } }');
+                               document                                
+-----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "20" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET documentdb.forceDisableSeqScan;
+SET enable_indexscan TO off; SET enable_bitmapscan TO off;
+SELECT document FROM bson_aggregation_count('hot_db', '{ "count": "hot_upd", "query": { "a": { "$gte": 1000 } } }');
+                               document                                
+-----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "20" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET enable_indexscan; RESET enable_bitmapscan;
+SET documentdb.forceDisableSeqScan TO on;
+SELECT document FROM bson_aggregation_count('hot_db', '{ "count": "hot_upd", "query": { "a": 150 } }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET documentdb.forceDisableSeqScan;
+SET enable_indexscan TO off; SET enable_bitmapscan TO off;
+SELECT document FROM bson_aggregation_count('hot_db', '{ "count": "hot_upd", "query": { "a": 150 } }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET enable_indexscan; RESET enable_bitmapscan;
+SET documentdb.forceDisableSeqScan TO on;
+SELECT document FROM bson_aggregation_count('hot_db', '{ "count": "hot_upd", "query": { "b": 3, "c": "c13" } }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET documentdb.forceDisableSeqScan;
+SET enable_indexscan TO off; SET enable_bitmapscan TO off;
+SELECT document FROM bson_aggregation_count('hot_db', '{ "count": "hot_upd", "query": { "b": 3, "c": "c13" } }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET enable_indexscan; RESET enable_bitmapscan;
+SET documentdb.forceDisableSeqScan TO on;
+SELECT document FROM bson_aggregation_count('hot_db', '{ "count": "hot_upd", "query": { "b": 3 } }');
+                               document                                
+-----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "20" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET documentdb.forceDisableSeqScan;
+SET enable_indexscan TO off; SET enable_bitmapscan TO off;
+SELECT document FROM bson_aggregation_count('hot_db', '{ "count": "hot_upd", "query": { "b": 3 } }');
+                               document                                
+-----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "20" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET enable_indexscan; RESET enable_bitmapscan;
+SET documentdb.forceDisableSeqScan TO on;
+SELECT document FROM bson_aggregation_count('hot_db', '{ "count": "hot_upd", "query": { "b": { "$gte": 0 }, "c": "changed" } }');
+                               document                                
+-----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "20" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET documentdb.forceDisableSeqScan;
+SET enable_indexscan TO off; SET enable_bitmapscan TO off;
+SELECT document FROM bson_aggregation_count('hot_db', '{ "count": "hot_upd", "query": { "b": { "$gte": 0 }, "c": "changed" } }');
+                               document                                
+-----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "20" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET enable_indexscan; RESET enable_bitmapscan;
+SET documentdb.forceDisableSeqScan TO on;
+SELECT document FROM bson_aggregation_count('hot_db', '{ "count": "hot_upd", "query": { "b": 2 } }');
+                               document                                
+-----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "21" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET documentdb.forceDisableSeqScan;
+SET enable_indexscan TO off; SET enable_bitmapscan TO off;
+SELECT document FROM bson_aggregation_count('hot_db', '{ "count": "hot_upd", "query": { "b": 2 } }');
+                               document                                
+-----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "21" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET enable_indexscan; RESET enable_bitmapscan;
+SET documentdb.forceDisableSeqScan TO on;
+SELECT document FROM bson_aggregation_count('hot_db', '{ "count": "hot_upd", "query": { "h": -1 } }');
+                               document                                
+-----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "20" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET documentdb.forceDisableSeqScan;
+SET enable_indexscan TO off; SET enable_bitmapscan TO off;
+SELECT document FROM bson_aggregation_count('hot_db', '{ "count": "hot_upd", "query": { "h": -1 } }');
+                               document                                
+-----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "20" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET enable_indexscan; RESET enable_bitmapscan;
+SET documentdb.forceDisableSeqScan TO on;
+SELECT document FROM bson_aggregation_count('hot_db', '{ "count": "hot_upd", "query": { "h": 100 } }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET documentdb.forceDisableSeqScan;
+SET enable_indexscan TO off; SET enable_bitmapscan TO off;
+SELECT document FROM bson_aggregation_count('hot_db', '{ "count": "hot_upd", "query": { "h": 100 } }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET enable_indexscan; RESET enable_bitmapscan;
+SELECT documentdb_api.drop_collection('hot_db', 'hot_upd');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- A unique index is an exclusion constraint, and same index entries do not
+-- mean the same constraint result: the constraint compares the documents'
+-- values.  A server that makes such an update HOT checks the constraint
+-- itself after the update; on other servers the update is not HOT.
+-- Make the entries collide: every unique term hashes alike, and two values
+-- with a long common prefix give the same truncated composite term.  The
+-- constraint's recheck tells them apart at insert, and must at update.
+SELECT documentdb_api.create_collection('hot_db', 'hot_uniq');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT collection_id AS uniq_col FROM documentdb_api_catalog.collections
+  WHERE database_name = 'hot_db' AND collection_name = 'hot_uniq' \gset
+SELECT FORMAT('ALTER TABLE documentdb_data.documents_%s SET (fillfactor = 10, autovacuum_enabled = off)', :uniq_col) \gexec
+ALTER TABLE documentdb_data.documents_3202 SET (fillfactor = 10, autovacuum_enabled = off)
+SELECT documentdb_api_internal.create_indexes_non_concurrently('hot_db',
+  '{ "createIndexes": "hot_uniq", "indexes": [ { "key": { "u": 1 }, "name": "u_unique", "unique": true } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SET documentdb.defaultUniqueIndexKeyhashOverride TO 1;
+SELECT documentdb_api.insert_one('hot_db', 'hot_uniq',
+  FORMAT('{ "_id": %s, "u": "%s%s", "n": 0 }', i, repeat('x', 4000), i)::bson)
+  FROM generate_series(1, 2) i;
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(2 rows)
+
+SELECT set_config('hot.col', :'uniq_col', false) IS NOT NULL AS ok;
+ ok 
+----
+ t
+(1 row)
+
+SELECT pg_stat_force_next_flush();
+ pg_stat_force_next_flush 
+--------------------------
+ 
+(1 row)
+
+BEGIN;
+SELECT documentdb_api.update('hot_db', '{ "update": "hot_uniq", "updates": [
+  { "q": {}, "u": { "$inc": { "n": 1 } }, "multi": true } ] }');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""2"" }, ""n"" : { ""$numberInt"" : ""2"" } }",t)
+(1 row)
+
+SELECT updated, hot IN (0, updated) AS hot_all_or_none FROM hot_counts();
+ updated | hot_all_or_none 
+---------+-----------------
+       2 | t
+(1 row)
+
+COMMIT;
+SELECT documentdb_api.update('hot_db', FORMAT('{ "update": "hot_uniq", "updates": [
+  { "q": { "_id": 2 }, "u": { "$set": { "u": "%s1" } } } ] }', repeat('x', 4000))::bson);
+                                                                                                                                                                   update                                                                                                                                                                    
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""319029277"" }, ""errmsg"" : ""Duplicate key violation on the requested collection: Index 'u_unique'"" } ] }",f)
+(1 row)
+
+SELECT COUNT(*) AS docs_with_u1 FROM documentdb_api.collection('hot_db', 'hot_uniq')
+ WHERE document @@ FORMAT('{ "u": "%s1" }', repeat('x', 4000))::bson;
+NOTICE:  using bson_query_match implementation
+NOTICE:  using bson_query_match implementation
+ docs_with_u1 
+--------------
+            1
+(1 row)
+
+RESET documentdb.defaultUniqueIndexKeyhashOverride;
+SELECT documentdb_api.drop_collection('hot_db', 'hot_uniq');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
