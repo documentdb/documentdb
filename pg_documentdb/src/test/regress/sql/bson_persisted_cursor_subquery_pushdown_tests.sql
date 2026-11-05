@@ -679,6 +679,93 @@ SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db',
         { "$skip": { "$numberDecimal": "Infinity" } }
     ], "cursor": {} }');
 
+-- Computed group input must be shared by the key and all accumulators.
+SET documentdb_core.enableCollation TO on;
+SELECT $command${
+    "aggregate": "flights", "pipeline": [
+        { "$project": { "routeId": 1, "carrier": 1, "legs": 1 } },
+        { "$project": { "routeId": 1, "carrier": 1,
+                       "distance": { "$sum": "$legs.dist" } } },
+        { "$group": {
+            "_id": { "route": "$routeId", "carrier": "$carrier" },
+            "total": { "$sum": "$distance" },
+            "average": { "$avg": "$distance" },
+            "minimum": { "$min": "$distance" },
+            "maximum": { "$max": "$distance" },
+            "count": { "$sum": 1 }
+        } },
+        { "$sort": { "_id.route": 1 } }
+    ], "cursor": { "batchSize": 2 },
+    "collation": { "locale": "en", "strength": 1 }
+}$command$ AS pcsub_group_command \gset
+
+BEGIN;
+SET LOCAL track_functions TO 'all';
+SELECT coalesce(sum(calls), 0) AS pcsub_group_initial_calls
+FROM pg_stat_xact_user_functions WHERE funcname = 'bson_dollar_project' \gset
+SET LOCAL documentdb.enable_subquery_pushdown_for_group TO off;
+CREATE TEMP TABLE pcsub_group_baseline AS
+SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db', :'pcsub_group_command');
+SELECT sum(calls) AS pcsub_group_baseline_calls
+FROM pg_stat_xact_user_functions WHERE funcname = 'bson_dollar_project' \gset
+SET LOCAL documentdb.enable_subquery_pushdown_for_group TO on;
+CREATE TEMP TABLE pcsub_group_shared AS
+SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db', :'pcsub_group_command');
+SELECT sum(calls) - :pcsub_group_baseline_calls = 40 AS projects_once_per_document,
+       sum(calls) - :pcsub_group_baseline_calls <
+           :pcsub_group_baseline_calls - :pcsub_group_initial_calls AS fewer_projection_calls
+FROM pg_stat_xact_user_functions WHERE funcname = 'bson_dollar_project';
+COMMIT;
+
+SELECT NOT EXISTS (
+    (SELECT document FROM pcsub_group_baseline EXCEPT ALL SELECT document FROM pcsub_group_shared)
+    UNION ALL
+    (SELECT document FROM pcsub_group_shared EXCEPT ALL SELECT document FROM pcsub_group_baseline)
+) AS identical_group_results;
+SELECT document FROM pcsub_group_shared ORDER BY document;
+
+SET documentdb.enable_subquery_pushdown_for_group TO on;
+
+-- A preceding sort and nonzero skip/limit must retain first/last semantics.
+SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db',
+    '{ "aggregate": "flights", "pipeline": [
+        { "$sort": { "_id": 1 } },
+        { "$skip": 2 }, { "$limit": 4 },
+        { "$project": { "value": { "$add": [ "$_id", 100 ] } } },
+        { "$group": { "_id": null, "first": { "$first": "$value" },
+                     "last": { "$last": "$value" }, "total": { "$sum": "$value" } } }
+    ], "cursor": {} }');
+
+-- Grouping remains pageable through the existing persisted-cursor path.
+CREATE TEMP TABLE pcsub_group_first_page AS
+SELECT cursorPage, continuation, persistConnection
+FROM documentdb_api.aggregate_cursor_first_page(
+    database => 'pcsub_pushdown_db',
+    commandSpec => :'pcsub_group_command',
+    cursorId => 4294967287);
+SELECT documentdb_api_catalog.bson_dollar_project(cursorPage,
+    '{ "batch": "$cursor.firstBatch" }'::documentdb_core.bson), persistConnection
+FROM pcsub_group_first_page;
+SELECT continuation AS pcsub_group_cont FROM pcsub_group_first_page \gset
+
+SELECT cursorPage, continuation AS pcsub_group_cont
+FROM documentdb_api.cursor_get_more(
+    database => 'pcsub_pushdown_db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967287" }, "collection": "flights", "batchSize": 2 }'::documentdb_core.bson,
+    continuationSpec => :'pcsub_group_cont') \gset
+SELECT documentdb_api_catalog.bson_dollar_project(:'cursorpage',
+    '{ "batch": "$cursor.nextBatch" }'::documentdb_core.bson);
+SELECT documentdb_api_catalog.bson_dollar_project(cursorPage,
+    '{ "cursor.id": 1, "batch": "$cursor.nextBatch" }'::documentdb_core.bson)
+FROM documentdb_api.cursor_get_more(
+    database => 'pcsub_pushdown_db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967287" }, "collection": "flights", "batchSize": 2 }'::documentdb_core.bson,
+    continuationSpec => :'pcsub_group_cont');
+
+DROP TABLE pcsub_group_baseline, pcsub_group_shared, pcsub_group_first_page;
+RESET documentdb.enable_subquery_pushdown_for_group;
+RESET documentdb_core.enableCollation;
+
 SELECT documentdb_api.drop_collection('pcsub_pushdown_db', 'flights_route1');
 SELECT documentdb_api.drop_collection('pcsub_pushdown_db', 'flights_route1_computed');
 

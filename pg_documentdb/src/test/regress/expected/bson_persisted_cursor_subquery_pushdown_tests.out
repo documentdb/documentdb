@@ -830,6 +830,124 @@ SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db',
         { "$skip": { "$numberDecimal": "Infinity" } }
     ], "cursor": {} }');
 ERROR:  Invalid parameter provided to $skip stage: value cannot be expressed as a 64-bit integer $skip: Infinity
+-- Computed group input must be shared by the key and all accumulators.
+SET documentdb_core.enableCollation TO on;
+SELECT $command${
+    "aggregate": "flights", "pipeline": [
+        { "$project": { "routeId": 1, "carrier": 1, "legs": 1 } },
+        { "$project": { "routeId": 1, "carrier": 1,
+                       "distance": { "$sum": "$legs.dist" } } },
+        { "$group": {
+            "_id": { "route": "$routeId", "carrier": "$carrier" },
+            "total": { "$sum": "$distance" },
+            "average": { "$avg": "$distance" },
+            "minimum": { "$min": "$distance" },
+            "maximum": { "$max": "$distance" },
+            "count": { "$sum": 1 }
+        } },
+        { "$sort": { "_id.route": 1 } }
+    ], "cursor": { "batchSize": 2 },
+    "collation": { "locale": "en", "strength": 1 }
+}$command$ AS pcsub_group_command \gset
+BEGIN;
+SET LOCAL track_functions TO 'all';
+SELECT coalesce(sum(calls), 0) AS pcsub_group_initial_calls
+FROM pg_stat_xact_user_functions WHERE funcname = 'bson_dollar_project' \gset
+SET LOCAL documentdb.enable_subquery_pushdown_for_group TO off;
+CREATE TEMP TABLE pcsub_group_baseline AS
+SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db', :'pcsub_group_command');
+SELECT sum(calls) AS pcsub_group_baseline_calls
+FROM pg_stat_xact_user_functions WHERE funcname = 'bson_dollar_project' \gset
+SET LOCAL documentdb.enable_subquery_pushdown_for_group TO on;
+CREATE TEMP TABLE pcsub_group_shared AS
+SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db', :'pcsub_group_command');
+SELECT sum(calls) - :pcsub_group_baseline_calls = 40 AS projects_once_per_document,
+       sum(calls) - :pcsub_group_baseline_calls <
+           :pcsub_group_baseline_calls - :pcsub_group_initial_calls AS fewer_projection_calls
+FROM pg_stat_xact_user_functions WHERE funcname = 'bson_dollar_project';
+ projects_once_per_document | fewer_projection_calls 
+----------------------------+------------------------
+ t                          | t
+(1 row)
+
+COMMIT;
+SELECT NOT EXISTS (
+    (SELECT document FROM pcsub_group_baseline EXCEPT ALL SELECT document FROM pcsub_group_shared)
+    UNION ALL
+    (SELECT document FROM pcsub_group_shared EXCEPT ALL SELECT document FROM pcsub_group_baseline)
+) AS identical_group_results;
+ identical_group_results 
+-------------------------
+ t
+(1 row)
+
+SELECT document FROM pcsub_group_shared ORDER BY document;
+                                                                                                                            document                                                                                                                             
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "route" : { "$numberInt" : "1" }, "carrier" : "alpha" }, "total" : { "$numberInt" : "104" }, "average" : { "$numberDouble" : "26.0" }, "minimum" : { "$numberInt" : "11" }, "maximum" : { "$numberInt" : "41" }, "count" : { "$numberInt" : "4" } }
+ { "_id" : { "route" : { "$numberInt" : "2" }, "carrier" : "alpha" }, "total" : { "$numberInt" : "72" }, "average" : { "$numberDouble" : "18.0" }, "minimum" : { "$numberInt" : "3" }, "maximum" : { "$numberInt" : "33" }, "count" : { "$numberInt" : "4" } }
+ { "_id" : { "route" : { "$numberInt" : "3" }, "carrier" : "alpha" }, "total" : { "$numberInt" : "80" }, "average" : { "$numberDouble" : "20.0" }, "minimum" : { "$numberInt" : "5" }, "maximum" : { "$numberInt" : "35" }, "count" : { "$numberInt" : "4" } }
+ { "_id" : { "route" : { "$numberInt" : "4" }, "carrier" : "alpha" }, "total" : { "$numberInt" : "88" }, "average" : { "$numberDouble" : "22.0" }, "minimum" : { "$numberInt" : "7" }, "maximum" : { "$numberInt" : "37" }, "count" : { "$numberInt" : "4" } }
+ { "_id" : { "route" : { "$numberInt" : "5" }, "carrier" : "alpha" }, "total" : { "$numberInt" : "96" }, "average" : { "$numberDouble" : "24.0" }, "minimum" : { "$numberInt" : "9" }, "maximum" : { "$numberInt" : "39" }, "count" : { "$numberInt" : "4" } }
+(5 rows)
+
+SET documentdb.enable_subquery_pushdown_for_group TO on;
+-- A preceding sort and nonzero skip/limit must retain first/last semantics.
+SELECT document FROM bson_aggregation_pipeline('pcsub_pushdown_db',
+    '{ "aggregate": "flights", "pipeline": [
+        { "$sort": { "_id": 1 } },
+        { "$skip": 2 }, { "$limit": 4 },
+        { "$project": { "value": { "$add": [ "$_id", 100 ] } } },
+        { "$group": { "_id": null, "first": { "$first": "$value" },
+                     "last": { "$last": "$value" }, "total": { "$sum": "$value" } } }
+    ], "cursor": {} }');
+                                                          document                                                           
+-----------------------------------------------------------------------------------------------------------------------------
+ { "_id" : null, "first" : { "$numberInt" : "103" }, "last" : { "$numberInt" : "106" }, "total" : { "$numberInt" : "418" } }
+(1 row)
+
+-- Grouping remains pageable through the existing persisted-cursor path.
+CREATE TEMP TABLE pcsub_group_first_page AS
+SELECT cursorPage, continuation, persistConnection
+FROM documentdb_api.aggregate_cursor_first_page(
+    database => 'pcsub_pushdown_db',
+    commandSpec => :'pcsub_group_command',
+    cursorId => 4294967287);
+SELECT documentdb_api_catalog.bson_dollar_project(cursorPage,
+    '{ "batch": "$cursor.firstBatch" }'::documentdb_core.bson), persistConnection
+FROM pcsub_group_first_page;
+                                                                                                                                                                                                                                                               bson_dollar_project                                                                                                                                                                                                                                                                | persistconnection 
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------
+ { "batch" : [ { "_id" : { "route" : { "$numberInt" : "1" }, "carrier" : "alpha" }, "total" : { "$numberInt" : "104" }, "average" : { "$numberDouble" : "26.0" }, "minimum" : { "$numberInt" : "11" }, "maximum" : { "$numberInt" : "41" }, "count" : { "$numberInt" : "4" } }, { "_id" : { "route" : { "$numberInt" : "2" }, "carrier" : "alpha" }, "total" : { "$numberInt" : "72" }, "average" : { "$numberDouble" : "18.0" }, "minimum" : { "$numberInt" : "3" }, "maximum" : { "$numberInt" : "33" }, "count" : { "$numberInt" : "4" } } ] } | t
+(1 row)
+
+SELECT continuation AS pcsub_group_cont FROM pcsub_group_first_page \gset
+SELECT cursorPage, continuation AS pcsub_group_cont
+FROM documentdb_api.cursor_get_more(
+    database => 'pcsub_pushdown_db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967287" }, "collection": "flights", "batchSize": 2 }'::documentdb_core.bson,
+    continuationSpec => :'pcsub_group_cont') \gset
+SELECT documentdb_api_catalog.bson_dollar_project(:'cursorpage',
+    '{ "batch": "$cursor.nextBatch" }'::documentdb_core.bson);
+                                                                                                                                                                                                                                                              bson_dollar_project                                                                                                                                                                                                                                                               
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "batch" : [ { "_id" : { "route" : { "$numberInt" : "3" }, "carrier" : "alpha" }, "total" : { "$numberInt" : "80" }, "average" : { "$numberDouble" : "20.0" }, "minimum" : { "$numberInt" : "5" }, "maximum" : { "$numberInt" : "35" }, "count" : { "$numberInt" : "4" } }, { "_id" : { "route" : { "$numberInt" : "4" }, "carrier" : "alpha" }, "total" : { "$numberInt" : "88" }, "average" : { "$numberDouble" : "22.0" }, "minimum" : { "$numberInt" : "7" }, "maximum" : { "$numberInt" : "37" }, "count" : { "$numberInt" : "4" } } ] }
+(1 row)
+
+SELECT documentdb_api_catalog.bson_dollar_project(cursorPage,
+    '{ "cursor.id": 1, "batch": "$cursor.nextBatch" }'::documentdb_core.bson)
+FROM documentdb_api.cursor_get_more(
+    database => 'pcsub_pushdown_db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967287" }, "collection": "flights", "batchSize": 2 }'::documentdb_core.bson,
+    continuationSpec => :'pcsub_group_cont');
+                                                                                                                                                      bson_dollar_project                                                                                                                                                       
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" } }, "batch" : [ { "_id" : { "route" : { "$numberInt" : "5" }, "carrier" : "alpha" }, "total" : { "$numberInt" : "96" }, "average" : { "$numberDouble" : "24.0" }, "minimum" : { "$numberInt" : "9" }, "maximum" : { "$numberInt" : "39" }, "count" : { "$numberInt" : "4" } } ] }
+(1 row)
+
+DROP TABLE pcsub_group_baseline, pcsub_group_shared, pcsub_group_first_page;
+RESET documentdb.enable_subquery_pushdown_for_group;
+RESET documentdb_core.enableCollation;
 SELECT documentdb_api.drop_collection('pcsub_pushdown_db', 'flights_route1');
 NOTICE:  table "documents_25860102" does not exist, skipping
  drop_collection 

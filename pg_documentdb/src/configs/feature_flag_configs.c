@@ -568,6 +568,10 @@ bool EnableAddShardKeyOnlyOnPrimaryKeyFilters =
 bool EnableSubqueryPushdownForMatchOnPersistedCursors =
 	DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_MATCH_ON_PERSISTED_CURSORS;
 
+/* Added on v1.3, pending stabilization, enable on v1.4 */
+#define DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_GROUP false
+bool EnableSubqueryPushdownForGroup = DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_GROUP;
+
 /* Added in v0.117, Pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_RUM_INDEX_ONLY_SCAN_PROJECTION_WRAPPER false
 bool EnableRumIndexOnlyScanProjectionWrapper =
@@ -1831,6 +1835,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableSubqueryPushdownForMatchOnPersistedCursors,
 		DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_MATCH_ON_PERSISTED_CURSORS,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_subquery_pushdown_for_group", newGucPrefix),
+		gettext_noop(
+			"Whether to evaluate computed group input in a subquery before grouping."),
+		NULL,
+		&EnableSubqueryPushdownForGroup,
+		DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_GROUP,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

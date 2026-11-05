@@ -101,6 +101,7 @@ extern bool EnableSampleScanPushdownForDynamicCursor;
 extern bool EnableDistinctIndexPushdown;
 extern bool EnableDistinctExistsFilterPushdown;
 extern bool EnableSubqueryPushdownForMatchOnPersistedCursors;
+extern bool EnableSubqueryPushdownForGroup;
 extern bool EnableSupportFunctionIdPushdown;
 
 /* GUC to config tdigest compression */
@@ -8220,6 +8221,24 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 
 	/* Take the current output (That's to be grouped)*/
 	TargetEntry *origEntry = linitial(query->targetList);
+
+	if (EnableSubqueryPushdownForGroup &&
+		context->joinStatus == JoinStageStatus_NoJoinsOrUnions &&
+		IsA(origEntry->expr, FuncExpr))
+	{
+		/* Prevent pull-up from duplicating computed input across group consumers. */
+		if (query->limitOffset == NULL)
+		{
+			bool isNull = false;
+			bool byValue = true;
+			query->limitOffset = (Node *) makeConst(INT8OID, -1, InvalidOid,
+													sizeof(int64_t), Int64GetDatum(0),
+													isNull, byValue);
+		}
+
+		query = MigrateQueryToSubQuery(query, context);
+		origEntry = linitial(query->targetList);
+	}
 
 	/* Clear the group's output */
 	query->targetList = NIL;
