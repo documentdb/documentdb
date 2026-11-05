@@ -12,7 +12,7 @@ mod pg_configuration;
 mod setup;
 mod version;
 
-use std::fmt::Debug;
+use std::{fmt::Debug, num::NonZero};
 
 pub use certs::{CertInputType, CertificateOptions};
 use dyn_clone::{clone_trait_object, DynClone};
@@ -141,8 +141,9 @@ pub trait SetupConfiguration: DynClone + Send + Sync + Debug {
     /// Returns whether refreshing settings from `pg_file_settings` is enabled.
     fn enable_pg_file_settings_refresh(&self) -> Option<bool>;
 
-    /// Returns maximum number of incoming connections allowed.
-    fn max_incoming_connections(&self) -> usize;
+    /// Returns the maximum number of concurrent client connections, shared
+    /// across the TCP and Unix socket listeners. Only the v2 runtime enforces it.
+    fn max_incoming_connections(&self) -> NonZero<usize>;
 }
 
 clone_trait_object!(SetupConfiguration);

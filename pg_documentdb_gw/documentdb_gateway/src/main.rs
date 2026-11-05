@@ -117,6 +117,17 @@ fn main() {
     runtime.block_on(start_gateway(setup_configuration));
 }
 
+/// Only the v2 runtime enforces `MaxIncomingConnections`.
+fn warn_if_connection_limit_unenforced(setup_configuration: &DocumentDBSetupConfiguration) {
+    if !setup_configuration.enable_v2_runtime()
+        && setup_configuration.max_incoming_connections.is_some()
+    {
+        tracing::warn!(
+            "MaxIncomingConnections is not enforced by the v1 runtime; enable the v2 runtime to apply it."
+        );
+    }
+}
+
 async fn start_gateway(mut setup_configuration: DocumentDBSetupConfiguration) {
     let enable_v2_runtime = setup_configuration.enable_v2_runtime();
 
@@ -144,6 +155,7 @@ async fn start_gateway(mut setup_configuration: DocumentDBSetupConfiguration) {
             .as_ref()
             .is_some_and(TelemetryManager::traces_enabled)
     );
+    warn_if_connection_limit_unenforced(&setup_configuration);
 
     let shutdown_token = SHUTDOWN_CONTROLLER.token();
 
