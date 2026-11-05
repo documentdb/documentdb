@@ -24,7 +24,6 @@
 #include "math.h"
 #include <optimizer/optimizer.h>
 #include <commands/explain.h>
-#include <access/gin.h>
 #include <parser/parsetree.h>
 #include <optimizer/pathnode.h>
 
@@ -801,7 +800,7 @@ extension_documentdb_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nsc
 		IndexMultiKeyStatus indexHasArrays = IndexMultiKeyStatus_Unknown;
 		bool hasCorrelatedReducedTerms = false;
 		uint32_t multiKeyPerPathStatus = 0;
-		if (options->enableMetadataBasedTracking)
+		if (options->enableMetadataBasedTracking && getopclassMetadataFunc != NULL)
 		{
 			bool indexHasArraysBool = false;
 			bool indexHasTruncation = false;
@@ -1104,11 +1103,18 @@ GetIndexBoundsForExplain(Relation index_rel, Datum compositeArgDatum,
 	/* Call extract_query to get the index details */
 	int32_t ginScanType = GetScanTypeForScanDirection(scanDirection);
 	LOCAL_FCINFO(fcinfo, 7);
-	fcinfo->flinfo = palloc(sizeof(FmgrInfo));
-	fmgr_info_copy(fcinfo->flinfo,
-				   index_getprocinfo(index_rel, 1,
-									 GIN_EXTRACTQUERY_PROC),
-				   CurrentMemoryContext);
+
+	/*
+	 * The composite extract_query is called directly below; it needs only
+	 * the column's operator class options from the call context.  Take them
+	 * from the index rather than from a support procedure: the procedure
+	 * number of extract_query is GIN's and RUM's, and an alternate index AM
+	 * registered with RegisterIndexAm may number its procedures otherwise.
+	 */
+	fcinfo->flinfo = palloc0(sizeof(FmgrInfo));
+	fcinfo->flinfo->fn_mcxt = CurrentMemoryContext;
+	set_fn_opclass_options(fcinfo->flinfo,
+						   RelationGetIndexAttOptions(index_rel, false)[0]);
 
 	fcinfo->args[0].value = compositeArgDatum;
 	fcinfo->args[1].value = PointerGetDatum(&nentries);
@@ -1158,6 +1164,7 @@ ExplainCompositeProperties(void *state, PGFunction multiKeyStatusFunc,
 						   void (*writeStringFunc)(const char *, const char *, void *))
 {
 	bool isMultiKey;
+	bool isMultiKeyKnown = true;
 	List *multiKeyPerPathList = NIL;
 	bool hasCorrelatedTerms = false;
 	bool isTruncated = false;
@@ -1177,7 +1184,14 @@ ExplainCompositeProperties(void *state, PGFunction multiKeyStatusFunc,
 	}
 	else
 	{
-		isMultiKey = DatumGetBool(DirectFunctionCall1(multiKeyStatusFunc,
+		/*
+		 * An alternate index AM need not register get_multikey_status.  Then
+		 * whether the index holds arrays is not known: assume it does, which
+		 * only widens the bounds shown, and do not report it.
+		 */
+		isMultiKeyKnown = multiKeyStatusFunc != NULL;
+		isMultiKey = !isMultiKeyKnown ||
+					 DatumGetBool(DirectFunctionCall1(multiKeyStatusFunc,
 													  PointerGetDatum(index_rel)));
 
 		if (options != NULL && options->enableCompositeReducedCorrelatedTerms &&
@@ -1191,7 +1205,11 @@ ExplainCompositeProperties(void *state, PGFunction multiKeyStatusFunc,
 	}
 
 
-	writeBoolFunc("isMultiKey", isMultiKey, state);
+	if (isMultiKeyKnown)
+	{
+		writeBoolFunc("isMultiKey", isMultiKey, state);
+	}
+
 	if (multiKeyPerPathList != NIL)
 	{
 		writeStringListFunc("multiKeyPaths", multiKeyPerPathList, state);
@@ -1427,6 +1445,7 @@ ExplainCompositeScanCore(IndexScanDesc scan, void *state,
 		(BsonGinCompositePathOptions *) scan->indexRelation->rd_opcoptions[0];
 
 	bool hasMultiKey = false;
+	bool isMultiKeyKnown = true;
 	List *multiKeyPerPathList = NIL;
 	bool hasCorrelatedReducedTerms = false;
 	bool hasTruncation = false;
@@ -1454,7 +1473,10 @@ ExplainCompositeScanCore(IndexScanDesc scan, void *state,
 	}
 	else
 	{
-		hasMultiKey = DatumGetBool(DirectFunctionCall1(multiKeyStatusFunc,
+		/* As in ExplainCompositeProperties: the AM may not say */
+		isMultiKeyKnown = multiKeyStatusFunc != NULL;
+		hasMultiKey = !isMultiKeyKnown ||
+					  DatumGetBool(DirectFunctionCall1(multiKeyStatusFunc,
 													   PointerGetDatum(
 														   scan->indexRelation)));
 		if (options->enableCompositeReducedCorrelatedTerms && hasMultiKey)
@@ -1467,7 +1489,11 @@ ExplainCompositeScanCore(IndexScanDesc scan, void *state,
 		hasTruncation = GetIndexTruncationStatus(scan->indexRelation);
 	}
 
-	writerFuncs->writeBool("isMultiKey", hasMultiKey, state);
+	if (isMultiKeyKnown)
+	{
+		writerFuncs->writeBool("isMultiKey", hasMultiKey, state);
+	}
+
 	if (multiKeyPerPathList != NIL)
 	{
 		writerFuncs->writeStringList("multiKeyPaths", multiKeyPerPathList, state);
