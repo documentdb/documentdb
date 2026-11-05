@@ -23,6 +23,32 @@ fn test_credentials(user: &str, password: &str) -> Credential {
         .build()
 }
 
+/// Builds TLS-enabled, SCRAM-SHA-256 authenticated `ClientOptions` for the
+/// local test gateway.
+///
+/// The options are returned (rather than a constructed `Client`) so callers
+/// can further customize them — e.g. `max_pool_size` or
+/// `server_selection_timeout` — before building a client. This is the shared
+/// builder reused by the `get_client*` helpers.
+///
+/// # Errors
+///
+/// Returns an error if the server address cannot be parsed.
+pub fn test_client_options(
+    username: &str,
+    password: &str,
+) -> std::result::Result<ClientOptions, Error> {
+    Ok(ClientOptions::builder()
+        .credential(test_credentials(username, password))
+        .tls(Tls::Enabled(
+            TlsOptions::builder()
+                .allow_invalid_certificates(true)
+                .build(),
+        ))
+        .hosts(vec![ServerAddress::parse("127.0.0.1:10260")?])
+        .build())
+}
+
 /// Creates a `MongoDB` test client with TLS but no authentication.
 /// Used for pre-auth commands like `hello` and `isMaster`.
 ///
@@ -64,19 +90,7 @@ pub fn get_client_with_credentials(
     username: &str,
     password: &str,
 ) -> std::result::Result<Client, Error> {
-    let credential = test_credentials(username, password);
-
-    let client_options = ClientOptions::builder()
-        .credential(credential)
-        .tls(Tls::Enabled(
-            TlsOptions::builder()
-                .allow_invalid_certificates(true)
-                .build(),
-        ))
-        .hosts(vec![ServerAddress::parse("127.0.0.1:10260")?])
-        .build();
-
-    Client::with_options(client_options)
+    Client::with_options(test_client_options(username, password)?)
 }
 
 /// Creates a `MongoDB` test client without TLS.

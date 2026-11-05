@@ -6,7 +6,7 @@
  *-------------------------------------------------------------------------
  */
 
-use std::{env, fs::File, path::Path};
+use std::{env, fs::File, num::NonZero, path::Path};
 
 use serde::Deserialize;
 
@@ -15,6 +15,10 @@ use crate::{
     error::{DocumentDBError, Result},
     telemetry::TelemetrySettings,
 };
+
+/// Used when `MaxIncomingConnections` is not set. 1024 * 512 is 1/2 of the
+/// maximum file handles that can be used for inbound connections.
+const DEFAULT_MAX_INCOMING_CONNECTIONS: NonZero<usize> = NonZero::new(1024 * 512).unwrap();
 
 /// Environment variable names recognized by `DocumentDBSetupConfiguration::from_env`.
 ///
@@ -98,6 +102,9 @@ pub struct DocumentDBSetupConfiguration {
     pub async_runtime_worker_threads: Option<usize>,
     pub stream_read_buffer_size: Option<usize>,
     pub stream_write_buffer_size: Option<usize>,
+
+    // Connection limits
+    pub max_incoming_connections: Option<NonZero<usize>>,
 
     // Unix domain socket configuration
     // If specified with a non-empty path, Unix socket is enabled at that path.
@@ -183,6 +190,7 @@ impl std::fmt::Debug for DocumentDBSetupConfiguration {
             )
             .field("stream_read_buffer_size", &self.stream_read_buffer_size)
             .field("stream_write_buffer_size", &self.stream_write_buffer_size)
+            .field("max_incoming_connections", &self.max_incoming_connections)
             .field("unix_socket_path", &self.unix_socket_path)
             .field(
                 "unix_socket_file_permissions",
@@ -953,6 +961,11 @@ impl SetupConfiguration for DocumentDBSetupConfiguration {
 
     fn enforce_tls(&self) -> bool {
         self.enforce_tls.unwrap_or(true)
+    }
+
+    fn max_incoming_connections(&self) -> NonZero<usize> {
+        self.max_incoming_connections
+            .unwrap_or(DEFAULT_MAX_INCOMING_CONNECTIONS)
     }
 
     #[expect(clippy::unwrap_used, reason = "validated octal string")]
