@@ -70,14 +70,13 @@ impl Response {
         }))
     }
 
-    /// Returns `true` if this response was produced by a write operation
-    /// whose `PostgreSQL` UDF signalled failure (`p_success = false`) and
-    /// the BSON contains `writeErrors`.
+    /// Returns `true` if a write response contains errors, whether translated
+    /// by the backend or transformed by the gateway.
     #[must_use]
     pub const fn has_write_errors(&self) -> bool {
         match self {
             Self::Raw(raw) => raw.has_write_errors(),
-            Self::Pg(_) => false,
+            Self::Pg(pg) => pg.has_write_errors(),
         }
     }
 }

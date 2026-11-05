@@ -11,6 +11,7 @@
 #include <postgres.h>
 #include <fmgr.h>
 #include <utils/builtins.h>
+#include "commands/commands_common.h"
 #include "utils/documentdb_errors.h"
 #include "utils/version_utils.h"
 #include "utils/error_utils.h"
@@ -24,6 +25,33 @@ format_log_hook unredacted_log_emit_hook = NULL;
 
 PG_FUNCTION_INFO_V1(command_convert_mongo_error_to_postgres);
 PG_FUNCTION_INFO_V1(command_throw_mongo_error);
+PG_FUNCTION_INFO_V1(test_try_get_wire_error_code);
+
+/*
+ * test_try_get_wire_error_code is a test-only function that returns the wire
+ * error code for a SQLSTATE, or NULL when the response requires translation.
+ */
+Datum
+test_try_get_wire_error_code(PG_FUNCTION_ARGS)
+{
+	char *sqlState = text_to_cstring(PG_GETARG_TEXT_PP(0));
+	if (strlen(sqlState) != 5)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg("SQLSTATE must contain five characters")));
+	}
+
+	int errorCode = MAKE_SQLSTATE(sqlState[0], sqlState[1], sqlState[2], sqlState[3],
+								  sqlState[4]);
+	int wireErrorCode;
+	if (!TryGetWireErrorCode(errorCode, &wireErrorCode))
+	{
+		PG_RETURN_NULL();
+	}
+
+	PG_RETURN_INT32(wireErrorCode);
+}
+
 
 /*
  * This method is useful in cases where the error codes can't be thrown from SQL directly

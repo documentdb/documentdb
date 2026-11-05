@@ -1,4 +1,6 @@
 ### documentdb v1.3-0 (Unreleased) ###
+* Convert supported insert and update errors to wire-protocol codes, including batched inserts, controlled by the default-on `documentdb.enable_write_error_code_conversion` setting. *[Feature]*
+* Release transient insert and update processing memory after each subtransaction instead of retaining it for the full request. *[Bugfix]*
 * Enable optional shard-key terms for supported unique indexes and global per-path index metadata tracking by default for newly created indexes. Metadata-tracked indexes reject parallel arrays by default. Existing index definitions are unchanged. *[Perf]*
 * Preserve full-value rechecks for truncated metadata-tracked index terms, and require metadata-write support before enabling tracking on new indexes. *[Bugfix]*
 * Preserve correlated multi-key predicate and sort semantics when selecting index-only scans and sort pushdown, safely merge scalar `$elemMatch` bounds on non-leading index paths, and avoid dereferencing exhausted ordered-scan state during distinct re-seeks. *[Bugfix]*

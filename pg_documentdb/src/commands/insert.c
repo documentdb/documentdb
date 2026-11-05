@@ -69,6 +69,9 @@ typedef struct BatchInsertionSpec
 	/* list of documents to insert */
 	List *documents;
 
+	/* original document sequence, when every document remains eligible */
+	pgbsonsequence *documentSequence;
+
 	/* if ordered, stop after the first failure */
 	bool isOrdered;
 
@@ -101,6 +104,12 @@ typedef struct BatchInsertionResult
 	HTAB *indexNameCache;
 } BatchInsertionResult;
 
+typedef struct InsertWorkerResult
+{
+	pgbson *wireResult;
+	bool isResponseReady;
+} InsertWorkerResult;
+
 
 PG_FUNCTION_INFO_V1(command_insert);
 PG_FUNCTION_INFO_V1(command_insert_one);
@@ -124,12 +133,18 @@ static void DoBatchInsertNoTransactionId(MongoCollection *collection,
 										 BatchInsertionSpec *batchSpec,
 										 BatchInsertionResult *batchResult,
 										 ExprEvalState *evalState,
-										 WriteMode writeMode);
+										 WriteMode writeMode,
+										 MemoryContext insertAttemptContext);
 
 static uint64 ProcessInsertion(MongoCollection *collection, Oid insertShardOid, const
 							   bson_value_t *document,
 							   text *transactionId, ExprEvalState *evalState);
-static pgbson * BuildResponseMessage(BatchInsertionResult *batchResult);
+static pgbson * BuildResponseMessage(BatchInsertionResult *batchResult,
+									 bool *isResponseReady,
+									 bool convertToWireErrorCodes);
+static pgbson * SerializeBatchInsertionResult(BatchInsertionResult *batchResult,
+											  bool convertToWireErrorCodes);
+static InsertWorkerResult DeserializeInsertWorkerResult(pgbson *workerResult);
 static uint64_t RunInsertQuery(Query *insertQuery, ParamListInfo paramListInfo);
 static Query * CreateInsertQuery(MongoCollection *collection, Oid shardOid,
 								 List *valuesLists);
@@ -477,6 +492,8 @@ BuildBatchInsertionSpec(bson_iter_t *insertCommandIter, pgbsonsequence *insertDo
 
 	batchSpec->collectionName = (char *) collectionName;
 	batchSpec->documents = documents;
+	batchSpec->documentSequence =
+		insertDocs != NULL && !hasSkippedDocuments ? insertDocs : NULL;
 	batchSpec->isOrdered = isOrdered;
 	batchSpec->bypassDocumentValidation = bypassDocumentValidation;
 
@@ -776,7 +793,8 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts,
 								  Oid shardOid,
 								  BatchInsertionResult *batchResult, int batchStartIndex,
 								  int *batchRowsInserted, int *batchEndIndex,
-								  ExprEvalState *evalState, WriteMode writeMode)
+								  ExprEvalState *evalState, WriteMode writeMode,
+								  MemoryContext insertAttemptContext)
 {
 	*batchRowsInserted = 0;
 	MemoryContext oldContext = CurrentMemoryContext;
@@ -786,6 +804,7 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts,
 
 	PG_TRY();
 	{
+		MemoryContextSwitchTo(insertAttemptContext);
 		if (writeMode == WriteMode_Bulk_Proc)
 		{
 			/* Set lock timeout inside the subtransaction so it is
@@ -814,6 +833,7 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts,
 		ReleaseCurrentSubTransaction();
 		MemoryContextSwitchTo(oldContext);
 		CurrentResourceOwner = oldOwner;
+		MemoryContextReset(insertAttemptContext);
 	}
 	PG_CATCH();
 	{
@@ -824,6 +844,7 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts,
 		RollbackAndReleaseCurrentSubTransaction();
 		MemoryContextSwitchTo(oldContext);
 		CurrentResourceOwner = oldOwner;
+		MemoryContextReset(insertAttemptContext);
 		*batchRowsInserted = 0;
 
 		if (IsOperatorInterventionError(errorData))
@@ -848,6 +869,7 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts,
 				"Batch insert failed; retrying sub-batch individually. Batch size: %d, start index: %d, SQL error code: %d",
 				list_length(inserts), batchStartIndex, errorCode);
 		}
+		FreeErrorData(errorData);
 	}
 	PG_END_TRY();
 
@@ -923,7 +945,8 @@ DoSingleInsertWithSubTxn(MongoCollection *collection,
 						 const bson_value_t *document,
 						 text *transactionId,
 						 BatchInsertionResult *batchResult, int insertIndex,
-						 ExprEvalState *evalState)
+						 ExprEvalState *evalState,
+						 MemoryContext insertAttemptContext)
 {
 	/* declared volatile because of the longjmp in PG_CATCH */
 	volatile bool isSuccess = false;
@@ -936,6 +959,7 @@ DoSingleInsertWithSubTxn(MongoCollection *collection,
 
 	PG_TRY();
 	{
+		MemoryContextSwitchTo(insertAttemptContext);
 		numDocsInserted = ProcessInsertion(collection, insertShardOid, document,
 										   transactionId, evalState);
 
@@ -943,6 +967,7 @@ DoSingleInsertWithSubTxn(MongoCollection *collection,
 		ReleaseCurrentSubTransaction();
 		MemoryContextSwitchTo(oldContext);
 		CurrentResourceOwner = oldOwner;
+		MemoryContextReset(insertAttemptContext);
 		batchResult->rowsInserted += numDocsInserted;
 		isSuccess = true;
 	}
@@ -954,6 +979,7 @@ DoSingleInsertWithSubTxn(MongoCollection *collection,
 		/* Abort inner transaction */
 		RollbackAndReleaseCurrentSubTransaction();
 		CurrentResourceOwner = oldOwner;
+		MemoryContextReset(insertAttemptContext);
 		if (IsOperatorInterventionError(errorData))
 		{
 			ReThrowError(errorData);
@@ -998,6 +1024,12 @@ ProcessBatchInsertion(MongoCollection *collection, BatchInsertionSpec *batchSpec
 
 	ExprEvalState *evalState = NULL;
 
+	/* Successful subtransactions retain their allocations until the outer request ends. */
+	MemoryContext insertAttemptContext =
+		AllocSetContextCreate(batchResult->resultMemoryContext,
+							  "DocumentDBInsertAttempt",
+							  ALLOCSET_DEFAULT_SIZES);
+
 	/* Document validation occurs regardless of whether the validation action is set to error or warn.
 	 * If validation fails and the action is error, an error is thrown; if the action is warn, a warning is logged.
 	 * Since we do not need to log a warning in this context, we will avoid calling ValidateSchemaOnDocumentInsert when the validation action is set to warn.
@@ -1029,7 +1061,8 @@ ProcessBatchInsertion(MongoCollection *collection, BatchInsertionSpec *batchSpec
 			ereport(DEBUG1, (errmsg("Using single insert with subtransaction")));
 			DoSingleInsertWithSubTxn(collection, batchSpec->insertShardOid,
 									 linitial(batchSpec->documents), transactionId,
-									 batchResult, insertIndex, evalState);
+									 batchResult, insertIndex, evalState,
+									 insertAttemptContext);
 		}
 	}
 	else
@@ -1038,13 +1071,14 @@ ProcessBatchInsertion(MongoCollection *collection, BatchInsertionSpec *batchSpec
 		 * and/or we have more than 1 document. Do a batch insert directly.
 		 */
 		DoBatchInsertNoTransactionId(collection, batchSpec, batchResult, evalState,
-									 writeMode);
+									 writeMode, insertAttemptContext);
 	}
 
 	if (evalState != NULL)
 	{
 		FreeExprEvalState(evalState, batchResult->resultMemoryContext);
 	}
+	MemoryContextDelete(insertAttemptContext);
 }
 
 
@@ -1054,7 +1088,8 @@ ProcessBatchInsertion(MongoCollection *collection, BatchInsertionSpec *batchSpec
 static void
 DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *batchSpec,
 							 BatchInsertionResult *batchResult, ExprEvalState *evalState,
-							 WriteMode writeMode)
+							 WriteMode writeMode,
+							 MemoryContext insertAttemptContext)
 {
 	List *insertions = batchSpec->documents;
 	bool isOrdered = batchSpec->isOrdered;
@@ -1093,7 +1128,8 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 																		  batchRowsInserted,
 																		  &batchEndIndex,
 																		  evalState,
-																		  writeMode);
+																		  writeMode,
+																		  insertAttemptContext);
 
 			Assert(!performedBatchInsert || batchRowsInserted > 0);
 			if (!performedBatchInsert)
@@ -1115,7 +1151,8 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 		bool isSuccess = DoSingleInsertWithSubTxn(collection, batchSpec->insertShardOid,
 												  document,
 												  transactionId, batchResult,
-												  nextInsertIndex, evalState);
+												  nextInsertIndex, evalState,
+												  insertAttemptContext);
 		nextInsertIndex++;
 
 		if (!isSuccess)
@@ -1418,12 +1455,12 @@ CommandInsertCore(PG_FUNCTION_ARGS, WriteMode writeMode, MemoryContext allocCont
 															&databaseNameDatum);
 
 	ReportInsertFeatureUsage(list_length(batchSpec->documents));
-	BatchInsertionResult batchResult;
-	batchResult.resultMemoryContext = allocContext;
-	batchResult.indexNameCache = NULL;
-	MemoryContextSwitchTo(oldContext);
+	BatchInsertionResult batchResult = {
+		.resultMemoryContext = allocContext
+	};
 	pgbson *response = NULL;
-	bool success = false;
+	bool isResponseReady = false;
+	MemoryContextSwitchTo(oldContext);
 	if (list_length(batchSpec->documents) == 0)
 	{
 		/* Don't create the collection if there are no documents to insert */
@@ -1451,10 +1488,13 @@ CommandInsertCore(PG_FUNCTION_ARGS, WriteMode writeMode, MemoryContext allocCont
 		}
 		if (ShouldDispatchFullInsertBatch(collection, batchSpec, writeMode))
 		{
-			response = CallInsertWorkerForBatch(collection, batchSpec);
-			bson_iter_t responseIter;
-			PgbsonInitIterator(response, &responseIter);
-			success = !bson_iter_find(&responseIter, "writeErrors");
+			pgbson *serializedWorkerResult =
+				CallInsertWorkerForBatch(collection, batchSpec);
+			InsertWorkerResult workerResult =
+				DeserializeInsertWorkerResult(serializedWorkerResult);
+			response = workerResult.wireResult;
+			isResponseReady = workerResult.isResponseReady;
+			pfree(serializedWorkerResult);
 		}
 		else
 		{
@@ -1464,17 +1504,18 @@ CommandInsertCore(PG_FUNCTION_ARGS, WriteMode writeMode, MemoryContext allocCont
 		}
 	}
 
-	if (response == NULL)
-	{
-		response = BuildResponseMessage(&batchResult);
-		success = batchResult.writeErrors == NIL;
-	}
-
 	Datum values[2];
 	bool isNulls[2] = { false, false };
 
+	if (response == NULL)
+	{
+		const bool convertToWireErrorCodes = true;
+		response = BuildResponseMessage(&batchResult, &isResponseReady,
+										convertToWireErrorCodes);
+	}
+
 	values[0] = PointerGetDatum(response);
-	values[1] = BoolGetDatum(success);
+	values[1] = BoolGetDatum(isResponseReady);
 	HeapTuple resultTuple = heap_form_tuple(resultTupDesc, values, isNulls);
 	return HeapTupleGetDatum(resultTuple);
 }
@@ -1568,8 +1609,14 @@ CallInsertWorkerForInsertOne(MongoCollection *collection, int64 shardKeyHash,
 static pgbson *
 CallInsertWorkerForBatch(MongoCollection *collection, BatchInsertionSpec *batchSpec)
 {
-	pgbsonsequence *documents = PgbsonSequenceBuildFromBsonValuesList(
-		batchSpec->documents, 0, list_length(batchSpec->documents));
+	pgbsonsequence *documents = batchSpec->documentSequence;
+	const bool ownsDocumentSequence = documents == NULL;
+	if (ownsDocumentSequence)
+	{
+		documents = PgbsonSequenceBuildFromBsonValuesList(
+			batchSpec->documents, 0, list_length(batchSpec->documents));
+	}
+
 	pgbson_writer writer;
 	pgbson_writer batchWriter;
 	PgbsonWriterInit(&writer);
@@ -1587,7 +1634,11 @@ CallInsertWorkerForBatch(MongoCollection *collection, BatchInsertionSpec *batchS
 	pgbson *response = CallInsertWorkerForInsert(collection, shardKeyHash, workerSpec,
 												 transactionId, documents);
 	pfree(workerSpec);
-	pfree(documents);
+	if (ownsDocumentSequence)
+	{
+		pfree(documents);
+	}
+
 	return response;
 }
 
@@ -1846,14 +1897,22 @@ command_insert_worker(PG_FUNCTION_ARGS)
 				batchResult.resultMemoryContext, localCollection.options.collationString);
 		}
 
+		MemoryContext insertAttemptContext =
+			AllocSetContextCreate(batchResult.resultMemoryContext,
+								  "DocumentDBInsertAttempt",
+								  ALLOCSET_DEFAULT_SIZES);
 		DoBatchInsertNoTransactionId(&localCollection, &batchSpec, &batchResult,
-									 evalState, WriteMode_Txn_Func);
+									 evalState, WriteMode_Txn_Func,
+									 insertAttemptContext);
 		if (evalState != NULL)
 		{
 			FreeExprEvalState(evalState, batchResult.resultMemoryContext);
 		}
+		MemoryContextDelete(insertAttemptContext);
 
-		PG_RETURN_POINTER(BuildResponseMessage(&batchResult));
+		const bool convertToWireErrorCodes = true;
+		PG_RETURN_POINTER(SerializeBatchInsertionResult(&batchResult,
+														convertToWireErrorCodes));
 	}
 	else
 	{
@@ -2057,12 +2116,80 @@ InsertOrReplaceDocument(MongoCollection *collection, const char *shardTableName,
 }
 
 
+static pgbson *
+SerializeBatchInsertionResult(BatchInsertionResult *batchResult,
+							  bool convertToWireErrorCodes)
+{
+	bool isResponseReady;
+	pgbson *wireResult = BuildResponseMessage(batchResult, &isResponseReady,
+											  convertToWireErrorCodes);
+
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	PgbsonWriterAppendDocument(&writer, "wireResult", 10, wireResult);
+	PgbsonWriterAppendBool(&writer, "isResponseReady", 15, isResponseReady);
+	return PgbsonWriterGetPgbson(&writer);
+}
+
+
+static InsertWorkerResult
+DeserializeInsertWorkerResult(pgbson *workerResult)
+{
+	InsertWorkerResult result = { 0 };
+	bool foundWireResult = false;
+	bool foundIsResponseReady = false;
+	bson_iter_t workerResultIter;
+	PgbsonInitIterator(workerResult, &workerResultIter);
+	while (bson_iter_next(&workerResultIter))
+	{
+		const char *key = bson_iter_key(&workerResultIter);
+		if (strcmp(key, "wireResult") == 0)
+		{
+			const bson_value_t *wireResultValue = bson_iter_value(&workerResultIter);
+			if (wireResultValue->value_type != BSON_TYPE_DOCUMENT)
+			{
+				ereport(ERROR, (errmsg("Insert worker wireResult must be a document")));
+			}
+
+			result.wireResult = PgbsonInitFromDocumentBsonValue(wireResultValue);
+			foundWireResult = true;
+		}
+		else if (strcmp(key, "isResponseReady") == 0)
+		{
+			if (!BSON_ITER_HOLDS_BOOL(&workerResultIter))
+			{
+				ereport(ERROR, (errmsg(
+									"Insert worker isResponseReady must be a boolean")));
+			}
+
+			result.isResponseReady = bson_iter_bool(&workerResultIter);
+			foundIsResponseReady = true;
+		}
+		else
+		{
+			ereport(ERROR, (errmsg("Unknown insert worker result field %s", key)));
+		}
+	}
+
+	if (!foundWireResult || !foundIsResponseReady)
+	{
+		ereport(ERROR, (errmsg(
+							"Insert worker result must have wireResult and isResponseReady fields")));
+	}
+
+	return result;
+}
+
+
 /*
  * BuildResponseMessage builds the response BSON for an insert command.
  */
 static pgbson *
-BuildResponseMessage(BatchInsertionResult *batchResult)
+BuildResponseMessage(BatchInsertionResult *batchResult, bool *isResponseReady,
+					 bool convertToWireErrorCodes)
 {
+	*isResponseReady = true;
+
 	pgbson_writer resultWriter;
 	PgbsonWriterInit(&resultWriter);
 	PgbsonWriterAppendInt32(&resultWriter, "n", 1, batchResult->rowsInserted);
@@ -2070,18 +2197,43 @@ BuildResponseMessage(BatchInsertionResult *batchResult)
 
 	if (batchResult->writeErrors != NIL)
 	{
+		ListCell *writeErrorCell = NULL;
+		if (convertToWireErrorCodes)
+		{
+			foreach(writeErrorCell, batchResult->writeErrors)
+			{
+				WriteError *writeError = lfirst(writeErrorCell);
+				int wireErrorCode;
+				if (!TryGetWireErrorCode(writeError->code, &wireErrorCode))
+				{
+					*isResponseReady = false;
+					break;
+				}
+			}
+		}
+		else
+		{
+			*isResponseReady = false;
+		}
+
 		pgbson_array_writer writeErrorsArrayWriter;
 		PgbsonWriterStartArray(&resultWriter, "writeErrors", 11, &writeErrorsArrayWriter);
 
-		ListCell *writeErrorCell = NULL;
 		foreach(writeErrorCell, batchResult->writeErrors)
 		{
 			WriteError *writeError = lfirst(writeErrorCell);
+			int responseErrorCode = writeError->code;
+			if (*isResponseReady && convertToWireErrorCodes)
+			{
+				bool hasWireErrorCode PG_USED_FOR_ASSERTS_ONLY =
+					TryGetWireErrorCode(writeError->code, &responseErrorCode);
+				Assert(hasWireErrorCode);
+			}
 
 			pgbson_writer writeErrorWriter;
 			PgbsonArrayWriterStartDocument(&writeErrorsArrayWriter, &writeErrorWriter);
 			PgbsonWriterAppendInt32(&writeErrorWriter, "index", 5, writeError->index);
-			PgbsonWriterAppendInt32(&writeErrorWriter, "code", 4, writeError->code);
+			PgbsonWriterAppendInt32(&writeErrorWriter, "code", 4, responseErrorCode);
 			PgbsonWriterAppendUtf8(&writeErrorWriter, "errmsg", 6, writeError->errmsg);
 			PgbsonArrayWriterEndDocument(&writeErrorsArrayWriter, &writeErrorWriter);
 		}

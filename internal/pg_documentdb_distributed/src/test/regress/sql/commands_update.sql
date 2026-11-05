@@ -2,6 +2,7 @@ SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documen
 SET citus.next_shard_id TO 650000;
 SET documentdb.next_collection_id TO 6500;
 SET documentdb.next_collection_index_id TO 6500;
+SET documentdb.enable_write_error_code_conversion TO on;
 
 select 1 from documentdb_api.insert_one('db', 'updateme', '{"a":1,"_id":1,"b":1}');
 select 1 from documentdb_api.insert_one('db', 'updateme', '{"a":2,"_id":2,"b":2}');
@@ -1243,3 +1244,4 @@ SELECT document FROM documentdb_api.collection('db', 'shard_batch')
 ROLLBACK;
 
 SELECT documentdb_api.drop_collection('db', 'shard_batch');
+RESET documentdb.enable_write_error_code_conversion;

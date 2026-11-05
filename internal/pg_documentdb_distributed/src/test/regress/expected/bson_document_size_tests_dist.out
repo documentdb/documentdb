@@ -843,6 +843,43 @@ FROM documentdb_api.collection('doc_size_db', 'doc_size_short_batch') ORDER BY o
  8  | t
 (8 rows)
 
+-- Duplicate-only worker responses are wire-ready. Mixed responses retain all
+-- internal error codes when any error still requires gateway conversion.
+BEGIN;
+SET LOCAL documentdb.enable_write_error_code_conversion TO on;
+SELECT p_result -> 'writeErrors.0.code' AS error_code, p_success
+FROM documentdb_api.insert(
+    'doc_size_db',
+    '{"insert":"doc_size_short_batch","ordered":false,"documents":[{"_id":3},{"_id":4}]}');
+             error_code              | p_success 
+---------------------------------------------------------------------
+ { "" : { "$numberInt" : "11000" } } | t
+(1 row)
+
+SET LOCAL documentdb.enable_write_error_code_conversion TO off;
+SELECT p_result -> 'writeErrors.0.code' AS error_code, p_success
+FROM documentdb_api.insert(
+    'doc_size_db',
+    '{"insert":"doc_size_short_batch","ordered":false,"documents":[{"_id":3},{"_id":4}]}');
+               error_code                | p_success 
+---------------------------------------------------------------------
+ { "" : { "$numberInt" : "319029277" } } | f
+(1 row)
+
+SET LOCAL documentdb.enable_write_error_code_conversion TO on;
+SELECT p_result -> 'writeErrors' AS write_errors, p_success
+FROM documentdb_api.insert(
+    'doc_size_db',
+    '{"insert":"doc_size_short_batch","ordered":false,"documents":[
+        {"_id":3},
+        {"_id":{"$regex":"^invalid"}}
+    ]}');
+                                                                                                                                                       write_errors                                                                                                                                                       | p_success 
+---------------------------------------------------------------------
+ { "" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "319029277" }, "errmsg" : "Duplicate key violation on the requested collection: Index '_id_'" }, { "index" : { "$numberInt" : "1" }, "code" : { "$numberInt" : "16777245" }, "errmsg" : "The '_id' field value must not be a type of regex" } ] } | f
+(1 row)
+
+COMMIT;
 SELECT documentdb_api.drop_collection('doc_size_db', 'doc_size_short_batch');
  drop_collection 
 ---------------------------------------------------------------------

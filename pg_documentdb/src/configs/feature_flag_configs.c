@@ -666,6 +666,10 @@ bool EnableNewNamespaceValidation =
  * SECTION: Write path feature flags
  */
 
+/* Added on v1.3, enabled on v1.3, remove after v1.5 */
+#define DEFAULT_ENABLE_WRITE_ERROR_CODE_CONVERSION true
+bool EnableWriteErrorCodeConversion = DEFAULT_ENABLE_WRITE_ERROR_CODE_CONVERSION;
+
 /* Added on v1.2, pending stabilization, enable on v1.5 */
 #define DEFAULT_ENABLE_UPDATE_QUERY_AST false
 bool EnableUpdateQueryAst = DEFAULT_ENABLE_UPDATE_QUERY_AST;
@@ -1917,6 +1921,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableUpdateWorkerSingleWriteNoSubTransaction,
 		DEFAULT_ENABLE_UPDATE_WORKER_SINGLE_WRITE_NO_SUB_TRANSACTION,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_write_error_code_conversion", newGucPrefix),
+		gettext_noop(
+			"Whether to convert supported write error codes to wire-protocol codes in the backend."),
+		NULL,
+		&EnableWriteErrorCodeConversion,
+		DEFAULT_ENABLE_WRITE_ERROR_CODE_CONVERSION,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

@@ -407,6 +407,31 @@ SELECT documentdb_api.insert('doc_size_db',
 COMMIT;
 SELECT document->>'_id' AS id, pg_column_size(document) < length(document::bytea) AS compressed
 FROM documentdb_api.collection('doc_size_db', 'doc_size_short_batch') ORDER BY object_id;
+
+-- Duplicate-only worker responses are wire-ready. Mixed responses retain all
+-- internal error codes when any error still requires gateway conversion.
+BEGIN;
+SET LOCAL documentdb.enable_write_error_code_conversion TO on;
+SELECT p_result -> 'writeErrors.0.code' AS error_code, p_success
+FROM documentdb_api.insert(
+    'doc_size_db',
+    '{"insert":"doc_size_short_batch","ordered":false,"documents":[{"_id":3},{"_id":4}]}');
+
+SET LOCAL documentdb.enable_write_error_code_conversion TO off;
+SELECT p_result -> 'writeErrors.0.code' AS error_code, p_success
+FROM documentdb_api.insert(
+    'doc_size_db',
+    '{"insert":"doc_size_short_batch","ordered":false,"documents":[{"_id":3},{"_id":4}]}');
+SET LOCAL documentdb.enable_write_error_code_conversion TO on;
+SELECT p_result -> 'writeErrors' AS write_errors, p_success
+FROM documentdb_api.insert(
+    'doc_size_db',
+    '{"insert":"doc_size_short_batch","ordered":false,"documents":[
+        {"_id":3},
+        {"_id":{"$regex":"^invalid"}}
+    ]}');
+COMMIT;
+
 SELECT documentdb_api.drop_collection('doc_size_db', 'doc_size_short_batch');
 
 -- These document sizes hit the sequence writer's former 59/64-byte boundary.

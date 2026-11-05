@@ -1,6 +1,7 @@
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 SET documentdb.next_collection_id TO 1500;
 SET documentdb.next_collection_index_id TO 1500;
+SET documentdb.enable_write_error_code_conversion TO on;
 select 1 from documentdb_api.insert_one('db', 'updateme', '{"a":1,"_id":1,"b":1}');
 NOTICE:  creating collection
  ?column? 
@@ -912,18 +913,18 @@ rollback;
 -- updating shard key is disallowed when using multi:true
 begin;
 select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"b":1},"u":{"$inc":{"a":1}},"multi":true}]}');
-                                                                                                                                                                             update                                                                                                                                                                             
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""319029277"" }, ""errmsg"" : ""Invalid write detected. Please validate the collection and/or shard key being written to"" } ] }",f)
+                                                                                                                                                                           update                                                                                                                                                                           
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""11000"" }, ""errmsg"" : ""Invalid write detected. Please validate the collection and/or shard key being written to"" } ] }",t)
 (1 row)
 
 rollback;
 -- updating shard key is disallowed when using multi:true, even with a shard key filter
 begin;
 select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"a":1},"u":{"$inc":{"a":1}},"multi":true}]}');
-                                                                                                                                                                             update                                                                                                                                                                             
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""319029277"" }, ""errmsg"" : ""Invalid write detected. Please validate the collection and/or shard key being written to"" } ] }",f)
+                                                                                                                                                                           update                                                                                                                                                                           
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""11000"" }, ""errmsg"" : ""Invalid write detected. Please validate the collection and/or shard key being written to"" } ] }",t)
 (1 row)
 
 rollback;
@@ -1865,15 +1866,36 @@ DEBUG:  Executing unique index runtime recheck.
 DEBUG:  Executing unique index runtime recheck.
 DEBUG:  executing "SELECT (index_spec).index_name FROM documentdb_api_catalog.collection_indexes WHERE index_id = 1519" via connection to "host=localhost port=58050 user=REGRESSION_USER dbname=regression application_name='documentdb-Internal'"
 DEBUG:  Inserting index name into cache: b_1
-                                                                                                                                                                                                                                                                                                                                               update                                                                                                                                                                                                                                                                                                                                               
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""319029277"" }, ""errmsg"" : ""Duplicate key violation on the requested collection: Index 'a_1'"" }, { ""index"" : { ""$numberInt"" : ""1"" }, ""code"" : { ""$numberInt"" : ""319029277"" }, ""errmsg"" : ""Duplicate key violation on the requested collection: Index 'a_1'"" }, { ""index"" : { ""$numberInt"" : ""2"" }, ""code"" : { ""$numberInt"" : ""319029277"" }, ""errmsg"" : ""Duplicate key violation on the requested collection: Index 'b_1'"" } ] }",f)
+                                                                                                                                                                                                                                                                                                                                         update                                                                                                                                                                                                                                                                                                                                         
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""11000"" }, ""errmsg"" : ""Duplicate key violation on the requested collection: Index 'a_1'"" }, { ""index"" : { ""$numberInt"" : ""1"" }, ""code"" : { ""$numberInt"" : ""11000"" }, ""errmsg"" : ""Duplicate key violation on the requested collection: Index 'a_1'"" }, { ""index"" : { ""$numberInt"" : ""2"" }, ""code"" : { ""$numberInt"" : ""11000"" }, ""errmsg"" : ""Duplicate key violation on the requested collection: Index 'b_1'"" } ] }",t)
 (1 row)
 
 RESET client_min_messages;
+SET documentdb.enable_write_error_code_conversion TO off;
+select documentdb_api.update('db', '{"update":"update_index_name_cache","updates":[
+    {"q":{"_id":2},"u":{"$set":{"a":1}}}
+]}');
+                                                                                                                                                                 update                                                                                                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""319029277"" }, ""errmsg"" : ""Duplicate key violation on the requested collection: Index 'a_1'"" } ] }",f)
+(1 row)
+
+SET documentdb.enable_write_error_code_conversion TO on;
+-- A mixed response must keep every original code for downstream translation.
+select documentdb_api.update('db', '{"update":"update_index_name_cache","ordered":false,"updates":[
+    {"q":{"_id":2},"u":{"$set":{"a":1}}},
+    {"q":{"$invalid":2},"u":{"$set":{"a":4}}}
+]}');
+                                                                                                                                                                                                                                                                                         update                                                                                                                                                                                                                                                                                          
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""319029277"" }, ""errmsg"" : ""Duplicate key violation on the requested collection: Index 'a_1'"" }, { ""index"" : { ""$numberInt"" : ""1"" }, ""code"" : { ""$numberInt"" : ""16777245"" }, ""errmsg"" : ""unknown top level operator: $invalid. If you have a field name that starts with a '$' symbol, consider using $getField or $setField."" } ] }",f)
+(1 row)
+
 select documentdb_api.drop_collection('db', 'update_index_name_cache');
  drop_collection 
 -----------------
  t
 (1 row)
 
+RESET documentdb.enable_write_error_code_conversion;

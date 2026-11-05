@@ -1,6 +1,8 @@
 EXTENSION = documentdb
 MODULE_big = pg_$(EXTENSION)
 
+.DEFAULT_GOAL := all
+
 SQL_DEPDIR=.deps/sql
 SQL_BUILDDIR=build/sql
 
@@ -43,6 +45,14 @@ include $(OSS_SRC_DIR)/Makefile.cflags
 SOURCES = $(wildcard src/*.c) $(wildcard src/**/*.c)
 
 OBJS = $(patsubst %.c,%.o,$(SOURCES))
+
+ERROR_CONVERSION_SOURCE = src/utils/documentdb_conversion_codes.c
+ERROR_CONVERSION_GENERATOR = $(OSS_SRC_DIR)/scripts/generate_wire_protocol_values.sh
+
+$(ERROR_CONVERSION_SOURCE): $(OSS_SRC_DIR)/pg_documentdb_core/include/utils/documentdb_codes.txt $(OSS_SRC_DIR)/error_mappings.csv $(ERROR_CONVERSION_GENERATOR)
+	$(ERROR_CONVERSION_GENERATOR) $(OSS_SRC_DIR)/pg_documentdb_core/include/utils/documentdb_codes.txt $(OSS_SRC_DIR)/error_mappings.csv $@
+
+generate_wire_error_values: $(ERROR_CONVERSION_SOURCE)
 
 # Update to notify roaring to use the C atomics implementation (as opposed to c++): See roaring.h CROARING_ATOMIC_IMPL_C
 PG_CFLAGS += -DCROARING_ATOMIC_IMPL=3

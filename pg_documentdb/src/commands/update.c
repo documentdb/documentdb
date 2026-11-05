@@ -346,7 +346,8 @@ static pgbson * ProcessBatchUpdateUnsharded(MongoCollection *collection,
 											BatchUpdateSpec *batchSpec,
 											text *transactionId,
 											bool callerHandlesError,
-											bool *hasWriteErrors);
+											BatchUpdateResult *batchResult,
+											bool *isResponseReady);
 static bool IsSingleUpdateBatch(BatchUpdateSpec *batchSpec);
 static pgbson * ProcessSingleUpdateUnshardedCallerHandlesError(
 	MongoCollection *collection,
@@ -354,7 +355,7 @@ static pgbson * ProcessSingleUpdateUnshardedCallerHandlesError(
 	text *transactionId,
 	BatchUpdateResult *
 	batchResult,
-	bool *hasWriteErrors);
+	bool *isResponseReady);
 static void ProcessUpdate(MongoCollection *collection, UpdateSpec *updateSpec,
 						  text *transactionId, UpdateResult *result,
 						  bool forceInlineWrites,
@@ -414,13 +415,13 @@ static pgbson * UpsertDocument(MongoCollection *collection, const bson_value_t *
 static List * ValidateQueryAndUpdateDocuments(BatchUpdateSpec *batchSpec,
 											  MemoryContext requestContext,
 											  HTAB **indexNameCache);
-static pgbson * BuildResponseMessage(BatchUpdateResult *batchResult);
+static pgbson * BuildResponseMessage(BatchUpdateResult *batchResult,
+									 bool *isResponseReady,
+									 bool convertToWireErrorCodes);
 static void BuildUpdates(BatchUpdateSpec *spec);
 static void DeserializeUpdateWorkerSpec(pgbson *updateInternalSpec,
 										WorkerUpdateParam *params);
 static pgbson * SerializeBatchUpdateResult(BatchUpdateResult *result);
-static pgbson * DeserializeBatchUpdateWorkerResponse(pgbson *response,
-													 bool *hasWriteErrors);
 static pgbson * SerializeUpdateOneResult(UpdateOneResult *result);
 static pgbson * SerializeUpdateOneParams(UpdateOneParams *params, pgbson *shardKeyBson);
 static void DeserializeUpdateOneResult(pgbson *resultBson, UpdateOneResult *result);
@@ -713,8 +714,12 @@ PerformUpdateCore(Datum *databaseNameDatum, pgbson *updateSpec,
 				&batchResult.indexNameCache);
 			batchResult.upserted = NIL;
 
-			values[0] = PointerGetDatum(BuildResponseMessage(&batchResult));
-			values[1] = BoolGetDatum(batchResult.writeErrors == NIL);
+			bool isResponseReady;
+			const bool convertToWireErrorCodes = true;
+			pgbson *response = BuildResponseMessage(&batchResult, &isResponseReady,
+													convertToWireErrorCodes);
+			values[0] = PointerGetDatum(response);
+			values[1] = BoolGetDatum(isResponseReady);
 			resultTuple = heap_form_tuple(resultTupDesc, values, isNulls);
 			return resultTuple;
 		}
@@ -739,7 +744,8 @@ PerformUpdateCore(Datum *databaseNameDatum, pgbson *updateSpec,
 	 * to the worker. If it's "Single node" or sharded, we also have to process it here. If it is unsharded
 	 * and the shard is local, we can process it locally.
 	 */
-	bool hasWriteErrors = false;
+	bool isResponseReady = false;
+	const bool convertToWireErrorCodes = true;
 	pgbson *result = NULL;
 	if (DefaultInlineWriteOperations || !IsUnshardedRemoteCollection(collection))
 	{
@@ -756,8 +762,8 @@ PerformUpdateCore(Datum *databaseNameDatum, pgbson *updateSpec,
 
 		ProcessBatchUpdate(collection, batchSpec, transactionId,
 						   &batchResult, state, writeMode);
-		result = BuildResponseMessage(&batchResult);
-		hasWriteErrors = batchResult.writeErrors != NIL;
+		result = BuildResponseMessage(&batchResult, &isResponseReady,
+									  convertToWireErrorCodes);
 	}
 	else if (writeMode == WriteMode_Bulk_Proc)
 	{
@@ -767,8 +773,8 @@ PerformUpdateCore(Datum *databaseNameDatum, pgbson *updateSpec,
 		MemoryContextSwitchTo(oldContext);
 		ProcessBatchUpdateNonTransactionalUnsharded(collection, batchSpec, transactionId,
 													&batchResult);
-		result = BuildResponseMessage(&batchResult);
-		hasWriteErrors = batchResult.writeErrors != NIL;
+		result = BuildResponseMessage(&batchResult, &isResponseReady,
+									  convertToWireErrorCodes);
 	}
 	else
 	{
@@ -784,12 +790,14 @@ PerformUpdateCore(Datum *databaseNameDatum, pgbson *updateSpec,
 																	batchSpec,
 																	transactionId,
 																	&batchResult,
-																	&hasWriteErrors);
+																	&isResponseReady);
 		}
 		else
 		{
 			result = ProcessBatchUpdateUnsharded(collection, batchSpec, transactionId,
-												 callerHandlesError, &hasWriteErrors);
+												 callerHandlesError,
+												 &batchResult,
+												 &isResponseReady);
 		}
 	}
 
@@ -799,7 +807,7 @@ PerformUpdateCore(Datum *databaseNameDatum, pgbson *updateSpec,
 	}
 
 	values[0] = PointerGetDatum(result);
-	values[1] = BoolGetDatum(!hasWriteErrors);
+	values[1] = BoolGetDatum(isResponseReady);
 	resultTuple = heap_form_tuple(resultTupDesc, values, isNulls);
 	return resultTuple;
 }
@@ -1278,7 +1286,7 @@ DoMultiUpdate(MongoCollection *collection, List *updates, text *transactionId,
 			  BatchUpdateResult *batchResult, int updateIndex,
 			  bool forceInlineWrites, int *recordsUpdated,
 			  ExprEvalState *stateForSchemaValidation,
-			  WriteMode writeMode)
+			  WriteMode writeMode, MemoryContext updateAttemptContext)
 {
 	/*
 	 * Execute the query inside a sub-transaction, so we can restore order
@@ -1298,6 +1306,7 @@ DoMultiUpdate(MongoCollection *collection, List *updates, text *transactionId,
 
 	PG_TRY();
 	{
+		MemoryContextSwitchTo(updateAttemptContext);
 		if (writeMode == WriteMode_Bulk_Proc)
 		{
 			/* Set lock timeout inside the subtransaction so it is
@@ -1316,7 +1325,7 @@ DoMultiUpdate(MongoCollection *collection, List *updates, text *transactionId,
 			ProcessUpdate(collection, updateSpec, transactionId, &updateResult,
 						  forceInlineWrites, stateForSchemaValidation);
 			UpdateResultInBatch(&batchResultInner, &updateResult,
-								batchResult->resultMemoryContext,
+								updateAttemptContext,
 								updateInnerIndex);
 			updateInnerIndex++;
 			updateCount++;
@@ -1331,10 +1340,19 @@ DoMultiUpdate(MongoCollection *collection, List *updates, text *transactionId,
 		batchResult->rowsMatched += batchResultInner.rowsMatched;
 		batchResult->rowsModified += batchResultInner.rowsModified;
 
-		batchResult->upserted = list_concat(batchResult->upserted,
-											batchResultInner.upserted);
+		ListCell *upsertCell;
+		foreach(upsertCell, batchResultInner.upserted)
+		{
+			UpsertResult *innerUpsert = lfirst(upsertCell);
+			UpsertResult *upsert = palloc(sizeof(UpsertResult));
+			upsert->index = innerUpsert->index;
+			upsert->objectId =
+				CopyPgbsonIntoMemoryContext(innerUpsert->objectId,
+											batchResult->resultMemoryContext);
+			batchResult->upserted = lappend(batchResult->upserted, upsert);
+		}
 		MemoryContextSwitchTo(oldContext);
-		list_free(batchResultInner.upserted);
+		MemoryContextReset(updateAttemptContext);
 		*recordsUpdated = updateCount;
 	}
 	PG_CATCH();
@@ -1346,6 +1364,7 @@ DoMultiUpdate(MongoCollection *collection, List *updates, text *transactionId,
 		RollbackAndReleaseCurrentSubTransaction();
 		MemoryContextSwitchTo(oldContext);
 		CurrentResourceOwner = oldOwner;
+		MemoryContextReset(updateAttemptContext);
 
 		if (IsOperatorInterventionError(errorData))
 		{
@@ -1354,6 +1373,7 @@ DoMultiUpdate(MongoCollection *collection, List *updates, text *transactionId,
 
 		*recordsUpdated = 0;
 		updateCount = 0;
+		FreeErrorData(errorData);
 	}
 	PG_END_TRY();
 	return updateCount != 0;
@@ -1368,7 +1388,8 @@ DoSingleUpdateWithSubTxn(MongoCollection *collection, UpdateSpec *updateSpec,
 						 text *transactionId,
 						 BatchUpdateResult *batchResult, int updateIndex, bool
 						 forceInlineWrites,
-						 ExprEvalState *volatile stateForSchemaValidation)
+						 ExprEvalState *volatile stateForSchemaValidation,
+						 MemoryContext updateAttemptContext)
 {
 	/*
 	 * Execute the query inside a sub-transaction, so we can restore order
@@ -1388,6 +1409,7 @@ DoSingleUpdateWithSubTxn(MongoCollection *collection, UpdateSpec *updateSpec,
 
 	PG_TRY();
 	{
+		MemoryContextSwitchTo(updateAttemptContext);
 		ProcessUpdate(collection, updateSpec, transactionId, &updateResult,
 					  forceInlineWrites, stateForSchemaValidation);
 
@@ -1398,6 +1420,7 @@ DoSingleUpdateWithSubTxn(MongoCollection *collection, UpdateSpec *updateSpec,
 
 		UpdateResultInBatch(batchResult, &updateResult,
 							batchResult->resultMemoryContext, updateIndex);
+		MemoryContextReset(updateAttemptContext);
 		isSuccess = true;
 	}
 	PG_CATCH();
@@ -1409,6 +1432,7 @@ DoSingleUpdateWithSubTxn(MongoCollection *collection, UpdateSpec *updateSpec,
 		RollbackAndReleaseCurrentSubTransaction();
 		MemoryContextSwitchTo(oldContext);
 		CurrentResourceOwner = oldOwner;
+		MemoryContextReset(updateAttemptContext);
 
 		if (IsOperatorInterventionError(errorData))
 		{
@@ -1497,7 +1521,8 @@ static void
 DoUnshardedMultiUpdateViaUpdateWorker(MongoCollection *collection, List *updates,
 									  text *transactionId,
 									  BatchUpdateResult *batchResult, int *updateIndex,
-									  bool ordered, bool bypassDocumentValidation)
+									  bool ordered, bool bypassDocumentValidation,
+									  MemoryContext updateAttemptContext)
 {
 	/*
 	 * Execute the query inside a sub-transaction, so we can restore order
@@ -1508,12 +1533,15 @@ DoUnshardedMultiUpdateViaUpdateWorker(MongoCollection *collection, List *updates
 
 	/* Serialize the updates for the update worker */
 	int updateStartIndex = *updateIndex;
+	MemoryContextSwitchTo(updateAttemptContext);
 	pgbson *workerSpec = SerializeUpdateBatchParams(updateIndex, updates,
 													ordered, bypassDocumentValidation);
+	MemoryContextSwitchTo(oldContext);
 	BeginInternalSubTransaction(NULL);
 
 	PG_TRY();
 	{
+		MemoryContextSwitchTo(updateAttemptContext);
 		Datum resultDatum = CallUpdateWorker(collection, workerSpec, NULL,
 											 (int64_t) collection->collectionId,
 											 transactionId);
@@ -1530,6 +1558,7 @@ DoUnshardedMultiUpdateViaUpdateWorker(MongoCollection *collection, List *updates
 		UpdateBatchResultFromWorkerResult(batchResult, updateStartIndex, resultBson);
 		pfree(resultBson);
 		MemoryContextSwitchTo(oldContext);
+		MemoryContextReset(updateAttemptContext);
 	}
 	PG_CATCH();
 	{
@@ -1540,6 +1569,7 @@ DoUnshardedMultiUpdateViaUpdateWorker(MongoCollection *collection, List *updates
 		RollbackAndReleaseCurrentSubTransaction();
 		MemoryContextSwitchTo(oldContext);
 		CurrentResourceOwner = oldOwner;
+		MemoryContextReset(updateAttemptContext);
 
 		/* This worker path should just return the result in write errors
 		 * Failures in this path are bad so rethrow.
@@ -1547,38 +1577,14 @@ DoUnshardedMultiUpdateViaUpdateWorker(MongoCollection *collection, List *updates
 		ReThrowError(errorData);
 	}
 	PG_END_TRY();
-
-	pfree(workerSpec);
-}
-
-
-static pgbson *
-DeserializeBatchUpdateWorkerResponse(pgbson *response, bool *hasWriteErrors)
-{
-	pgbson *result = NULL;
-	bson_iter_t iter;
-	PgbsonInitIterator(response, &iter);
-	while (bson_iter_next(&iter))
-	{
-		const char *key = bson_iter_key(&iter);
-		if (strcmp(key, "response") == 0)
-		{
-			result = PgbsonInitFromDocumentBsonValue(bson_iter_value(&iter));
-		}
-		else if (strcmp(key, "ok") == 0)
-		{
-			*hasWriteErrors = !bson_iter_bool(&iter);
-		}
-	}
-
-	return result;
 }
 
 
 static pgbson *
 ProcessBatchUpdateUnsharded(MongoCollection *collection, BatchUpdateSpec *batchSpec,
 							text *transactionId, bool callerHandlesError,
-							bool *hasWriteErrors)
+							BatchUpdateResult *batchResult,
+							bool *isResponseReady)
 {
 	Assert(collection->shardKey == NULL);
 
@@ -1599,7 +1605,9 @@ ProcessBatchUpdateUnsharded(MongoCollection *collection, BatchUpdateSpec *batchS
 										  shardKeyHash, transactionId);
 
 	pgbson *response = DatumGetPgBson(workerResult);
-	return DeserializeBatchUpdateWorkerResponse(response, hasWriteErrors);
+	UpdateBatchResultFromWorkerResult(batchResult, 0, response);
+	const bool convertToWireErrorCodes = true;
+	return BuildResponseMessage(batchResult, isResponseReady, convertToWireErrorCodes);
 }
 
 
@@ -1641,7 +1649,7 @@ ProcessSingleUpdateUnshardedCallerHandlesError(MongoCollection *collection,
 											   BatchUpdateSpec *batchSpec,
 											   text *transactionId,
 											   BatchUpdateResult *batchResult,
-											   bool *hasWriteErrors)
+											   bool *isResponseReady)
 {
 	/* declared volatile because of the longjmp in PG_CATCH */
 	volatile bool isSuccess = false;
@@ -1656,10 +1664,10 @@ ProcessSingleUpdateUnshardedCallerHandlesError(MongoCollection *collection,
 		 * propagates any error it encounters, which is caught by this
 		 * PG_TRY/PG_CATCH block.
 		 */
-		bool ignoreHasWriteErrors = false;
 		result = ProcessBatchUpdateUnsharded(collection, batchSpec, transactionId,
 											 callerHandlesError,
-											 &ignoreHasWriteErrors);
+											 batchResult,
+											 isResponseReady);
 		isSuccess = true;
 	}
 	PG_CATCH();
@@ -1705,8 +1713,8 @@ ProcessSingleUpdateUnshardedCallerHandlesError(MongoCollection *collection,
 	}
 
 	batchResult->ok = 1;
-	*hasWriteErrors = true;
-	return BuildResponseMessage(batchResult);
+	const bool convertToWireErrorCodes = true;
+	return BuildResponseMessage(batchResult, isResponseReady, convertToWireErrorCodes);
 }
 
 
@@ -1722,6 +1730,11 @@ ProcessBatchUpdateNonTransactionalUnsharded(MongoCollection *collection,
 	batchResult->rowsModified = 0;
 	batchResult->writeErrors = NIL;
 	batchResult->upserted = NIL;
+
+	MemoryContext updateAttemptContext =
+		AllocSetContextCreate(batchResult->resultMemoryContext,
+							  "DocumentDBUpdateAttempt",
+							  ALLOCSET_DEFAULT_SIZES);
 
 	text *subTransactionId = transactionId;
 	if (list_length(updates) > 1)
@@ -1749,7 +1762,8 @@ ProcessBatchUpdateNonTransactionalUnsharded(MongoCollection *collection,
 
 		DoUnshardedMultiUpdateViaUpdateWorker(collection, updates, subTransactionId,
 											  batchResult, &updateIndex, spec->isOrdered,
-											  spec->bypassDocumentValidation);
+											  spec->bypassDocumentValidation,
+											  updateAttemptContext);
 
 		if (list_length(batchResult->writeErrors) > 0 && spec->isOrdered)
 		{
@@ -1757,6 +1771,7 @@ ProcessBatchUpdateNonTransactionalUnsharded(MongoCollection *collection,
 			break;
 		}
 	}
+	MemoryContextDelete(updateAttemptContext);
 }
 
 
@@ -1772,6 +1787,12 @@ ProcessBatchUpdateCore(MongoCollection *collection, List *updates, text *transac
 	batchResult->writeErrors = NIL;
 	batchResult->upserted = NIL;
 
+	/* Successful subtransactions retain their allocations until the outer request ends. */
+	MemoryContext updateAttemptContext =
+		AllocSetContextCreate(batchResult->resultMemoryContext,
+							  "DocumentDBUpdateAttempt",
+							  ALLOCSET_DEFAULT_SIZES);
+
 	text *subTransactionId = transactionId;
 
 	if (list_length(updates) == 1)
@@ -1782,13 +1803,15 @@ ProcessBatchUpdateCore(MongoCollection *collection, List *updates, text *transac
 			DoSingleUpdate(collection, linitial(updates), subTransactionId,
 						   batchResult, updateIndex, forceInlineWrites,
 						   stateForSchemaValidation);
+			MemoryContextDelete(updateAttemptContext);
 			return;
 		}
 
 		ereport(DEBUG1, (errmsg("Using single update with subtransaction")));
 		DoSingleUpdateWithSubTxn(collection, linitial(updates), subTransactionId,
 								 batchResult, updateIndex, forceInlineWrites,
-								 stateForSchemaValidation);
+								 stateForSchemaValidation, updateAttemptContext);
+		MemoryContextDelete(updateAttemptContext);
 		return;
 	}
 	else
@@ -1827,7 +1850,7 @@ ProcessBatchUpdateCore(MongoCollection *collection, List *updates, text *transac
 			isSuccess = DoMultiUpdate(collection, updates, subTransactionId,
 									  batchResult, updateIndex, forceInlineWrites,
 									  &incrementCount, stateForSchemaValidation,
-									  writeMode);
+									  writeMode, updateAttemptContext);
 
 			if (!isSuccess || incrementCount == 0)
 			{
@@ -1847,7 +1870,8 @@ ProcessBatchUpdateCore(MongoCollection *collection, List *updates, text *transac
 		isSuccess = DoSingleUpdateWithSubTxn(collection, updateSpec, subTransactionId,
 											 batchResult, updateIndex,
 											 forceInlineWrites,
-											 stateForSchemaValidation);
+											 stateForSchemaValidation,
+											 updateAttemptContext);
 		updateIndex++;
 
 		if (hasBatchUpdateFailed && writeMode == WriteMode_Bulk_Proc &&
@@ -1863,6 +1887,7 @@ ProcessBatchUpdateCore(MongoCollection *collection, List *updates, text *transac
 			break;
 		}
 	}
+	MemoryContextDelete(updateAttemptContext);
 }
 
 
@@ -3752,14 +3777,18 @@ SerializeUpdateOneResult(UpdateOneResult *result)
 }
 
 
-/* Serializes the batch update result as a pgbson to be sent back to the coordinator. We return the raw response and ok: true if there were no write errors otherwise false. */
+/* Serializes the raw batch update result for the coordinator. */
 static pgbson *
 SerializeBatchUpdateResult(BatchUpdateResult *result)
 {
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
 
-	PgbsonWriterAppendDocument(&writer, "response", -1, BuildResponseMessage(result));
+	bool isResponseReady;
+	const bool convertToWireErrorCodes = false;
+	pgbson *response = BuildResponseMessage(result, &isResponseReady,
+											convertToWireErrorCodes);
+	PgbsonWriterAppendDocument(&writer, "response", -1, response);
 	PgbsonWriterAppendBool(&writer, "ok", -1, result->writeErrors == NIL);
 
 	return PgbsonWriterGetPgbson(&writer);
@@ -3939,7 +3968,11 @@ UpdateBatchResultFromWorkerResult(BatchUpdateResult *result, int32_t updateIndex
 			while (bson_iter_next(&responseIter))
 			{
 				const char *key = bson_iter_key(&responseIter);
-				if (strcmp(key, "nModified") == 0)
+				if (strcmp(key, "ok") == 0)
+				{
+					result->ok = bson_iter_double(&responseIter);
+				}
+				else if (strcmp(key, "nModified") == 0)
 				{
 					result->rowsModified += bson_iter_as_int64(&responseIter);
 				}
@@ -4944,8 +4977,11 @@ ValidateQueryAndUpdateDocuments(BatchUpdateSpec *batchSpec,
  * BuildResponseMessage builds the response BSON for an update command.
  */
 static pgbson *
-BuildResponseMessage(BatchUpdateResult *batchResult)
+BuildResponseMessage(BatchUpdateResult *batchResult, bool *isResponseReady,
+					 bool convertToWireErrorCodes)
 {
+	*isResponseReady = true;
+
 	pgbson_writer resultWriter;
 	PgbsonWriterInit(&resultWriter);
 	PgbsonWriterAppendDouble(&resultWriter, "ok", 2, batchResult->ok);
@@ -4982,18 +5018,43 @@ BuildResponseMessage(BatchUpdateResult *batchResult)
 
 	if (batchResult->writeErrors != NIL)
 	{
+		ListCell *writeErrorCell = NULL;
+		if (convertToWireErrorCodes)
+		{
+			foreach(writeErrorCell, batchResult->writeErrors)
+			{
+				WriteError *writeError = lfirst(writeErrorCell);
+				int wireErrorCode;
+				if (!TryGetWireErrorCode(writeError->code, &wireErrorCode))
+				{
+					*isResponseReady = false;
+					break;
+				}
+			}
+		}
+		else
+		{
+			*isResponseReady = false;
+		}
+
 		pgbson_array_writer writeErrorsArrayWriter;
 		PgbsonWriterStartArray(&resultWriter, "writeErrors", 11, &writeErrorsArrayWriter);
 
-		ListCell *writeErrorCell = NULL;
 		foreach(writeErrorCell, batchResult->writeErrors)
 		{
 			WriteError *writeError = lfirst(writeErrorCell);
+			int responseErrorCode = writeError->code;
+			if (*isResponseReady && convertToWireErrorCodes)
+			{
+				bool hasWireErrorCode PG_USED_FOR_ASSERTS_ONLY =
+					TryGetWireErrorCode(writeError->code, &responseErrorCode);
+				Assert(hasWireErrorCode);
+			}
 
 			pgbson_writer writeErrorWriter;
 			PgbsonArrayWriterStartDocument(&writeErrorsArrayWriter, &writeErrorWriter);
 			PgbsonWriterAppendInt32(&writeErrorWriter, "index", 5, writeError->index);
-			PgbsonWriterAppendInt32(&writeErrorWriter, "code", 4, writeError->code);
+			PgbsonWriterAppendInt32(&writeErrorWriter, "code", 4, responseErrorCode);
 			PgbsonWriterAppendUtf8(&writeErrorWriter, "errmsg", 6, writeError->errmsg);
 			PgbsonArrayWriterEndDocument(&writeErrorsArrayWriter, &writeErrorWriter);
 		}
