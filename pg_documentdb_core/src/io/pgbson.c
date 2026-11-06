@@ -864,6 +864,19 @@ PgbsonHeapWriterAppendValue(pgbson_heap_writer *writer, const char *path,
 }
 
 
+void
+PgbsonWriterAppendOid(pgbson_writer *writer, const char *path, uint32_t pathLength,
+					  const bson_oid_t *value)
+{
+	if (!bson_append_oid(&(writer->innerBson), path, pathLength, value))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg(
+							"adding ObjectId value: failed due to value being too large")));
+	}
+}
+
+
 /*
  * Appends given int64 to the writer with the specified path.
  */

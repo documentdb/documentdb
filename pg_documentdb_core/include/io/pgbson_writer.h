@@ -68,6 +68,8 @@ void PgbsonWriterCopyToBuffer(pgbson_writer *writer, uint8_t *buffer, uint32_t l
 
 void PgbsonWriterAppendValue(pgbson_writer *writer, const char *path, uint32_t pathLength,
 							 const bson_value_t *value);
+void PgbsonWriterAppendOid(pgbson_writer *writer, const char *path, uint32_t pathLength,
+						   const bson_oid_t *value);
 void PgbsonWriterAppendInt64(pgbson_writer *writer, const char *path, uint32_t pathLength,
 							 int64 value);
 void PgbsonWriterAppendDouble(pgbson_writer *writer, const char *path, uint32_t

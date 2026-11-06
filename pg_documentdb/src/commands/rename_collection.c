@@ -18,6 +18,7 @@
 #include "utils/documentdb_errors.h"
 #include "metadata/collection.h"
 #include "metadata/metadata_cache.h"
+#include "metadata/writable_contrib_collection.h"
 #include "utils/query_utils.h"
 #include "utils/string_view.h"
 
@@ -141,15 +142,18 @@ ExecuteRenameCollection(char *databaseName, char *sourceCollectionName,
 	Datum collection_datum = CStringGetTextDatum(sourceCollectionName);
 	Datum new_collection_datum = CStringGetTextDatum(targetCollectionName);
 
-	if (EnableNewNamespaceValidation)
+	if (EnableNewNamespaceValidation || EnableWritableContribCollections)
 	{
+		bool allowContribCollections = false;
 		StringView collectionView = CreateStringViewFromString(sourceCollectionName);
-		ValidateCollectionNameForValidSystemNamespace(&collectionView, database_datum);
+		ValidateCollectionNameForValidSystemNamespace(&collectionView, database_datum,
+													  allowContribCollections);
 
 		StringView targetCollectionView = CreateStringViewFromString(
 			targetCollectionName);
 		ValidateCollectionNameForValidSystemNamespace(&targetCollectionView,
-													  database_datum);
+													  database_datum,
+													  allowContribCollections);
 	}
 
 	/*

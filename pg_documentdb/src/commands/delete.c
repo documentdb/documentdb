@@ -347,8 +347,10 @@ CommandDeleteCore(PG_FUNCTION_ARGS, WriteMode writeMode, MemoryContext allocCont
 		};
 
 		PostProcessDeleteBatchSpec(batchSpec);
+		bool allowContribCollections = true;
 		ValidateCollectionNameForValidSystemNamespace(&collectionView,
-													  databaseNameDatum);
+													  databaseNameDatum,
+													  allowContribCollections);
 
 		/*
 		 * Delete on non-existent collection is a noop, but we still need to

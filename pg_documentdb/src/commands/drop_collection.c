@@ -22,6 +22,7 @@
 
 #include "utils/documentdb_errors.h"
 #include "metadata/collection.h"
+#include "metadata/writable_contrib_collection.h"
 #include "metadata/metadata_cache.h"
 #include "metadata/index.h"
 #include "utils/query_utils.h"
@@ -73,8 +74,14 @@ command_drop_collection(PG_FUNCTION_ARGS)
 	if (strncmp(collectionName, "system.", 7) == 0 &&
 		strcmp(collectionName, "system.dbSentinel") != 0)
 	{
-		/* system collection, cannot drop */
-		PG_RETURN_BOOL(false);
+		StringView databaseView = CreateStringViewFromString(databaseName);
+		StringView collectionView = CreateStringViewFromString(collectionName);
+		if (!EnableWritableContribCollections ||
+			!IsRegisteredWritableContribCollection(&databaseView, &collectionView))
+		{
+			/* Unregistered contrib system collections cannot be dropped. */
+			PG_RETURN_BOOL(false);
+		}
 	}
 
 	EnsureCollectionOwner(collection);

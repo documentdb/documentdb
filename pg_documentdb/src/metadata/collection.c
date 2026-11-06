@@ -34,6 +34,7 @@
 #include "utils/version_utils.h"
 
 #include "metadata/collection.h"
+#include "metadata/writable_contrib_collection.h"
 #include "aggregation/extensible_metadata_view.h"
 #include "metadata/metadata_cache.h"
 #include "utils/documentdb_errors.h"
@@ -1417,33 +1418,34 @@ ValidateCollectionNameForUnauthorizedSystemNs(const char *collectionName,
  */
 void
 ValidateCollectionNameForValidSystemNamespace(StringView *collectionView,
-											  Datum databaseNameDatum)
+											  Datum databaseNameDatum,
+											  bool allowContribCollections)
 {
 	char *collectionName = CreateStringFromStringView(collectionView);
 
 	if (StringViewStartsWithStringView(collectionView, &SystemPrefix))
 	{
-		bool found = false;
-		for (int i = 0; i < ValidSystemCollectionNamesLength; i++)
+		StringView databaseView = CreateStringViewFromText(DatumGetTextPP(
+															   databaseNameDatum));
+		bool found = allowContribCollections && EnableWritableContribCollections &&
+					 IsRegisteredWritableContribCollection(&databaseView, collectionView);
+		for (int i = 0; !found && i < ValidSystemCollectionNamesLength; i++)
 		{
 			if (strcmp(collectionName, ValidSystemCollectionNames[i]) == 0)
 			{
 				found = true;
-				ValidateCollectionNameForUnauthorizedSystemNs(
-					collectionName, databaseNameDatum);
-				break;
 			}
 		}
 
 		if (!found)
 		{
-			StringView databaseView = CreateStringViewFromText(DatumGetTextPP(
-																   databaseNameDatum));
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
 							errmsg("System namespace provided is invalid: %.*s.%.*s",
 								   databaseView.length, databaseView.string,
 								   collectionView->length, collectionView->string)));
 		}
+
+		ValidateCollectionNameForUnauthorizedSystemNs(collectionName, databaseNameDatum);
 	}
 
 	if (EnableNewNamespaceValidation)
@@ -2084,8 +2086,10 @@ ValidateDatabaseCollection(Datum databaseDatum, Datum collectionDatum)
 							   MaxDatabaseCollectionLength)));
 	}
 
+	bool allowContribCollections = true;
 	ValidateCollectionNameForValidSystemNamespace(&collectionView,
-												  PointerGetDatum(databaseName));
+												  PointerGetDatum(databaseName),
+												  allowContribCollections);
 }
 
 
