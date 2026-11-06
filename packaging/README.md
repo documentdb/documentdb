@@ -230,6 +230,14 @@ install paths, all served by the four packages above:
 See the design doc for the full prerequisite and rollback semantics of
 each workflow.
 
+PGDG also publishes the extension alone (`postgresql-N-documentdb`,
+PostgreSQL 15-18) for Debian 13 and 14, Ubuntu 26.04, and Ubuntu 26.10
+(amd64 only), packaged by the Debian PostgreSQL team with its own version
+suffix (`1.0-0-1.pgdg13+1`). That is Workflow A without
+`documentdb-postgresql-tools`, so PostgreSQL is configured by hand. See
+[PGDG extension packages](https://github.com/documentdb/docs/blob/main/getting-started/prebuilt-packages.md#pgdg-extension-packages)
+for its targets and upgrade notes.
+
 > **RHEL / Rocky / AlmaLinux prerequisite (before any `dnf install`).**
 > The DocumentDB RPMs depend on PGDG-provided PostgreSQL extension packages
 > (`pgvector_N`, `pg_cron_N`, `postgis36_N`), which live in the PGDG, EPEL, and

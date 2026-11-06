@@ -231,8 +231,10 @@ test_unsupported_hosts() {
         expect_failure "${name}" "${expected}" run_installer "${root}"
     done <<'HOSTS'
 Debian 12|debian|12|Unsupported Linux distribution
+Debian 13|debian|13|PGDG publishes the DocumentDB extension
 Ubuntu 22.04|ubuntu|22.04|Unsupported Ubuntu release
 Ubuntu 26.04|ubuntu|26.04|Unsupported Ubuntu release
+Ubuntu 26.04 PGDG|ubuntu|26.04|PGDG publishes the DocumentDB extension
 RHEL 8|rhel|8.9|Only the 9 series is supported
 Rocky 10|rocky|10.0|Only the 9 series is supported
 Fedora 41|fedora|41|Unsupported Linux distribution
