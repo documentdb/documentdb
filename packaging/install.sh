@@ -524,10 +524,17 @@ detect_platform() {
     esac
 
     read_os_release
+    # PGDG ships the extension alone for these releases, so the refusal isn't a dead end.
+    pgdg_hint=""
+    case "${OS_ID} ${OS_VERSION_ID}" in
+        "debian 13"|"debian 14"|"ubuntu 26.04")
+            pgdg_hint=" PGDG publishes the DocumentDB extension, without the gateway, for this release: https://github.com/documentdb/docs/blob/main/getting-started/prebuilt-packages.md#pgdg-extension-packages"
+            ;;
+    esac
     case "${OS_ID}" in
         ubuntu)
             [ "${OS_VERSION_ID}" = "24.04" ] ||
-                die "Unsupported Ubuntu release ${OS_VERSION_ID}. Only Ubuntu 24.04 LTS is supported."
+                die "Unsupported Ubuntu release ${OS_VERSION_ID}. Only Ubuntu 24.04 LTS is supported.${pgdg_hint}"
             PACKAGE_FAMILY="apt"
             DISTRO_KIND="ubuntu"
             OS_DISPLAY="Ubuntu 24.04 LTS"
@@ -546,7 +553,7 @@ detect_platform() {
             esac
             ;;
         *)
-            die "Unsupported Linux distribution '${OS_ID}' ${OS_VERSION_ID}. Supported distributions are Ubuntu 24.04 and the RHEL-compatible 9 family."
+            die "Unsupported Linux distribution '${OS_ID}' ${OS_VERSION_ID}. Supported distributions are Ubuntu 24.04 and the RHEL-compatible 9 family.${pgdg_hint}"
             ;;
     esac
 
