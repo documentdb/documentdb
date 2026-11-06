@@ -468,7 +468,6 @@ DROP TABLE text_search_cursor_result;
 -- pipeline cases
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_dollar_ops_text_search", "cursor": {}, "pipeline": [ { "$project": { "_id": 1 } }, { "$match": { "$text": { "$search": "Manzana baya cosechar" } } } ] }');
 ERROR:  A text index is necessary to perform a $text query.
-CONTEXT:  while executing command on localhost:58070
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_dollar_ops_text_search", "cursor": {}, "pipeline": [ { "$match": { "$text": { "$search": "Manzana baya cosechar" } } }, { "$sort": { "_id": 1 } } ] }');
                                                             document                                                             
 ---------------------------------------------------------------------
@@ -796,6 +795,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createI
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "bson_dollar_ops_text_search", "indexes": [ { "key": { "desc": "text", "extra": "text" }, "name": "desc_text" } ] }', TRUE);
 ERROR:  Expected exactly one text index. Requested index: { "v" : 2, "key" : { "desc" : "text", "extra" : "text" }, "name" : "desc_text" }, existing index: { "v" : 2, "key" : { "alpha" : "text" }, "name" : "alpha_1", "weights" : { "alpha" : 10, "beta" : 1 } }
+CONTEXT:  SQL statement "SELECT documentdb_api_internal.create_indexes_dispatch($1, $2, $3, $4)"
 -- ===================================================================
 -- Tests for dot-delimited text search (dots treated as word boundaries)
 -- ===================================================================

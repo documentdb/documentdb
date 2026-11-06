@@ -3,9 +3,11 @@
 * Avoid repeated evaluation of computed input across group keys and accumulators when `documentdb.enable_subquery_pushdown_for_group` is enabled. *[Bugfix]*
 * Convert supported insert and update errors to wire-protocol codes, including batched inserts, controlled by the default-on `documentdb.enable_write_error_code_conversion` setting. *[Feature]*
 * Release transient insert and update processing memory after each subtransaction instead of retaining it for the full request. *[Bugfix]*
+* Enable dynamic cursors by default. Set `documentdb.enableDynamicCursors = off` to retain the non-dynamic cursor path. *[Feature]*
 * Enable optional shard-key terms for supported unique indexes and global per-path index metadata tracking by default for newly created indexes. Metadata-tracked indexes reject parallel arrays by default. Existing index definitions are unchanged. *[Perf]*
 * Preserve full-value rechecks for truncated metadata-tracked index terms, and require metadata-write support before enabling tracking on new indexes. *[Bugfix]*
 * Preserve correlated multi-key predicate and sort semantics when selecting index-only scans and sort pushdown, safely merge scalar `$elemMatch` bounds on non-leading index paths, and avoid dereferencing exhausted ordered-scan state during distinct re-seeks. *[Bugfix]*
+* Track cursor-deletion usage with the `command_kill_cursors` feature counter, counting once per non-null cursor ID. *[Feature]*
 * Preserve inclusive and exclusive boundaries when pushing constant-first or variable-first `$expr` comparisons to ordered indexes. *[Bugfix]*
 * Hide reserved login-role names from `usersInfo` and `admin.system.users` while preserving customer users and their public role names, including prefixed customer users when prefix enforcement is disabled. *[Bugfix]*
 * **Breaking change:** The gateway's shipped `SetupConfiguration.json` no longer sets `TelemetryOptions.Metrics` or `TelemetryOptions.Tracing`, so `OTEL_*` environment variables such as `OTEL_METRICS_ENABLED`, `OTEL_TRACES_ENABLED`, and `OTEL_EXPORTER_OTLP_ENDPOINT` now configure telemetry for gateways that use that file. Defaults are unchanged when those variables are unset. To keep telemetry off regardless of the environment, set `TelemetryOptions.Metrics.Enabled` and `TelemetryOptions.Tracing.Enabled` to `false`. *[Feature]*

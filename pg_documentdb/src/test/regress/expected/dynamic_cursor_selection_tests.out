@@ -132,6 +132,37 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('dyncurdb', '{ "c
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
+-- Default enablement and explicit opt-out must affect real first pages.
+SHOW documentdb.enableDynamicCursors;
+ documentdb.enableDynamicCursors 
+---------------------------------
+ on
+(1 row)
+
+SELECT continuation::text::jsonb ? 'qd' AS default_dynamic
+FROM documentdb_api.find_cursor_first_page(
+    'dyncurdb', '{ "find": "dyncoll", "batchSize": 2 }', 4321);
+ default_dynamic 
+-----------------
+ t
+(1 row)
+
+SET documentdb.enableDynamicCursors TO off;
+SELECT continuation::text::jsonb ? 'qc' AS legacy_streaming
+FROM documentdb_api.find_cursor_first_page(
+    'dyncurdb', '{ "find": "dyncoll", "batchSize": 2 }', 4321);
+ legacy_streaming 
+------------------
+ t
+(1 row)
+
+RESET documentdb.enableDynamicCursors;
+SHOW documentdb.enableDynamicCursors;
+ documentdb.enableDynamicCursors 
+---------------------------------
+ on
+(1 row)
+
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
 ------------------------------------------------------------
 -- For each query scenario we run EXPLAIN twice:

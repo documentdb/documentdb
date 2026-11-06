@@ -349,7 +349,6 @@ extern bool EnableOrderByIndexTerm;
 extern bool EnableMultiKeyFilterIndexOnlyScan;
 extern bool TrackIndexOnlyScanFindCandidate;
 extern bool EnableExtendedIndexes;
-extern bool EnableDynamicCursors;
 extern bool EnableDistinctIndexPushdown;
 extern bool EnableCollationWithNonUniqueOrderedIndexes;
 extern bool EnablePerPathMultiKeySortPushdown;
@@ -9168,7 +9167,7 @@ ReplaceFunctionOperatorsInPlanPath(PlannerInfo *root, RelOptInfo *rel, Path *pat
 	}
 	else if (IsA(path, CustomPath) &&
 			 (EnablePrimaryKeyCursorScan ||
-			  EnableDynamicCursors))
+			  ShouldEnableDynamicCursors()))
 	{
 		CustomPath *customPath = (CustomPath *) path;
 		ReplaceExtensionFunctionOperatorsInPaths(root, rel,

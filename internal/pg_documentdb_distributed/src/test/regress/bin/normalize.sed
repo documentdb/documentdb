@@ -37,6 +37,8 @@ s/documentdb_core.bson/bson/g
 # The privilege-check wrapper adds an internal SPI frame to create-index errors.
 /^(CONTEXT:  )?SQL statement "SELECT .*create_indexes_dispatch\(/d
 /^(s[0-9]+: )?DEBUG:  executing "SELECT .*create_indexes_dispatch\(.*" via SPI$/d
+# Dynamic cursor dispatch adds an internal SPI frame with a routing relation.
+/^(CONTEXT:  )?SQL statement "SELECT .*cursor_dynamic_drain_page\(/d
 # PostgreSQL versions can report collection ACL failures against either the
 # coordinator table or its physical shard.
 s/^(ERROR:  permission denied for table )documents_[0-9]+(_[0-9]+)?$/\1documents_<COLLECTION>/g

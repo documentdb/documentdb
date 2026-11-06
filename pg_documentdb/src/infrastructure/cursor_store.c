@@ -43,6 +43,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
+#include <sys/stat.h>
 #include <utime.h>
 
 #include "metadata/metadata_cache.h"
@@ -104,6 +105,14 @@ typedef struct CursorFileState
 } CursorFileState;
 
 
+typedef struct CursorFileSize
+{
+	/* Negative size means the file was successfully deleted. */
+	int64_t sizeBytes;
+	int64_t allocatedBlocks;
+} CursorFileSize;
+
+
 /*
  * Shared memory state for the cursor store
  * This is used to track the number of cursors
@@ -122,8 +131,10 @@ typedef struct CursorStoreSharedData
 
 	int64_t cleanupCursorFileCount;
 	int64_t cleanupTotalCursorSize;
-} CursorStoreSharedData;
 
+	/* Allocated bytes retained by the most recent cleanup pass. */
+	int64_t cursorDirectorySizeOnDiskBytes;
+} CursorStoreSharedData;
 
 PG_FUNCTION_INFO_V1(cursor_directory_cleanup);
 PG_FUNCTION_INFO_V1(cursor_directory_cleanup_background);
@@ -136,7 +147,8 @@ static void DecrementCursorCount(void);
 static bool IncrementCursorCount(void);
 
 static void TryCleanUpAndReserveCursor(void);
-static int64_t TryDeleteCursorFile(struct dirent *de, int64_t expirtyTimeLimitSeconds);
+static CursorFileSize TryDeleteCursorFile(struct dirent *de,
+										  int64_t expiryTimeLimitSeconds);
 static void CursorDirectoryCleanupCore(int64_t expiryTimeLimitSeconds);
 static bool ShouldScheduleCursorCleanupInRecovery(void);
 
@@ -211,22 +223,24 @@ CursorDirectoryCleanupCore(int64_t expiryTimeLimitSeconds)
 		/* Skip if dir doesn't exist appropriate */
 		if (errno == ENOENT)
 		{
+			CursorStoreSharedState->cursorDirectorySizeOnDiskBytes = 0;
 			return;
 		}
 	}
 
 	Size totalCursorSize = 0;
+	int64_t totalCursorAllocatedBlocks = 0;
 	int32_t totalCursorCount = 0;
 	while ((de = ReadDir(dirdesc, cursor_directory)) != NULL)
 	{
-		int64_t deleteRes = TryDeleteCursorFile(de, expiryTimeLimitSeconds);
+		CursorFileSize deleteRes = TryDeleteCursorFile(de, expiryTimeLimitSeconds);
 
-		if (deleteRes == 0)
+		if (deleteRes.sizeBytes == 0)
 		{
 			/* Invalid file or concurrent delete */
 			continue;
 		}
-		else if (deleteRes < 0)
+		else if (deleteRes.sizeBytes < 0)
 		{
 			/* Successfully deleted */
 			DecrementCursorCount();
@@ -234,7 +248,8 @@ CursorDirectoryCleanupCore(int64_t expiryTimeLimitSeconds)
 		else
 		{
 			/* Live cursor */
-			totalCursorSize += deleteRes;
+			totalCursorSize += deleteRes.sizeBytes;
+			totalCursorAllocatedBlocks += deleteRes.allocatedBlocks;
 		}
 
 		totalCursorCount++;
@@ -245,6 +260,10 @@ CursorDirectoryCleanupCore(int64_t expiryTimeLimitSeconds)
 	pg_memory_barrier();
 	CursorStoreSharedState->cleanupCursorFileCount += totalCursorCount;
 	CursorStoreSharedState->cleanupTotalCursorSize += totalCursorSize;
+
+	/* st_blocks uses 512-byte units, independently of the filesystem block size. */
+	CursorStoreSharedState->cursorDirectorySizeOnDiskBytes =
+		totalCursorAllocatedBlocks * 512;
 
 	ereport(DEBUG1, (errmsg("Total size of cursor files: %ld, count %d", totalCursorSize,
 							totalCursorCount)));
@@ -454,18 +473,22 @@ WriteToCursorFile(CursorFileState *cursorFileState, pgbson *dataBson)
 
 void
 GetCurrentCursorCount(int32_t *currentCursorCount, int32_t *measuredCursorCount,
-					  int64_t *lastCursorSize)
+					  int64_t *lastCursorSize, int64_t *cursorDirectorySizeOnDiskBytes)
 {
 	if (!cursor_set_initialized || !CleanupCursorFiles)
 	{
 		*currentCursorCount = 0;
 		*measuredCursorCount = 0;
 		*lastCursorSize = 0;
+		*cursorDirectorySizeOnDiskBytes = 0;
+		return;
 	}
 
 	*currentCursorCount = CursorStoreSharedState->currentCursorCount;
 	*measuredCursorCount = CursorStoreSharedState->cleanupCursorFileCount;
 	*lastCursorSize = CursorStoreSharedState->cleanupTotalCursorSize;
+	*cursorDirectorySizeOnDiskBytes =
+		CursorStoreSharedState->cursorDirectorySizeOnDiskBytes;
 }
 
 
@@ -757,6 +780,7 @@ InitializeFileCursorShmem(void)
 
 	if (!found)
 	{
+		CursorStoreSharedState->cursorDirectorySizeOnDiskBytes = 0;
 		CursorStoreSharedState->sharedCursorStoreTrancheName = "Cursor Store Tranche";
 #if PG_VERSION_NUM >= 190000
 		CursorStoreSharedState->sharedCursorStoreTrancheId = LWLockNewTrancheId(
@@ -831,8 +855,9 @@ TryCleanUpAndReserveCursor(void)
 	bool deleted = false;
 	while ((de = ReadDir(dirdesc, cursor_directory)) != NULL)
 	{
-		int64_t deleteRes = TryDeleteCursorFile(de, DefaultCursorExpiryTimeLimitSeconds);
-		if (deleteRes < 0)
+		CursorFileSize deleteRes = TryDeleteCursorFile(de,
+													   DefaultCursorExpiryTimeLimitSeconds);
+		if (deleteRes.sizeBytes < 0)
 		{
 			/* Successfully deleted an expired cursor */
 			deleted = true;
@@ -854,16 +879,17 @@ TryCleanUpAndReserveCursor(void)
 }
 
 
-static int64_t
+static CursorFileSize
 TryDeleteCursorFile(struct dirent *de, int64_t expiryTimeLimitSeconds)
 {
 	char path[MAXPGPATH * 2];
 	struct stat attrib;
+	CursorFileSize fileSize = { 0 };
 
 	/* Skip hidden files */
 	if (de->d_name[0] == '.')
 	{
-		return 0;
+		return fileSize;
 	}
 
 	/* Get the file info */
@@ -873,7 +899,7 @@ TryDeleteCursorFile(struct dirent *de, int64_t expiryTimeLimitSeconds)
 		/* Ignore concurrently-deleted files, else complain */
 		if (errno == ENOENT)
 		{
-			return 0;
+			return fileSize;
 		}
 
 		ereport(ERROR,
@@ -884,8 +910,11 @@ TryDeleteCursorFile(struct dirent *de, int64_t expiryTimeLimitSeconds)
 	/* Ignore anything but regular files */
 	if (!S_ISREG(attrib.st_mode))
 	{
-		return 0;
+		return fileSize;
 	}
+
+	fileSize.sizeBytes = attrib.st_size;
+	fileSize.allocatedBlocks = attrib.st_blocks;
 
 	TimestampTz lastModified = time_t_to_timestamptz(attrib.st_mtime);
 	TimestampTz currentTime = GetCurrentTimestamp();
@@ -897,15 +926,9 @@ TryDeleteCursorFile(struct dirent *de, int64_t expiryTimeLimitSeconds)
 		bool deleted = PathNameDeleteTemporaryFile(path, errorOnFailure);
 		if (deleted)
 		{
-			return -attrib.st_size;
-		}
-		else
-		{
-			return attrib.st_size;
+			fileSize.sizeBytes = -fileSize.sizeBytes;
 		}
 	}
-	else
-	{
-		return attrib.st_size;
-	}
+
+	return fileSize;
 }

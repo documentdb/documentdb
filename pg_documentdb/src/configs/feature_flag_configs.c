@@ -409,8 +409,8 @@ bool EnableCompositeParallelIndexScan = DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_
 bool EnableParallelSafeWithExprAccumulators =
 	DEFAULT_ENABLE_PARALLEL_SAFE_WITH_EXPR_ACCUMULATORS;
 
-/* Added in v0.113, pending stabilization, enable in v1.5 */
-#define DEFAULT_ENABLE_DYNAMIC_CURSORS false
+/* Added on v0.113, enabled on v1.3, remove after v1.9 */
+#define DEFAULT_ENABLE_DYNAMIC_CURSORS true
 bool EnableDynamicCursors = DEFAULT_ENABLE_DYNAMIC_CURSORS;
 
 /* Added in v1.1, pending stabilization, enable in v1.4 */

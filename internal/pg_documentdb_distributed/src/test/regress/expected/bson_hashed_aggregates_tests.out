@@ -1,3 +1,5 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
 SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_core;
 SET documentdb.next_collection_id TO 1430;
 SET documentdb.next_collection_index_id TO 1430;
@@ -28,18 +30,42 @@ SET enable_sort = off;
 SET enable_incremental_sort = off;
 SET documentdb.defaultcursorfirstpagebatchsize = 1;
 -- TEST each aggregate, TODO add more
-SELECT cursorPage->'cursor.firstBatch' FROM aggregate_cursor_first_page('testdb', '{ "aggregate": "hash_aggTest", "pipeline": [ { "$group": { "_id": "$key", "items": { "$push": "$$ROOT" } } } ], "cursor" : {  } }');
+-- Drain both pages so no file slots remain occupied for later quota tests.
+SELECT cursorPage, continuation, cursorId
+FROM aggregate_cursor_first_page('testdb', '{ "aggregate": "hash_aggTest", "pipeline": [ { "$group": { "_id": "$key", "items": { "$push": "$$ROOT" } } } ], "cursor" : {  } }')
+\gset hash_push_
+SELECT :'hash_push_cursorpage'::bson->'cursor.firstBatch';
                                                                                                                 ?column?                                                                                                                 
 ---------------------------------------------------------------------
  { "" : [ { "_id" : { "$numberInt" : "1" }, "items" : [ { "_id" : { "$numberInt" : "1" }, "key" : { "$numberInt" : "1" }, "value" : "abc" }, { "_id" : { "$numberInt" : "3" }, "key" : { "$numberInt" : "1" }, "value" : "ghi" } ] } ] }
 (1 row)
 
+SELECT cursorPage->'cursor.nextBatch' AS next_batch, continuation IS NULL AS fully_drained
+FROM cursor_get_more('testdb',
+    FORMAT('{ "getMore": { "$numberLong": "%s" }, "collection": "hash_aggTest", "batchSize": 100 }', :'hash_push_cursorid')::bson,
+    :'hash_push_continuation'::bson);
+                                                                     next_batch                                                                     | fully_drained 
+---------------------------------------------------------------------
+ { "" : [ { "_id" : { "$numberInt" : "2" }, "items" : [ { "_id" : { "$numberInt" : "2" }, "key" : { "$numberInt" : "2" }, "value" : "def" } ] } ] } | t
+(1 row)
+
 -- $addToSet under hash aggregation
-SELECT cursorPage->'cursor.firstBatch' FROM aggregate_cursor_first_page('testdb', '{ "aggregate": "hash_aggTest", "pipeline": [ { "$group": { "_id": "$key", "items": { "$addToSet": "$$ROOT" } } } ], "cursor" : {  } }');
-NOTICE:  There are open held portals. Closing them
+SELECT cursorPage, continuation, cursorId
+FROM aggregate_cursor_first_page('testdb', '{ "aggregate": "hash_aggTest", "pipeline": [ { "$group": { "_id": "$key", "items": { "$addToSet": "$$ROOT" } } } ], "cursor" : {  } }')
+\gset hash_set_
+SELECT :'hash_set_cursorpage'::bson->'cursor.firstBatch';
                                                                                                                 ?column?                                                                                                                 
 ---------------------------------------------------------------------
  { "" : [ { "_id" : { "$numberInt" : "1" }, "items" : [ { "_id" : { "$numberInt" : "1" }, "key" : { "$numberInt" : "1" }, "value" : "abc" }, { "_id" : { "$numberInt" : "3" }, "key" : { "$numberInt" : "1" }, "value" : "ghi" } ] } ] }
+(1 row)
+
+SELECT cursorPage->'cursor.nextBatch' AS next_batch, continuation IS NULL AS fully_drained
+FROM cursor_get_more('testdb',
+    FORMAT('{ "getMore": { "$numberLong": "%s" }, "collection": "hash_aggTest", "batchSize": 100 }', :'hash_set_cursorid')::bson,
+    :'hash_set_continuation'::bson);
+                                                                     next_batch                                                                     | fully_drained 
+---------------------------------------------------------------------
+ { "" : [ { "_id" : { "$numberInt" : "2" }, "items" : [ { "_id" : { "$numberInt" : "2" }, "key" : { "$numberInt" : "2" }, "value" : "def" } ] } ] } | t
 (1 row)
 
 -- Check if we are really are doing hash aggregations

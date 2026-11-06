@@ -295,20 +295,22 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 (1 row)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$match": { "_id": { "$gt": "1" } } }, { "$project": { "a.b": 1, "c": "$_id", "_id": 0 } }, { "$match": { "c": { "$gt": "2" } } }], "cursor": {} }');
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             
+                                                                                                                                                                                                                                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                            
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_project(document, '{ "a.b" : { "$numberInt" : "1" }, "c" : "$_id", "_id" : { "$numberInt" : "0" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE ((documentdb_api_internal.bson_dollar_project(document, '{ "a.b" : { "$numberInt" : "1" }, "c" : "$_id", "_id" : { "$numberInt" : "0" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) OPERATOR(documentdb_api_catalog.#>) '{ "c" : "2" }'::documentdb_core.bsonquery) AND ((document OPERATOR(documentdb_api_catalog.#>) '{ "_id" : "1" }'::documentdb_core.bsonquery) AND ((object_id OPERATOR(documentdb_core.>) '{ "" : "1" }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<) '{ "" : {  } }'::documentdb_core.bson)) AND (shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint)))
+         Query: SELECT document FROM (SELECT documentdb_api_internal.bson_dollar_project(collection.document, '{ "a.b" : { "$numberInt" : "1" }, "c" : "$_id", "_id" : { "$numberInt" : "0" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE ((collection.document OPERATOR(documentdb_api_catalog.#>) '{ "_id" : "1" }'::documentdb_core.bsonquery) AND ((collection.object_id OPERATOR(documentdb_core.>) '{ "" : "1" }'::documentdb_core.bson) AND (collection.object_id OPERATOR(documentdb_core.<) '{ "" : {  } }'::documentdb_core.bson)) AND (collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint)) OFFSET '0'::bigint) agg_stage_2 WHERE (document OPERATOR(documentdb_api_catalog.#>) '{ "c" : "2" }'::documentdb_core.bsonquery)
          Node: host=localhost port=58070 dbname=regression
-         ->  Index Scan using _id_ on documentdb_data.documents_4110_411001 collection
-               Output: documentdb_api_internal.bson_dollar_project(document, '{ "a.b" : { "$numberInt" : "1" }, "c" : "$_id", "_id" : { "$numberInt" : "0" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
-               Index Cond: ((collection.shard_key_value = '4110'::bigint) AND (collection.object_id OPERATOR(documentdb_core.>) '{ "" : "1" }'::documentdb_core.bson) AND (collection.object_id OPERATOR(documentdb_core.<) '{ "" : {  } }'::documentdb_core.bson))
-               Filter: (documentdb_api_internal.bson_dollar_project(collection.document, '{ "a.b" : { "$numberInt" : "1" }, "c" : "$_id", "_id" : { "$numberInt" : "0" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) OPERATOR(documentdb_api_catalog.@>) '{ "c" : "2" }'::documentdb_core.bson)
-(11 rows)
+         ->  Subquery Scan on agg_stage_2
+               Output: agg_stage_2.document
+               Filter: (agg_stage_2.document OPERATOR(documentdb_api_catalog.#>) '{ "c" : "2" }'::documentdb_core.bsonquery)
+               ->  Index Scan using _id_ on documentdb_data.documents_4110_411001 collection
+                     Output: documentdb_api_internal.bson_dollar_project(collection.document, '{ "a.b" : { "$numberInt" : "1" }, "c" : "$_id", "_id" : { "$numberInt" : "0" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+                     Index Cond: ((collection.shard_key_value = '4110'::bigint) AND (collection.object_id OPERATOR(documentdb_core.>) '{ "" : "1" }'::documentdb_core.bson) AND (collection.object_id OPERATOR(documentdb_core.<) '{ "" : {  } }'::documentdb_core.bson))
+(13 rows)
 
 -- unwind
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$unwind": "$a.b" } ], "cursor": {} }');
@@ -1019,21 +1021,25 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('db',
 
 -- with _id query and limit 1 we should see custom scan with primary key lookup.
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('db', '{ "find": "aggregation_pipeline", "filter": { "_id": "2" }, "limit": 1 }');
-                                                                                                                                                                       QUERY PLAN                                                                                                                                                                        
+                                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                                 
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_4110_411001 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : "2" }'::documentdb_core.bsonquery) AND (object_id OPERATOR(documentdb_core.=) '{ "" : "2" }'::documentdb_core.bson) AND (shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint)) LIMIT '1'::bigint
+         Query: SELECT document FROM documentdb_data.documents_4110_411001 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : "2" }'::documentdb_core.bsonquery) AND (object_id OPERATOR(documentdb_core.=) '{ "" : "2" }'::documentdb_core.bson) AND ((shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.cursor_tracker(document, '{ "allowOffsetLimitNode" : false }'::documentdb_core.bson))) LIMIT '1'::bigint
          Node: host=localhost port=58070 dbname=regression
          ->  Limit
                Output: document
-               ->  Index Scan using _id_ on documentdb_data.documents_4110_411001 collection
+               ->  Custom Scan (DocumentDBApiCursorScan)
                      Output: document
-                     Index Cond: ((collection.shard_key_value = '4110'::bigint) AND (collection.object_id OPERATOR(documentdb_core.=) '{ "" : "2" }'::documentdb_core.bson))
-(12 rows)
+                     cursorScanType: Primary Key Scan
+                     indexName: _id_
+                     ->  Index Scan using _id_ on documentdb_data.documents_4110_411001 collection
+                           Output: shard_key_value, object_id, document
+                           Index Cond: ((collection.shard_key_value = '4110'::bigint) AND (collection.object_id OPERATOR(documentdb_core.=) '{ "" : "2" }'::documentdb_core.bson))
+(16 rows)
 
 ROLLBACK;
 -- $lookup

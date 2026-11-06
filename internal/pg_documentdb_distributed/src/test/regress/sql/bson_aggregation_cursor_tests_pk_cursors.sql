@@ -1,8 +1,13 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+
 SET search_path TO documentdb_api_catalog, documentdb_api, documentdb_core, public;
 SET documentdb.next_collection_id TO 400;
 SET documentdb.next_collection_index_id TO 400;
 SET citus.next_shard_id TO 40000;
 
+-- These assertions cover legacy primary-key scan and continuation behavior.
+SET documentdb.enableDynamicCursors TO off;
 
 -- insert 10 documents - but insert the _id as reverse order of insertion order (so that TID and insert order do not match)
 DO $$

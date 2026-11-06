@@ -1,5 +1,6 @@
 -- Copyright (c) Microsoft Corporation.
 -- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
 
 SET search_path TO documentdb_api_catalog, documentdb_core, documentdb_api, public;
 SET citus.next_shard_id TO 6750000;
@@ -16,6 +17,10 @@ WITH deleted AS (
 
 -- Reset the counters by making a call to the counter and discarding the results
 select count(*)*0 as count from documentdb_api_internal.command_feature_counter_stats(true);
+
+-- Cursor deletion counts each non-null cursor ID.
+SELECT documentdb_api_internal.delete_cursors(ARRAY[67501, 67502, NULL]::bigint[]);
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 
 -- Empty role creation increments only the general createRole counter.
 SET documentdb.enableRoleCrud TO ON;
@@ -402,6 +407,8 @@ SELECT document FROM bson_aggregation_find('topo_db', '{"find": "unshard_coll", 
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 
 -- Local unsharded: getMore path
+-- Keep coverage of the legacy streaming counter independent of the default.
+SET documentdb.enableDynamicCursors TO off;
 CREATE TEMP TABLE topo_first_page AS
 SELECT continuation FROM find_cursor_first_page(database => 'topo_db',
     commandSpec => '{"find": "unshard_coll", "filter": {}, "batchSize": 1}', cursorId => 4294967294);
@@ -411,6 +418,7 @@ SELECT cursorPage FROM cursor_get_more(database => 'topo_db',
     continuationSpec => :'r1_continuation');
 DROP TABLE topo_first_page;
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+RESET documentdb.enableDynamicCursors;
 
 -- Sharded with shard key equality (first page)
 SELECT documentdb_api.shard_collection('topo_db', 'shard_coll', '{"sk": "hashed"}', false);

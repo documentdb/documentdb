@@ -178,20 +178,22 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
                                                                                                                                                                                                                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                  
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort
-   Output: (documentdb_api_internal.bson_dollar_project(documentdb_api_internal.bson_dollar_replace_root(documentdb_api_internal.bson_dollar_add_fields(document, '{ "e" : { "f" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '{ "newRoot" : "$e" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '{ "items" : { "$filter" : { "input" : "$f", "as" : "animal", "cond" : { "$eq" : [ "$$animal", "CAT" ] } } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
+ Subquery Scan on agg_stage_3
+  Output: documentdb_api_internal.bson_dollar_project(agg_stage_3.document, '{ "items" : { "$filter" : { "input" : "$f", "as" : "animal", "cond" : { "$eq" : [ "$$animal", "CAT" ] } } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
+  Filter: bson_dollar_elemmatch(agg_stage_3.document, '{ "f" : { "$eq" : "cAt" }, "collation" : "en-u-ks-level1" }'::bson)
+  ->  Sort
+        Output: (documentdb_api_internal.bson_dollar_replace_root(documentdb_api_internal.bson_dollar_add_fields(collection.document, '{ "e" : { "f" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '{ "newRoot" : "$e" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+  Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: documentdb_api_internal.bson_dollar_project(documentdb_api_internal.bson_dollar_replace_root(documentdb_api_internal.bson_dollar_add_fields(document, '{ "e" : { "f" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '{ "newRoot" : "$e" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '{ "items" : { "$filter" : { "input" : "$f", "as" : "animal", "cond" : { "$eq" : [ "$$animal", "CAT" ] } } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+              Output: documentdb_api_internal.bson_dollar_replace_root(documentdb_api_internal.bson_dollar_add_fields(collection.document, '{ "e" : { "f" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '{ "newRoot" : "$e" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
          namespaceName: coll_q_db.coll_array_filter
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8800 collection
-               Output: document
+                    Output: collection.document
                Recheck Cond: (collection.shard_key_value = '8800'::bigint)
-               Filter: (documentdb_api_internal.bson_dollar_replace_root(documentdb_api_internal.bson_dollar_add_fields(collection.document, '{ "e" : { "f" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '{ "newRoot" : "$e" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text) @#? '{ "f" : { "$eq" : "cAt" }, "collation" : "en-u-ks-level1" }'::bson)
                ->  Bitmap Index Scan on _id_
                      Index Cond: (collection.shard_key_value = '8800'::bigint)
-(13 rows)
+(15 rows)
 
 -- ======================================================================
 -- SECTION 3: $expr and ICU locale semantics

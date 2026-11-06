@@ -203,12 +203,18 @@ RESET documentdb.enable_reduced_correlated_non_multikey_order_by;
 \set sortAsc '{ "aggregate": "grp_idx_push", "pipeline": [ { "$match": { "meta.ownerKey": "owner-7" } }, { "$sort": { "meta.category": 1 } }, { "$project": { "c": "$meta.category" } } ], "hint": "idx_owner_cat_ts", "cursor": {} }'
 \set sortDesc '{ "aggregate": "grp_idx_push", "pipeline": [ { "$match": { "meta.ownerKey": "owner-7" } }, { "$sort": { "meta.category": -1 } }, { "$project": { "c": "$meta.category" } } ], "hint": "idx_owner_cat_ts", "cursor": {} }'
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('grp_idx_push_db', :'sortAsc');
-                                    QUERY PLAN                                    
-----------------------------------------------------------------------------------
- Index Scan using idx_owner_cat_ts on documents_25901 collection
-   Index Cond: (document @= '{ "meta.ownerKey" : "owner-7" }'::bson)
-   Order By: (document |-<> '{ "meta.category" : { "$numberInt" : "1" } }'::bson)
-(3 rows)
+                                                           QUERY PLAN                                                           
+--------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiCursorScan)
+   cursorScanType: Secondary Index Scan
+   indexName: idx_owner_cat_ts
+   indexKey: {"meta.ownerKey": 1,"meta.category": 1,"updatedAt": -1}
+   isMultiKey: false
+   indexBounds: ["meta.ownerKey": ["owner-7", "owner-7"], "meta.category": (MinKey, MaxKey), "updatedAt": DESC(MinKey, MaxKey)]
+   ->  Index Scan using idx_owner_cat_ts on documents_25901 collection
+         Index Cond: (document @= '{ "meta.ownerKey" : "owner-7" }'::bson)
+         Order By: (document |-<> '{ "meta.category" : { "$numberInt" : "1" } }'::bson)
+(9 rows)
 
 SELECT document FROM bson_aggregation_pipeline('grp_idx_push_db', :'sortAsc');
                                document                                
@@ -226,12 +232,18 @@ SELECT document FROM bson_aggregation_pipeline('grp_idx_push_db', :'sortAsc');
 (10 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('grp_idx_push_db', :'sortDesc');
-                                    QUERY PLAN                                     
------------------------------------------------------------------------------------
- Index Scan using idx_owner_cat_ts on documents_25901 collection
-   Index Cond: (document @= '{ "meta.ownerKey" : "owner-7" }'::bson)
-   Order By: (document <>-| '{ "meta.category" : { "$numberInt" : "-1" } }'::bson)
-(3 rows)
+                                                           QUERY PLAN                                                           
+--------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiCursorScan)
+   cursorScanType: Secondary Index Scan
+   indexName: idx_owner_cat_ts
+   indexKey: {"meta.ownerKey": 1,"meta.category": 1,"updatedAt": -1}
+   isMultiKey: false
+   indexBounds: ["meta.ownerKey": ["owner-7", "owner-7"], "meta.category": (MinKey, MaxKey), "updatedAt": DESC(MinKey, MaxKey)]
+   ->  Index Scan using idx_owner_cat_ts on documents_25901 collection
+         Index Cond: (document @= '{ "meta.ownerKey" : "owner-7" }'::bson)
+         Order By: (document <>-| '{ "meta.category" : { "$numberInt" : "-1" } }'::bson)
+(9 rows)
 
 SELECT document FROM bson_aggregation_pipeline('grp_idx_push_db', :'sortDesc');
                                document                                

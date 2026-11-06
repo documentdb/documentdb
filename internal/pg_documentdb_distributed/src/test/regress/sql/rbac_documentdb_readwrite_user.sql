@@ -1,3 +1,5 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
 /*
  * Validates the readWriteAnyDatabase role surface.
  *
@@ -105,13 +107,20 @@ CREATE TEMP TABLE firstPageResponse AS
 SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.id": 1 }'), continuation, persistconnection, cursorid FROM
     documentdb_api.find_cursor_first_page(database => 'db', commandSpec => '{ "find": "aggregation_cursor_txn", "batchSize": 5 }', cursorId => 4294967294);
 
-SELECT * FROM firstPageResponse;
+-- Worker cursor identifiers and routing OIDs vary per run.
+-- Keep the stored continuation intact for getMore and mask only its display.
+SELECT bson_dollar_project,
+    bson_dollar_project(continuation, '{ "wc.qi": 0, "wc.qn": 0, "wc.qf": 0, "dr": 0 }') AS continuation,
+    persistconnection, cursorid
+FROM firstPageResponse;
 
 -- now drain it
 SELECT continuation AS r1_continuation FROM firstPageResponse \gset
 SELECT bson_dollar_project(cursorpage, '{ "cursor.nextBatch._id": 1, "cursor.id": 1 }'), continuation FROM documentdb_api.cursor_get_more(database => 'db', getMoreSpec => '{ "collection": "aggregation_cursor_txn", "getMore": 4294967294, "batchSize": 6 }', continuationSpec => :'r1_continuation');
 
-SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.id": 1 }'), continuation, persistconnection, cursorid 
+SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.id": 1 }'),
+    bson_dollar_project(continuation, '{ "wc.qi": 0, "wc.qn": 0, "wc.qf": 0, "dr": 0 }') AS continuation,
+    persistconnection, cursorid
 FROM documentdb_api.aggregate_cursor_first_page(
     database => 'db', 
     commandSpec => '{ "aggregate": "aggregation_cursor_txn", "pipeline": [{ "$match": { "sk": 0 } }], "cursor": { "batchSize": 3 } }', 

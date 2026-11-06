@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * src/api_hooks.c
  *
@@ -29,6 +30,7 @@ extern bool EnableIndexMetadataGlobalTracking;
 extern bool EnableExtendedIndexes;
 extern bool EnablePlannerStatisticsNewCollections;
 extern bool EnableIndexOnlyScanForFindProject;
+extern bool EnableDynamicCursors;
 
 IsMetadataCoordinator_HookType is_metadata_coordinator_hook = NULL;
 IsClusterInitialized_HookType is_cluster_initialized_hook = NULL;
@@ -107,6 +109,9 @@ DefaultEnableStatsCreationOnNewCollections_HookType
 
 DefaultEnableIndexOnlyScanForFindProject_HookType
 	default_enable_index_only_scan_for_find_project_hook = NULL;
+
+DefaultEnableDynamicCursors_HookType
+	default_enable_dynamic_cursors_hook = NULL;
 
 ExtendedSearchOperatorDefByName_HookType
 	extended_search_operator_def_by_name_hook = NULL;
@@ -840,6 +845,21 @@ ShouldEnableIndexOnlyScanForFindProject(void)
 	}
 
 	return EnableIndexOnlyScanForFindProject;
+}
+
+
+/*
+ * Returns whether dynamic cursors are enabled for the current request.
+ */
+bool
+ShouldEnableDynamicCursors(void)
+{
+	if (default_enable_dynamic_cursors_hook != NULL)
+	{
+		return default_enable_dynamic_cursors_hook();
+	}
+
+	return EnableDynamicCursors;
 }
 
 
