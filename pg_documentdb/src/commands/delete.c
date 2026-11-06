@@ -763,7 +763,7 @@ ProcessBatchDeletion(MongoCollection *collection, BatchDeletionSpec *batchSpec,
 	}
 
 	/* Multiple deletions: always use subtransactions for each */
-	int deleteIndex = 0;
+	int nextDeleteIndex = 0;
 	ListCell *deletionCell = NULL;
 	foreach(deletionCell, deletions)
 	{
@@ -772,8 +772,8 @@ ProcessBatchDeletion(MongoCollection *collection, BatchDeletionSpec *batchSpec,
 		DeletionSpec *deletionSpec = lfirst(deletionCell);
 		bool isSuccess = DoSingleDeletionWithSubTxn(collection, deletionSpec,
 													forceInline, transactionId,
-													batchResult, deleteIndex);
-		deleteIndex++;
+													batchResult, nextDeleteIndex);
+		nextDeleteIndex++;
 
 		if (!isSuccess && isOrdered)
 		{

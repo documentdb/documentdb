@@ -460,7 +460,7 @@ static HeapTuple PerformUpdateCore(Datum *databaseNameDatum, pgbson *updateSpec,
 								   TupleDesc resultTupleDesc, WriteMode writeMode,
 								   MemoryContext allocContext);
 
-static pgbson * SerializeUpdateBatchParams(int *updateIndex, List *updates,
+static pgbson * SerializeUpdateBatchParams(int *nextUpdateIndex, List *updates,
 										   bool ordered, bool bypassDocumentValidation);
 static void UpdateBatchResultFromWorkerResult(BatchUpdateResult *result, int32_t
 											  updateIndex, pgbson *resultBson);
@@ -1283,8 +1283,8 @@ UpdateResultInBatch(BatchUpdateResult *batchResult, UpdateResult *updateResult,
  */
 static bool
 DoMultiUpdate(MongoCollection *collection, List *updates, text *transactionId,
-			  BatchUpdateResult *batchResult, int updateIndex,
-			  bool forceInlineWrites, int *recordsUpdated,
+			  BatchUpdateResult *batchResult, int batchStartIndex,
+			  bool forceInlineWrites, int *batchUpdatesProcessed,
 			  ExprEvalState *stateForSchemaValidation,
 			  WriteMode writeMode, MemoryContext updateAttemptContext)
 {
@@ -1296,8 +1296,8 @@ DoMultiUpdate(MongoCollection *collection, List *updates, text *transactionId,
 	ResourceOwner oldOwner = CurrentResourceOwner;
 
 	/* declared volatile because of the longjmp in PG_CATCH */
-	volatile int updateInnerIndex = updateIndex;
-	volatile int updateCount = 0;
+	volatile int nextUpdateIndex = batchStartIndex;
+	volatile int batchInputCount = 0;
 
 	BatchUpdateResult batchResultInner;
 	memset(&batchResultInner, 0, sizeof(batchResultInner));
@@ -1315,20 +1315,20 @@ DoMultiUpdate(MongoCollection *collection, List *updates, text *transactionId,
 			SetGUCLocally("lock_timeout", batchLockTimeoutStr);
 		}
 		ListCell *updateCell;
-		while (updateInnerIndex < list_length(updates) &&
-			   updateCount < BatchWriteSubTransactionCount)
+		while (nextUpdateIndex < list_length(updates) &&
+			   batchInputCount < BatchWriteSubTransactionCount)
 		{
 			CHECK_FOR_INTERRUPTS();
-			updateCell = list_nth_cell(updates, updateInnerIndex);
+			updateCell = list_nth_cell(updates, nextUpdateIndex);
 			UpdateSpec *updateSpec = lfirst(updateCell);
 			UpdateResult updateResult = { 0 };
 			ProcessUpdate(collection, updateSpec, transactionId, &updateResult,
 						  forceInlineWrites, stateForSchemaValidation);
 			UpdateResultInBatch(&batchResultInner, &updateResult,
 								updateAttemptContext,
-								updateInnerIndex);
-			updateInnerIndex++;
-			updateCount++;
+								nextUpdateIndex);
+			nextUpdateIndex++;
+			batchInputCount++;
 		}
 
 		/* Commit the inner transaction, return to outer xact context */
@@ -1353,7 +1353,7 @@ DoMultiUpdate(MongoCollection *collection, List *updates, text *transactionId,
 		}
 		MemoryContextSwitchTo(oldContext);
 		MemoryContextReset(updateAttemptContext);
-		*recordsUpdated = updateCount;
+		*batchUpdatesProcessed = batchInputCount;
 	}
 	PG_CATCH();
 	{
@@ -1371,12 +1371,25 @@ DoMultiUpdate(MongoCollection *collection, List *updates, text *transactionId,
 			ReThrowError(errorData);
 		}
 
-		*recordsUpdated = 0;
-		updateCount = 0;
+		*batchUpdatesProcessed = 0;
+		batchInputCount = 0;
+
+		if (EreportCodeIsDocumentDBError(errorData->sqlerrcode))
+		{
+			elog_unredacted(
+				"Batch update failed; retrying sub-batch individually. Batch size: %d, start index: %d, DocumentDB error code: %d",
+				list_length(updates), batchStartIndex, errorData->sqlerrcode);
+		}
+		else
+		{
+			elog_unredacted(
+				"Batch update failed; retrying sub-batch individually. Batch size: %d, start index: %d, SQL error code: %d",
+				list_length(updates), batchStartIndex, errorData->sqlerrcode);
+		}
 		FreeErrorData(errorData);
 	}
 	PG_END_TRY();
-	return updateCount != 0;
+	return batchInputCount != 0;
 }
 
 
@@ -1520,7 +1533,8 @@ DoSingleUpdate(MongoCollection *collection, UpdateSpec *updateSpec, text *transa
 static void
 DoUnshardedMultiUpdateViaUpdateWorker(MongoCollection *collection, List *updates,
 									  text *transactionId,
-									  BatchUpdateResult *batchResult, int *updateIndex,
+									  BatchUpdateResult *batchResult,
+									  int *nextUpdateIndex,
 									  bool ordered, bool bypassDocumentValidation,
 									  MemoryContext updateAttemptContext)
 {
@@ -1532,9 +1546,9 @@ DoUnshardedMultiUpdateViaUpdateWorker(MongoCollection *collection, List *updates
 	ResourceOwner oldOwner = CurrentResourceOwner;
 
 	/* Serialize the updates for the update worker */
-	int updateStartIndex = *updateIndex;
+	int batchStartIndex = *nextUpdateIndex;
 	MemoryContextSwitchTo(updateAttemptContext);
-	pgbson *workerSpec = SerializeUpdateBatchParams(updateIndex, updates,
+	pgbson *workerSpec = SerializeUpdateBatchParams(nextUpdateIndex, updates,
 													ordered, bypassDocumentValidation);
 	MemoryContextSwitchTo(oldContext);
 	BeginInternalSubTransaction(NULL);
@@ -1555,7 +1569,7 @@ DoUnshardedMultiUpdateViaUpdateWorker(MongoCollection *collection, List *updates
 
 		pgbson *resultBson = DatumGetPgBsonPacked(resultDatum);
 
-		UpdateBatchResultFromWorkerResult(batchResult, updateStartIndex, resultBson);
+		UpdateBatchResultFromWorkerResult(batchResult, batchStartIndex, resultBson);
 		pfree(resultBson);
 		MemoryContextSwitchTo(oldContext);
 		MemoryContextReset(updateAttemptContext);
@@ -1747,11 +1761,11 @@ ProcessBatchUpdateNonTransactionalUnsharded(MongoCollection *collection,
 		subTransactionId = NULL;
 	}
 
-	int updateIndex = 0;
-	while (updateIndex < list_length(updates))
+	int nextUpdateIndex = 0;
+	while (nextUpdateIndex < list_length(updates))
 	{
 		CHECK_FOR_INTERRUPTS();
-		if (updateIndex > 0)
+		if (nextUpdateIndex > 0)
 		{
 			/* For each iteration of the loop, commit prior work */
 			bool setSnapshot = false;
@@ -1761,7 +1775,8 @@ ProcessBatchUpdateNonTransactionalUnsharded(MongoCollection *collection,
 		}
 
 		DoUnshardedMultiUpdateViaUpdateWorker(collection, updates, subTransactionId,
-											  batchResult, &updateIndex, spec->isOrdered,
+											  batchResult, &nextUpdateIndex,
+											  spec->isOrdered,
 											  spec->bypassDocumentValidation,
 											  updateAttemptContext);
 
@@ -1824,15 +1839,16 @@ ProcessBatchUpdateCore(MongoCollection *collection, List *updates, text *transac
 		subTransactionId = NULL;
 	}
 
-	int updateIndex = 0;
+	int nextUpdateIndex = 0;
+	int singleUpdateFailureCount = 0;
 	int nextBatchAttemptIndex = -1;
 	bool hasBatchUpdateFailed = false;
 
 	ListCell *updateCell = NULL;
-	while (updateIndex < list_length(updates))
+	while (nextUpdateIndex < list_length(updates))
 	{
 		CHECK_FOR_INTERRUPTS();
-		if (writeMode == WriteMode_Bulk_Proc && updateIndex > 0)
+		if (writeMode == WriteMode_Bulk_Proc && nextUpdateIndex > 0)
 		{
 			/* For each iteration of the loop, commit prior work */
 			bool setSnapshot = false;
@@ -1844,41 +1860,51 @@ ProcessBatchUpdateCore(MongoCollection *collection, List *updates, text *transac
 		bool isSuccess = false;
 		if (list_length(updates) > 1 && !hasBatchUpdateFailed)
 		{
-			int incrementCount = 0;
+			int batchUpdatesProcessed = 0;
 
 			/* Optimistically try to do multiple updates together, if it fails, try again one by one to figure out which one failed */
 			isSuccess = DoMultiUpdate(collection, updates, subTransactionId,
-									  batchResult, updateIndex, forceInlineWrites,
-									  &incrementCount, stateForSchemaValidation,
+									  batchResult, nextUpdateIndex, forceInlineWrites,
+									  &batchUpdatesProcessed, stateForSchemaValidation,
 									  writeMode, updateAttemptContext);
 
-			if (!isSuccess || incrementCount == 0)
+			if (!isSuccess || batchUpdatesProcessed == 0)
 			{
 				/* if batch failed, retry batch after the current batch */
-				nextBatchAttemptIndex = updateIndex + BatchWriteSubTransactionCount;
+				nextBatchAttemptIndex = nextUpdateIndex + BatchWriteSubTransactionCount;
 				hasBatchUpdateFailed = true;
 			}
 			else
 			{
-				updateIndex += incrementCount;
+				nextUpdateIndex += batchUpdatesProcessed;
 			}
 
 			continue;
 		}
-		updateCell = list_nth_cell(updates, updateIndex);
+		updateCell = list_nth_cell(updates, nextUpdateIndex);
 		UpdateSpec *updateSpec = lfirst(updateCell);
 		isSuccess = DoSingleUpdateWithSubTxn(collection, updateSpec, subTransactionId,
-											 batchResult, updateIndex,
+											 batchResult, nextUpdateIndex,
 											 forceInlineWrites,
 											 stateForSchemaValidation,
 											 updateAttemptContext);
-		updateIndex++;
+		nextUpdateIndex++;
+
+		if (!isSuccess)
+		{
+			singleUpdateFailureCount++;
+		}
 
 		if (hasBatchUpdateFailed && writeMode == WriteMode_Bulk_Proc &&
-			(updateIndex > nextBatchAttemptIndex))
+			(nextUpdateIndex > nextBatchAttemptIndex))
 		{
+			elog_unredacted(
+				"Single-update retries for the current sub-batch encountered %d failures",
+				singleUpdateFailureCount);
+
 			nextBatchAttemptIndex = -1;
 			hasBatchUpdateFailed = false;
+			singleUpdateFailureCount = 0;
 		}
 
 		if (!isSuccess && isOrdered)
@@ -1886,6 +1912,13 @@ ProcessBatchUpdateCore(MongoCollection *collection, List *updates, text *transac
 			/* stop trying update operations after a failure if using ordered:true */
 			break;
 		}
+	}
+
+	if (hasBatchUpdateFailed)
+	{
+		elog_unredacted(
+			"Single-update retries for the current sub-batch encountered %d failures",
+			singleUpdateFailureCount);
 	}
 	MemoryContextDelete(updateAttemptContext);
 }
@@ -3410,7 +3443,7 @@ WriteUpdateOneParamsAsUpdateSpec(UpdateOneParams *params, pgbson_writer *writer)
 
 
 static pgbson *
-SerializeUpdateBatchParams(int *updateIndex, List *updates,
+SerializeUpdateBatchParams(int *nextUpdateIndex, List *updates,
 						   bool ordered, bool bypassDocumentValidation)
 {
 	pgbson_writer commandWriter;
@@ -3423,14 +3456,14 @@ SerializeUpdateBatchParams(int *updateIndex, List *updates,
 	const bson_value_t *variableSpec = { 0 };
 	pgbson_array_writer specsWriter;
 	PgbsonWriterStartArray(&topLevelWriter, "specs", 5, &specsWriter);
-	int updateCount = 0;
+	int batchInputCount = 0;
 	ListCell *updateCell;
-	while (*updateIndex < list_length(updates) &&
-		   updateCount < BatchWriteSubTransactionCount)
+	while (*nextUpdateIndex < list_length(updates) &&
+		   batchInputCount < BatchWriteSubTransactionCount)
 	{
 		CHECK_FOR_INTERRUPTS();
 
-		updateCell = list_nth_cell(updates, *updateIndex);
+		updateCell = list_nth_cell(updates, *nextUpdateIndex);
 		UpdateSpec *updateSpec = lfirst(updateCell);
 		pgbson_writer specWriter;
 		PgbsonArrayWriterStartDocument(&specsWriter, &specWriter);
@@ -3462,8 +3495,8 @@ SerializeUpdateBatchParams(int *updateIndex, List *updates,
 		WriteUpdateOneParamsAsUpdateSpec(&updateSpec->updateOneParams, &specWriter);
 		PgbsonWriterAppendBool(&specWriter, "multi", 5, updateSpec->isMulti);
 		PgbsonArrayWriterEndDocument(&specsWriter, &specWriter);
-		(*updateIndex)++;
-		updateCount++;
+		(*nextUpdateIndex)++;
+		batchInputCount++;
 	}
 
 	PgbsonWriterEndArray(&topLevelWriter, &specsWriter);
