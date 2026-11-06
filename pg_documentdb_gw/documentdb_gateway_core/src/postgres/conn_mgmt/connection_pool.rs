@@ -27,6 +27,7 @@ use deadpool_postgres::{
 };
 use openssl::sha::Sha256;
 use tokio::{
+    sync::Semaphore,
     task::JoinHandle,
     time::{Duration, Instant},
 };
@@ -42,7 +43,7 @@ use crate::{
     postgres::{
         conn_mgmt::{
             pool_metrics::{ConnectionPoolMetrics, ConnectionPoolStatus, PoolRole},
-            PgPoolSettings,
+            Connection, PgPoolSettings,
         },
         QueryCatalog,
     },
@@ -223,6 +224,9 @@ pub struct ConnectionPool {
     /// Client-side deadline for statements executed on connections from this
     /// pool; see [`command_deadline_for`].
     command_deadline: Duration,
+    /// Persistent cursors may pin all but one data connection. The remaining
+    /// slot lets ordinary requests make progress without waiting for expiry.
+    cursor_connections: Arc<Semaphore>,
 }
 
 impl ConnectionPool {
@@ -372,7 +376,22 @@ impl ConnectionPool {
             credential_fingerprint: credential_fingerprint(password),
             prune_task,
             command_deadline,
+            cursor_connections: Arc::new(Semaphore::new(
+                pool_settings.adjusted_max_connections().saturating_sub(1),
+            )),
         })
+    }
+
+    /// Reserves capacity for a connection-backed cursor without waiting.
+    ///
+    /// The reservation follows the connection through getMore and is released
+    /// when its last owner drops it. Reusing a transaction's connection does
+    /// not consume another slot.
+    ///
+    /// # Errors
+    /// Returns an error if pinning this connection would exhaust data capacity.
+    pub fn reserve_cursor_connection(&self, connection: &Connection) -> Result<()> {
+        connection.reserve_cursor_connection(&self.cursor_connections)
     }
 
     /// Acquires a connection from the primary pool.

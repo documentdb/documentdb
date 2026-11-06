@@ -677,6 +677,25 @@ pub trait PgDataClient: Send + Sync {
 
         // Save cursor state after a first-page query if the response contains a continuation.
         if let Some((persist, cursor)) = response.get_cursor()? {
+            if persist {
+                if let Err(error) = self
+                    .connection_pool()?
+                    .reserve_cursor_connection(&connection)
+                {
+                    // The portal name in the continuation differs from the
+                    // client-facing cursor id. Close the rejected portal
+                    // before returning its connection to the pool.
+                    let portal = cursor
+                        .continuation
+                        .get_str("qn")
+                        .map_err(crate::error::DocumentDBError::parse_failure())?
+                        .replace('"', "\"\"");
+                    connection
+                        .batch_execute(&format!("CLOSE \"{portal}\""))
+                        .await?;
+                    return Err(error);
+                }
+            }
             let connection = persist.then_some(connection);
 
             // Surface the backend cursor id for diagnostics: find/aggregate first pages

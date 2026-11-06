@@ -237,7 +237,7 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
     }
 
     fn default_cursor_idle_timeout_sec(&self) -> u64 {
-        self.get_u64("mongoCursorIdleTimeoutInSeconds", 60)
+        self.get_u64("mongoCursorIdleTimeoutInSeconds", 600)
     }
 
     fn stateless_cursor_idle_timeout_sec(&self) -> u64 {

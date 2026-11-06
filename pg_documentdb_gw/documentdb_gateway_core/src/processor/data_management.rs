@@ -49,6 +49,28 @@ pub async fn process_find(
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
+    if let Some(value) = request_context
+        .request()
+        .document()
+        .get("noCursorTimeout")?
+    {
+        match value {
+            RawBsonRef::Boolean(false) => {}
+            RawBsonRef::Boolean(true) => {
+                return Err(DocumentDBError::documentdb_error(
+                    ErrorCode::CommandNotSupported,
+                    "noCursorTimeout: true is not supported".to_owned(),
+                ));
+            }
+            _ => {
+                return Err(DocumentDBError::documentdb_error(
+                    ErrorCode::TypeMismatch,
+                    "noCursorTimeout must be a boolean".to_owned(),
+                ));
+            }
+        }
+    }
+
     pg_data_client
         .execute_find(request_context, connection_context)
         .await
