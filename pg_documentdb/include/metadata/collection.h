@@ -217,7 +217,8 @@ void ValidateCollectionNameForUnauthorizedSystemNs(const char *collectionName,
  * Checks if the given collection name belongs to a valid system namespace
  */
 void ValidateCollectionNameForValidSystemNamespace(StringView *collectionView,
-												   Datum databaseNameDatum);
+												   Datum databaseNameDatum,
+												   bool allowContribCollections);
 
 /*
  * Data table for given MongoCollection has been created within the current

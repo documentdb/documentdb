@@ -1937,8 +1937,10 @@ ParseCreateIndexesArg(Datum *dbNameDatum, pgbson *arg)
 	{
 		StringView collectionView = CreateStringViewFromString(
 			createIndexesArg.collectionName);
+		bool allowContribCollections = true;
 		ValidateCollectionNameForValidSystemNamespace(&collectionView,
-													  *dbNameDatum);
+													  *dbNameDatum,
+													  allowContribCollections);
 	}
 	else
 	{
