@@ -1533,7 +1533,7 @@ CallInsertWorkerForInsert(MongoCollection *collection, int64 shardKeyHash,
 	char argNulls[6] = { ' ', ' ', ' ', ' ', 'n', 'n' };
 	Oid argTypes[6] = { INT8OID, INT8OID, REGCLASSOID, BYTEAOID, BYTEAOID, TEXTOID };
 
-	const char *updateQuery = FormatSqlQuery(
+	const char *insertQuery = FormatSqlQuery(
 		" SELECT %s.insert_worker($1, $2, $3, $4::%s.bson, $5::%s.bsonsequence, $6) FROM %s.documents_"
 		UINT64_FORMAT " WHERE shard_key_value = %ld",
 		DocumentDBApiInternalSchemaName, CoreSchemaNameV2, CoreSchemaNameV2,
@@ -1570,7 +1570,7 @@ CallInsertWorkerForInsert(MongoCollection *collection, int64 shardKeyHash,
 	int numResults = 1;
 
 	/* forceDelegation assumes nested distribution */
-	RunMultiValueQueryWithNestedDistribution(updateQuery, argCount, argTypes, argValues,
+	RunMultiValueQueryWithNestedDistribution(insertQuery, argCount, argTypes, argValues,
 											 argNulls,
 											 readOnly, SPI_OK_SELECT, resultDatum,
 											 isNulls, numResults);
