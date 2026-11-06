@@ -234,7 +234,6 @@ PG_FUNCTION_INFO_V1(command_cursor_tracker_support);
 extern bool EnableRumCursorDynamicIndexScans;
 extern bool EnableRumDynamicIndexScansSkipToTid;
 extern bool EnableMergeSortForInPrefix;
-extern bool EnableGroupByDynamicStreaming;
 extern bool EnableDynamicCursorMultiKeyBitmap;
 extern bool EnableSkipParallelPlansWithoutStats;
 extern bool EnablePerCollectionPlannerStatistics;
@@ -1060,8 +1059,7 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 static bool
 IsGroupByFullyPushableForStreaming(PlannerInfo *root)
 {
-	return EnableGroupByDynamicStreaming &&
-		   root->group_pathkeys != NIL &&
+	return root->group_pathkeys != NIL &&
 		   root->query_pathkeys != NIL &&
 		   list_length(root->group_pathkeys) == list_length(root->query_pathkeys) &&
 		   pathkeys_contained_in(root->group_pathkeys, root->query_pathkeys);

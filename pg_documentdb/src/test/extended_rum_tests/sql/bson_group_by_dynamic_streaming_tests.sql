@@ -30,7 +30,7 @@ SET documentdb.enableDynamicCursors TO on;
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
 
 -- ===========================================================================
--- Plan shape: with the feature flag OFF the grouping-only $group must NOT be
+-- Plan shape: with dynamic cursors off the grouping-only $group must NOT be
 -- wrapped by the dynamic cursor scan (the GroupAggregate sits directly on the
 -- ordered index only scan).
 -- ===========================================================================
@@ -38,7 +38,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enable_group_by_dynamic_streaming TO off;
+SET LOCAL documentdb.enableDynamicCursors TO off;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($Q$
 EXPLAIN (COSTS OFF, VERBOSE ON)
@@ -48,7 +48,7 @@ $Q$);
 ROLLBACK;
 
 -- ===========================================================================
--- Plan shape: with the feature flag ON the grouping-only $group is served by
+-- Plan shape: with dynamic cursors on the grouping-only $group is served by
 -- the dynamic cursor scan, producing
 --   GroupAggregate -> Custom Scan (DocumentDBApiCursorScan) -> Index Only Scan.
 -- ===========================================================================
@@ -56,7 +56,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enable_group_by_dynamic_streaming TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($Q$
 EXPLAIN (COSTS OFF, VERBOSE ON)
@@ -83,7 +82,6 @@ BEGIN
     SET LOCAL enable_seqscan TO off;
     SET LOCAL enable_bitmapscan TO off;
     SET LOCAL enable_hashagg TO off;
-    SET LOCAL documentdb.enable_group_by_dynamic_streaming TO on;
 
     SELECT fp.cursorPage, fp.continuation, fp.persistConnection
     INTO v_cursor_page, v_continuation, v_persist
@@ -139,7 +137,7 @@ DECLARE
     v_ids text := '';
     v_batch text;
 BEGIN
-    EXECUTE FORMAT('SET LOCAL documentdb.enable_group_by_dynamic_streaming TO %s',
+    EXECUTE FORMAT('SET LOCAL documentdb.enableDynamicCursors TO %s',
                    CASE WHEN p_streaming THEN 'on' ELSE 'off' END);
 
     SELECT fp.cursorPage, fp.continuation, fp.persistConnection
@@ -243,7 +241,7 @@ DECLARE
     v_continuation documentdb_core.bson;
     v_batch text;
 BEGIN
-    EXECUTE FORMAT('SET LOCAL documentdb.enable_group_by_dynamic_streaming TO %s',
+    EXECUTE FORMAT('SET LOCAL documentdb.enableDynamicCursors TO %s',
                    CASE WHEN p_streaming THEN 'on' ELSE 'off' END);
 
     o_ids := '';

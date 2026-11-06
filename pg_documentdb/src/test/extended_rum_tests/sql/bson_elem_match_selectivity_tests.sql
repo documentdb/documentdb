@@ -9,7 +9,6 @@ SET documentdb.enableCompositeIndexPlanner TO on;
 SET documentdb.enablePerCollectionPlannerStatistics TO on;
 SET documentdb.enablePlannerStatisticsNewCollections TO on;
 SET documentdb.enableIndexMetadataGlobalTracking TO on;
-SET documentdb.enablePerPathMultiKeySortPushdown TO on;
 SET documentdb.enableCompositeReducedCorrelatedTermsOnCommonSubPath TO on;
 SET documentdb.enable_composite_reduced_correlated_bounds_planning TO on;
 
@@ -332,7 +331,6 @@ SELECT documentdb_api.drop_collection(
 RESET documentdb.enable_composite_reduced_correlated_bounds_planning;
 RESET documentdb.enable_elem_match_selectivity_lower_bound;
 RESET documentdb.enableCompositeReducedCorrelatedTermsOnCommonSubPath;
-RESET documentdb.enablePerPathMultiKeySortPushdown;
 RESET documentdb.enableIndexMetadataGlobalTracking;
 RESET documentdb.enable_array_bson_stats_with_planner_statistics;
 RESET documentdb.enablePlannerStatisticsNewCollections;

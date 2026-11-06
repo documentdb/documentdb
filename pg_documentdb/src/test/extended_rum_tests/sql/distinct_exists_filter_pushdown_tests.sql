@@ -100,7 +100,6 @@ ROLLBACK;
 -- 5b: Bitmap Heap Scan (serial) - the recheck uses the lowered OpExpr,
 -- matching the bitmap index cond, and there is no distinct-exists FuncExpr.
 BEGIN;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
 SET LOCAL enable_indexscan TO off;
 SET LOCAL enable_indexonlyscan TO off;
 SET LOCAL enable_seqscan TO off;
@@ -111,7 +110,6 @@ ROLLBACK;
 
 -- 5c: Parallel Bitmap Heap Scan - same lowered OpExpr recheck under parallelism.
 BEGIN;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
 SET LOCAL enable_indexscan TO off;
 SET LOCAL enable_indexonlyscan TO off;
 SET LOCAL enable_seqscan TO off;
@@ -127,7 +125,6 @@ ROLLBACK;
 
 -- 5d: Seq Scan - the distinct-exists marker is trimmed (only the ts filter remains).
 BEGIN;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
 SET LOCAL enable_indexscan TO off;
 SET LOCAL enable_indexonlyscan TO off;
 SET LOCAL enable_bitmapscan TO off;
@@ -138,7 +135,6 @@ ROLLBACK;
 
 -- 5e: Parallel Seq Scan - the marker is trimmed under parallelism too.
 BEGIN;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
 SET LOCAL enable_indexscan TO off;
 SET LOCAL enable_indexonlyscan TO off;
 SET LOCAL enable_bitmapscan TO off;
@@ -154,7 +150,6 @@ ROLLBACK;
 -- 5f: correctness parity across the forced scan types (the trimmed seq
 -- scan must still exclude the missing-path _id 5001 doc inserted above).
 BEGIN;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
 SET LOCAL enable_indexscan TO off;
 SET LOCAL enable_indexonlyscan TO off;
 SET LOCAL enable_seqscan TO off;
@@ -162,7 +157,6 @@ SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_exists
 ROLLBACK;
 
 BEGIN;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
 SET LOCAL enable_indexscan TO off;
 SET LOCAL enable_indexonlyscan TO off;
 SET LOCAL enable_bitmapscan TO off;

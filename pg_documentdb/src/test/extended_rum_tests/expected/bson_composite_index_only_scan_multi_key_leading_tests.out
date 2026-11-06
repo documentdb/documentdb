@@ -7,9 +7,6 @@ set documentdb.enableCompositeIndexPlanner to on;
 -- Enable opclass metadata tracking so the composite index records per-path multi-key
 -- state (the mkp=true opclass option) instead of a single index-wide multi-key term.
 set documentdb.enableIndexMetadataGlobalTracking to on;
--- Pin the per-path multi-key gate on so the plan shapes below are deterministic
--- regardless of the default.
-set documentdb.enablePerPathMultiKeySortPushdown to on;
 -- Covered find projections are only considered for index-only scan when this is
 -- on, so pin it: without it the projection cases below would report false for a
 -- reason that has nothing to do with multi-key state.

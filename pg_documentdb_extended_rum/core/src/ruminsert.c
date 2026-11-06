@@ -1636,14 +1636,10 @@ RumBufferInit(RumState *state)
 			cmpFunc = typentry->cmp_proc_finfo.fn_oid;
 			PrepareSortSupportComparisonShim(cmpFunc, sortKey);
 		}
-		else if (EnableRumCompareFunctionFmgr)
+		else
 		{
 			sortKey->ssup_extra = &state->compareFn[i];
 			sortKey->comparator = rum_indexbuild_comparator_shim;
-		}
-		else
-		{
-			PrepareSortSupportComparisonShim(cmpFunc, sortKey);
 		}
 	}
 

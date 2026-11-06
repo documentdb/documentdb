@@ -1,6 +1,5 @@
 -- Tests for streaming dynamic cursors over $group queries whose group keys can
--- be provided in order by a composite (ordered) index. With
--- documentdb.enable_group_by_dynamic_streaming the planner produces a sorted
+-- be provided in order by a composite (ordered) index. The planner produces a sorted
 -- GroupAggregate over an ordered index-only scan (no blocking Sort), which the
 -- dynamic cursor wraps and pages through incrementally instead of falling back
 -- to a persistent (materialized) cursor.
@@ -89,7 +88,6 @@ $$ LANGUAGE plpgsql;
 -- returns exactly 1000 groups via a streaming cursor (type 7), and that paging
 -- actually happens (round trips scale with batch size).
 -- ===========================================================================
-SET documentdb.enable_group_by_dynamic_streaming TO on;
 
 SELECT total, first_type FROM dcgrp_drain(
     '{ "aggregate": "grp", "hint": "b_c_1", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" } } } ], "cursor": { "batchSize": 100 } }',
@@ -151,7 +149,6 @@ FROM aggregate_cursor_first_page(
 -- than an index-only scan (dc.type 7). This must still stream under the dynamic
 -- cursor with the same read-ahead continuation handling.
 -- ===========================================================================
-SET documentdb.enable_group_by_dynamic_streaming TO on;
 
 SELECT documentdb_api.drop_collection('dcgrp_db', 'grp_heap');
 
@@ -249,14 +246,14 @@ DROP FUNCTION dcgrp_drain_heap(text, int);
 SELECT documentdb_api.drop_collection('dcgrp_db', 'grp_heap');
 
 -- ===========================================================================
--- Feature gating: with the GUC off, the same $group falls back to a persistent
+-- With dynamic cursors off, the same $group falls back to a persistent
 -- (non-streaming) cursor - the continuation has no streaming scan type.
 -- ===========================================================================
-SET documentdb.enable_group_by_dynamic_streaming TO off;
+SET documentdb.enableDynamicCursors TO off;
 
 SELECT first_type AS gated_off_type FROM dcgrp_drain(
     '{ "aggregate": "grp", "hint": "b_c_1", "pipeline": [ { "$group": { "_id": { "b": "$b" }, "n": { "$sum": 1 } } } ], "cursor": { "batchSize": 3 } }',
     3);
 
 DROP FUNCTION dcgrp_drain(text, int);
-SET documentdb.enable_group_by_dynamic_streaming TO off;
+RESET documentdb.enableDynamicCursors;

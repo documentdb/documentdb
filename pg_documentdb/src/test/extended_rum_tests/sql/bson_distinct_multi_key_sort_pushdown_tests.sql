@@ -21,7 +21,6 @@ set documentdb.enableExtendedExplainPlans to on;
 -- Suppress per-index cost details so explain output is stable across runs.
 set documentdb.enableExplainScanIndexCosts to off;
 -- The distinct order-by pushdown is a prerequisite for everything below.
-set documentdb.enableDistinctIndexPushdown to on;
 -- The skip scan is the payoff of the pushdown, so keep it on to observe it.
 set documentdb.enableDistinctCustomScan to on;
 -- Force index usage and reject bitmap scans so the ordered index-scan shape (and
@@ -170,18 +169,6 @@ BEGIN;
 SET LOCAL documentdb.enable_distinct_multi_key_sort_pushdown TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dmk_db', '{ "distinct": "recs", "key": "c", "query": { "a": "A", "b": "B" } }')
-$cmd$);
-ROLLBACK;
-
--- ============================================================================
--- Negative case: the per-path sort feature is disabled, even though the index
--- has per-path metadata.
--- ============================================================================
-BEGIN;
-SET LOCAL documentdb.enable_distinct_multi_key_sort_pushdown TO on;
-SET LOCAL documentdb.enablePerPathMultiKeySortPushdown TO off;
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dmk_db', '{ "distinct": "recs", "key": "e", "query": { "a": "A", "b": "B", "c": "u5", "d": "D" } }')
 $cmd$);
 ROLLBACK;
 
@@ -357,7 +344,6 @@ SELECT (pg_get_indexdef(idx.indexrelid) LIKE '%mkp=''true''%') AS has_per_path_t
 
 BEGIN;
 SET LOCAL documentdb.enable_distinct_multi_key_sort_pushdown TO on;
-SET LOCAL documentdb.enablePerPathMultiKeySortPushdown TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dmk_db', '{ "distinct": "legacy_recs", "key": "e", "query": { "a": "u5" }, "hint": "idx_legacy_ae" }')
 $cmd$);
@@ -463,7 +449,6 @@ ANALYZE documentdb_data.documents_:rct_cid;
 
 BEGIN;
 SET LOCAL documentdb.enable_composite_reduced_correlated_bounds_planning TO off;
-SET LOCAL documentdb.enable_composite_secondary_path_order_pushdown TO on;
 SET LOCAL documentdb.enable_group_by_multi_key_sort_pushdown TO off;
 SET LOCAL documentdb.enable_distinct_multi_key_sort_pushdown TO off;
 WITH result AS (

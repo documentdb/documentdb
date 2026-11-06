@@ -41,7 +41,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO off;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
@@ -53,7 +52,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
@@ -69,7 +67,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 2 } }')
@@ -85,7 +82,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value" }')
@@ -101,7 +97,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO off;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -135,7 +130,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -172,7 +166,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_array", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
@@ -181,17 +174,6 @@ WITH result AS (
   SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_array", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
 )
 SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
-ROLLBACK;
-
--- Test 8: Disabling distinct pushdown retains the runtime Sort.
-BEGIN;
-SET LOCAL enable_seqscan TO off;
-SET LOCAL enable_bitmapscan TO off;
-SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
-$cmd$);
 ROLLBACK;
 
 -- Test 9: A matching collated index supports a dotted distinct path.
@@ -214,16 +196,10 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_nested", "key": "nested.value", "collation": { "locale": "en", "strength": 1 } }')
 $cmd$, p_ignore_heap_fetches => true);
-WITH result AS (
-  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_nested", "key": "nested.value", "collation": { "locale": "en", "strength": 1 } }')
-)
-SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
 WITH result AS (
   SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_nested", "key": "nested.value", "collation": { "locale": "en", "strength": 1 } }')
 )
@@ -235,16 +211,10 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "query": { "value": { "$gte": "cafe" } }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$, p_ignore_heap_fetches => true);
-WITH result AS (
-  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "query": { "value": { "$gte": "cafe" } }, "collation": { "locale": "en", "strength": 1 } }')
-)
-SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
 WITH result AS (
   SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "query": { "value": { "$gte": "cafe" } }, "collation": { "locale": "en", "strength": 1 } }')
 )
@@ -258,7 +228,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
@@ -282,16 +251,10 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_mixed", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
 $cmd$, p_ignore_heap_fetches => true);
-WITH result AS (
-  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_mixed", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
-)
-SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
 WITH result AS (
   SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_mixed", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
 )
@@ -303,7 +266,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SET LOCAL documentdb.enable_distinct_exists_filter_pushdown TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -326,7 +288,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation", "key": "value", "collation": { "locale": "en", "strength": 1 } }')
@@ -363,16 +324,10 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_compound", "key": "value", "query": { "category": "group" }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$, p_ignore_heap_fetches => true);
-WITH result AS (
-  SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_compound", "key": "value", "query": { "category": "group" }, "collation": { "locale": "en", "strength": 1 } }')
-)
-SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM result;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
 WITH result AS (
   SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_compound", "key": "value", "query": { "category": "group" }, "collation": { "locale": "en", "strength": 1 } }')
 )
@@ -402,20 +357,15 @@ SELECT documentdb_api.insert_one(
   '{ "_id": 4, "value": "cafe", "nested": { "value": "cafe" }, "numeric": "2" }');
 ANALYZE documentdb_data.documents_20206;
 
--- Test 16: Scalar results match with ordered pushdown and a runtime Sort.
+-- Test 16: Scalar results preserve the full response with ordered pushdown.
 BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_response", "key": "value", "collation": { "locale": "fr", "strength": 2 } }')
 $cmd$, p_ignore_heap_fetches => true);
-SELECT document FROM documentdb_api.distinct_query(
-  'db',
-  '{ "distinct": "dist_collation_response", "key": "value", "collation": { "locale": "fr", "strength": 2 } }');
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM documentdb_api.distinct_query(
   'db',
   '{ "distinct": "dist_collation_response", "key": "value", "collation": { "locale": "fr", "strength": 2 } }');
@@ -426,7 +376,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_response", "key": "nested.value", "collation": { "locale": "fr", "strength": 2 } }')
@@ -441,7 +390,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_response", "key": "numeric", "collation": { "locale": "en", "strength": 1, "numericOrdering": true } }')
@@ -479,7 +427,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_response_compound", "key": "value", "query": { "category": "group" }, "collation": { "locale": "fr", "strength": 2 } }')
@@ -500,7 +447,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_collation_id", "key": "_id", "collation": { "locale": "en", "strength": 1 } }')
@@ -534,9 +480,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enablePerPathMultiKeySortPushdown TO on;
 SET LOCAL documentdb.enable_group_by_multi_key_sort_pushdown TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SET LOCAL documentdb.enable_distinct_multi_key_sort_pushdown TO off;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$

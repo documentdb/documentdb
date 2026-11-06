@@ -122,6 +122,11 @@ bool RumFailOnLostPath = DEFAULT_RUM_FAIL_ON_LOST_PATH;
 #define DEFAULT_FORCE_COLL_STATS_DATA_COLLECTION false
 bool ForceCollStatsDataCollection = DEFAULT_FORCE_COLL_STATS_DATA_COLLECTION;
 
+/* Retained for testing planner behavior with collection statistics disabled. */
+#define DEFAULT_ENABLE_PER_COLLECTION_PLANNER_STATISTICS true
+bool EnablePerCollectionPlannerStatistics =
+	DEFAULT_ENABLE_PER_COLLECTION_PLANNER_STATISTICS;
+
 /* On by default; can be turned off in tests to exercise the non-live-tuples count path */
 #define DEFAULT_USE_PG_STATS_LIVE_TUPLES_FOR_COUNT true
 bool UsePgStatsLiveTuplesForCount = DEFAULT_USE_PG_STATS_LIVE_TUPLES_FOR_COUNT;
@@ -490,6 +495,14 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		gettext_noop(
 			"Whether to force fetching metadata during collstats operations."),
 		NULL, &ForceCollStatsDataCollection, DEFAULT_FORCE_COLL_STATS_DATA_COLLECTION,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enablePerCollectionPlannerStatistics", newGucPrefix),
+		gettext_noop(
+			"Whether to enable per-collection planner statistics."),
+		NULL, &EnablePerCollectionPlannerStatistics,
+		DEFAULT_ENABLE_PER_COLLECTION_PLANNER_STATISTICS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

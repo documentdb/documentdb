@@ -2,7 +2,6 @@ SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 SET citus.next_shard_id TO 5880000;
 SET documentdb.next_collection_id TO 588000;
 SET documentdb.next_collection_index_id TO 588000;
-set documentdb.enablePrepareUnique to on;
 -- if documentdb_extended_rum exists, set alternate index handler
 SELECT pg_catalog.set_config('documentdb.alternate_index_handler_name', 'extended_rum', false), extname FROM pg_extension WHERE extname = 'documentdb_extended_rum';
   set_config  |         extname         
@@ -229,12 +228,7 @@ SELECT document from documentdb_data.documents_588001 where document @@ '{"a": 1
  { "_id" : { "$numberInt" : "101" }, "a" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" } }
 (2 rows)
 
--- now convert it to unique (this should fail for GUC check)
-set documentdb.enableCollModUnique to off;
-SELECT documentdb_api.coll_mod('prep_unique_db', 'collection', '{ "collMod": "collection", "index": { "name": "a_1", "unique": true } }');
-ERROR:  unique index option is not supported yet
 -- now this fails with existing unique violations
-set documentdb.enableCollModUnique to on;
 SELECT documentdb_api.coll_mod('prep_unique_db', 'collection', '{ "collMod": "collection", "index": { "name": "a_1", "unique": true } }');
 ERROR:  conflicting key value violates exclusion constraint "documents_rum_index_588002_5880002"
 DETAIL:  Key (document, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" } }'::bson, false, true))=({ "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "99" }, "c" : { "$numberInt" : "1" } }, { "$shard_key_value" : { "$numberLong" : "588001" }, "$numTerms" : { "$numberInt" : "1" }, "$numPaths" : { "$numberInt" : "1" }, "a" : [ { "$numberInt" : "1" } ] }) conflicts with existing key (document, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" } }'::bson, false, true))=({ "_id" : { "$numberInt" : "101" }, "a" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" } }, { "$shard_key_value" : { "$numberLong" : "588001" }, "$numTerms" : { "$numberInt" : "1" }, "$numPaths" : { "$numberInt" : "1" }, "a" : [ { "$numberInt" : "1" } ] }).
@@ -503,10 +497,6 @@ Indexes:
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '588002'::bigint)
 
--- turn off feature, should fail
-set documentdb.enablePrepareUnique to off;
-SELECT documentdb_api.coll_mod('prep_unique_db', 'collection', '{ "collMod": "collection", "index": { "name": "f_1", "prepareUnique": true } }');
-ERROR:  prepareUnique index option is not supported yet
 SELECT documentdb_api.drop_collection('prep_unique_db', 'collection');
  drop_collection 
 ---------------------------------------------------------------------
@@ -528,7 +518,6 @@ SELECT documentdb_api.create_user('{"createUser":"newPrepareUniqueUser", "pwd":"
 (1 row)
 
 \c - newPrepareUniqueUser
-set documentdb.enablePrepareUnique to on;
 SELECT documentdb_api.coll_mod('prep_unique_db', 'collection', '{ "collMod": "collection", "index": { "name": "f_1", "prepareUnique": true } }');
                                           coll_mod                                          
 ---------------------------------------------------------------------
@@ -605,7 +594,6 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_find('prep_unique_d
 (2 rows)
 
 -- this fails (one shard has a duplicate)
-set documentdb.enableCollModUnique to on;
 SELECT documentdb_api.coll_mod('prep_unique_db', 'shard_collection', '{ "collMod": "shard_collection", "index": { "name": "a_1_shard", "unique": true } }');
 ERROR:  conflicting key value violates exclusion constraint "documents_rum_index_4_102053"
 DETAIL:  Key (document, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson, false, true))=({ "_id" : { "$numberInt" : "50" }, "a" : { "$numberInt" : "50" }, "shkey" : { "$numberInt" : "0" } }, { "$shard_key_value" : { "$numberLong" : "3" }, "$numTerms" : { "$numberInt" : "1" }, "$numPaths" : { "$numberInt" : "1" }, "a" : [ { "$numberInt" : "50" } ] }) conflicts with existing key (document, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson, false, true))=({ "_id" : { "$numberInt" : "201" }, "a" : { "$numberInt" : "50" }, "shkey" : { "$numberInt" : "0" } }, { "$shard_key_value" : { "$numberLong" : "3" }, "$numTerms" : { "$numberInt" : "1" }, "$numPaths" : { "$numberInt" : "1" }, "a" : [ { "$numberInt" : "50" } ] }).

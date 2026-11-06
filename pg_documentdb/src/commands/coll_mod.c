@@ -35,8 +35,6 @@
 #include "utils/feature_counter.h"
 #include "commands/coll_mod.h"
 
-extern bool EnablePrepareUnique;
-extern bool EnableCollModUnique;
 extern bool ForceUpdateIndexInline;
 extern bool EnablePreImages;
 extern bool EnablePerCollectionPlannerStatistics;
@@ -950,12 +948,6 @@ ModifyIndexSpecsInCollection(const MongoCollection *collection,
 
 	if ((*specFlags & HAS_INDEX_OPTION_PREPARE_UNIQUE) == HAS_INDEX_OPTION_PREPARE_UNIQUE)
 	{
-		if (!EnablePrepareUnique)
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
-							errmsg("prepareUnique index option is not supported yet")));
-		}
-
 		if (!isIndexValid)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
@@ -1010,12 +1002,6 @@ ModifyIndexSpecsInCollection(const MongoCollection *collection,
 
 	if ((*specFlags & HAS_INDEX_OPTION_UNIQUE) == HAS_INDEX_OPTION_UNIQUE)
 	{
-		if (!EnableCollModUnique)
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
-							errmsg("unique index option is not supported yet")));
-		}
-
 		if (!isIndexValid)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),

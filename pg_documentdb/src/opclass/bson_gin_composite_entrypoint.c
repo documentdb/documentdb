@@ -182,8 +182,6 @@ extern bool EnablePartialMatchHasRecheck;
 extern bool EnableFailureOnParallelIndexArrays;
 extern bool EnableHighKeyOptimization;
 extern bool EnableFailureOnParallelIndexArraysForMetadataTracking;
-extern bool EnableDynamicCursorDedupTracking;
-extern bool EnableCompositeSecondaryPathOrderPushdown;
 extern bool EnableReducedCorrelatedNonMultiKeyOrderBy;
 extern bool EnableOrderedSaopMultiRangeSkipAdvance;
 extern bool EnableUniqueNullMissingSemantics;
@@ -3412,12 +3410,8 @@ gin_bson_composite_index_term_transform(PG_FUNCTION_ARGS)
 
 			/* When the continuation carried a serialized dedup state, hand it
 			 * back so the ordered scan can restore its dedup tracker. The binary
-			 * payload is itself a complete varlena (bytea), so copy it verbatim.
-			 * When dedup tracking is disabled we still dedup within a page (so
-			 * batch sizing is honored), but we do not carry state across pages,
-			 * so skip the restore and let the tracker start empty each page. */
-			if (EnableDynamicCursorDedupTracking &&
-				outDedupState != NULL &&
+			 * payload is itself a complete varlena (bytea), so copy it verbatim. */
+			if (outDedupState != NULL &&
 				runData->metaInfo->dedupState.value_type == BSON_TYPE_BINARY)
 			{
 				uint32_t len = runData->metaInfo->dedupState.value.v_binary.data_len;
@@ -4240,9 +4234,7 @@ GetCompositeTraverseOptionSinglePath(BsonGinCompositePathOptions *options,
 			{
 				bool hasDottedPath = memchr(indexPaths[i], '.', indexPathsLengths[i]) !=
 									 NULL;
-				if (options->enableMetadataBasedTracking &&
-					EnableCompositeSecondaryPathOrderPushdown &&
-					!hasDottedPath)
+				if (options->enableMetadataBasedTracking && !hasDottedPath)
 				{
 					/* Reduced correlated term index, and secondary path, but it's
 					 * top level (not dotted) - eligible for pushdown

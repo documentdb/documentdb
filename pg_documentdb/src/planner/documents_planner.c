@@ -159,7 +159,6 @@ extern bool EnableDistinctCustomScan;
 extern bool EnableGroupByDistinctScan;
 extern bool EnableDistinctScanForGroupFirst;
 extern bool EnableMergeSortForInPrefix;
-extern bool EnablePartialFilterEvalOnPlanner;
 extern bool EnableRumIndexOnlyScanProjectionWrapper;
 extern bool EnableSupportObjectIdFunctionPfePushdown;
 
@@ -1115,8 +1114,7 @@ ExtensionGetRelationInfoHookCore(PlannerInfo *root, Oid relationObjectId,
 				firstIndex->amcanparallel = true;
 			}
 
-			if (EnablePartialFilterEvalOnPlanner &&
-				list_length(firstIndex->indpred) > 0)
+			if (list_length(firstIndex->indpred) > 0)
 			{
 				pfeIndexes = lappend(pfeIndexes, firstIndex);
 			}
@@ -1124,8 +1122,7 @@ ExtensionGetRelationInfoHookCore(PlannerInfo *root, Oid relationObjectId,
 	}
 
 
-	if (EnablePartialFilterEvalOnPlanner &&
-		list_length(pfeIndexes) > 0)
+	if (list_length(pfeIndexes) > 0)
 	{
 		/* Create a temporary memory context for this */
 		MemoryContext tempContext = AllocSetContextCreate(CurrentMemoryContext,

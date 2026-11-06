@@ -145,8 +145,7 @@ SELECT documentdb_api.drop_collection('gbmk_db', 'recs2');
 -- (cat). With reduced-correlated-terms planning on, an $elemMatch equality on
 -- the "tags" prefix binds the leading columns, and a $group/$sort on the
 -- trailing top-level "cat" path can stream its order out of the ordered index
--- scan -- but only a NON-leading (secondary) top-level path, which is gated by
--- documentdb.enable_composite_secondary_path_order_pushdown.
+-- scan for a NON-leading (secondary) top-level path.
 --
 -- Because the prefix is multi-key, a single document can match the $elemMatch
 -- through more than one array element, so the streamed scan can emit that
@@ -169,25 +168,24 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('gbmk_db',
 
 ANALYZE;
 
--- Flag OFF: the order-by on the secondary top-level "cat" path is NOT pushed
--- into the ordered index scan, so a blocking Sort appears and the index scan
--- has no "Order By:" line.
-set documentdb.enable_composite_secondary_path_order_pushdown to off;
+-- Group multi-key sort pushdown OFF: the secondary "cat" order is not pushed
+-- into the index scan, so a blocking Sort appears with no "Order By:" line.
+set documentdb.enable_group_by_multi_key_sort_pushdown to off;
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs3", "pipeline": [ { "$match": { "tags": { "$elemMatch": { "k": "x", "v": 1 } } } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } } ], "cursor": {}, "hint": "idx_tags_cat" }') $cmd$);
 
--- Flag ON: the order-by streams out of the ordered index scan (an "Order By:"
--- line, no blocking Sort).
-set documentdb.enable_composite_secondary_path_order_pushdown to on;
+-- Group multi-key sort pushdown ON: the order streams out of the index
+-- (an "Order By:" line, no blocking Sort).
+set documentdb.enable_group_by_multi_key_sort_pushdown to on;
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs3", "pipeline": [ { "$match": { "tags": { "$elemMatch": { "k": "x", "v": 1 } } } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } } ], "cursor": {}, "hint": "idx_tags_cat" }') $cmd$);
 
 -- Correctness: the grouped counts are identical with the pushdown off and on.
 -- _id 1 (two matching elements) must contribute exactly once to "alpha", so the
 -- expected result is alpha:2, beta:1 regardless of the flag.
-set documentdb.enable_composite_secondary_path_order_pushdown to off;
+set documentdb.enable_group_by_multi_key_sort_pushdown to off;
 SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs3", "pipeline": [ { "$match": { "tags": { "$elemMatch": { "k": "x", "v": 1 } } } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
-set documentdb.enable_composite_secondary_path_order_pushdown to on;
+set documentdb.enable_group_by_multi_key_sort_pushdown to on;
 SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs3", "pipeline": [ { "$match": { "tags": { "$elemMatch": { "k": "x", "v": 1 } } } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
 
 SELECT documentdb_api.drop_collection('gbmk_db', 'recs3');

@@ -1975,16 +1975,6 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
       '{ "find": "coll_mk_pp_sort", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }')
 $cmd$);
 
--- Ignoring the per-path bitmask makes both paths potentially multi-key, so the
--- planner must fall back to a blocking Sort.
-SET documentdb.enablePerPathMultiKeySortPushdown TO off;
-SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
-    SELECT document FROM bson_aggregation_find('msdb',
-      '{ "find": "coll_mk_pp_sort", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }')
-$cmd$);
-RESET documentdb.enablePerPathMultiKeySortPushdown;
-
 -- A multi-key exploded column still needs the de-dup: _id 1 and 3 each carry
 -- both 1 and 4, so they arrive through both children and one copy is dropped.
 SET documentdb.enable_merge_sort_for_in_prefix TO off;

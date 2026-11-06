@@ -438,10 +438,8 @@ WHERE page_num < (SELECT MAX(page_num) FROM r3);
 
 RESET documentdb_rum.enable_page_fill_factor;
 
--- verify that inserts still respect fill factor 100 when the build comparator
--- optimization is disabled
+-- Verify that inserts respect fill factor 100 with numeric collation.
 SET documentdb_rum.rum_default_page_fill_factor TO 100;
-SET documentdb_rum.enable_compare_function_fmgr TO off;
 
 -- start with an empty index so retained pages do not affect the insert path
 TRUNCATE documentdb_data.documents_2105;
@@ -465,12 +463,11 @@ r3 AS (
     SELECT page_num, page_stats FROM r2 WHERE page_stats->>'flagsStr' = 'LEAF')
 SELECT CASE
     WHEN percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) BETWEEN 90 AND 130
-    THEN 'PASS: fill factor 100 respected on inserts when fmgr disabled'
-    ELSE 'FAIL: fill factor 100 NOT respected on inserts when fmgr disabled - test invalid'
+    THEN 'PASS: fill factor 100 respected on inserts with numeric collation'
+    ELSE 'FAIL: fill factor 100 NOT respected on inserts with numeric collation - test invalid'
 END AS fillfactor_check,
 percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) AS median_nentries
 FROM r3
 WHERE page_num < (SELECT MAX(page_num) FROM r3);
 
-RESET documentdb_rum.enable_compare_function_fmgr;
 RESET maintenance_work_mem;

@@ -27,14 +27,13 @@ SELECT collection_id FROM documentdb_api_catalog.collections WHERE collection_na
 ANALYZE documentdb_data.documents_:collection_id;
 
 -- ============================================================
--- Test 1: EXPLAIN distinct on indexed field - pushdown ON
+-- Test 1: EXPLAIN distinct on indexed field
 -- Sort should be absent, index provides ordering via Order By
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "a" }')
@@ -42,28 +41,12 @@ $cmd$);
 ROLLBACK;
 
 -- ============================================================
--- Test 2: EXPLAIN distinct on indexed field - pushdown OFF
--- Sort should be present
+-- Test 3: EXPLAIN distinct with filter
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
-
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "a" }')
-$cmd$);
-ROLLBACK;
-
--- ============================================================
--- Test 3: EXPLAIN distinct with filter - pushdown ON
--- ============================================================
-BEGIN;
-SET LOCAL enable_seqscan TO off;
-SET LOCAL enable_bitmapscan TO off;
-SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "a", "query": { "a": { "$gte": 5 } } }')
@@ -71,30 +54,18 @@ $cmd$);
 ROLLBACK;
 
 -- ============================================================
--- Test 4: Correctness - pushdown ON vs OFF should give same results
+-- Test 4: Correctness - indexed distinct results
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "a" }');
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "a" }');
 
 -- ============================================================
--- Test 5: Correctness with filter - pushdown ON vs OFF
+-- Test 5: Correctness with filter
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "a", "query": { "a": { "$lt": 3 } } }');
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "a", "query": { "a": { "$lt": 3 } } }');
 
 -- ============================================================
 -- Test 6: Correctness on field "b"
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "b" }');
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "b" }');
 
 -- ============================================================
@@ -107,9 +78,8 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 
--- After multikey insertion, Sort should reappear even with pushdown ON
+-- After multikey insertion, Sort should reappear
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "a" }')
 $cmd$);
@@ -119,10 +89,6 @@ ROLLBACK;
 SELECT documentdb_api.delete('dist_idx_db', '{ "delete": "dist_push", "deletes": [ { "q": { "_id": 999 }, "limit": 1 } ] }');
 
 -- Verify correctness after multikey (index remains multikey)
-SET documentdb.enableDistinctIndexPushdown TO on;
-SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "a" }');
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "a" }');
 
 -- ============================================================
@@ -141,7 +107,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 
 -- Multikey from the start: Sort should be present
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
@@ -150,14 +115,10 @@ $cmd$);
 ROLLBACK;
 
 -- Correctness
-SET documentdb.enableDistinctIndexPushdown TO on;
-SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_mk", "key": "arr" }');
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_mk", "key": "arr" }');
 
 -- ============================================================
--- Test 9: Sharded collection - distinct pushdown ON
+-- Test 9: Sharded collection - distinct pushdown
 -- Shard the collection and verify pushdown works per-shard
 -- ============================================================
 SELECT documentdb_api.create_collection('dist_idx_db', 'dist_push_sharded');
@@ -178,47 +139,21 @@ SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
 SET LOCAL citus.enable_local_execution TO off;
 SET LOCAL citus.explain_analyze_sort_method TO taskId;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 
--- Pushdown ON: each shard should use Index Scan with Order By, no Sort
+-- Each shard should use Index Scan with Order By, no Sort
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_sharded", "key": "a" }')
 $cmd$);
 ROLLBACK;
 
 -- ============================================================
--- Test 10: Sharded collection - distinct pushdown OFF
+-- Test 11: Sharded collection - correctness
 -- ============================================================
-BEGIN;
-SET LOCAL enable_seqscan TO off;
-SET LOCAL enable_bitmapscan TO off;
-SET LOCAL enable_hashagg TO off;
-SET LOCAL citus.enable_local_execution TO off;
-SET LOCAL citus.explain_analyze_sort_method TO taskId;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
-
--- Pushdown OFF: Sort should be present in each shard's plan
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_sharded", "key": "a" }')
-$cmd$);
-ROLLBACK;
-
--- ============================================================
--- Test 11: Sharded collection - correctness ON vs OFF
--- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_sharded", "key": "a" }');
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_sharded", "key": "a" }');
 
 -- ============================================================
 -- Test 12: Sharded collection - distinct with filter
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_sharded", "key": "a", "query": { "a": { "$gte": 7 } } }');
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_sharded", "key": "a", "query": { "a": { "$gte": 7 } } }');
 
 -- ============================================================
@@ -233,9 +168,8 @@ SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
 SET LOCAL citus.enable_local_execution TO off;
 SET LOCAL citus.explain_analyze_sort_method TO taskId;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 
--- After multikey, Sort should reappear even with pushdown ON
+-- After multikey, Sort should reappear
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_sharded", "key": "a" }')
 $cmd$);
@@ -273,9 +207,7 @@ SET LOCAL documentdb.useLocalExecutionShardQueries TO off;
 SET LOCAL documentdb_core.enableCollation TO on;
 SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
 SET LOCAL documentdb.enableIndexMetadataGlobalTracking TO on;
-SET LOCAL documentdb.enablePerPathMultiKeySortPushdown TO on;
 SET LOCAL documentdb.enable_group_by_multi_key_sort_pushdown TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SET LOCAL documentdb.enable_distinct_multi_key_sort_pushdown TO off;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$

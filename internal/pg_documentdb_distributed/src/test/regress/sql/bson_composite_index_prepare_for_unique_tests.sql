@@ -4,8 +4,6 @@ SET citus.next_shard_id TO 5880000;
 SET documentdb.next_collection_id TO 588000;
 SET documentdb.next_collection_index_id TO 588000;
 
-set documentdb.enablePrepareUnique to on;
-
 -- if documentdb_extended_rum exists, set alternate index handler
 SELECT pg_catalog.set_config('documentdb.alternate_index_handler_name', 'extended_rum', false), extname FROM pg_extension WHERE extname = 'documentdb_extended_rum';
 
@@ -68,12 +66,7 @@ SELECT documentdb_api.insert_one('prep_unique_db', 'collection', '{ "_id": 102, 
 -- but we already have a duplicate because prepareUnique doesn't enforce uniqueness on existing data.
 SELECT document from documentdb_data.documents_588001 where document @@ '{"a": 1}';
 
--- now convert it to unique (this should fail for GUC check)
-set documentdb.enableCollModUnique to off;
-SELECT documentdb_api.coll_mod('prep_unique_db', 'collection', '{ "collMod": "collection", "index": { "name": "a_1", "unique": true } }');
-
 -- now this fails with existing unique violations
-set documentdb.enableCollModUnique to on;
 SELECT documentdb_api.coll_mod('prep_unique_db', 'collection', '{ "collMod": "collection", "index": { "name": "a_1", "unique": true } }');
 
 -- now drop the duplicate
@@ -166,10 +159,6 @@ SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.
 
 \d documentdb_data.documents_588002;
 
--- turn off feature, should fail
-set documentdb.enablePrepareUnique to off;
-SELECT documentdb_api.coll_mod('prep_unique_db', 'collection', '{ "collMod": "collection", "index": { "name": "f_1", "prepareUnique": true } }');
-
 SELECT documentdb_api.drop_collection('prep_unique_db', 'collection');
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently('prep_unique_db', '{ "createIndexes": "collection", "indexes": [ { "name": "f_1", "key": { "f": 1 }, "storageEngine": { "enableOrderedIndex": true, "buildAsUnique": true } } ] }', TRUE);
@@ -178,8 +167,6 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('prep_unique_db',
 SELECT documentdb_api.create_user('{"createUser":"newPrepareUniqueUser", "pwd":"Admin123!", "roles":[{"role":"readWriteAnyDatabase","db":"admin"}, {"role":"clusterAdmin","db":"admin"}]}');
 
 \c - newPrepareUniqueUser
-set documentdb.enablePrepareUnique to on;
-
 SELECT documentdb_api.coll_mod('prep_unique_db', 'collection', '{ "collMod": "collection", "index": { "name": "f_1", "prepareUnique": true } }');
 
 \d documentdb_data.documents_588003;
@@ -206,7 +193,6 @@ SELECT documentdb_api.insert_one('prep_unique_db', 'shard_collection', '{ "_id":
 SELECT document FROM documentdb_api_catalog.bson_aggregation_find('prep_unique_db', '{ "find": "shard_collection", "filter": { "a": 50 } }');
 
 -- this fails (one shard has a duplicate)
-set documentdb.enableCollModUnique to on;
 SELECT documentdb_api.coll_mod('prep_unique_db', 'shard_collection', '{ "collMod": "shard_collection", "index": { "name": "a_1_shard", "unique": true } }');
 
 -- fixing the duplicates allows it to go through

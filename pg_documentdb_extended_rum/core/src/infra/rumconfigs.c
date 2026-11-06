@@ -45,10 +45,6 @@ PGDLLEXPORT bool RumEnableXlogInsertEntry = RUM_DEFAULT_ENABLE_XLOG_INSERT_ENTRY
 #define RUM_DEFAULT_ENABLE_CUSTOM_XLOG_RMRG false
 PGDLLEXPORT bool EnableCustomXlogRmgr = RUM_DEFAULT_ENABLE_CUSTOM_XLOG_RMRG;
 
-/* FeatureFlag: Added in v0.114, enabled in v0.114, remove after v1.0 */
-#define RUM_DEFAULT_ENABLE_COMPARE_FUNCTION_FMGR true
-PGDLLEXPORT bool EnableRumCompareFunctionFmgr = RUM_DEFAULT_ENABLE_COMPARE_FUNCTION_FMGR;
-
 /* FeatureFlag: Added in v0.108, enabled in v0.108, remove after v1.3 */
 #define RUM_DEFAULT_FIX_INCOMPLETE_SPLIT true
 PGDLLEXPORT bool RumFixIncompleteSplit = RUM_DEFAULT_FIX_INCOMPLETE_SPLIT;
@@ -169,7 +165,7 @@ PGDLLEXPORT bool RumEnableTargetedPostingTreePruning =
 PGDLLEXPORT bool RumEnableSinglePassPostingTreeVacuum =
 	RUM_DEFAULT_ENABLE_SINGLE_PASS_POSTING_TREE_VACUUM;
 
-/* FeatureFlag: Added in v1.0, Pending stabilization, enable on v1.2 */
+/* FeatureFlag: Added in v1.0, Pending stabilization, enable on v1.3 */
 #define RUM_DEFAULT_ENABLE_VACUUM_CLEANUP_POSTING_TREE_PRUNING_IF_BULK_DELETE_SKIPPED \
 	false
 PGDLLEXPORT bool RumEnableVacuumCleanupPostingTreePruningIfBulkDeleteSkipped =
@@ -484,15 +480,6 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		NULL,
 		&EnableCustomXlogRmgr,
 		RUM_DEFAULT_ENABLE_CUSTOM_XLOG_RMRG,
-		PGC_USERSET, 0,
-		NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enable_compare_function_fmgr", documentDBRumGucPrefix),
-		"Sets whether or not to enable the use of the compare function in the fmgr",
-		NULL,
-		&EnableRumCompareFunctionFmgr,
-		RUM_DEFAULT_ENABLE_COMPARE_FUNCTION_FMGR,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 
