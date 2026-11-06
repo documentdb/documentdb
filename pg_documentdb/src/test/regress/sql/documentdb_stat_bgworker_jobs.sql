@@ -189,7 +189,7 @@ SELECT job_id, schedule_interval_seconds
 
 RESET documentdb.indexBuildScheduleInSec;
 
-SET documentdb.enable_cursor_cleanup_in_recovery TO true;
+SET documentdb.enable_cursor_cleanup_in_recovery TO false;
 
 SELECT job_id, enabled
     FROM documentdb_api_internal.documentdb_stat_bgworker_jobs
