@@ -182,7 +182,7 @@ SELECT job_id,
            '{"": null}'::documentdb_core.bson AS reset_ts_is_set
     FROM job_stats
     ORDER BY job_id;
- job_id | counters_are_nonnegative | counter_invariant_holds | failure_streak_is_valid | cumulative_state_is_coherent | event_driven_durations_are_null | reset_ts_is_set
+ job_id | counters_are_nonnegative | counter_invariant_holds | failure_streak_is_valid | cumulative_state_is_coherent | event_driven_durations_are_null | reset_ts_is_set 
 --------+--------------------------+-------------------------+-------------------------+------------------------------+---------------------------------+-----------------
      90 | t                        | t                       | t                       | t                            | t                               | t
      91 | t                        | t                       | t                       | t                            | t                               | t
@@ -210,7 +210,7 @@ SELECT job_id, job_name, command, schedule_interval_seconds, timeout_seconds, en
 --------+------------------------------------------+--------------------------------------------------+---------------------------+-----------------+---------+----------------------------------------------------------------------------
      90 | documentdb_index_build_background_job_1  | documentdb_api_internal.build_index_background   |                        17 |             300 | t       | { "roleExecutionProfile" : "primaryOnly", "execCoordinatorOnly" : true }
      91 | documentdb_index_build_background_job_2  | documentdb_api_internal.build_index_background   |                        17 |             300 | t       | { "roleExecutionProfile" : "primaryOnly", "execCoordinatorOnly" : true }
-     92 | documentdb_cursor_cleanup_background_job | documentdb_api_internal.cursor_directory_cleanup |                        60 |             300 | f       | { "roleExecutionProfile" : "recoveryOnly", "execCoordinatorOnly" : false }
+     92 | documentdb_cursor_cleanup_background_job | documentdb_api_internal.cursor_directory_cleanup |                        60 |             300 | t       | { "roleExecutionProfile" : "recoveryOnly", "execCoordinatorOnly" : false }
 (3 rows)
 
 -- The two hook-resolved columns are point-in-time lookups, not cached values: changing
@@ -227,13 +227,13 @@ SELECT job_id, schedule_interval_seconds
 (3 rows)
 
 RESET documentdb.indexBuildScheduleInSec;
-SET documentdb.enable_cursor_cleanup_in_recovery TO true;
+SET documentdb.enable_cursor_cleanup_in_recovery TO false;
 SELECT job_id, enabled
     FROM documentdb_api_internal.documentdb_stat_bgworker_jobs
     WHERE job_id = 92;
  job_id | enabled 
 --------+---------
-     92 | t
+     92 | f
 (1 row)
 
 RESET documentdb.enable_cursor_cleanup_in_recovery;

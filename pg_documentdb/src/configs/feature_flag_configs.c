@@ -516,8 +516,8 @@ bool UseFileBasedPersistedDynamicCursors =
 #define DEFAULT_CLEANUP_CURSOR_FILES true
 bool CleanupCursorFiles = DEFAULT_CLEANUP_CURSOR_FILES;
 
-/* Added in v1.1, Pending stabilization, enable in v1.3 */
-#define DEFAULT_ENABLE_CURSOR_CLEANUP_IN_RECOVERY false
+/* Added in v1.1, enabled in v1.3, remove after v1.5 */
+#define DEFAULT_ENABLE_CURSOR_CLEANUP_IN_RECOVERY true
 bool EnableCursorCleanupInRecovery = DEFAULT_ENABLE_CURSOR_CLEANUP_IN_RECOVERY;
 
 /* Added in v0.114, enabled in v0.114, remove after v1.2 */
