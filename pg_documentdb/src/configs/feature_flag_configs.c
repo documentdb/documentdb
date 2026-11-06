@@ -661,8 +661,8 @@ bool EnableUniqueReindex = DEFAULT_ENABLE_UNIQUE_REINDEX;
 bool EnableNonBlockingUniqueIndexBuild =
 	DEFAULT_ENABLE_NON_BLOCKING_UNIQUE_INDEX_BUILD;
 
-/* Added in v0.114, Pending stabilization, enable in v1.2 */
-#define DEFAULT_ENABLE_COMPACT_VACUUM_FULL false
+/* Added in v0.114, enabled in v1.2, remove after v1.4 */
+#define DEFAULT_ENABLE_COMPACT_VACUUM_FULL true
 bool EnableCompactVacuumFull = DEFAULT_ENABLE_COMPACT_VACUUM_FULL;
 
 /* Added on v0.112, enabled on v0.115, remove after v1.0 */
