@@ -9,16 +9,23 @@
 
 use std::{
     future::Future,
-    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, OnceLock,
+    },
     time::Duration,
 };
 
+use tokio::sync::Semaphore;
 use tokio_postgres::{
     types::{ToSql, Type},
     Row,
 };
 
-use crate::postgres::{conn_mgmt::PoolConnection, PgDocument};
+use crate::{
+    error::{DocumentDBError, ErrorCode},
+    postgres::{conn_mgmt::PoolConnection, PgDocument},
+};
 
 /// Failure executing a SQL statement against the backend: either the backend
 /// rejected the statement or the connection's deadline expired first.
@@ -72,6 +79,19 @@ fn duration_to_nanos(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
 
+/// A cursor-capacity slot follows the backend's ownership, independently of
+/// the short-lived semaphore permit used to claim it.
+#[derive(Debug)]
+struct CursorConnectionReservation {
+    budget: Arc<Semaphore>,
+}
+
+impl Drop for CursorConnectionReservation {
+    fn drop(&mut self) {
+        self.budget.add_permits(1);
+    }
+}
+
 // Provides functions which coerce bson to BYTEA. Any statement binding a PgDocument should use query_typed and not query
 // WrongType { postgres: Other(Other { name: "bson", oid: 18934, kind: Simple, schema: "schema_name" }), rust: "document_gateway::postgres::document::PgDocument" })
 // Will be occur if the wrong one is used.
@@ -94,6 +114,9 @@ pub struct Connection {
     /// Deadline to fall back to for a request that carries no timeout of its
     /// own. Inherited from the owning pool and never changes.
     default_command_deadline: Duration,
+    /// Counts this backend once while a persistent cursor owns it, including
+    /// during getMore when the cursor is temporarily absent from its store.
+    cursor_reservation: OnceLock<CursorConnectionReservation>,
 }
 
 /// Discard a connection if the caller drops a statement before it completes.
@@ -125,7 +148,36 @@ impl Connection {
             abandoned_deadline_nanos: AtomicU64::new(0),
             command_deadline_nanos: AtomicU64::new(duration_to_nanos(command_deadline)),
             default_command_deadline: command_deadline,
+            cursor_reservation: OnceLock::new(),
         }
+    }
+
+    pub(super) fn reserve_cursor_connection(
+        &self,
+        budget: &Arc<Semaphore>,
+    ) -> std::result::Result<(), DocumentDBError> {
+        if self.cursor_reservation.get().is_some() {
+            return Ok(());
+        }
+        let reservation_budget = Arc::clone(budget);
+        // Transfer responsibility for returning the slot to the backend's
+        // reservation, which outlives individual cursor requests.
+        budget
+            .try_acquire()
+            .map_err(|_error| {
+                DocumentDBError::documentdb_error(
+                    ErrorCode::TooManyLogicalSessions,
+                    "Too many open cursors: close an existing cursor before opening another persistent cursor"
+                        .to_owned(),
+                )
+            })?
+            .forget();
+        // Concurrent cursors in one transaction share the backend and only
+        // need one reservation. A losing set returns its extra capacity.
+        let _ = self.cursor_reservation.set(CursorConnectionReservation {
+            budget: reservation_budget,
+        });
+        Ok(())
     }
 
     pub fn in_transaction(&self) -> bool {
@@ -495,7 +547,46 @@ mod tests {
             abandoned_deadline_nanos: AtomicU64::new(0),
             command_deadline_nanos: AtomicU64::new(duration_to_nanos(Duration::from_secs(30))),
             default_command_deadline: Duration::from_secs(30),
+            cursor_reservation: OnceLock::new(),
         }
+    }
+
+    #[test]
+    fn cursor_capacity_follows_the_last_connection_owner() {
+        let budget = Arc::new(Semaphore::new(1));
+        let first = Arc::new(deadline_connection());
+        first.reserve_cursor_connection(&budget).unwrap();
+        first.reserve_cursor_connection(&budget).unwrap();
+        let second = deadline_connection();
+        assert_eq!(
+            second
+                .reserve_cursor_connection(&budget)
+                .unwrap_err()
+                .error_code(),
+            ErrorCode::TooManyLogicalSessions
+        );
+
+        let remaining_owner = Arc::clone(&first);
+        drop(first);
+        assert!(
+            second.reserve_cursor_connection(&budget).is_err(),
+            "a live cursor or transaction still owns the reservation"
+        );
+        drop(remaining_owner);
+        second.reserve_cursor_connection(&budget).unwrap();
+        assert_eq!(budget.available_permits(), 0);
+        drop(second);
+        assert_eq!(budget.available_permits(), 1);
+    }
+
+    #[test]
+    fn rejected_cursor_reservation_can_be_retried() {
+        let budget = Arc::new(Semaphore::new(0));
+        let connection = deadline_connection();
+        assert!(connection.reserve_cursor_connection(&budget).is_err());
+        budget.add_permits(1);
+        connection.reserve_cursor_connection(&budget).unwrap();
+        assert_eq!(budget.available_permits(), 0);
     }
 
     #[tokio::test]
