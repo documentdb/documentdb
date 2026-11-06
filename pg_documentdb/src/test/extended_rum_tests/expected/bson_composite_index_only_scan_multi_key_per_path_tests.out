@@ -8,10 +8,8 @@ set documentdb.enableCompositeIndexPlanner to on;
 -- state (the mkp=true opclass option). Index-only-scan eligibility for the operators
 -- exercised below is decided per referenced column from this metadata.
 set documentdb.enableIndexMetadataGlobalTracking to on;
--- The per-path multi-key gate is what unlocks the relaxed operators ($ne,
--- $eq null, $eq [], $exists) and index-wide multi-key relaxation. Pin it on so the
--- plan shapes are deterministic regardless of the default.
-set documentdb.enablePerPathMultiKeySortPushdown to on;
+-- Per-path multi-key metadata unlocks the relaxed operators ($ne,
+-- $eq null, $eq [], $exists) and index-wide multi-key relaxation.
 -- Keep this suite focused on index-only eligibility rather than group order pushdown.
 set documentdb.enable_group_by_multi_key_sort_pushdown to off;
 set documentdb.enableExtendedExplainPlans to on;
@@ -1518,31 +1516,6 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                Index Cond: (collection.document @!= '{ "addr.city" : "Reno" }'::bson)
 (15 rows)
 
--- ----------------------------------------------------------------------------
--- Feature flag OFF: the relaxed operators are no longer index-only eligible even on
--- the non-multi-key "region" (legacy behavior).
--- ----------------------------------------------------------------------------
-set documentdb.enablePerPathMultiKeySortPushdown to off;
-SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosmk_db', '{ "aggregate" : "coll", "pipeline" : [{ "$match" : { "region": { "$ne": "west" } } }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
-                                               run_explain_and_trim                                               
-------------------------------------------------------------------------------------------------------------------
- Aggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('count'::text, documentdb_api_internal.bsoncount(1))
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
-         namespaceName: iosmk_db.coll
-         indexName: region_tags_1
-         indexKey: {"region": 1,"tags": 1}
-         isMultiKey: true
-         multiKeyPaths: tags
-         indexBounds: ["region": [MinKey, MaxKey], "tags": (MinKey, MaxKey)]
-         innerScanLoops: 8 loops
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5)]
-         ->  Index Scan using region_tags_1 on documentdb_data.documents_43601 collection (actual rows=5 loops=1)
-               Index Cond: (collection.document @!= '{ "region" : "west" }'::bson)
-(14 rows)
-
-set documentdb.enablePerPathMultiKeySortPushdown to on;
 -- ----------------------------------------------------------------------------
 -- Correctness: index-only results for the relaxed operators match the documents.
 -- ----------------------------------------------------------------------------

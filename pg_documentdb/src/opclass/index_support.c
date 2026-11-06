@@ -349,15 +349,12 @@ extern bool EnableOrderByIndexTerm;
 extern bool EnableMultiKeyFilterIndexOnlyScan;
 extern bool TrackIndexOnlyScanFindCandidate;
 extern bool EnableExtendedIndexes;
-extern bool EnableDistinctIndexPushdown;
 extern bool EnableCollationWithNonUniqueOrderedIndexes;
-extern bool EnablePerPathMultiKeySortPushdown;
 extern bool EnableSupportFunctionIdPushdown;
 extern bool EnableGroupByMultiKeySortPushdown;
 extern bool EnableDistinctMultiKeySortPushdown;
 extern bool EnableSkipSortPushdownForNonPointEqualities;
 extern bool EnableCompositeReducedCorrelatedBoundsPlanning;
-extern bool EnableMergeSortForBitmapOr;
 extern bool EnableCrossIndexBitmapOrSortMerge;
 extern bool EnableCompositeReducedCorrelatedFirstOwnerFallback;
 extern bool EnableReducedCorrelatedNonMultiKeyOrderBy;
@@ -2773,22 +2770,6 @@ IndexClausesSupportIndexOnlyScan(IndexPath *indexPath,
 }
 
 
-static bool
-PlanHasAggregates(PlannerInfo *root)
-{
-	return list_length(root->agginfos) != 0 ||
-		   (root->parent_root != NULL && PlanHasAggregates(root->parent_root));
-}
-
-
-static bool
-PlanHasGroupBy(PlannerInfo *root)
-{
-	return list_length(root->group_pathkeys) != 0 ||
-		   (root->parent_root != NULL && PlanHasGroupBy(root->parent_root));
-}
-
-
 static pgbson *
 TryExtractPgbsonFromConst(Expr *expr)
 {
@@ -3193,8 +3174,7 @@ CheckFieldCoverage(Node *node, void *context)
 					state->hasUncoveredField = !isProjectionCoveredByIndex;
 					return state->hasUncoveredField;
 				}
-				else if (EnableDistinctIndexPushdown &&
-						 (funcExpr->funcid == BsonDistinctUnwindFunctionOid() ||
+				else if ((funcExpr->funcid == BsonDistinctUnwindFunctionOid() ||
 						  funcExpr->funcid ==
 						  BsonDistinctUnwindWithCollationFunctionOid()) &&
 						 IsA(secondArg, Const))
@@ -3283,18 +3263,7 @@ AreAllTargetsCoveredByIndex(PlannerInfo *root, IndexPath *indexPath,
 static bool
 IsQueryEligibleForIndexOnlyScan(PlannerInfo *root, Index scanRti, bool *hasDocumentVar)
 {
-	bool planHasAggregates = PlanHasAggregates(root);
-	bool planHasGroupby = PlanHasGroupBy(root);
-
-	/*
-	 * Always consider the non-distinct bucket: find projections are still gated
-	 * in CheckFieldCoverage, other covered queries convert on coverage alone, and
-	 * distinct uses its own GUC instead of the find-project feature.
-	 */
-	bool isDistinctQuery = root->parse->distinctClause != NIL;
-	bool considerBucket = !isDistinctQuery || EnableDistinctIndexPushdown;
-	if (root->hasJoinRTEs ||
-		(!planHasAggregates && !planHasGroupby && !considerBucket))
+	if (root->hasJoinRTEs)
 	{
 		return false;
 	}
@@ -3367,8 +3336,7 @@ IsCompositeIndexOnlyScanCandidate(const IndexPath *indexPath,
 
 	multiKeyState->isMultiKeyIndex = metadata->isMultiKey;
 	multiKeyState->multiKeyPathBitMask = metadata->multiKeyPathBitMask;
-	multiKeyState->isPerPathMultiKeyTracked = hasPerPathMetadata &&
-											  EnablePerPathMultiKeySortPushdown;
+	multiKeyState->isPerPathMultiKeyTracked = hasPerPathMetadata;
 
 	/* A multi-key index is only a candidate when per-path tracking gates each
 	 * referenced column; otherwise the whole index must be non-multi-key. */
@@ -4020,9 +3988,8 @@ GetSortDetails(PlannerInfo *root, Index rti, bool *hasGroupby,
 			*hasGroupby = true;
 			isGroupByEntry = true;
 		}
-		else if ((func->funcid == BsonDistinctUnwindFunctionOid() ||
-				  func->funcid == BsonDistinctUnwindWithCollationFunctionOid()) &&
-				 EnableDistinctIndexPushdown)
+		else if (func->funcid == BsonDistinctUnwindFunctionOid() ||
+				 func->funcid == BsonDistinctUnwindWithCollationFunctionOid())
 		{
 			/* Similar to $group case, reject if ORDER BY has already been seen */
 			if (hasOrderBy)
@@ -4126,7 +4093,7 @@ GetSortDetails(PlannerInfo *root, Index rti, bool *hasGroupby,
 
 		pgbsonelement sortElement;
 
-		if (EnableDistinctIndexPushdown && hasDistinct)
+		if (hasDistinct)
 		{
 			if (secondConst->consttype != TEXTOID || secondConst->constisnull)
 			{
@@ -5406,10 +5373,9 @@ TryBuildMergeSortInPrefixPlan(PlannerInfo *root, IndexOptInfo *indexInfo,
  * are already collapsed by the index AM's own per-scan heap-TID de-duplication.
  *
  * The per-path bitmask is only trustworthy when the index reports a per-path
- * breakdown (a zero mask means the metadata carried no breakdown) and
- * EnablePerPathMultiKeySortPushdown allows relying on it. Otherwise fall back to
- * the whole-index answer, matching how GetIndexColumnMultiKeyStatus gates the
- * same bitmask.
+ * breakdown (a zero mask means the metadata carried no breakdown). Otherwise
+ * fall back to the whole-index answer, matching how GetIndexColumnMultiKeyStatus
+ * gates the same bitmask.
  */
 static bool
 MergeSortInPrefixNeedsTidDedup(const MergeSortInPrefixPlan *plan,
@@ -5420,7 +5386,7 @@ MergeSortInPrefixNeedsTidDedup(const MergeSortInPrefixPlan *plan,
 		return false;
 	}
 
-	if (!EnablePerPathMultiKeySortPushdown || multiKeyBitMask == 0)
+	if (multiKeyBitMask == 0)
 	{
 		return true;
 	}
@@ -6125,14 +6091,8 @@ ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 				 * composite index scans into a MergeAppend that streams already sorted,
 				 * removing the blocking Sort. The default path requires branches to use
 				 * the same index; a separate feature flag permits different indexes that
-				 * provide identical pathkeys. Gated separately so it can be disabled
-				 * without turning off the $in-prefix merge-sort rewrite.
+				 * provide identical pathkeys.
 				 */
-				if (!EnableMergeSortForBitmapOr)
-				{
-					continue;
-				}
-
 				BitmapHeapPath *bitmapPath = (BitmapHeapPath *) path;
 				if (!IsA(bitmapPath->bitmapqual, BitmapOrPath))
 				{
@@ -6693,9 +6653,7 @@ ProcessOrderByStatements(PlannerInfo *root,
 							   (hasGroupby && EnableGroupByMultiKeySortPushdown);
 
 		bool rejectGroupByPushdown = true;
-		if (pushdownEnabled &&
-			EnablePerPathMultiKeySortPushdown &&
-			hasPerPathMetadata)
+		if (pushdownEnabled && hasPerPathMetadata)
 		{
 			rejectGroupByPushdown = false;
 			for (int col = minOrderByColumn; col <= maxOrderByColumn; col++)
@@ -6778,13 +6736,10 @@ ProcessOrderByStatements(PlannerInfo *root,
 		if (isMultiKeyIndex)
 		{
 			/*
-			 * Respect the per-path multi-key bitmask when the feature flag is on:
-			 * only treat this order-by column as multi-key if its own path bit is
-			 * set (or the bitmask is unavailable). When the flag is off, fall back
-			 * to treating every order-by column of a multi-key index as multi-key.
+			 * Treat this order-by column as multi-key if its own path bit is set
+			 * or the bitmask is unavailable.
 			 */
-			bool isMultiKeyPath = !EnablePerPathMultiKeySortPushdown ||
-								  multiKeyBitMask == 0 ||
+			bool isMultiKeyPath = multiKeyBitMask == 0 ||
 								  ((multiKeyBitMask & (UINT32_C(1) << i)) != 0);
 
 			/* For a multi-key index, all order by related paths must have no filter specifications */
@@ -6808,7 +6763,7 @@ ProcessOrderByStatements(PlannerInfo *root,
 						continue;
 					}
 
-					if (!EnablePerPathMultiKeySortPushdown || multiKeyBitMask == 0 ||
+					if (multiKeyBitMask == 0 ||
 						(multiKeyBitMask & (UINT32_C(1) << otherCol)) != 0)
 					{
 						hasOtherMultiKeyFilter = true;

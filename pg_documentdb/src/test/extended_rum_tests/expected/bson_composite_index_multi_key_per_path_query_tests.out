@@ -526,66 +526,6 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 (14 rows)
 
 -- ============================================================================
--- Scenario E: the enablePerPathMultiKeySortPushdown feature flag (default on).
---
--- This flag gates whether the per-path multi-key bitmask is respected at query time
--- when deciding order-by pushdown. Unlike Scenario D (which removed the per-path
--- metadata from the index at build time), here the index DOES carry per-path metadata
--- (built with tracking on); we toggle the query-time flag to show it controls whether
--- that metadata is honored. Reuses mkpq_coll_a3 (leading "a" multi-key, scalar "b")
--- with the Case A4 query (filter { a: 1, b: { $gte: 1 } }, sort { b: 1 }).
--- ============================================================================
--- Case E1 (flag off): with the flag off the bitmask is ignored, so every order-by
--- column of a multi-key index is treated as multi-key. The sort column "b" carries a
--- range filter, so the order by is NOT pushed (a Sort node sits above the Custom
--- Scan) -- the same outcome as before per-path tracking existed. Contrast with Case
--- A4, which pushes this exact query down with the flag on (the default).
-set documentdb.enablePerPathMultiKeySortPushdown to off;
-SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkpq_db', '{ "find": "mkpq_coll_a3", "filter": { "a": 1, "b": { "$gte": 1 } }, "sort": { "b": 1 }, "hint": "a_b_1" }') $cmd$);
-                                                              run_explain_and_trim                                                              
-------------------------------------------------------------------------------------------------------------------------------------------------
- Sort (actual rows=2 loops=1)
-   Sort Key: (bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
-         namespaceName: mkpq_db.mkpq_coll_a3
-         indexName: a_b_1
-         indexKey: {"a": 1,"b": 1}
-         isMultiKey: true
-         multiKeyPaths: a
-         indexBounds: ["a": [1, 1], "b": [1, Infinity]]
-         innerScanLoops: 3 loops
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
-         ->  Index Scan using a_b_1 on documents_13102 collection (actual rows=2 loops=1)
-               Index Cond: ((document @= '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document @>= '{ "b" : { "$numberInt" : "1" } }'::bson))
-(15 rows)
-
--- Case E2 (flag back on): restoring the flag re-enables per-path awareness, so the
--- sort column "b" (not multi-key) again pushes the order by down (Order By line, no
--- Sort node), matching Case A4.
-set documentdb.enablePerPathMultiKeySortPushdown to on;
-SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkpq_db', '{ "find": "mkpq_coll_a3", "filter": { "a": 1, "b": { "$gte": 1 } }, "sort": { "b": 1 }, "hint": "a_b_1" }') $cmd$);
-                                                           run_explain_and_trim                                                           
-------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
-   namespaceName: mkpq_db.mkpq_coll_a3
-   indexName: a_b_1
-   indexKey: {"a": 1,"b": 1}
-   isMultiKey: true
-   multiKeyPaths: a
-   indexBounds: ["a": [1, 1], "b": [1, Infinity]]
-   innerScanLoops: 3 loops
-   scanType: ordered
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
-   ->  Index Scan using a_b_1 on documents_13102 collection (actual rows=2 loops=1)
-         Index Cond: ((document @= '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document @>= '{ "b" : { "$numberInt" : "1" } }'::bson))
-         Order By: (document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson)
-(13 rows)
-
--- ============================================================================
 -- Scenario F: upgrade an existing index's opclass options in place via collMod
 -- "reindex".
 --
@@ -1085,7 +1025,7 @@ VACUUM (ANALYZE ON, FREEZE ON) documentdb_data.documents_13108
 -- filtered/covered path "country" is not multi-key (only "city" is). Per-path
 -- multi-key tracking gates index-only eligibility per column, not index-wide.
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('mkpq_db', '{ "aggregate" : "mkpq_ios", "pipeline" : [{ "$match" : { "country": { "$eq": "USA" } } }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
-                                               run_explain_and_trim                                                
+                                                  run_explain_and_trim
 ------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, documentdb_api_internal.bsoncount(1))

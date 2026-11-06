@@ -84,15 +84,6 @@ SELECT index_correlation_tests.classify_index_correlation(
     $q$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('corr_idb', '{ "find": "index_correlation", "filter": { "rnd": { "$gte": 100, "$lte": 2000 } }}') $q$,
     'rnd_tag_1');
 
--- With the statistics-based correlation feature flag disabled, the correlated
--- leading path falls back to the base access method estimate and is no longer
--- reported as highly correlated.
-set documentdb.enable_index_correlation_from_statistics to off;
-SELECT index_correlation_tests.classify_index_correlation(
-    $q$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('corr_idb', '{ "find": "index_correlation", "filter": { "seq": { "$gte": 100, "$lte": 300 } }}') $q$,
-    'seq_tag_1');
-reset documentdb.enable_index_correlation_from_statistics;
-
 -- ============================================================================
 -- Sort direction and descending (backward) index correlation.
 --

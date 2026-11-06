@@ -174,7 +174,7 @@ bool EnableVectorCalculateDefaultSearchParameter =
 #define DEFAULT_USE_NEW_COMPOSITE_INDEX_OPCLASS true
 bool DefaultUseCompositeOpClass = DEFAULT_USE_NEW_COMPOSITE_INDEX_OPCLASS;
 
-/* Added in v0.109, Pending stabilization, enable in v1.2 */
+/* Added in v0.109, Pending stabilization, enable in v1.4 */
 #define DEFAULT_ENABLE_COMPOSITE_INDEX_PLANNER false
 bool EnableCompositeIndexPlanner = DEFAULT_ENABLE_COMPOSITE_INDEX_PLANNER;
 
@@ -200,7 +200,7 @@ bool EnableBtreeOrderByWithFilters = DEFAULT_ENABLE_BTREE_ORDER_BY_WITH_FILTERS;
 bool EnableValueOnlyIndexTerms = DEFAULT_ENABLE_VALUE_ONLY_INDEX_TERMS;
 
 
-/* Added in v0.114, Pending stabilization, enable in v1.2 */
+/* Added in v0.114, Pending stabilization, enable in v1.4 */
 #define DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS false
 bool EnableFailureOnParallelIndexArrays = DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS;
 
@@ -288,11 +288,6 @@ bool EnableIndexMetadataGlobalTracking = DEFAULT_ENABLE_INDEX_METADATA_GLOBAL_TR
 #define DEFAULT_ENABLE_REQUEST_INDEX_NAME_CACHE true
 bool EnableRequestIndexNameCache = DEFAULT_ENABLE_REQUEST_INDEX_NAME_CACHE;
 
-/* Added on v0.115, enabled on v0.115, remove after v1.0 */
-#define DEFAULT_ENABLE_PER_PATH_MULTI_KEY_SORT_PUSHDOWN true
-bool EnablePerPathMultiKeySortPushdown =
-	DEFAULT_ENABLE_PER_PATH_MULTI_KEY_SORT_PUSHDOWN;
-
 /* Added in v0.116, enabled in v1.0, remove after v1.3 */
 #define DEFAULT_ENABLE_GROUP_BY_MULTI_KEY_SORT_PUSHDOWN true
 bool EnableGroupByMultiKeySortPushdown =
@@ -308,11 +303,6 @@ bool EnableDistinctMultiKeySortPushdown =
 bool EnableSkipSortPushdownForNonPointEqualities =
 	DEFAULT_ENABLE_SKIP_SORT_PUSHDOWN_FOR_NON_POINT_EQUALITIES;
 
-/* Added in v0.115, enabled in v0.115, remove after v1.0 */
-#define DEFAULT_ENABLE_INDEX_CORRELATION_FROM_STATISTICS true
-bool EnableIndexCorrelationFromStatistics =
-	DEFAULT_ENABLE_INDEX_CORRELATION_FROM_STATISTICS;
-
 /* Added in v1.1, enabled in v1.2, remove after v1.5 */
 #define DEFAULT_ENABLE_COMPOSITE_RANGE_SELECTIVITY true
 bool EnableCompositeRangeSelectivity =
@@ -323,12 +313,7 @@ bool EnableCompositeRangeSelectivity =
 bool EnableElemMatchSelectivityFromStats =
 	DEFAULT_ENABLE_ELEM_MATCH_SELECTIVITY_FROM_STATS;
 
-/* Added in v0.111, enabled in v0.115, remove after v1.0 */
-#define DEFAULT_ENABLE_PER_COLLECTION_PLANNER_STATISTICS true
-bool EnablePerCollectionPlannerStatistics =
-	DEFAULT_ENABLE_PER_COLLECTION_PLANNER_STATISTICS;
-
-/* Added in v0.113, Pending stabilization, enable in v1.2 */
+/* Added in v0.113, Pending stabilization, enable in v1.4 */
 #define DEFAULT_ENABLE_PLANNER_STATISTICS_NEW_COLLECTIONS false
 bool EnablePlannerStatisticsNewCollections =
 	DEFAULT_ENABLE_PLANNER_STATISTICS_NEW_COLLECTIONS;
@@ -374,17 +359,9 @@ bool EnableFullScanCostAndSelectivity =
 #define DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK true
 bool EnablePartialMatchHasRecheck = DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK;
 
-/* Added in v0.115, enabled in v0.115, remove after v1.0 */
-#define DEFAULT_ENABLE_PARTIAL_FILTER_EVAL_ON_PLANNER true
-bool EnablePartialFilterEvalOnPlanner = DEFAULT_ENABLE_PARTIAL_FILTER_EVAL_ON_PLANNER;
-
 /* Added in v0.117, Pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_HIGH_KEY_OPTIMIZATION false
 bool EnableHighKeyOptimization = DEFAULT_ENABLE_HIGH_KEY_OPTIMIZATION;
-
-/* Added in v0.114, enabled in v0.114, remove after v1.0 */
-#define DEFAULT_ENABLE_DISTINCT_INDEX_PUSHDOWN true
-bool EnableDistinctIndexPushdown = DEFAULT_ENABLE_DISTINCT_INDEX_PUSHDOWN;
 
 /* Added in v0.116, enabled in v1.0, remove after v1.4 */
 #define DEFAULT_ENABLE_DISTINCT_EXISTS_FILTER_PUSHDOWN true
@@ -436,18 +413,6 @@ bool EnableNonDynamicCursorParallelPlans =
 #define DEFAULT_ENABLE_SKIP_PARALLEL_PLANS_WITHOUT_STATS true
 bool EnableSkipParallelPlansWithoutStats =
 	DEFAULT_ENABLE_SKIP_PARALLEL_PLANS_WITHOUT_STATS;
-
-/* Tracks deduplication state for ordered multikey index scans and carries it
- * forward in the continuation so each document is returned at most once across
- * cursor batches. Enabled by default; can be disabled as an escape hatch. */
-
-/* Added in v0.116, enabled in v0.116, remove after v1.0 */
-#define DEFAULT_ENABLE_DYNAMIC_CURSOR_DEDUP_TRACKING true
-bool EnableDynamicCursorDedupTracking = DEFAULT_ENABLE_DYNAMIC_CURSOR_DEDUP_TRACKING;
-
-/* Added in v0.116, enabled in v0.116, remove after v1.0 */
-#define DEFAULT_ENABLE_GROUP_BY_DYNAMIC_STREAMING true
-bool EnableGroupByDynamicStreaming = DEFAULT_ENABLE_GROUP_BY_DYNAMIC_STREAMING;
 
 /* Added in v0.114, enabled in v0.114, remove after v1.2 */
 #define DEFAULT_ENABLE_INDEX_PATH_KEY_SUMMARIZATION true
@@ -538,19 +503,10 @@ bool EnableProjectPushUpBeforeUnwindWithGroup =
 #define DEFAULT_ENABLE_MERGE_SORT_FOR_IN_PREFIX false
 bool EnableMergeSortForInPrefix = DEFAULT_ENABLE_MERGE_SORT_FOR_IN_PREFIX;
 
-/* Added in v0.116, enabled in v0.116, remove after v1.0 */
-#define DEFAULT_ENABLE_MERGE_SORT_FOR_BITMAP_OR true
-bool EnableMergeSortForBitmapOr = DEFAULT_ENABLE_MERGE_SORT_FOR_BITMAP_OR;
-
 /* Added on v1.0, enabled on v1.1, remove after v1.5 */
 #define DEFAULT_ENABLE_CROSS_INDEX_BITMAP_OR_SORT_MERGE true
 bool EnableCrossIndexBitmapOrSortMerge =
 	DEFAULT_ENABLE_CROSS_INDEX_BITMAP_OR_SORT_MERGE;
-
-/* Added in v0.116, enabled in v0.116, remove after v1.0 */
-#define DEFAULT_ENABLE_COMPOSITE_SECONDARY_PATH_ORDER_PUSHDOWN true
-bool EnableCompositeSecondaryPathOrderPushdown =
-	DEFAULT_ENABLE_COMPOSITE_SECONDARY_PATH_ORDER_PUSHDOWN;
 
 /* Added on v1.1, enabled on v1.1, remove after v1.3 */
 #define DEFAULT_ENABLE_ORDERED_SAOP_MULTI_RANGE_SKIP_ADVANCE true
@@ -644,14 +600,6 @@ bool FailOnCollatedIndexTermTruncation =
 #define DEFAULT_ENABLE_SCHEMA_ENFORCEMENT_FOR_CSFLE true
 bool EnableSchemaEnforcementForCSFLE = DEFAULT_ENABLE_SCHEMA_ENFORCEMENT_FOR_CSFLE;
 
-/* Added in v0.109, enabled in v0.114, remove after v1.0 */
-#define DEFAULT_ENABLE_PREPARE_UNIQUE true
-bool EnablePrepareUnique = DEFAULT_ENABLE_PREPARE_UNIQUE;
-
-/* Added in v0.109, enabled in v0.114, remove after v1.0 */
-#define DEFAULT_ENABLE_COLLMOD_UNIQUE true
-bool EnableCollModUnique = DEFAULT_ENABLE_COLLMOD_UNIQUE;
-
 /* Added in v0.113, enabled in v0.113, remove after v1.2 */
 #define DEFAULT_ENABLE_UNIQUE_REINDEX true
 bool EnableUniqueReindex = DEFAULT_ENABLE_UNIQUE_REINDEX;
@@ -665,7 +613,7 @@ bool EnableNonBlockingUniqueIndexBuild =
 #define DEFAULT_ENABLE_COMPACT_VACUUM_FULL true
 bool EnableCompactVacuumFull = DEFAULT_ENABLE_COMPACT_VACUUM_FULL;
 
-/* Added on v0.112, enabled on v0.115, remove after v1.0 */
+/* Added on v0.112, enabled on v0.115, remove after v1.1 */
 #define DEFAULT_ENABLE_NEW_NAMESPACE_VALIDATION true
 bool EnableNewNamespaceValidation =
 	DEFAULT_ENABLE_NEW_NAMESPACE_VALIDATION;
@@ -689,7 +637,7 @@ bool EnableUpdateManyWorkerPushdown = DEFAULT_ENABLE_UPDATE_MANY_WORKER_PUSHDOWN
 /* Improves updateMany performance but can lead to deadlocks when concurrent writes update the same document */
 /* To enable this default we need to handle deadlock scenarios gracefully */
 
-/* Added in v0.114, Pending stabilization, enable in v1.2 */
+/* Added in v0.114, Pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_COMMUTATIVE_UPDATE_MANY false
 bool EnableCommutativeUpdateMany =
 	DEFAULT_ENABLE_COMMUTATIVE_UPDATE_MANY;
@@ -1085,28 +1033,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enable_dynamic_cursor_dedup_tracking", newGucPrefix),
-		gettext_noop(
-			"Whether dynamic cursors track deduplication state for ordered "
-			"multikey index scans and carry it forward in the continuation so "
-			"a document is returned at most once across cursor batches. When "
-			"disabled, ordered multikey scans do not track dedup state and may "
-			"re-emit a document across batches."),
-		NULL, &EnableDynamicCursorDedupTracking,
-		DEFAULT_ENABLE_DYNAMIC_CURSOR_DEDUP_TRACKING,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enable_group_by_dynamic_streaming", newGucPrefix),
-		gettext_noop(
-			"Whether or not to allow a fully pushable $group (with or without "
-			"accumulators) whose group keys can be provided in order by an index "
-			"to use a dynamic streaming cursor instead of a persisted cursor."),
-		NULL, &EnableGroupByDynamicStreaming,
-		DEFAULT_ENABLE_GROUP_BY_DYNAMIC_STREAMING,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enableIndexPathKeySummarization", newGucPrefix),
 		gettext_noop(
 			"Whether or not to enable summarization of index path keys."),
@@ -1294,26 +1220,10 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enable_partial_filter_eval_on_planner", newGucPrefix),
-		gettext_noop(
-			"Whether to enable partial filter evaluation on the planner."),
-		NULL, &EnablePartialFilterEvalOnPlanner,
-		DEFAULT_ENABLE_PARTIAL_FILTER_EVAL_ON_PLANNER,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enable_high_key_optimization", newGucPrefix),
 		gettext_noop(
 			"Whether to enable high key optimization for composite index scans."),
 		NULL, &EnableHighKeyOptimization, DEFAULT_ENABLE_HIGH_KEY_OPTIMIZATION,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableDistinctIndexPushdown", newGucPrefix),
-		gettext_noop(
-			"Whether to enable pushing down distinct operations to the index."),
-		NULL, &EnableDistinctIndexPushdown,
-		DEFAULT_ENABLE_DISTINCT_INDEX_PUSHDOWN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -1404,20 +1314,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enablePrepareUnique", newGucPrefix),
-		gettext_noop(
-			"Whether to enable prepareUnique for coll mod."),
-		NULL, &EnablePrepareUnique, DEFAULT_ENABLE_PREPARE_UNIQUE,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableCollModUnique", newGucPrefix),
-		gettext_noop(
-			"Whether to enable unique for coll mod."),
-		NULL, &EnableCollModUnique, DEFAULT_ENABLE_COLLMOD_UNIQUE,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enableUniqueReindex", newGucPrefix),
 		gettext_noop(
 			"Whether to enable unique reindex."),
@@ -1459,27 +1355,11 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enable_merge_sort_for_bitmap_or", newGucPrefix),
-		gettext_noop(
-			"Whether to push a composite index sort to a merge of the ordered per-branch index scans of a bitmap OR when the $or branches share the index and order-by suffix."),
-		NULL, &EnableMergeSortForBitmapOr,
-		DEFAULT_ENABLE_MERGE_SORT_FOR_BITMAP_OR,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enable_cross_index_bitmap_or_sort_merge", newGucPrefix),
 		gettext_noop(
 			"Whether to enable sort merge support for cross-index bitmap OR branches."),
 		NULL, &EnableCrossIndexBitmapOrSortMerge,
 		DEFAULT_ENABLE_CROSS_INDEX_BITMAP_OR_SORT_MERGE,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enable_composite_secondary_path_order_pushdown", newGucPrefix),
-		gettext_noop(
-			"Whether to push an order-by down to a non-leading top-level path of a composite index whose reduced correlated terms carry metadata-based tracking."),
-		NULL, &EnableCompositeSecondaryPathOrderPushdown,
-		DEFAULT_ENABLE_COMPOSITE_SECONDARY_PATH_ORDER_PUSHDOWN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -1591,14 +1471,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enablePerPathMultiKeySortPushdown", newGucPrefix),
-		gettext_noop(
-			"Whether to respect the per-path multi-key bitmask when deciding order-by pushdown for composite ordered indexes. When off, a multi-key index blocks order-by pushdown on any filtered sort column regardless of that column's per-path multi-key state."),
-		NULL, &EnablePerPathMultiKeySortPushdown,
-		DEFAULT_ENABLE_PER_PATH_MULTI_KEY_SORT_PUSHDOWN,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enable_group_by_multi_key_sort_pushdown", newGucPrefix),
 		gettext_noop(
 			"Whether to allow order-by pushdown for a group-by over a multi-key composite ordered index when the per-path multi-key bitmask proves the grouped/ordered columns are scalar. When off, any group-by on a multi-key index blocks order-by pushdown. De-duplication preserves one row per document when a multi-key equality prefix emits multiple matching index tuples."),
@@ -1621,14 +1493,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to skip order-by pushdown across equality predicates that span multiple index terms."),
 		NULL, &EnableSkipSortPushdownForNonPointEqualities,
 		DEFAULT_ENABLE_SKIP_SORT_PUSHDOWN_FOR_NON_POINT_EQUALITIES,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enable_index_correlation_from_statistics", newGucPrefix),
-		gettext_noop(
-			"Whether to source the physical-order correlation of a composite index's leading path from extended statistics during cost estimation. When off, the correlation defaults to the base access method estimate."),
-		NULL, &EnableIndexCorrelationFromStatistics,
-		DEFAULT_ENABLE_INDEX_CORRELATION_FROM_STATISTICS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -1746,14 +1610,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Determines whether to remove $match aggregation stage filters on namespace when inlined with $changestreams"),
 		NULL, &RemoveMatchNamespaceFilters,
 		DEFAULT_REMOVE_MATCH_NAMESPACE_FILTERS,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enablePerCollectionPlannerStatistics", newGucPrefix),
-		gettext_noop(
-			"Whether to enable per-collection planner statistics."),
-		NULL, &EnablePerCollectionPlannerStatistics,
-		DEFAULT_ENABLE_PER_COLLECTION_PLANNER_STATISTICS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

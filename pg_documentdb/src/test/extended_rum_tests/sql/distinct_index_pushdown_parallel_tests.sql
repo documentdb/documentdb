@@ -1,4 +1,4 @@
--- Characterizes how distinct index pushdown (documentdb.enableDistinctIndexPushdown)
+-- Characterizes how distinct index pushdown
 -- interacts with parallel composite index scans on the extended RUM access method.
 --
 -- Documented state (see per-part comments and the expected output):
@@ -12,8 +12,7 @@
 --     parallel plan invalid). Both a forced (2a) and a cost-chosen (2b) parallel
 --     plan work; parts 2c/2d repeat those cases with the distinct custom scan
 --     (enableDistinctCustomScan) also enabled.
---   * Part 3 - Parallel without pushdown: with the distinct index pushdown off the
---     order-by is NOT pushed to the field index; the plan falls back to a parallel
+--   * Part 3 - Parallel without index scans: the plan falls back to a parallel
 --     Seq Scan feeding a Sort + Unique.
 --
 -- Plans use EXPLAIN without ANALYZE so the shape is stable across PostgreSQL
@@ -54,7 +53,6 @@ SELECT COUNT(documentdb_api.insert_one('dist_par', 'dp',
 SELECT FORMAT('VACUUM FREEZE ANALYZE documentdb_data.documents_%s', :p_col) \gexec
 
 SET documentdb.enableExtendedExplainPlans TO on;
-SET documentdb.enableDistinctIndexPushdown TO on;
 -- Only add the shard_key_value predicate for primary-key (_id) filters, so the
 -- distinct scan on "a" is not forced to carry a shard_key_value qualifier.
 SET documentdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO on;
@@ -149,21 +147,22 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('
 ROLLBACK;
 
 -- ==========================================================================
--- Part 3: with distinct pushdown OFF the order-by is not pushed to idx_a - the
--- parallel plan falls back to a Seq Scan feeding a Sort + Unique.
+-- Part 3: disabling index scans exercises the parallel Seq Scan fallback
+-- feeding a Sort + Unique.
 -- ==========================================================================
 BEGIN;
 SET LOCAL parallel_tuple_cost TO 0;
 SET LOCAL parallel_setup_cost TO 0;
 SET LOCAL min_parallel_index_scan_size TO 0;
 SET LOCAL min_parallel_table_scan_size TO 0;
-SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_seqscan TO on;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
 SET LOCAL max_parallel_workers_per_gather TO 2;
 SET LOCAL documentdb.enableCompositeParallelIndexScan TO on;
 SET LOCAL documentdb.forceParallelScanIfAvailable TO on;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
+SET LOCAL enable_indexscan TO off;
+SET LOCAL enable_indexonlyscan TO off;
 SET LOCAL documentdb.enableExtendedExplainPlans TO off;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_par',

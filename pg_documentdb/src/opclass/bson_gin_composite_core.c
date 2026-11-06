@@ -47,7 +47,6 @@
  #include "utils/string_view.h"
  #include "utils/utf8_utils.h"
 
-extern bool EnablePerPathMultiKeySortPushdown;
 extern bool EnableSkipSettingOrderScanDirectionForFullScanExpr;
 extern bool EnableSingleBoundaryForDollarNotIn;
 
@@ -791,7 +790,7 @@ MergeSingleVariableBounds(List *boundsList, const char **wildcardPath,
 
 		if (hasArrayPaths)
 		{
-			if (multiKeyBitMask == 0 || !EnablePerPathMultiKeySortPushdown)
+			if (multiKeyBitMask == 0)
 			{
 				/* Can't merge since we don't have multi-path information */
 				continue;
@@ -1316,7 +1315,7 @@ ParseOperatorStrategy(const char **indexPaths, uint32_t *indexPathLengths,
 		pathMultiKeyState = IndexMultiKeyStatus_Unknown;
 	}
 	else if (hasArrayPaths &&
-			 (multiKeyBitMask == 0 || !EnablePerPathMultiKeySortPushdown ||
+			 (multiKeyBitMask == 0 ||
 			  (multiKeyBitMask & (UINT32_C(1) << i)) != 0))
 	{
 		pathMultiKeyState = IndexMultiKeyStatus_HasArrays;

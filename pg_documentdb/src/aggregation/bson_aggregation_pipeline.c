@@ -97,7 +97,6 @@ extern bool EnableScalarAggregateIndexPushdown;
 extern bool EnableScalarAggregateAccumulatorPathCollection;
 extern bool EnableProjectPushUpBeforeUnwindWithGroup;
 extern bool EnableSampleScanPushdownForDynamicCursor;
-extern bool EnableDistinctIndexPushdown;
 extern bool EnableDistinctExistsFilterPushdown;
 extern bool EnableSubqueryPushdownForMatchOnPersistedCursors;
 extern bool EnableSubqueryPushdownForGroup;
@@ -6002,7 +6001,7 @@ HandleDistinct(const StringView *distinctKey, Query *query,
 	parseState->p_next_resno = firstEntry->resno + 1;
 
 	/* Add the full scan expr to be able to push the sort to an index */
-	if (CanPushSortFilterToIndex(query, context) && EnableDistinctIndexPushdown)
+	if (CanPushSortFilterToIndex(query, context))
 	{
 		pgbsonelement sortSpecElement = { 0 };
 		sortSpecElement.path = distinctKey->string;

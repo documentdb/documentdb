@@ -32,7 +32,6 @@ set documentdb.enableIndexMetadataGlobalTracking to on;
 -- This suite intentionally exercises independent multi-key path topologies.
 -- Parallel-array rejection is covered by dedicated tests.
 set documentdb.enable_failure_on_parallel_index_arrays_for_metadata_tracking to off;
-set documentdb.enablePerPathMultiKeySortPushdown to on;
 set documentdb.enableExtendedExplainPlans to on;
 set documentdb.enableExplainScanIndexCosts to off;
 set enable_seqscan to off;

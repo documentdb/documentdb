@@ -44,7 +44,6 @@ extern bool EnableNativeColocation;
 extern int ShardingMaxChunks;
 extern char *ApiGucPrefixV2;
 extern bool EnableRbacCompliantSchemas;
-extern bool EnablePrepareUnique;
 
 /* Metadata about shard keys - this is unchanged through
  * iterating though the query for the shard key.
@@ -1717,22 +1716,19 @@ ShardCollectionCore(ShardCollectionArgs *args)
 	bool isPrepareUniqueArrayNull = true;
 	Datum prepareUniqueNamesArray = (Datum) 0;
 
-	if (EnablePrepareUnique)
-	{
-		/* Get prepareUnique index names that need to be converted after rebuilt. */
-		resetStringInfo(queryInfo);
-		appendStringInfo(queryInfo,
-						 " SELECT array_agg((index_spec).index_name)::text[] FROM %s.collection_indexes WHERE "
-						 "(index_is_valid OR %s.index_build_is_in_progress(index_id)) AND collection_id = %lu AND "
-						 "(index_spec).index_options::%s OPERATOR(%s.#=) '{\"prepareUnique\": true}';",
-						 ApiCatalogSchemaName, ApiInternalSchemaName,
-						 collection->collectionId, FullBsonTypeName,
-						 ApiCatalogSchemaName);
+	/* Get prepareUnique index names that need to be converted after rebuilt. */
+	resetStringInfo(queryInfo);
+	appendStringInfo(queryInfo,
+					 " SELECT array_agg((index_spec).index_name)::text[] FROM %s.collection_indexes WHERE "
+					 "(index_is_valid OR %s.index_build_is_in_progress(index_id)) AND collection_id = %lu AND "
+					 "(index_spec).index_options::%s OPERATOR(%s.#=) '{\"prepareUnique\": true}';",
+					 ApiCatalogSchemaName, ApiInternalSchemaName,
+					 collection->collectionId, FullBsonTypeName,
+					 ApiCatalogSchemaName);
 
-		prepareUniqueNamesArray = ExtensionExecuteQueryViaSPI(queryInfo->data, readOnly,
-															  SPI_OK_SELECT,
-															  &isPrepareUniqueArrayNull);
-	}
+	prepareUniqueNamesArray = ExtensionExecuteQueryViaSPI(queryInfo->data, readOnly,
+														  SPI_OK_SELECT,
+														  &isPrepareUniqueArrayNull);
 
 	/* Get extended index ids to be recreated from metadata, including valid and in-progress indexes*/
 	bool isExtendedIndexIdsArrayNull = true;
@@ -1820,7 +1816,7 @@ ShardCollectionCore(ShardCollectionArgs *args)
 		int savedGUCLevel = NewGUCNestLevel();
 		SetGUCLocally(psprintf("%s.defaultUseCompositeOpClass", ApiGucPrefixV2), "false");
 
-		bool buildAsUniqueForPrepareUnique = EnablePrepareUnique;
+		bool buildAsUniqueForPrepareUnique = true;
 		CreateIndexesArg createIndexesArg = ParseCreateIndexesArg(&databaseDatum,
 																  createIndexesMsg);
 		bool skipCheckCollectionCreate = createIndexesArg.blocking;

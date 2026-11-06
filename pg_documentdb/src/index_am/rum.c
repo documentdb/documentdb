@@ -54,7 +54,6 @@ extern bool EnableExtendedExplainPlans;
 extern bool EnableExplainScanIndexCosts;
 extern bool EnableOrderByIndexTerm;
 extern bool EnableMergeSortForInPrefix;
-extern bool EnableDynamicCursorDedupTracking;
 extern bool EnableCompositeRangeSelectivity;
 extern int MaxExplainIndexCosts;
 
@@ -1911,19 +1910,6 @@ DocumentDBRumGetCurrentIndexKey(IndexScanDesc scan, bytea **dedupState)
 
 	if (IsPathKeySummarizationScan(scan->indexRelation->rd_rel->relam))
 	{
-		/* When dedup tracking is disabled, do not request the dedup state from
-		 * the index: call without the out-pointer and report none, so no dedup
-		 * state is serialized into the continuation. */
-		if (!EnableDynamicCursorDedupTracking)
-		{
-			if (dedupState != NULL)
-			{
-				*dedupState = NULL;
-			}
-
-			return DirectFunctionCall1(getCurrentIndexKey, PointerGetDatum(scan));
-		}
-
 		return DirectFunctionCall2(getCurrentIndexKey, PointerGetDatum(scan),
 								   PointerGetDatum(dedupState));
 	}

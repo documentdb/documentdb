@@ -45,14 +45,13 @@ SELECT COUNT(documentdb_api.insert_one('dist_idx_db', 'dist_push', bson_build_do
 SELECT collection_id FROM documentdb_api_catalog.collections WHERE collection_name = 'dist_push' AND database_name = 'dist_idx_db' \gset
 ANALYZE documentdb_data.documents_:collection_id;
 -- ============================================================
--- Test 1: EXPLAIN distinct on indexed field - pushdown ON
+-- Test 1: EXPLAIN distinct on indexed field
 -- Sort should be absent, index provides ordering via Order By
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "a" }')
 $cmd$);
@@ -81,49 +80,12 @@ $cmd$);
 
 ROLLBACK;
 -- ============================================================
--- Test 2: EXPLAIN distinct on indexed field - pushdown OFF
--- Sort should be present
+-- Test 3: EXPLAIN distinct with filter
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "a" }')
-$cmd$);
-                                                                                                                                                                                                                              run_explain_and_trim                                                                                                                                                                                                                              
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Output: remote_scan.document
-   Task Count: 1
-   Tasks Shown: All
-   ->  Task
-         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text) AS document FROM documentdb_data.documents_1984601_198460002 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '1984601'::bigint) AND documentdb_api_internal.bson_dollar_distinct_exists(collection.document, '{ "a" : true }'::documentdb_core.bson))) agg_stage_0
-         Node: host=localhost port=58070 dbname=regression
-         ->  Aggregate
-               Output: documentdb_api_catalog.bson_distinct_agg((documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text)))
-               ->  Unique
-                     Output: (documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text))
-                     ->  Sort
-                           Output: (documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text))
-                           Sort Key: (documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text))
-                           ->  ProjectSet
-                                 Output: documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text)
-                                 ->  Index Scan using idx_a on documentdb_data.documents_1984601_198460002 collection
-                                       Output: collection.shard_key_value, collection.object_id, collection.document
-                                       Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : { "$minKey" : 1 } }'::documentdb_core.bson)
-(19 rows)
-
-ROLLBACK;
--- ============================================================
--- Test 3: EXPLAIN distinct with filter - pushdown ON
--- ============================================================
-BEGIN;
-SET LOCAL enable_seqscan TO off;
-SET LOCAL enable_bitmapscan TO off;
-SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "a", "query": { "a": { "$gte": 5 } } }')
 $cmd$);
@@ -152,16 +114,8 @@ $cmd$);
 
 ROLLBACK;
 -- ============================================================
--- Test 4: Correctness - pushdown ON vs OFF should give same results
+-- Test 4: Correctness - indexed distinct results
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "a" }');
-                                                                                                                                               document                                                                                                                                                
----------------------------------------------------------------------
- { "values" : [ { "$numberInt" : "0" }, { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" }, { "$numberInt" : "8" }, { "$numberInt" : "9" } ], "ok" : { "$numberDouble" : "1.0" } }
-(1 row)
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "a" }');
                                                                                                                                                document                                                                                                                                                
 ---------------------------------------------------------------------
@@ -169,16 +123,8 @@ SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "di
 (1 row)
 
 -- ============================================================
--- Test 5: Correctness with filter - pushdown ON vs OFF
+-- Test 5: Correctness with filter
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "a", "query": { "a": { "$lt": 3 } } }');
-                                                           document                                                            
----------------------------------------------------------------------
- { "values" : [ { "$numberInt" : "0" }, { "$numberInt" : "1" }, { "$numberInt" : "2" } ], "ok" : { "$numberDouble" : "1.0" } }
-(1 row)
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "a", "query": { "a": { "$lt": 3 } } }');
                                                            document                                                            
 ---------------------------------------------------------------------
@@ -188,14 +134,6 @@ SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "di
 -- ============================================================
 -- Test 6: Correctness on field "b"
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "b" }');
-                                    document                                    
----------------------------------------------------------------------
- { "values" : [ "A", "B", "C", "D", "E" ], "ok" : { "$numberDouble" : "1.0" } }
-(1 row)
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "b" }');
                                     document                                    
 ---------------------------------------------------------------------
@@ -216,8 +154,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
--- After multikey insertion, Sort should reappear even with pushdown ON
+-- After multikey insertion, Sort should reappear
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "a" }')
 $cmd$);
@@ -253,14 +190,6 @@ SELECT documentdb_api.delete('dist_idx_db', '{ "delete": "dist_push", "deletes":
 (1 row)
 
 -- Verify correctness after multikey (index remains multikey)
-SET documentdb.enableDistinctIndexPushdown TO on;
-SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "a" }');
-                                                                                                                                               document                                                                                                                                                
----------------------------------------------------------------------
- { "values" : [ { "$numberInt" : "0" }, { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" }, { "$numberInt" : "8" }, { "$numberInt" : "9" } ], "ok" : { "$numberDouble" : "1.0" } }
-(1 row)
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push", "key": "a" }');
                                                                                                                                                document                                                                                                                                                
 ---------------------------------------------------------------------
@@ -301,7 +230,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 -- Multikey from the start: Sort should be present
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_mk", "key": "arr" }')
@@ -331,14 +259,6 @@ $cmd$);
 
 ROLLBACK;
 -- Correctness
-SET documentdb.enableDistinctIndexPushdown TO on;
-SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_mk", "key": "arr" }');
-                                                                                   document                                                                                    
----------------------------------------------------------------------
- { "values" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" } ], "ok" : { "$numberDouble" : "1.0" } }
-(1 row)
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_mk", "key": "arr" }');
                                                                                    document                                                                                    
 ---------------------------------------------------------------------
@@ -346,7 +266,7 @@ SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "di
 (1 row)
 
 -- ============================================================
--- Test 9: Sharded collection - distinct pushdown ON
+-- Test 9: Sharded collection - distinct pushdown
 -- Shard the collection and verify pushdown works per-shard
 -- ============================================================
 SELECT documentdb_api.create_collection('dist_idx_db', 'dist_push_sharded');
@@ -383,8 +303,7 @@ SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
 SET LOCAL citus.enable_local_execution TO off;
 SET LOCAL citus.explain_analyze_sort_method TO taskId;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
--- Pushdown ON: each shard should use Index Scan with Order By, no Sort
+-- Each shard should use Index Scan with Order By, no Sort
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_sharded", "key": "a" }')
 $cmd$);
@@ -392,7 +311,7 @@ $cmd$);
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 86_1
+   ->  Distributed Subplan 85_1
          ->  Unique
                Output: remote_scan.document
                ->  Sort
@@ -418,81 +337,19 @@ $cmd$);
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('86_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('85_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate
                Output: documentdb_api_catalog.bson_distinct_agg(intermediate_result.document)
                ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                      Output: intermediate_result.document
-                     Function Call: read_intermediate_result('86_1'::text, 'binary'::citus_copy_format)
+                     Function Call: read_intermediate_result('85_1'::text, 'binary'::citus_copy_format)
 (35 rows)
 
 ROLLBACK;
 -- ============================================================
--- Test 10: Sharded collection - distinct pushdown OFF
+-- Test 11: Sharded collection - correctness
 -- ============================================================
-BEGIN;
-SET LOCAL enable_seqscan TO off;
-SET LOCAL enable_bitmapscan TO off;
-SET LOCAL enable_hashagg TO off;
-SET LOCAL citus.enable_local_execution TO off;
-SET LOCAL citus.explain_analyze_sort_method TO taskId;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
--- Pushdown OFF: Sort should be present in each shard's plan
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_sharded", "key": "a" }')
-$cmd$);
-                                                                                                                                            run_explain_and_trim                                                                                                                                             
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Output: remote_scan.document
-   ->  Distributed Subplan 88_1
-         ->  Unique
-               Output: remote_scan.document
-               ->  Sort
-                     Output: remote_scan.document
-                     Sort Key: remote_scan.document
-                     ->  Custom Scan (Citus Adaptive)
-                           Output: remote_scan.document
-                           Task Count: 8
-                           Tasks Shown: One of 8
-                           ->  Task
-                                 Query: SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text) AS document FROM documentdb_data.documents_1984603_198460008 collection WHERE documentdb_api_internal.bson_dollar_distinct_exists(document, '{ "a" : true }'::documentdb_core.bson)
-                                 Node: host=localhost port=58070 dbname=regression
-                                 ->  Unique
-                                       Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text))
-                                       ->  Sort
-                                             Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text))
-                                             Sort Key: (documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text))
-                                             ->  ProjectSet
-                                                   Output: documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text)
-                                                   ->  Index Scan using idx_a on documentdb_data.documents_1984603_198460008 collection
-                                                         Output: shard_key_value, object_id, document
-                                                         Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : { "$minKey" : 1 } }'::documentdb_core.bson)
-   Task Count: 1
-   Tasks Shown: All
-   ->  Task
-         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('88_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_0
-         Node: host=localhost port=58070 dbname=regression
-         ->  Aggregate
-               Output: documentdb_api_catalog.bson_distinct_agg(intermediate_result.document)
-               ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
-                     Output: intermediate_result.document
-                     Function Call: read_intermediate_result('88_1'::text, 'binary'::citus_copy_format)
-(35 rows)
-
-ROLLBACK;
--- ============================================================
--- Test 11: Sharded collection - correctness ON vs OFF
--- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_sharded", "key": "a" }');
-                                                                                                                                               document                                                                                                                                                
----------------------------------------------------------------------
- { "values" : [ { "$numberInt" : "0" }, { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" }, { "$numberInt" : "8" }, { "$numberInt" : "9" } ], "ok" : { "$numberDouble" : "1.0" } }
-(1 row)
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_sharded", "key": "a" }');
                                                                                                                                                document                                                                                                                                                
 ---------------------------------------------------------------------
@@ -502,14 +359,6 @@ SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "di
 -- ============================================================
 -- Test 12: Sharded collection - distinct with filter
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_sharded", "key": "a", "query": { "a": { "$gte": 7 } } }');
-                                                           document                                                            
----------------------------------------------------------------------
- { "values" : [ { "$numberInt" : "7" }, { "$numberInt" : "8" }, { "$numberInt" : "9" } ], "ok" : { "$numberDouble" : "1.0" } }
-(1 row)
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_sharded", "key": "a", "query": { "a": { "$gte": 7 } } }');
                                                            document                                                            
 ---------------------------------------------------------------------
@@ -532,8 +381,7 @@ SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
 SET LOCAL citus.enable_local_execution TO off;
 SET LOCAL citus.explain_analyze_sort_method TO taskId;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
--- After multikey, Sort should reappear even with pushdown ON
+-- After multikey, Sort should reappear
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_idx_db', '{ "distinct": "dist_push_sharded", "key": "a" }')
 $cmd$);
@@ -541,7 +389,7 @@ $cmd$);
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 99_1
+   ->  Distributed Subplan 92_1
          ->  Unique
                Output: remote_scan.document
                ->  Sort
@@ -567,13 +415,13 @@ $cmd$);
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('99_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('92_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate
                Output: documentdb_api_catalog.bson_distinct_agg(intermediate_result.document)
                ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                      Output: intermediate_result.document
-                     Function Call: read_intermediate_result('99_1'::text, 'binary'::citus_copy_format)
+                     Function Call: read_intermediate_result('92_1'::text, 'binary'::citus_copy_format)
 (35 rows)
 
 ROLLBACK;
@@ -633,9 +481,7 @@ SET LOCAL documentdb.useLocalExecutionShardQueries TO off;
 SET LOCAL documentdb_core.enableCollation TO on;
 SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
 SET LOCAL documentdb.enableIndexMetadataGlobalTracking TO on;
-SET LOCAL documentdb.enablePerPathMultiKeySortPushdown TO on;
 SET LOCAL documentdb.enable_group_by_multi_key_sort_pushdown TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SET LOCAL documentdb.enable_distinct_multi_key_sort_pushdown TO off;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
@@ -645,7 +491,7 @@ $cmd$);
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 336_1
+   ->  Distributed Subplan 329_1
          ->  Unique
                Output: remote_scan.document
                ->  Sort
@@ -671,13 +517,13 @@ $cmd$);
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('336_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_1
+         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('329_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_1
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate
                Output: documentdb_api_catalog.bson_distinct_agg(intermediate_result.document)
                ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                      Output: intermediate_result.document
-                     Function Call: read_intermediate_result('336_1'::text, 'binary'::citus_copy_format)
+                     Function Call: read_intermediate_result('329_1'::text, 'binary'::citus_copy_format)
 (35 rows)
 
 WITH result AS (
@@ -700,7 +546,7 @@ $cmd$);
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 342_1
+   ->  Distributed Subplan 335_1
          ->  Unique
                Output: remote_scan.document
                ->  Sort
@@ -726,13 +572,13 @@ $cmd$);
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('342_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_1
+         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('335_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_1
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate
                Output: documentdb_api_catalog.bson_distinct_agg(intermediate_result.document)
                ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                      Output: intermediate_result.document
-                     Function Call: read_intermediate_result('342_1'::text, 'binary'::citus_copy_format)
+                     Function Call: read_intermediate_result('335_1'::text, 'binary'::citus_copy_format)
 (35 rows)
 
 WITH result AS (

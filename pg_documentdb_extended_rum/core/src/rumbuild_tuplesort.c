@@ -480,7 +480,7 @@ tuplesort_begin_indexbuild_rum(Relation heapRel,
 			cmpFunc = typentry->cmp_proc_finfo.fn_oid;
 			PrepareSortSupportComparisonShim(cmpFunc, sortKey);
 		}
-		else if (compareFn[i].fn_oid == cmpFunc && EnableRumCompareFunctionFmgr)
+		else if (compareFn[i].fn_oid == cmpFunc)
 		{
 			sortKey->comparator = rum_indexbuild_comparator_shim;
 			sortKey->ssup_extra = (void *) &compareFn[i];

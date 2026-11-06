@@ -14,10 +14,6 @@ set documentdb.enableIndexMetadataGlobalTracking to on;
 -- This suite intentionally exercises independent multi-key paths. Parallel-array
 -- rejection is covered by dedicated tests.
 set documentdb.enable_failure_on_parallel_index_arrays_for_metadata_tracking to off;
--- Respect the per-path multi-key bitmask when deciding order-by pushdown for the
--- ORDER BY cases below. This defaults to on; it is pinned explicitly so the order-by
--- plan shapes (Cases 2b, 5b) are deterministic regardless of the default.
-set documentdb.enablePerPathMultiKeySortPushdown to on;
 set documentdb.enableExtendedExplainPlans to on;
 -- Suppress per-index cost details so explain output is stable across runs.
 set documentdb.enableExplainScanIndexCosts to off;
@@ -71,9 +67,6 @@ set enable_bitmapscan to off;
 -- is scalar its bounds still merge, distinguishing per-path tracking from an
 -- index-wide multi-key flag (which would have blocked the merge).
 --
--- The per-path merge is gated on documentdb.enablePerPathMultiKeySortPushdown; the
--- final scenario re-runs Cases 4/4b/5/5b with that flag OFF and confirms they revert
--- to the conservative two-bound (un-merged) behavior.
 -- ============================================================================
 -- ----------------------------------------------------------------------------
 -- Fixture 1: a fully scalar collection on a composite (a, b, c) ordered index.
@@ -81,7 +74,7 @@ set enable_bitmapscan to off;
 -- multi-key).
 -- ----------------------------------------------------------------------------
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkf_db', '{ "createIndexes": "scalar_coll", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1 }, "name": "a_b_c_1", "enableOrderedIndex": 1 } ] }');
-psql:sql/bson_composite_index_multi_key_per_path_filter_tests.sql:89: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_filter_tests.sql:81: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -171,7 +164,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 -- scalar "b" should merge, but currently does not).
 -- ----------------------------------------------------------------------------
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkf_db', '{ "createIndexes": "a_multikey_coll", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1", "enableOrderedIndex": 1 } ] }');
-psql:sql/bson_composite_index_multi_key_per_path_filter_tests.sql:117: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_filter_tests.sql:109: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -264,7 +257,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 -- keeps both bounds).
 -- ----------------------------------------------------------------------------
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkf_db', '{ "createIndexes": "b_multikey_coll", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1", "enableOrderedIndex": 1 } ] }');
-psql:sql/bson_composite_index_multi_key_per_path_filter_tests.sql:150: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_filter_tests.sql:142: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -354,7 +347,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 -- Exercises Rule 3 on the leading path "a".
 -- ----------------------------------------------------------------------------
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkf_db', '{ "createIndexes": "both_multikey_coll", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1", "enableOrderedIndex": 1 } ] }');
-psql:sql/bson_composite_index_multi_key_per_path_filter_tests.sql:178: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_filter_tests.sql:170: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -414,121 +407,6 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 (12 rows)
 
 -- ============================================================================
--- Scenario: the per-path merge is gated on documentdb.enablePerPathMultiKeySortPushdown.
--- With the flag OFF, the merge logic can no longer trust the per-path multi-key
--- bitmask, so any multi-key index falls back to the conservative index-wide rule:
--- a filtered path's multiple bounds are NOT merged even when that path is itself
--- scalar. This reverts Cases 4, 4b, 5, 5b to two separate bound sets (the "diverged"
--- behavior), while the already-merged scalar-index Cases 2/2b are unaffected (they
--- have no multi-key path so the gate never engages).
--- ============================================================================
-set documentdb.enablePerPathMultiKeySortPushdown to off;
--- Case 4-off (reverts): scalar path "b" range, index multi-key via "a". With the flag
--- off the bounds on "b" are NO LONGER merged -- indexBounds renders TWO bound sets on
--- "b", matching the conservative index-wide behavior.
-SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "a_multikey_coll", "filter": { "b": { "$gt": 1, "$lt": 10 } }, "hint": "a_b_1" }') $cmd$);
-                                                           run_explain_and_trim                                                           
-------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
-   namespaceName: mkf_db.a_multikey_coll
-   indexName: a_b_1
-   indexKey: {"a": 1,"b": 1}
-   isMultiKey: true
-   multiKeyPaths: a
-   indexBounds: ["a": (MinKey, MaxKey), "b": (1, Infinity]], ["a": (MinKey, MaxKey), "b": [-Infinity, 10)]
-   innerScanLoops: 2 loops
-   scanType: regular
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3), (isInequality: true, estimatedEntryCount: 3)]
-   ->  Index Scan using a_b_1 on documents_21102 collection (actual rows=2 loops=1)
-         Index Cond: ((document @> '{ "b" : { "$numberInt" : "1" } }'::bson) AND (document @< '{ "b" : { "$numberInt" : "10" } }'::bson))
-(12 rows)
-
--- Case 4b-off (reverts): equality on "a" plus scalar "b" range; "b" bounds revert to
--- two separate bound sets.
-SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "a_multikey_coll", "filter": { "a": 7, "b": { "$gt": 1, "$lt": 10 } }, "hint": "a_b_1" }') $cmd$);
-                                                                                        run_explain_and_trim                                                                                         
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
-   namespaceName: mkf_db.a_multikey_coll
-   indexName: a_b_1
-   indexKey: {"a": 1,"b": 1}
-   isMultiKey: true
-   multiKeyPaths: a
-   indexBounds: ["a": [7, 7], "b": (1, Infinity]], ["a": [7, 7], "b": [-Infinity, 10)]
-   innerScanLoops: 1 loops
-   scanType: regular
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1), (isInequality: true, estimatedEntryCount: 1)]
-   ->  Index Scan using a_b_1 on documents_21102 collection (actual rows=1 loops=1)
-         Index Cond: ((document @= '{ "a" : { "$numberInt" : "7" } }'::bson) AND (document @> '{ "b" : { "$numberInt" : "1" } }'::bson) AND (document @< '{ "b" : { "$numberInt" : "10" } }'::bson))
-(12 rows)
-
--- Case 5-off (reverts): scalar leading path "a" range, index multi-key via "b". The
--- bounds on "a" revert to two separate bound sets.
-SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "b_multikey_coll", "filter": { "a": { "$gt": 1, "$lt": 10 } }, "hint": "a_b_1" }') $cmd$);
-                                                           run_explain_and_trim                                                           
-------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
-   namespaceName: mkf_db.b_multikey_coll
-   indexName: a_b_1
-   indexKey: {"a": 1,"b": 1}
-   isMultiKey: true
-   multiKeyPaths: b
-   indexBounds: ["a": (1, Infinity], "b": (MinKey, MaxKey)], ["a": [-Infinity, 10), "b": (MinKey, MaxKey)]
-   innerScanLoops: 2 loops
-   scanType: regular
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3), (isInequality: true, estimatedEntryCount: 3)]
-   ->  Index Scan using a_b_1 on documents_21103 collection (actual rows=2 loops=1)
-         Index Cond: ((document @> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document @< '{ "a" : { "$numberInt" : "10" } }'::bson))
-(12 rows)
-
--- Case 5b-off (reverts): the same scalar-"a" range with a sort on "a". With the flag
--- off the per-path order-by pushdown is also disabled, so a separate Sort node appears
--- above a regular index scan whose bounds on "a" are the two un-merged bound sets.
-SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "b_multikey_coll", "filter": { "a": { "$gt": 1, "$lt": 10 } }, "sort": { "a": 1 }, "hint": "a_b_1" }') $cmd$);
-                                                              run_explain_and_trim                                                              
-------------------------------------------------------------------------------------------------------------------------------------------------
- Sort (actual rows=2 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
-         namespaceName: mkf_db.b_multikey_coll
-         indexName: a_b_1
-         indexKey: {"a": 1,"b": 1}
-         isMultiKey: true
-         multiKeyPaths: b
-         indexBounds: ["a": (1, Infinity], "b": (MinKey, MaxKey)], ["a": [-Infinity, 10), "b": (MinKey, MaxKey)]
-         innerScanLoops: 2 loops
-         scanType: regular
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3), (isInequality: true, estimatedEntryCount: 3)]
-         ->  Index Scan using a_b_1 on documents_21103 collection (actual rows=2 loops=1)
-               Index Cond: ((document @> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document @< '{ "a" : { "$numberInt" : "10" } }'::bson))
-(15 rows)
-
--- Control: a fully scalar index (Case 2) still merges with the flag off, because it
--- has no multi-key path and the gate never engages.
-SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "scalar_coll", "filter": { "a": { "$gt": 1, "$lt": 10 } }, "hint": "a_b_c_1" }') $cmd$);
-                                                           run_explain_and_trim                                                           
-------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
-   namespaceName: mkf_db.scalar_coll
-   indexName: a_b_c_1
-   indexKey: {"a": 1,"b": 1,"c": 1}
-   isMultiKey: false
-   indexBounds: ["a": (1, 10), "b": (MinKey, MaxKey), "c": (MinKey, MaxKey)]
-   innerScanLoops: 3 loops
-   scanType: ordered
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
-   ->  Index Scan using a_b_c_1 on documents_21101 collection (actual rows=3 loops=1)
-         Index Cond: ((document @> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document @< '{ "a" : { "$numberInt" : "10" } }'::bson))
-(11 rows)
-
-set documentdb.enablePerPathMultiKeySortPushdown to on;
--- ============================================================================
 -- Per-path multi-key RUNTIME RECHECK gating for $eq null and the range operators
 -- against null ($gt / $gte / $lt / $lte), plus the scalar-value negations
 -- $ne <scalar> / $nin <scalars>.
@@ -568,7 +446,7 @@ set documentdb.enablePerPathMultiKeySortPushdown to on;
 -- no "Rows Removed by Index Recheck" line, and the results are still correct.
 -- ----------------------------------------------------------------------------
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkf_db', '{ "createIndexes": "null_scalar_coll", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1", "enableOrderedIndex": 1 } ] }');
-psql:sql/bson_composite_index_multi_key_per_path_filter_tests.sql:273: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_filter_tests.sql:226: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -658,7 +536,7 @@ SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "null_scalar_col
 -- empty-array document.
 -- ----------------------------------------------------------------------------
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkf_db', '{ "createIndexes": "null_mk_coll", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1", "enableOrderedIndex": 1 } ] }');
-psql:sql/bson_composite_index_multi_key_per_path_filter_tests.sql:296: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_filter_tests.sql:249: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -726,7 +604,7 @@ SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "null_mk_coll", 
 -- ----------------------------------------------------------------------------
 set documentdb.enableIndexMetadataGlobalTracking to off;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkf_db', '{ "createIndexes": "null_legacy_coll", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1", "enableOrderedIndex": 1 } ] }');
-psql:sql/bson_composite_index_multi_key_per_path_filter_tests.sql:317: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_filter_tests.sql:270: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }

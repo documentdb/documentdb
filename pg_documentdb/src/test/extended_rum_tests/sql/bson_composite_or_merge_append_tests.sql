@@ -1,6 +1,6 @@
 -- Tests for the BitmapOr -> MergeAppend rewrite that removes a blocking Sort when
 -- an $or of ordered per-branch composite-index scans shares the requested order as
--- a suffix. Gated by documentdb.enable_merge_sort_for_bitmap_or (default on).
+-- a suffix.
 --
 -- A BitmapOr unions the per-branch TID bitmaps and therefore deduplicates rows; a
 -- MergeAppend simply concatenates its children and does NOT deduplicate. When the
@@ -16,9 +16,8 @@
 -- the suffix order-by pushdown the rewrite depends on.
 --
 -- Assertion strategy:
---   * Correctness checks compare the row count with the feature OFF (BitmapOr,
---     deduplicated) against ON, so a regression that emits duplicates fails.
---   * "Feature ON" plan-shape checks run with enable_sort = off so the assertion
+--   * Correctness checks assert deduplicated row counts and ordering.
+--   * Plan-shape checks run with enable_sort = off so the assertion
 --     isolates "is a valid ordered MergeAppend path generated" from the cost
 --     model's choice.
 
@@ -35,7 +34,6 @@ SET documentdb.next_collection_index_id TO 39500;
 
 SET documentdb.forceDisableSeqScan TO on;
 SET documentdb.enable_merge_sort_for_in_prefix TO on;
-SET documentdb.enable_merge_sort_for_bitmap_or TO on;
 
 -- =====================================================================
 -- Setup: composite index {a:1, b:1, c:1, d:1}.
@@ -66,30 +64,16 @@ FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
 $cmd$) AS line;
 SET enable_sort TO on;
 
--- Feature OFF for the same disjoint query keeps the deduplicating BitmapOr and
--- must return the identical rows/order (correctness is plan-independent).
-SET documentdb.enable_merge_sort_for_bitmap_or TO off;
-SELECT document FROM bson_aggregation_find('msdb',
-  '{ "find": "records", "filter": { "$or": [ { "a": 1, "b": 5 }, { "a": 2, "b": 7 } ] }, "sort": { "c": 1 } }');
-SET documentdb.enable_merge_sort_for_bitmap_or TO on;
-
 -- =====================================================================
 -- CORRECTNESS: overlapping branches must NOT emit duplicate rows. For every
--- case below the row count with the feature ON must equal the count with it
--- OFF (the BitmapOr baseline), proving the rewrite was rejected (or a sound
--- non-duplicating plan was chosen).
+-- case below the row count must include each matching document only once,
+-- proving that a sound non-duplicating plan was chosen.
 -- =====================================================================
 
 -- Overlap 1: two range branches sorted by the leading column a. A document with
 -- a >= 2 satisfies both branches, so a MergeAppend would double-count it. No
 -- equality column distinguishes the branches, so the rewrite must be rejected.
-SET documentdb.enable_merge_sort_for_bitmap_or TO off;
-SELECT count(*) AS overlap_ranges_off FROM (
-  SELECT document FROM bson_aggregation_find('msdb',
-    '{ "find": "records", "filter": { "$or": [ { "a": { "$gte": 1 }, "b": { "$lte": 7 } }, { "a": { "$gte": 2 }, "b": { "$lte": 5 } } ] }, "sort": { "a": 1 } }')
-) s;
-SET documentdb.enable_merge_sort_for_bitmap_or TO on;
-SELECT count(*) AS overlap_ranges_on FROM (
+SELECT count(*) AS overlap_ranges_count FROM (
   SELECT document FROM bson_aggregation_find('msdb',
     '{ "find": "records", "filter": { "$or": [ { "a": { "$gte": 1 }, "b": { "$lte": 7 } }, { "a": { "$gte": 2 }, "b": { "$lte": 5 } } ] }, "sort": { "a": 1 } }')
 ) s;
@@ -105,13 +89,7 @@ SET enable_sort TO on;
 
 -- Overlap 2: identical branches. Every matching document matches both, so a
 -- MergeAppend would emit each row twice. Must be rejected.
-SET documentdb.enable_merge_sort_for_bitmap_or TO off;
-SELECT count(*) AS overlap_identical_off FROM (
-  SELECT document FROM bson_aggregation_find('msdb',
-    '{ "find": "records", "filter": { "$or": [ { "a": 1, "b": 5 }, { "a": 1, "b": 5 } ] }, "sort": { "c": 1 } }')
-) s;
-SET documentdb.enable_merge_sort_for_bitmap_or TO on;
-SELECT count(*) AS overlap_identical_on FROM (
+SELECT count(*) AS overlap_identical_count FROM (
   SELECT document FROM bson_aggregation_find('msdb',
     '{ "find": "records", "filter": { "$or": [ { "a": 1, "b": 5 }, { "a": 1, "b": 5 } ] }, "sort": { "c": 1 } }')
 ) s;
@@ -119,14 +97,8 @@ SELECT count(*) AS overlap_identical_on FROM (
 -- Overlap 3: the branches share their full equality prefix (a=1, b=1) and differ
 -- only in a trailing $gt on d. A document with a=1,b=1,d large matches both. The
 -- planner factors the shared prefix into a single ordered scan carrying the $or(d)
--- as a Filter, so there is no BitmapOr and no duplicates; assert the counts match.
-SET documentdb.enable_merge_sort_for_bitmap_or TO off;
-SELECT count(*) AS overlap_prefix_off FROM (
-  SELECT document FROM bson_aggregation_find('msdb',
-    '{ "find": "records", "filter": { "$or": [ { "a": 1, "b": 1, "d": { "$gt": 6 } }, { "a": 1, "b": 1, "d": { "$gt": 5 } } ] }, "sort": { "c": 1 } }')
-) s;
-SET documentdb.enable_merge_sort_for_bitmap_or TO on;
-SELECT count(*) AS overlap_prefix_on FROM (
+-- as a Filter, so there is no BitmapOr and the row count must exclude duplicates.
+SELECT count(*) AS overlap_prefix_count FROM (
   SELECT document FROM bson_aggregation_find('msdb',
     '{ "find": "records", "filter": { "$or": [ { "a": 1, "b": 1, "d": { "$gt": 6 } }, { "a": 1, "b": 1, "d": { "$gt": 5 } } ] }, "sort": { "c": 1 } }')
 ) s;
@@ -151,14 +123,8 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
   '{ "createIndexes": "coll_ci", "indexes": [ { "key": { "cat": 1, "score": 1 }, "name": "cat_ci", "enableOrderedIndex": 1, "collation": { "locale": "en", "strength": 2 } } ] }', true);
 
 -- "Alpha" vs "alpha" are collation-equal: overlapping branches, reject the rewrite.
--- Feature OFF vs ON must return the identical (deduplicated) row count.
-SET documentdb.enable_merge_sort_for_bitmap_or TO off;
-SELECT count(*) AS coll_overlap_off FROM (
-  SELECT document FROM bson_aggregation_find('msdb',
-    '{ "find": "coll_ci", "filter": { "$or": [ { "cat": "Alpha" }, { "cat": "alpha" } ] }, "sort": { "score": 1 }, "collation": { "locale": "en", "strength": 2 } }')
-) s;
-SET documentdb.enable_merge_sort_for_bitmap_or TO on;
-SELECT count(*) AS coll_overlap_on FROM (
+-- The row count must exclude duplicates across collation-equal branches.
+SELECT count(*) AS coll_overlap_count FROM (
   SELECT document FROM bson_aggregation_find('msdb',
     '{ "find": "coll_ci", "filter": { "$or": [ { "cat": "Alpha" }, { "cat": "alpha" } ] }, "sort": { "score": 1 }, "collation": { "locale": "en", "strength": 2 } }')
 ) s;
@@ -211,7 +177,7 @@ SELECT documentdb_api.drop_collection('msdb','tagged');
 -- therefore NOT capture it as an equality bound; otherwise two overlapping
 -- elemMatch branches would be compared by their (differing) spec documents
 -- and wrongly declared disjoint, dropping the deduplicating BitmapOr and
--- emitting duplicate rows. Feature OFF vs ON must return the identical count.
+-- emitting duplicate rows. The row count must exclude duplicates.
 -- =====================================================================
 SELECT documentdb_api.create_collection('msdb','em_or');
 SELECT documentdb_api.insert_one('msdb','em_or','{ "_id": 1, "tags": [ { "k": "x", "v": 1 } ], "rank": 10 }');
@@ -223,13 +189,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
   '{ "createIndexes": "em_or", "indexes": [ { "key": { "tags.k": 1, "tags.v": 1, "rank": 1 }, "name": "em_or_idx", "enableOrderedIndex": 1 } ] }', true);
 RESET documentdb.enableIndexMetadataGlobalTracking;
 
-SET documentdb.enable_merge_sort_for_bitmap_or TO off;
-SELECT count(*) AS em_or_off FROM (
-  SELECT document FROM bson_aggregation_find('msdb',
-    '{ "find": "em_or", "filter": { "$or": [ { "tags": { "$elemMatch": { "k": "x", "v": 1 } } }, { "tags": { "$elemMatch": { "k": "y", "v": 2 } } } ] }, "sort": { "rank": 1 } }')
-) s;
-SET documentdb.enable_merge_sort_for_bitmap_or TO on;
-SELECT count(*) AS em_or_on FROM (
+SELECT count(*) AS em_or_count FROM (
   SELECT document FROM bson_aggregation_find('msdb',
     '{ "find": "em_or", "filter": { "$or": [ { "tags": { "$elemMatch": { "k": "x", "v": 1 } } }, { "tags": { "$elemMatch": { "k": "y", "v": 2 } } } ] }, "sort": { "rank": 1 } }')
 ) s;
@@ -254,9 +214,9 @@ SELECT documentdb_api.drop_collection('msdb','em_or');
 
 -- =====================================================================
 -- Additional scalar coverage. Every non-disjoint case asserts
--- count(feature ON) = count(feature OFF, the deduplicating BitmapOr
--- baseline); a duplicate leak from an unsound MergeAppend fails the check
--- regardless of the plan the cost model picks. Collection {a,b,c,d}.
+-- the number of matching documents; a duplicate leak from an unsound
+-- MergeAppend fails the check regardless of the cost model's plan choice.
+-- Collection {a,b,c,d}.
 -- =====================================================================
 SELECT documentdb_api.create_collection('msdb','or_scalar');
 SELECT documentdb_api.insert_one('msdb','or_scalar','{ "_id": 1, "a": 1, "b": 2, "c": 30, "d": 1 }');
@@ -272,13 +232,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
 -- disjoint branch {a:3,b:4}, sorted by the trailing key c. The identical pair
 -- makes _id 1,2 reachable through two branches -- a plain MergeAppend would
 -- double-count them.
-SET documentdb.enable_merge_sort_for_bitmap_or TO off;
-SELECT count(*) AS three_way_dup_off FROM (
-  SELECT document FROM bson_aggregation_find('msdb',
-    '{ "find": "or_scalar", "filter": { "$or": [ { "a": 1, "b": 2 }, { "a": 1, "b": 2 }, { "a": 3, "b": 4 } ] }, "sort": { "c": 1 } }')
-) s;
-SET documentdb.enable_merge_sort_for_bitmap_or TO on;
-SELECT count(*) AS three_way_dup_on FROM (
+SELECT count(*) AS three_way_dup_count FROM (
   SELECT document FROM bson_aggregation_find('msdb',
     '{ "find": "or_scalar", "filter": { "$or": [ { "a": 1, "b": 2 }, { "a": 1, "b": 2 }, { "a": 3, "b": 4 } ] }, "sort": { "c": 1 } }')
 ) s;
@@ -286,13 +240,7 @@ SELECT count(*) AS three_way_dup_on FROM (
 -- Case B: subset branches {a:1} and {a:1, c:{$gt:0}}. Every document of the
 -- second branch also satisfies the first, so the branches fully overlap and a
 -- MergeAppend without de-dup would repeat them.
-SET documentdb.enable_merge_sort_for_bitmap_or TO off;
-SELECT count(*) AS subset_off FROM (
-  SELECT document FROM bson_aggregation_find('msdb',
-    '{ "find": "or_scalar", "filter": { "$or": [ { "a": 1 }, { "a": 1, "c": { "$gt": 0 } } ] }, "sort": { "b": 1 } }')
-) s;
-SET documentdb.enable_merge_sort_for_bitmap_or TO on;
-SELECT count(*) AS subset_on FROM (
+SELECT count(*) AS subset_count FROM (
   SELECT document FROM bson_aggregation_find('msdb',
     '{ "find": "or_scalar", "filter": { "$or": [ { "a": 1 }, { "a": 1, "c": { "$gt": 0 } } ] }, "sort": { "b": 1 } }')
 ) s;
@@ -321,7 +269,7 @@ SELECT documentdb_api.drop_collection('msdb','or_scalar');
 -- elements satisfying more than one $or branch and is reachable through each
 -- branch. A plain MergeAppend would emit it once per branch, so the rewrite
 -- is only sound when the MergeAppend is wrapped in the heap-TID de-dup scan.
--- Assert both count parity and the "Merge Append => de-dup" implication.
+-- Assert both the deduplicated count and the "Merge Append => de-dup" implication.
 -- =====================================================================
 SELECT documentdb_api.create_collection('msdb','or_mk');
 SELECT documentdb_api.insert_one('msdb','or_mk','{ "_id": 1, "vals": [ 1, 2 ], "w": 20 }');
@@ -332,14 +280,8 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
   '{ "createIndexes": "or_mk", "indexes": [ { "key": { "vals": 1, "w": 1 }, "name": "vals_w", "enableOrderedIndex": 1 } ] }', true);
 
 -- _id 1 has vals [1,2] and matches both {vals:1} and {vals:2}; the BitmapOr
--- baseline de-duplicates it to a single row.
-SET documentdb.enable_merge_sort_for_bitmap_or TO off;
-SELECT count(*) AS mk_or_off FROM (
-  SELECT document FROM bson_aggregation_find('msdb',
-    '{ "find": "or_mk", "filter": { "$or": [ { "vals": 1 }, { "vals": 2 } ] }, "sort": { "w": 1 } }')
-) s;
-SET documentdb.enable_merge_sort_for_bitmap_or TO on;
-SELECT count(*) AS mk_or_on FROM (
+-- semantics require it to contribute only one row.
+SELECT count(*) AS mk_or_count FROM (
   SELECT document FROM bson_aggregation_find('msdb',
     '{ "find": "or_mk", "filter": { "$or": [ { "vals": 1 }, { "vals": 2 } ] }, "sort": { "w": 1 } }')
 ) s;
@@ -361,9 +303,9 @@ SELECT documentdb_api.drop_collection('msdb','or_mk');
 -- De-dup stress: many documents each reachable through more than one $or
 -- branch. `vals` is a multi-key array, so a document holding several matching
 -- elements is emitted once per branch by a plain MergeAppend; the heap-TID
--- de-dup scan must collapse those back to one row so the count matches the
--- deduplicating BitmapOr baseline. Exercises both the plain projection (SELECT
--- document) and the column-pruning aggregation-above path (count(*)), which
+-- de-dup scan must collapse those back to one row per document.
+-- Exercises both the plain projection (SELECT document) and the
+-- column-pruning aggregation-above path (count(*)), which
 -- forces a heap-fetching index scan so the surfaced ctid stays available.
 -- =====================================================================
 SELECT documentdb_api.create_collection('msdb','or_stress');
@@ -375,27 +317,19 @@ FROM generate_series(1, 90) i;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
   '{ "createIndexes": "or_stress", "indexes": [ { "key": { "vals": 1, "w": 1 }, "name": "vals_w", "enableOrderedIndex": 1 } ] }', true);
 
--- BitmapOr baseline (feature OFF): 90 distinct documents.
-SET documentdb.enable_merge_sort_for_bitmap_or TO off;
-SELECT count(*) AS stress_off FROM (
+-- Plain projection: the de-dup scan keeps the count at 90.
+SELECT count(*) AS stress_count FROM (
   SELECT document FROM bson_aggregation_find('msdb',
     '{ "find": "or_stress", "filter": { "$or": [ { "vals": 1 }, { "vals": 2 }, { "vals": 3 } ] }, "sort": { "w": 1 } }')
 ) s;
 
--- Feature ON, plain projection: the de-dup scan keeps the count at 90.
-SET documentdb.enable_merge_sort_for_bitmap_or TO on;
-SELECT count(*) AS stress_on FROM (
-  SELECT document FROM bson_aggregation_find('msdb',
-    '{ "find": "or_stress", "filter": { "$or": [ { "vals": 1 }, { "vals": 2 }, { "vals": 3 } ] }, "sort": { "w": 1 } }')
-) s;
-
--- Feature ON, aggregation directly above (count(*) prunes the document column):
+-- Aggregation directly above (count(*) prunes the document column):
 -- the branch scans must stay heap-fetching index scans so the de-dup ctid is
 -- available; a regression here reintroduces the "variable not found in subplan
--- target list" planner error. Must equal the baseline (90).
+-- target list" planner error. Must return 90 documents.
 SET enable_seqscan TO off;
 SET enable_bitmapscan TO off;
-SELECT count(*) AS stress_agg_on FROM (
+SELECT count(*) AS stress_agg_count FROM (
   SELECT document FROM bson_aggregation_find('msdb',
     '{ "find": "or_stress", "filter": { "$or": [ { "vals": 1 }, { "vals": 2 }, { "vals": 3 } ] }, "sort": { "w": 1 } }')
 ) s;

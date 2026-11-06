@@ -31,15 +31,14 @@ SELECT COUNT(documentdb_api.insert_one('db', 'dist_push', bson_build_document('_
 ANALYZE;
 
 -- ============================================================
--- Test 1: EXPLAIN distinct on single indexed field - pushdown ON
--- With enableDistinctIndexPushdown ON, Sort node should be absent
+-- Test 1: EXPLAIN distinct on single indexed field
+-- Sort node should be absent
 -- and the composite index should provide ordering directly.
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a" }')
@@ -47,28 +46,12 @@ $cmd$);
 ROLLBACK;
 
 -- ============================================================
--- Test 2: EXPLAIN distinct on single indexed field - pushdown OFF
--- With enableDistinctIndexPushdown OFF, Sort should be present
+-- Test 3: EXPLAIN distinct on nested/dotted path
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
-
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a" }')
-$cmd$);
-ROLLBACK;
-
--- ============================================================
--- Test 3: EXPLAIN distinct on nested/dotted path - pushdown ON
--- ============================================================
-BEGIN;
-SET LOCAL enable_seqscan TO off;
-SET LOCAL enable_bitmapscan TO off;
-SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "nested.field" }')
@@ -76,14 +59,13 @@ $cmd$);
 ROLLBACK;
 
 -- ============================================================
--- Test 4: EXPLAIN distinct on leading key of compound index - pushdown ON
+-- Test 4: EXPLAIN distinct on leading key of compound index
 -- Index { a: 1, b: 1 } should support ordering on the leading key "a"
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a" }')
@@ -91,15 +73,14 @@ $cmd$);
 ROLLBACK;
 
 -- ============================================================
--- Test 5: EXPLAIN distinct on non-leading key of compound index - pushdown ON
+-- Test 5: EXPLAIN distinct on non-leading key of compound index
 -- Index can't provide ordering on non-prefix key "b" alone;
--- Sort should still be present even with pushdown ON.
+-- Sort should still be present.
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "b" }')
@@ -125,7 +106,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push_mk", "key": "arr" }')
@@ -145,9 +125,8 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 
--- After multikey insertion, Sort should reappear even with pushdown ON
+-- After multikey insertion, Sort should reappear
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a" }')
 $cmd$);
@@ -160,81 +139,42 @@ VACUUM (FREEZE) documentdb_data.documents_19900;
 ANALYZE documentdb_data.documents_19900;
 
 -- ============================================================
--- Test 8: Distinct correctness - pushdown ON vs OFF on indexed field "a"
+-- Test 8: Distinct correctness on indexed field "a"
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a" }');
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a" }');
 
 -- ============================================================
--- Test 9: Distinct correctness on field "b" - pushdown ON vs OFF
+-- Test 9: Distinct correctness on field "b"
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "b" }');
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "b" }');
 
 -- ============================================================
--- Test 10: Distinct correctness on nested path - pushdown ON vs OFF
+-- Test 10: Distinct correctness on nested path
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "nested.field" }');
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "nested.field" }');
 
 -- ============================================================
--- Test 11: Distinct with filter - pushdown ON vs OFF
+-- Test 11: Distinct with filter
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "query": { "a": { "$gte": 5 } } }');
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "query": { "a": { "$gte": 5 } } }');
 
 -- ============================================================
--- Test 12: Distinct on multikey field - correctness with pushdown ON vs OFF
+-- Test 12: Distinct on multikey field - correctness
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push_mk", "key": "arr" }');
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push_mk", "key": "arr" }');
 
 -- ============================================================
--- Test 13: Distinct on non-indexed field - should work regardless of GUC
+-- Test 13: Distinct on non-indexed field - correctness
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "extra" }');
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "extra" }');
 
 -- ============================================================
--- Test 14: EXPLAIN distinct with filter on indexed field - pushdown ON
+-- Test 14: EXPLAIN distinct with filter on indexed field
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
-
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "query": { "a": { "$gte": 5 } } }')
-$cmd$);
-ROLLBACK;
-
--- ============================================================
--- Test 15: EXPLAIN distinct with filter - pushdown OFF
--- ============================================================
-BEGIN;
-SET LOCAL enable_seqscan TO off;
-SET LOCAL enable_bitmapscan TO off;
-SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "query": { "a": { "$gte": 5 } } }')
@@ -244,10 +184,6 @@ ROLLBACK;
 -- ============================================================
 -- Test 16: Distinct with filter on different field than distinct key
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "query": { "b": "A" } }');
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "query": { "b": "A" } }');
 
 -- ============================================================
@@ -255,7 +191,7 @@ SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push",
 -- Index term truncation limit is ~2.7KB for single-path indexes.
 -- Values larger than that are stored truncated in the index.
 -- Distinct must return correct, full-fidelity values regardless.
--- With pushdown ON, the plan should show index ordering with recheck.
+-- The plan should show index ordering with recheck.
 -- ============================================================
 
 -- Create collection with large string values that exceed the truncation limit
@@ -292,14 +228,13 @@ SELECT documentdb_api.insert_one('db', 'dist_trunc', '{ "_id": 23, "bigbin": { "
 ANALYZE;
 
 -- ============================================================
--- Test 17: EXPLAIN distinct on truncated strings - pushdown ON
+-- Test 17: EXPLAIN distinct on truncated strings
 -- Should show index ordering with recheck for truncated terms
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_trunc", "key": "bigstr" }')
@@ -307,13 +242,12 @@ $cmd$);
 ROLLBACK;
 
 -- ============================================================
--- Test 18: EXPLAIN distinct on truncated docs - pushdown ON
+-- Test 18: EXPLAIN distinct on truncated docs
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_trunc", "key": "bigdoc" }')
@@ -321,13 +255,12 @@ $cmd$);
 ROLLBACK;
 
 -- ============================================================
--- Test 19: EXPLAIN distinct on truncated binary - pushdown ON
+-- Test 19: EXPLAIN distinct on truncated binary
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_trunc", "key": "bigbin" }')
@@ -339,12 +272,6 @@ ROLLBACK;
 -- Must return 4 distinct values (3 long + 1 short), not collapse the long ones
 -- Validate count and that suffixes (_val1, _val2, _val3, short_value) are present
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-WITH r1 AS (SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_trunc", "key": "bigstr" }'))
-SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM r1;
-
--- Verify pushdown OFF gives same count
-SET documentdb.enableDistinctIndexPushdown TO off;
 WITH r1 AS (SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_trunc", "key": "bigstr" }'))
 SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM r1;
 
@@ -352,11 +279,6 @@ SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM
 -- Test 21: Validate truncated string suffixes are preserved
 -- Extract the last 5 chars of each value to confirm full fidelity
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-WITH r1 AS (SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_trunc", "key": "bigstr" }'))
-SELECT bson_dollar_project(document, '{ "suffixes": { "$map": { "input": "$values", "as": "v", "in": { "$substrBytes": [ "$$v", 4000, 5 ] } } } }') FROM r1;
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 WITH r1 AS (SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_trunc", "key": "bigstr" }'))
 SELECT bson_dollar_project(document, '{ "suffixes": { "$map": { "input": "$values", "as": "v", "in": { "$substrBytes": [ "$$v", 4000, 5 ] } } } }') FROM r1;
 
@@ -364,11 +286,6 @@ SELECT bson_dollar_project(document, '{ "suffixes": { "$map": { "input": "$value
 -- Test 22: Distinct on truncated documents - correctness validation
 -- Must return 3 distinct docs (2 large + 1 small), dedup large doc1 duplicates
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-WITH r1 AS (SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_trunc", "key": "bigdoc" }'))
-SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM r1;
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 WITH r1 AS (SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_trunc", "key": "bigdoc" }'))
 SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM r1;
 
@@ -376,11 +293,6 @@ SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM
 -- Test 23: Distinct on truncated binary - correctness validation
 -- Must return 3 distinct binary values (2 large + 1 small)
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-WITH r1 AS (SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_trunc", "key": "bigbin" }'))
-SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM r1;
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 WITH r1 AS (SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_trunc", "key": "bigbin" }'))
 SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM r1;
 
@@ -388,31 +300,21 @@ SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM
 -- Test 24: Mixed truncated and non-truncated in same index
 -- Verify distinct correctly handles a mix of truncated and short values
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_trunc", "key": "tag" }');
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_trunc", "key": "tag" }');
 
 -- ============================================================
 -- Test 25: Distinct with filter on truncated field - correctness
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
-WITH r1 AS (SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_trunc", "key": "bigstr", "query": { "tag": "str" } }'))
-SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM r1;
-
-SET documentdb.enableDistinctIndexPushdown TO off;
 WITH r1 AS (SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_trunc", "key": "bigstr", "query": { "tag": "str" } }'))
 SELECT bson_dollar_project(document, '{ "count": { "$size": "$values" } }') FROM r1;
 
 -- ============================================================
--- Test 26: EXPLAIN distinct with filter on truncated field - pushdown ON
+-- Test 26: EXPLAIN distinct with filter on truncated field
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_trunc", "key": "bigstr", "query": { "tag": "str" } }')
@@ -439,7 +341,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -456,7 +357,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO off;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -473,7 +373,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -489,7 +388,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO off;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -506,7 +404,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 
 WITH r1 AS (
@@ -519,7 +416,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO off;
 
 WITH r1 AS (
@@ -541,7 +437,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 
 WITH r1 AS (
@@ -555,7 +450,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -574,7 +468,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 
 WITH r1 AS (
@@ -592,7 +485,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 
 WITH r1 AS (
@@ -616,7 +508,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -635,7 +526,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -662,29 +552,13 @@ SELECT COUNT(documentdb_api.insert_one('db', 'dist_ios', bson_build_document('_i
 VACUUM (ANALYZE ON, FREEZE ON) documentdb_data.documents_19905;
 
 -- ============================================================
--- Test 37: EXPLAIN ANALYZE distinct with index-only scan - pushdown ON
+-- Test 37: EXPLAIN ANALYZE distinct with index-only scan
 -- The plan should show "Index Only Scan" (not "Index Scan").
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
-
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF, VERBOSE ON, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_ios", "key": "status" }')
-$cmd$, p_ignore_heap_fetches => true);
-ROLLBACK;
-
--- ============================================================
--- Test 38: EXPLAIN ANALYZE distinct with index-only scan - pushdown OFF
--- Should still use Index Only Scan but with Sort node present.
--- ============================================================
-BEGIN;
-SET LOCAL enable_seqscan TO off;
-SET LOCAL enable_bitmapscan TO off;
-SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_ios", "key": "status" }')
@@ -699,7 +573,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -714,7 +587,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 
 WITH r1 AS (
     SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_ios", "key": "status" }')
@@ -734,7 +606,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_ios", "key": "status", "query": { "status": { "$gte": "closed" } } }')
@@ -757,7 +628,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -773,7 +643,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -791,7 +660,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableDistinctCustomScan TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 
@@ -808,28 +676,10 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_ios", "key": "status" }')
-$cmd$, p_ignore_heap_fetches => true);
-ROLLBACK;
-
--- ============================================================
--- Test 46: Extended explain with pushdown OFF
--- Without pushdown, distinct falls back to _id scan.
--- Extended explain should reflect the different scan strategy.
--- ============================================================
-BEGIN;
-SET LOCAL enable_seqscan TO off;
-SET LOCAL enable_bitmapscan TO off;
-SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
-SET LOCAL documentdb.enableExtendedExplainPlans TO on;
-
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a" }')
 $cmd$, p_ignore_heap_fetches => true);
 ROLLBACK;
 
@@ -854,7 +704,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 
 -- Hint the compound index idx_a_b explicitly.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -867,7 +716,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "hint": "idx_a" }')
@@ -887,7 +735,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "query": { "b": { "$gte": "C" } }, "hint": "idx_a_b" }')
@@ -904,7 +751,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -921,7 +767,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "query": { "a": { "$gt": 5 }, "b": { "$gte": "C" } }, "hint": "idx_a_b" }')
@@ -939,7 +784,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "query": { "b": { "$gte": "C" } } }')

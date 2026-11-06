@@ -11,10 +11,8 @@ set documentdb.enableCompositeIndexPlanner to on;
 -- exercised below is decided per referenced column from this metadata.
 set documentdb.enableIndexMetadataGlobalTracking to on;
 
--- The per-path multi-key gate is what unlocks the relaxed operators ($ne,
--- $eq null, $eq [], $exists) and index-wide multi-key relaxation. Pin it on so the
--- plan shapes are deterministic regardless of the default.
-set documentdb.enablePerPathMultiKeySortPushdown to on;
+-- Per-path multi-key metadata unlocks the relaxed operators ($ne,
+-- $eq null, $eq [], $exists) and index-wide multi-key relaxation.
 
 -- Keep this suite focused on index-only eligibility rather than group order pushdown.
 set documentdb.enable_group_by_multi_key_sort_pushdown to off;
@@ -385,14 +383,6 @@ SELECT documentdb_api.insert_one('iosmk_db', 'dotted_coll', '{ "_id": 4, "addr":
 
 -- Now "addr.city" is multi-key: the same $ne flips to a regular Index Scan.
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosmk_db', '{ "aggregate" : "dotted_coll", "pipeline" : [{ "$match" : { "addr.city": { "$ne": "Reno" } } }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
-
--- ----------------------------------------------------------------------------
--- Feature flag OFF: the relaxed operators are no longer index-only eligible even on
--- the non-multi-key "region" (legacy behavior).
--- ----------------------------------------------------------------------------
-set documentdb.enablePerPathMultiKeySortPushdown to off;
-SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosmk_db', '{ "aggregate" : "coll", "pipeline" : [{ "$match" : { "region": { "$ne": "west" } } }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
-set documentdb.enablePerPathMultiKeySortPushdown to on;
 
 -- ----------------------------------------------------------------------------
 -- Correctness: index-only results for the relaxed operators match the documents.

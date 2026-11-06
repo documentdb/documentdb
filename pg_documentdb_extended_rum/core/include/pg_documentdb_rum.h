@@ -1206,7 +1206,6 @@ extern PGDLLIMPORT bool RumAllowReplaceOnInsertTuple;
 extern PGDLLIMPORT bool RumEnableXlogInsertEntry;
 extern PGDLLIMPORT bool RumEnableBtreeLockOrder;
 extern PGDLLIMPORT bool EnableCustomXlogRmgr;
-extern PGDLLIMPORT bool EnableRumCompareFunctionFmgr;
 extern PGDLLIMPORT bool RumEnableEntryPageStep;
 extern PGDLLIMPORT int RumDedupSerializeOptimizeThresholdBytes;
 

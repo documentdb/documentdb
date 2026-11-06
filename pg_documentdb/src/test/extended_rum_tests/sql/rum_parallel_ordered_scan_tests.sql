@@ -153,7 +153,6 @@ SELECT COUNT(*) FROM r1;
 -- enableDistinctCustomScan is explicitly off here to keep coverage
 -- of the non-custom-scan distinct pushdown path.
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
 SET documentdb.enableDistinctCustomScan TO off;
 
 -- Verify distinct plan uses parallel scan on RUM index
@@ -171,7 +170,6 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_distinct('pord_db',
 SELECT document FROM bson_aggregation_distinct('pord_db',
     '{ "distinct": "ordered_scan", "key": "createdAt", "query": { "createdAt": { "$gte": { "$date": "2017-01-01T00:00:00Z" }, "$lt": { "$date": "2020-01-01T00:00:00Z" } } } }');
 
-RESET documentdb.enableDistinctIndexPushdown;
 RESET documentdb.enableDistinctCustomScan;
 
 -- ============================================================
@@ -180,7 +178,6 @@ RESET documentdb.enableDistinctCustomScan;
 -- in a DocumentDBApiDistinctQueryScan node that skips duplicate
 -- index entries, scanning only one row per distinct value.
 -- ============================================================
-SET documentdb.enableDistinctIndexPushdown TO on;
 SET documentdb.enableDistinctCustomScan TO on;
 
 -- Ensure stats are up to date for deterministic plans
@@ -201,7 +198,6 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_distinct('pord_db',
 SELECT document FROM bson_aggregation_distinct('pord_db',
     '{ "distinct": "ordered_scan", "key": "createdAt", "query": { "createdAt": { "$gte": { "$date": "2017-01-01T00:00:00Z" }, "$lt": { "$date": "2020-01-01T00:00:00Z" } } } }');
 
-RESET documentdb.enableDistinctIndexPushdown;
 RESET documentdb.enableDistinctCustomScan;
 
 -- Cleanup

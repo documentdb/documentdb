@@ -1764,9 +1764,7 @@ SELECT documentdb_api.drop_collection('runtime_sort_db', 'runtime_sort_coll');
 -- and has no resumable scan position). But when the group keys can be provided
 -- in order by a composite (ordered) index, the planner builds a sorted
 -- GroupAggregate over an ordered index-only scan with no blocking Sort, which
--- streams one group at a time. documentdb.enable_group_by_dynamic_streaming
--- gates whether that streamable shape is served by a dynamic (streaming) cursor
--- or falls back to the persistent cursor.
+-- streams one group at a time when dynamic cursors are enabled.
 -- ===========================================================================
 
 -- Composite op class + compound-id pushdown + repath write are what turn the
@@ -1929,17 +1927,16 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- ---------------------------------------------------------------------------
--- Test I1: GUC on, compound-id $group ({g,s}) -> streaming cursor (type 7),
+-- Test I1: compound-id $group ({g,s}) -> streaming cursor (type 7),
 -- draining all 200 single-row groups across small batches.
 -- ---------------------------------------------------------------------------
-SET documentdb.enable_group_by_dynamic_streaming TO on;
 
 SELECT * FROM grp_drain_kind(
     '{ "aggregate": "grp_coll", "hint": "g_s_1", "pipeline": [ { "$group": { "_id": { "g": "$g", "s": "$s" } } } ], "cursor": { "batchSize": 7 } }',
     7, 5101);
 
 -- ---------------------------------------------------------------------------
--- Test I2: GUC on, multi-row group ({g}) with a $sum accumulator -> streaming
+-- Test I2: multi-row group ({g}) with a $sum accumulator -> streaming
 -- cursor. Exercises the sorted GroupAggregate read-ahead: a group is only
 -- emitted after the first row of the next group is read, so the continuation
 -- must resume at the next group without dropping or duplicating a group.
@@ -1975,36 +1972,35 @@ FROM aggregate_cursor_first_page(
     cursorId => 5103);
 
 -- ---------------------------------------------------------------------------
--- Test I4: GUC off -> the same streamable $group falls back to a persistent
+-- Test I4: dynamic cursors off -> the same streamable $group uses a persistent
 -- cursor, still returning all 5 groups correctly.
 -- ---------------------------------------------------------------------------
-SET documentdb.enable_group_by_dynamic_streaming TO off;
+SET documentdb.enableDynamicCursors TO off;
 
 SELECT * FROM grp_drain_kind(
     '{ "aggregate": "grp_coll", "hint": "g_s_1", "pipeline": [ { "$group": { "_id": { "g": "$g" }, "n": { "$sum": 1 } } } ], "cursor": { "batchSize": 2 } }',
     2, 5104);
 
 -- ---------------------------------------------------------------------------
--- Test I5: GUC on, group with an accumulator on a NON-indexed field ($sum: "$w")
+-- Test I5: group with an accumulator on a NON-indexed field ($sum: "$w")
 -- -> the ordering index still serves the group order, but the scan must fetch
 -- "w" from the heap, so it is a plain (heap-fetching) secondary index scan
 -- (dc.type 3) rather than an index-only scan (dc.type 7). It must still stream.
 -- ---------------------------------------------------------------------------
-SET documentdb.enable_group_by_dynamic_streaming TO on;
+SET documentdb.enableDynamicCursors TO on;
 
 SELECT * FROM grp_drain_kind(
     '{ "aggregate": "grp_coll", "hint": "g_s_1", "pipeline": [ { "$group": { "_id": { "g": "$g" }, "sw": { "$sum": "$w" } } } ], "cursor": { "batchSize": 2 } }',
     2, 5105);
 
 -- ---------------------------------------------------------------------------
--- Test I6: GUC on, compound-id $group ({g,s}) on the secondary index, drained
+-- Test I6: compound-id $group ({g,s}) on the secondary index, drained
 -- with a tiny batch size so the cursor is resumed across many getMore pages.
 -- Asserts the SecondaryIndexOnlyScan branch (dc.type 7) stays streaming on the
 -- first page AND on every getMore page -- i.e. the resumed secondary-index scan
 -- keeps its index ordering and never flips to a persistent cursor mid-stream.
 -- 200 single-row groups over batchSize 3 -> at least ~66 streaming getMore pages.
 -- ---------------------------------------------------------------------------
-SET documentdb.enable_group_by_dynamic_streaming TO on;
 
 SELECT total, (getmore_streaming_pages > 0) AS drained_across_getmores
 FROM grp_drain_assert_streaming(
@@ -2012,7 +2008,7 @@ FROM grp_drain_assert_streaming(
     3, 5106, 7);
 
 -- ---------------------------------------------------------------------------
--- Test I7: GUC on, multi-row group ({g}) with a heap-fetching accumulator
+-- Test I7: multi-row group ({g}) with a heap-fetching accumulator
 -- ($sum: "$w" on a non-indexed field). Asserts the plain SecondaryIndexScan
 -- branch (dc.type 3) also stays streaming across every getMore page while the
 -- read-ahead GroupAggregate resumes group-by-group over the ordered index.
@@ -2026,4 +2022,4 @@ FROM grp_drain_assert_streaming(
 DROP FUNCTION grp_drain_kind(text, int, bigint);
 DROP FUNCTION grp_drain_assert_streaming(text, int, bigint, int);
 SELECT documentdb_api.drop_collection('dyncur_grp_db', 'grp_coll');
-SET documentdb.enable_group_by_dynamic_streaming TO off;
+RESET documentdb.enableDynamicCursors;

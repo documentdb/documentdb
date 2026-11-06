@@ -145,7 +145,6 @@ typedef struct MatchNamespaceFiltersContext
 	bool isInvalidNSFilters;
 } MatchNamespaceFiltersContext;
 
-extern bool EnablePartialFilterEvalOnPlanner;
 extern bool EnableSupportFunctionIdPushdown;
 extern bool EnableBsonTypeArgumentValidation;
 
@@ -2640,33 +2639,6 @@ CreateOpExprFromOperatorDocIteratorCore(bson_iter_t *operatorDocIterator,
 				Expr *inExpr = CreateFuncExprForSimpleQueryOperator(operatorDocIterator,
 																	context, operator,
 																	path);
-
-				/*
-				 * For $in queries to match indexes that have partial filter expressions
-				 * on them, we need a ScalarArrayOpExpr - do this with a custom bson type
-				 * that we can then remove in the relpathlist to avoid runtime evaluation
-				 */
-				if (context->simplifyOperators &&
-					context->coerceOperatorExprIfApplicable &&
-					context->inputType == MongoQueryOperatorInputType_Bson &&
-					operator->operatorType == QUERY_OPERATOR_IN &&
-					!hasRegex && !EnablePartialFilterEvalOnPlanner)
-				{
-					if (bson_iter_recurse(operatorDocIterator, &arrayIterator))
-					{
-						Expr *inOperator =
-							CreateScalarArrayOpExprForInWithBsonIndexBounds(
-								context->documentExpr, path,
-								context->
-								collationString, &arrayIterator);
-
-						if (inOperator != NULL)
-						{
-							inExpr = (Expr *) make_and_qual((Node *) inExpr,
-															(Node *) inOperator);
-						}
-					}
-				}
 
 				return inExpr;
 			}

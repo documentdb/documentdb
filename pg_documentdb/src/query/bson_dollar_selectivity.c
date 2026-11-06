@@ -43,7 +43,6 @@
 
 extern bool EnablePerCollectionPlannerStatistics;
 extern bool EnableCompositeIndexPlanner;
-extern bool EnableIndexCorrelationFromStatistics;
 extern bool EnableLookupJoinSelectivityFromStats;
 extern bool EnableElemMatchSelectivityFromStats;
 extern bool EnableElemMatchSelectivityLowerBound;
@@ -1832,11 +1831,6 @@ static void
 GetCorrelationFromStatisticsCore(PlannerInfo *root, IndexPath *path,
 								 double *indexCorrelation)
 {
-	if (!EnableIndexCorrelationFromStatistics)
-	{
-		return;
-	}
-
 	bool isWildCardIndex = false;
 	const char *firstPath = GetFirstPathFromIndexOptionsIfApplicable(
 		path->indexinfo->opclassoptions[0], &isWildCardIndex);

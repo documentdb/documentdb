@@ -4328,18 +4328,18 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     SELECT document FROM bson_aggregation_find('msdb',
       '{ "find": "coll_mk_sort", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }')
 $cmd$);
-                                             run_explain_and_trim                                             
+                                                    run_explain_and_trim
 -----------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=5 loops=1)
    Sort Key: (bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
-   namespaceName: msdb.coll_mk_sort
-   indexName: a_1_b_1
-   indexKey: {"a": 1,"b": 1}
-   isMultiKey: true
+         namespaceName: msdb.coll_mk_sort
+         indexName: a_1_b_1
+         indexKey: {"a": 1,"b": 1}
+         isMultiKey: true
          indexBounds: ["a": [1, 1], "b": (MinKey, MaxKey)], ["a": [4, 4], "b": (MinKey, MaxKey)]
-   innerScanLoops: 5 loops
+         innerScanLoops: 5 loops
          scanType: regular
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5), (isInequality: true, estimatedEntryCount: 5)]
          ->  Index Scan using a_1_b_1 on documents_2229 collection (actual rows=5 loops=1)
@@ -4958,34 +4958,6 @@ $cmd$);
                      Order By: (document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson)
 (29 rows)
 
--- Ignoring the per-path bitmask makes both paths potentially multi-key, so the
--- planner must fall back to a blocking Sort.
-SET documentdb.enablePerPathMultiKeySortPushdown TO off;
-SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
-    SELECT document FROM bson_aggregation_find('msdb',
-      '{ "find": "coll_mk_pp_sort", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }')
-$cmd$);
-                                             run_explain_and_trim                                             
------------------------------------------------------------------------------------------------------------------------------
- Sort (actual rows=4 loops=1)
-   Sort Key: (bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
-   namespaceName: msdb.coll_mk_pp_sort
-   indexName: a_1_b_1
-   indexKey: {"a": 1,"b": 1}
-   isMultiKey: true
-   multiKeyPaths: b
-         indexBounds: ["a": [1, 1], "b": (MinKey, MaxKey)], ["a": [4, 4], "b": (MinKey, MaxKey)]
-   innerScanLoops: 4 loops
-         scanType: regular
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3), (isInequality: true, estimatedEntryCount: 3)]
-         ->  Index Scan using a_1_b_1 on documents_2231 collection (actual rows=4 loops=1)
-               Index Cond: (document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "4" } ] }'::bson)
-(15 rows)
-
-RESET documentdb.enablePerPathMultiKeySortPushdown;
 -- A multi-key exploded column still needs the de-dup: _id 1 and 3 each carry
 -- both 1 and 4, so they arrive through both children and one copy is dropped.
 SET documentdb.enable_merge_sort_for_in_prefix TO off;
