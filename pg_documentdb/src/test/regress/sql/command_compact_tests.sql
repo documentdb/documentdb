@@ -23,6 +23,9 @@ SELECT documentdb_api.compact('{"compact": "compact_coll", "dryRun": true, "mode
 SELECT documentdb_api.compact('{"compact": "compact_coll", "mode": "updateStats", "mode": "full"}');
 SELECT documentdb_api.compact('{"compact": "compact_coll", "mode": "full", "mode": "standard"}');
 
+-- Turn the GUC off to check that it only gates mode "full"
+SET documentdb.enableCompactVacuumFull TO off;
+
 -- Default mode is "standard", which is NOT gated by the GUC and runs even with GUC off
 SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db"}');
 
@@ -63,13 +66,17 @@ SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db", 
 -- comment field should be accepted
 SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db", "comment": "test comment"}');
 
+-- The GUC is on by default
 RESET documentdb.enableCompactVacuumFull;
+SHOW documentdb.enableCompactVacuumFull;
 
--- After reset, mode "full" should be no-op again since it is gated by the GUC
+-- With the GUC off, mode "full" is a no-op again
+SET documentdb.enableCompactVacuumFull TO off;
 SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db", "mode": "full"}');
 
 -- ... but the default (standard) mode still runs since it is not gated by the GUC
 SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db"}');
+RESET documentdb.enableCompactVacuumFull;
 
 SELECT documentdb_api.drop_collection('compact_db','compact_coll');
 

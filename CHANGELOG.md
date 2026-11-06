@@ -1,4 +1,5 @@
 ### documentdb v1.3-0 (Unreleased) ###
+* Turn on `documentdb.enableCompactVacuumFull` by default, so `compact` with `mode: "full"` runs VACUUM FULL. `compact` with no mode still runs a regular, non-blocking VACUUM. *[Feature]*
 * Avoid repeated evaluation of computed input across group keys and accumulators when `documentdb.enable_subquery_pushdown_for_group` is enabled. *[Bugfix]*
 * Convert supported insert and update errors to wire-protocol codes, including batched inserts, controlled by the default-on `documentdb.enable_write_error_code_conversion` setting. *[Feature]*
 * Release transient insert and update processing memory after each subtransaction instead of retaining it for the full request. *[Bugfix]*

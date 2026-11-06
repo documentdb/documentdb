@@ -43,6 +43,8 @@ SELECT documentdb_api.compact('{"compact": "compact_coll", "mode": "updateStats"
 ERROR:  conflicting compact mode values are mutually exclusive
 SELECT documentdb_api.compact('{"compact": "compact_coll", "mode": "full", "mode": "standard"}');
 ERROR:  conflicting compact mode values are mutually exclusive
+-- Turn the GUC off to check that it only gates mode "full"
+SET documentdb.enableCompactVacuumFull TO off;
 -- Default mode is "standard", which is NOT gated by the GUC and runs even with GUC off
 SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db"}');
                                     compact                                     
@@ -138,8 +140,16 @@ SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db", 
  { "ok" : { "$numberDouble" : "1.0" }, "bytesFreed" : { "$numberLong" : "0" } }
 (1 row)
 
+-- The GUC is on by default
 RESET documentdb.enableCompactVacuumFull;
--- After reset, mode "full" should be no-op again since it is gated by the GUC
+SHOW documentdb.enableCompactVacuumFull;
+ documentdb.enableCompactVacuumFull 
+------------------------------------
+ on
+(1 row)
+
+-- With the GUC off, mode "full" is a no-op again
+SET documentdb.enableCompactVacuumFull TO off;
 SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db", "mode": "full"}');
                                     compact                                     
 --------------------------------------------------------------------------------
@@ -153,6 +163,7 @@ SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db"}'
  { "ok" : { "$numberDouble" : "1.0" }, "bytesFreed" : { "$numberLong" : "0" } }
 (1 row)
 
+RESET documentdb.enableCompactVacuumFull;
 SELECT documentdb_api.drop_collection('compact_db','compact_coll');
  drop_collection 
 -----------------
