@@ -1,7 +1,11 @@
+-- Copyright (c) Microsoft Corporation.
+
 SET search_path TO documentdb_api_catalog, documentdb_api, documentdb_core, public;
 SET documentdb.next_collection_id TO 3400;
 SET documentdb.next_collection_index_id TO 3400;
 
+-- Preserve legacy streaming continuation coverage across writes.
+SET documentdb.enableDynamicCursors TO off;
 
 -- insert 100 documents
 DO $$

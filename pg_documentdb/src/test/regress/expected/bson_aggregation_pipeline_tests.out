@@ -224,13 +224,15 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 (1 row)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$match": { "_id": { "$gt": "1" } } }, { "$project": { "a.b": 1, "c": "$_id", "_id": 0 } }, { "$match": { "c": { "$gt": "2" } } }], "cursor": {} }');
-                                                                                                                               QUERY PLAN                                                                                                                               
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Index Scan using _id_ on documentdb_data.documents_3500 collection
-   Output: documentdb_api_internal.bson_dollar_project(document, '{ "a.b" : { "$numberInt" : "1" }, "c" : "$_id", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   Index Cond: ((collection.shard_key_value = '3500'::bigint) AND (collection.object_id > '{ "" : "1" }'::bson) AND (collection.object_id < '{ "" : {  } }'::bson))
-   Filter: (documentdb_api_internal.bson_dollar_project(collection.document, '{ "a.b" : { "$numberInt" : "1" }, "c" : "$_id", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson) @> '{ "c" : "2" }'::bson)
-(4 rows)
+                                                                                                                    QUERY PLAN                                                                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_2
+   Output: agg_stage_2.document
+   Filter: (agg_stage_2.document #> '{ "c" : "2" }'::bsonquery)
+   ->  Index Scan using _id_ on documentdb_data.documents_3500 collection
+         Output: documentdb_api_internal.bson_dollar_project(collection.document, '{ "a.b" : { "$numberInt" : "1" }, "c" : "$_id", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+         Index Cond: ((collection.shard_key_value = '3500'::bigint) AND (collection.object_id > '{ "" : "1" }'::bson) AND (collection.object_id < '{ "" : {  } }'::bson))
+(6 rows)
 
 -- unwind
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$unwind": "$a.b" } ], "cursor": {} }');

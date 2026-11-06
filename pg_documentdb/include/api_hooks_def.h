@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * SPDX-License-Identifier: MIT
  *
  * include/api_hooks_def.h
  *
@@ -312,6 +313,9 @@ extern DefaultEnableStatsCreationOnNewCollections_HookType
 typedef bool (*DefaultEnableIndexOnlyScanForFindProject_HookType)(void);
 extern DefaultEnableIndexOnlyScanForFindProject_HookType
 	default_enable_index_only_scan_for_find_project_hook;
+
+typedef bool (*DefaultEnableDynamicCursors_HookType)(void);
+extern DefaultEnableDynamicCursors_HookType default_enable_dynamic_cursors_hook;
 
 /*
  * Hook for resolving a search operator definition by operator name.

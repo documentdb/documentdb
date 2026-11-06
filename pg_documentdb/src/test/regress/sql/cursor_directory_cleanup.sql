@@ -72,6 +72,9 @@ SELECT documentdb_api_catalog.bson_dollar_project(cursorPage,
 FROM documentdb_api.cursor_get_more(
     'cursor_cleanup_db', :'file_getmore_command', :'file_continuation');
 
+SELECT count(*) * 0 AS reset_count
+FROM documentdb_api_internal.command_feature_counter_stats(true);
+
 SELECT documentdb_api_internal.delete_cursors(ARRAY[3301]::bigint[]);
 SELECT pg_stat_file('pg_documentdb_cursor_files/cursor_3301', true) IS NULL AS file_deleted;
 
@@ -95,6 +98,18 @@ SELECT continuation IS NOT NULL AS reused_aborted_cursor_id
 FROM documentdb_api.aggregate_cursor_first_page(
     'cursor_cleanup_db', :'file_cursor_command', 3302);
 SELECT documentdb_api_internal.delete_cursors(ARRAY[3302]::bigint[]);
+
+-- Count each non-null cursor ID, even when its file is absent.
+SELECT documentdb_api_internal.delete_cursors(ARRAY[3301, 3302, NULL]::bigint[]);
+SELECT feature_name, usage_count
+FROM documentdb_api_internal.command_feature_counter_stats(false)
+WHERE feature_name = 'command_kill_cursors';
+
+-- An empty batch does not increment the counter.
+SELECT documentdb_api_internal.delete_cursors(ARRAY[]::bigint[]);
+SELECT feature_name, usage_count
+FROM documentdb_api_internal.command_feature_counter_stats(false)
+WHERE feature_name = 'command_kill_cursors';
 
 SELECT documentdb_api.drop_collection('cursor_cleanup_db', 'file_cursors');
 RESET documentdb.enableDynamicCursors;

@@ -1,3 +1,6 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
 
 SET citus.next_shard_id TO 2930000;
@@ -64,7 +67,10 @@ SELECT documentdb_api.insert('db', '{"insert":"3col", "documents":[ { "_id" : 30
 SELECT documentdb_api.update('db', '{"update":"3col", "updates":[{"q":{"_id":{"$eq":1}},"u":[{"$set":{"a" : 1} }]}]}');
 
 -- (3.4)  aggregate to 3 column collection
+-- Inspect the legacy continuation with the table-layout GUC disabled.
+SET documentdb.enableDynamicCursors TO off;
 SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "3col", "pipeline": [ {"$match" : {}} ] , "cursor": { "batchSize": 1 } }', 4294967294);
+RESET documentdb.enableDynamicCursors;
 -- (3.5)  $merge to 4 column collection
 SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "3col",  "pipeline": [  {"$project" : {"a" : "GUC IS DISBALE"}},{"$merge" : { "into": "3col",  "whenMatched" : "replace" , "whenNotMatched" : "insert" }} ] , "cursor": { "batchSize": 1 } }', 4294967294);
 SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "3col", "pipeline": [ {"$match" : {}} ] , "cursor": { "batchSize": 10 } }', 4294967294);

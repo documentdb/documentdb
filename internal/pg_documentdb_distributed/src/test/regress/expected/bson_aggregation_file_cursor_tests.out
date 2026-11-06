@@ -1,7 +1,11 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
 SET search_path TO documentdb_api_catalog, documentdb_api, documentdb_core, public;
 SET citus.next_shard_id TO 3160000;
 SET documentdb.next_collection_id TO 3160;
 SET documentdb.next_collection_index_id TO 3160;
+-- Exercise the legacy file-cursor GUC and quota contract explicitly.
+SET documentdb.enableDynamicCursors TO off;
 SET citus.multi_shard_modify_mode TO 'sequential';
 set documentdb.useFileBasedPersistedCursors to on;
 CREATE SCHEMA aggregation_cursor_test_file;

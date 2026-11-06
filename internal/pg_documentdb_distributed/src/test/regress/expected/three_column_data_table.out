@@ -1,3 +1,5 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
 SET citus.next_shard_id TO 2930000;
 SET documentdb.next_collection_id TO 293000;
@@ -152,12 +154,15 @@ SELECT documentdb_api.update('db', '{"update":"3col", "updates":[{"q":{"_id":{"$
 (1 row)
 
 -- (3.4)  aggregate to 3 column collection
+-- Inspect the legacy continuation with the table-layout GUC disabled.
+SET documentdb.enableDynamicCursors TO off;
 SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "3col", "pipeline": [ {"$match" : {}} ] , "cursor": { "batchSize": 1 } }', 4294967294);
                                                                                            cursorpage                                                                                            |                                                                                                                                                                                                                                                               continuation                                                                                                                                                                                                                                                               | persistconnection |  cursorid  
 ---------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "4294967294" }, "ns" : "db.3col", "firstBatch" : [ { "_id" : { "$numberInt" : "2" }, "a" : "GUC IS ENABLED" } ] }, "ok" : { "$numberDouble" : "1.0" } } | { "qi" : { "$numberLong" : "4294967294" }, "qp" : false, "qk" : { "$numberInt" : "2" }, "qc" : { "aggregate" : "3col", "pipeline" : [ { "$match" : {  } } ], "cursor" : { "batchSize" : { "$numberInt" : "1" } } }, "continuation" : [ { "table_name" : "documents_293001_2930020", "value" : { "$binary" : { "base64" : "AAAAAAUA", "subType" : "00" } }, "pk" : [ { "$numberLong" : "293001" }, { "" : { "$numberInt" : "2" } } ] } ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE } | f                 | 4294967294
 (1 row)
 
+RESET documentdb.enableDynamicCursors;
 -- (3.5)  $merge to 4 column collection
 SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "3col",  "pipeline": [  {"$project" : {"a" : "GUC IS DISBALE"}},{"$merge" : { "into": "3col",  "whenMatched" : "replace" , "whenNotMatched" : "insert" }} ] , "cursor": { "batchSize": 1 } }', 4294967294);
                                                           cursorpage                                                          | continuation | persistconnection | cursorid 

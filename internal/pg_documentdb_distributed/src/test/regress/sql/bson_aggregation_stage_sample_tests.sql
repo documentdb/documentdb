@@ -1,3 +1,6 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
 
 -- CREATE EXTENSION IF NOT EXISTS tsm_system_rows;
@@ -21,7 +24,10 @@ SELECT documentdb_api.insert_one('sampledb','sampleTest',' { "_id" : 6, "product
 -- https://www.postgresql.org/docs/current/tsm-system-rows.html
 
 -- Sample with cursor for unsharded collection not supported - use persisted cursor
+-- Check the legacy connection-backed persisted cursor rather than file fallback.
+SET documentdb.enableDynamicCursors TO off;
 SELECT * FROM documentdb_api.aggregate_cursor_first_page(database => 'sampledb', commandSpec => '{ "aggregate": "sampleTest", "pipeline": [ { "$sample": { "size": 3 } }, { "$project": { "_id": 0 } } ], "cursor": { "batchSize": 1 } }', cursorId => 4294967294);
+RESET documentdb.enableDynamicCursors;
 
 -- Shard orders collection on item 
 SELECT documentdb_api.shard_collection('sampledb','sampleTest', '{"product":"hashed"}', false);

@@ -123,6 +123,13 @@ FROM documentdb_api.cursor_get_more(
  { "ids" : [ { "$numberInt" : "6" } ] }
 (1 row)
 
+SELECT count(*) * 0 AS reset_count
+FROM documentdb_api_internal.command_feature_counter_stats(true);
+ reset_count 
+-------------
+           0
+(1 row)
+
 SELECT documentdb_api_internal.delete_cursors(ARRAY[3301]::bigint[]);
  delete_cursors 
 ----------------
@@ -183,6 +190,36 @@ SELECT documentdb_api_internal.delete_cursors(ARRAY[3302]::bigint[]);
  delete_cursors 
 ----------------
  { }
+(1 row)
+
+-- Count each non-null cursor ID, even when its file is absent.
+SELECT documentdb_api_internal.delete_cursors(ARRAY[3301, 3302, NULL]::bigint[]);
+ delete_cursors 
+----------------
+ { }
+(1 row)
+
+SELECT feature_name, usage_count
+FROM documentdb_api_internal.command_feature_counter_stats(false)
+WHERE feature_name = 'command_kill_cursors';
+     feature_name     | usage_count 
+----------------------+-------------
+ command_kill_cursors |           5
+(1 row)
+
+-- An empty batch does not increment the counter.
+SELECT documentdb_api_internal.delete_cursors(ARRAY[]::bigint[]);
+ delete_cursors 
+----------------
+ { }
+(1 row)
+
+SELECT feature_name, usage_count
+FROM documentdb_api_internal.command_feature_counter_stats(false)
+WHERE feature_name = 'command_kill_cursors';
+     feature_name     | usage_count 
+----------------------+-------------
+ command_kill_cursors |           5
 (1 row)
 
 SELECT documentdb_api.drop_collection('cursor_cleanup_db', 'file_cursors');

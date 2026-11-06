@@ -22,7 +22,8 @@ Size FileCursorShmemSize(void);
 
 void DeletePendingCursorFiles(void);
 void GetCurrentCursorCount(int32_t *currentCursorCount, int32_t *measuredCursorCount,
-						   int64_t *lastCursorSize);
+						   int64_t *lastCursorSize,
+						   int64_t *cursorDirectorySizeOnDiskBytes);
 void DeleteCursorFile(const char *cursorName);
 CursorFileState * CreateCursorFile(const char *cursorName,
 								   bool useFileBasedCursors);

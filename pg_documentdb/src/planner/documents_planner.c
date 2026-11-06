@@ -155,7 +155,6 @@ extern bool EnableCursorsOnAggregationQueryRewrite;
 extern bool EnableCompositeParallelIndexScan;
 extern bool ForceParallelScanIfAvailable;
 extern bool EnableExtendedIndexes;
-extern bool EnableDynamicCursors;
 extern bool EnableDistinctCustomScan;
 extern bool EnableGroupByDistinctScan;
 extern bool EnableDistinctScanForGroupFirst;
@@ -2227,7 +2226,7 @@ ExpandAggregationFunction(Query *query, ParamListInfo boundParams, PlannedStmt *
 	{
 		queryData.cursorStateConst = PgbsonInitEmpty();
 		queryData.isAggregationQueryCursorRewrite = true;
-		if (EnableDynamicCursors)
+		if (ShouldEnableDynamicCursors())
 		{
 			cursorParams = CursorParamKind_Dynamic;
 		}

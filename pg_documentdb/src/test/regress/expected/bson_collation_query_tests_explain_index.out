@@ -175,22 +175,24 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_array_filter", "pipeline": [ { "$sort": { "_id": 1 } }, { "$addFields": { "e": {  "f": "$a" } } }, { "$replaceRoot": { "newRoot": "$e" } }, { "$match" : { "f": { "$elemMatch": {"$eq": "cAt"} } } }, {"$project": { "items" : { "$filter" : { "input" : "$f", "as" : "animal", "cond" : { "$eq" : ["$$animal", "CAT"] } }} }} ],
  "cursor": {}, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
-                                                                                                                                                                                                                                                                                                                                                                                 run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                  
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort
-   Output: (documentdb_api_internal.bson_dollar_project(documentdb_api_internal.bson_dollar_replace_root(documentdb_api_internal.bson_dollar_add_fields(document, '{ "e" : { "f" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '{ "newRoot" : "$e" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '{ "items" : { "$filter" : { "input" : "$f", "as" : "animal", "cond" : { "$eq" : [ "$$animal", "CAT" ] } } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
-   ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: documentdb_api_internal.bson_dollar_project(documentdb_api_internal.bson_dollar_replace_root(documentdb_api_internal.bson_dollar_add_fields(document, '{ "e" : { "f" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '{ "newRoot" : "$e" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '{ "items" : { "$filter" : { "input" : "$f", "as" : "animal", "cond" : { "$eq" : [ "$$animal", "CAT" ] } } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
-         namespaceName: coll_q_db.coll_array_filter
-         indexName: _id_
-         ->  Bitmap Heap Scan on documentdb_data.documents_8800 collection
-               Output: document
-               Recheck Cond: (collection.shard_key_value = '8800'::bigint)
-               Filter: (documentdb_api_internal.bson_dollar_replace_root(documentdb_api_internal.bson_dollar_add_fields(collection.document, '{ "e" : { "f" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '{ "newRoot" : "$e" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text) @#? '{ "f" : { "$eq" : "cAt" }, "collation" : "en-u-ks-level1" }'::bson)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '8800'::bigint)
-(13 rows)
+                                                                                                                                                                                                                                                              run_explain_and_trim                                                                                                                                                                                                                                                              
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_3
+   Output: documentdb_api_internal.bson_dollar_project(agg_stage_3.document, '{ "items" : { "$filter" : { "input" : "$f", "as" : "animal", "cond" : { "$eq" : [ "$$animal", "CAT" ] } } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
+   Filter: bson_dollar_elemmatch(agg_stage_3.document, '{ "f" : { "$eq" : "cAt" }, "collation" : "en-u-ks-level1" }'::bson)
+   ->  Sort
+         Output: (documentdb_api_internal.bson_dollar_replace_root(documentdb_api_internal.bson_dollar_add_fields(collection.document, '{ "e" : { "f" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '{ "newRoot" : "$e" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
+         ->  Custom Scan (DocumentDBApiExplainQueryScan)
+               Output: documentdb_api_internal.bson_dollar_replace_root(documentdb_api_internal.bson_dollar_add_fields(collection.document, '{ "e" : { "f" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '{ "newRoot" : "$e" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+               namespaceName: coll_q_db.coll_array_filter
+               indexName: _id_
+               ->  Bitmap Heap Scan on documentdb_data.documents_8800 collection
+                     Output: collection.document
+                     Recheck Cond: (collection.shard_key_value = '8800'::bigint)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (collection.shard_key_value = '8800'::bigint)
+(15 rows)
 
 -- ======================================================================
 -- SECTION 3: $expr and ICU locale semantics
@@ -5285,6 +5287,8 @@ $cmd$);
 SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
   '{ "createIndexes": "single_field_binary", "indexes": [{ "key": {"a": 1, "b": 1}, "name": "gate_disabled_support", "collation": {"locale": "simple"} }] }', TRUE);
 ERROR:  Error in specification { "key" : { "a" : 1, "b" : 1 }, "name" : "gate_disabled_support", "collation" : { "locale" : "simple" } }:createIndex.collation is not implemented yet
+CONTEXT:  SQL statement "SELECT documentdb_api_internal.create_indexes_dispatch($1, $2, $3, $4)"
+SQL statement "SELECT documentdb_api_internal.create_indexes_dispatch($1, $2, $3, $4)"
 SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
 -- With collation disabled, a stored collation option remains a pushdown barrier.
 SET documentdb_core.enableCollation TO off;
@@ -5382,12 +5386,15 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
 SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
   '{ "createIndexes": "simple_gate_single", "indexes": [{ "key": {"a": 1}, "name": "gate_single_collation", "collation": {"locale": "simple"} }] }', TRUE);
 ERROR:  Index already exists with a different name: gate_single
+CONTEXT:  SQL statement "SELECT documentdb_api_internal.create_indexes_dispatch($1, $2, $3, $4)"
 SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
   '{ "createIndexes": "simple_gate_hashed", "indexes": [{ "key": {"a": "hashed"}, "name": "gate_hashed_collation", "collation": {"locale": "simple"} }] }', TRUE);
 ERROR:  Index already exists with a different name: gate_hashed
+CONTEXT:  SQL statement "SELECT documentdb_api_internal.create_indexes_dispatch($1, $2, $3, $4)"
 SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
   '{ "createIndexes": "simple_gate_wildcard", "indexes": [{ "key": {"$**": 1}, "name": "gate_wildcard_collation", "wildcardProjection": {"a": 1}, "collation": {"locale": "simple"} }] }', TRUE);
 ERROR:  Index already exists with a different name: gate_wildcard
+CONTEXT:  SQL statement "SELECT documentdb_api_internal.create_indexes_dispatch($1, $2, $3, $4)"
 SET documentdb.defaultUseCompositeOpClass TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "simple_gate_single", "filter": {"a": "apple"} }')

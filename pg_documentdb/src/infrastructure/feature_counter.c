@@ -1,6 +1,7 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.
  * Licensed under the MIT License
+ * SPDX-License-Identifier: MIT
  *
  * src/oss_backend/infrastructure/feature_counter.c
  *
@@ -324,6 +325,7 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_COMMAND_INSERT_BULK] = "command_insert_bulk",
 	[FEATURE_COMMAND_INSERT_EXTENDED] = "command_insert_extended",
 	[FEATURE_COMMAND_INSERT_ONE] = "command_insert_one",
+	[FEATURE_COMMAND_KILL_CURSORS] = "command_kill_cursors",
 	[FEATURE_COMMAND_LIST_COLLECTIONS_CURSOR_FIRST_PAGE] =
 		"command_list_collections_cursor_first_page",
 	[FEATURE_COMMAND_LIST_DATABASES] =

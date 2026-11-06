@@ -106,6 +106,20 @@ SELECT documentdb_api.insert_one('dyncurdb', 'dyncoll', '{ "_id": 5, "a": 2, "b"
 -- Create a secondary index on field 'a'
 SELECT documentdb_api_internal.create_indexes_non_concurrently('dyncurdb', '{ "createIndexes": "dyncoll", "indexes": [{ "key": { "a": 1 }, "name": "idx_a" }] }', true);
 
+-- Default enablement and explicit opt-out must affect real first pages.
+SHOW documentdb.enableDynamicCursors;
+SELECT continuation::text::jsonb ? 'qd' AS default_dynamic
+FROM documentdb_api.find_cursor_first_page(
+    'dyncurdb', '{ "find": "dyncoll", "batchSize": 2 }', 4321);
+
+SET documentdb.enableDynamicCursors TO off;
+SELECT continuation::text::jsonb ? 'qc' AS legacy_streaming
+FROM documentdb_api.find_cursor_first_page(
+    'dyncurdb', '{ "find": "dyncoll", "batchSize": 2 }', 4321);
+
+RESET documentdb.enableDynamicCursors;
+SHOW documentdb.enableDynamicCursors;
+
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
 
 ------------------------------------------------------------

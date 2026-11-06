@@ -1,6 +1,7 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.
  * Licensed under the MIT License
+ * SPDX-License-Identifier: MIT
  *
  * src/commands/aggregation_cursors.c
  *
@@ -38,7 +39,6 @@
 #include "api_hooks.h"
 
 
-extern bool EnableDynamicCursors;
 extern int DefaultTailableCursorMaxAwaitTimeMs;
 extern bool ReportParallelPlanInCursorContinuation;
 
@@ -353,7 +353,8 @@ command_aggregate_cursor_first_page(PG_FUNCTION_ARGS)
 inline static bool
 CanDispatchRemoteUnshardedFirstPage(MongoCollection *collection)
 {
-	return EnableDynamicCursors && collection != NULL && collection->isShardRemote &&
+	return ShouldEnableDynamicCursors() && collection != NULL &&
+		   collection->isShardRemote &&
 		   collection->shardKey == NULL && IsClusterVersionAtleast(DocDB_V0, 112, 2);
 }
 
@@ -364,7 +365,8 @@ aggregate_cursor_first_page(text *database, pgbson *aggregationSpec,
 {
 	ReportFeatureUsage(FEATURE_COMMAND_AGG_CURSOR_FIRST_PAGE);
 
-	CursorParamKind cursorParamKind = EnableDynamicCursors ? CursorParamKind_Dynamic :
+	CursorParamKind cursorParamKind = ShouldEnableDynamicCursors() ?
+									  CursorParamKind_Dynamic :
 									  CursorParamKind_Streaming;
 	bool setStatementTimeout = true;
 	QueryData queryData = GenerateFirstPageQueryData();
@@ -426,7 +428,8 @@ find_cursor_first_page(text *database, pgbson *findSpec, int64_t cursorId)
 
 	/* Parse the find spec for the purposes of query execution */
 	QueryData queryData = GenerateFirstPageQueryData();
-	CursorParamKind cursorParams = EnableDynamicCursors ? CursorParamKind_Dynamic :
+	CursorParamKind cursorParams = ShouldEnableDynamicCursors() ?
+								   CursorParamKind_Dynamic :
 								   CursorParamKind_Streaming;
 	bool setStatementTimeout = true;
 
@@ -1085,6 +1088,7 @@ delete_cursors(ArrayType *cursorArray)
 
 		int64_t cursorId = DatumGetInt64(cursorIds[i]);
 		const char *cursorName = FormatCursorName(cursorStringInfo, cursorId);
+		ReportFeatureUsage(FEATURE_COMMAND_KILL_CURSORS);
 		DeleteCursorFile(cursorName);
 	}
 

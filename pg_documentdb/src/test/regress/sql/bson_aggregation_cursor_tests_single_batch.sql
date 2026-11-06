@@ -1,6 +1,11 @@
+-- Copyright (c) Microsoft Corporation.
+
 SET search_path TO documentdb_api_catalog, documentdb_api, documentdb_core, public;
 SET documentdb.next_collection_id TO 600;
 SET documentdb.next_collection_index_id TO 600;
+
+-- Preserve legacy cursor plans alongside the dynamic cursor selection tests.
+SET documentdb.enableDynamicCursors TO off;
 
 DO $$
 DECLARE i int;
@@ -83,4 +88,3 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson
 
 -- not streamable even with limit 1
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('sb_db', '{ "aggregate": "sb_get_aggregation_cursor_smalldoc_test", "pipeline": [ { "$match": { "a": 1 }}, { "$limit": 1 }, { "$unwind": "$a" } ] }');
-

@@ -296,6 +296,7 @@ bool ShouldEnableCompositeUniqueOptionalKey(void);
 bool ShouldEnableIndexMetadataGlobalTracking(void);
 bool ShouldEnablePlannerStatisticsNewCollections(void);
 bool ShouldEnableIndexOnlyScanForFindProject(void);
+bool ShouldEnableDynamicCursors(void);
 
 
 /*

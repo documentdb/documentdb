@@ -1,3 +1,5 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
 -- CREATE EXTENSION IF NOT EXISTS tsm_system_rows;
 SET citus.next_shard_id TO 70000;
@@ -47,12 +49,15 @@ SELECT documentdb_api.insert_one('sampledb','sampleTest',' { "_id" : 6, "product
 -- especially if only a small number of rows are requested.
 -- https://www.postgresql.org/docs/current/tsm-system-rows.html
 -- Sample with cursor for unsharded collection not supported - use persisted cursor
+-- Check the legacy connection-backed persisted cursor rather than file fallback.
+SET documentdb.enableDynamicCursors TO off;
 SELECT * FROM documentdb_api.aggregate_cursor_first_page(database => 'sampledb', commandSpec => '{ "aggregate": "sampleTest", "pipeline": [ { "$sample": { "size": 3 } }, { "$project": { "_id": 0 } } ], "cursor": { "batchSize": 1 } }', cursorId => 4294967294);
                                                                                                                    cursorpage                                                                                                                    |                                                                                                    continuation                                                                                                    | persistconnection |  cursorid  
 ---------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "4294967294" }, "ns" : "sampledb.sampleTest", "firstBatch" : [ { "product" : "beer", "unitPrice" : { "$numberInt" : "1" }, "stock" : { "$numberInt" : "1" } } ] }, "ok" : { "$numberDouble" : "1.0" } } | { "qi" : { "$numberLong" : "4294967294" }, "qp" : true, "qk" : { "$numberInt" : "2" }, "qn" : "cursor_4294967294", "numIters" : { "$numberInt" : "0" }, "sn" : NOW_SYS_VARIABLE } | t                 | 4294967294
 (1 row)
 
+RESET documentdb.enableDynamicCursors;
 -- Shard orders collection on item 
 SELECT documentdb_api.shard_collection('sampledb','sampleTest', '{"product":"hashed"}', false);
  shard_collection 

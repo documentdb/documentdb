@@ -84,7 +84,6 @@
 
 extern bool EnableCursorsOnAggregationQueryRewrite;
 extern bool EnableCollation;
-extern bool EnableDynamicCursors;
 extern bool EnableDynamicCursorWithSkipLimit;
 extern bool SkipFailOnCollation;
 extern bool DefaultInlineWriteOperations;
@@ -1736,10 +1735,10 @@ SetCursorTopology(QueryData *queryData,
 		 * called from inside a PL/pgSQL function (IsTransactionBlock()=true) —
 		 * and we must not dispatch those queries to a remote worker.
 		 *
-		 * Topology is set unconditionally here; the EnableDynamicCursors GUC is
+		 * Topology is set unconditionally here; ShouldEnableDynamicCursors() is
 		 * enforced at the usage sites (HandleFirstPageRequest and
 		 * TryAddDynamicCursorQuery) so that cursor_tracker injection and worker
-		 * dispatch are both suppressed when the GUC is off.
+		 * dispatch are both suppressed when dynamic cursors are disabled.
 		 */
 		queryData->cursorTopology =
 			context->mongoCollection->isShardRemote ?
@@ -5049,7 +5048,7 @@ HandleMatchWithIndexFilter(const bson_value_t *existingValue, Query *query,
 	TargetEntry *entry = linitial(query->targetList);
 
 	if (context->joinStatus == JoinStageStatus_NoJoinsOrUnions &&
-		(EnableDynamicCursors ||
+		(ShouldEnableDynamicCursors() ||
 		 (EnableSubqueryPushdownForMatchOnPersistedCursors &&
 		  context->requiresPersistentCursor)) &&
 		IsA(entry->expr, FuncExpr))
