@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/utils/roaring_bitmap_utils.c
  *
@@ -14,6 +15,10 @@
  */
 
 #include <postgres.h>
+#include <fmgr.h>
+#include <miscadmin.h>
+
+#include <access/htup_details.h>
 
 #include "roaring_bitmaps/roaring.h"
 #include "utils/roaring_bitmap_utils.h"
@@ -42,17 +47,45 @@ struct RoaringTidDedupState
 
 
 /*
- * Pack a heap ItemPointer into a 64-bit key: block number in the high bits,
- * item offset in the low 16 bits.
+ * Maps a heap TID to its key in the de-duplication set:
+ * block * (MaxHeapTuplesPerPage + 1) + offset. A heap offset never exceeds
+ * MaxHeapTuplesPerPage, so every TID gets its own key.
+ *
+ * Roaring groups keys into chunks of 65536 consecutive values and pays a
+ * fixed cost for each chunk in use, so the set is smallest when keys are
+ * close together. Encoding a TID as block << 16 | offset would reserve 65536
+ * keys per page, although a page holds at most MaxHeapTuplesPerPage TIDs,
+ * so each page would take a chunk of its own. This encoding reserves only
+ * MaxHeapTuplesPerPage + 1 keys per page. That is 292 with 8 KB pages, so
+ * about 224 pages (65536 / 292) share one chunk. MaxHeapTuplesPerPage is
+ * derived from the block size, so other block sizes change how many pages
+ * share a chunk, and the key stays unique.
  *
  * An ItemPointer has no relation/shard id, so (block, offset) is unique only
  * within a single relation -- two shards can share the same value. That is safe
  * here because each de-dup set is scoped to one scan over one relation (a single
  * shard's heap in the distributed case) and is never shared across relations.
  */
-#define ItemPointerToUint64(pointer) \
-	((((uint64) ItemPointerGetBlockNumber(pointer)) << 16) | \
-	 ItemPointerGetOffsetNumber(pointer))
+static inline uint64
+TidToDedupKey(ItemPointer tid)
+{
+	OffsetNumber offset = ItemPointerGetOffsetNumber(tid);
+
+	/*
+	 * A larger offset would produce the same key as a TID on the next block,
+	 * so a distinct row would be dropped as a duplicate.
+	 */
+	if (offset > MaxHeapTuplesPerPage)
+	{
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("TID offset %u is out of range for de-duplication",
+							   offset)));
+	}
+
+	return (uint64) ItemPointerGetBlockNumber(tid) * (MaxHeapTuplesPerPage + 1) +
+		   offset;
+}
+
 
 static RoaringBitmap32State * CreateRoaringBitmap(uint32 initialCapacity);
 static void FreeRoaringBitmap(RoaringBitmap32State *state);
@@ -64,6 +97,8 @@ static void RoaringBitmapRunOptimize(RoaringBitmap32State *state);
 static size_t RoaringBitmapSerializedSize(RoaringBitmap32State *state);
 static void RoaringBitmapSerialize(RoaringBitmap32State *state, char *buf);
 static RoaringBitmap32State * RoaringBitmapDeserialize(const char *buf, size_t length);
+
+PG_FUNCTION_INFO_V1(test_tid_dedup_container_count);
 
 
 const RoaringBitmap32AdapterFuncs RoaringBitmapAdapter = {
@@ -179,7 +214,7 @@ CreateRoaringTidDedup(void)
 bool
 RoaringTidDedupAddChecked(RoaringTidDedupState *state, ItemPointer tid)
 {
-	uint64 key = ItemPointerToUint64(tid);
+	uint64 key = TidToDedupKey(tid);
 	return roaring64_bitmap_add_checked(state->bitmap, key);
 }
 
@@ -194,6 +229,52 @@ FreeRoaringTidDedup(RoaringTidDedupState *state)
 
 	roaring64_bitmap_free(state->bitmap);
 	pfree(state);
+}
+
+
+/*
+ * test_tid_dedup_container_count is a test-only function. It adds the first
+ * slotsPerPage TIDs of each of `pages` consecutive heap pages to a
+ * de-duplication set and returns how many roaring containers the set uses.
+ * It raises an error if two distinct TIDs map to the same key, so the result
+ * cannot look small only because keys collided.
+ */
+Datum
+test_tid_dedup_container_count(PG_FUNCTION_ARGS)
+{
+	int32 pages = PG_GETARG_INT32(0);
+	int32 slotsPerPage = PG_GETARG_INT32(1);
+
+	if (pages < 1 || slotsPerPage < 1 || slotsPerPage > MaxHeapTuplesPerPage)
+	{
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("pages must be positive and slots per page must be "
+							   "between 1 and %d", MaxHeapTuplesPerPage)));
+	}
+
+	RoaringTidDedupState *state = CreateRoaringTidDedup();
+	for (BlockNumber block = 0; block < (BlockNumber) pages; block++)
+	{
+		CHECK_FOR_INTERRUPTS();
+
+		for (OffsetNumber offset = FirstOffsetNumber; offset <= slotsPerPage; offset++)
+		{
+			ItemPointerData tid;
+			ItemPointerSet(&tid, block, offset);
+			if (!RoaringTidDedupAddChecked(state, &tid))
+			{
+				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+								errmsg("TID (%u,%u) shares a key with an earlier TID",
+									   block, offset)));
+			}
+		}
+	}
+
+	roaring64_statistics_t stats;
+	roaring64_bitmap_statistics(state->bitmap, &stats);
+	FreeRoaringTidDedup(state);
+
+	PG_RETURN_INT64((int64) stats.n_containers);
 }
 
 
