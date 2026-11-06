@@ -19,13 +19,14 @@ use crate::{
 /// Data connection buffer size (in bytes).
 pub const CONN_BUFFER_SIZE: usize = 262_144;
 pub const CONN_PRUNE_INTERVAL_SECS: u64 = 10;
-pub const CONN_IDLE_LIFETIME_SECS: u64 = 300;
-pub const CONN_LIFETIME_SECS: u64 = 3600;
+pub const CONN_IDLE_LIFETIME_SECS: u64 = 900;
+pub const CONN_LIFETIME_SECS: u64 = 1800;
 const DEFAULT_UNCHECKED_DATA_POOL_SIZE: usize = 2;
 
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PgPoolSettings {
     max_connections: usize,
+    min_data_pool_size_percent: usize,
     system_connection_budget: usize,
     connection_buffer_size: usize,
     connection_pruning_interval: Duration,
@@ -52,6 +53,7 @@ impl PgPoolSettings {
     ) -> Self {
         Self {
             max_connections,
+            min_data_pool_size_percent: 0,
             system_connection_budget: 0,
             connection_buffer_size: CONN_BUFFER_SIZE,
             connection_pruning_interval: Duration::from_secs(CONN_PRUNE_INTERVAL_SECS),
@@ -75,9 +77,11 @@ impl PgPoolSettings {
         let max_request_timeout = Duration::from_secs(config.max_request_timeout_sec());
         let transaction_timeout = Duration::from_secs(config.transaction_timeout_sec());
         let connect_timeout = config.connect_timeout();
+        let min_data_pool_size_percent = config.min_data_pool_size_percent();
 
         Self {
             max_connections,
+            min_data_pool_size_percent,
             system_connection_budget,
             connection_buffer_size,
             connection_pruning_interval,
@@ -93,6 +97,20 @@ impl PgPoolSettings {
     #[must_use]
     pub const fn with_connect_timeout(mut self, connect_timeout: Duration) -> Self {
         self.connect_timeout = Some(connect_timeout);
+        self
+    }
+
+    /// Sets the minimum data-pool size as a percentage of its maximum size.
+    #[must_use]
+    pub const fn with_min_pool_size_percent(mut self, min_pool_size_percent: usize) -> Self {
+        self.min_data_pool_size_percent = min_pool_size_percent;
+        self
+    }
+
+    /// Removes the minimum data-pool size.
+    #[must_use]
+    pub const fn without_min_pool_size(mut self) -> Self {
+        self.min_data_pool_size_percent = 0;
         self
     }
 
@@ -125,6 +143,25 @@ impl PgPoolSettings {
         }
 
         data_pool_max_connections
+    }
+
+    #[must_use]
+    pub fn data_pool_min_connections(&self) -> usize {
+        let max_data_pool_size = self.data_pool_max_connections();
+
+        // Zero disables the minimum so system pools remain lazy.
+        if self.min_data_pool_size_percent == 0 {
+            return 0;
+        }
+
+        if self.min_data_pool_size_percent >= 100 {
+            return max_data_pool_size;
+        }
+
+        let min_data_pool_size = (max_data_pool_size / 100) * self.min_data_pool_size_percent
+            + ((max_data_pool_size % 100) * self.min_data_pool_size_percent) / 100;
+
+        min_data_pool_size.max(1)
     }
 
     #[must_use]
@@ -171,6 +208,7 @@ mod tests {
     fn settings(max_connections: usize, system_connection_budget: usize) -> PgPoolSettings {
         PgPoolSettings {
             max_connections,
+            min_data_pool_size_percent: 0,
             system_connection_budget,
             connection_buffer_size: CONN_BUFFER_SIZE,
             connection_pruning_interval: Duration::from_secs(CONN_PRUNE_INTERVAL_SECS),
@@ -193,6 +231,53 @@ mod tests {
         assert_eq!(settings(1, 0).data_pool_max_connections(), 1);
         assert_eq!(
             settings(usize::MAX, 0).data_pool_max_connections(),
+            usize::MAX
+        );
+    }
+
+    #[test]
+    fn system_pool_settings_preserve_zero_minimum() {
+        let settings = PgPoolSettings::system_pool_settings(4);
+        assert_eq!(settings.data_pool_min_connections(), 0);
+        assert_eq!(
+            settings
+                .with_min_pool_size_percent(100)
+                .data_pool_min_connections(),
+            4
+        );
+        assert_eq!(
+            settings
+                .with_min_pool_size_percent(100)
+                .without_min_pool_size()
+                .data_pool_min_connections(),
+            0
+        );
+    }
+
+    #[test]
+    fn data_pool_min_connections_scales_without_overflow() {
+        assert_eq!(
+            settings(20, 0)
+                .with_min_pool_size_percent(10)
+                .data_pool_min_connections(),
+            2
+        );
+        assert_eq!(
+            settings(4, 0)
+                .with_min_pool_size_percent(10)
+                .data_pool_min_connections(),
+            1
+        );
+        assert_eq!(
+            settings(usize::MAX, 0)
+                .with_min_pool_size_percent(50)
+                .data_pool_min_connections(),
+            usize::MAX / 2
+        );
+        assert_eq!(
+            settings(usize::MAX, 0)
+                .with_min_pool_size_percent(usize::MAX)
+                .data_pool_min_connections(),
             usize::MAX
         );
     }
