@@ -221,6 +221,39 @@ async fn sasl_start_clears_authenticated_user_and_pool_settings() {
 }
 
 #[tokio::test]
+async fn authentication_keeps_per_user_pool_lazy_when_shared_pool_has_minimum() {
+    let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+    dynamic_configuration.set_min_data_pool_size_percent(100);
+    assert!(
+        PgPoolSettings::from_configuration(dynamic_configuration.as_ref())
+            .data_pool_min_connections()
+            > 0
+    );
+
+    let mut connection_context = test_connection_context(false, dynamic_configuration, None).await;
+    connection_context
+        .set_authenticated_user(
+            UserAuthState::authenticated("TEST", Principal::new("external-user", 1), None, None),
+            "pool-secret",
+        )
+        .expect("authenticated user and data pool should be installed");
+
+    let settings = connection_context
+        .user()
+        .data_pool_settings()
+        .expect("authenticated user should retain its pool settings");
+    assert_eq!(settings.data_pool_min_connections(), 0);
+
+    let pool = connection_context
+        .service_context
+        .connection_pool_manager()
+        .get_data_pool_with_settings("external-user", settings)
+        .expect("per-user pool should be available");
+    assert_eq!(pool.get_min_pool_size(), 0);
+    assert_eq!(pool.status().status().size, 0);
+}
+
+#[tokio::test]
 async fn authentication_can_switch_principal() {
     let new_principal = Principal::new("different-user", 2);
     let mut authentication_manager = AuthenticationManager::default();

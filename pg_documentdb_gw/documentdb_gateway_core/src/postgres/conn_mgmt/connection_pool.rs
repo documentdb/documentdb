@@ -11,16 +11,17 @@ use std::{
     hash::{Hash, Hasher},
     ops::Deref,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         Arc,
     },
 };
 
+use arc_swap::ArcSwap;
 use deadpool::{
     managed::{
         Manager as DeadpoolManager, Metrics as DeadpoolMetrics, Object as DeadpoolObject,
         Pool as DeadpoolPool, RecycleError as DeadpoolRecycleError,
-        RecycleResult as DeadpoolRecycleResult,
+        RecycleResult as DeadpoolRecycleResult, TimeoutType,
     },
     Runtime, Status,
 };
@@ -48,6 +49,7 @@ use crate::{
         },
         QueryCatalog,
     },
+    telemetry::event_id::EventId,
     time::{self, EpochClock},
 };
 
@@ -127,6 +129,7 @@ fn now_epoch_nanos() -> u64 {
 /// Slack between the pool-wide `statement_timeout` and the client-side deadline
 /// backing it up, so the server's own graceful timeout error wins the race.
 const COMMAND_DEADLINE_SLACK: Duration = Duration::from_secs(1);
+const PRE_ALLOCATION_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Client-side deadline for a request that carries no timeout of its own;
 /// `Connection::set_command_deadline` replaces it per request.
@@ -314,6 +317,8 @@ pub struct ConnectionPool {
     /// [`InstrumentedManager::recycle`]. The reset does not roll back an open
     /// transaction, which is why `Connection` rolls back on drop.
     pool: DeadpoolPool<InstrumentedManager>,
+    max_pool_size: AtomicUsize,
+    min_pool_size: Arc<AtomicUsize>,
     /// Nanosecond offset from `EPOCH` of the last `acquire_connection` call.
     /// Always written through [`now_epoch_nanos`].
     /// Uses `AtomicU64` instead of `RwLock<Instant>` to avoid async lock
@@ -322,13 +327,18 @@ pub struct ConnectionPool {
     metrics: Arc<ConnectionPoolMetrics>,
     identifier: String,
     credential_fingerprint: [u8; 32],
-    prune_task: JoinHandle<()>,
+    max_connection_age: Arc<ArcSwap<Duration>>,
+    max_connection_idle: Arc<ArcSwap<Duration>>,
+    pruning_interval: Arc<ArcSwap<Duration>>,
+    prune_task: Option<JoinHandle<()>>,
     /// Client-side deadline for statements executed on connections from this
     /// pool; see [`command_deadline_for`].
     command_deadline: Duration,
 }
 
 impl ConnectionPool {
+    /// Creates a pool with on-demand connections and background pruning.
+    ///
     /// # Errors
     ///
     /// Returns error if the operation fails.
@@ -356,6 +366,8 @@ impl ConnectionPool {
     ///
     /// `tls` is the mechanism, `ssl_mode` the policy: supplying a connector does
     /// not by itself require the backend to negotiate.
+    /// Connections open on demand; call [`Self::pre_allocate_connections`] for
+    /// startup warmup.
     ///
     /// # Errors
     ///
@@ -423,24 +435,6 @@ impl ConnectionPool {
             .create_timeout(pool_settings.connect_timeout())
             .build()?;
 
-        // `Pool` is internally `Arc`-wrapped, so cloning shares state with the pruner.
-        let pool_copy = pool.clone();
-
-        let prune_task = tokio::spawn(async move {
-            let mut prune_interval =
-                tokio::time::interval(pool_settings.connection_pruning_interval());
-
-            loop {
-                prune_interval.tick().await;
-
-                // Prune idle connections that have exceeded idle lifetime or total lifetime
-                pool_copy.retain(|_, conn_metrics| {
-                    conn_metrics.last_used() < pool_settings.connection_idle_lifetime()
-                        && conn_metrics.age() < pool_settings.connection_lifetime()
-                });
-            }
-        });
-
         let mut hasher = DefaultHasher::new();
         user.hash(&mut hasher);
         let pool_identifier = format!(
@@ -449,15 +443,153 @@ impl ConnectionPool {
             max_connections
         );
 
-        Ok(Self {
+        let mut connection_pool = Self {
             pool,
+            max_pool_size: AtomicUsize::new(pool_settings.data_pool_max_connections()),
+            min_pool_size: Arc::new(AtomicUsize::new(pool_settings.data_pool_min_connections())),
             last_used_nanos: AtomicU64::new(now_epoch_nanos()),
             metrics,
             identifier: pool_identifier,
             credential_fingerprint: credential_fingerprint(password),
-            prune_task,
+            max_connection_age: Arc::new(ArcSwap::from_pointee(
+                pool_settings.connection_lifetime(),
+            )),
+            max_connection_idle: Arc::new(ArcSwap::from_pointee(
+                pool_settings.connection_idle_lifetime(),
+            )),
+            pruning_interval: Arc::new(ArcSwap::from_pointee(
+                pool_settings.connection_pruning_interval(),
+            )),
+            prune_task: None,
             command_deadline,
+        };
+        connection_pool.prune_task = Some(connection_pool.spawn_prune_task());
+
+        Ok(connection_pool)
+    }
+
+    /// Warms the pool within a 30-second total budget. Failures are logged and
+    /// leave the pool usable on demand.
+    pub async fn pre_allocate_connections(&self) {
+        if let Err(error) =
+            Self::pre_allocate_pool_connections(&self.pool, &self.metrics, self.get_min_pool_size())
+                .await
+        {
+            tracing::warn!(
+                event_id = EventId::ConnectionPool.code(),
+                error = %error,
+                "Backend connection preallocation failed"
+            );
+        }
+    }
+
+    fn spawn_prune_task(&self) -> JoinHandle<()> {
+        // `Pool` is internally `Arc`-wrapped, so cloning shares state with the pruner.
+        let pool = self.pool.clone();
+        let min_pool_size = Arc::clone(&self.min_pool_size);
+        let max_connection_age = Arc::clone(&self.max_connection_age);
+        let max_connection_idle = Arc::clone(&self.max_connection_idle);
+        let pruning_interval = Arc::clone(&self.pruning_interval);
+
+        tokio::spawn(async move {
+            let mut prune_interval = tokio::time::interval(**pruning_interval.load());
+
+            loop {
+                prune_interval.tick().await;
+
+                let pool_status = pool.status();
+                let prunable_connection_count = pool_status
+                    .size
+                    .saturating_sub(min_pool_size.load(Ordering::Relaxed));
+
+                // Do not prune connections if the pool is already at or below the minimum.
+                if prunable_connection_count > 0 {
+                    let max_connection_age = **max_connection_age.load();
+                    let max_connection_idle = **max_connection_idle.load();
+                    let mut pruned_connection_count = 0;
+
+                    // Prune expired idle connections without reducing the pool below its minimum.
+                    pool.retain(|_, conn_metrics| {
+                        if pruned_connection_count >= prunable_connection_count {
+                            return true;
+                        }
+
+                        if conn_metrics.last_used() < max_connection_idle
+                            && conn_metrics.age() < max_connection_age
+                        {
+                            return true;
+                        }
+
+                        pruned_connection_count += 1;
+                        false
+                    });
+                }
+
+                let interval = **pruning_interval.load();
+                if interval != prune_interval.period() {
+                    prune_interval = tokio::time::interval_at(Instant::now() + interval, interval);
+                }
+            }
         })
+    }
+
+    fn abort_prune_task(&self) {
+        if let Some(prune_task) = &self.prune_task {
+            prune_task.abort();
+        }
+    }
+
+    #[must_use]
+    pub fn get_max_pool_size(&self) -> usize {
+        self.max_pool_size.load(Ordering::Relaxed)
+    }
+
+    pub fn set_max_pool_size(&self, max_pool_size: usize) {
+        self.max_pool_size.store(max_pool_size, Ordering::Relaxed);
+        self.pool.resize(max_pool_size);
+    }
+
+    #[must_use]
+    pub fn get_min_pool_size(&self) -> usize {
+        self.min_pool_size.load(Ordering::Relaxed)
+    }
+
+    pub fn set_min_pool_size(&self, min_pool_size: usize) {
+        self.min_pool_size.store(min_pool_size, Ordering::Relaxed);
+    }
+
+    /// Returns the maximum lifetime allowed for a pooled connection.
+    #[must_use]
+    pub fn get_max_connection_age(&self) -> Duration {
+        **self.max_connection_age.load()
+    }
+
+    /// Updates the maximum lifetime allowed for a pooled connection.
+    pub fn set_max_connection_age(&self, max_connection_age: Duration) {
+        self.max_connection_age.store(Arc::new(max_connection_age));
+    }
+
+    /// Returns the maximum idle lifetime allowed for a pooled connection.
+    #[must_use]
+    pub fn get_max_connection_idle(&self) -> Duration {
+        **self.max_connection_idle.load()
+    }
+
+    /// Updates the maximum idle lifetime allowed for a pooled connection.
+    pub fn set_max_connection_idle(&self, max_connection_idle: Duration) {
+        self.max_connection_idle
+            .store(Arc::new(max_connection_idle));
+    }
+
+    /// Returns the interval between connection-pruning passes.
+    #[must_use]
+    pub fn get_pruning_interval(&self) -> Duration {
+        **self.pruning_interval.load()
+    }
+
+    /// Updates the interval between connection-pruning passes.
+    pub fn set_pruning_interval(&self, pruning_interval: Duration) {
+        self.pruning_interval.store(Arc::new(pruning_interval));
     }
 
     /// Acquires a connection from the pool.
@@ -579,29 +711,80 @@ impl ConnectionPool {
     pub(super) fn combined_status(&self) -> Status {
         self.pool.status()
     }
+
+    /// Preallocates connections without recording request activity.
+    /// Waiting requests take priority, so contention can stop warmup early.
+    /// The entire operation is limited to 30 seconds; cancellation releases
+    /// held connections and any in-flight acquisition.
+    async fn pre_allocate_pool_connections(
+        pool: &DeadpoolPool<InstrumentedManager>,
+        metrics: &ConnectionPoolMetrics,
+        min_pool_size: usize,
+    ) -> std::result::Result<(), deadpool_postgres::PoolError> {
+        let status = pool.status();
+        let target_size = min_pool_size.min(status.max_size);
+        if status.size >= target_size {
+            return Ok(());
+        }
+
+        let mut timeouts = pool.timeouts();
+        timeouts.wait = Some(Duration::ZERO);
+        timeouts.create = Some(timeouts.create.unwrap_or(PRE_ALLOCATION_TIMEOUT));
+
+        if let Ok(result) = tokio::time::timeout(PRE_ALLOCATION_TIMEOUT, async {
+            // Hold idle connections so subsequent checkouts create new ones
+            // rather than repeatedly recycling the same connection.
+            let mut connections = Vec::with_capacity(target_size);
+            while connections.len() < target_size {
+                let status = pool.status();
+                if status.size >= target_size.min(status.max_size) || status.waiting > 0 {
+                    break;
+                }
+
+                connections.push(pool.timeout_get(&timeouts).await.inspect_err(|error| {
+                    metrics.record_timeout_if_pool_timeout(error);
+                })?);
+            }
+            Ok(())
+        })
+        .await
+        {
+            result
+        } else {
+            let error = deadpool_postgres::PoolError::Timeout(TimeoutType::Create);
+            metrics.record_timeout_if_pool_timeout(&error);
+            Err(error)
+        }
+    }
 }
 
 impl Drop for ConnectionPool {
     fn drop(&mut self) {
         // Stop the background pruner when the pool is dropped.
-        self.prune_task.abort();
+        self.abort_prune_task();
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{iter, time::Instant as WallClockInstant};
+
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
-        task::yield_now,
+        sync::oneshot,
+        task::{yield_now, JoinSet},
     };
 
     use super::*;
     use crate::{
         configuration::DocumentDBSetupConfiguration,
-        postgres::create_query_catalog,
+        postgres::{conn_mgmt::PoolManager, create_query_catalog},
         telemetry::consts::{labels, metric_names},
-        testing::{test_connection_pool, test_setup_configuration, RecordingMetricsRecorder},
+        testing::{
+            test_connection_pool, test_setup_configuration, RecordingMetricsRecorder,
+            TestDynamicConfiguration,
+        },
     };
 
     #[tokio::test]
@@ -1003,7 +1186,447 @@ mod tests {
         backend.abort();
     }
 
+    #[tokio::test]
+    async fn explicit_preallocation_warms_the_configured_minimum() {
+        let (port, backend) = scripted_backend(READY.to_vec()).await;
+        let recorder = RecordingMetricsRecorder::default();
+        let pool = backend_pool(
+            &recorder,
+            port,
+            PgPoolSettings::system_pool_settings(4).with_min_pool_size_percent(25),
+        );
+        let last_used = pool.last_used();
+
+        tokio::time::timeout(Duration::from_secs(5), pool.pre_allocate_connections())
+            .await
+            .expect("initial preallocation completes");
+
+        assert_eq!(pool.combined_status().size, pool.get_min_pool_size());
+        assert_eq!(pool.combined_status().size, 1);
+        assert_eq!(pool.combined_status().available, 1);
+        assert_eq!(pool.last_used(), last_used);
+        assert_eq!(pool.status().connections_created(), 1);
+        backend.abort();
+    }
+
+    #[tokio::test]
+    async fn construction_does_not_preallocate_connections() {
+        let (port, backend) = scripted_backend(READY.to_vec()).await;
+        let recorder = RecordingMetricsRecorder::default();
+        let pool = backend_pool(
+            &recorder,
+            port,
+            PgPoolSettings::system_pool_settings(1).with_min_pool_size_percent(100),
+        );
+
+        yield_now().await;
+
+        assert_eq!(pool.combined_status().size, 0);
+        assert_eq!(pool.combined_status().waiting, 0);
+        assert_eq!(pool.status().connections_created(), 0);
+        backend.abort();
+    }
+
+    #[tokio::test]
+    async fn startup_warms_the_shared_pool_used_by_requests() {
+        let (port, backend) = scripted_backend(READY.to_vec()).await;
+        let setup_config = DocumentDBSetupConfiguration {
+            postgres_host_name: Some("127.0.0.1".to_owned()),
+            postgres_port: Some(port),
+            ..test_setup_configuration()
+        };
+        let query_catalog = create_query_catalog();
+        let system_pool = |name| {
+            ConnectionPool::new_with_user(
+                &setup_config,
+                &query_catalog,
+                "user",
+                None,
+                name,
+                PgPoolSettings::system_pool_settings(1),
+            )
+            .unwrap()
+        };
+        let requests = system_pool("requests");
+        let auth = system_pool("auth");
+        let manager = PoolManager::new(query_catalog, Box::new(setup_config), requests, auth);
+        let dynamic_configuration = TestDynamicConfiguration::default();
+        dynamic_configuration.set_min_data_pool_size_percent(25);
+        let minimum =
+            PgPoolSettings::from_configuration(&dynamic_configuration).data_pool_min_connections();
+        assert!(minimum > 0);
+
+        let pool = manager
+            .get_system_shared_pool(&dynamic_configuration)
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), pool.pre_allocate_connections())
+            .await
+            .expect("startup warmup completes");
+
+        let reused = manager
+            .get_system_shared_pool(&dynamic_configuration)
+            .unwrap();
+        assert!(Arc::ptr_eq(&pool, &reused));
+        assert_eq!(pool.combined_status().size, minimum);
+        assert_eq!(pool.combined_status().available, minimum);
+        let connection = reused.acquire_connection().await.unwrap();
+        assert_eq!(pool.status().connections_created(), minimum as u64);
+        drop(connection);
+        backend.abort();
+    }
+
+    #[tokio::test]
+    async fn prune_task_uses_updated_settings_and_respects_minimum() {
+        let (port, backend) = scripted_backend(READY.to_vec()).await;
+        let recorder = RecordingMetricsRecorder::default();
+        let pool = backend_pool(
+            &recorder,
+            port,
+            PgPoolSettings::system_pool_settings(4).with_min_pool_size_percent(25),
+        );
+
+        tokio::time::timeout(Duration::from_secs(5), pool.pre_allocate_connections())
+            .await
+            .expect("initial preallocation completes");
+
+        let first = pool.acquire_connection().await.unwrap();
+        let second = pool.acquire_connection().await.unwrap();
+        drop(first);
+        drop(second);
+
+        pool.set_min_pool_size(2);
+        pool.set_max_connection_age(Duration::ZERO);
+        pool.set_max_connection_idle(Duration::ZERO);
+        pool.set_pruning_interval(Duration::from_secs(1));
+
+        assert_eq!(pool.get_max_connection_age(), Duration::ZERO);
+        assert_eq!(pool.get_max_connection_idle(), Duration::ZERO);
+        assert_eq!(pool.get_pruning_interval(), Duration::from_secs(1));
+
+        yield_now().await;
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(11)).await;
+        yield_now().await;
+
+        assert_eq!(pool.combined_status().size, 2);
+
+        pool.set_min_pool_size(1);
+        tokio::time::advance(Duration::from_secs(2)).await;
+        yield_now().await;
+
+        assert_eq!(pool.combined_status().size, 1);
+
+        pool.set_min_pool_size(0);
+        tokio::time::advance(Duration::from_secs(2)).await;
+        yield_now().await;
+
+        assert_eq!(pool.combined_status().size, 0);
+        backend.abort();
+    }
+
+    #[tokio::test]
+    async fn preallocation_stops_at_the_minimum_not_the_maximum() {
+        let (port, backend) = scripted_backend(READY.to_vec()).await;
+        let recorder = RecordingMetricsRecorder::default();
+        let pool = preallocation_pool(&recorder, port, 3, 8);
+        let last_used = pool.last_used();
+
+        preallocate(&pool).await.unwrap();
+
+        assert_eq!(pool.combined_status().max_size, 8);
+        assert_eq!(pool.combined_status().size, 3);
+        assert_eq!(pool.combined_status().available, 3);
+        assert_eq!(pool.last_used(), last_used);
+        assert_eq!(
+            recorder.counter(metric_names::BACKEND_CONNECTION_CREATE_COUNT, &[DATA]),
+            Some(3)
+        );
+        backend.abort();
+    }
+
+    #[tokio::test]
+    async fn preallocation_counts_existing_connections_and_caps_the_target() {
+        let (port, backend) = scripted_backend(READY.to_vec()).await;
+        let recorder = RecordingMetricsRecorder::default();
+        let pool = data_pool(&recorder, port);
+        pool.set_max_pool_size(4);
+        let first = pool.acquire_connection().await.unwrap();
+        let second = pool.acquire_connection().await.unwrap();
+        drop(second);
+
+        pool.set_min_pool_size(3);
+        preallocate(&pool).await.unwrap();
+        assert_eq!(pool.combined_status().size, 3);
+        assert_eq!(pool.combined_status().available, 2);
+        assert_eq!(pool.status().connections_created(), 3);
+        drop(first);
+
+        pool.set_min_pool_size(10);
+        preallocate(&pool).await.unwrap();
+        assert_eq!(pool.combined_status().size, 4);
+        assert_eq!(pool.combined_status().available, 4);
+        assert_eq!(pool.status().connections_created(), 4);
+        backend.abort();
+    }
+
+    #[tokio::test]
+    async fn preallocation_skips_a_zero_minimum_or_a_full_pool() {
+        let (port, backend) = scripted_backend(READY.to_vec()).await;
+        let recorder = RecordingMetricsRecorder::default();
+        let pool = data_pool(&recorder, port);
+        pool.set_min_pool_size(0);
+        preallocate(&pool).await.unwrap();
+        assert_eq!(pool.status().connections_created(), 0);
+
+        let connection = pool.acquire_connection().await.unwrap();
+        pool.set_min_pool_size(1);
+        preallocate(&pool).await.unwrap();
+        assert_eq!(pool.status().connections_created(), 1);
+        drop(connection);
+        backend.abort();
+    }
+
+    #[tokio::test]
+    async fn preallocation_records_backend_creation_failures() {
+        let (port, backend) = scripted_backend(error_response("28P01")).await;
+        let recorder = RecordingMetricsRecorder::default();
+        let pool = preallocation_pool(&recorder, port, 2, 4);
+
+        let error = preallocate(&pool).await.unwrap_err();
+        assert!(matches!(error, deadpool::managed::PoolError::Backend(_)));
+
+        assert_eq!(failed_creations(&recorder, "auth"), Some(1));
+        assert_eq!(pool.combined_status().size, 0);
+        assert_eq!(pool.combined_status().waiting, 0);
+        backend.abort();
+    }
+
+    #[tokio::test]
+    async fn startup_preallocation_failure_is_nonfatal() {
+        let (port, backend) =
+            scripted_backend_replies(vec![error_response("53300"), READY.to_vec()].into_iter())
+                .await;
+        let recorder = RecordingMetricsRecorder::default();
+        let pool = backend_pool(
+            &recorder,
+            port,
+            PgPoolSettings::system_pool_settings(2).with_min_pool_size_percent(100),
+        );
+
+        pool.pre_allocate_connections().await;
+
+        assert_eq!(failed_creations(&recorder, "connection_limit"), Some(1));
+        assert_eq!(pool.combined_status().size, 0);
+        assert_eq!(pool.combined_status().waiting, 0);
+
+        let connection = pool.acquire_connection().await.unwrap();
+        assert_eq!(pool.status().connections_created(), 1);
+        drop(connection);
+        backend.abort();
+    }
+
+    #[tokio::test]
+    async fn preallocation_yields_to_pending_requests() {
+        let (port, backend) = scripted_backend(Vec::new()).await;
+        let recorder = RecordingMetricsRecorder::default();
+        let pool = data_pool(&recorder, port);
+        pool.set_max_pool_size(2);
+        pool.set_min_pool_size(2);
+        let request_pool = pool.pool.clone();
+        let request = tokio::spawn(async move { request_pool.get().await });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while pool.combined_status().waiting == 0 {
+                yield_now().await;
+            }
+        })
+        .await
+        .expect("the request starts acquiring a connection");
+
+        preallocate(&pool).await.unwrap();
+
+        assert_eq!(pool.combined_status().waiting, 1);
+        assert_eq!(pool.status().connections_created(), 0);
+        assert_eq!(failed_creations(&recorder, "network"), Some(0));
+        request.abort();
+        request.await.expect_err("the pending request is cancelled");
+        backend.abort();
+    }
+
+    #[tokio::test]
+    async fn preallocation_respects_connect_timeout_and_releases_connections() {
+        let (port, backend) =
+            scripted_backend_replies(vec![READY.to_vec(), Vec::new()].into_iter()).await;
+        let recorder = RecordingMetricsRecorder::default();
+        let pool = backend_pool(
+            &recorder,
+            port,
+            PgPoolSettings::system_pool_settings_with_command_timeout(2, 0)
+                .with_connect_timeout(Duration::from_secs(1))
+                .with_min_pool_size_percent(50),
+        );
+        pool.abort_prune_task();
+        assert_eq!(pool.pool.timeouts().create, Some(Duration::from_secs(1)));
+        preallocate(&pool).await.unwrap();
+
+        pool.set_min_pool_size(2);
+        let error = preallocate(&pool).await.unwrap_err();
+        assert!(matches!(
+            error,
+            deadpool::managed::PoolError::Timeout(deadpool::managed::TimeoutType::Create)
+        ));
+
+        assert_eq!(pool.combined_status().size, 1);
+        assert_eq!(pool.combined_status().available, 1);
+        assert_eq!(pool.combined_status().waiting, 0);
+        assert_eq!(
+            recorder.counter(metric_names::BACKEND_CONNECTION_POOL_TIMEOUT_COUNT, &[DATA]),
+            Some(1)
+        );
+        assert_eq!(failed_creations(&recorder, "network"), Some(1));
+        backend.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn startup_preallocation_has_thirty_seconds_total_and_exits_safely() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (release_reply, reply_ready) = oneshot::channel();
+        let backend = tokio::spawn(async move {
+            let (mut first, _) = listener.accept().await.unwrap();
+            let length = usize::try_from(first.read_u32().await.unwrap()).unwrap();
+            let mut startup = vec![0; length - 4];
+            first.read_exact(&mut startup).await.unwrap();
+            reply_ready.await.unwrap();
+            first.write_all(&READY).await.unwrap();
+            let (mut second, _) = listener.accept().await.unwrap();
+            let mut remaining = Vec::new();
+            let _ = second.read_to_end(&mut remaining).await;
+            let _ = first.read_to_end(&mut remaining).await;
+        });
+        let recorder = RecordingMetricsRecorder::default();
+        let pool = backend_pool(
+            &recorder,
+            port,
+            PgPoolSettings::system_pool_settings_with_command_timeout(2, 0)
+                .with_min_pool_size_percent(100),
+        );
+        pool.abort_prune_task();
+        assert!(pool.pool.timeouts().create.is_none());
+        let started = Instant::now();
+        let mut preallocation = Box::pin(pool.pre_allocate_connections());
+        let mut release_reply = Some(release_reply);
+
+        for expected_size in [0, 1] {
+            if expected_size == 1 {
+                tokio::time::advance(Duration::from_secs(20)).await;
+                release_reply.take().unwrap().send(()).unwrap();
+            }
+            let wait_started = WallClockInstant::now();
+            tokio::select! {
+                () = async {
+                    loop {
+                        let status = pool.combined_status();
+                        if status.size == expected_size && status.waiting == 1 {
+                            break;
+                        }
+                        assert!(wait_started.elapsed() < Duration::from_secs(5));
+                        yield_now().await;
+                    }
+                } => {}
+                result = &mut preallocation => {
+                    panic!("preallocation exited before the total deadline: {result:?}");
+                }
+            }
+        }
+
+        tokio::time::advance(Duration::from_secs(9)).await;
+        tokio::select! {
+            biased;
+            result = &mut preallocation => {
+                panic!("preallocation exited before thirty seconds: {result:?}");
+            }
+            () = yield_now() => {}
+        }
+        tokio::time::advance(Duration::from_secs(1)).await;
+        preallocation.await;
+
+        assert_eq!(started.elapsed(), Duration::from_secs(30));
+        assert_eq!(pool.combined_status().size, 1);
+        assert_eq!(pool.combined_status().available, 1);
+        assert_eq!(pool.combined_status().waiting, 0);
+        assert_eq!(
+            recorder.counter(metric_names::BACKEND_CONNECTION_POOL_TIMEOUT_COUNT, &[DATA]),
+            Some(1)
+        );
+        let connection = pool.acquire_connection().await.unwrap();
+        assert_eq!(pool.status().connections_created(), 1);
+        drop(connection);
+        backend.abort();
+    }
+
+    #[tokio::test]
+    async fn cancelling_preallocation_returns_held_connections() {
+        let (port, backend) =
+            scripted_backend_replies(vec![READY.to_vec(), Vec::new()].into_iter()).await;
+        let recorder = RecordingMetricsRecorder::default();
+        let pool = preallocation_pool(&recorder, port, 2, 2);
+        let mut preallocation = Box::pin(preallocate(&pool));
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::select! {
+                () = async {
+                    loop {
+                        let status = pool.combined_status();
+                        if status.size == 1 && status.waiting == 1 {
+                            break;
+                        }
+                        yield_now().await;
+                    }
+                } => {}
+                result = &mut preallocation => {
+                    panic!("preallocation completed before cancellation: {result:?}");
+                }
+            }
+        })
+        .await
+        .expect("preallocation holds one connection while creating the next");
+        drop(preallocation);
+
+        assert_eq!(pool.combined_status().size, 1);
+        assert_eq!(pool.combined_status().available, 1);
+        assert_eq!(pool.combined_status().waiting, 0);
+        backend.abort();
+    }
+
+    const READY: [u8; 15] = [b'R', 0, 0, 0, 8, 0, 0, 0, 0, b'Z', 0, 0, 0, 5, b'I'];
     const DATA: (&str, &str) = (labels::BACKEND_CONNECTION_POOL_ROLE, "data");
+
+    async fn preallocate(
+        pool: &ConnectionPool,
+    ) -> std::result::Result<(), deadpool_postgres::PoolError> {
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            ConnectionPool::pre_allocate_pool_connections(
+                &pool.pool,
+                &pool.metrics,
+                pool.get_min_pool_size(),
+            ),
+        )
+        .await
+        .expect("preallocation is bounded")
+    }
+
+    fn preallocation_pool(
+        recorder: &RecordingMetricsRecorder,
+        port: u16,
+        minimum: usize,
+        maximum: usize,
+    ) -> ConnectionPool {
+        let pool = data_pool(recorder, port);
+        pool.set_max_pool_size(maximum);
+        pool.set_min_pool_size(minimum);
+        pool
+    }
 
     fn failed_creations(recorder: &RecordingMetricsRecorder, error_type: &str) -> Option<u64> {
         recorder.counter(
@@ -1015,6 +1638,20 @@ mod tests {
     /// Builds a single-connection pool for a local test backend whose
     /// instruments report to `recorder` under the `data` role.
     fn data_pool(recorder: &RecordingMetricsRecorder, port: u16) -> ConnectionPool {
+        let pool = backend_pool(
+            recorder,
+            port,
+            PgPoolSettings::system_pool_settings(1).with_connect_timeout(Duration::from_secs(1)),
+        );
+        pool.abort_prune_task();
+        pool
+    }
+
+    fn backend_pool(
+        recorder: &RecordingMetricsRecorder,
+        port: u16,
+        settings: PgPoolSettings,
+    ) -> ConnectionPool {
         let setup_config = DocumentDBSetupConfiguration {
             postgres_host_name: Some("127.0.0.1".to_owned()),
             postgres_port: Some(port),
@@ -1027,26 +1664,40 @@ mod tests {
             "user",
             None,
             "app",
-            PgPoolSettings::system_pool_settings(1).with_connect_timeout(Duration::from_secs(1)),
+            settings,
         )
         .expect("the pool should build");
         metrics::with_local_recorder(recorder, || pool.assign_role(PoolRole::Data));
         pool
     }
 
-    /// A backend that answers the startup message with `reply`, then holds the
+    /// A backend that answers startup messages with `reply`, then holds each
     /// connection until the client closes it.
     async fn scripted_backend(reply: Vec<u8>) -> (u16, JoinHandle<()>) {
+        scripted_backend_replies(iter::repeat(reply)).await
+    }
+
+    async fn scripted_backend_replies(
+        replies: impl Iterator<Item = Vec<u8>> + Send + 'static,
+    ) -> (u16, JoinHandle<()>) {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let backend = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let length = usize::try_from(socket.read_u32().await.unwrap()).unwrap();
-            let mut startup = vec![0; length - 4];
-            socket.read_exact(&mut startup).await.unwrap();
-            socket.write_all(&reply).await.unwrap();
-            let mut remaining = Vec::new();
-            let _ = socket.read_to_end(&mut remaining).await;
+            let mut connections = JoinSet::new();
+            for reply in replies {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                connections.spawn(async move {
+                    let length = usize::try_from(socket.read_u32().await.unwrap()).unwrap();
+                    let mut startup = vec![0; length - 4];
+                    socket.read_exact(&mut startup).await.unwrap();
+                    socket.write_all(&reply).await.unwrap();
+                    let mut remaining = Vec::new();
+                    let _ = socket.read_to_end(&mut remaining).await;
+                });
+            }
+            while let Some(result) = connections.join_next().await {
+                result.unwrap();
+            }
         });
         (port, backend)
     }

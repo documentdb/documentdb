@@ -273,9 +273,12 @@ impl ConnectionContext {
     ) -> Result<()> {
         let username = user.principal()?.name();
 
+        // Authentication provisions per-user pools. Keep them lazy; configured
+        // minimums belong to shared data pools.
         let settings = PgPoolSettings::from_configuration(
             self.service_context.dynamic_configuration().as_ref(),
-        );
+        )
+        .without_min_pool_size();
 
         self.service_context
             .connection_pool_manager()

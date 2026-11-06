@@ -11,7 +11,7 @@
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         RwLock,
     },
 };
@@ -43,6 +43,7 @@ pub struct TestDynamicConfiguration {
     endpoint_routable: AtomicBool,
     report_endpoint_name: AtomicBool,
     enable_change_streams: AtomicBool,
+    min_data_pool_size_percent: AtomicUsize,
 }
 
 impl Default for TestDynamicConfiguration {
@@ -61,6 +62,7 @@ impl Default for TestDynamicConfiguration {
             endpoint_routable: AtomicBool::new(true),
             report_endpoint_name: AtomicBool::new(false),
             enable_change_streams: AtomicBool::new(false),
+            min_data_pool_size_percent: AtomicUsize::new(0),
         }
     }
 }
@@ -125,6 +127,12 @@ impl TestDynamicConfiguration {
 
     pub fn set_enable_change_streams(&self, value: bool) {
         self.enable_change_streams.store(value, Ordering::Relaxed);
+    }
+
+    /// Sets the minimum data-pool percentage returned by this test configuration.
+    pub fn set_min_data_pool_size_percent(&self, value: usize) {
+        self.min_data_pool_size_percent
+            .store(value, Ordering::Relaxed);
     }
 }
 
@@ -212,6 +220,10 @@ impl DynamicConfiguration for TestDynamicConfiguration {
 
     fn max_connections(&self) -> usize {
         16
+    }
+
+    fn min_data_pool_size_percent(&self) -> usize {
+        self.min_data_pool_size_percent.load(Ordering::Relaxed)
     }
 
     fn allow_transaction_snapshot(&self) -> bool {

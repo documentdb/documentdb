@@ -253,6 +253,11 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
         self.get_u64("mongoCursorIdleResolutionIntervalSeconds", 5)
     }
 
+    #[must_use]
+    fn min_data_pool_size_percent(&self) -> usize {
+        0
+    }
+
     fn enable_gateway_connection_limits(&self) -> bool {
         true
     }
