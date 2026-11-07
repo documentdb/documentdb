@@ -305,6 +305,9 @@ AddCustomPathCore(List *pathList, InputQueryState *queryState)
 		path->rows = inputPath->rows;
 		path->startup_cost = inputPath->startup_cost;
 		path->total_cost = inputPath->total_cost;
+#if PG_VERSION_NUM >= 180000
+		path->disabled_nodes = inputPath->disabled_nodes;
+#endif
 
 		/*
 		 * The CustomQueryScan ExtensibleNode cannot be serialized to a parallel
@@ -484,6 +487,9 @@ AddCustomPathForVectorCore(PlannerInfo *planner, List *pathList, RelOptInfo *rel
 	path->rows = vectorSearchPath->rows;
 	path->startup_cost = vectorSearchPath->startup_cost;
 	path->total_cost = vectorSearchPath->total_cost;
+#if PG_VERSION_NUM >= 180000
+	path->disabled_nodes = vectorSearchPath->disabled_nodes;
+#endif
 
 	/*
 	 * The CustomQueryScan ExtensibleNode cannot be serialized to a parallel

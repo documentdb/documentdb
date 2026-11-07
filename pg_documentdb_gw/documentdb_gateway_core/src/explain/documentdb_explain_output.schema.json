@@ -66,6 +66,24 @@
   },
   "required": ["explainVersion", "currentDateTime", "command", "ok"],
   "$defs": {
+    "CollectionPlannerStatistics": {
+      "type": "object",
+      "description": "Collection relation statistics reported on the owning query-planner stage when enable_explain_scan_relation_stats is enabled. Preserved when explain wrappers are collapsed and reported independently of namespace reporting. Values of zero and unavailable-count estimates are retained.",
+      "properties": {
+        "estimatedDocumentCount": {
+          "type": "number",
+          "description": "The planner's estimate of the number of documents in the base relation before filtering. This is not an exact live document count or the estimated number of query results; it can be negative when relation statistics are unavailable."
+        },
+        "allVisibleFraction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "The planner's estimate of the fraction of heap pages marked all-visible in the visibility map. This is a fraction, not a percentage or a fraction of documents matching the query."
+        }
+      },
+      "minProperties": 1,
+      "additionalProperties": false
+    },
     "QueryPlanner": {
       "type": "object",
       "description": "Describes the query plan chosen by the planner. Wraps the winning execution plan as a tree of stages.",
@@ -106,6 +124,14 @@
       "type": "object",
       "description": "A single stage in the query planner's winning plan tree. Each stage describes one logical step in query execution.",
       "properties": {
+        "ns": {
+          "type": "string",
+          "description": "The collection namespace in 'db.collection' format for this stage, when supplied by the backend plan."
+        },
+        "collectionPlannerStatistics": {
+          "$ref": "#/$defs/CollectionPlannerStatistics",
+          "description": "Planner statistics for the collection scanned by this stage, before filtering. Present only when the backend reports at least one statistic, including zero values. Also applies to nested and per-shard winning-plan stages; not emitted in executionStats."
+        },
         "stage": {
           "type": "string",
           "description": "The name of the execution stage. Possible values include: 'COLLSCAN' (collection scan), 'IXSCAN' (index scan), 'FETCH' (document fetch after index scan), 'SORT' (in-memory sort), 'LIMIT' (result limit), 'COUNT' (count operation), 'OR' (bitmap OR of index scans), 'AND' (bitmap AND of index scans), 'PROJECTION_DEFAULT' (default projection), 'TEXT_MATCH' (full-text search), 'GEO_NEAR_2D' (2D geo-near), 'GEO_NEAR_2DSPHERE' (2D-sphere geo-near), 'SHARD_MERGE' (merge results from multiple shards), 'SINGLE_SHARD' (query routed to a single shard), 'PARALLEL_MERGE' (merge results from parallel workers — maps from PostgreSQL Gather node), 'PARALLEL_SORT_MERGE' (merge sorted results from parallel workers preserving sort order — maps from PostgreSQL Gather Merge node), 'LOOKUP' (lookup/join), 'EOF' (empty result set / no data), 'SAMPLESCAN' (random sample scan), 'SAMPLESORT' ($sample via sort on random()), 'UNIQUE' (deduplication), 'GROUP' ($group aggregation), 'GROUPSORT' (sort for group), 'COUNT_SCAN' (count via aggregation), 'DISTINCT_SCAN' (distinct scan).",

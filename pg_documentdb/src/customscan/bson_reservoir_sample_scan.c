@@ -934,6 +934,9 @@ AddReservoirSampleCustomPath(PlannerInfo *root, RelOptInfo *rel, FuncExpr *sampl
 		cpath->path.rows = Min((double) sampleSize, inputPath->rows);
 		cpath->path.startup_cost = inputPath->total_cost;
 		cpath->path.total_cost = inputPath->total_cost;
+#if PG_VERSION_NUM >= 180000
+		cpath->path.disabled_nodes = inputPath->disabled_nodes;
+#endif
 		cpath->path.parallel_safe = false;
 		cpath->path.pathtarget = inputPath->pathtarget;
 		cpath->path.pathkeys = NIL;

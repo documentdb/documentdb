@@ -156,6 +156,9 @@ bool EnableExplainScanIndexCosts = DEFAULT_ENABLE_EXPLAIN_SCAN_INDEX_COSTS;
 #define DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME true
 bool EnableExplainScanNamespaceName = DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME;
 
+#define DEFAULT_ENABLE_EXPLAIN_SCAN_RELATION_STATS true
+bool EnableExplainScanRelationStats = DEFAULT_ENABLE_EXPLAIN_SCAN_RELATION_STATS;
+
 #define DEFAULT_ENABLE_EXPLAIN_SCAN_SEQ_SCAN true
 bool EnableExplainScanSeqScan = DEFAULT_ENABLE_EXPLAIN_SCAN_SEQ_SCAN;
 
@@ -559,6 +562,14 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 			"Whether to include namespace name in explain output for index scans. requires enableextendedexplainplans"),
 		NULL, &EnableExplainScanNamespaceName,
 		DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_explain_scan_relation_stats", newGucPrefix),
+		gettext_noop(
+			"Whether to include estimated document counts and all-visible heap-page fractions in extended explain output."),
+		NULL, &EnableExplainScanRelationStats,
+		DEFAULT_ENABLE_EXPLAIN_SCAN_RELATION_STATS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

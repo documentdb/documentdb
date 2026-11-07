@@ -554,6 +554,10 @@ CreateCustomScanPathForContinuation(PlannerInfo *root, RelOptInfo *rel, Path *in
 	path->startup_cost = inputPath->startup_cost;
 	path->total_cost = inputPath->total_cost;
 
+#if PG_VERSION_NUM >= 180000
+	path->disabled_nodes = inputPath->disabled_nodes;
+#endif
+
 	/* For now the custom path is not parallel safe */
 	path->parallel_safe = false;
 

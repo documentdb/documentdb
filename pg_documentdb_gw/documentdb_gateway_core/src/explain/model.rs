@@ -322,6 +322,12 @@ pub struct ExplainPlan {
     #[serde(rename = "IndexCosts")]
     pub index_costs: Option<Vec<IndexCost>>,
 
+    #[serde(rename = "estimatedDocumentCount")]
+    pub estimated_document_count: Option<f64>,
+
+    #[serde(rename = "allVisibleFraction")]
+    pub all_visible_fraction: Option<f64>,
+
     #[serde(rename = "namespaceName")]
     pub namespace_name: Option<String>,
 

@@ -587,6 +587,10 @@ CreateCustomScanPathForStreaming(PlannerInfo *root, RelOptInfo *rel, Path *input
 	path->startup_cost = inputPath->startup_cost;
 	path->total_cost = inputPath->total_cost;
 
+#if PG_VERSION_NUM >= 180000
+	path->disabled_nodes = inputPath->disabled_nodes;
+#endif
+
 	/* For now the custom path is not parallel safe */
 	path->parallel_safe = false;
 	customPath->custom_paths = list_make1(inputPath);
@@ -1822,9 +1826,12 @@ ExtensionCursorScanExplainCustomScan(CustomScanState *node, List *ancestors,
 							 0, es);
 	}
 
+	HTAB *indexNameHash = CreateExplainIndexNameHash();
 	ExplainOpenGroup("custom_scan", "IndexDetails", false, es);
-	WalkAndExplainScanState((PlanState *) extensionCursorScanState->innerScanState, es);
+	WalkAndExplainScanState((PlanState *) extensionCursorScanState->innerScanState, es,
+							indexNameHash);
 	ExplainCloseGroup("custom_scan", "IndexDetails", false, es);
+	hash_destroy(indexNameHash);
 }
 
 

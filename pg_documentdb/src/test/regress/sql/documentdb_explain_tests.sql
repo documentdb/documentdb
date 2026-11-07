@@ -1,6 +1,7 @@
 SET search_path TO documentdb_api, documentdb_api_catalog,documentdb_core;
 SET documentdb.next_collection_id TO 1300;
 SET documentdb.next_collection_index_id TO 1300;
+SET documentdb.enable_explain_scan_relation_stats TO off;
 
 CREATE OR REPLACE FUNCTION documentdb_test_helpers.documentdb_explain(
     p_explain_spec bson,
@@ -124,4 +125,102 @@ SELECT documentdb_test_helpers.explain_uses_extended($Q$ SELECT document FROM do
 
 -- Running EXPLAIN through the hook must not leak the base GUC onto later queries.
 SHOW documentdb.enableExtendedExplainPlans;
+RESET documentdb.enable_default_extended_explain;
+
+CREATE OR REPLACE FUNCTION documentdb_test_helpers.explain_plan_json(
+    p_query text, p_analyze boolean DEFAULT FALSE)
+ RETURNS jsonb AS $$
+ DECLARE
+     result jsonb;
+ BEGIN
+     EXECUTE format(
+         'EXPLAIN (FORMAT JSON, COSTS OFF, ANALYZE %s, TIMING OFF, SUMMARY OFF) %s',
+         CASE WHEN p_analyze THEN 'TRUE' ELSE 'FALSE' END, p_query) INTO result;
+     RETURN result->0->'Plan';
+ END;
+ $$ LANGUAGE plpgsql;
+
+SELECT format('VACUUM (ANALYZE) documentdb_data.documents_%s', collection_id)
+FROM documentdb_api_catalog.collections
+WHERE database_name = 'expdb' AND collection_name = 'coll1'
+\gexec
+
+SET documentdb.enable_default_extended_explain TO on;
+SET documentdb.forceDisableSeqScan TO off;
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+SET enable_indexonlyscan TO off;
+SET documentdb.enable_explain_scan_relation_stats TO on;
+
+-- A wrapped disabled sequential scan must not beat an enabled index scan.
+WITH explain AS (
+    SELECT documentdb_test_helpers.explain_plan_json($Q$
+        SELECT document FROM documentdb_api.collection('expdb', 'coll1')
+        WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": {"$gt": 0}}'
+    $Q$) AS plan
+)
+SELECT plan->'Plans'->0->>'Node Type' = 'Index Scan' AS enabled_index_selected,
+       (plan->>'estimatedDocumentCount')::numeric = 1 AS estimated_count_preserved,
+       (plan->>'allVisibleFraction')::numeric = 1 AS visibility_preserved,
+       plan->>'namespaceName' = 'expdb.coll1' AS namespace_present
+FROM explain;
+
+WITH explain AS (
+    SELECT documentdb_test_helpers.explain_plan_json($Q$
+        SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('expdb',
+            '{"aggregate": "coll1", "pipeline": [
+                {"$match": {"_id": {"$gte": 1}}},
+                {"$sample": {"size": 1}}
+            ]}')
+    $Q$) AS plan
+)
+SELECT plan->'Plans'->0->>'Custom Plan Provider' = 'DocumentDBApiReservoirSample'
+           AS reservoir_wrapper_present,
+       plan->'Plans'->0->'Plans'->0->>'Node Type' = 'Index Scan'
+           AS reservoir_enabled_index_selected
+FROM explain;
+
+-- Statistics remain available when namespace reporting is disabled.
+SET documentdb.enableExplainScanNamespaceName TO off;
+WITH explain AS (
+    SELECT documentdb_test_helpers.explain_plan_json($Q$
+        SELECT document FROM documentdb_api.collection('expdb', 'coll1')
+        WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": {"$gt": 0}}'
+    $Q$, TRUE) AS plan
+)
+SELECT (plan->>'estimatedDocumentCount')::numeric = 1 AS estimated_count_without_namespace,
+       (plan->>'allVisibleFraction')::numeric = 1 AS visibility_without_namespace,
+       NOT plan ? 'namespaceName' AS namespace_omitted
+FROM explain;
+
+SET enable_seqscan TO on;
+SET enable_indexscan TO off;
+WITH explain AS (
+    SELECT documentdb_test_helpers.explain_plan_json($Q$
+        SELECT document FROM documentdb_api.collection('expdb', 'coll1')
+        WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": {"$gt": 0}}'
+    $Q$) AS plan
+)
+SELECT plan->'Plans'->0->>'Node Type' = 'Seq Scan' AS enabled_seq_scan_selected,
+       (plan->>'estimatedDocumentCount')::numeric = 1 AS seq_scan_estimated_count
+FROM explain;
+
+SET documentdb.enable_explain_scan_relation_stats TO off;
+RESET documentdb.enableExplainScanNamespaceName;
+WITH explain AS (
+    SELECT documentdb_test_helpers.explain_plan_json($Q$
+        SELECT document FROM documentdb_api.collection('expdb', 'coll1')
+        WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": {"$gt": 0}}'
+    $Q$) AS plan
+)
+SELECT NOT plan ? 'estimatedDocumentCount' AND NOT plan ? 'allVisibleFraction'
+           AS statistics_omitted_when_disabled,
+       plan->>'namespaceName' = 'expdb.coll1' AS namespace_independent_of_statistics
+FROM explain;
+
+RESET enable_seqscan;
+RESET enable_indexscan;
+RESET enable_indexonlyscan;
+RESET enable_bitmapscan;
+RESET documentdb.enableExplainScanNamespaceName;
 RESET documentdb.enable_default_extended_explain;

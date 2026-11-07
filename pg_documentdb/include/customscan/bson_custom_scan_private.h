@@ -74,6 +74,14 @@
 	token = pg_strtok(&length);     /* Retrieve specified field value */ \
 	local_node->fldname = strtol(token, NULL, 10)
 
+/* double fields */
+#define WRITE_FLOAT_FIELD(fldname) \
+	appendStringInfo(str, " :" CppAsString(fldname) " %.17g", node->fldname)
+#define READ_FLOAT_FIELD(fldname) \
+	token = pg_strtok(&length);     /* skip :fldname */ \
+	token = pg_strtok(&length);     /* Retrieve specified field value */ \
+	local_node->fldname = strtod(token, NULL)
+
 
 IndexOptInfo * GetPrimaryKeyIndexOptCore(RelOptInfo *rel);
 
@@ -93,8 +101,8 @@ TupleTableSlot * SkipWithUserContinuation(ScanState *innerScanState,
 										  bool returnOnEquality,
 										  bool *shouldContinue,
 										  double *numSkipped);
-
-void WalkAndExplainScanState(PlanState *scanState, ExplainState *es);
+HTAB * CreateExplainIndexNameHash(void);
+void WalkAndExplainScanState(PlanState *scanState, ExplainState *es, HTAB *indexNameHash);
 
 Node * ResolveCoerceViaIOToConst(Node *arg, Oid expectedTypeOid);
 #endif
