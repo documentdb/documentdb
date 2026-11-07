@@ -50,7 +50,9 @@ void ExplainRawCompositeScanToWriter(Relation index_rel, List *indexQuals,
 void ExplainRegularIndexScan(IndexScanDesc scan, struct ExplainState *es);
 void ExplainRegularIndexScanToWriter(IndexScanDesc scan, pgbson_writer *writer);
 
-void LogReportedIndexCosts(Oid relOid, struct ExplainState *es);
+void LogReportedIndexCosts(Oid relOid, struct ExplainState *es,
+						   const char *(*getIndexName)(Oid indexOid, void *context),
+						   void *context);
 void ResetReportedIndexCosts(void);
 void RecordCostEstimateForIndex(Oid indexOid, Oid relOid, Cost indexStartupCost,
 								Cost indexTotalCost, Selectivity indexSelectivity,

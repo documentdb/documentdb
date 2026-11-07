@@ -390,6 +390,9 @@ AddDistinctCustomPathCore(PlannerInfo *root, List *pathList,
 		path->rows = inputPath->rows;
 		path->startup_cost = inputPath->startup_cost;
 		path->total_cost = inputPath->total_cost;
+#if PG_VERSION_NUM >= 180000
+		path->disabled_nodes = inputPath->disabled_nodes;
+#endif
 
 		/* For now the custom path is as parallel safe as its inner path */
 		path->parallel_safe = inputPath->parallel_safe;

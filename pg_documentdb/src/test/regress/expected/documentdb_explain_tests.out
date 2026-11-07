@@ -1,6 +1,7 @@
 SET search_path TO documentdb_api, documentdb_api_catalog,documentdb_core;
 SET documentdb.next_collection_id TO 1300;
 SET documentdb.next_collection_index_id TO 1300;
+SET documentdb.enable_explain_scan_relation_stats TO off;
 CREATE OR REPLACE FUNCTION documentdb_test_helpers.documentdb_explain(
     p_explain_spec bson,
     p_append_cursor_params boolean DEFAULT FALSE)
@@ -48,14 +49,14 @@ SELECT documentdb_test_helpers.documentdb_explain('{ "explain": { "find": "foo" 
 ERROR:  Invalid verbosity option for explain: queryPlannerInvalid
 -- test find (with multiple combos) on non-existent collection.
 SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent" }, "$db": "expdb", "verbosity": "queryPlanner" }'::bson);
-                                                          explain_and_mask_numbers                                                          
+                                                          explain_and_mask_numbers
 --------------------------------------------------------------------------------------------------------------------------------------------
  { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.nonexistent", "winningPlan" : { "stage" : "EOF",
   "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" } } }, "ok" : { "$numberDouble" : "1.0" } },
 (2 rows)
 
 SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent" }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
-                                                                                             explain_and_mask_numbers                                                                                             
+                                                                                             explain_and_mask_numbers
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.nonexistent", "winningPlan" : { "stage" : "EOF",
   "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" } } }, "executionStats" : { "nReturned" : { "$numberLong" : "0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" },
@@ -65,7 +66,7 @@ SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": 
 (5 rows)
 
 SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent", "limit": 1 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
-                                                                                            explain_and_mask_numbers                                                                                             
+                                                                                            explain_and_mask_numbers
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.nonexistent", "winningPlan" : { "stage" : "LIMIT",
   "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "limitAmount" : { "$numberDouble" : "1.0" },
@@ -78,7 +79,7 @@ SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": 
 (8 rows)
 
 SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent", "limit": 1, "skip": 1 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
-                                                                                                 explain_and_mask_numbers                                                                                                 
+                                                                                                 explain_and_mask_numbers
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.nonexistent", "winningPlan" : { "stage" : "LIMIT",
   "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "skipAmount" : { "$numberDouble" : "1.0" },
@@ -91,7 +92,7 @@ SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": 
 (8 rows)
 
 SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent", "sort": { "a": 1 }, "limit": 1, "skip": 1 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
-                                                                                                 explain_and_mask_numbers                                                                                                  
+                                                                                                 explain_and_mask_numbers
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.nonexistent", "winningPlan" : { "stage" : "LIMIT",
   "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "skipAmount" : { "$numberDouble" : "1.0" },
@@ -108,7 +109,7 @@ SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": 
 (12 rows)
 
 SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent", "filter": { "b": { "$gt": 1 } }, "sort": { "a": 1 }, "limit": 1, "skip": 1 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
-                                                                                                   explain_and_mask_numbers                                                                                                    
+                                                                                                   explain_and_mask_numbers
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.nonexistent", "winningPlan" : { "stage" : "LIMIT",
   "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "skipAmount" : { "$numberDouble" : "1.0" },
@@ -126,7 +127,7 @@ SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": 
 
 -- last one with all options
 SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent", "projection": { "c": 1 }, "filter": { "b": { "$gt": 1 } }, "sort": { "a": 1 }, "limit": 1, "skip": 1 }, "$db": "expdb", "verbosity": "queryPlanner" }'::bson);
-                                                                                        explain_and_mask_numbers                                                                                        
+                                                                                        explain_and_mask_numbers
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.nonexistent", "winningPlan" : { "stage" : "PROJECTION_SIMPLE",
   "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "transformBy" : { "c" : { "$numberInt" : "1" } },
@@ -137,7 +138,7 @@ SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": 
 (6 rows)
 
 SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent", "projection": { "c": 1 }, "filter": { "b": { "$gt": 1 } }, "sort": { "a": 1 }, "limit": 1, "skip": 1 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
-                                                                                                explain_and_mask_numbers                                                                                                 
+                                                                                                explain_and_mask_numbers
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.nonexistent", "winningPlan" : { "stage" : "PROJECTION_SIMPLE",
   "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "transformBy" : { "c" : { "$numberInt" : "1" } },
@@ -159,13 +160,13 @@ SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": 
 -- now do the same with a simple COLLSCAN (runtime scan) on a collection that exists.
 SELECT documentdb_api.insert_one('expdb', 'coll1', '{ "_id": 1, "a": 1, "b": 2 }');
 NOTICE:  creating collection
-                              insert_one                              
+                              insert_one
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "coll1", "projection": { "c": 1 }, "filter": { "b": { "$gt": 1 } }, "sort": { "a": 1 }, "limit": 1, "skip": 1 }, "$db": "expdb", "verbosity": "queryPlanner" }'::bson);
-                                                                                        explain_and_mask_numbers                                                                                        
+                                                                                        explain_and_mask_numbers
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.coll1", "winningPlan" : { "stage" : "PROJECTION_SIMPLE",
   "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "transformBy" : { "c" : { "$numberInt" : "1" } },
@@ -179,7 +180,7 @@ SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": 
 (9 rows)
 
 SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "coll1", "projection": { "c": 1 }, "filter": { "b": { "$gt": 1 } }, "sort": { "a": 1 }, "limit": 1, "skip": 1 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
-                                                                                                 explain_and_mask_numbers                                                                                                  
+                                                                                                 explain_and_mask_numbers
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.coll1", "winningPlan" : { "stage" : "PROJECTION_SIMPLE",
   "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "transformBy" : { "c" : { "$numberInt" : "1" } },
@@ -205,7 +206,7 @@ SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": 
 
 -- sort on the index (_id index)
 SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "coll1", "projection": { "c": 1 }, "filter": { "_id": { "$gt": 1 } }, "sort": { "_id": -1 }, "limit": 2 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
-                                                                                                 explain_and_mask_numbers                                                                                                 
+                                                                                                 explain_and_mask_numbers
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.coll1", "winningPlan" : { "stage" : "LIMIT",
   "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "limitAmount" : { "$numberDouble" : "2.0" },
@@ -221,7 +222,7 @@ SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": 
 
 -- incremental sort on the index (_id index)
 SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "coll1", "projection": { "c": 1 }, "filter": { "_id": { "$gt": 1 } }, "sort": { "_id": 1, "b": 1 }, "limit": 2 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
-                                                                                                   explain_and_mask_numbers                                                                                                    
+                                                                                                   explain_and_mask_numbers
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.coll1", "winningPlan" : { "stage" : "LIMIT",
   "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "limitAmount" : { "$numberDouble" : "2.0" },
@@ -241,7 +242,7 @@ SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": 
 
 -- now do with a RUM index.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('expdb', '{ "createIndexes": "coll1", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1" } ] }'::bson, TRUE);
-                                                                                                   create_indexes_non_concurrently                                                                                                    
+                                                                                                   create_indexes_non_concurrently
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
@@ -249,7 +250,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('expdb', '{ "crea
 set enable_seqscan to off;
 set documentdb.forceDisableSeqScan to on;
 SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "coll1", "projection": { "c": 1 }, "filter": { "a": { "$gt": 1 }, "d": 1 }, "limit": 2 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
-                                                                                               explain_and_mask_numbers                                                                                               
+                                                                                               explain_and_mask_numbers
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.coll1", "winningPlan" : { "stage" : "LIMIT",
   "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "limitAmount" : { "$numberDouble" : "2.0" },
@@ -269,7 +270,7 @@ SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": 
 
 -- cannot test sort pushdown here (or Idxos)
 SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "coll1", "projection": { "c": 1 }, "filter": { "a": { "$gt": 1 }, "d": 1 }, "sort": { "a": 1, "d": 1 }, "limit": 2 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
-                                                                                                 explain_and_mask_numbers                                                                                                 
+                                                                                                 explain_and_mask_numbers
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.coll1", "winningPlan" : { "stage" : "LIMIT",
   "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "limitAmount" : { "$numberDouble" : "2.0" },
@@ -309,7 +310,7 @@ CREATE OR REPLACE FUNCTION documentdb_test_helpers.explain_uses_extended(p_query
  $$ LANGUAGE plpgsql;
 -- The base extended-explain GUC is off; the hook is what turns it on for EXPLAIN.
 SHOW documentdb.enableExtendedExplainPlans;
- documentdb.enableExtendedExplainPlans 
+ documentdb.enableExtendedExplainPlans
 ---------------------------------------
  off
 (1 row)
@@ -317,7 +318,7 @@ SHOW documentdb.enableExtendedExplainPlans;
 -- With the guard on, the hook injects extended explain even though the base GUC is off.
 SET documentdb.enable_default_extended_explain TO on;
 SELECT documentdb_test_helpers.explain_uses_extended($Q$ SELECT document FROM documentdb_api.collection('expdb', 'coll1') WHERE document OPERATOR(documentdb_api_catalog.@@) '{ "a": { "$gt": 1 } }' $Q$) AS extended_when_guard_on;
- extended_when_guard_on 
+ extended_when_guard_on
 ------------------------
  t
 (1 row)
@@ -350,16 +351,131 @@ RESET enable_bitmapscan;
 -- With the guard off, the hook does not inject extended explain.
 SET documentdb.enable_default_extended_explain TO off;
 SELECT documentdb_test_helpers.explain_uses_extended($Q$ SELECT document FROM documentdb_api.collection('expdb', 'coll1') WHERE document OPERATOR(documentdb_api_catalog.@@) '{ "a": { "$gt": 1 } }' $Q$) AS extended_when_guard_off;
- extended_when_guard_off 
+ extended_when_guard_off
 -------------------------
  f
 (1 row)
 
 -- Running EXPLAIN through the hook must not leak the base GUC onto later queries.
 SHOW documentdb.enableExtendedExplainPlans;
- documentdb.enableExtendedExplainPlans 
+ documentdb.enableExtendedExplainPlans
 ---------------------------------------
  off
 (1 row)
 
+RESET documentdb.enable_default_extended_explain;
+CREATE OR REPLACE FUNCTION documentdb_test_helpers.explain_plan_json(
+    p_query text, p_analyze boolean DEFAULT FALSE)
+ RETURNS jsonb AS $$
+ DECLARE
+     result jsonb;
+ BEGIN
+     EXECUTE format(
+         'EXPLAIN (FORMAT JSON, COSTS OFF, ANALYZE %s, TIMING OFF, SUMMARY OFF) %s',
+         CASE WHEN p_analyze THEN 'TRUE' ELSE 'FALSE' END, p_query) INTO result;
+     RETURN result->0->'Plan';
+ END;
+ $$ LANGUAGE plpgsql;
+SELECT format('VACUUM (ANALYZE) documentdb_data.documents_%s', collection_id)
+FROM documentdb_api_catalog.collections
+WHERE database_name = 'expdb' AND collection_name = 'coll1'
+\gexec
+VACUUM (ANALYZE) documentdb_data.documents_1301
+SET documentdb.enable_default_extended_explain TO on;
+SET documentdb.forceDisableSeqScan TO off;
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+SET enable_indexonlyscan TO off;
+SET documentdb.enable_explain_scan_relation_stats TO on;
+-- A wrapped disabled sequential scan must not beat an enabled index scan.
+WITH explain AS (
+    SELECT documentdb_test_helpers.explain_plan_json($Q$
+        SELECT document FROM documentdb_api.collection('expdb', 'coll1')
+        WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": {"$gt": 0}}'
+    $Q$) AS plan
+)
+SELECT plan->'Plans'->0->>'Node Type' = 'Index Scan' AS enabled_index_selected,
+       (plan->>'estimatedDocumentCount')::numeric = 1 AS estimated_count_preserved,
+       (plan->>'allVisibleFraction')::numeric = 1 AS visibility_preserved,
+       plan->>'namespaceName' = 'expdb.coll1' AS namespace_present
+FROM explain;
+ enabled_index_selected | estimated_count_preserved | visibility_preserved | namespace_present
+------------------------+---------------------------+----------------------+-------------------
+ t                      | t                         | t                    | t
+(1 row)
+
+WITH explain AS (
+    SELECT documentdb_test_helpers.explain_plan_json($Q$
+        SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('expdb',
+            '{"aggregate": "coll1", "pipeline": [
+                {"$match": {"_id": {"$gte": 1}}},
+                {"$sample": {"size": 1}}
+            ]}')
+    $Q$) AS plan
+)
+SELECT plan->'Plans'->0->>'Custom Plan Provider' = 'DocumentDBApiReservoirSample'
+           AS reservoir_wrapper_present,
+       plan->'Plans'->0->'Plans'->0->>'Node Type' = 'Index Scan'
+           AS reservoir_enabled_index_selected
+FROM explain;
+ reservoir_wrapper_present | reservoir_enabled_index_selected
+---------------------------+----------------------------------
+ t                         | t
+(1 row)
+
+-- Statistics remain available when namespace reporting is disabled.
+SET documentdb.enableExplainScanNamespaceName TO off;
+WITH explain AS (
+    SELECT documentdb_test_helpers.explain_plan_json($Q$
+        SELECT document FROM documentdb_api.collection('expdb', 'coll1')
+        WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": {"$gt": 0}}'
+    $Q$, TRUE) AS plan
+)
+SELECT (plan->>'estimatedDocumentCount')::numeric = 1 AS estimated_count_without_namespace,
+       (plan->>'allVisibleFraction')::numeric = 1 AS visibility_without_namespace,
+       NOT plan ? 'namespaceName' AS namespace_omitted
+FROM explain;
+ estimated_count_without_namespace | visibility_without_namespace | namespace_omitted
+-----------------------------------+------------------------------+-------------------
+ t                                 | t                            | t
+(1 row)
+
+SET enable_seqscan TO on;
+SET enable_indexscan TO off;
+WITH explain AS (
+    SELECT documentdb_test_helpers.explain_plan_json($Q$
+        SELECT document FROM documentdb_api.collection('expdb', 'coll1')
+        WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": {"$gt": 0}}'
+    $Q$) AS plan
+)
+SELECT plan->'Plans'->0->>'Node Type' = 'Seq Scan' AS enabled_seq_scan_selected,
+       (plan->>'estimatedDocumentCount')::numeric = 1 AS seq_scan_estimated_count
+FROM explain;
+ enabled_seq_scan_selected | seq_scan_estimated_count
+---------------------------+--------------------------
+ t                         | t
+(1 row)
+
+SET documentdb.enable_explain_scan_relation_stats TO off;
+RESET documentdb.enableExplainScanNamespaceName;
+WITH explain AS (
+    SELECT documentdb_test_helpers.explain_plan_json($Q$
+        SELECT document FROM documentdb_api.collection('expdb', 'coll1')
+        WHERE document OPERATOR(documentdb_api_catalog.@@) '{"a": {"$gt": 0}}'
+    $Q$) AS plan
+)
+SELECT NOT plan ? 'estimatedDocumentCount' AND NOT plan ? 'allVisibleFraction'
+           AS statistics_omitted_when_disabled,
+       plan->>'namespaceName' = 'expdb.coll1' AS namespace_independent_of_statistics
+FROM explain;
+ statistics_omitted_when_disabled | namespace_independent_of_statistics
+----------------------------------+-------------------------------------
+ t                                | t
+(1 row)
+
+RESET enable_seqscan;
+RESET enable_indexscan;
+RESET enable_indexonlyscan;
+RESET enable_bitmapscan;
+RESET documentdb.enableExplainScanNamespaceName;
 RESET documentdb.enable_default_extended_explain;

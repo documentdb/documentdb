@@ -168,6 +168,9 @@ WrapPathWithTidDedup(Path *subpath)
 	cpath->path.param_info = subpath->param_info;
 	cpath->path.rows = subpath->rows;
 	cpath->path.startup_cost = subpath->startup_cost;
+#if PG_VERSION_NUM >= 180000
+	cpath->path.disabled_nodes = subpath->disabled_nodes;
+#endif
 
 	/*
 	 * Charge one operator cost per row for the heap-TID bitmap probe.

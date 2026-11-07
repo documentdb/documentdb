@@ -1,5 +1,7 @@
 ### documentdb v1.3-0 (Unreleased) ###
 * End a dynamic cursor's `getMore` with a query-plan-killed error when its collection was dropped and created again, or another collection was renamed onto its name, after the previous page. Such a `getMore` previously resumed in the new collection's table at the old position, returning its documents or crashing the server process. *[Bugfix]*
+* Preserve PostgreSQL 18 disabled-node counts through custom scan wrappers so planner scan preferences remain effective. *[Bugfix]*
+* Cache index names within extended PostgreSQL explain callbacks and report estimated document counts and all-visible heap-page fractions independently of namespace reporting, preserving these statistics through plan copying and serialization. Expose the statistics as `collectionPlannerStatistics` on gateway query-planner stages. Statistics reporting is controlled by `documentdb.enable_explain_scan_relation_stats`. *[Perf/Bugfix]*
 * Turn on `documentdb.enableCompactVacuumFull` by default, so `compact` with `mode: "full"` runs VACUUM FULL. `compact` with no mode still runs a regular, non-blocking VACUUM. *[Feature]*
 * Avoid repeated evaluation of computed input across group keys and accumulators when `documentdb.enable_subquery_pushdown_for_group` is enabled. *[Bugfix]*
 * Convert supported insert and update errors to wire-protocol codes, including batched inserts, controlled by the default-on `documentdb.enable_write_error_code_conversion` setting. *[Feature]*

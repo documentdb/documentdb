@@ -43,6 +43,7 @@
 #include "index_am/index_am_utils.h"
 #include "index_am/documentdb_rum.h"
 #include "utils/query_utils.h"
+#include "utils/hashset_utils.h"
 #include "commands/commands_common.h"
 
 
@@ -57,6 +58,8 @@ typedef struct ExplainInputQueryState
 	ExtensibleNode extensible;
 	uint64_t collectionId;
 	Oid relOid;
+	double allVisibleFraction;
+	double estimatedDocumentCount;
 } ExplainInputQueryState;
 
 
@@ -106,7 +109,8 @@ static bool EqualUnsupportedExtensionQueryScanNode(const struct ExtensibleNode *
 												   const struct ExtensibleNode *b);
 static TupleTableSlot * ExplainQueryScanNext(CustomScanState *node);
 static bool ExplainQueryScanNextRecheck(ScanState *state, TupleTableSlot *slot);
-static List * AddExplainCustomPathCore(List *pathList, Oid relOid, uint64 collectionId);
+static List * AddExplainCustomPathCore(RelOptInfo *rel, List *pathList, Oid relOid, uint64
+									   collectionId);
 
 /* --------------------------------------------------------- */
 /* Top level exports */
@@ -145,7 +149,15 @@ static const ExtensibleNodeMethods InputQueryStateMethods =
 
 extern bool EnableExplainScanIndexCosts;
 extern bool EnableExplainScanNamespaceName;
+extern bool EnableExplainScanRelationStats;
 extern bool EnableExplainScanSeqScan;
+
+
+typedef struct ExplainIndexNameEntry
+{
+	Oid indexOid;
+	const char *indexName;
+} ExplainIndexNameEntry;
 
 
 /*
@@ -164,8 +176,10 @@ void
 AddExplainCustomScanWrapper(PlannerInfo *root, RelOptInfo *rel,
 							RangeTblEntry *rte, uint64 collectionId)
 {
-	rel->pathlist = AddExplainCustomPathCore(rel->pathlist, rte->relid, collectionId);
-	rel->partial_pathlist = AddExplainCustomPathCore(rel->partial_pathlist, rte->relid,
+	rel->pathlist = AddExplainCustomPathCore(rel, rel->pathlist, rte->relid,
+											 collectionId);
+	rel->partial_pathlist = AddExplainCustomPathCore(rel, rel->partial_pathlist,
+													 rte->relid,
 													 collectionId);
 }
 
@@ -240,7 +254,7 @@ IsValidPath(Path *inputPath)
  * and adds a custom path wrapper that contains the queryState.
  */
 static List *
-AddExplainCustomPathCore(List *pathList, Oid relOid, uint64 collectionId)
+AddExplainCustomPathCore(RelOptInfo *rel, List *pathList, Oid relOid, uint64 collectionId)
 {
 	List *customPlanPaths = NIL;
 	ListCell *cell;
@@ -273,6 +287,9 @@ AddExplainCustomPathCore(List *pathList, Oid relOid, uint64 collectionId)
 		path->rows = inputPath->rows;
 		path->startup_cost = inputPath->startup_cost;
 		path->total_cost = inputPath->total_cost;
+#if PG_VERSION_NUM >= 180000
+		path->disabled_nodes = inputPath->disabled_nodes;
+#endif
 
 		/* For now the custom path is as parallel safe as its inner path */
 		path->parallel_safe = inputPath->parallel_safe;
@@ -299,6 +316,8 @@ AddExplainCustomPathCore(List *pathList, Oid relOid, uint64 collectionId)
 		queryState->extensible.extnodename = InputContinuationNodeName;
 		queryState->collectionId = collectionId;
 		queryState->relOid = relOid;
+		queryState->estimatedDocumentCount = rel->tuples;
+		queryState->allVisibleFraction = rel->allvisfrac;
 
 		/* Store the input state to be used later.
 		 * NOTE: Anything added here must be of type ExtensibleNode and must be registered
@@ -485,12 +504,34 @@ ExplainQueryScanReScanCustomScan(CustomScanState *node)
 }
 
 
+static const char *
+ExplainGetIndexNameWithCache(Oid indexOid, void *context)
+{
+	bool found = false;
+	HTAB *indexNameHash = (HTAB *) context;
+	ExplainIndexNameEntry *entry = hash_search(indexNameHash, &indexOid, HASH_FIND,
+											   &found);
+	if (found)
+	{
+		return entry->indexName;
+	}
+	else
+	{
+		const char *indexName = ExtensionExplainGetIndexName(indexOid);
+		entry = hash_search(indexNameHash, &indexOid, HASH_ENTER, &found);
+		entry->indexName = indexName;
+		return indexName;
+	}
+}
+
+
 static void
 ExplainIndexScanState(IndexScanDesc indexScan, Oid indexOid, List *indexQuals,
-					  List *indexOrderBy, ScanDirection indexScanDir, ExplainState *es)
+					  List *indexOrderBy, ScanDirection indexScanDir, ExplainState *es,
+					  HTAB *indexNameHash)
 {
 	ExplainOpenGroup("index_top_level", NULL, true, es);
-	const char *indexName = ExtensionExplainGetIndexName(indexOid);
+	const char *indexName = ExplainGetIndexNameWithCache(indexOid, indexNameHash);
 	ExplainPropertyText("indexName", indexName, es);
 	if (indexScan == NULL)
 	{
@@ -522,7 +563,7 @@ ExplainIndexScanState(IndexScanDesc indexScan, Oid indexOid, List *indexQuals,
 
 
 void
-WalkAndExplainScanState(PlanState *scanState, ExplainState *es)
+WalkAndExplainScanState(PlanState *scanState, ExplainState *es, HTAB *indexNameHash)
 {
 	check_stack_depth();
 	CHECK_FOR_INTERRUPTS();
@@ -532,7 +573,7 @@ WalkAndExplainScanState(PlanState *scanState, ExplainState *es)
 		IndexScan *scan = (IndexScan *) indexScanState->ss.ps.plan;
 		ExplainIndexScanState(indexScanState->iss_ScanDesc, scan->indexid,
 							  scan->indexqual, scan->indexorderby, scan->indexorderdir,
-							  es);
+							  es, indexNameHash);
 	}
 	else if (IsA(scanState, IndexOnlyScanState))
 	{
@@ -540,7 +581,7 @@ WalkAndExplainScanState(PlanState *scanState, ExplainState *es)
 		IndexOnlyScan *scan = (IndexOnlyScan *) indexOnlyScanState->ss.ps.plan;
 		ExplainIndexScanState(indexOnlyScanState->ioss_ScanDesc, scan->indexid,
 							  scan->indexqual, scan->indexorderby, scan->indexorderdir,
-							  es);
+							  es, indexNameHash);
 	}
 	else if (IsA(scanState, BitmapIndexScanState))
 	{
@@ -548,14 +589,15 @@ WalkAndExplainScanState(PlanState *scanState, ExplainState *es)
 		BitmapIndexScan *scan = (BitmapIndexScan *) bitmapIndexScanState->ss.ps.plan;
 		List *indexOrderBy = NIL;
 		ExplainIndexScanState(bitmapIndexScanState->biss_ScanDesc, scan->indexid,
-							  scan->indexqual, indexOrderBy, NoMovementScanDirection, es);
+							  scan->indexqual, indexOrderBy, NoMovementScanDirection, es,
+							  indexNameHash);
 	}
 	else if (IsA(scanState, BitmapAndState))
 	{
 		BitmapAndState *bitmapAndState = (BitmapAndState *) scanState;
 		for (int i = 0; i < bitmapAndState->nplans; i++)
 		{
-			WalkAndExplainScanState(bitmapAndState->bitmapplans[i], es);
+			WalkAndExplainScanState(bitmapAndState->bitmapplans[i], es, indexNameHash);
 		}
 	}
 	else if (IsA(scanState, BitmapOrState))
@@ -563,7 +605,7 @@ WalkAndExplainScanState(PlanState *scanState, ExplainState *es)
 		BitmapOrState *bitmapOrState = (BitmapOrState *) scanState;
 		for (int i = 0; i < bitmapOrState->nplans; i++)
 		{
-			WalkAndExplainScanState(bitmapOrState->bitmapplans[i], es);
+			WalkAndExplainScanState(bitmapOrState->bitmapplans[i], es, indexNameHash);
 		}
 	}
 	else if (IsA(scanState, MergeAppendState))
@@ -571,7 +613,7 @@ WalkAndExplainScanState(PlanState *scanState, ExplainState *es)
 		MergeAppendState *mergeAppendState = (MergeAppendState *) scanState;
 		for (int i = 0; i < mergeAppendState->ms_nplans; i++)
 		{
-			WalkAndExplainScanState(mergeAppendState->mergeplans[i], es);
+			WalkAndExplainScanState(mergeAppendState->mergeplans[i], es, indexNameHash);
 		}
 	}
 	else if (IsA(scanState, AppendState))
@@ -579,7 +621,7 @@ WalkAndExplainScanState(PlanState *scanState, ExplainState *es)
 		AppendState *appendState = (AppendState *) scanState;
 		for (int i = 0; i < appendState->as_nplans; i++)
 		{
-			WalkAndExplainScanState(appendState->appendplans[i], es);
+			WalkAndExplainScanState(appendState->appendplans[i], es, indexNameHash);
 		}
 	}
 	else if (IsA(scanState, CustomScanState))
@@ -589,17 +631,17 @@ WalkAndExplainScanState(PlanState *scanState, ExplainState *es)
 		foreach(cell, customScanState->custom_ps)
 		{
 			PlanState *child = (PlanState *) lfirst(cell);
-			WalkAndExplainScanState(child, es);
+			WalkAndExplainScanState(child, es, indexNameHash);
 		}
 	}
 
 	if (scanState->lefttree != NULL)
 	{
-		WalkAndExplainScanState(scanState->lefttree, es);
+		WalkAndExplainScanState(scanState->lefttree, es, indexNameHash);
 	}
 	if (scanState->righttree != NULL)
 	{
-		WalkAndExplainScanState(scanState->righttree, es);
+		WalkAndExplainScanState(scanState->righttree, es, indexNameHash);
 	}
 }
 
@@ -633,6 +675,16 @@ ExplainGetNamespaceNameFromCollectionId(uint64 collectionId)
 }
 
 
+HTAB *
+CreateExplainIndexNameHash(void)
+{
+	HASHCTL hashCtl = CreateExtensionHashCTL(sizeof(Oid),
+											 sizeof(ExplainIndexNameEntry), NULL, NULL);
+	return hash_create("IndexNameHash", 128, &hashCtl,
+					   HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
+}
+
+
 static void
 ExplainQueryScanExplainCustomScan(CustomScanState *node, List *ancestors,
 								  ExplainState *es)
@@ -651,16 +703,31 @@ ExplainQueryScanExplainCustomScan(CustomScanState *node, List *ancestors,
 		}
 	}
 
+	if (queryScanState->inputQueryState->collectionId != 0 &&
+		EnableExplainScanRelationStats)
+	{
+		ExplainPropertyFloat("allVisibleFraction", "",
+							 queryScanState->inputQueryState->allVisibleFraction, 2, es);
+		ExplainPropertyFloat("estimatedDocumentCount", "",
+							 queryScanState->inputQueryState->estimatedDocumentCount, 2,
+							 es);
+	}
+
+	HTAB *indexNameHash = NULL;
+	indexNameHash = CreateExplainIndexNameHash();
 	ExplainOpenGroup("custom_scan", "IndexDetails", false, es);
-	WalkAndExplainScanState(&queryScanState->innerScanState->ps, es);
+	WalkAndExplainScanState(&queryScanState->innerScanState->ps, es, indexNameHash);
 	ExplainCloseGroup("custom_scan", "IndexDetails", false, es);
 
 	if (EnableExplainScanIndexCosts)
 	{
 		ExplainOpenGroup("custom_scan", "IndexCosts", false, es);
-		LogReportedIndexCosts(queryScanState->inputQueryState->relOid, es);
+		LogReportedIndexCosts(queryScanState->inputQueryState->relOid, es,
+							  ExplainGetIndexNameWithCache, indexNameHash);
 		ExplainCloseGroup("custom_scan", "IndexCosts", false, es);
 	}
+
+	hash_destroy(indexNameHash);
 }
 
 
@@ -688,6 +755,10 @@ CopyNodeInputQueryState(struct ExtensibleNode *target_node, const struct
 	newNode->extensible.extnodename = InputContinuationNodeName;
 	newNode->collectionId = ((ExplainInputQueryState *) source_node)->collectionId;
 	newNode->relOid = ((ExplainInputQueryState *) source_node)->relOid;
+	newNode->allVisibleFraction =
+		((ExplainInputQueryState *) source_node)->allVisibleFraction;
+	newNode->estimatedDocumentCount =
+		((ExplainInputQueryState *) source_node)->estimatedDocumentCount;
 }
 
 
@@ -700,6 +771,8 @@ OutInputQueryScanNode(StringInfo str, const struct ExtensibleNode *raw_node)
 	ExplainInputQueryState *node = (ExplainInputQueryState *) raw_node;
 	WRITE_UINT64_FIELD(collectionId);
 	WRITE_OID_FIELD(relOid);
+	WRITE_FLOAT_FIELD(allVisibleFraction);
+	WRITE_FLOAT_FIELD(estimatedDocumentCount);
 }
 
 
@@ -716,4 +789,6 @@ ReadUnsupportedExtensionQueryScanNode(struct ExtensibleNode *node)
 	local_node->extensible.extnodename = InputContinuationNodeName;
 	READ_UINT64_FIELD(collectionId);
 	READ_OID_FIELD(relOid);
+	READ_FLOAT_FIELD(allVisibleFraction);
+	READ_FLOAT_FIELD(estimatedDocumentCount);
 }

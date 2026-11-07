@@ -1345,6 +1345,17 @@ fn query_planner(
                 doc.append("ns", namespace_name);
             }
 
+            if plan.estimated_document_count.is_some() || plan.all_visible_fraction.is_some() {
+                let mut statistics = RawDocumentBuf::new();
+                if let Some(estimated_document_count) = plan.estimated_document_count {
+                    statistics.append("estimatedDocumentCount", estimated_document_count);
+                }
+                if let Some(all_visible_fraction) = plan.all_visible_fraction {
+                    statistics.append("allVisibleFraction", all_visible_fraction);
+                }
+                doc.append("collectionPlannerStatistics", statistics);
+            }
+
             if let Some(cursor_scan_type) = plan.cursor_scan_type.as_deref() {
                 doc.append("cursorScanType", cursor_scan_type);
             }
@@ -2118,6 +2129,8 @@ fn skip_stage(mut plan: ExplainPlan, query_catalog: &QueryCatalog) -> ExplainPla
         // capture before `plan` is consumed and re-apply after the collapse.
         let carried_distinct_dedup = plan.has_distinct_dedup;
         let carried_multi_key_row_dedup = plan.has_multi_key_row_dedup;
+        let carried_estimated_document_count = plan.estimated_document_count;
+        let carried_all_visible_fraction = plan.all_visible_fraction;
 
         plan = if plan.node_type == "Subquery Scan"
             && plan.output.as_ref().is_some_and(|o| {
@@ -2138,15 +2151,9 @@ fn skip_stage(mut plan: ExplainPlan, query_catalog: &QueryCatalog) -> ExplainPla
         {
             let mut new_plan = plan.inner_plans.expect("Checked").remove(0);
             new_plan.output = plan.output;
-            if new_plan.namespace_name.is_none() {
-                new_plan.namespace_name = plan.namespace_name.clone();
-            }
-            if new_plan.cursor_scan_type.is_none() {
-                new_plan.cursor_scan_type = plan.cursor_scan_type;
-            }
-            if new_plan.skipped_tuples.is_none() {
-                new_plan.skipped_tuples = plan.skipped_tuples;
-            }
+            new_plan.namespace_name = new_plan.namespace_name.or(plan.namespace_name);
+            new_plan.cursor_scan_type = new_plan.cursor_scan_type.or(plan.cursor_scan_type);
+            new_plan.skipped_tuples = new_plan.skipped_tuples.or(plan.skipped_tuples);
 
             distribute_index_details(&mut new_plan, plan.index_details);
             new_plan
@@ -2222,6 +2229,10 @@ fn skip_stage(mut plan: ExplainPlan, query_catalog: &QueryCatalog) -> ExplainPla
             break plan;
         };
 
+        plan.estimated_document_count = plan
+            .estimated_document_count
+            .or(carried_estimated_document_count);
+        plan.all_visible_fraction = plan.all_visible_fraction.or(carried_all_visible_fraction);
         plan.has_distinct_dedup |= carried_distinct_dedup;
         plan.has_multi_key_row_dedup |= carried_multi_key_row_dedup;
     }
@@ -2358,6 +2369,38 @@ mod tests {
         ExplainPlan {
             node_type: node_type.to_owned(),
             ..Default::default()
+        }
+    }
+
+    fn assert_collection_statistics_schema(statistics: &bson::raw::RawDocument) {
+        let schema: serde_json::Value =
+            serde_json::from_str(include_str!("documentdb_explain_output.schema.json"))
+                .expect("explain schema should be valid JSON");
+        assert_eq!(
+            schema["$defs"]["QueryPlanStage"]["properties"]["collectionPlannerStatistics"]["$ref"],
+            "#/$defs/CollectionPlannerStatistics"
+        );
+        let definition = &schema["$defs"]["CollectionPlannerStatistics"];
+        let minimum_properties = definition["minProperties"]
+            .as_u64()
+            .expect("statistics schema should require a nonempty object");
+        assert!(
+            u64::try_from(statistics.into_iter().count()).expect("field count should fit")
+                >= minimum_properties
+        );
+        for entry in statistics {
+            let (name, value) = entry.expect("statistics should contain valid BSON");
+            let property = definition["properties"]
+                .get(name)
+                .expect("every emitted statistic should be documented");
+            assert_eq!(property["type"], "number");
+            let value = value.as_f64().expect("statistics should be numeric");
+            if let Some(minimum) = property["minimum"].as_f64() {
+                assert!(value >= minimum);
+            }
+            if let Some(maximum) = property["maximum"].as_f64() {
+                assert!(value <= maximum);
+            }
         }
     }
 
@@ -2597,6 +2640,184 @@ mod tests {
 
         assert_eq!(index_usage.get_str("indexKeyString"), Ok(r#"{"x": 1}"#));
         assert_eq!(index_usage.get_str("indexCollation"), Ok("en-u-ks-level2"));
+    }
+
+    #[test]
+    fn collection_planner_statistics_survive_chained_wrappers() {
+        for (estimated_document_count, all_visible_fraction) in
+            [(100.25, 0.5), (0.0, 0.0), (-1.0, 1.0)]
+        {
+            let plan: ExplainPlan = serde_json::from_value(serde_json::json!({
+                "Node Type": "Custom Scan",
+                "Custom Plan Provider": "DocumentDBApiExplainQueryScan",
+                "estimatedDocumentCount": estimated_document_count,
+                "allVisibleFraction": all_visible_fraction,
+                "Plans": [{
+                    "Node Type": "Custom Scan",
+                    "Custom Plan Provider": "DocumentDBApiCursorScan",
+                    "Plans": [{
+                        "Node Type": "Custom Scan",
+                        "Custom Plan Provider": "DocumentDBApiRumIndexOnlyScan",
+                        "Plans": [{ "Node Type": "Index Only Scan" }]
+                    }]
+                }]
+            }))
+            .expect("explain wrapper should deserialize");
+
+            let is_aggregation_stage = false;
+            let explain = cursor_explain(
+                plan,
+                "db.collection",
+                is_aggregation_stage,
+                Verbosity::ExecutionStats,
+                &create_query_catalog(),
+            );
+            let winning_plan = explain
+                .get_document("queryPlanner")
+                .expect("query planner should be present")
+                .get_document("winningPlan")
+                .expect("winning plan should be present");
+            assert_eq!(winning_plan.get_str("stage"), Ok("IXSCAN"));
+            assert!(winning_plan.get("ns").expect("valid BSON").is_none());
+            let statistics = winning_plan
+                .get_document("collectionPlannerStatistics")
+                .expect("collection statistics should survive all wrapper collapses");
+            assert_collection_statistics_schema(statistics);
+            assert_eq!(
+                statistics.get_f64("estimatedDocumentCount"),
+                Ok(estimated_document_count)
+            );
+            assert_eq!(
+                statistics.get_f64("allVisibleFraction"),
+                Ok(all_visible_fraction)
+            );
+            let execution_stage = explain
+                .get_document("executionStats")
+                .expect("execution statistics should be present")
+                .get_document("executionStages")
+                .expect("execution stage should be present");
+            assert!(execution_stage
+                .get("collectionPlannerStatistics")
+                .expect("valid BSON")
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn collection_planner_statistics_are_omitted_when_unavailable() {
+        let plan: ExplainPlan = serde_json::from_value(serde_json::json!({
+            "Node Type": "Custom Scan",
+            "Custom Plan Provider": "DocumentDBApiExplainQueryScan",
+            "namespaceName": "db.collection",
+            "Plans": [{ "Node Type": "Seq Scan" }]
+        }))
+        .expect("older explain wrapper should deserialize");
+        let is_aggregation_stage = false;
+        let planner = query_planner(
+            plan,
+            "db.collection",
+            is_aggregation_stage,
+            &create_query_catalog(),
+        );
+        let winning_plan = planner
+            .get_document("winningPlan")
+            .expect("winning plan should be present");
+
+        assert_eq!(winning_plan.get_str("ns"), Ok("db.collection"));
+        assert!(winning_plan
+            .get("collectionPlannerStatistics")
+            .expect("valid BSON")
+            .is_none());
+    }
+
+    #[test]
+    fn collection_planner_statistics_stay_on_the_owning_nested_stage() {
+        let plan: ExplainPlan = serde_json::from_value(serde_json::json!({
+            "Node Type": "Nested Loop",
+            "Join Type": "Left",
+            "Plans": [
+                {
+                    "Node Type": "Custom Scan",
+                    "Custom Plan Provider": "DocumentDBApiExplainQueryScan",
+                    "namespaceName": "db.source",
+                    "estimatedDocumentCount": 10.0,
+                    "allVisibleFraction": 0.25,
+                    "Plans": [{ "Node Type": "Seq Scan" }]
+                },
+                {
+                    "Node Type": "Custom Scan",
+                    "Custom Plan Provider": "DocumentDBApiExplainQueryScan",
+                    "namespaceName": "db.target",
+                    "estimatedDocumentCount": 20.0,
+                    "allVisibleFraction": 0.75,
+                    "Plans": [{ "Node Type": "Seq Scan" }]
+                }
+            ]
+        }))
+        .expect("nested collection scans should deserialize");
+        let is_aggregation_stage = false;
+        let planner = query_planner(
+            plan,
+            "db.source",
+            is_aggregation_stage,
+            &create_query_catalog(),
+        );
+        let winning_plan = planner
+            .get_document("winningPlan")
+            .expect("winning plan should be present");
+        assert!(winning_plan
+            .get("collectionPlannerStatistics")
+            .expect("valid BSON")
+            .is_none());
+        let stages = winning_plan
+            .get_array("inputStages")
+            .expect("lookup inputs should be present");
+        assert_eq!(stages.into_iter().count(), 2);
+        for (stage, (namespace, count, fraction)) in stages
+            .into_iter()
+            .zip([("db.source", 10.0, 0.25), ("db.target", 20.0, 0.75)])
+        {
+            let stage = stage
+                .expect("valid BSON")
+                .as_document()
+                .expect("input stage should be a document");
+            assert_eq!(stage.get_str("ns"), Ok(namespace));
+            let statistics = stage
+                .get_document("collectionPlannerStatistics")
+                .expect("input stage should retain its own statistics");
+            assert_collection_statistics_schema(statistics);
+            assert_eq!(statistics.get_f64("estimatedDocumentCount"), Ok(count));
+            assert_eq!(statistics.get_f64("allVisibleFraction"), Ok(fraction));
+        }
+    }
+
+    #[test]
+    fn collection_planner_statistics_allow_partial_metadata() {
+        for field in ["estimatedDocumentCount", "allVisibleFraction"] {
+            let mut plan = serde_json::json!({
+                "Node Type": "Custom Scan",
+                "Custom Plan Provider": "DocumentDBApiExplainQueryScan",
+                "Plans": [{ "Node Type": "Seq Scan" }]
+            });
+            plan[field] = serde_json::json!(0.0);
+            let plan = serde_json::from_value(plan).expect("partial statistics should deserialize");
+            let is_aggregation_stage = false;
+            let planner = query_planner(
+                plan,
+                "db.collection",
+                is_aggregation_stage,
+                &create_query_catalog(),
+            );
+            let statistics = planner
+                .get_document("winningPlan")
+                .expect("winning plan should be present")
+                .get_document("collectionPlannerStatistics")
+                .expect("present statistic should be emitted");
+
+            assert_collection_statistics_schema(statistics);
+            assert_eq!(statistics.into_iter().count(), 1);
+            assert_eq!(statistics.get_f64(field), Ok(0.0));
+        }
     }
 
     #[test]

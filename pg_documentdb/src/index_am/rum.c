@@ -1768,7 +1768,9 @@ GetReportedIndexKeyString(Oid indexOid)
 
 
 void
-LogReportedIndexCosts(Oid relOid, struct ExplainState *es)
+LogReportedIndexCosts(Oid relOid, struct ExplainState *es,
+					  const char *(*getIndexName)(Oid indexOid, void *context),
+					  void *context)
 {
 	if (!EnableExtendedExplainPlans || !EnableExplainScanIndexCosts)
 	{
@@ -1801,8 +1803,7 @@ LogReportedIndexCosts(Oid relOid, struct ExplainState *es)
 			continue;
 		}
 
-		const char *indexName = ExtensionExplainGetIndexName(
-			IndexExplainCosts[i].indexOid);
+		const char *indexName = getIndexName(IndexExplainCosts[i].indexOid, context);
 		if (indexName == NULL)
 		{
 			continue;
