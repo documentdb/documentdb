@@ -29,6 +29,8 @@ use crate::{
 
 pub const SCRAM_SHA256_SCHEME: &str = "SCRAM-SHA-256";
 
+const INVALID_CREDENTIALS_MESSAGE: &str = "Authentication failed: either the user name doesn't exist, the password is invalid or the password expired.";
+
 /// Number of random characters appended to the client nonce to form the server nonce.
 const SERVER_NONCE_SUFFIX_LEN: usize = 24;
 
@@ -358,7 +360,7 @@ async fn get_salt_and_iterations(
     {
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::AuthenticationFailed,
-            "Invalid account: User details not found in the database".to_owned(),
+            INVALID_CREDENTIALS_MESSAGE.to_owned(),
         ));
     }
 
@@ -408,7 +410,7 @@ async fn verify_scram_proof(
         != 1
     {
         return Err(DocumentDBError::authentication_failed(
-            "Invalid key".to_owned(),
+            INVALID_CREDENTIALS_MESSAGE.to_owned(),
         ));
     }
 
