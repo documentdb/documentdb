@@ -11,6 +11,7 @@
 #define DOCUMENTDB_NODE_DISTRIBUTED_OPS_H
 
 bool IsSingleNodeCluster(void);
+void ExecuteAdminWriteCommandOnAllNodesCore(Oid nodeFunction, pgbson *argument);
 List * ExecutePerNodeCommand(Oid nodeFunction, pgbson *nodeFunctionArg, bool readOnly,
 							 const char *distributedTableName,
 							 bool backFillCoordinator);

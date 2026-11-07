@@ -205,6 +205,7 @@ select vector_ivf_test.batch_insert_testing_vector_documents('aggregation_pipeli
 ANALYZE;
 
 BEGIN;
+SET LOCAL citus.enable_local_execution TO off;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_ivf_db', '{ "aggregate": "aggregation_pipeline_ivf_nprobes", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }  } } ], "cursor": {} }');

@@ -138,6 +138,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
 
 TRUNCATE documentdb_data.documents_8601;
 SELECT COUNT(documentdb_api.insert_one('group_idx_db', 'group_push', bson_build_document('_id', i, 'a', i % 100, 'b', i % 10, 'c', i) )) FROM generate_series(1, 1000) AS i;
+ANALYZE documentdb_data.documents_8601;
 
 -----------------------------------------------------------------------------------------------------
 -- Group by $_id (the document's own _id field)

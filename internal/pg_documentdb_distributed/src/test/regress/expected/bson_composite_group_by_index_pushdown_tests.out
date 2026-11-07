@@ -480,6 +480,7 @@ SELECT COUNT(documentdb_api.insert_one('group_idx_db', 'group_push', bson_build_
   1000
 (1 row)
 
+ANALYZE documentdb_data.documents_8601;
 ---------------------------------------------------------------------
 -- Group by $_id (the document's own _id field)
 ---------------------------------------------------------------------
