@@ -58,6 +58,6 @@ EXPLAIN (VERBOSE ON, COSTS OFF ) SELECT document, bson_dollar_project(document, 
 
 -- run with remote execution
 set citus.enable_local_execution to off;
-SELECT * FROM execute_and_sort($$SELECT  object_id, document::text || ', cursurState:' ||current_cursor_state(document)::text as document FROM documentdb_api.collection('db', 'cursors_seqscan_sharded') WHERE documentdb_api_internal.cursor_state(document, '{ "getpage_batchCount": 3 }') AND document @@ '{ "a.b": { "$gt": 12 }}'$$);
+SELECT * FROM execute_and_sort($$SELECT  object_id, document::text || ', cursurState:' ||current_cursor_state(document)::text as document FROM documentdb_api.collection('db', 'cursors_seqscan_sharded') WHERE documentdb_api_internal.cursor_state(document, '{ "getpage_batchCount": 3 }') AND document @@ '{ "a.b": { "$gt": 12 }}'$$) ORDER BY document;
 SELECT document, bson_dollar_project(document, '{ "a.b": 1 }'), current_cursor_state(document) INTO TEMPORARY d4 FROM documentdb_api.collection('db', 'cursors_seqscan_sharded') WHERE documentdb_api_internal.cursor_state(document, :r2) AND document @@ '{ "a.b": { "$gt": 12 }}';
 SELECT document,  bson_dollar_project, bson_dollar_project(current_cursor_state, '{ "table_name": 0 }') FROM d4 order by document -> '_id', document -> 'sh';

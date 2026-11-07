@@ -39,6 +39,8 @@ NotifyCollectionMetadataInvalidated_HookType
 NotifyCollectionRelationInvalidated_HookType
 	notify_collection_relation_invalidated_hook = NULL;
 RunCommandOnMetadataCoordinator_HookType run_command_on_metadata_coordinator_hook = NULL;
+ExecuteAdminWriteCommandOnAllNodes_HookType
+	execute_admin_write_command_on_all_nodes_hook = NULL;
 RunQueryWithCommutativeWrites_HookType run_query_with_commutative_writes_hook = NULL;
 RunMultiValueQueryWithCommutativeWrites_HookType
 	run_multi_value_query_with_commutative_writes_hook = NULL;
@@ -205,6 +207,20 @@ RunCommandOnMetadataCoordinator(const char *query)
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
 					errmsg("Unexpected. Should not call RunCommandOnMetadataCoordinator"
 						   "When the node is a MetadataCoordinator")));
+}
+
+
+void
+ExecuteAdminWriteCommandOnAllNodes(Oid nodeFunction, pgbson *argument)
+{
+	if (execute_admin_write_command_on_all_nodes_hook != NULL)
+	{
+		execute_admin_write_command_on_all_nodes_hook(nodeFunction, argument);
+	}
+	else
+	{
+		OidFunctionCall1(nodeFunction, PointerGetDatum(argument));
+	}
 }
 
 

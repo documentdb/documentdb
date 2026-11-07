@@ -7,12 +7,13 @@
  documentdb_api_distributed | initialize_cluster              | void                 |                                           | func
  documentdb_api_distributed | is_table_schema_consistent      | documentdb_core.bson | table_name regclass                       | func
  documentdb_api_distributed | move_collection                 | documentdb_core.bson | move_collection_spec documentdb_core.bson | func
+ documentdb_api_distributed | node_command_dispatch_trigger   | trigger              |                                           | func
  documentdb_api_distributed | rebalancer_start                | documentdb_core.bson | p_spec documentdb_core.bson               | func
  documentdb_api_distributed | rebalancer_status               | documentdb_core.bson | p_spec documentdb_core.bson               | func
  documentdb_api_distributed | rebalancer_stop                 | documentdb_core.bson | p_spec documentdb_core.bson               | func
  documentdb_api_distributed | repair_collections_table_schema |                      |                                           | proc
  documentdb_api_distributed | update_postgres_index_worker    | documentdb_core.bson | p_local_function_arg documentdb_core.bson | func
-(9 rows)
+(10 rows)
 
 -- show all aggregates exported
 \da+ documentdb_api_distributed.*
@@ -37,4 +38,12 @@ Index "documentdb_api_distributed.documentdb_cluster_data_pkey"
 ---------------------------------------------------------------------
  metadata | documentdb_core.bson | yes  | metadata
 primary key, btree, for table "documentdb_api_distributed.documentdb_cluster_data"
+
+Table "documentdb_api_distributed.node_command_dispatch"
+    Column     | Type | Collation | Nullable | Default
+---------------------------------------------------------------------
+ function_name | text |           | not null |
+ argument      | text |           | not null |
+Triggers:
+    node_command_dispatch BEFORE INSERT ON documentdb_api_distributed.node_command_dispatch FOR EACH ROW EXECUTE FUNCTION documentdb_api_distributed.node_command_dispatch_trigger()
 

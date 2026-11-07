@@ -11,15 +11,19 @@
 
 #include <postgres.h>
 #include <miscadmin.h>
+#include <commands/trigger.h>
+#include <utils/acl.h>
 #include <utils/builtins.h>
 #include <utils/timestamp.h>
 #include <nodes/makefuncs.h>
 #include <catalog/namespace.h>
+#include <catalog/pg_proc.h>
 #include <utils/lsyscache.h>
 #include <utils/regproc.h>
 
 #include "utils/query_utils.h"
 #include "utils/documentdb_errors.h"
+#include "utils/documentdb_pg_compatibility.h"
 #include "utils/error_utils.h"
 #include "io/bson_core.h"
 #include "metadata/metadata_cache.h"
@@ -27,6 +31,101 @@
 #include "api_hooks.h"
 #include "utils/hashset_utils.h"
 #include "utils/string_view.h"
+
+extern char *ApiDistributedSchemaNameV2;
+
+PG_FUNCTION_INFO_V1(command_dispatch_trigger);
+
+
+void
+ExecuteAdminWriteCommandOnAllNodesCore(Oid nodeFunction, pgbson *argument)
+{
+	EnsureMetadataTableReplicated("collections");
+
+	/*
+	 * Reference inserts enlist every placement in the caller's transaction,
+	 * even without document shards. The BEFORE trigger executes the command
+	 * locally and discards the row, so no arguments or node-local OIDs persist.
+	 */
+	char *query = psprintf(
+		"INSERT INTO %s.node_command_dispatch (function_name, argument) VALUES ($1, $2)",
+		quote_identifier(ApiDistributedSchemaNameV2));
+	Oid argTypes[2] = { TEXTOID, TEXTOID };
+	Datum argValues[2] = {
+		CStringGetTextDatum(format_procedure_qualified(nodeFunction)),
+		CStringGetTextDatum(PgbsonToHexadecimalString(argument))
+	};
+	bool readOnly = false;
+	int statementTimeoutDisabled = 0;
+	int lockTimeoutDisabled = 0;
+	ExtensionExecuteCappedStatementWithArgsViaSPI(query, 2, argTypes, argValues, NULL,
+												  readOnly, SPI_OK_INSERT,
+												  statementTimeoutDisabled,
+												  lockTimeoutDisabled);
+}
+
+
+Datum
+command_dispatch_trigger(PG_FUNCTION_ARGS)
+{
+	if (!CALLED_AS_TRIGGER(fcinfo))
+	{
+		ereport(ERROR, (errmsg("command dispatch must be called as a trigger")));
+	}
+
+	TriggerData *triggerData = (TriggerData *) fcinfo->context;
+	if (!TRIGGER_FIRED_BEFORE(triggerData->tg_event) ||
+		!TRIGGER_FIRED_BY_INSERT(triggerData->tg_event) ||
+		!TRIGGER_FIRED_FOR_ROW(triggerData->tg_event))
+	{
+		ereport(ERROR, (errmsg("command dispatch requires a BEFORE INSERT row trigger")));
+	}
+
+	TupleDesc tupleDesc = RelationGetDescr(triggerData->tg_relation);
+	if (tupleDesc->natts != 2 ||
+		TupleDescAttr(tupleDesc, 0)->atttypid != TEXTOID ||
+		TupleDescAttr(tupleDesc, 1)->atttypid != TEXTOID)
+	{
+		ereport(ERROR, (errmsg("command dispatch requires two text columns")));
+	}
+	bool isNull = false;
+	Datum functionName = heap_getattr(triggerData->tg_trigtuple, 1, tupleDesc, &isNull);
+	if (isNull)
+	{
+		ereport(ERROR, (errmsg("command dispatch requires a function")));
+	}
+	Oid nodeFunction = DatumGetObjectId(DirectFunctionCall1(regprocedurein,
+															CStringGetDatum(
+																TextDatumGetCString(
+																	functionName))));
+	AclResult aclResult = PgProcAclCheckCompat(nodeFunction, GetUserId(), ACL_EXECUTE);
+	if (aclResult != ACLCHECK_OK)
+	{
+		aclcheck_error(aclResult, OBJECT_FUNCTION, get_func_name(nodeFunction));
+	}
+
+	Oid *argumentTypes;
+	int argumentCount;
+	get_func_signature(nodeFunction, &argumentTypes, &argumentCount);
+	if (argumentCount != 1)
+	{
+		ereport(ERROR, (errmsg("command dispatch requires a single-argument function")));
+	}
+	Datum argument = heap_getattr(triggerData->tg_trigtuple, 2, tupleDesc, &isNull);
+	if (isNull)
+	{
+		ereport(ERROR, (errmsg("command dispatch requires an argument")));
+	}
+	Oid inputFunction;
+	Oid ioParam;
+	getTypeInputInfo(argumentTypes[0], &inputFunction, &ioParam);
+	Datum functionArgument = OidInputFunctionCall(inputFunction,
+												  TextDatumGetCString(argument),
+												  ioParam, -1);
+	OidFunctionCall1(nodeFunction, functionArgument);
+
+	PG_RETURN_POINTER(NULL);
+}
 
 
 static ArrayType *

@@ -58,6 +58,9 @@ void NotifyCollectionRelationInvalidated(Oid relationId);
  */
 DistributedRunCommandResult RunCommandOnMetadataCoordinator(const char *query);
 
+/* Invoke an admin-write BSON worker once per server within the caller's transaction. */
+void ExecuteAdminWriteCommandOnAllNodes(Oid nodeFunction, pgbson *argument);
+
 /*
  * Runs a query via SPI with commutative writes on for distributed scenarios.
  * Returns the Datum returned by the executed query.

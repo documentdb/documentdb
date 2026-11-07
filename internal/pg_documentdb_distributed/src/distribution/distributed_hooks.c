@@ -961,6 +961,8 @@ InitializeDocumentDBDistributedHooks(void)
 	is_metadata_coordinator_hook = IsMetadataCoordinatorCore;
 	is_cluster_initialized_hook = IsClusterInitializedCore;
 	run_command_on_metadata_coordinator_hook = RunCommandOnMetadataCoordinatorCore;
+	execute_admin_write_command_on_all_nodes_hook =
+		ExecuteAdminWriteCommandOnAllNodesCore;
 	run_query_with_commutative_writes_hook = RunQueryWithCommutativeWritesCore;
 	run_multi_value_query_with_commutative_writes_hook =
 		RunMultiValueQueryWithCommutativeWritesCore;

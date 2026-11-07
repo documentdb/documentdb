@@ -69,6 +69,11 @@ typedef DistributedRunCommandResult (*RunCommandOnMetadataCoordinator_HookType)(
 																				query);
 extern RunCommandOnMetadataCoordinator_HookType run_command_on_metadata_coordinator_hook;
 
+typedef void (*ExecuteAdminWriteCommandOnAllNodes_HookType)(Oid nodeFunction,
+															pgbson *argument);
+extern ExecuteAdminWriteCommandOnAllNodes_HookType
+	execute_admin_write_command_on_all_nodes_hook;
+
 /*
  * Runs a query via SPI with commutative writes on for distributed scenarios.
  * Returns the Datum returned by the executed query.

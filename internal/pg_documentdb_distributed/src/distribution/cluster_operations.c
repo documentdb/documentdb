@@ -16,7 +16,9 @@
 #include "lib/stringinfo.h"
 #include "access/xact.h"
 #include "catalog/namespace.h"
+#include "commands/trigger.h"
 #include "utils/typcache.h"
+#include "parser/parse_func.h"
 #include "parser/parse_type.h"
 #include "nodes/makefuncs.h"
 
@@ -71,6 +73,7 @@ static bool VersionEquals(ExtensionVersion versionA, ExtensionVersion versionB);
 static void GetInstalledVersion(ExtensionVersion *installedVersion);
 static void ParseVersionString(ExtensionVersion *extensionVersion, char *versionString);
 static bool SetupCluster(bool isInitialize);
+static void CreateNodeCommandDispatcher(ExtensionVersion installedVersion);
 static void SetPermissionsForReadOnlyRole(void);
 static void SetPermissionsForReadWriteRole(void);
 static void GrantClusterDataReadToRbacApiAccessRole(void);
@@ -432,11 +435,103 @@ RunUpgradeActions(ExtensionVersion installedVersion, ExtensionVersion lastUpgrad
 			readOnly, SPI_OK_UTILITY, &isNull);
 	}
 
+	CreateNodeCommandDispatcher(installedVersion);
+
 	/* we call the post setup cluster hook to allow the extension to do any additional setup */
 	PostSetupClusterHook(&ShouldRunSetupForVersionForHook, &versions);
 
 	TriggerInvalidateClusterMetadata();
 	return true;
+}
+
+
+/*
+ * Create the transactional command relay during version-changing cluster setup.
+ */
+static void
+CreateNodeCommandDispatcher(ExtensionVersion installedVersion)
+{
+	if (!IsExtensionVersionAtleast(installedVersion, DocDB_V1, 2, 0))
+	{
+		return;
+	}
+
+	bool missingOk = true;
+	Oid schemaOid = get_namespace_oid(ApiDistributedSchemaNameV2, !missingOk);
+	Oid tableOid = get_relname_relid("node_command_dispatch", schemaOid);
+	List *functionName = list_make2(makeString(ApiDistributedSchemaNameV2),
+									makeString("node_command_dispatch_trigger"));
+	Oid triggerFunctionOid = LookupFuncName(functionName, 0, NULL, missingOk);
+	Oid triggerOid = OidIsValid(tableOid) ?
+					 get_trigger_oid(tableOid, "node_command_dispatch", missingOk) :
+					 InvalidOid;
+
+	bool isNull = false;
+	bool readOnly = false;
+	Oid argTypes[1] = { OIDOID };
+	Datum argValues[1] = { ObjectIdGetDatum(tableOid) };
+	Datum referenceTable = ExtensionExecuteQueryWithArgsViaSPI(
+		"SELECT EXISTS (SELECT FROM pg_catalog.pg_dist_partition "
+		"WHERE logicalrelid = $1 AND partmethod = 'n' AND repmodel = 't')",
+		1, argTypes, argValues, NULL, readOnly, SPI_OK_SELECT, &isNull);
+	bool isReferenceTable = DatumGetBool(referenceTable);
+	if (OidIsValid(triggerFunctionOid) && OidIsValid(triggerOid) && isReferenceTable)
+	{
+		return;
+	}
+
+	const char *tableName = quote_qualified_identifier(ApiDistributedSchemaNameV2,
+													   "node_command_dispatch");
+	const char *triggerFunctionName = quote_qualified_identifier(
+		ApiDistributedSchemaNameV2,
+		"node_command_dispatch_trigger");
+	int gucLevel = NewGUCNestLevel();
+	SetGUCLocally("citus.enable_unsafe_triggers", "on");
+
+	if (!OidIsValid(triggerFunctionOid))
+	{
+		ExtensionExecuteQueryViaSPI(
+			psprintf("CREATE FUNCTION %s() RETURNS trigger LANGUAGE C AS "
+					 "'pg_documentdb_distributed', 'command_dispatch_trigger'",
+					 triggerFunctionName),
+			readOnly, SPI_OK_UTILITY, &isNull);
+	}
+
+	if (!OidIsValid(tableOid))
+	{
+		ExtensionExecuteQueryViaSPI(
+			psprintf(
+				"CREATE TABLE %s (function_name text NOT NULL, argument text NOT NULL)",
+				tableName), readOnly, SPI_OK_UTILITY, &isNull);
+	}
+
+	if (!OidIsValid(triggerOid))
+	{
+		ExtensionExecuteQueryViaSPI(
+			psprintf("CREATE TRIGGER node_command_dispatch BEFORE INSERT ON %s "
+					 "FOR EACH ROW EXECUTE FUNCTION %s()", tableName,
+					 triggerFunctionName),
+			readOnly, SPI_OK_UTILITY, &isNull);
+	}
+
+	if (!isReferenceTable)
+	{
+		CreateReferenceTable(tableName);
+	}
+
+	/* Grant after distribution so function privileges also propagate to workers. */
+	ExtensionExecuteQueryViaSPI(
+		psprintf("REVOKE ALL ON FUNCTION %s() FROM PUBLIC; "
+				 "GRANT EXECUTE ON FUNCTION %s() TO %s; "
+				 "GRANT USAGE ON SCHEMA %s TO %s; "
+				 "GRANT INSERT ON TABLE %s TO %s",
+				 triggerFunctionName, triggerFunctionName, quote_identifier(ApiAdminRole),
+				 quote_identifier(ApiDistributedSchemaNameV2), quote_identifier(
+					 ApiAdminRole),
+				 tableName, quote_identifier(ApiAdminRole)),
+		readOnly, SPI_OK_UTILITY, &isNull);
+
+	RollbackGUCChange(gucLevel);
 }
 
 
