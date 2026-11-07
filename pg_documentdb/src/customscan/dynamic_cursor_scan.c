@@ -2720,8 +2720,21 @@ GeneratePathFromContinuation(ParsedContinuationState *state,
 							 PathTarget *baseRelPathTarget,
 							 ReplaceExtensionFunctionContext *indexContext)
 {
+	/*
+	 * The saved position (a TID, a primary key, or an index key) is only
+	 * meaningful in the table that the previous page read. The query is planned
+	 * again by collection name, so if the collection was dropped and created
+	 * again, or another collection was renamed onto its name, this is a
+	 * different table. That holds for every scan type, so check it once here.
+	 */
+	if (state->tableOid != rte->relid)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED),
+						errmsg(
+							"Cannot resume the cursor since its collection has been replaced.")));
+	}
+
 	inputContinuation->scanType = state->scanType;
-	inputContinuation->queryTableId = state->tableOid;
 	switch (state->scanType)
 	{
 		case QueryScanType_PrimaryKeyScan:
@@ -2838,16 +2851,7 @@ GeneratePathFromContinuation(ParsedContinuationState *state,
 
 		case QueryScanType_TidRangeScan:
 		{
-			/* Create a TIDRange scan against the relation resuming at the said TID
-			 * Note: We can't resume if the table's OID changed.
-			 */
-			if (state->tableOid != inputContinuation->queryTableId)
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED),
-								errmsg(
-									"Cannot resume a TID range scan since the table ID has changed.")));
-			}
-
+			/* Create a TIDRange scan against the relation resuming at the said TID */
 			ItemPointer tidLowerPointPointer = palloc0(sizeof(ItemPointerData));
 			Const *tidLowerBoundConst = makeConst(TIDOID, -1, InvalidOid,
 												  sizeof(ItemPointerData),
@@ -2888,12 +2892,6 @@ GeneratePathFromContinuation(ParsedContinuationState *state,
 				&state->userContinuationState);
 			inputContinuation->indexContinuation = DatumGetByteaP(state->cursorDatums[0]);
 			inputContinuation->indexDedupState = state->dedupState;
-			if (state->tableOid != inputContinuation->queryTableId)
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED),
-								errmsg(
-									"Cannot resume a secondary index scan since the table ID has changed.")));
-			}
 
 			ListCell *cell;
 			IndexPath *resumePath = NULL;
@@ -3022,12 +3020,6 @@ GeneratePathFromContinuation(ParsedContinuationState *state,
 			 */
 			inputContinuation->itemPointerAsUint64 = ItemPointerToUint64(
 				&state->userContinuationState);
-			if (state->tableOid != inputContinuation->queryTableId)
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED),
-								errmsg(
-									"Cannot resume a secondary index bitmap scan since the table ID has changed.")));
-			}
 
 			/* First check if any of the existing paths match the bitmap path */
 			ListCell *indexCell;

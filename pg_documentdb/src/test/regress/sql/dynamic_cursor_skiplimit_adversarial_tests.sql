@@ -380,10 +380,10 @@ FROM cursor_get_more('advskiplim', '{ "getMore": { "$numberLong": "9700" }, "col
 -- The query swapped for a find on a different collection while the remaining
 -- limit is kept. The limit was authorized against the original namespace, so
 -- resuming another one under it must not be allowed to read further than that
--- namespace's own query would have. The other collection is seeded with a
--- disjoint id range so the returned ids identify which collection was actually
--- read: ids in the 100s mean the resume followed the swapped spec rather than
--- the collection the cursor state was captured against.
+-- namespace's own query would have. The continuation names the table it was
+-- captured against, so the resume is refused instead of reading the other
+-- collection, which is seeded with a disjoint id range (ids in the 100s) so
+-- that such a read would be visible.
 DO $$
 BEGIN
     FOR g IN 101..120 LOOP
