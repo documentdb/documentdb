@@ -107,8 +107,8 @@ bool EnableRoleCrud = DEFAULT_ENABLE_ROLE_CRUD;
 #define DEFAULT_ENABLE_USERS_ADMIN_DB_CHECK false
 bool EnableUsersAdminDBCheck = DEFAULT_ENABLE_USERS_ADMIN_DB_CHECK;
 
-/* Added on v1.3, pending stabilization, enable on v1.5 */
-#define DEFAULT_ENABLE_USER_PASSWORD_EXPIRATION false
+/* Added on v1.3, enabled on v1.3, remove after v1.5 */
+#define DEFAULT_ENABLE_USER_PASSWORD_EXPIRATION true
 bool EnableUserPasswordExpiration = DEFAULT_ENABLE_USER_PASSWORD_EXPIRATION;
 
 /* Added in v0.116, Pending stabilization, enable on v1.3 */

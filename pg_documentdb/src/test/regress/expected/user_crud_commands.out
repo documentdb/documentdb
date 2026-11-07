@@ -1297,6 +1297,7 @@ RETURNS boolean LANGUAGE C AS 'pg_documentdb', 'command_authenticate_with_pwd';
 CREATE FUNCTION documentdb_test_helpers.password_expiry_proof(text, text)
 RETURNS documentdb_core.bson LANGUAGE C AS 'pg_documentdb', 'command_generate_auth_message_client_proof_for_test';
 -- All supplied deadlines require the feature flag, including null.
+SET documentdb.enable_user_password_expiration TO OFF;
 SELECT documentdb_api.create_user('{"createUser":"expiry_user", "pwd":"Valid$123Pass", "roles":[{"role":"readAnyDatabase","db":"admin"}], "customData":{"validUntil":{"$date":"2500-01-01T00:00:00.123Z"}}, "$db":"admin"}');
 ERROR:  Password expiration is not enabled.
 SELECT documentdb_api.create_user('{"createUser":"expiry_user", "pwd":"Valid$123Pass", "roles":[{"role":"readAnyDatabase","db":"admin"}], "customData":{"validUntil":null}, "$db":"admin"}');
@@ -1547,7 +1548,7 @@ SET documentdb.enable_user_password_expiration TO OFF;
 SELECT documentdb_api.update_user('{"updateUser":"expiry_user", "customData":{"validUntil":{"$date":"2500-01-01T00:00:00Z"}}, "$db":"admin"}');
 ERROR:  Password expiration is not enabled.
 -- Creation with a deadline uses the same validation and storage as renewal.
-SET documentdb.enable_user_password_expiration TO ON;
+RESET documentdb.enable_user_password_expiration;
 SELECT documentdb_api.create_user('{"createUser":"expiry_created", "pwd":"Valid$123Pass", "roles":[{"role":"readAnyDatabase","db":"admin"}], "customData":{"validUntil":null, "validUntil":{"$date":"2000-01-01T00:00:00.123Z"}}, "$db":"admin"}');
             create_user            
 -----------------------------------

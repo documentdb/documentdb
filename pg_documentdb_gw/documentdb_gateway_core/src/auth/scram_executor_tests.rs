@@ -178,23 +178,69 @@ async fn injected_executor_preserves_scram_conversation_and_principal() {
 }
 
 #[tokio::test]
+async fn rejected_salt_lookup_reports_possible_credential_causes() {
+    let bson_type = Type::new("bson".to_owned(), 9999, Kind::Simple, "public".to_owned());
+    let rejected = test_postgres_row(bson_type, bson::to_vec(&doc! { "ok": 0 }).unwrap()).await;
+    let database = Arc::new(Database {
+        responses: Mutex::new(VecDeque::from([Ok(vec![rejected])])),
+        arguments: Mutex::new(Vec::new()),
+    });
+    let mut manager = AuthenticationManager::default();
+    manager
+        .register_scheme(
+            SCRAM_SHA256_SCHEME,
+            Box::new(ScramAuthenticationHandler::with_executor(database)),
+        )
+        .unwrap();
+    let mut connection = test_connection_context_with_authentication_manager(
+        false,
+        Arc::new(TestDynamicConfiguration::default()),
+        None,
+        manager,
+    )
+    .await;
+    let error = invoke(
+        &mut connection,
+        RequestType::SaslStart,
+        "n,,n=user,r=client".to_owned(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.error_code(), ErrorCode::AuthenticationFailed);
+    assert_eq!(
+        error.error_message_user(),
+        "Authentication failed: either the user name doesn't exist, the password is invalid or the password expired."
+    );
+    assert!(!connection.user().is_authenticated());
+    assert!(connection.user().metadata(SCRAM_SHA256_SCHEME).is_none());
+}
+
+#[tokio::test]
 async fn final_database_failure_clears_the_real_conversation() {
+    assert_final_failure_clears_conversation(true).await;
+    assert_final_failure_clears_conversation(false).await;
+}
+
+async fn assert_final_failure_clears_conversation(rejected_credentials: bool) {
     let bson_type = Type::new("bson".to_owned(), 9999, Kind::Simple, "public".to_owned());
     let salt = test_postgres_row(
-        bson_type,
+        bson_type.clone(),
         bson::to_vec(&doc! {
             "ok": 1, "salt": "salt", "iterations": 4096,
         })
         .unwrap(),
     )
     .await;
+    let rejected = test_postgres_row(bson_type, bson::to_vec(&doc! { "ok": 0 }).unwrap()).await;
+    let failure = if rejected_credentials {
+        Ok(vec![rejected])
+    } else {
+        Err(DocumentDBError::authentication_failed(
+            "proof rejected".to_owned(),
+        ))
+    };
     let database = Arc::new(Database {
-        responses: Mutex::new(VecDeque::from([
-            Ok(vec![salt]),
-            Err(DocumentDBError::authentication_failed(
-                "proof rejected".to_owned(),
-            )),
-        ])),
+        responses: Mutex::new(VecDeque::from([Ok(vec![salt]), failure])),
         arguments: Mutex::new(Vec::new()),
     });
     let mut manager = AuthenticationManager::default();
@@ -235,6 +281,14 @@ async fn final_database_failure_clears_the_real_conversation() {
     .await
     .unwrap_err();
     assert_eq!(error.error_code(), ErrorCode::AuthenticationFailed);
+    if rejected_credentials {
+        assert_eq!(
+            error.error_message_user(),
+            "Authentication failed: either the user name doesn't exist, the password is invalid or the password expired."
+        );
+    } else {
+        assert_eq!(error.error_message_user(), "proof rejected");
+    }
     assert!(!connection.user().is_authenticated());
     assert!(connection.user().metadata(SCRAM_SHA256_SCHEME).is_none());
     assert_eq!(database.arguments.lock().unwrap().len(), 2);
