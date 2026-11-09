@@ -36,6 +36,7 @@
 #include "io/bson_core.h"
 #include "commands/commands_common.h"
 #include "commands/insert.h"
+#include "commands/insert_on_conflict_scan.h"
 #include "commands/parse_error.h"
 #include "metadata/collection.h"
 #include "infrastructure/documentdb_plan_cache.h"
@@ -138,7 +139,8 @@ static void DoBatchInsertNoTransactionId(MongoCollection *collection,
 
 static uint64 ProcessInsertion(MongoCollection *collection, Oid insertShardOid, const
 							   bson_value_t *document,
-							   text *transactionId, ExprEvalState *evalState);
+							   text *transactionId, ExprEvalState *evalState,
+							   InsertConflictState *conflictState);
 static pgbson * BuildResponseMessage(BatchInsertionResult *batchResult,
 									 bool *isResponseReady,
 									 bool convertToWireErrorCodes);
@@ -190,9 +192,18 @@ extern bool UseLocalExecutionShardQueries;
 extern bool EnableBypassDocumentValidation;
 extern bool SkipFailOnCollation;
 extern int BatchUpdateLockTimeoutMs;
+extern bool EnableInsertOnConflictOptimization;
 extern int32_t DocumentToastCompressionThreshold;
 extern bool DefaultInlineWriteOperations;
 extern bool EnableInsertWorkerPushdown;
+
+
+static inline bool
+ShouldRunWithInsertConflictHandling(const InsertConflictState *conflictState)
+{
+	return EnableInsertOnConflictOptimization && conflictState != NULL &&
+		   conflictState->isValid;
+}
 
 
 inline static bool
@@ -794,11 +805,20 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts,
 								  BatchInsertionResult *batchResult, int batchStartIndex,
 								  int *batchRowsInserted, int *batchEndIndex,
 								  ExprEvalState *evalState, WriteMode writeMode,
+								  InsertConflictState *conflictState,
 								  MemoryContext insertAttemptContext)
 {
 	*batchRowsInserted = 0;
+	volatile bool batchExecutionSucceeded = false;
+	volatile bool attemptedRemoteInsert = false;
 	MemoryContext oldContext = CurrentMemoryContext;
 	ResourceOwner oldOwner = CurrentResourceOwner;
+
+	/* Before attempting a batch, reset conflict state if any */
+	if (conflictState != NULL)
+	{
+		memset(conflictState, 0, sizeof(InsertConflictState));
+	}
 
 	BeginInternalSubTransaction(NULL);
 
@@ -816,6 +836,7 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts,
 		text *transactionId = NULL;
 		if (ShouldDispatchInsertSubBatch(collection, transactionId, evalState))
 		{
+			attemptedRemoteInsert = true;
 			DoMultiInsertWithoutTransactionViaInsertWorker(collection, inserts,
 														   batchStartIndex,
 														   batchRowsInserted,
@@ -827,6 +848,8 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts,
 												  batchStartIndex, batchRowsInserted,
 												  batchEndIndex, evalState);
 		}
+
+		batchExecutionSucceeded = true;
 
 		/* Commit the inner transaction, return to outer xact context */
 		batchResult->rowsInserted += *batchRowsInserted;
@@ -852,6 +875,14 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts,
 			ReThrowError(errorData);
 		}
 
+		if (EnableInsertOnConflictOptimization && conflictState != NULL &&
+			!attemptedRemoteInsert)
+		{
+			TrySetInsertConflictState(conflictState, errorData, shardOid,
+									  batchResult->resultMemoryContext,
+									  &batchResult->indexNameCache);
+		}
+
 		int errorCode = errorData->sqlerrcode;
 		if (EreportCodeIsDocumentDBError(errorCode))
 		{
@@ -873,7 +904,7 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts,
 	}
 	PG_END_TRY();
 
-	return *batchRowsInserted != 0;
+	return batchExecutionSucceeded;
 }
 
 
@@ -898,8 +929,9 @@ DoSingleInsert(MongoCollection *collection,
 
 	PG_TRY();
 	{
+		InsertConflictState *ignoreConflictState = NULL;
 		numDocsInserted = ProcessInsertion(collection, insertShardOid, document,
-										   transactionId, evalState);
+										   transactionId, evalState, ignoreConflictState);
 		batchResult->rowsInserted += numDocsInserted;
 		isSuccess = true;
 	}
@@ -946,6 +978,7 @@ DoSingleInsertWithSubTxn(MongoCollection *collection,
 						 text *transactionId,
 						 BatchInsertionResult *batchResult, int insertIndex,
 						 ExprEvalState *evalState,
+						 InsertConflictState *conflictState,
 						 MemoryContext insertAttemptContext)
 {
 	/* declared volatile because of the longjmp in PG_CATCH */
@@ -961,7 +994,7 @@ DoSingleInsertWithSubTxn(MongoCollection *collection,
 	{
 		MemoryContextSwitchTo(insertAttemptContext);
 		numDocsInserted = ProcessInsertion(collection, insertShardOid, document,
-										   transactionId, evalState);
+										   transactionId, evalState, conflictState);
 
 		/* Commit the inner transaction, return to outer xact context */
 		ReleaseCurrentSubTransaction();
@@ -969,7 +1002,20 @@ DoSingleInsertWithSubTxn(MongoCollection *collection,
 		CurrentResourceOwner = oldOwner;
 		MemoryContextReset(insertAttemptContext);
 		batchResult->rowsInserted += numDocsInserted;
-		isSuccess = true;
+
+		if (ShouldRunWithInsertConflictHandling(conflictState) && numDocsInserted == 0)
+		{
+			MemoryContextSwitchTo(batchResult->resultMemoryContext);
+			batchResult->writeErrors = lappend(
+				batchResult->writeErrors,
+				BuildInsertConflictWriteError(insertIndex, conflictState));
+			MemoryContextSwitchTo(oldContext);
+			isSuccess = false;
+		}
+		else
+		{
+			isSuccess = true;
+		}
 	}
 	PG_CATCH();
 	{
@@ -1059,10 +1105,11 @@ ProcessBatchInsertion(MongoCollection *collection, BatchInsertionSpec *batchSpec
 		else
 		{
 			ereport(DEBUG1, (errmsg("Using single insert with subtransaction")));
+			InsertConflictState *ignoreConflictState = NULL;
 			DoSingleInsertWithSubTxn(collection, batchSpec->insertShardOid,
 									 linitial(batchSpec->documents), transactionId,
 									 batchResult, insertIndex, evalState,
-									 insertAttemptContext);
+									 ignoreConflictState, insertAttemptContext);
 		}
 	}
 	else
@@ -1099,6 +1146,12 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 	int retryBatchEndIndex = -1;
 	bool hasBatchedInsertFailed = false;
 
+	/* Arbiter OIDs are cached only when the command stays in one transaction. */
+	InsertConflictState conflictState = { 0 };
+	InsertConflictState *conflictHandlingState =
+		EnableInsertOnConflictOptimization &&
+		writeMode != WriteMode_Bulk_Proc ? &conflictState : NULL;
+
 	ListCell *insertCell = NULL;
 	while (nextInsertIndex < list_length(insertions))
 	{
@@ -1129,6 +1182,7 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 																		  &batchEndIndex,
 																		  evalState,
 																		  writeMode,
+																		  conflictHandlingState,
 																		  insertAttemptContext);
 
 			Assert(!performedBatchInsert || batchRowsInserted > 0);
@@ -1152,6 +1206,7 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 												  document,
 												  transactionId, batchResult,
 												  nextInsertIndex, evalState,
+												  conflictHandlingState,
 												  insertAttemptContext);
 		nextInsertIndex++;
 
@@ -1300,7 +1355,8 @@ ProcessInsertionCore(MongoCollection *collection,
 					 int64 shardKeyHash,
 					 pgbson *objectIdPtr,
 					 pgbson *insertDoc,
-					 ExprEvalState *evalState)
+					 ExprEvalState *evalState,
+					 InsertConflictState *conflictState)
 {
 	/*
 	 * If retry is NULL then we don't really need to call insert_one on the worker, and then
@@ -1332,6 +1388,19 @@ ProcessInsertionCore(MongoCollection *collection,
 											 singleInsertList));
 		insertResult = RunInsertQuery(query, paramListInfo);
 	}
+	else if (ShouldRunWithInsertConflictHandling(conflictState))
+	{
+		ThrowIfWriteCommandNotAllowed();
+
+		PlannedStmt *queryPlan = CreateLocalShardInsertPlan(collection,
+															optionalInsertShardOid,
+															list_make1(
+																singleInsertList));
+		bool captureSkippedIndexes = false;
+		ModifyInsertPlanWithOnConflict(queryPlan, conflictState->arbiterIndexOid,
+									   captureSkippedIndexes);
+		insertResult = ExecuteLocalShardInsertPlan(queryPlan, paramListInfo);
+	}
 	else
 	{
 		ThrowIfWriteCommandNotAllowed();
@@ -1355,7 +1424,8 @@ static uint64
 ProcessInsertion(MongoCollection *collection,
 				 Oid optionalInsertShardOid,
 				 const bson_value_t *documentValue,
-				 text *transactionId, ExprEvalState *evalState)
+				 text *transactionId, ExprEvalState *evalState,
+				 InsertConflictState *conflictState)
 {
 	if (transactionId != NULL &&
 		collection->shardKey != NULL &&
@@ -1402,7 +1472,7 @@ ProcessInsertion(MongoCollection *collection,
 	{
 		return ProcessInsertionCore(collection, optionalInsertShardOid,
 									shardKeyHash, objectIdPtr,
-									insertDoc, evalState);
+									insertDoc, evalState, conflictState);
 	}
 	else
 	{
@@ -1724,9 +1794,10 @@ DoInsertWorkerInsertOne(Oid shardOid, text *transactionId, pgbsonelement element
 		pgbson *document = PgbsonInitFromDocumentBsonValue(&element.bsonValue);
 		pgbson *objectId = PgbsonGetDocumentId(document);
 		ExprEvalState *evalState = NULL;
+		InsertConflictState *conflictState = NULL;
 		ProcessInsertionCore(mongoCollection, shardOid,
 							 shardKeyValue, objectId,
-							 document, evalState);
+							 document, evalState, conflictState);
 	}
 }
 
@@ -2456,8 +2527,8 @@ CreateLocalShardInsertPlan(MongoCollection *collection, Oid shardOid,
 
 
 /*
- * Executes a local insert plan for a sharded table using the provided PlannedStmt.
- * Returns the number of rows processed.
+ * Executes a local-shard insert plan and returns inserted rows and, when
+ * requested, the input positions skipped by conflict handling.
  */
 static uint64_t
 ExecuteLocalShardInsertPlan(PlannedStmt *queryPlan, ParamListInfo paramListInfo)

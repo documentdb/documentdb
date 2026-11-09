@@ -265,6 +265,292 @@ DROP FUNCTION documentdb_api_internal.test_try_get_wire_error_code(text);
 
 
 -- ============================================================
+-- Part 8: Isolated ON CONFLICT sub-batch scenarios
+-- ============================================================
+\echo '--- Part 8: isolated ON CONFLICT scenarios ---'
+
+SET documentdb.enable_insert_on_conflict_optimization = ON;
+SET documentdb.batchWriteSubTransactionCount = 3;
+
+-- 8.1: Only _id conflicts. Both sub-batches conflict at index 0.
+SELECT documentdb_api.create_collection('insertdupdb', 'id_only');
+SELECT documentdb_api.insert_one('insertdupdb', 'id_only', '{"_id": 0}');
+SELECT documentdb_api_catalog.bson_dollar_project(
+    p_result,
+    '{"n": 1, "writeErrors.index": 1, "writeErrors.errmsg": 1}'::documentdb_core.bson)
+FROM documentdb_api.insert(
+    'insertdupdb',
+    '{"insert": "id_only", "ordered": false, "documents": [
+        {"_id": 0}, {"_id": 1}, {"_id": 2},
+        {"_id": 0}, {"_id": 3}, {"_id": 4}
+    ]}');
+SELECT COUNT(*) AS total_docs
+FROM documentdb_api.collection('insertdupdb', 'id_only');
+SELECT documentdb_api.drop_collection('insertdupdb', 'id_only');
+
+-- 8.2: Only one secondary unique index conflicts.
+SELECT documentdb_api.create_collection('insertdupdb', 'unique_only');
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'insertdupdb',
+    '{"createIndexes": "unique_only", "indexes": [
+        {"key": {"a": 1}, "name": "a_1", "unique": true}
+    ]}',
+    true);
+SELECT documentdb_api.insert_one(
+    'insertdupdb', 'unique_only', '{"_id": 0, "a": 0}');
+SELECT documentdb_api_catalog.bson_dollar_project(
+    p_result,
+    '{"n": 1, "writeErrors.index": 1, "writeErrors.errmsg": 1}'::documentdb_core.bson)
+FROM documentdb_api.insert(
+    'insertdupdb',
+    '{"insert": "unique_only", "ordered": false, "documents": [
+        {"_id": 1, "a": 0}, {"_id": 2, "a": 2}, {"_id": 3, "a": 3},
+        {"_id": 4, "a": 0}, {"_id": 5, "a": 5}, {"_id": 6, "a": 6}
+    ]}');
+SELECT COUNT(*) AS total_docs
+FROM documentdb_api.collection('insertdupdb', 'unique_only');
+SELECT documentdb_api.drop_collection('insertdupdb', 'unique_only');
+
+-- 8.3: _id and secondary unique conflicts occur in the same command.
+SELECT documentdb_api.create_collection('insertdupdb', 'id_and_unique');
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'insertdupdb',
+    '{"createIndexes": "id_and_unique", "indexes": [
+        {"key": {"a": 1}, "name": "a_1", "unique": true}
+    ]}',
+    true);
+SELECT documentdb_api.insert_one(
+    'insertdupdb', 'id_and_unique', '{"_id": 0, "a": 0}');
+SELECT documentdb_api_catalog.bson_dollar_project(
+    p_result,
+    '{"n": 1, "writeErrors.index": 1, "writeErrors.errmsg": 1}'::documentdb_core.bson)
+FROM documentdb_api.insert(
+    'insertdupdb',
+    '{"insert": "id_and_unique", "ordered": false, "documents": [
+        {"_id": 0, "a": 1}, {"_id": 1, "a": 1}, {"_id": 2, "a": 2},
+        {"_id": 3, "a": 0}, {"_id": 0, "a": 4}, {"_id": 4, "a": 4}
+    ]}');
+SELECT COUNT(*) AS total_docs
+FROM documentdb_api.collection('insertdupdb', 'id_and_unique');
+SELECT documentdb_api.drop_collection('insertdupdb', 'id_and_unique');
+
+-- 8.4: Two different secondary unique indexes conflict.
+SELECT documentdb_api.create_collection('insertdupdb', 'two_unique');
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'insertdupdb',
+    '{"createIndexes": "two_unique", "indexes": [
+        {"key": {"a": 1}, "name": "a_1", "unique": true},
+        {"key": {"b": 1}, "name": "b_1", "unique": true}
+    ]}',
+    true);
+SELECT documentdb_api.insert_one(
+    'insertdupdb', 'two_unique', '{"_id": 0, "a": 0, "b": 0}');
+SELECT documentdb_api_catalog.bson_dollar_project(
+    p_result,
+    '{"n": 1, "writeErrors.index": 1, "writeErrors.errmsg": 1}'::documentdb_core.bson)
+FROM documentdb_api.insert(
+    'insertdupdb',
+    '{"insert": "two_unique", "ordered": false, "documents": [
+        {"_id": 1, "a": 0, "b": 1}, {"_id": 2, "a": 2, "b": 2}, {"_id": 3, "a": 3, "b": 3},
+        {"_id": 4, "a": 4, "b": 0}, {"_id": 5, "a": 0, "b": 5}, {"_id": 6, "a": 6, "b": 6}
+    ]}');
+SELECT COUNT(*) AS total_docs
+FROM documentdb_api.collection('insertdupdb', 'two_unique');
+SELECT documentdb_api.drop_collection('insertdupdb', 'two_unique');
+
+-- 8.5: A trailing conflict is classified when each sub-batch is exhausted.
+SELECT documentdb_api.create_collection('insertdupdb', 'trailing_conflict');
+SELECT documentdb_api.insert_one(
+    'insertdupdb', 'trailing_conflict', '{"_id": 0}');
+SELECT documentdb_api_catalog.bson_dollar_project(
+    p_result,
+    '{"n": 1, "writeErrors.index": 1}'::documentdb_core.bson)
+FROM documentdb_api.insert(
+    'insertdupdb',
+    '{"insert": "trailing_conflict", "ordered": false, "documents": [
+        {"_id": 1}, {"_id": 2}, {"_id": 0},
+        {"_id": 3}, {"_id": 4}, {"_id": 0}
+    ]}');
+SELECT COUNT(*) AS total_docs
+FROM documentdb_api.collection('insertdupdb', 'trailing_conflict');
+SELECT documentdb_api.drop_collection('insertdupdb', 'trailing_conflict');
+
+-- 8.6: A leading conflict is classified before the next input.
+SELECT documentdb_api.create_collection('insertdupdb', 'leading_conflict');
+SELECT documentdb_api.insert_one(
+    'insertdupdb', 'leading_conflict', '{"_id": 0}');
+SELECT documentdb_api_catalog.bson_dollar_project(
+    p_result,
+    '{"n": 1, "writeErrors.index": 1}'::documentdb_core.bson)
+FROM documentdb_api.insert(
+    'insertdupdb',
+    '{"insert": "leading_conflict", "ordered": false, "documents": [
+        {"_id": 0}, {"_id": 1}, {"_id": 2},
+        {"_id": 0}, {"_id": 3}, {"_id": 4}
+    ]}');
+SELECT COUNT(*) AS total_docs
+FROM documentdb_api.collection('insertdupdb', 'leading_conflict');
+SELECT documentdb_api.drop_collection('insertdupdb', 'leading_conflict');
+
+-- 8.7: The first sub-batch conflicts and the optimized second one does not.
+SELECT documentdb_api.create_collection('insertdupdb', 'first_conflict_only');
+SELECT documentdb_api.insert_one(
+    'insertdupdb', 'first_conflict_only', '{"_id": 0}');
+SELECT documentdb_api_catalog.bson_dollar_project(
+    p_result,
+    '{"n": 1, "writeErrors.index": 1}'::documentdb_core.bson)
+FROM documentdb_api.insert(
+    'insertdupdb',
+    '{"insert": "first_conflict_only", "ordered": false, "documents": [
+        {"_id": 0}, {"_id": 1}, {"_id": 2},
+        {"_id": 3}, {"_id": 4}, {"_id": 5}
+    ]}');
+SELECT COUNT(*) AS total_docs
+FROM documentdb_api.collection('insertdupdb', 'first_conflict_only');
+SELECT documentdb_api.drop_collection('insertdupdb', 'first_conflict_only');
+
+-- 8.8: Both sub-batches contain multiple conflicts.
+SELECT documentdb_api.create_collection('insertdupdb', 'both_conflict');
+SELECT documentdb_api.insert_one(
+    'insertdupdb', 'both_conflict', '{"_id": 0}');
+SELECT documentdb_api_catalog.bson_dollar_project(
+    p_result,
+    '{"n": 1, "writeErrors.index": 1}'::documentdb_core.bson)
+FROM documentdb_api.insert(
+    'insertdupdb',
+    '{"insert": "both_conflict", "ordered": false, "documents": [
+        {"_id": 0}, {"_id": 1}, {"_id": 0},
+        {"_id": 0}, {"_id": 2}, {"_id": 0}
+    ]}');
+SELECT COUNT(*) AS total_docs
+FROM documentdb_api.collection('insertdupdb', 'both_conflict');
+SELECT documentdb_api.drop_collection('insertdupdb', 'both_conflict');
+
+-- 8.9: The optimized second sub-batch has a middle conflict.
+SELECT documentdb_api.create_collection('insertdupdb', 'middle_conflict');
+SELECT documentdb_api.insert_one(
+    'insertdupdb', 'middle_conflict', '{"_id": 0}');
+SELECT documentdb_api_catalog.bson_dollar_project(
+    p_result,
+    '{"n": 1, "writeErrors.index": 1}'::documentdb_core.bson)
+FROM documentdb_api.insert(
+    'insertdupdb',
+    '{"insert": "middle_conflict", "ordered": false, "documents": [
+        {"_id": 0}, {"_id": 1}, {"_id": 2},
+        {"_id": 3}, {"_id": 0}, {"_id": 4}
+    ]}');
+SELECT COUNT(*) AS total_docs
+FROM documentdb_api.collection('insertdupdb', 'middle_conflict');
+SELECT documentdb_api.drop_collection('insertdupdb', 'middle_conflict');
+
+-- 8.10: A successful optimized sub-batch can contain only conflicts.
+SELECT documentdb_api.create_collection('insertdupdb', 'later_all_conflict');
+SELECT documentdb_api.insert_one(
+    'insertdupdb', 'later_all_conflict', '{"_id": 0}');
+SELECT documentdb_api_catalog.bson_dollar_project(
+    p_result,
+    '{"n": 1, "writeErrors.index": 1}'::documentdb_core.bson)
+FROM documentdb_api.insert(
+    'insertdupdb',
+    '{"insert": "later_all_conflict", "ordered": false, "documents": [
+        {"_id": 0}, {"_id": 1}, {"_id": 2},
+        {"_id": 0}, {"_id": 0}, {"_id": 0}
+    ]}');
+SELECT COUNT(*) AS total_docs
+FROM documentdb_api.collection('insertdupdb', 'later_all_conflict');
+SELECT documentdb_api.drop_collection('insertdupdb', 'later_all_conflict');
+
+-- Ordered retries must stop on a suppressed duplicate, not treat it as success.
+SELECT documentdb_api.create_collection('insertdupdb', 'ordered_conflict');
+SELECT documentdb_api.insert_one(
+    'insertdupdb', 'ordered_conflict', '{"_id": 0}');
+
+-- A leading duplicate must prevent every later insert.
+SELECT p_result, p_success
+FROM documentdb_api.insert(
+    'insertdupdb',
+    '{"insert": "ordered_conflict", "ordered": true, "documents": [
+        {"_id": 0}, {"_id": 1}, {"_id": 2}
+    ]}');
+SELECT object_id FROM documentdb_api.collection('insertdupdb', 'ordered_conflict')
+ORDER BY object_id;
+
+-- Keep the successful prefix, but skip the rest of this and later sub-batches.
+SELECT p_result, p_success
+FROM documentdb_api.insert(
+    'insertdupdb',
+    '{"insert": "ordered_conflict", "ordered": true, "documents": [
+        {"_id": 1}, {"_id": 0}, {"_id": 2},
+        {"_id": 3}, {"_id": 0}, {"_id": 4}
+    ]}');
+SELECT object_id FROM documentdb_api.collection('insertdupdb', 'ordered_conflict')
+ORDER BY object_id;
+
+-- A duplicate in a later sub-batch must preserve earlier successful work.
+SELECT p_result, p_success
+FROM documentdb_api.insert(
+    'insertdupdb',
+    '{"insert": "ordered_conflict", "ordered": true, "documents": [
+        {"_id": 2}, {"_id": 3}, {"_id": 4},
+        {"_id": 5}, {"_id": 0}, {"_id": 6}
+    ]}');
+SELECT object_id FROM documentdb_api.collection('insertdupdb', 'ordered_conflict')
+ORDER BY object_id;
+SELECT documentdb_api.drop_collection('insertdupdb', 'ordered_conflict');
+
+-- Secondary duplicates must stop ordered retries too.
+SELECT documentdb_api.create_collection('insertdupdb', 'ordered_unique_conflict');
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'insertdupdb',
+    '{"createIndexes": "ordered_unique_conflict", "indexes": [
+        {"key": {"a": 1}, "name": "a_1", "unique": true}
+    ]}',
+    true);
+SELECT documentdb_api.insert_one(
+    'insertdupdb', 'ordered_unique_conflict', '{"_id": 0, "a": "Alpha"}');
+SELECT p_result, p_success
+FROM documentdb_api.insert(
+    'insertdupdb',
+    '{"insert": "ordered_unique_conflict", "ordered": true, "documents": [
+        {"_id": 1, "a": "Beta"}, {"_id": 2, "a": "Alpha"}, {"_id": 3, "a": "Gamma"},
+        {"_id": 4, "a": "Delta"}
+    ]}');
+SELECT document
+FROM documentdb_api.collection('insertdupdb', 'ordered_unique_conflict')
+ORDER BY object_id;
+SELECT documentdb_api.drop_collection('insertdupdb', 'ordered_unique_conflict');
+
+-- Retried prefix documents still use the collection's validator collation.
+SET documentdb_core.enableCollation = ON;
+SELECT documentdb_api.create_collection_view(
+    'insertdupdb',
+    '{"create": "ordered_validated_conflict", "validator": {"state": "ready"},
+      "validationAction": "error"}');
+UPDATE documentdb_api_catalog.collections
+SET options = '{"collation": {"locale": "en", "strength": 2}}'::documentdb_core.bson
+WHERE database_name = 'insertdupdb' AND collection_name = 'ordered_validated_conflict';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+SELECT documentdb_api.insert_one(
+    'insertdupdb', 'ordered_validated_conflict', '{"_id": 0, "state": "ready"}');
+SELECT p_result, p_success
+FROM documentdb_api.insert(
+    'insertdupdb',
+    '{"insert": "ordered_validated_conflict", "ordered": true, "documents": [
+        {"_id": 1, "state": "READY"}, {"_id": 0, "state": "ready"},
+        {"_id": 2, "state": "ready"}, {"_id": 3, "state": "ready"}
+    ]}');
+SELECT document
+FROM documentdb_api.collection('insertdupdb', 'ordered_validated_conflict')
+ORDER BY object_id;
+SELECT documentdb_api.drop_collection('insertdupdb', 'ordered_validated_conflict');
+RESET documentdb_core.enableCollation;
+
+RESET documentdb.batchWriteSubTransactionCount;
+RESET documentdb.enable_insert_on_conflict_optimization;
+
+
+
+-- ============================================================
 -- Cleanup
 -- ============================================================
 SELECT documentdb_api.drop_database('insertdupdb');

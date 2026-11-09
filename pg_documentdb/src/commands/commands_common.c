@@ -113,9 +113,6 @@ static int CompareStringsCaseInsensitive(const void *a, const void *b);
 static pgbson * RewriteDocumentAddObjectIdCore(const bson_value_t *docValue,
 											   bson_value_t *objectIdToWrite);
 static HTAB * CreateIndexNameCache(MemoryContext requestContext);
-static const char * GetIndexNameWithCache(const char *pgIndexName,
-										  MemoryContext requestContext,
-										  HTAB **indexNameCache);
 
 /*
  * Rejects an embedded null in a namespace when validation is enabled.
@@ -827,7 +824,7 @@ TryGetErrorMessageAndCode(ErrorData *errorData, int *code, char **errmessage,
  * secondary-index lookups for the current request. The request context keeps
  * the cache alive across transaction retries and releases it with the command.
  */
-static const char *
+const char *
 GetIndexNameWithCache(const char *pgIndexName, MemoryContext requestContext,
 					  HTAB **indexNameCache)
 {
