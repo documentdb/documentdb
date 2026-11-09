@@ -159,6 +159,9 @@ WriteError * GetWriteErrorFromErrorData(ErrorData *errorData, int writeErrorIdx,
 bool TryGetErrorMessageAndCode(ErrorData *errorData, int *code, char **errmessage,
 							   MemoryContext requestContext,
 							   HTAB **indexNameCache);
+const char * GetIndexNameWithCache(const char *pgIndexName,
+								   MemoryContext requestContext,
+								   HTAB **indexNameCache);
 bool TryGetWireErrorCode(int errorCode, int *wireErrorCode);
 
 pgbson * GetObjectIdFilterFromQueryDocumentValue(const bson_value_t *queryDoc,

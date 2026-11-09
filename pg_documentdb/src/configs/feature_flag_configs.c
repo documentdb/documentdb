@@ -622,6 +622,11 @@ bool EnableNewNamespaceValidation =
  * SECTION: Write path feature flags
  */
 
+/* Added on v1.3, pending stabilization, enable on v1.6 */
+#define DEFAULT_ENABLE_INSERT_ON_CONFLICT_OPTIMIZATION false
+bool EnableInsertOnConflictOptimization =
+	DEFAULT_ENABLE_INSERT_ON_CONFLICT_OPTIMIZATION;
+
 /* Added on v1.3, enabled on v1.3, remove after v1.5 */
 #define DEFAULT_ENABLE_WRITE_ERROR_CODE_CONVERSION true
 bool EnableWriteErrorCodeConversion = DEFAULT_ENABLE_WRITE_ERROR_CODE_CONVERSION;
@@ -1669,6 +1674,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable new namespace validation."),
 		NULL, &EnableNewNamespaceValidation,
 		DEFAULT_ENABLE_NEW_NAMESPACE_VALIDATION,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_insert_on_conflict_optimization", newGucPrefix),
+		gettext_noop(
+			"Whether to optimize later unordered insert batches after a duplicate conflict."),
+		NULL, &EnableInsertOnConflictOptimization,
+		DEFAULT_ENABLE_INSERT_ON_CONFLICT_OPTIMIZATION,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
