@@ -16,6 +16,8 @@
 # 2026-10-30: removed 2 idIndex collation cases fixed in the shared create-command path. Strict node-id count after removal: 12967.
 # 2026-11-02: removed 6 parallel-array rejection cases that started passing on CI after multikey index validation was fixed for inserts, updates, and index builds. Count: 12961.
 # 2026-11-04: removed 2 $addToSet collation cases now supported by the aggregation implementation. Strict node-id count after removal: 12945.
+# 2026-11-09: restored the 2 $addToSet collation cases: OSS CI still rejects collation in aggregate (code 115). Removed the GeometryCollection $geometry case, which now passes (strict XPASS). Moved 2 hidden-index indexStats counter cases to the flaky list.
+# 2026-11-09: added wildcard dedup_exists_on_embedded_object: $exists on an embedded object through a $** index returns the document once per leaf. Regression from this sync (likely dynamic cursors on by default, PR 820); remove once fixed.
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/aggregation/commands/aggregate/test_aggregate_agnostic.py::test_aggregate_agnostic[documentdb-agnostic_empty_pipeline]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/aggregation/commands/aggregate/test_aggregate_agnostic.py::test_aggregate_agnostic[documentdb-agnostic_list_local_sessions]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/aggregation/commands/aggregate/test_aggregate_agnostic.py::test_aggregate_agnostic[documentdb-documents_with_string_collection]
@@ -642,6 +644,8 @@ docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/comma
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_graphlookup.py::test_collation_aggregate_graphlookup[documentdb-graphlookup_case_insensitive_traversal]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_graphlookup.py::test_collation_aggregate_graphlookup[documentdb-graphlookup_max_depth_with_collation]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_graphlookup.py::test_collation_aggregate_graphlookup[documentdb-graphlookup_restrictsearchwithmatch_case_insensitive]
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_group.py::test_collation_aggregate_group[documentdb-group_addtoset_strength1_deduplicates]
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_group.py::test_collation_aggregate_group[documentdb-group_addtoset_strength2_keeps_accents]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_group.py::test_collation_aggregate_group[documentdb-group_compound_second_field_distinguishes]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_group.py::test_collation_aggregate_group[documentdb-group_compound_strength1_collapses_both_fields]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_group.py::test_collation_aggregate_group[documentdb-group_first_encountered_key_asc]
@@ -12082,14 +12086,6 @@ docdb_functional_tests/documentdb_tests/compatibility/tests/system/diagnostic/co
 docdb_functional_tests/documentdb_tests/compatibility/tests/system/diagnostic/commands/validate/test_validate_response_structure.py::test_validate_response_properties[documentdb-repairMode_is_string]
 docdb_functional_tests/documentdb_tests/compatibility/tests/system/diagnostic/commands/validate/test_validate_response_structure.py::test_validate_response_properties[documentdb-uuid_exists]
 
-# $geometry with a GeometryCollection returns no match on this stack (the other
-# 14 GeoJSON types in test_geometry_geojson_types all pass). Not a regression:
-# the previous allowlist covered only test_smoke_geometry.py under
-# specifiers/geometry/, so the full-suite move is what first ran this case, and
-# the baseline was seeded from another gateway's lists, where this
-# case passes. Deterministic, no engine restart. Per-gateway divergence.
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/query/geospatial/specifiers/geometry/test_geometry_geojson_types.py::test_geometry_geojson_types[documentdb-geometry_collection]
-
 # Rebaselined for the current suite pin.
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/aggregation/commands/aggregate/test_aggregate_readconcern_stages.py::test_aggregate_readconcern_stages[documentdb-rc_standalone_linearizable]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/aggregation/commands/aggregate/test_aggregate_readconcern_stages.py::test_aggregate_readconcern_stages[documentdb-rc_standalone_snapshot]
@@ -12138,8 +12134,6 @@ docdb_functional_tests/documentdb_tests/compatibility/tests/core/collections/com
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collections/commands/dropDatabase/test_dropDatabase_wc_w.py::test_dropDatabase_wc_w[documentdb-w_tagged_zero]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collections/commands/validateDBMetadata/test_validateDBMetadata_read_write_concern.py::test_validateDBMetadata_read_write_concern[documentdb-read_concern_err_after_cluster_time_valid]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/hidden/test_hidden_behavior.py::test_indexstats_counter[documentdb-find_after_unhide_increments]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/hidden/test_hidden_behavior.py::test_indexstats_counter[documentdb-multiple_reset_cycle]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/hidden/test_hidden_behavior.py::test_indexstats_counter[documentdb-reset_on_hide]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/hidden/test_hidden_behavior.py::test_indexstats_counter[documentdb-unhide_resets_counter]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/hidden/test_hidden_behavior.py::test_indexstats_counter[documentdb-unhide_stays_zero]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/hidden/test_hidden_behavior.py::test_indexstats_filter_on_spec_hidden[documentdb]
@@ -12246,6 +12240,7 @@ docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/w
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/wildcard/test_wildcard_creation.py::test_wildcard_projection_valid[documentdb-include_multiple_fields]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/wildcard/test_wildcard_creation.py::test_wildcard_projection_valid[documentdb-include_nested_object_form]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/wildcard/test_wildcard_creation.py::test_wildcard_projection_valid[documentdb-include_single_field]
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/wildcard/test_wildcard_data_types.py::test_wildcard_document_structure[documentdb-dedup_exists_on_embedded_object]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/wildcard/test_wildcard_data_types.py::test_wildcard_document_structure[documentdb-empty_document_equality_hinted]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/wildcard/test_wildcard_data_types.py::test_wildcard_document_structure[documentdb-numeric_string_field_name]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/types/wildcard/test_wildcard_data_types.py::test_wildcard_null_and_missing[documentdb-ne_null_hinted]
