@@ -15,6 +15,7 @@
 # that shared validation path. Strict node-id count after removal: 13247.
 # 2026-10-30: removed 2 idIndex collation cases fixed in the shared create-command path. Strict node-id count after removal: 12967.
 # 2026-11-02: removed 6 parallel-array rejection cases that started passing on CI after multikey index validation was fixed for inserts, updates, and index builds. Count: 12961.
+# 2026-11-04: removed 2 $addToSet collation cases now supported by the aggregation implementation. Strict node-id count after removal: 12945.
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/aggregation/commands/aggregate/test_aggregate_agnostic.py::test_aggregate_agnostic[documentdb-agnostic_empty_pipeline]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/aggregation/commands/aggregate/test_aggregate_agnostic.py::test_aggregate_agnostic[documentdb-agnostic_list_local_sessions]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/aggregation/commands/aggregate/test_aggregate_agnostic.py::test_aggregate_agnostic[documentdb-documents_with_string_collection]
@@ -641,8 +642,6 @@ docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/comma
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_graphlookup.py::test_collation_aggregate_graphlookup[documentdb-graphlookup_case_insensitive_traversal]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_graphlookup.py::test_collation_aggregate_graphlookup[documentdb-graphlookup_max_depth_with_collation]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_graphlookup.py::test_collation_aggregate_graphlookup[documentdb-graphlookup_restrictsearchwithmatch_case_insensitive]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_group.py::test_collation_aggregate_group[documentdb-group_addtoset_strength1_deduplicates]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_group.py::test_collation_aggregate_group[documentdb-group_addtoset_strength2_keeps_accents]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_group.py::test_collation_aggregate_group[documentdb-group_compound_second_field_distinguishes]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_group.py::test_collation_aggregate_group[documentdb-group_compound_strength1_collapses_both_fields]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_group.py::test_collation_aggregate_group[documentdb-group_first_encountered_key_asc]

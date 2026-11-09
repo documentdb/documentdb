@@ -264,6 +264,140 @@ SELECT document FROM bson_aggregation_pipeline('group_collation_mn',
 (6 rows)
 
 ROLLBACK;
+-- The accumulator itself executes on the worker, not just its input scan.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT bool_or(query_plan LIKE '%Query:%bson_add_to_set(%') AS worker_add_to_set
+FROM documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('group_collation_mn',
+    '{ "aggregate": "decomposed", "pipeline": [
+        { "$group": { "_id": null, "regions": { "$addToSet": "$region" } } },
+        { "$project": {
+            "_id": 0,
+            "regions": { "$sortArray": {
+                "input": { "$map": { "input": "$regions", "as": "region", "in": { "$toLower": "$$region" } } },
+                "sortBy": 1
+            } }
+        } }
+    ], "collation": { "locale": "en", "strength": 1 } }')
+$cmd$) AS plan(query_plan);
+ worker_add_to_set 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('group_collation_mn',
+    '{ "aggregate": "decomposed", "pipeline": [
+        { "$group": { "_id": null, "regions": { "$addToSet": "$region" } } },
+        { "$project": {
+            "_id": 0,
+            "regions": { "$sortArray": {
+                "input": { "$map": { "input": "$regions", "as": "region", "in": { "$toLower": "$$region" } } },
+                "sortBy": 1
+            } }
+        } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+               document               
+---------------------------------------------------------------------
+ { "regions" : [ "north", "south" ] }
+(1 row)
+
+-- Inherited collation and its simple override also reach the worker accumulator.
+SELECT document FROM bson_aggregation_pipeline('group_collation_mn',
+    '{ "aggregate": "decomposed_default", "pipeline": [
+        { "$group": { "_id": null, "regions": { "$addToSet": "$region" } } },
+        { "$project": { "_id": 0, "count": { "$size": "$regions" } } }
+    ] }');
+               document               
+---------------------------------------------------------------------
+ { "count" : { "$numberInt" : "2" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('group_collation_mn',
+    '{ "aggregate": "decomposed_default", "pipeline": [
+        { "$group": { "_id": null, "regions": { "$addToSet": "$region" } } },
+        { "$project": { "_id": 0, "count": { "$size": "$regions" } } }
+    ], "collation": { "locale": "simple" } }');
+               document               
+---------------------------------------------------------------------
+ { "count" : { "$numberInt" : "6" } }
+(1 row)
+
+ROLLBACK;
+-- Compare local and forced-remote execution on the same coordinator placement.
+SELECT shouldhaveshards AS coordinator_had_shards FROM pg_dist_node
+WHERE groupid = 0 AND noderole = 'primary' \gset
+SELECT citus_set_node_property(nodename, nodeport, 'shouldhaveshards', true)
+FROM pg_dist_node WHERE groupid = 0 AND noderole = 'primary';
+ citus_set_node_property 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+CALL documentdb_distributed_test_helpers.place_collection_on_node(
+    'group_collation_mn', 'decomposed', 0);
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.useLocalExecutionShardQueries TO on;
+SET LOCAL citus.enable_local_execution TO on;
+SELECT document FROM bson_aggregation_pipeline('group_collation_mn',
+    '{ "aggregate": "decomposed", "pipeline": [
+        { "$group": { "_id": null, "regions": { "$addToSet": "$region" } } },
+        { "$project": { "_id": 0, "count": { "$size": "$regions" } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+               document               
+---------------------------------------------------------------------
+ { "count" : { "$numberInt" : "2" } }
+(1 row)
+
+ROLLBACK;
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.useLocalExecutionShardQueries TO off;
+SET LOCAL citus.enable_local_execution TO off;
+SELECT document FROM bson_aggregation_pipeline('group_collation_mn',
+    '{ "aggregate": "decomposed", "pipeline": [
+        { "$group": { "_id": null, "regions": { "$addToSet": "$region" } } },
+        { "$project": { "_id": 0, "count": { "$size": "$regions" } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+               document               
+---------------------------------------------------------------------
+ { "count" : { "$numberInt" : "2" } }
+(1 row)
+
+-- Equivalent values arrive from distinct coordinator and worker placements.
+SELECT document FROM bson_aggregation_pipeline('group_collation_mn',
+    '{ "aggregate": "decomposed", "pipeline": [
+        { "$unionWith": "decomposed_default" },
+        { "$group": {
+            "_id": null,
+            "regions": { "$addToSet": "$region" },
+            "rows": { "$sum": 1 }
+        } },
+        { "$project": { "_id": 0, "count": { "$size": "$regions" }, "rows": 1 } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+                                document                                
+---------------------------------------------------------------------
+ { "rows" : { "$numberInt" : "12" }, "count" : { "$numberInt" : "2" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('group_collation_mn',
+    '{ "aggregate": "decomposed", "pipeline": [
+        { "$unionWith": "decomposed_default" },
+        { "$group": {
+            "_id": null,
+            "regions": { "$addToSet": "$region" },
+            "rows": { "$sum": 1 }
+        } },
+        { "$project": { "_id": 0, "count": { "$size": "$regions" }, "rows": 1 } }
+    ], "collation": { "locale": "simple" } }');
+                                document                                
+---------------------------------------------------------------------
+ { "rows" : { "$numberInt" : "12" }, "count" : { "$numberInt" : "6" } }
+(1 row)
+
+ROLLBACK;
 SELECT documentdb_api.drop_collection('group_collation_mn', 'decomposed');
  drop_collection 
 ---------------------------------------------------------------------
@@ -274,6 +408,13 @@ SELECT documentdb_api.drop_collection('group_collation_mn', 'decomposed_default'
  drop_collection 
 ---------------------------------------------------------------------
  t
+(1 row)
+
+SELECT citus_set_node_property(nodename, nodeport, 'shouldhaveshards', :'coordinator_had_shards'::boolean)
+FROM pg_dist_node WHERE groupid = 0 AND noderole = 'primary';
+ citus_set_node_property 
+---------------------------------------------------------------------
+ 
 (1 row)
 
 RESET citus.enable_local_execution;

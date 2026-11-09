@@ -313,13 +313,17 @@ SELECT document FROM bson_aggregation_pipeline(
  { "matchingCategories" : { "$numberInt" : "3" } }
 (1 row)
 
--- Accumulators that cannot honor a collation retain their existing rejection.
+-- $addToSet uses the inherited collation and retains original values.
 SELECT document FROM bson_aggregation_pipeline(
     'collation_aggregate_db',
     '{ "aggregate": "source", "pipeline": [
         { "$group": { "_id": null, "categories": { "$addToSet": "$category" } } }
     ] }');
-psql:sql/bson_collation_collection_aggregate_tests.sql:214: ERROR:  collation is not supported with the $addToSet accumulator in $group yet.
+                      document                      
+----------------------------------------------------
+ { "_id" : null, "categories" : [ "cafe", "tea" ] }
+(1 row)
+
 -- A collection with no default collation keeps binary behavior.
 SELECT documentdb_api.create_collection('collation_aggregate_db', 'no_default');
 psql:sql/bson_collation_collection_aggregate_tests.sql:217: NOTICE:  creating collection

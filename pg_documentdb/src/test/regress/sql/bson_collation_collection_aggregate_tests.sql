@@ -206,7 +206,7 @@ SELECT document FROM bson_aggregation_pipeline(
         { "$count": "matchingCategories" }
     ] }');
 
--- Accumulators that cannot honor a collation retain their existing rejection.
+-- $addToSet uses the inherited collation and retains original values.
 SELECT document FROM bson_aggregation_pipeline(
     'collation_aggregate_db',
     '{ "aggregate": "source", "pipeline": [

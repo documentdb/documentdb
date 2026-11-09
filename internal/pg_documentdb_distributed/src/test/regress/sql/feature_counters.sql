@@ -148,7 +148,7 @@ SELECT document FROM bson_aggregation_find('db', '{ "find": "feature_counter_col
 -- $group accumulator that cannot honor the collation. skipFailOnCollation lets
 -- the accumulator run so the counter is reported without the error.
 SET documentdb.skipFailOnCollation TO on;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": null, "a": { "$addToSet": "$a" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": null, "a": { "$push": "$a" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
 RESET documentdb.skipFailOnCollation;
 RESET documentdb_core.enablecollation;
 
@@ -166,6 +166,12 @@ SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(false);
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- A supported accumulator reports its own counter, not an unsupported collation.
+SET documentdb_core.enablecollation TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": null, "a": { "$addToSet": "$a" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+RESET documentdb_core.enablecollation;
 
 -- check other two vector indexes
 SET client_min_messages TO WARNING;
