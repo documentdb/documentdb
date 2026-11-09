@@ -1,3 +1,5 @@
+### documentdb v1.4-0 (Unreleased) ###
+
 ### documentdb v1.3-0 (Unreleased) ###
 * End a dynamic cursor's `getMore` with a query-plan-killed error when its collection was dropped and created again, or another collection was renamed onto its name, after the previous page. Such a `getMore` previously resumed in the new collection's table at the old position, returning its documents or crashing the server process. *[Bugfix]*
 * Preserve PostgreSQL 18 disabled-node counts through custom scan wrappers so planner scan preferences remain effective. *[Bugfix]*
