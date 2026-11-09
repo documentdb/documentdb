@@ -48,7 +48,9 @@ mkdir -p $PCRE_LIB_WITH_VERSION
 
 cd $PCRE_LIB_WITH_VERSION
 
-curl -L https://github.com/PCRE2Project/pcre2/releases/download/$PCRE_LIB_WITH_VERSION/$PCRE_LIB_WITH_VERSION.tar.gz -o ./$PCRE_LIB_WITH_VERSION.tar.gz
+curl --fail --location --retry 3 --retry-delay 5 --connect-timeout 30 --max-time 300 \
+    https://github.com/PCRE2Project/pcre2/releases/download/$PCRE_LIB_WITH_VERSION/$PCRE_LIB_WITH_VERSION.tar.gz \
+    -o ./$PCRE_LIB_WITH_VERSION.tar.gz
 tar -xf ./$PCRE_LIB_WITH_VERSION.tar.gz --strip-components 1
 
 # Remove the tar file

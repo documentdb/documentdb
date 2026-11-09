@@ -28,7 +28,9 @@ if [ "${MAKE_PROGRAM:-""}" == "" ]; then
 fi
 
 pushd $INSTALL_DEPENDENCIES_ROOT
-curl -s -L https://github.com/mongodb/mongo-c-driver/releases/download/$DRIVER_VERSION/mongo-c-driver-$DRIVER_VERSION.tar.gz -o ./mongo-c-driver-$DRIVER_VERSION.tar.gz
+curl --silent --show-error --fail --location --retry 3 --retry-delay 5 --connect-timeout 30 --max-time 300 \
+    https://github.com/mongodb/mongo-c-driver/releases/download/$DRIVER_VERSION/mongo-c-driver-$DRIVER_VERSION.tar.gz \
+    -o ./mongo-c-driver-$DRIVER_VERSION.tar.gz
 tar -xzvf ./mongo-c-driver-$DRIVER_VERSION.tar.gz -C $INSTALL_DEPENDENCIES_ROOT --transform="s|mongo-c-driver-$DRIVER_VERSION|mongo-c-driver|"
 
 # remove the tar file
