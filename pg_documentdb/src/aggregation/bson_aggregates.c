@@ -1,5 +1,7 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
  *
  * src/bson/bson_aggregates.c
  *
@@ -69,6 +71,7 @@ typedef struct BsonObjectAggState
 typedef struct BsonAddToSetState
 {
 	HTAB *set;
+	const char *collationString;
 
 	/* The total size of documents accumulated so far */
 	int64_t currentSizeWritten;
@@ -957,7 +960,8 @@ bson_add_to_set_transition(PG_FUNCTION_ARGS)
 		currentState = (BsonAddToSetState *) bytes->state;
 		currentState->currentSizeWritten = 0;
 		currentState->aggregateList = NIL;
-		currentState->set = CreateBsonValueHashSet();
+		currentState->set = NULL;
+		currentState->collationString = NULL;
 		currentState->isWindowAggregation = isWindowAggregation;
 	}
 	else
@@ -969,46 +973,71 @@ bson_add_to_set_transition(PG_FUNCTION_ARGS)
 	pgbson *currentValue = PG_GETARG_MAYBE_NULL_PGBSON(1);
 	if (currentValue != NULL && !IsPgbsonEmptyDocument(currentValue))
 	{
-		uint32 currentValueSize = PgbsonGetBsonSize(currentValue);
-		CheckAggregateIntermediateResultSize(currentState->currentSizeWritten +
-											 currentValueSize);
-
-		/*
-		 * We need to copy the whole pgbson because otherwise the pointers we store
-		 * in the hash table will reference an address in the stack. These are released
-		 * after the function resolves and will point to garbage.
-		 */
-		currentValue = PgbsonCloneFromPgbson(currentValue);
 		pgbsonelement singleBsonElement;
+		const char *collationString = NULL;
 
-		/* If it's a bson that's { "": value } */
-		if (TryGetSinglePgbsonElementFromPgbson(currentValue, &singleBsonElement) &&
-			singleBsonElement.pathLength == 0)
-		{
-			bool found = false;
-			hash_search(currentState->set, &singleBsonElement.bsonValue,
-						HASH_ENTER, &found);
-
-			/*
-			 * If the BSON was not found in the hash table, add its size to the
-			 * current state object and append it to the ordered list. The list
-			 * lets the final function emit values in insertion order without
-			 * iterating the hash table.
-			 */
-			if (!found)
-			{
-				currentState->currentSizeWritten += PgbsonGetBsonSize(currentValue);
-
-				bson_value_t *bsonValueCopy = palloc(sizeof(bson_value_t));
-				*bsonValueCopy = singleBsonElement.bsonValue;
-				currentState->aggregateList = lappend(currentState->aggregateList,
-													  bsonValueCopy);
-			}
-		}
-		else
+		if (!TryGetSinglePgbsonElementFromPgbsonWithCollation(currentValue,
+															  &singleBsonElement,
+															  &collationString) ||
+			singleBsonElement.pathLength != 0)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
 							errmsg("Bad input format for addToSet transition.")));
+		}
+
+		if (currentState->set == NULL)
+		{
+			if (IsCollationValid(collationString))
+			{
+				currentState->collationString = pstrdup(collationString);
+				currentState->set = CreateBsonValueWithCollationHashSet(0);
+			}
+			else
+			{
+				currentState->set = CreateBsonValueHashSet();
+			}
+		}
+
+		bool found = false;
+		bson_value_t *storedValue;
+
+		/* Collation was validated when creating the hash table. */
+		if (currentState->collationString != NULL)
+		{
+			BsonValueHashEntry entry = {
+				.bsonValue = singleBsonElement.bsonValue,
+				.collationString = currentState->collationString
+			};
+			BsonValueHashEntry *storedEntry = hash_search(currentState->set, &entry,
+														  HASH_ENTER, &found);
+			storedValue = &storedEntry->bsonValue;
+		}
+		else
+		{
+			storedValue = hash_search(currentState->set, &singleBsonElement.bsonValue,
+									  HASH_ENTER, &found);
+		}
+
+		if (!found)
+		{
+			/* Retain only unique original values, without collation metadata. */
+			pgbson *ownedValue = collationString == NULL ?
+								 PgbsonCloneFromPgbson(currentValue) :
+								 BsonValueToDocumentPgbson(&singleBsonElement.bsonValue);
+
+			uint32 currentValueSize = PgbsonGetBsonSize(ownedValue);
+			CheckAggregateIntermediateResultSize(currentState->currentSizeWritten +
+												 currentValueSize);
+
+			PgbsonToSinglePgbsonElement(ownedValue, &singleBsonElement);
+			*storedValue = singleBsonElement.bsonValue;
+			currentState->currentSizeWritten += currentValueSize;
+
+			/* The output list must survive destruction of the hash table. */
+			bson_value_t *bsonValueCopy = palloc(sizeof(bson_value_t));
+			*bsonValueCopy = singleBsonElement.bsonValue;
+			currentState->aggregateList = lappend(currentState->aggregateList,
+												  bsonValueCopy);
 		}
 	}
 

@@ -191,19 +191,20 @@ SELECT document FROM bson_aggregation_pipeline('db',
         { "$sort": { "firstId": 1 } }
     ], "collation": { "locale": "en", "strength": 1 } }');
 
--- $addToSet compares values byte by byte, so it cannot honor the collation
--- and now errors instead of returning a set that ignores it.
+-- $addToSet deduplicates with collation but returns the original values.
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$sort": { "_id": 1 } },
         { "$group": {
             "_id": null,
             "categories": { "$addToSet": "$category" }
         } }
     ], "collation": { "locale": "en", "strength": 1 } }');
 
--- A collation aware _id does not make the accumulator collation aware.
+-- Each group has its own collation-aware set.
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$sort": { "_id": 1 } },
         { "$group": {
             "_id": "$category",
             "firstId": { "$min": "$_id" },
@@ -211,6 +212,98 @@ SELECT document FROM bson_aggregation_pipeline('db',
         } },
         { "$sort": { "firstId": 1 } }
     ], "collation": { "locale": "en", "strength": 1 } }');
+
+-- Collation applies to computed inputs and command variables too.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$sort": { "_id": 1 } },
+        { "$group": {
+            "_id": null,
+            "categories": { "$addToSet": {
+                "$cond": [ { "$eq": ["$$expected", "alpha"] }, "$category", "$region" ]
+            } }
+        } }
+    ], "let": { "expected": "ALPHA" }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- Recurse into values, not field names; retain types, field order and array order.
+-- Missing values and $$REMOVE retain the same behavior with and without collation.
+SELECT documentdb_api.insert_one('db', 'add_to_set_collation_test', doc::bson)
+FROM (VALUES
+    ('{ "_id": 1, "value": "Caf\u00e9" }'),
+    ('{ "_id": 2, "value": "CAFE" }'),
+    ('{ "_id": 3, "value": "cafe" }'),
+    ('{ "_id": 4, "value": { "x": "A", "y": ["B"] } }'),
+    ('{ "_id": 5, "value": { "x": "a", "y": ["b"] } }'),
+    ('{ "_id": 6, "value": { "X": "a", "y": ["b"] } }'),
+    ('{ "_id": 7, "value": { "y": ["b"], "x": "a" } }'),
+    ('{ "_id": 8, "value": ["A", "B"] }'),
+    ('{ "_id": 9, "value": ["a", "b"] }'),
+    ('{ "_id": 10, "value": ["b", "a"] }'),
+    ('{ "_id": 11, "value": 1 }'),
+    ('{ "_id": 12, "value": { "$numberLong": "1" } }'),
+    ('{ "_id": 13, "value": "1" }'),
+    ('{ "_id": 14, "value": "" }'),
+    ('{ "_id": 15, "value": null }'),
+    ('{ "_id": 16 }')
+) AS inputs(doc);
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "add_to_set_collation_test", "pipeline": [
+        { "$sort": { "_id": 1 } },
+        { "$group": { "_id": null, "values": { "$addToSet": "$value" }, "removed": { "$addToSet": "$$REMOVE" } } }
+    ] }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "add_to_set_collation_test", "pipeline": [
+        { "$sort": { "_id": 1 } },
+        { "$group": { "_id": null, "values": { "$addToSet": "$value" }, "removed": { "$addToSet": "$$REMOVE" } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "add_to_set_collation_test", "pipeline": [
+        { "$sort": { "_id": 1 } },
+        { "$group": { "_id": null, "values": { "$addToSet": "$value" }, "removed": { "$addToSet": "$$REMOVE" } } }
+    ], "collation": { "locale": "en", "strength": 2 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "add_to_set_collation_test", "pipeline": [
+        { "$sort": { "_id": 1 } },
+        { "$group": { "_id": null, "values": { "$addToSet": "$value" }, "removed": { "$addToSet": "$$REMOVE" } } }
+    ], "collation": { "locale": "en", "strength": 3 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "add_to_set_collation_test", "pipeline": [
+        { "$sort": { "_id": 1 } },
+        { "$group": { "_id": null, "values": { "$addToSet": "$value" }, "removed": { "$addToSet": "$$REMOVE" } } }
+    ], "collation": { "locale": "simple" } }');
+SELECT documentdb_api.drop_collection('db', 'add_to_set_collation_test');
+
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": 1, "pipeline": [
+        { "$documents": [{ "value": "First" }, { "value": "FIRST" }, { "value": "Last" }] },
+        { "$group": { "_id": null, "values": { "$addToSet": "$value" } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+
+-- Parsed metadata remains authoritative after expression evaluation.
+BEGIN;
+CREATE TEMP TABLE add_to_set_metadata AS
+SELECT id, doc::bson AS document,
+    documentdb_api_internal.bson_expression_get(
+        doc::bson, '{ "": "$value" }'::bson, false, '{}'::bson, 'en-u-ks-level1') AS value
+FROM (VALUES
+    (1, '{ "value": "Alpha" }'),
+    (2, '{ "value": "ALPHA" }'),
+    (3, '{ "value": { "key": "Cafe" } }'),
+    (4, '{ "value": { "key": "CAF\u00c9" } }'),
+    (5, '{ "value": ["North", { "key": "First" }] }'),
+    (6, '{ "value": ["NORTH", { "key": "FIRST" }] }')
+) AS inputs(id, doc);
+SELECT documentdb_api_internal.bson_add_to_set(value ORDER BY id)
+FROM add_to_set_metadata;
+SET LOCAL documentdb_core.enableCollation TO off;
+SELECT documentdb_api_internal.bson_add_to_set(value ORDER BY id)
+FROM add_to_set_metadata;
+-- Disabling collation before evaluation still produces binary inputs.
+SELECT documentdb_api_internal.bson_add_to_set(
+    documentdb_api_internal.bson_expression_get(
+        document, '{ "": "$value" }'::bson, false, '{}'::bson, 'en-u-ks-level1') ORDER BY id)
+FROM add_to_set_metadata;
+ROLLBACK;
 
 -- The remaining accumulators that cannot honor the collation.
 SELECT document FROM bson_aggregation_pipeline('db',
@@ -371,8 +464,7 @@ SELECT document FROM bson_aggregation_pipeline('db',
         { "$sort": { "firstId": 1 } }
     ], "collation": { "locale": "en", "strength": 3 } }');
 
--- skipFailOnCollation lets a caller keep the old behavior: no error, and the
--- accumulator answers with a byte by byte comparison.
+-- skipFailOnCollation does not disable collation for supported accumulators.
 SET documentdb.skipFailOnCollation TO on;
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "group_collation_test", "pipeline": [

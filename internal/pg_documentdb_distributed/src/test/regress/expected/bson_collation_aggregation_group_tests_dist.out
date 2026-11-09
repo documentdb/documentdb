@@ -330,6 +330,20 @@ SELECT document FROM bson_aggregation_pipeline('db',
  { "_id" : "DOG", "firstId" : { "$numberInt" : "6" }, "values" : { "$numberInt" : "60" } }
 (6 rows)
 
+-- A remote input preserves original values while deduplicating with collation.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$sort": { "_id": 1 } },
+        { "$group": {
+            "_id": null,
+            "categories": { "$addToSet": "$category" }
+        } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+                     document                      
+---------------------------------------------------------------------
+ { "_id" : null, "categories" : [ "Cat", "Dog" ] }
+(1 row)
+
 ROLLBACK;
 -- $push cannot honor a collation, so it is rejected.
 BEGIN;
@@ -418,6 +432,38 @@ SELECT document FROM bson_aggregation_pipeline('db',
 ---------------------------------------------------------------------
  { "_id" : null, "acc" : [ { "$numberDouble" : "0.0" }, { "$numberDouble" : "100.0" } ] }
 (1 row)
+
+ROLLBACK;
+-- Case variants distributed across shards share a set within each collated group.
+-- Normalize representatives because shard arrival order is unspecified.
+SELECT documentdb_api.shard_collection('db', 'group_collation_dist_test', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+BEGIN;
+SET local documentdb_core.enableCollation TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$sort": { "_id": 1 } },
+        { "$group": {
+            "_id": "$category",
+            "firstId": { "$min": "$_id" },
+            "regions": { "$addToSet": "$region" }
+        } },
+        { "$project": {
+            "_id": { "$toLower": "$_id" },
+            "firstId": 1,
+            "regions": { "$map": { "input": "$regions", "as": "region", "in": { "$toLower": "$$region" } } }
+        } },
+        { "$sort": { "firstId": 1 } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+                                    document                                    
+---------------------------------------------------------------------
+ { "_id" : "cat", "firstId" : { "$numberInt" : "1" }, "regions" : [ "north" ] }
+ { "_id" : "dog", "firstId" : { "$numberInt" : "4" }, "regions" : [ "south" ] }
+(2 rows)
 
 ROLLBACK;
 SELECT documentdb_api.drop_collection('db', 'group_collation_dist_test');

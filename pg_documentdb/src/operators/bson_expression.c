@@ -1,5 +1,7 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
  *
  * src/operators/bson_expression.c
  *
@@ -625,11 +627,9 @@ bson_expression_get(PG_FUNCTION_ARGS)
 											  &writer,
 											  state->variableContext, isNullOnEmpty);
 
-	if (IsCollationApplicable(collationString))
+	/* Metadata must not turn a missing expression result into a value. */
+	if (IsCollationApplicable(collationString) && !IsPgbsonWriterEmptyDocument(&writer))
 	{
-		/* Append the collation directly to the writer before materializing, */
-		/* so it can be extracted by other functions that utilize it from bson_expression_get. */
-		/* For example: the comparison filter for bson_dollar_in used in $graphLookup */
 		PgbsonWriterAppendUtf8(&writer, "collation", 9, collationString);
 	}
 

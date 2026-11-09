@@ -199,6 +199,15 @@ SELECT document FROM bson_aggregation_pipeline('db',
         } },
         { "$sort": { "firstId": 1 } }
     ], "collation": { "locale": "en", "strength": 3 } }');
+-- A remote input preserves original values while deduplicating with collation.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$sort": { "_id": 1 } },
+        { "$group": {
+            "_id": null,
+            "categories": { "$addToSet": "$category" }
+        } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
 ROLLBACK;
 
 -- $push cannot honor a collation, so it is rejected.
@@ -249,6 +258,28 @@ SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "group_collation_dist_test", "pipeline": [
         { "$group": { "_id": null, "acc": { "$percentile": { "input": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] }, "p": [ 0.5, 0.9 ], "method": "approximate" } } } }
     ] }');
+ROLLBACK;
+
+-- Case variants distributed across shards share a set within each collated group.
+-- Normalize representatives because shard arrival order is unspecified.
+SELECT documentdb_api.shard_collection('db', 'group_collation_dist_test', '{ "_id": "hashed" }', false);
+BEGIN;
+SET local documentdb_core.enableCollation TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$sort": { "_id": 1 } },
+        { "$group": {
+            "_id": "$category",
+            "firstId": { "$min": "$_id" },
+            "regions": { "$addToSet": "$region" }
+        } },
+        { "$project": {
+            "_id": { "$toLower": "$_id" },
+            "firstId": 1,
+            "regions": { "$map": { "input": "$regions", "as": "region", "in": { "$toLower": "$$region" } } }
+        } },
+        { "$sort": { "firstId": 1 } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
 ROLLBACK;
 
 SELECT documentdb_api.drop_collection('db', 'group_collation_dist_test');

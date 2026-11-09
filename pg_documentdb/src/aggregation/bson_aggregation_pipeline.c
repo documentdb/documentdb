@@ -1,6 +1,7 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.
- * Licensed under the MIT License
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
  *
  * src/aggregation/bson_aggregation_pipeline.c
  *
@@ -8827,7 +8828,6 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		else if (StringViewEqualsCString(&accumulatorName, "$addToSet"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_ADD_TO_SET);
-			RejectCollationForGroupAccumulator(context, accumulatorElement.path);
 			repathArgs = AddSimpleGroupAccumulator(query,
 												   &accumulatorElement.bsonValue,
 												   repathArgs,
@@ -8836,7 +8836,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 												   origEntry->expr,
 												   BsonAddToSetAggregateFunctionOid(),
 												   context->variableSpec,
-												   collationStringIgnore,
+												   context->collationString,
 												   NULL);
 		}
 		else if (StringViewEqualsCString(&accumulatorName, "$mergeObjects"))

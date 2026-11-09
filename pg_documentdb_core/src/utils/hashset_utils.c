@@ -1,5 +1,7 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
  *
  * src/utils/hashset_utils.c
  *
@@ -342,8 +344,8 @@ HashStringWithCollation(const char *collationString, const char *string,
 /*
  * Hashes a bson value for use in hash set.
  *
- * (1) No collation to apply, either because none was given, collation is disabled, or
- *     the type is not collation aware: hash the bson value directly.
+ * (1) No valid collation was given, or the type is not collation aware:
+ *     hash the bson value directly.
  * (2) string-family bson value: hash its collation sort key.
  * (3) arrays and documents: recurse into them, applying (1), (2), (3) to each entry.
  *
@@ -359,7 +361,7 @@ BsonValueHashFuncCore(const bson_value_t *bsonValue, const
 	 * (1) No collation, or a type that collation does not apply to: hash the bson
 	 * value directly.
 	 */
-	if (!IsCollationApplicable(collationString) ||
+	if (!IsCollationValid(collationString) ||
 		!IsBsonTypeCollationAware(bsonValue->value_type))
 	{
 		*hashValue += BsonValueHashUint32(bsonValue);
