@@ -290,6 +290,66 @@ each workflow.
 > require the administrator to assign distinct public gateway ports for the
 > non-default instances (manual configuration, not automatic allocation).
 
+## After upgrading
+
+A package upgrade replaces the extension library and SQL
+scripts, but maintainer scripts never restart PostgreSQL or run SQL. The
+running server keeps the old library, and the installed extensions keep their
+old version, until you finish the upgrade. `documentdb-N` prints both steps
+when it upgrades:
+
+1. Restart PostgreSQL: `sudo systemctl restart documentdb-local@18.target`
+   (Workflow C with its private instance; if it was set up with
+   `--no-enable`, restart `documentdb-postgresql@18.service` instead so the
+   gateway stays down), or the PostgreSQL service DocumentDB is attached to
+   (Workflows A and B, or an adopted instance).
+2. Update the extensions: re-run `sudo documentdb-setup --pg-version 18
+   --admin-user ADMIN_USER` (replace ADMIN_USER with your admin user), plus
+   any `--data-dir` / `--pg-port` / `--no-enable` it was set up with
+   (Workflow C with its private instance; it sets that user's password
+   again), or run
+   `ALTER EXTENSION documentdb_core UPDATE;` then
+   `ALTER EXTENSION documentdb UPDATE;` (and `documentdb_extended_rum`, if
+   installed) in the `postgres` database.
+
+If you edited a packaged configuration file such as
+`/etc/documentdb/gateway/SetupConfiguration.json`, dpkg asks what to do with
+it during the upgrade. Without a terminal it fails with "end of file on stdin
+at conffile prompt" and leaves the packages unconfigured. For unattended
+upgrades, keep your version explicitly:
+
+```sh
+sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+  -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold
+```
+
+The packaged default is then left beside it as `.dpkg-dist`. To recover an
+upgrade that already stopped there, run
+`sudo dpkg --force-confold --configure -a`.
+
+## After removing or purging
+
+On systemd hosts, `apt remove documentdb-18` stops the instance but keeps
+its configuration and data; reinstalling it re-enables the instance if it was
+enabled. Purge, `dnf remove`, `documentdb-setup --restore` and
+`documentdb-local-reset` differ in what they leave:
+
+| Path | Setup state | Data under `/var/lib/documentdb-local/18` |
+|------|-------------|---------------------------------------------|
+| `documentdb-setup --restore` | removed | kept |
+| `apt purge` / `dnf remove` | removed | kept |
+| `documentdb-local-reset --pg-version 18 --confirm-destroy` | removed | removed |
+
+The `documentdb-gateway` system account is kept on purge, so retained gateway
+state keeps a valid owner. To use data that was kept, install the packages
+and run `documentdb-setup --pg-version 18` again (the major the data belongs
+to): it reuses the existing data directory and sets the admin password you
+give it. A custom data directory is not
+remembered, so pass the same `--data-dir` (`--restore` prints it). To start
+empty instead, run `documentdb-local-reset` first (or, once the packages are
+purged, delete `/var/lib/documentdb-local/18`); delete a custom data
+directory yourself.
+
 ## Building Debian/Ubuntu Packages
 
 Run `./packaging/build_packages.sh -h` and follow the instructions.

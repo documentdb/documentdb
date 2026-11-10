@@ -174,6 +174,9 @@ main() {
     for _path in "${data_dir}" "${gw_dir}" "${backup_dir}" "${log_dir}" "${config_dir}" "${run_dir}"; do
         [[ -e "${_path}" ]] && _anything=true
     done
+    # An earlier reset could leave just the alias and the legacy state file.
+    grep -Fqx "Requires=documentdb-local@${PG_VERSION}.target" /etc/systemd/system/documentdb-local.target 2>/dev/null && _anything=true
+    grep -Fqx "PG_VERSION=${PG_VERSION}" /etc/documentdb/documentdb-postgresql.env 2>/dev/null && _anything=true
     if [[ "${_anything}" != "true" && -z "${_pm_pids}" ]]; then
         log "Nothing to reset for PostgreSQL ${PG_VERSION}: no greenfield DocumentDB Local install or running server found."
         exit 0
@@ -184,6 +187,11 @@ main() {
         log "Stopping documentdb-local@${PG_VERSION}.target..."
         systemctl stop "documentdb-local@${PG_VERSION}.target" 2>/dev/null || true
         systemctl disable "documentdb-local@${PG_VERSION}.target" 2>/dev/null || true
+        # The meta package's alias would otherwise come up "active" at boot with nothing behind it.
+        if grep -Fqx "Requires=documentdb-local@${PG_VERSION}.target" /etc/systemd/system/documentdb-local.target 2>/dev/null; then
+            systemctl stop documentdb-local.target 2>/dev/null || true
+            systemctl disable documentdb-local.target 2>/dev/null || true
+        fi
     fi
 
     # On a no-systemd host this major's gateway runs under nohup, recorded in
@@ -311,6 +319,13 @@ main() {
     # Remove runtime dir
     if [[ -d "${run_dir}" ]]; then
         rm -rf "${run_dir}"
+    fi
+
+    # Pre-per-major state file; it records the major it was written for.
+    local legacy_env="/etc/documentdb/documentdb-postgresql.env"
+    if grep -Fqx "PG_VERSION=${PG_VERSION}" "${legacy_env}" 2>/dev/null; then
+        log "Removing legacy state: ${legacy_env}"
+        rm -f "${legacy_env}"
     fi
 
     # Clean up empty parent dirs

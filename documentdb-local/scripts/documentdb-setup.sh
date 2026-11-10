@@ -1979,34 +1979,6 @@ validate_required_arguments() {
         # must record auto-generate=false so the gateway honors the
         # provided files rather than re-generating on next start.
         TLS_AUTO_GENERATE="false"
-        # The gateway daemon runs as
-        # the documentdb-gateway OS user. If the operator-supplied TLS
-        # files are not readable by that user (e.g. root:root 0600), the
-        # gateway aborts with "Failed to create TLS provider: Permission
-        # denied" — even though the wizard accepted them because root
-        # can read them. Auto-fix ownership when we have privilege; bail
-        # with a clear actionable error otherwise.
-        local gw_user="documentdb-gateway"
-        if id -u "${gw_user}" >/dev/null 2>&1; then
-            local f
-            for f in "${TLS_CERT_FILE}" "${TLS_KEY_FILE}"; do
-                if ! sudo -n -u "${gw_user}" test -r "${f}" 2>/dev/null \
-                        && ! run_as_user "${gw_user}" test -r "${f}" 2>/dev/null; then
-                    if [[ "$(id -u)" -eq 0 ]]; then
-                        log_info "Adjusting ownership of ${f} to root:${gw_user} mode 0640 so the gateway can read it."
-                        chown "root:${gw_user}" "${f}"
-                        # Cert can stay world-readable; key tightens to 0640.
-                        if [[ "${f}" == "${TLS_KEY_FILE}" ]]; then
-                            chmod 0640 "${f}"
-                        else
-                            chmod 0644 "${f}"
-                        fi
-                    else
-                        die "TLS file ${f} is not readable by the documentdb-gateway OS user. Run as root, or manually: sudo chown root:${gw_user} ${f} && sudo chmod 0640 ${f}"
-                    fi
-                fi
-            done
-        fi
         # Tighten the
         # private-key permission warning. 0600/0640 are both fine; warn
         # only when group/world has read.
@@ -2075,6 +2047,57 @@ validate_documentdb_extension_installation() {
     [[ -f "${EXTENSION_CONTROL_FILE}" ]] || die "The DocumentDB extension package is not installed for PostgreSQL ${PG_VERSION} (${EXTENSION_CONTROL_FILE} is missing)."
 }
 
+# Run after every refusal in preflight, since it changes the operator's files.
+grant_gateway_tls_access() {
+    [[ -n "${TLS_CERT_FILE}" ]] || return 0
+    # The gateway daemon runs as
+    # the documentdb-gateway OS user. If the operator-supplied TLS
+    # files are not readable by that user (e.g. root:root 0600), the
+    # gateway aborts with "Failed to create TLS provider: Permission
+    # denied", even though the wizard accepted them because root
+    # can read them. Auto-fix ownership when we have privilege; bail
+    # with a clear actionable error otherwise.
+    local gw_user="documentdb-gateway"
+    if id -u "${gw_user}" >/dev/null 2>&1; then
+        local f
+        for f in "${TLS_CERT_FILE}" "${TLS_KEY_FILE}"; do
+            if ! sudo -n -u "${gw_user}" test -r "${f}" 2>/dev/null \
+                    && ! run_as_user "${gw_user}" test -r "${f}" 2>/dev/null; then
+                if [[ "$(id -u)" -eq 0 ]]; then
+                    log_info "Adjusting ownership of ${f} to root:${gw_user} mode 0640 so the gateway can read it."
+                    chown "root:${gw_user}" "${f}"
+                    # Cert can stay world-readable; key tightens to 0640.
+                    if [[ "${f}" == "${TLS_KEY_FILE}" ]]; then
+                        chmod 0640 "${f}"
+                    else
+                        chmod 0644 "${f}"
+                    fi
+                else
+                    die "TLS file ${f} is not readable by the documentdb-gateway OS user. Run as root, or manually: sudo chown root:${gw_user} ${f} && sudo chmod 0640 ${f}"
+                fi
+            fi
+        done
+    fi
+}
+
+# documentdb-common (which ships this script) stays installed only through a
+# documentdb-N Depends, so a major without its own documentdb-N can lose the
+# gateway and these tools to a package autoremove while it still runs.
+require_major_package() {
+    local pkg="documentdb-${PG_VERSION}" install_cmd
+    if command_exists dpkg-query \
+            && [[ "$(dpkg-query -W -f='${db:Status-Status}' documentdb-common 2>/dev/null)" == installed ]]; then
+        [[ "$(dpkg-query -W -f='${db:Status-Status}' "${pkg}" 2>/dev/null)" == installed ]] && return 0
+        install_cmd="sudo apt install ${pkg}"
+    elif command_exists rpm && rpm -q documentdb-common >/dev/null 2>&1; then
+        rpm -q "${pkg}" >/dev/null 2>&1 && return 0
+        install_cmd="sudo dnf install ${pkg}"
+    else
+        return 0
+    fi
+    die "The ${pkg} package is not installed. Install it first (${install_cmd}): without it, removing another major's package can autoremove documentdb-common, the gateway and these tools while this PostgreSQL ${PG_VERSION} install still runs."
+}
+
 preflight_validation() {
     require_root
     validate_required_arguments
@@ -2103,6 +2126,7 @@ preflight_validation() {
     # ensure_documentdb_runtime_user (the first host mutation), so every apply
     # path is rejected on the authoritative major before any mutation.
     enforce_gateway_pg_major_supported "${PG_VERSION}"
+    require_major_package
     resolve_runtime_paths
 
     # An invalid value, or an explicit lz4 request the build cannot be verified
@@ -2249,9 +2273,13 @@ preflight_validation() {
                 fi
                 die "Gateway port ${GATEWAY_PORT} is already in use by a non-gateway process (pid ${gw_listener_pid}). Use --gateway-port to specify a different port, or --no-enable to skip gateway startup."
             fi
+            # Fail before initdb, not at the systemd takeover.
+            refuse_foreign_unit_gateway "${gw_listener_pid}"
         fi
     fi
 
+    [[ -n "${TARGET_CLUSTER}" ]] || confirm_kept_data_reuse
+    grant_gateway_tls_access
     ensure_documentdb_runtime_user
 }
 
@@ -2881,6 +2909,26 @@ prepare_brownfield_instance() {
     log_info "  socket dir:     ${distro_socket}"
 }
 
+# Asked in preflight, before setup changes anything on the host.
+confirm_kept_data_reuse() {
+    [[ -f "${DATA_DIR}/PG_VERSION" ]] || return 0
+    [[ "$(head -n 1 "${DATA_DIR}/PG_VERSION" | cut -d'.' -f1)" == "${PG_VERSION}" ]] || return 0
+    # Left by --restore or a package purge: reusing it must not be silent.
+    if [[ ! -f "/etc/documentdb/local/${PG_VERSION}/setup.conf" ]]; then
+        local wipe_hint="run 'documentdb-local-reset --pg-version ${PG_VERSION} --confirm-destroy'"
+        # Without setup.conf, reset only knows the default data dir.
+        [[ "${DATA_DIR}" == "/var/lib/documentdb-local/${PG_VERSION}/data" ]] || wipe_hint="delete ${DATA_DIR}"
+        log_warn "${DATA_DIR} holds PostgreSQL ${PG_VERSION} data from an earlier install (left by 'documentdb-setup --restore' or a package purge). To start empty instead, stop here and ${wipe_hint}."
+        # Yes/no only: confirm_or_apply's dry-run skip would still reuse it.
+        if [[ "${YES}" != "true" ]]; then
+            local reply=""
+            printf '%s' "Reuse the existing data in ${DATA_DIR}: its databases are kept and the password of '${USERNAME}' is set to the one given now. Continue? [y/N] " >&2
+            IFS= read -r reply || reply=""
+            [[ "${reply}" =~ ^(y|Y|yes|YES)$ ]] || die "Aborted: ${DATA_DIR} was not reused."
+        fi
+    fi
+}
+
 prepare_self_managed_cluster() {
     # Greenfield creates a private PostgreSQL instance of major PG_VERSION and
     # attaches the gateway to it. Reject a PG<=15 target before initdb / tune /
@@ -3484,9 +3532,8 @@ verify_gateway_unit_active() {
     die "The gateway unit ${gw_unit} is not active after 'systemctl start' (or the start step was skipped / answered 'dry-run').${env_hint} Check: journalctl -u ${gw_unit} --no-pager -n 20."
 }
 
-start_gateway() {
-    local existing_gateway_pid=""
-
+# setup_gateway_unit: the unit this setup runs the gateway under.
+setup_gateway_unit() {
     # Per design §4.4, the per-major templated gateway unit is the public
     # day-2 surface. We prefer it whenever a PG_VERSION is known and the
     # unit file is shipped.
@@ -3499,6 +3546,37 @@ start_gateway() {
     if [[ -z "${gw_unit}" ]] || ! has_systemd_unit_file "${gw_unit}"; then
         gw_unit="documentdb-gateway.service"
     fi
+    printf '%s' "${gw_unit}"
+}
+
+# refuse_foreign_unit_gateway <pid>: die if a systemd service other than
+# this setup's gateway unit runs <pid> (e.g. another major's, or a Workflow B
+# documentdb-gateway.service): stopping it would break that install's clients.
+refuse_foreign_unit_gateway() {
+    local pid="$1" own_unit line unit="" user_scope=""
+    # 1 is find_listener_pid's owner-unknown placeholder; /proc/1 is init, not the listener.
+    [[ "${pid}" != 1 ]] || return 0
+    # The gateway this setup started under nohup carries its caller's cgroup.
+    [[ "$(nohup_gateway_pid_for_port "${GATEWAY_PORT}" 2>/dev/null || true)" != "${pid}" ]] || return 0
+    own_unit="$(setup_gateway_unit)"
+    while IFS= read -r line; do
+        # Last .service component, so a delegated subgroup (foo.service/worker) still counts;
+        # a user manager (user@N.service) is a login session, not a unit we could stop.
+        # A unit inside a user manager is never ours, whatever its name.
+        if [[ "${line}" =~ .*/([^/]+\.service)(/|$) && "${BASH_REMATCH[1]}" != user@*.service ]]; then
+            unit="${BASH_REMATCH[1]}"
+            user_scope=""
+            [[ "${line}" == */user@*.service/* ]] && user_scope=" in a user manager"
+        fi
+    done < <(cat "/proc/${pid}/cgroup" 2>/dev/null || true)
+    [[ -z "${unit}" ]] || [[ "${unit}" == "${own_unit}" && -z "${user_scope}" ]] && return 0
+    die "Gateway port ${GATEWAY_PORT} is served by ${unit}${user_scope} (pid ${pid}), which this setup does not manage; refusing to stop it. Use --listen-port for a different port, or stop and disable ${unit} first."
+}
+
+start_gateway() {
+    local existing_gateway_pid=""
+    local gw_unit
+    gw_unit="$(setup_gateway_unit)"
 
     if [[ "${NO_ENABLE}" == "true" ]]; then
         # The operator asked us not to (re)enable the gateway. But if a
@@ -3536,6 +3614,7 @@ start_gateway() {
                 if ! listener_looks_like_gateway "${existing_gateway_pid}" "${GATEWAY_PORT}"; then
                     die "Gateway port ${GATEWAY_PORT} is in use by a non-gateway process (pid ${existing_gateway_pid}); refusing to stop it for the systemd takeover. Use --gateway-port for a different port, or stop that process yourself."
                 fi
+                refuse_foreign_unit_gateway "${existing_gateway_pid}"
                 # Listener exists, is our gateway, but systemd doesn't own it —
                 # stop the manual process so the unit can take over.
                 log_info "Stopping manually started gateway (pid ${existing_gateway_pid}) before systemd takeover."
@@ -3604,6 +3683,7 @@ start_gateway() {
             if ! listener_looks_like_gateway "${existing_gateway_pid}" "${GATEWAY_PORT}"; then
                 die "Port ${GATEWAY_PORT} is already in use by a non-gateway process."
             fi
+            refuse_foreign_unit_gateway "${existing_gateway_pid}"
 
             log_info "Restarting the manually managed gateway process on port ${GATEWAY_PORT}."
             if ! stop_gateway_process "${existing_gateway_pid}" "${GATEWAY_PORT}"; then
@@ -4743,6 +4823,8 @@ main() {
         # just created — on a multi-major host the unscoped sweep would
         # also strip, stop, and de-state every OTHER major's install.
         local restore_scope="" scoped_gateway_port=""
+        # setup.conf is the only record of a custom --data-dir; keep it for the kept-data notice.
+        local -a restore_custom_data_dirs=()  # "major:path"
         if [[ "${PG_VERSION_EXPLICIT}" == "true" ]]; then
             # The scope is expanded into globs and unit names below; a
             # non-numeric value ('*', '17 18') would silently widen the
@@ -4871,6 +4953,8 @@ main() {
             pm_dir="$(dirname "${per_major_conf}")"
             pm_major="$(basename "${pm_dir}")"
             pm_env_file="${pm_dir}/gateway.env"
+            [[ -n "${pm_data_dir}" && "${pm_data_dir}" != "/var/lib/documentdb-local/${pm_major}/data" ]] \
+                && restore_custom_data_dirs+=("${pm_major}:${pm_data_dir}")
             if [[ -f "${pm_env_file}" ]]; then
                 if [[ "${DRY_RUN}" == "true" ]]; then
                     log_info "[dry-run] Would strip managed env block from ${pm_env_file} (and remove the file if nothing else remains)"
@@ -5152,6 +5236,19 @@ main() {
         if [[ "${DRY_RUN}" == "true" ]]; then
             log_success "Restore dry-run complete. No changes were made. Re-run without --dry-run to apply."
         else
+            # Restore is non-destructive; say what it left and how to drop it.
+            local _kept_data
+            for _kept_data in /var/lib/documentdb-local/${restore_scope:-*}/data; do
+                [[ -f "${_kept_data}/PG_VERSION" ]] || continue
+                _kept_data="${_kept_data%/data}"
+                log_info "Kept the PostgreSQL data in ${_kept_data}/data. A later 'documentdb-setup --pg-version ${_kept_data##*/}' reuses it; to delete it, run 'documentdb-local-reset --pg-version ${_kept_data##*/} --confirm-destroy'."
+            done
+            for _kept_data in "${restore_custom_data_dirs[@]}"; do
+                local _kept_major="${_kept_data%%:*}"
+                _kept_data="${_kept_data#*:}"
+                [[ -f "${_kept_data}/PG_VERSION" ]] || continue
+                log_info "Kept the PostgreSQL data in ${_kept_data}. To reuse it, run documentdb-setup --pg-version ${_kept_major} --data-dir '$(printf '%s' "${_kept_data}" | sed "s/'/'\"'\"'/g")'; to delete it, remove that directory (documentdb-local-reset no longer knows it)."
+            done
             log_success "Restore complete. Restart PostgreSQL to apply."
         fi
         exit 0

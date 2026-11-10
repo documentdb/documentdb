@@ -747,6 +747,9 @@ test_derived_state() {
     expect_failure "residual data without configuration" \
         "Residual data exists under /var/lib/documentdb-local/18" \
         run_installer "${root}"
+    assert_has "residual refusal offers the adopt path" "run 'documentdb-setup --pg-version 18', which reuses it"
+    assert_has "residual refusal offers the wipe path" \
+        "documentdb-local-reset --pg-version 18 --confirm-destroy"
 
     # Commands outside the installer's PATH still shadow the packaged ones.
     root="$(new_root ubuntu 24.04)"

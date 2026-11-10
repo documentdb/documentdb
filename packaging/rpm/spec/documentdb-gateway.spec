@@ -245,19 +245,15 @@ fi
 if [ "$1" -eq 0 ]; then
     rm -rf /run/documentdb-gateway 2>/dev/null || true
     # Remove auto-generated TLS material and other persistent state under
-    # /var/lib/documentdb-gateway, the admin env file, and the dedicated
-    # system user/group on full erase, so a complete uninstall does not
-    # leave gateway-owned private keys or accounts behind.
+    # /var/lib/documentdb-gateway and the admin env file on full erase, so a
+    # complete uninstall does not leave gateway-owned private keys behind.
+    # The system user/group stay (Fedora packaging guidelines): per-major
+    # state under /var/lib/documentdb-local survives the erase, and a
+    # reinstall must find it owned by the same uid, not a new or recycled one.
     rm -rf /var/lib/documentdb-gateway 2>/dev/null || true
     rm -f /etc/documentdb/gateway/gateway.env 2>/dev/null || true
     rmdir --ignore-fail-on-non-empty /etc/documentdb/gateway 2>/dev/null || true
     rmdir --ignore-fail-on-non-empty /etc/documentdb 2>/dev/null || true
-    if getent passwd documentdb-gateway >/dev/null 2>&1; then
-        userdel documentdb-gateway 2>/dev/null || true
-    fi
-    if getent group documentdb-gateway >/dev/null 2>&1; then
-        groupdel documentdb-gateway 2>/dev/null || true
-    fi
 fi
 
 %posttrans

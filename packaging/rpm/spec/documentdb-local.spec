@@ -37,12 +37,38 @@ provided by documentdb-common.
 %post
 # The PG-agnostic sysusers/tmpfiles bootstrap and the unit daemon-reload live
 # in documentdb-common (a dependency, installed first). This per-major scriptlet
-# only advertises the next setup step.
-echo "DocumentDB stand-alone package for PostgreSQL %{pg_version} installed."
-echo ""
-echo "Next: sudo documentdb-setup --admin-user admin --pg-version %{pg_version}"
-echo "(The wizard prompts for the first admin password, runs initdb / CREATE EXTENSION /"
-echo "first-user bootstrap, and enables documentdb-local@%{pg_version}.target so the stack survives reboot.)"
+# only advertises the next setup step, or on upgrade what finishes it: scriptlets
+# never restart PostgreSQL (§7). Mirrors the DEB postinst.
+state_dir="/etc/documentdb/local/%{pg_version}"
+restart_step="" update_step=""
+if [ "$1" -ge 2 ] && [ -f "${state_dir}/setup.conf" ]; then
+    # Only printed, inside single quotes; close and reopen around any ' in the path.
+    data_dir="$(grep -E '^DATA_DIR=' "${state_dir}/setup.conf" | head -n 1 | cut -d= -f2- | sed "s/'/'\"'\"'/g")"
+    pg_port="$(grep -E '^PG_PORT=' "${state_dir}/setup.conf" | head -n 1 | cut -d= -f2-)"
+    if [ -d /run/systemd/system ]; then
+        restart_step="sudo systemctl restart documentdb-local@%{pg_version}.target  # set up with --no-enable? restart documentdb-postgresql@%{pg_version}.service instead"
+    else
+        restart_step="sudo -u documentdb-local /usr/pgsql-%{pg_version}/bin/pg_ctl -D '${data_dir}' -l '${data_dir}/pglog.log' restart"
+    fi
+    # Setup does not read these back from setup.conf, so name them.
+    update_step="sudo documentdb-setup --pg-version %{pg_version}${data_dir:+ --data-dir '${data_dir}'}${pg_port:+ --pg-port ${pg_port}} --admin-user ADMIN_USER  # replace ADMIN_USER with your admin user, add --no-enable if you used it; runs ALTER EXTENSION ... UPDATE and sets that user's password again"
+elif [ "$1" -ge 2 ] && [ -f "${state_dir}/brownfield.conf" ]; then
+    restart_step="Restart the PostgreSQL %{pg_version} server DocumentDB is attached to."
+    update_step="In its postgres database: ALTER EXTENSION documentdb_core UPDATE; ALTER EXTENSION documentdb UPDATE; (and documentdb_extended_rum, if installed)"
+fi
+if [ -n "${restart_step}" ]; then
+    # $1 >= 2 is any install over an earlier one: RPM does not say which way it went.
+    echo "DocumentDB for PostgreSQL %{pg_version} %{version} replaced an earlier install. After an upgrade,"
+    echo "PostgreSQL keeps the old build loaded and the extensions their old version until you finish it:"
+    echo "  1. ${restart_step}"
+    echo "  2. ${update_step}"
+elif [ "$1" -eq 1 ]; then
+    echo "DocumentDB stand-alone package for PostgreSQL %{pg_version} installed."
+    echo ""
+    echo "Next: sudo documentdb-setup --admin-user admin --pg-version %{pg_version}"
+    echo "(The wizard prompts for the first admin password, runs initdb / CREATE EXTENSION /"
+    echo "first-user bootstrap, and enables documentdb-local@%{pg_version}.target so the stack survives reboot.)"
+fi
 
 %preun
 # On erase, stop and disable only this major's concrete target instance.
@@ -113,6 +139,13 @@ if [ "$1" -eq 0 ]; then
         hba_file="$(grep -E '^HBA_FILE=' "${sf}" | head -1 | cut -d= -f2- || true)"
         ident_file="$(grep -E '^IDENT_FILE=' "${sf}" | head -1 | cut -d= -f2- || true)"
         config_file="$(grep -E '^CONFIG_FILE=' "${sf}" | head -1 | cut -d= -f2- || true)"
+        # setup.conf is the only record of a custom --data-dir; name it before it goes.
+        data_dir="$(grep -E '^DATA_DIR=' "${sf}" | head -1 | cut -d= -f2- || true)"
+        if [ "${sf##*/}" = setup.conf ] && [ -n "${data_dir}" ] \
+                && [ "${data_dir}" != "/var/lib/documentdb-local/%{pg_version}/data" ] && [ -f "${data_dir}/PG_VERSION" ]; then
+            data_dir_q="$(printf '%s' "${data_dir}" | sed "s/'/'\"'\"'/g")"
+            echo "Kept the PostgreSQL data in ${data_dir}. To reuse it, run documentdb-setup --pg-version %{pg_version} --data-dir '${data_dir_q}'; to delete it, remove that directory (documentdb-local-reset no longer knows it)."
+        fi
         [ -n "${hba_file}" ] && documentdb_strip_managed_block "${hba_file}" \
             "# >>> documentdb-setup managed hba >>>" \
             "# <<< documentdb-setup managed hba <<<"

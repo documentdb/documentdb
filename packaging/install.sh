@@ -718,7 +718,7 @@ detect_installation_state() {
         die "Another DocumentDB instance is already configured (${other_state}). This bootstrap configures a single stand-alone major; manage the existing instance with documentdb-setup."
     done
     if directory_has_entries "$(system_path "${DATA_ROOT}/${PG_MAJOR}")"; then
-        die "Residual data exists under ${DATA_ROOT}/${PG_MAJOR} without a configured instance. Reconcile or remove it with documentdb-setup before installing."
+        die "Residual data exists under ${DATA_ROOT}/${PG_MAJOR} without a configured instance (left by documentdb-setup --restore or a package purge). To keep it, install documentdb-${PG_MAJOR} and run 'documentdb-setup --pg-version ${PG_MAJOR}', which reuses it. To discard it, run 'documentdb-local-reset --pg-version ${PG_MAJOR} --confirm-destroy', or delete ${DATA_ROOT}/${PG_MAJOR} if the packages are purged, then rerun this installer."
     fi
     refuse_command_collisions
 }

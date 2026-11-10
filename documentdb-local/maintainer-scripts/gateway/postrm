@@ -19,8 +19,10 @@ has_working_systemd() {
 case "$1" in
     purge)
         # Remove the gateway's runtime and persistent state, including any
-        # auto-generated TLS material under /var/lib/documentdb-gateway, then
-        # the dedicated system user/group. On purge (unlike remove) the
+        # auto-generated TLS material under /var/lib/documentdb-gateway. The
+        # system user/group stay: per-major state under /var/lib/documentdb-local
+        # survives purge, and a reinstall must find it owned by the same uid
+        # rather than a new (or recycled) one. On purge (unlike remove) the
         # operator-authored gateway.env is removed too, matching Debian purge
         # semantics (config is only preserved across remove, not purge).
         #
@@ -56,12 +58,6 @@ case "$1" in
         rm -f /etc/documentdb/gateway/gateway.env 2>/dev/null || true
         rmdir --ignore-fail-on-non-empty /etc/documentdb/gateway 2>/dev/null || true
         rmdir --ignore-fail-on-non-empty /etc/documentdb 2>/dev/null || true
-        if getent passwd documentdb-gateway >/dev/null 2>&1; then
-            userdel documentdb-gateway 2>/dev/null || true
-        fi
-        if getent group documentdb-gateway >/dev/null 2>&1; then
-            groupdel documentdb-gateway 2>/dev/null || true
-        fi
         if has_working_systemd; then
             systemctl daemon-reload 2>/dev/null || true
         fi
