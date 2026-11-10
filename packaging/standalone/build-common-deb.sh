@@ -133,24 +133,9 @@ deb_install_changelog "${PKG_DIR}" "${FILE_PKG_NAME}" "${VERSION}" \
 # from the per-major documentdb-N packages). The per-major documentdb-N pins
 # the PostgreSQL major + extension and depends on this package.
 #
-# Replaces: implements the standard Debian "file takeover" idiom for the shared
-# files that a PRE-SPLIT documentdb-N used to ship at these same paths. Without
-# it, `dpkg` refuses to unpack documentdb-common while an older documentdb-N
-# still owns e.g. /usr/bin/documentdb-setup ("trying to overwrite ... which is
-# also in package documentdb-N"). It is unversioned so the takeover works
-# regardless of the old package's version, and it is inert for the post-split
-# documentdb-N (which ships no files at all). The pre-split documentdb-N was
-# never released, so Replaces: is inert for real first-time installs and only
-# smooths an in-place upgrade from a pre-split dev/CI build.
-#
-# We intentionally do NOT add a matching Breaks:. A rolling
-# `Breaks: documentdb-N (<< ${VERSION}~)` would forbid a newer documentdb-common
-# from coexisting with a slightly older documentdb-N, which contradicts the
-# `Depends: documentdb-common (>= ${VERSION})` floor above — that floor is
-# deliberately a lower bound (not an exact pin), so the packages tolerate a
-# staggered point release where they ship a short time apart. Replaces: alone is
-# sufficient to transfer file ownership (dpkg permits the overwrite and the old
-# owner is upgraded to the payload-free version in the same run).
+# No Replaces: the pre-split documentdb-N that shipped these files was never
+# released, and an unversioned Replaces made apt offer documentdb-common as a
+# substitute for a missing documentdb-N.
 emit_control "${PKG_DIR}" <<CONTROL
 Package: ${DEB_PKG_NAME}
 Version: ${VERSION}
@@ -158,7 +143,6 @@ Architecture: ${ARCH}
 Maintainer: ${DEB_MAINTAINER}
 Installed-Size: @INSTALLED_SIZE@
 Depends: documentdb-postgresql-tools (>= ${VERSION}), documentdb-gateway (>= ${VERSION}), jq, procps
-Replaces: documentdb-16, documentdb-17, documentdb-18
 Section: database
 Priority: optional
 Homepage: https://github.com/documentdb/documentdb

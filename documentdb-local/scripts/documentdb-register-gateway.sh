@@ -792,12 +792,15 @@ do_setup() {
         local _la="${GATEWAY_LISTEN_ADDR}"
         if [[ "${_la}" =~ ^:[0-9]+$ ]]; then
             connect_port="${_la#:}"
+        elif ! [[ "${_la}" =~ :[0-9]+$ ]]; then
+            connect_host="${_la}"
         else
             connect_host="${_la%:*}"
             connect_port="${_la##*:}"
         fi
+        # The gateway binds IPv6 loopback as 127.0.0.1, so [::1] would be refused.
         case "${connect_host}" in
-            ""|":"|"0.0.0.0"|"::"|"*") connect_host="127.0.0.1" ;;
+            ""|":"|"0.0.0.0"|"::"|"*"|"::1"|"[::1]") connect_host="127.0.0.1" ;;
         esac
     fi
     # Bracket a bare IPv6 literal so host:port stays unambiguous. The pattern
@@ -931,6 +934,17 @@ write_connection_secret() {
     # the Workflow B path (/var/lib/documentdb-gateway/tls is also
     # gateway-owned).
     install -d -m 0700 -o "${GW_OS_USER}" -g "${GW_OS_USER}" "${SECRET_DIR}/tls"
+    # Older packages deleted the gateway account on purge, so the kept key and
+    # certificate can carry a uid the recreated account no longer has; hand
+    # them back. Only these two names, and -h: the directory is gateway-writable.
+    local _tls_file _tls_uid _gw_uid
+    _gw_uid="$(id -u "${GW_OS_USER}")"
+    for _tls_file in "${SECRET_DIR}/tls/cert.pem" "${SECRET_DIR}/tls/pkey.pem"; do
+        _tls_uid="$(stat -c %u "${_tls_file}" 2>/dev/null)" || continue
+        [[ "${_tls_uid}" == "${_gw_uid}" || "${_tls_uid}" == 0 ]] && continue
+        chown -h "${GW_OS_USER}:${GW_OS_USER}" "${_tls_file}" \
+            || die "Cannot give ${_tls_file} back to ${GW_OS_USER}; fix its ownership, then re-run."
+    done
     log "TLS state directory pre-created at ${SECRET_DIR}/tls (gateway-owned, 0700)"
 }
 
@@ -1133,7 +1147,7 @@ verify_psql_connects_to_named_cluster() {
         local live_config_file
         live_config_file="$(run_as_user "${PG_OWNER}" "${PSQL}" -h "${SOCKET_DIR}" -p "${PG_PORT}" \
             -d postgres -X -tA -v ON_ERROR_STOP=1 \
-            -c "SHOW config_file;" 2>/dev/null | tr -d '[:space:]' || true)"
+            -c "SHOW config_file;" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)"
 
         if [[ -z "${live_config_file}" ]]; then
             die "Cannot SHOW config_file on PostgreSQL ${PG_VERSION} via socket ${SOCKET_DIR}:${PG_PORT} as ${PG_OWNER}. Verify the instance is running and the --pg-port is correct."
@@ -1167,7 +1181,7 @@ verify_psql_connects_to_named_cluster() {
         local live_data_dir want_data_dir
         live_data_dir="$(run_as_user "${PG_OWNER}" "${PSQL}" -h "${SOCKET_DIR}" -p "${PG_PORT}" \
             -d postgres -X -tA -v ON_ERROR_STOP=1 \
-            -c "SHOW data_directory;" 2>/dev/null | tr -d '[:space:]' || true)"
+            -c "SHOW data_directory;" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)"
         if [[ -z "${live_data_dir}" ]]; then
             die "Cannot SHOW data_directory on PostgreSQL via socket ${SOCKET_DIR}:${PG_PORT} as ${PG_OWNER}. Verify the instance at --pgdata ${PGDATA} is running and reachable (or pass --pg-port / --socket-dir)."
         fi
@@ -1190,10 +1204,10 @@ verify_psql_connects_to_named_cluster() {
     local live_hba_file live_ident_file
     live_hba_file="$(run_as_user "${PG_OWNER}" "${PSQL}" -h "${SOCKET_DIR}" -p "${PG_PORT}" \
         -d postgres -X -tA -v ON_ERROR_STOP=1 \
-        -c "SHOW hba_file;" 2>/dev/null | tr -d '[:space:]' || true)"
+        -c "SHOW hba_file;" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)"
     live_ident_file="$(run_as_user "${PG_OWNER}" "${PSQL}" -h "${SOCKET_DIR}" -p "${PG_PORT}" \
         -d postgres -X -tA -v ON_ERROR_STOP=1 \
-        -c "SHOW ident_file;" 2>/dev/null | tr -d '[:space:]' || true)"
+        -c "SHOW ident_file;" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)"
 
     if [[ -n "${live_hba_file}" && "${live_hba_file}" != "${HBA_FILE}" ]]; then
         log "Overriding HBA file from cluster query: ${HBA_FILE} -> ${live_hba_file}"
@@ -1251,6 +1265,29 @@ write_gateway_env_fragment() {
     # --tls-key / --listen-addr) or the generated secret path would inject
     # additional env lines. Spaces are safe (systemd takes the rest of the
     # line as the value); only newline/CR can break out of the value.
+    # The block is rewritten whole and moved last, so a re-run without
+    # --listen-addr keeps the effective (last) assignment, read as
+    # documentdb-gateway-wrapper.sh loads it; an operator's override outside the
+    # block must not lose to the stale block value.
+    if [[ -z "${GATEWAY_LISTEN_ADDR:-}" ]]; then
+        local _prev_addr="" _line
+        while IFS= read -r _line || [[ -n "${_line}" ]]; do
+            [[ "${_line}" =~ ^[[:space:]]*(export[[:space:]]+)?DOCUMENTDB_LISTEN_ADDR[[:space:]]*=[[:space:]]*(.*[^[:space:]])?[[:space:]]*$ ]] || continue
+            _prev_addr="${BASH_REMATCH[2]}"
+            [[ "${_prev_addr}" =~ ^\"(.*)\"$ || "${_prev_addr}" =~ ^\'(.*)\'$ ]] && _prev_addr="${BASH_REMATCH[1]}"
+        done < "${env_target}"
+        # The gateway trims the value and takes a bare port as ":port".
+        _prev_addr="${_prev_addr#"${_prev_addr%%[![:space:]]*}"}"
+        _prev_addr="${_prev_addr%"${_prev_addr##*[![:space:]]}"}"
+        [[ "${_prev_addr}" =~ ^[0-9]+$ ]] && _prev_addr=":${_prev_addr}"
+        # Only a bracketed host stands alone; the gateway reads a bare word as a port.
+        if [[ "${_prev_addr}" =~ ^(\[[0-9A-Fa-f:]+\]|[A-Za-z0-9._:-]*):[0-9]+$ \
+                || "${_prev_addr}" =~ ^\[[0-9A-Fa-f:]+\]$ ]]; then
+            log "Keeping DOCUMENTDB_LISTEN_ADDR=${_prev_addr} from the previous registration (pass --listen-addr to change it)."
+            GATEWAY_LISTEN_ADDR="${_prev_addr}"
+        fi
+    fi
+
     local _ef_v
     for _ef_v in "${SECRET_FILE}" "${GATEWAY_LISTEN_ADDR:-}" \
             "${GATEWAY_TLS_AUTO_GENERATE:-}" "${GATEWAY_TLS_CERT_FILE:-}" \
@@ -1846,6 +1883,11 @@ autodetect_single_pg_instance() {
 check_gateway_prereq() {
     if ! getent passwd "${GW_OS_USER}" >/dev/null 2>&1; then
         die "OS user '${GW_OS_USER}' does not exist. Install the documentdb-gateway package first (e.g., 'sudo apt install documentdb-gateway' or 'sudo dnf install documentdb-gateway'), then re-run this command."
+    fi
+    # Purge keeps the account, so also require the runtime. documentdb-setup
+    # (which sets the QUIET marker) has already resolved a packaged or repo build.
+    if [[ "${DOCUMENTDB_REGISTER_GATEWAY_QUIET:-}" != "1" && ! -x /usr/bin/documentdb-gateway ]]; then
+        die "The documentdb-gateway package is not installed (/usr/bin/documentdb-gateway is missing). Install it first (e.g., 'sudo apt install documentdb-gateway' or 'sudo dnf install documentdb-gateway'), then re-run this command."
     fi
 }
 

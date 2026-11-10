@@ -96,7 +96,8 @@ Description: Stand-alone meta package for DocumentDB
  To fully uninstall, run:
  .
    sudo apt purge documentdb documentdb-${DEFAULT_PG_MAJOR} documentdb-common \\
-       documentdb-gateway documentdb-postgresql-tools
+       documentdb-gateway documentdb-postgresql-tools \\
+       postgresql-${DEFAULT_PG_MAJOR}-documentdb
  .
  'apt purge documentdb' alone only removes this meta package; the
  per-major stand-alone package, the gateway runtime, and the
@@ -209,6 +210,11 @@ DEFAULT_PG_MAJOR="${DEFAULT_PG_MAJOR}"
 case "\$1" in
     purge|remove)
         if command -v systemctl >/dev/null 2>&1; then
+            # setup enabled only the alias; enable the per-major target it
+            # pulled in so the stack still starts at boot without it.
+            if [ -L /etc/systemd/system/multi-user.target.wants/documentdb-local.target ]; then
+                systemctl enable "documentdb-local@\${DEFAULT_PG_MAJOR}.target" >/dev/null 2>&1 || true
+            fi
             # Disable before deleting the unit; systemctl reads [Install]
             # metadata from the unit file to locate enablement symlinks.
             systemctl disable documentdb-local.target >/dev/null 2>&1 || true
@@ -246,7 +252,8 @@ case "\$1" in
         for pkg in "documentdb-\${DEFAULT_PG_MAJOR}" \\
                    "documentdb-common" \\
                    "documentdb-gateway" \\
-                   "documentdb-postgresql-tools"; do
+                   "documentdb-postgresql-tools" \\
+                   "postgresql-\${DEFAULT_PG_MAJOR}-documentdb"; do
             status=\$(dpkg-query -W -f='\${db:Status-Status}\\n' "\$pkg" 2>/dev/null || true)
             case "\$status" in
                 installed|half-installed|unpacked|half-configured|triggers-awaited|triggers-pending|config-files)

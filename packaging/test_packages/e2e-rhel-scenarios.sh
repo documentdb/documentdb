@@ -504,6 +504,8 @@ scenario_rpm_hygiene() {
     pass "RH-HYGIENE: all commands present after reinstall"
 
     log "Erasing every DocumentDB RPM"
+    local gw_uid_before gw_passwd
+    gw_uid_before="$(id -u documentdb-gateway 2>/dev/null || true)"
     # Per-major names must track ${PG_MAJOR}: the list previously hardcoded
     # documentdb-18, so on any other major the stand-alone package was never
     # added and `rpm -e` aborted on its unsatisfied dependency — turning every
@@ -539,9 +541,15 @@ scenario_rpm_hygiene() {
         && pass "RH-HYGIENE: no DocumentDB private key survived the erase" \
         || { echo "${leftover_keys}" >&2; fail "RH-HYGIENE: private key survived the erase"; }
 
-    id -u documentdb-gateway >/dev/null 2>&1 \
-        && fail "RH-HYGIENE: documentdb-gateway user survived the erase" \
-        || pass "RH-HYGIENE: documentdb-gateway user removed"
+    # Kept so retained per-major gateway state has the same owner after a reinstall.
+    gw_passwd="$(getent passwd documentdb-gateway || true)"
+    if [[ -n "${gw_uid_before}" && "$(cut -d: -f3 <<<"${gw_passwd}")" == "${gw_uid_before}" \
+            && "$(cut -d: -f6 <<<"${gw_passwd}")" == /nonexistent \
+            && "$(cut -d: -f7 <<<"${gw_passwd}")" == */nologin ]]; then
+        pass "RH-HYGIENE: documentdb-gateway account kept with uid ${gw_uid_before}, no login"
+    else
+        fail "RH-HYGIENE: documentdb-gateway account not kept as a nologin account with uid ${gw_uid_before:-?} (got '${gw_passwd}')"
+    fi
 
     # bash caches command paths; drop the cache and test the filesystem.
     hash -r

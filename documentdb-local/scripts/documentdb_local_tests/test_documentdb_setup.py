@@ -3168,13 +3168,12 @@ class DocumentDBCommonSplitTests(unittest.TestCase):
         self.assertRegex(spec, r"(?m)^%postun\b")
         self.assertIn("documentdb-local@%{pg_version}.target", spec)
 
-    def test_common_deb_declares_replaces_for_pre_split_major(self):
-        # Unversioned Replaces: transfers ownership of the shared files from a
-        # pre-split documentdb-N. There is intentionally NO Breaks: — a rolling
-        # Breaks would contradict the deliberately-relaxed
-        # `Depends: documentdb-common (>= VERSION)` staggered-release floor.
+    def test_common_deb_does_not_stand_in_for_a_major(self):
+        # An unversioned Replaces made apt offer documentdb-common for a
+        # missing documentdb-N; no Breaks either, which would contradict the
+        # relaxed `Depends: documentdb-common (>= VERSION)` floor.
         script = COMMON_BUILD_SCRIPT.read_text(encoding="utf-8")
-        self.assertRegex(script, r"(?m)^Replaces: documentdb-16, documentdb-17, documentdb-18")
+        self.assertNotRegex(script, r"(?m)^Replaces:")
         self.assertNotRegex(script, r"(?m)^Breaks:")
 
     # ── Orchestration builds documentdb-common (DEB + RPM) ──────────
@@ -6601,6 +6600,24 @@ class RegisterGatewayQueriesLiveHbaIdentTests(unittest.TestCase):
         self.assertIn('IDENT_FILE="${live_ident_file}"', body,
                       "Verifier must override IDENT_FILE with the live value")
 
+    def test_a_data_directory_with_spaces_passes_the_identity_check(self):
+        shell = shutil.which("bash")
+        if not shell:
+            self.skipTest("bash not available")
+        script = (
+            'log() { echo "LOG: $*"; }; log_verbose() { :; }; die() { echo "DIE: $*"; exit 3; }\n'
+            # psql -tA output for each SHOW, as run_as_user would return it.
+            'run_as_user() { case "${@: -1}" in *data_directory*) echo "/srv/data space" ;;'
+            ' *hba_file*) echo "/srv/data space/pg_hba.conf" ;; *ident_file*) echo "/srv/data space/pg_ident.conf" ;; esac; }\n'
+            + _shell_function(self, GATEWAY_SETUP_SCRIPT, "verify_psql_connects_to_named_cluster") + "\n"
+            + 'PSQL=psql; SOCKET_DIR=/run/x; PG_PORT=5432; PG_OWNER=postgres; CLUSTER_NAME=""\n'
+            + 'PGDATA="/srv/data space"; HBA_FILE="$PGDATA/pg_hba.conf"; IDENT_FILE="$PGDATA/pg_ident.conf"\n'
+            + 'verify_psql_connects_to_named_cluster && printf "%s|%s\\n" "$HBA_FILE" "$IDENT_FILE"\n'
+        )
+        r = subprocess.run([shell, "-c", script], capture_output=True, text=True, timeout=20)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("/srv/data space/pg_hba.conf|/srv/data space/pg_ident.conf", r.stdout)
+
 
 class BrownfieldRestartGuardTests(unittest.TestCase):
     """In brownfield mode, when
@@ -7329,8 +7346,11 @@ class SetupReportsTrueStateTests(unittest.TestCase):
 
     def test_tls_home_refusal_runs_before_chown_and_on_reuse(self):
         body = self._shell_function("validate_required_arguments")
-        refuse = body.index('refuse_home_tls_path "${TLS_KEY_FILE}"')
-        self.assertLess(refuse, body.index("chown "),
+        self.assertIn('refuse_home_tls_path "${TLS_KEY_FILE}"', body)
+        self.assertNotIn("chown ", body)
+        preflight = self._shell_function("preflight_validation")
+        self.assertLess(preflight.index("validate_required_arguments"),
+                        preflight.index("grant_gateway_tls_access"),
                         "the refusal must come before setup touches the operator's files")
         persisted = self._shell_function("default_gateway_settings_from_persisted_state")
         self.assertIn('refuse_home_tls_path "${_p_cert}"', persisted)
@@ -9291,10 +9311,11 @@ class GatewayConnectHintEndpointTests(unittest.TestCase):
             ":9718": "127.0.0.1:9718",         # custom port honored
             "0.0.0.0:10260": "127.0.0.1:10260",  # wildcard host -> loopback
             "10.0.0.5:7000": "10.0.0.5:7000",  # explicit host:port
-            "[::1]:10260": "[::1]:10260",       # already-bracketed IPv6
-            "::1:10260": "[::1]:10260",         # bare IPv6 gets bracketed
+            "[::1]:10260": "127.0.0.1:10260",   # the gateway binds IPv6 loopback as 127.0.0.1
+            "::1:10260": "127.0.0.1:10260",
             "fe80::1:10260": "[fe80::1]:10260",
             "::10260": "127.0.0.1:10260",       # bare-colon host -> loopback
+            "[::1]": "127.0.0.1:10260",         # host only (kept on rerun) -> default port
         }
         for addr, expected in cases.items():
             with self.subTest(listen_addr=addr):
@@ -10833,6 +10854,22 @@ class ExtendedRumPackagedInstallTests(unittest.TestCase):
                           "the inferred requirement still belongs in the remedy")
 
 
+def _shell_words(test, command):
+    """Run a printed command through a real shell (sudo stubbed) and return its words."""
+    # dash where present (Debian's sh), in the C locale, as a pasted line would meet it.
+    r = subprocess.run([shutil.which("dash") or "sh", "-c", "sudo() { printf '%s\\0' \"$@\"; }\n" + command],
+                       capture_output=True, text=True, timeout=10, env={**os.environ, "LC_ALL": "C"})
+    test.assertEqual((r.returncode, r.stderr), (0, ""), command)
+    return r.stdout.split("\0")[:-1]
+
+
+def _notice_data_dir(test, out, major):
+    """The --data-dir value a kept-data notice prints, as a shell reads it."""
+    line = next(l for l in out.splitlines()
+                if f"To reuse it, run documentdb-setup --pg-version {major} --data-dir " in l)
+    return _shell_words(test, "sudo " + line.split("--data-dir ", 1)[1].split("; to delete it")[0])
+
+
 def _shell_function(test, path, name):
     """Return the full definition of shell function ``name`` in ``path``."""
     match = re.search(
@@ -11511,3 +11548,712 @@ class ProcpsDependencyTests(unittest.TestCase):
         text = SETUP_SCRIPT.read_text(encoding="utf-8")
         check = text.index('if [[ -z "${restore_scope}" ]] && ! command_exists pgrep; then')
         self.assertLess(check, text.index('_restore_strip_block "${config_file}"'))
+
+
+class MaintainerScriptSandbox:
+    """Render a DEB builder's maintainer scripts and run them against a
+    sandbox root, with a systemctl stub that tracks enablement in files."""
+
+    SYSTEMCTL = (
+        "#!/bin/bash\n"
+        'echo "$*" >> "$SANDBOX/systemctl.log"\n'
+        'mode="$1"; shift; [[ "$1" == --now ]] && shift\n'
+        'case "$mode" in\n'
+        '  is-enabled) [[ -e "$SANDBOX/enabled/$1" ]] && { echo enabled; exit 0; }; echo disabled; exit 1 ;;\n'
+        '  enable) [[ -e "$SANDBOX/enable-fails" ]] && exit 1\n'
+        '          mkdir -p "$SANDBOX/enabled"; touch "$SANDBOX/enabled/$1" ;;\n'
+        '  disable) rm -f "$SANDBOX/enabled/$1" ;;\n'
+        '  start) [[ -e "$SANDBOX/start-fails" ]] && exit 1 ;;\n'
+        "esac\nexit 0\n"
+    )
+
+    def __init__(self, test, root):
+        self.test = test
+        self.root = Path(root)
+        self.bin = self.root / "bin"
+        self.bin.mkdir(parents=True)
+        (self.root / "run" / "systemd" / "system").mkdir(parents=True)
+        self._tool("systemctl", self.SYSTEMCTL)
+        # Keep each built package's control directory instead of packing it.
+        self._tool("dpkg-deb", '#!/bin/bash\n[[ " $* " == *" --build "* ]] || { echo ./f; exit 0; }\n'
+                               'for a; do :; done\nsrc="${@: -2:1}"\n'
+                               'cp -r "$src/DEBIAN" "$a.DEBIAN"\n')
+        self._tool("dpkg-query", "#!/bin/sh\nexit 1\n")
+
+    def _tool(self, name, body):
+        (self.bin / name).write_text(body)
+        (self.bin / name).chmod(0o755)
+
+    def env(self):
+        return {**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}",
+                "SANDBOX": str(self.root)}
+
+    def render(self, build_script, *args):
+        out = self.root / "out"
+        r = subprocess.run(["bash", str(build_script), *args, "--output-dir", str(out)],
+                           capture_output=True, text=True, timeout=60, env=self.env())
+        self.test.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        control = next(out.glob("*.DEBIAN"))
+        scripts = {p.name: p.read_text() for p in control.iterdir()}
+        shutil.rmtree(out)
+        return scripts
+
+    def run(self, text, *args):
+        for path in ("/etc/", "/run/systemd/system", "/run/documentdb-local", "/var/lib/documentdb-local"):
+            text = text.replace(path, f"{self.root}{path}")
+        return subprocess.run(["bash", "-c", text, "script", *args], capture_output=True,
+                              text=True, timeout=30, env=self.env())
+
+    def enabled(self, unit):
+        return (self.root / "enabled" / unit).exists()
+
+    def enable(self, unit):
+        (self.root / "enabled").mkdir(exist_ok=True)
+        (self.root / "enabled" / unit).touch()
+
+    def log(self):
+        log = self.root / "systemctl.log"
+        return log.read_text() if log.exists() else ""
+
+
+class PackageLifecycleTests(unittest.TestCase):
+    """remove, reinstall and meta removal
+    must not leave a configured stack that no longer starts at boot."""
+
+    def setUp(self):
+        if not shutil.which("bash"):
+            self.skipTest("bash not available")
+        self._tmp = tempfile.TemporaryDirectory()
+        self.box = MaintainerScriptSandbox(self, self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _ok(self, script, *args):
+        r = self.box.run(script, *args)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        return r
+
+    def _configured(self, major="18"):
+        state = self.box.root / "etc" / "documentdb" / "local" / major
+        state.mkdir(parents=True)
+        (state / "setup.conf").write_text(f"PG_VERSION={major}\nDOCUMENTDB_MANAGED_POSTGRES=true\n")
+        return state
+
+    def _standalone(self):
+        return self.box.render(STANDALONE_BUILD_SCRIPT, "--version", "0.1.0", "--pg-version", "18")
+
+    def test_remove_then_reinstall_re_enables_the_target(self):
+        scripts = self._standalone()
+        state = self._configured()
+        target = "documentdb-local@18.target"
+        self.box.enable(target)
+
+        r = self.box.run(scripts["prerm"], "remove")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(self.box.enabled(target), "remove still stops and disables the target")
+        r = self.box.run(scripts["postinst"], "configure", "0.1.0")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(self.box.enabled(target), "reinstall must turn the target back on")
+        self.assertIn(f"enable {target}", self.box.log())
+        self.assertIn(f"start {target}", self.box.log())
+        self.assertFalse((state / "reenable-target").exists())
+
+        # A target that was not enabled (--no-enable) stays disabled.
+        (self.box.root / "enabled" / target).unlink()
+        self._ok(scripts["prerm"], "remove")
+        self._ok(scripts["postinst"], "configure", "0.1.0")
+        self.assertFalse(self.box.enabled(target))
+
+    def test_reinstall_with_systemd_offline_still_re_enables(self):
+        scripts = self._standalone()
+        state = self._configured()
+        target = "documentdb-local@18.target"
+        self.box.enable(target)
+        self._ok(scripts["prerm"], "remove")
+
+        # Reinstalled in a chroot or image build: link for next boot, don't start.
+        shutil.rmtree(self.box.root / "run" / "systemd")
+        r = self.box.run(scripts["postinst"], "configure", "0.1.0")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(self.box.enabled(target))
+        self.assertIn(f"enable {target}", self.box.log())
+        self.assertNotIn(f"start {target}", self.box.log())
+        self.assertFalse((state / "reenable-target").exists())
+
+    def test_failed_re_enable_keeps_the_marker(self):
+        scripts = self._standalone()
+        state = self._configured()
+        target = "documentdb-local@18.target"
+        self.box.enable(target)
+        self._ok(scripts["prerm"], "remove")
+
+        (self.box.root / "enable-fails").touch()
+        r = self.box.run(scripts["postinst"], "configure", "0.1.0")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("failed to re-enable", r.stderr)
+        self.assertTrue((state / "reenable-target").exists(), "next configure must retry")
+
+        (self.box.root / "enable-fails").unlink()
+        self._ok(scripts["postinst"], "configure", "0.1.0")
+        self.assertTrue(self.box.enabled(target))
+        self.assertFalse((state / "reenable-target").exists())
+
+    def test_failed_start_after_enable_drops_the_marker(self):
+        # The link exists, so a later configure must not re-enable a target
+        # the operator has since disabled.
+        scripts = self._standalone()
+        state = self._configured()
+        target = "documentdb-local@18.target"
+        self.box.enable(target)
+        self._ok(scripts["prerm"], "remove")
+
+        (self.box.root / "start-fails").touch()
+        r = self.box.run(scripts["postinst"], "configure", "0.1.0")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("failed to start", r.stderr)
+        self.assertTrue(self.box.enabled(target))
+        self.assertFalse((state / "reenable-target").exists())
+
+    def test_upgrade_does_not_touch_enablement(self):
+        scripts = self._standalone()
+        self._configured()
+        self._ok(scripts["prerm"], "upgrade", "0.2.0")
+        self._ok(scripts["postinst"], "configure", "0.1.0")
+        self.assertNotIn("enable", self.box.log().replace("is-enabled", ""))
+
+    def test_purge_forgets_the_target_state(self):
+        scripts = self._standalone()
+        state = self._configured()
+        self.box.enable("documentdb-local@18.target")
+        self._ok(scripts["prerm"], "remove")
+        self.assertTrue((state / "reenable-target").exists())
+        r = self.box.run(scripts["postrm"], "purge")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(state.exists(), "purge must leave nothing behind for this major")
+
+    def test_purge_names_a_kept_custom_data_dir(self):
+        # setup.conf is the only record of a custom --data-dir and purge deletes it.
+        spec = STANDALONE_SPEC.read_text(encoding="utf-8")
+        postun = spec[spec.index("\n%postun\n") + 9:spec.index("\n%posttrans\n")]
+        postun = postun.replace("%{pg_version}", "18").replace("%%", "%")
+        for name, script, args in (("deb", self._standalone()["postrm"], ("purge",)),
+                                   ("rpm", postun, ("0",))):
+            for custom in (True, False):
+                with self.subTest(name, custom=custom):
+                    data = self.box.root / "srv" / "team's équipe 18"
+                    default = self.box.root / "var" / "lib" / "documentdb-local" / "18" / "data"
+                    for d in (data, default):
+                        d.mkdir(parents=True, exist_ok=True)
+                        (d / "PG_VERSION").write_text("18\n")
+                    state = self.box.root / "etc" / "documentdb" / "local" / "18"
+                    state.mkdir(parents=True, exist_ok=True)
+                    recorded = data if custom else default
+                    (state / "setup.conf").write_text(f"DOCUMENTDB_MANAGED_POSTGRES=true\nDATA_DIR={recorded}\n")
+                    r = self.box.run(script, *args)
+                    self.assertEqual(r.returncode, 0, r.stderr)
+                    if custom:
+                        self.assertEqual(_notice_data_dir(self, r.stdout, 18), [str(data)])
+                    else:
+                        self.assertNotIn("To reuse it", r.stdout)
+                    self.assertNotIn("Kept the PostgreSQL data in /var/lib", r.stdout)
+                    self.assertEqual((recorded / "PG_VERSION").read_text(), "18\n",
+                                     "purge keeps the data it names")
+
+    def test_meta_removal_keeps_the_major_starting_at_boot(self):
+        scripts = self.box.render(META_BUILD_SCRIPT, "--version", "0.1.0", "--default-pg-major", "18")
+        wants = self.box.root / "etc" / "systemd" / "system" / "multi-user.target.wants"
+        wants.mkdir(parents=True)
+        (wants / "documentdb-local.target").symlink_to("/etc/systemd/system/documentdb-local.target")
+        r = self.box.run(scripts["postrm"], "remove")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(self.box.enabled("documentdb-local@18.target"))
+        self.assertFalse((wants / "documentdb-local.target").is_symlink())
+
+        # Without an enabled alias (--no-enable), meta removal enables nothing.
+        self._ok(scripts["postrm"], "purge")
+        self.assertEqual(self.box.log().count("enable documentdb-local@18.target"), 1)
+
+    def test_meta_purge_hint_names_the_extension_package(self):
+        meta = META_BUILD_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn('"postgresql-\\${DEFAULT_PG_MAJOR}-documentdb"', meta)
+        self.assertIn("postgresql-${DEFAULT_PG_MAJOR}-documentdb", meta.split("CONTROL")[1])
+        spec = (OSS_ROOT / "packaging" / "rpm" / "spec"
+                / "documentdb-local-meta.spec").read_text(encoding="utf-8")
+        self.assertIn('"postgresql%{default_pg_major}-documentdb"', spec)
+
+    def test_rpm_meta_erase_keeps_the_major_starting_at_boot(self):
+        spec = (OSS_ROOT / "packaging" / "rpm" / "spec"
+                / "documentdb-local-meta.spec").read_text(encoding="utf-8")
+        postun = spec[spec.index("\n%postun\n") + 9:spec.index("\n%files\n")]
+        postun = postun.replace("%{default_pg_major}", "18").replace("%%", "%")
+        self.box._tool("rpm", "#!/bin/sh\nexit 1\n")
+        wants = self.box.root / "etc" / "systemd" / "system" / "multi-user.target.wants"
+        wants.mkdir(parents=True)
+        (wants / "documentdb-local.target").symlink_to("/etc/systemd/system/documentdb-local.target")
+        self._ok(postun, "0")
+        self.assertTrue(self.box.enabled("documentdb-local@18.target"))
+        self.assertFalse((wants / "documentdb-local.target").is_symlink())
+        # Without an enabled alias (--no-enable), erase enables nothing.
+        self._ok(postun, "0")
+        self.assertEqual(self.box.log().count("enable documentdb-local@18.target"), 1)
+
+
+class ForeignGatewayUnitTests(unittest.TestCase):
+    """Greenfield setup for a second major
+    must not stop a gateway that another systemd unit runs on the same port."""
+
+    def _refuse(self, cgroup, pid=4242):
+        shell = shutil.which("bash")
+        if not shell:
+            self.skipTest("bash not available")
+        script = (
+            'die() { echo "DIE: $*"; exit 3; }\n'
+            "has_systemd_unit_file() { return 0; }\n"
+            f"cat() {{ printf '%s\\n' {shlex.quote(cgroup)}; }}\n"
+            + _shell_function(self, SETUP_SCRIPT, "setup_gateway_unit") + "\n"
+            + _shell_function(self, SETUP_SCRIPT, "refuse_foreign_unit_gateway") + "\n"
+            + "PG_VERSION=18; GATEWAY_PORT=10260\n"
+            + f"refuse_foreign_unit_gateway {pid} && echo ALLOWED\n"
+        )
+        return subprocess.run([shell, "-c", script], capture_output=True, text=True, timeout=20)
+
+    def test_a_workflow_b_gateway_is_refused(self):
+        for cgroup in ("0::/system.slice/documentdb-gateway.service",
+                       "0::/system.slice/documentdb-gateway.service/worker"):
+            r = self._refuse(cgroup)
+            self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+            self.assertIn("served by documentdb-gateway.service (pid 4242)", r.stdout)
+
+    def test_another_majors_gateway_is_refused(self):
+        r = self._refuse("1:name=systemd:/system.slice/system-documentdb\\x2dgateway\\x2dlocal.slice/"
+                         "documentdb-gateway-local@17.service")
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertIn("documentdb-gateway-local@17.service", r.stdout)
+
+    def test_a_user_manager_unit_with_our_name_is_refused(self):
+        r = self._refuse("0::/user.slice/user-1000.slice/user@1000.service/app.slice/"
+                         "documentdb-gateway-local@18.service")
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertIn("documentdb-gateway-local@18.service in a user manager", r.stdout)
+
+    def test_this_majors_unit_and_manual_gateways_are_allowed(self):
+        for cgroup in ("0::/system.slice/system-documentdb\\x2dgateway\\x2dlocal.slice/"
+                       "documentdb-gateway-local@18.service",
+                       "0::/user.slice/user-0.slice/session-3.scope",
+                       "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-term.scope", ""):
+            r = self._refuse(cgroup)
+            self.assertIn("ALLOWED", r.stdout, cgroup)
+
+    def test_the_unknown_owner_placeholder_is_not_read_as_init(self):
+        r = self._refuse("0::/system.slice/containerd.service", pid=1)
+        self.assertIn("ALLOWED", r.stdout, r.stdout + r.stderr)
+
+    def test_checked_in_preflight_and_before_the_takeover_stop(self):
+        preflight = _shell_function(self, SETUP_SCRIPT, "preflight_validation")
+        self.assertIn('refuse_foreign_unit_gateway "${gw_listener_pid}"', preflight)
+        self.assertLess(preflight.index("refuse_foreign_unit_gateway"),
+                        preflight.rindex("ensure_documentdb_runtime_user"))
+        start = _shell_function(self, SETUP_SCRIPT, "start_gateway")
+        self.assertLess(start.index('refuse_foreign_unit_gateway "${existing_gateway_pid}"'),
+                        start.index("Stopping manually started gateway"))
+
+
+class UpgradeFinishStepsTests(unittest.TestCase):
+    """A package upgrade never restarts
+    PostgreSQL, so it must say what finishes the upgrade."""
+
+    def setUp(self):
+        if not shutil.which("bash") or not shutil.which("dpkg"):
+            self.skipTest("needs bash and dpkg")
+        self._tmp = tempfile.TemporaryDirectory()
+        self.box = MaintainerScriptSandbox(self, self._tmp.name)
+        self.postinst = self.box.render(
+            STANDALONE_BUILD_SCRIPT, "--version", "0.2.0", "--pg-version", "18")["postinst"]
+        self.state = self.box.root / "etc" / "documentdb" / "local" / "18"
+        self.state.mkdir(parents=True)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    ODD_DIR = "/srv/team's ddb 18"
+
+    def _assert_steps_round_trip(self, script, *args):
+        # The printed commands must hand the recorded path back to a shell intact.
+        for systemd in (True, False):
+            if not systemd:
+                shutil.rmtree(self.box.root / "run" / "systemd")
+            r = self.box.run(script, *args)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            lines = {l.split(". ", 1)[0].strip(): _shell_words(self, l.split(". ", 1)[1])
+                     for l in r.stdout.splitlines() if l.startswith(("  1. ", "  2. "))}
+            update = lines["2"]
+            self.assertEqual(update[:3], ["documentdb-setup", "--pg-version", "18"])
+            self.assertEqual(update[update.index("--admin-user") + 1], "ADMIN_USER")
+            self.assertEqual(update[update.index("--data-dir") + 1], self.ODD_DIR)
+            self.assertEqual(update[update.index("--pg-port") + 1], "9800")
+            if not systemd:
+                restart = lines["1"]
+                self.assertEqual(restart[restart.index("-D") + 1], self.ODD_DIR)
+                self.assertEqual(restart[restart.index("-l") + 1], self.ODD_DIR + "/pglog.log")
+
+    def test_greenfield_upgrade_prints_restart_and_extension_update(self):
+        (self.state / "setup.conf").write_text(f"PG_PORT=9800\nDATA_DIR={self.ODD_DIR}\n")
+        r = self.box.run(self.postinst, "configure", "0.1.0")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("upgraded from 0.1.0", r.stdout)
+        self.assertIn("sudo systemctl restart documentdb-local@18.target", r.stdout)
+        # A re-run does not read DATA_DIR / PG_PORT back from setup.conf.
+        self.assertIn("sudo documentdb-setup --pg-version 18 --data-dir ", r.stdout)
+        self.assertNotIn("restart documentdb-local", self.box.log(), "the scriptlet must not restart PostgreSQL")
+        self._assert_steps_round_trip(self.postinst, "configure", "0.1.0")
+
+    def test_brownfield_upgrade_names_the_sql(self):
+        (self.state / "brownfield.conf").write_text("PG_VERSION=18\n")
+        r = self.box.run(self.postinst, "configure", "0.1.0")
+        self.assertIn("Restart the PostgreSQL 18 server", r.stdout)
+        self.assertIn("ALTER EXTENSION documentdb_core UPDATE; ALTER EXTENSION documentdb UPDATE;", r.stdout)
+
+    def test_no_notice_without_an_instance_or_on_a_same_version_reinstall(self):
+        r = self.box.run(self.postinst, "configure", "0.1.0")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("upgraded", r.stdout)
+        (self.state / "setup.conf").write_text("DATA_DIR=/d\n")
+        r = self.box.run(self.postinst, "configure", "0.2.0")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("upgraded", r.stdout)
+
+    def test_rpm_post_mirrors_the_deb_notice(self):
+        spec = STANDALONE_SPEC.read_text(encoding="utf-8")
+        post = spec[spec.index("\n%post\n"):spec.index("\n%preun\n")]
+        self.assertIn('if [ "$1" -ge 2 ] && [ -f "${state_dir}/setup.conf" ]', post)
+        self.assertIn("sudo systemctl restart documentdb-local@%{pg_version}.target", post)
+        self.assertIn("/usr/pgsql-%{pg_version}/bin/pg_ctl", post)
+        self.assertNotIn("systemctl restart documentdb-postgresql", post)
+        (self.state / "setup.conf").write_text(f"PG_PORT=9800\nDATA_DIR={self.ODD_DIR}\n")
+        self._assert_steps_round_trip(post.split("\n", 2)[2].replace("%{pg_version}", "18"), "2")
+
+    def test_readme_documents_unattended_upgrades_with_edited_conffiles(self):
+        readme = PACKAGING_README.read_text(encoding="utf-8")
+        self.assertIn("-o Dpkg::Options::=--force-confold", readme)
+        self.assertIn("ALTER EXTENSION documentdb_core UPDATE;", readme)
+
+
+class RetainedStateOwnershipTests(unittest.TestCase):
+    """Purge and dnf remove keep the
+    per-major data and gateway TLS state, so the gateway account must keep its
+    uid, kept files must get their owner back, and reusing the data must not be
+    silent."""
+
+    GATEWAY_POSTRM = OSS_ROOT / "documentdb-local" / "maintainer-scripts" / "gateway" / "postrm"
+    GATEWAY_SPEC = OSS_ROOT / "packaging" / "rpm" / "spec" / "documentdb-gateway.spec"
+
+    def test_purge_and_erase_keep_the_gateway_account(self):
+        for path in (self.GATEWAY_POSTRM, self.GATEWAY_SPEC):
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("userdel", text, path.name)
+            self.assertNotIn("groupdel", text, path.name)
+            self.assertIn("rm -rf /var/lib/documentdb-gateway", text,
+                          "gateway-owned global state is still removed")
+
+    def test_register_gateway_returns_kept_tls_files_to_the_gateway(self):
+        shell = shutil.which("bash")
+        if not shell or os.geteuid() != 0 or not shutil.which("useradd"):
+            self.skipTest("needs root and useradd")
+        text = GATEWAY_SETUP_SCRIPT.read_text(encoding="utf-8")
+        snippet = text[text.index('    install -d -m 0700 -o "${GW_OS_USER}"'):
+                       text.index('    log "TLS state directory pre-created')]
+        user = "ddbtestgw"
+        subprocess.run(["useradd", "--system", "--no-create-home", user], check=True)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                tls = Path(tmp) / "tls"
+                tls.mkdir()
+                (tls / "pkey.pem").write_text("k")
+                os.chown(tls / "pkey.pem", 54321, 54321)   # uid of a deleted account
+                (tls / "operator.pem").write_text("c")    # root-owned: left alone
+                (tls / "stray").write_text("s")           # not a file the gateway reads
+                os.chown(tls / "stray", 54321, 54321)
+                # A scratch target, so a regression cannot re-own a real system file.
+                target = Path(tmp) / "target"
+                target.write_text("t")
+                (tls / "cert.pem").symlink_to(target)
+                os.chown(tls / "cert.pem", 54321, 54321, follow_symlinks=False)
+                script = (f"set -e\ndie() {{ echo \"$*\" >&2; exit 1; }}\n"
+                          f"GW_OS_USER={user}; SECRET_DIR={tmp}\nf() {{\n{snippet}\n}}\nf\n")
+                r = subprocess.run([shell, "-c", script], capture_output=True, text=True, timeout=20)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                uid = int(subprocess.run(["id", "-u", user], capture_output=True, text=True).stdout)
+                self.assertEqual((tls / "pkey.pem").stat().st_uid, uid)
+                self.assertEqual((tls / "operator.pem").stat().st_uid, 0)
+                self.assertEqual((tls / "stray").stat().st_uid, 54321, "only the gateway's files")
+                self.assertEqual((tls / "cert.pem").lstat().st_uid, uid, "the link itself is handed back")
+                self.assertEqual(target.stat().st_uid, 0, "symlinks must not be followed")
+        finally:
+            subprocess.run(["userdel", user], capture_output=True)
+
+    def test_setup_asks_before_reusing_data_without_state(self):
+        shell = shutil.which("bash")
+        if not shell:
+            self.skipTest("bash not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            default, custom = Path(tmp) / "var" / "18" / "data", Path(tmp) / "custom"
+            for data in (default, custom):
+                data.mkdir(parents=True)
+                (data / "PG_VERSION").write_text("18\n")
+            body = "\n".join(_shell_function(self, SETUP_SCRIPT, fn) for fn in (
+                "confirm_kept_data_reuse", "prepare_self_managed_cluster")).replace(
+                "/etc/documentdb/local/", f"{tmp}/etc/").replace("/var/lib/documentdb-local/", f"{tmp}/var/")
+            script = (
+                'die() { echo "DIE: $*"; exit 3; }; log_warn() { echo "WARN: $*"; }; log_info() { :; }\n'
+                "enforce_gateway_pg_major_supported() { :; }\n"
+                "find_listener_pid() { echo 4242; }; resolve_live_cluster_metadata() { echo REUSED; exit 0; }\n"
+                + _shell_function(self, SETUP_SCRIPT, "confirm_or_apply") + "\n" + body + "\n"
+                + 'PG_VERSION=18; DATA_DIR="$1"; USERNAME=admin; DRY_RUN=false; YES=false\n'
+                + "confirm_kept_data_reuse\nprepare_self_managed_cluster\n"
+            )
+            run = lambda data, answer: subprocess.run(
+                [shell, "-c", script, "sh", str(data)], input=answer + "\n",
+                capture_output=True, text=True, timeout=20)
+            for answer, reused in (("y", True), ("d", False), ("", False)):
+                with self.subTest(answer=answer):
+                    r = run(default, answer)
+                    self.assertIn("documentdb-local-reset --pg-version 18 --confirm-destroy", r.stdout)
+                    self.assertEqual("REUSED" in r.stdout, reused, r.stdout + r.stderr)
+                    if not reused:
+                        self.assertEqual(r.returncode, 3)
+                        self.assertIn(f"DIE: Aborted: {default} was not reused.", r.stdout)
+            # Without setup.conf, reset would wipe only the default dir.
+            r = run(custom, "")
+            self.assertIn(f"stop here and delete {custom}.", r.stdout)
+            self.assertNotIn("documentdb-local-reset", r.stdout)
+
+    def test_restore_names_the_data_it_kept(self):
+        if not shutil.which("bash"):
+            self.skipTest("needs bash")
+        with tempfile.TemporaryDirectory() as tmp:
+            box = MaintainerScriptSandbox(self, tmp)
+            box._tool("id", '#!/bin/sh\n[ "$1" = -u ] && { echo 0; exit 0; }\nexec /usr/bin/id "$@"\n')
+            # The unscoped restore sweeps nohup gateways; never let it see or signal real ones.
+            box._tool("pgrep", "#!/bin/sh\nexit 1\n")
+            box._tool("pkill", "#!/bin/sh\nexit 1\n")
+            root = box.root
+            text = SETUP_SCRIPT.read_text(encoding="utf-8")
+            for path in ("/etc/", "/var/lib/documentdb-local", "/var/log/documentdb-local", "/run/"):
+                text = text.replace(path, f"{root}{path}")
+            stage_tools_lib(box.bin)
+            (box.bin / "setup.sh").write_text(text)
+            default = root / "var" / "lib" / "documentdb-local" / "17" / "data"
+            custom = root / "srv" / "team's équipe 18"
+            for major, data in (("17", default), ("18", custom)):
+                data.mkdir(parents=True)
+                (data / "PG_VERSION").write_text(f"{major}\n")
+                state = root / "etc" / "documentdb" / "local" / major
+                state.mkdir(parents=True)
+                (state / "setup.conf").write_text(
+                    "DOCUMENTDB_MANAGED_POSTGRES=true\nDOCUMENTDB_MODE=greenfield\n"
+                    f"PG_VERSION={major}\nDATA_DIR={data}\n")
+            r = subprocess.run(["bash", str(box.bin / "setup.sh"), "--restore", "--yes"],
+                               capture_output=True, text=True, timeout=60, env={**box.env(), "LC_ALL": "C"})
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn(f"Kept the PostgreSQL data in {default}. A later 'documentdb-setup --pg-version 17' "
+                          "reuses it; to delete it, run 'documentdb-local-reset --pg-version 17 --confirm-destroy'.",
+                          r.stdout)
+            self.assertTrue((default / "PG_VERSION").is_file() and (custom / "PG_VERSION").is_file(),
+                            "--restore keeps the data it reports as kept")
+            # setup.conf is gone, so a custom dir must be named with how to reuse or drop it.
+            self.assertIn(f"Kept the PostgreSQL data in {custom}. To reuse it", r.stdout)
+            self.assertEqual(_notice_data_dir(self, r.stdout, 18), [str(custom)])
+
+    def test_readme_documents_adopt_or_wipe(self):
+        readme = PACKAGING_README.read_text(encoding="utf-8")
+        self.assertIn("## After removing or purging", readme)
+        self.assertIn("system account is kept on purge", readme)
+
+
+class RegisterGatewayRerunKeepsListenAddrTests(unittest.TestCase):
+    """A documentdb-register-gateway re-run
+    without --listen-addr must not move the gateway back to the default port."""
+
+    def _write(self, env_text, listen_addr=""):
+        shell = shutil.which("bash")
+        if not shell:
+            self.skipTest("bash not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / "gateway.env"
+            env.write_text(env_text)
+            script = (
+                f". {TOOLS_LIB}\n"
+                'log() { echo "LOG: $*"; }; die() { echo "DIE: $*"; exit 3; }\n'
+                "ensure_etc_dir() { :; }; chgrp() { :; }\n"
+                + _shell_function(self, GATEWAY_SETUP_SCRIPT, "create_temp_in_dir") + "\n"
+                + _shell_function(self, GATEWAY_SETUP_SCRIPT, "write_gateway_env_fragment") + "\n"
+                + f"GATEWAY_ENV_FILE={env}; SECRET_FILE=/var/lib/x/pg-url\n"
+                + f"GATEWAY_LISTEN_ADDR={shlex.quote(listen_addr)}\n"
+                + "write_gateway_env_fragment\n"
+            )
+            r = subprocess.run([shell, "-c", script], capture_output=True, text=True, timeout=20)
+            self.assertEqual((r.returncode, r.stderr), (0, ""), r.stdout)
+            return r.stdout, env.read_text()
+
+    BLOCK = ("# >>> documentdb-register-gateway managed env >>>\n"
+             "DOCUMENTDB_PG_URL_FILE=/var/lib/x/pg-url\n"
+             "DOCUMENTDB_LISTEN_ADDR=:10261\n"
+             "# <<< documentdb-register-gateway managed env <<<\n")
+
+    def test_rerun_without_listen_addr_keeps_the_previous_one(self):
+        out, env = self._write("OPERATOR=1\n" + self.BLOCK.replace(
+            "DOCUMENTDB_PG_URL_FILE=/var/lib/x/pg-url", "DOCUMENTDB_PG_URL_FILE=/old"))
+        self.assertIn("DOCUMENTDB_PG_URL_FILE=/var/lib/x/pg-url", env, "the block must be rewritten")
+        self.assertIn("OPERATOR=1", env)
+        self.assertIn("DOCUMENTDB_LISTEN_ADDR=:10261", env)
+        self.assertIn("Keeping DOCUMENTDB_LISTEN_ADDR=:10261", out)
+
+    def test_rerun_keeps_forms_the_gateway_accepts(self):
+        # The gateway trims the value and reads a bare port as ":port".
+        for stored, kept in (("12004", ":12004"), ('" 127.0.0.1:12005 "', "127.0.0.1:12005"),
+                             ("[::1]", "[::1]")):
+            with self.subTest(stored=stored):
+                _, env = self._write(self.BLOCK.replace(":10261", stored))
+                self.assertIn(f"DOCUMENTDB_LISTEN_ADDR={kept}\n", env)
+
+    def test_rerun_drops_a_bare_host(self):
+        # The gateway reads an unbracketed word without a colon as a port and rejects it.
+        for stored in ("127.0.0.1", "localhost"):
+            with self.subTest(stored=stored):
+                out, env = self._write(self.BLOCK.replace(":10261", stored))
+                self.assertNotIn("DOCUMENTDB_LISTEN_ADDR", env)
+                self.assertNotIn("Keeping DOCUMENTDB_LISTEN_ADDR", out)
+
+    def test_an_explicit_listen_addr_still_wins(self):
+        _, env = self._write(self.BLOCK, "127.0.0.1:10262")
+        self.assertIn("DOCUMENTDB_LISTEN_ADDR=127.0.0.1:10262", env)
+        self.assertNotIn(":10261", env)
+
+    def test_a_kept_account_alone_does_not_satisfy_the_prerequisite(self):
+        # Purge keeps the account; a direct run must still find the gateway runtime.
+        shell = shutil.which("bash")
+        if not shell or os.path.exists("/usr/bin/documentdb-gateway"):
+            self.skipTest("needs bash and no installed gateway")
+        func = _shell_function(self, GATEWAY_SETUP_SCRIPT, "check_gateway_prereq")
+        base = 'getent() { return 0; }; die() { echo "DIE: $*"; exit 3; }; GW_OS_USER=documentdb-gateway\n' + func + "\n"
+        r = subprocess.run([shell, "-c", base + "check_gateway_prereq"], capture_output=True, text=True, timeout=10)
+        self.assertIn("documentdb-gateway package is not installed", r.stdout)
+        r = subprocess.run([shell, "-c", base + "DOCUMENTDB_REGISTER_GATEWAY_QUIET=1 check_gateway_prereq"],
+                           capture_output=True, text=True, timeout=10)
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_an_operator_override_after_the_block_stays_effective(self):
+        # The rewritten block moves last; it must not resurrect the overridden wildcard.
+        for override in ("DOCUMENTDB_LISTEN_ADDR=127.0.0.1:10260", "  DOCUMENTDB_LISTEN_ADDR=127.0.0.1:10260",
+                         "export DOCUMENTDB_LISTEN_ADDR='127.0.0.1:10260'"):
+            with self.subTest(override=override):
+                _, env = self._write(self.BLOCK.replace(":10261", ":10260") + override + "\n")
+                last = [l for l in env.splitlines() if "DOCUMENTDB_LISTEN_ADDR=" in l][-1]
+                self.assertEqual(last, "DOCUMENTDB_LISTEN_ADDR=127.0.0.1:10260")
+
+
+class ResetLeavesNothingEnabledTests(unittest.TestCase):
+    """documentdb-local-reset must not leave
+    the meta alias enabled, or the legacy env file, for the major it wiped."""
+
+    def test_reset_disables_the_alias_and_removes_legacy_state(self):
+        if not shutil.which("bash"):
+            self.skipTest("needs bash")
+        with tempfile.TemporaryDirectory() as tmp:
+            box = MaintainerScriptSandbox(self, tmp)
+            # Every path is sandboxed, so only the root check needs faking.
+            box._tool("id", '#!/bin/sh\n[ "$1" = -u ] && { echo 0; exit 0; }\nexec /usr/bin/id "$@"\n')
+            root = box.root
+            text = RESET_SCRIPT.read_text(encoding="utf-8")
+            for path in ("/etc/", "/var/lib/documentdb-local", "/var/log/documentdb-local",
+                         "/run/documentdb-local", "/run/documentdb-gateway"):
+                text = text.replace(path, f"{root}{path}")
+            stage_tools_lib(box.bin)
+            (box.bin / "reset.sh").write_text(text)
+            etc = root / "etc"
+            (etc / "systemd" / "system").mkdir(parents=True)
+            (etc / "systemd" / "system" / "documentdb-local.target").write_text(
+                "[Unit]\nRequires=documentdb-local@18.target\n")
+            box.enable("documentdb-local.target")
+            (etc / "documentdb" / "local" / "18").mkdir(parents=True)
+            (etc / "documentdb" / "documentdb-postgresql.env").write_text(
+                "DOCUMENTDB_MANAGED_POSTGRES=true\nPG_VERSION=18\n")
+            (root / "var" / "lib" / "documentdb-local" / "18" / "data").mkdir(parents=True)
+
+            r = subprocess.run(["bash", str(box.bin / "reset.sh"), "--pg-version", "18",
+                                "--confirm-destroy"], capture_output=True, text=True,
+                               timeout=60, env=box.env())
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertFalse(box.enabled("documentdb-local.target"))
+            self.assertFalse((etc / "documentdb" / "documentdb-postgresql.env").exists())
+
+            # Another major's alias and legacy file are not this reset's to touch.
+            (etc / "systemd" / "system" / "documentdb-local.target").write_text(
+                "[Unit]\nRequires=documentdb-local@17.target\n")
+            box.enable("documentdb-local.target")
+            (etc / "documentdb" / "documentdb-postgresql.env").write_text("PG_VERSION=17\n")
+            (root / "var" / "lib" / "documentdb-local" / "18" / "data").mkdir(parents=True)
+            r = subprocess.run(["bash", str(box.bin / "reset.sh"), "--pg-version", "18",
+                                "--confirm-destroy"], capture_output=True, text=True,
+                               timeout=60, env=box.env())
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertFalse((root / "var" / "lib" / "documentdb-local" / "18" / "data").exists())
+            self.assertTrue(box.enabled("documentdb-local.target"))
+            self.assertTrue((etc / "documentdb" / "documentdb-postgresql.env").exists())
+
+            # What an earlier reset left behind is still this major's to clean.
+            (etc / "systemd" / "system" / "documentdb-local.target").write_text(
+                "[Unit]\nRequires=documentdb-local@18.target\n")
+            (etc / "documentdb" / "documentdb-postgresql.env").write_text("PG_VERSION=18\n")
+            r = subprocess.run(["bash", str(box.bin / "reset.sh"), "--pg-version", "18",
+                                "--confirm-destroy"], capture_output=True, text=True,
+                               timeout=60, env=box.env())
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertFalse(box.enabled("documentdb-local.target"), r.stdout)
+            self.assertFalse((etc / "documentdb" / "documentdb-postgresql.env").exists())
+
+
+class SetupRequiresTheMajorPackageTests(unittest.TestCase):
+    """Setup must not configure a major whose
+    documentdb-N is missing: autoremove could then take the running install's
+    gateway and tools."""
+
+    def _require(self, installed, tool="dpkg-query"):
+        shell = shutil.which("bash")
+        if not shell:
+            self.skipTest("bash not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp) / tool
+            if tool == "dpkg-query":
+                stub.write_text("#!/bin/bash\n" + "".join(
+                    f'[[ "${{@: -1}}" == {p} ]] && {{ printf installed; exit 0; }}\n' for p in installed)
+                    + "exit 1\n")
+            else:
+                stub.write_text("#!/bin/bash\n" + "".join(
+                    f'[[ "${{@: -1}}" == {p} ]] && exit 0\n' for p in installed) + "exit 1\n")
+            stub.chmod(0o755)
+            script = (
+                'die() { echo "DIE: $*"; exit 3; }\n'
+                + f'command_exists() {{ [[ "$1" == {tool} ]]; }}\n'
+                + _shell_function(self, SETUP_SCRIPT, "require_major_package") + "\n"
+                + f"PATH={tmp}:$PATH; PG_VERSION=17\nrequire_major_package && echo OK\n"
+            )
+            return subprocess.run([shell, "-c", script], capture_output=True, text=True, timeout=20)
+
+    def test_refuses_a_major_without_its_package(self):
+        r = self._require(["documentdb-common", "documentdb-18"])
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertIn("sudo apt install documentdb-17", r.stdout)
+        r = self._require(["documentdb-common", "documentdb-18"], tool="rpm")
+        self.assertIn("sudo dnf install documentdb-17", r.stdout)
+
+    def test_allows_the_major_with_its_package_and_dev_hosts(self):
+        self.assertIn("OK", self._require(["documentdb-common", "documentdb-17"]).stdout)
+        self.assertIn("OK", self._require(["documentdb-common", "documentdb-17"], tool="rpm").stdout)
+        self.assertIn("OK", self._require([]).stdout, "no packaged documentdb-common: nothing to hold")
+
+    def test_runs_before_any_host_mutation(self):
+        preflight = _shell_function(self, SETUP_SCRIPT, "preflight_validation")
+        self.assertLess(preflight.index("require_major_package"),
+                        preflight.index("\n    resolve_runtime_paths\n"))

@@ -174,6 +174,33 @@ case "\$1" in
             fi
         fi
 
+        # Maintainer scripts never restart PostgreSQL (§7), so say what finishes the upgrade.
+        if [ -n "\${2:-}" ] && dpkg --compare-versions "\$2" lt "${VERSION}" 2>/dev/null; then
+            state_dir="/etc/documentdb/local/${PG_VERSION}"
+            restart_step="" update_step=""
+            if [ -f "\${state_dir}/setup.conf" ]; then
+                # Only printed, inside single quotes; close and reopen around any ' in the path.
+                data_dir="\$(grep -E '^DATA_DIR=' "\${state_dir}/setup.conf" | head -n 1 | cut -d= -f2- | sed "s/'/'\"'\"'/g")"
+                pg_port="\$(grep -E '^PG_PORT=' "\${state_dir}/setup.conf" | head -n 1 | cut -d= -f2-)"
+                if [ -d /run/systemd/system ]; then
+                    restart_step="sudo systemctl restart documentdb-local@${PG_VERSION}.target  # set up with --no-enable? restart documentdb-postgresql@${PG_VERSION}.service instead"
+                else
+                    restart_step="sudo -u documentdb-local /usr/lib/postgresql/${PG_VERSION}/bin/pg_ctl -D '\${data_dir}' -l '\${data_dir}/pglog.log' restart"
+                fi
+                # Setup does not read these back from setup.conf, so name them.
+                update_step="sudo documentdb-setup --pg-version ${PG_VERSION}\${data_dir:+ --data-dir '\${data_dir}'}\${pg_port:+ --pg-port \${pg_port}} --admin-user ADMIN_USER  # replace ADMIN_USER with your admin user, add --no-enable if you used it; runs ALTER EXTENSION ... UPDATE and sets that user's password again"
+            elif [ -f "\${state_dir}/brownfield.conf" ]; then
+                restart_step="Restart the PostgreSQL ${PG_VERSION} server DocumentDB is attached to."
+                update_step="In its postgres database: ALTER EXTENSION documentdb_core UPDATE; ALTER EXTENSION documentdb UPDATE; (and documentdb_extended_rum, if installed)"
+            fi
+            if [ -n "\${restart_step}" ]; then
+                echo "DocumentDB for PostgreSQL ${PG_VERSION} was upgraded from \$2. PostgreSQL keeps the old build"
+                echo "loaded and the extensions keep their old version until you finish the upgrade:"
+                echo "  1. \${restart_step}"
+                echo "  2. \${update_step}"
+            fi
+        fi
+
         if [ -z "\${2:-}" ]; then
             # On a fresh install, advertise the next steps for this
             # per-major standalone — BUT suppress when the documentdb
@@ -214,6 +241,26 @@ case "\$1" in
                 echo "first-user bootstrap, and enables documentdb-local@${PG_VERSION}.target so the stack survives reboot.)"
             fi
         fi
+
+        # prerm left this marker when it disabled an enabled target on remove.
+        reenable_marker="/etc/documentdb/local/${PG_VERSION}/reenable-target"
+        if [ -f "\${reenable_marker}" ] \\
+                && ! [ -f /etc/documentdb/local/${PG_VERSION}/setup.conf ] && ! [ -f /etc/documentdb/local/${PG_VERSION}/brownfield.conf ]; then
+            # The stack was reset since; nothing left to re-enable.
+            rm -f "\${reenable_marker}"
+        elif [ -f "\${reenable_marker}" ] && command -v systemctl >/dev/null 2>&1; then
+            echo "Re-enabling documentdb-local@${PG_VERSION}.target, which was enabled before documentdb-${PG_VERSION} was removed."
+            # Drop the marker once the boot link exists, so only a failed enable is retried
+            # on the next configure; offline (chroot, image build) nothing is started.
+            if systemctl enable "documentdb-local@${PG_VERSION}.target" >/dev/null 2>&1; then
+                rm -f "\${reenable_marker}"
+                if [ -d /run/systemd/system ] && ! systemctl start "documentdb-local@${PG_VERSION}.target" >/dev/null 2>&1; then
+                    echo "WARNING: failed to start documentdb-local@${PG_VERSION}.target; run: sudo systemctl start documentdb-local@${PG_VERSION}.target" >&2
+                fi
+            else
+                echo "WARNING: failed to re-enable documentdb-local@${PG_VERSION}.target; run: sudo systemctl enable --now documentdb-local@${PG_VERSION}.target" >&2
+            fi
+        fi
         ;;
 esac
 
@@ -240,6 +287,11 @@ set -e
 case "\$1" in
     remove)
         if { [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; }; then
+            # Kept until purge so a reinstall re-enables the target (postinst).
+            if [ "\$(systemctl is-enabled "documentdb-local@${PG_VERSION}.target" 2>/dev/null)" = enabled ] \\
+                    && [ -d /etc/documentdb/local/${PG_VERSION} ]; then
+                : > /etc/documentdb/local/${PG_VERSION}/reenable-target 2>/dev/null || true
+            fi
             systemctl stop "documentdb-local@${PG_VERSION}.target" 2>/dev/null || true
             systemctl disable "documentdb-local@${PG_VERSION}.target" 2>/dev/null || true
         else
@@ -346,6 +398,7 @@ documentdb_restore_debian_tune_fragment() {
 
 case "$1" in
     purge)
+        rm -f "/etc/documentdb/local/${PKG_PG_VERSION}/reenable-target" 2>/dev/null || true
         for sf in "/etc/documentdb/local/${PKG_PG_VERSION}/setup.conf" \
                   "/etc/documentdb/local/${PKG_PG_VERSION}/brownfield.conf" \
                   "/etc/documentdb/local/${PKG_PG_VERSION}/gateway-setup.state"; do
@@ -353,6 +406,13 @@ case "$1" in
             hba_file="$(grep -E '^HBA_FILE=' "${sf}" | head -1 | cut -d= -f2- || true)"
             ident_file="$(grep -E '^IDENT_FILE=' "${sf}" | head -1 | cut -d= -f2- || true)"
             config_file="$(grep -E '^CONFIG_FILE=' "${sf}" | head -1 | cut -d= -f2- || true)"
+            # setup.conf is the only record of a custom --data-dir; name it before it goes.
+            data_dir="$(grep -E '^DATA_DIR=' "${sf}" | head -1 | cut -d= -f2- || true)"
+            if [ "${sf##*/}" = setup.conf ] && [ -n "${data_dir}" ] \
+                    && [ "${data_dir}" != "/var/lib/documentdb-local/${PKG_PG_VERSION}/data" ] && [ -f "${data_dir}/PG_VERSION" ]; then
+                data_dir_q="$(printf '%s' "${data_dir}" | sed "s/'/'\"'\"'/g")"
+                echo "Kept the PostgreSQL data in ${data_dir}. To reuse it, run documentdb-setup --pg-version ${PKG_PG_VERSION} --data-dir '${data_dir_q}'; to delete it, remove that directory (documentdb-local-reset no longer knows it)."
+            fi
             target_cluster="$(grep -E '^TARGET_CLUSTER=' "${sf}" | head -1 | cut -d= -f2- || true)"
             [ -n "${hba_file}" ] && documentdb_strip_managed_block "${hba_file}" \
                 "# >>> documentdb-setup managed hba >>>" \

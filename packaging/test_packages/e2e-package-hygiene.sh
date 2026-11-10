@@ -153,6 +153,7 @@ fi
 
 # ── RESIDUE (P3): purge everything, then audit ─────────────────────────
 log "Detaching and purging every DocumentDB package"
+gw_uid_before="$(id -u documentdb-gateway 2>/dev/null || true)"
 documentdb-setup --restore --yes > /tmp/e2e-hyg-restore.log 2>&1 || true
 documentdb-local-reset --pg-version "${PG_MAJOR}" --confirm-destroy \
     > /tmp/e2e-hyg-reset.log 2>&1 || true
@@ -202,11 +203,15 @@ for tree in /etc/documentdb /var/lib/documentdb-gateway; do
     fi
 done
 
-# The gateway system user must be gone (its home was purged).
-if id -u documentdb-gateway >/dev/null 2>&1; then
-    fail "RESIDUE: documentdb-gateway system user survived the purge"
+# The gateway account outlives purge so retained per-major state keeps its
+# owner across a reinstall; it must stay a non-login system account.
+gw_passwd="$(getent passwd documentdb-gateway || true)"
+if [[ -n "${gw_uid_before}" && "$(cut -d: -f3 <<<"${gw_passwd}")" == "${gw_uid_before}" \
+        && "$(cut -d: -f6 <<<"${gw_passwd}")" == /nonexistent \
+        && "$(cut -d: -f7 <<<"${gw_passwd}")" == */nologin ]]; then
+    pass "RESIDUE: documentdb-gateway account kept with uid ${gw_uid_before}, no login"
 else
-    pass "RESIDUE: documentdb-gateway system user removed"
+    fail "RESIDUE: documentdb-gateway account not kept as a nologin account with uid ${gw_uid_before:-?} (got '${gw_passwd}')"
 fi
 
 # Binaries must be gone from PATH. (documentdb-setup may legitimately be

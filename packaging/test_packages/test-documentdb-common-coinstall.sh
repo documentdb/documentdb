@@ -15,11 +15,11 @@
 #      shared files.
 #   C. Upgrade from a PRE-SPLIT documentdb-17 (which owned /usr/bin/documentdb-setup)
 #      to documentdb-common + payload-free documentdb-17 — ownership must
-#      transfer to documentdb-common with no file-ownership error. DEB proves
-#      this via the unversioned Replaces: on documentdb-common (plain dpkg -i,
-#      no --force-overwrite); RPM proves it via rpm's identical-file digest
-#      takeover (plain rpm -U, no --replacefiles), so the synthetic pre-split
-#      package ships the same documentdb-setup content documentdb-common does.
+#      transfer to documentdb-common with no file-ownership error. RPM only:
+#      rpm's identical-file digest takeover (plain rpm -U, no --replacefiles),
+#      so the synthetic pre-split package ships the same documentdb-setup
+#      content documentdb-common does. The pre-split DEB was never released and
+#      documentdb-common has no Replaces:, so the DEB half is skipped.
 #
 # Run inside a Debian/Ubuntu container (--type deb, needs dpkg-deb) or a
 # RHEL-family container (--type rpm, needs rpmbuild). PostgreSQL/gateway
@@ -146,29 +146,9 @@ check "documentdb-setup removed once documentdb-common is gone" setup_absent
 echo "=== Scenario C: upgrade from a PRE-SPLIT documentdb-17 that owned documentdb-setup ==="
 fakedir="$(mktemp -d)"
 if [[ "${PACKAGE_TYPE}" == "deb" ]]; then
-    fk="${fakedir}/documentdb-17"
-    mkdir -p "${fk}/DEBIAN" "${fk}/usr/bin"
-    printf '#!/bin/sh\necho pre-split\n' > "${fk}/usr/bin/documentdb-setup"
-    chmod 0755 "${fk}/usr/bin/documentdb-setup"
-    cat > "${fk}/DEBIAN/control" <<CTL
-Package: documentdb-17
-Version: ${OLD_VERSION}
-Architecture: all
-Maintainer: DocumentDB Packaging <documentdb-packaging-maintainers@microsoft.com>
-Description: synthetic pre-split documentdb-17 that owns the shared file
-CTL
-    dpkg-deb --build --root-owner-group "${fk}" "${fakedir}/old17.deb" >/dev/null
-    pkg_install "${fakedir}/old17.deb" || die "installing synthetic pre-split documentdb-17 failed"
-    check "pre-split documentdb-17 owns documentdb-setup" bash -c '[ "$(dpkg -S /usr/bin/documentdb-setup | cut -d: -f1)" = documentdb-17 ]'
-    # Plain dpkg -i (no --auto-deconfigure): unversioned Replaces alone must
-    # permit the file takeover.
-    if dpkg -i --force-depends "${COMMON}" "${P17}" >"${fakedir}/up.log" 2>&1; then
-        check "upgrade succeeded (no overwrite error)" bash -c '! grep -q "trying to overwrite" '"${fakedir}/up.log"
-    else
-        echo "  FAIL: upgrade transaction errored"; cat "${fakedir}/up.log"; FAIL=$((FAIL + 1))
-    fi
-    check "documentdb-setup now owned by documentdb-common after upgrade" owned_by_common
-    pkg_remove documentdb-17 documentdb-common >/dev/null 2>&1 || true
+    # documentdb-common declares no Replaces: (the pre-split package was never
+    # released), so a DEB takeover is no longer a supported path.
+    echo "  SKIP: deb pre-split takeover (no Replaces: on documentdb-common)"
 else
     fk="${fakedir}/rpmbuild"
     mkdir -p "${fk}"/{SPECS,BUILDROOT}

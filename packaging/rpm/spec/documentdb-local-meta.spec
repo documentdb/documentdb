@@ -37,7 +37,8 @@ To install a specific PG major, use: sudo dnf install documentdb-N
 
 To fully uninstall, run:
   sudo dnf remove documentdb documentdb-%{default_pg_major} documentdb-common \
-                  documentdb-gateway documentdb-postgresql-tools
+                  documentdb-gateway documentdb-postgresql-tools \
+                  postgresql%{default_pg_major}-documentdb
 
 'dnf remove documentdb' alone only removes this meta package; the
 per-major stand-alone package, the gateway runtime, and the
@@ -125,6 +126,11 @@ echo "first-user bootstrap, and enables documentdb-local.target so the stack sur
 # host), so unconditional removal is safe.
 if [ "$1" -eq 0 ]; then
     if command -v systemctl >/dev/null 2>&1; then
+        # setup enabled only the alias; enable the per-major target it pulled
+        # in so the stack still starts at boot without it. Mirrors the DEB postrm.
+        if [ -L /etc/systemd/system/multi-user.target.wants/documentdb-local.target ]; then
+            systemctl enable "documentdb-local@%{default_pg_major}.target" >/dev/null 2>&1 || true
+        fi
         # Disable before deleting the unit; systemctl reads [Install]
         # metadata from the unit file to locate enablement symlinks.
         systemctl disable documentdb-local.target >/dev/null 2>&1 || true
@@ -161,7 +167,8 @@ if [ "$1" -eq 0 ]; then
     for pkg in "documentdb-%{default_pg_major}" \
                "documentdb-common" \
                "documentdb-gateway" \
-               "documentdb-postgresql-tools"; do
+               "documentdb-postgresql-tools" \
+               "postgresql%{default_pg_major}-documentdb"; do
         if rpm -q "$pkg" >/dev/null 2>&1; then
             remaining_pkgs="${remaining_pkgs} $pkg"
         fi
