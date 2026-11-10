@@ -17,7 +17,10 @@
 #include <utils/snapmgr.h>
 #include <utils/lsyscache.h>
 #include <utils/inval.h>
+#include <access/heapam.h>
 #include <access/table.h>
+#include <commands/progress.h>
+#include <utils/backend_progress.h>
 
 #include "commands/parse_error.h"
 #include "commands/commands_common.h"
@@ -1709,9 +1712,69 @@ IndexCheckExclusion(Relation heapRelation,
 								 true,  /* buffer access strategy OK */
 								 true); /* syncscan OK */
 
+	HeapScanDesc heapScan = (HeapScanDesc) scan;
+	int64 blocksTotal = heapScan->rs_nblocks;
+	int64 tuplesTotal = Max((int64) heapRelation->rd_rel->reltuples, 0);
+	pgstat_progress_start_command(PROGRESS_COMMAND_CREATE_INDEX,
+								  RelationGetRelid(heapRelation));
+	const int progressIndices[] = {
+		PROGRESS_CREATEIDX_COMMAND,
+		PROGRESS_CREATEIDX_PHASE,
+		PROGRESS_CREATEIDX_INDEX_OID,
+		PROGRESS_CREATEIDX_ACCESS_METHOD_OID,
+		PROGRESS_SCAN_BLOCKS_TOTAL,
+		PROGRESS_CREATEIDX_TUPLES_TOTAL
+	};
+	const int64 progressValues[] = {
+		PROGRESS_CREATEIDX_COMMAND_CREATE_CONCURRENTLY,
+		PROGRESS_CREATEIDX_PHASE_VALIDATE_TABLESCAN,
+		RelationGetRelid(indexRelation),
+		indexRelation->rd_rel->relam,
+		blocksTotal,
+		tuplesTotal
+	};
+	pgstat_progress_update_multi_param(lengthof(progressIndices), progressIndices,
+									   progressValues);
+
+	int64 tuplesDone = 0;
+	int64 blocksDone = 0;
+	BlockNumber block = InvalidBlockNumber;
 	while (table_scan_getnextslot(scan, ForwardScanDirection, slot))
 	{
 		CHECK_FOR_INTERRUPTS();
+
+		BlockNumber currentBlock = ItemPointerGetBlockNumber(&slot->tts_tid);
+		if (currentBlock != block)
+		{
+			if (block == InvalidBlockNumber)
+			{
+				block = heapScan->rs_startblock;
+			}
+
+			if (currentBlock > block)
+			{
+				/* Moved forward in blocks */
+				blocksDone += (currentBlock - block);
+			}
+			else if (currentBlock < block)
+			{
+				/* Wraparound of blocks */
+				blocksDone += blocksTotal - block + currentBlock;
+			}
+
+			const int progressDoneIndices[] = {
+				PROGRESS_SCAN_BLOCKS_DONE,
+				PROGRESS_CREATEIDX_TUPLES_DONE
+			};
+			const int64 progressDoneValues[] = { blocksDone, tuplesDone };
+			pgstat_progress_update_multi_param(lengthof(progressDoneIndices),
+											   progressDoneIndices, progressDoneValues);
+
+			/* Update progress for blocks done so far */
+			block = currentBlock;
+		}
+
+		tuplesDone++;
 
 		/*
 		 * In a partial index, ignore tuples that don't satisfy the predicate.
@@ -1744,6 +1807,8 @@ IndexCheckExclusion(Relation heapRelation,
 		MemoryContextReset(econtext->ecxt_per_tuple_memory);
 	}
 
+	pgstat_progress_update_param(PROGRESS_SCAN_BLOCKS_DONE, blocksTotal);
+	pgstat_progress_update_param(PROGRESS_CREATEIDX_TUPLES_DONE, tuplesDone);
 	table_endscan(scan);
 	UnregisterSnapshot(snapshot);
 
@@ -1754,6 +1819,7 @@ IndexCheckExclusion(Relation heapRelation,
 	/* These may have been pointing to the now-gone estate */
 	indexInfo->ii_ExpressionsState = NIL;
 	indexInfo->ii_PredicateState = NULL;
+	pgstat_progress_end_command();
 }
 
 

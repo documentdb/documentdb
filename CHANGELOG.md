@@ -2,6 +2,7 @@
 * Reclaim dead postings during index insertion to avoid posting-list promotion and entry-page splits, controlled by the default-off `documentdb_rum.enable_insert_time_posting_list_reclaim` and `documentdb_rum.enable_insert_time_deletion` settings. *[Perf]*
 
 ### documentdb v1.3-0 (Unreleased) ###
+* Report physical heap-block and tuple progress during unique-index validation through `currentOp`, including `collMod` and background unique-index builds. *[Feature]*
 * End a dynamic cursor's `getMore` with a query-plan-killed error when its collection was dropped and created again, or another collection was renamed onto its name, after the previous page. Such a `getMore` previously resumed in the new collection's table at the old position, returning its documents or crashing the server process. *[Bugfix]*
 * Preserve PostgreSQL 18 disabled-node counts through custom scan wrappers so planner scan preferences remain effective. *[Bugfix]*
 * Cache index names within extended PostgreSQL explain callbacks and report estimated document counts and all-visible heap-page fractions independently of namespace reporting, preserving these statistics through plan copying and serialization. Expose the statistics as `collectionPlannerStatistics` on gateway query-planner stages. Statistics reporting is controlled by `documentdb.enable_explain_scan_relation_stats`. *[Perf/Bugfix]*
