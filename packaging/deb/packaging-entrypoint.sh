@@ -49,8 +49,8 @@ if grep -nE '^XB-(Static-Built-Using|Bundled):.*_VERSION' debian/control >&2; th
 fi
 echo "Bundled versions: libbson ${LIBBSON_VER}, pcre2 ${PCRE2_VER}, intel-decimal-math ${IDML_VER}"
 
-# Build the Debian package
-debuild -us -uc
+# Build the Debian package. No orig tarball exists, and debuild demands one for X.Y-Z once Z > 0.
+debuild --no-tgz-check -us -uc
 
 # Change to the root to make file renaming expression simpler
 cd /
