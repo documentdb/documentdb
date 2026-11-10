@@ -86,17 +86,11 @@ WidenSnapshotXid(TransactionId xid, FullTransactionId next_fxid)
 }
 
 
-/*
- * Emit an XLOG_BTREE_REUSE_PAGE marker so hot standbys can resolve recovery
- * conflicts before we reuse space freed by dead index entries on `buf`.
- */
 void
-RumLogReusePage(Relation index, Buffer buf)
+RumLogReusePageWithHorizon(Relation index, Buffer buf, TransactionId latestRemovedXid)
 {
-	Page page = BufferGetPage(buf);
-	TransactionId horizon = RumPageGetDeleteXid(page);
 	FullTransactionId conflictHorizon =
-		WidenSnapshotXid(horizon, ReadNextFullTransactionId());
+		WidenSnapshotXid(latestRemovedXid, ReadNextFullTransactionId());
 	xl_btree_reuse_page xlrec_reuse;
 
 	xlrec_reuse.block = BufferGetBlockNumber(buf);
@@ -115,8 +109,22 @@ RumLogReusePage(Relation index, Buffer buf)
 }
 
 
+/*
+ * Emit an XLOG_BTREE_REUSE_PAGE marker so hot standbys can resolve recovery
+ * conflicts before we reuse space freed by dead index entries on `buf`.
+ */
+void
+RumLogReusePage(Relation index, Buffer buf)
+{
+	Page page = BufferGetPage(buf);
+
+	/* To-do: pass healRel to RumLogReusePage to determine if it is a catalog relation. */
+	RumLogReusePageWithHorizon(index, buf, RumPageGetDeleteXid(page));
+}
+
+
 #if PG_VERSION_NUM >= 200000
-#error "rumxlogcompat.c is not expected to be compiled for PG 19 or later"
+#error "rumxlogcompat.c is not expected to be compiled for PG 20 or later"
 #endif
 
 

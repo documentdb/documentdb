@@ -3,7 +3,8 @@
  * rumentrypage.c
  *	  page utilities routines for the postgres inverted index access method.
  *
- * Portions Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Portions Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  * Portions Copyright (c) 2015-2022, Postgres Professional
  * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -13,8 +14,15 @@
 
 #include "postgres.h"
 
+#include "access/table.h"
+#include "access/tableam.h"
+#include "lib/qunique.h"
 #include "miscadmin.h"
 #include "pg_documentdb_rum.h"
+#include "utils/rel.h"
+#include <utils/hsearch.h>
+
+static inline int _entrypage_blk_cmp(const void *arg1, const void *arg2);
 
 /* How to prepare the entry page for insertion */
 typedef enum EntryPrepareMode
@@ -28,7 +36,6 @@ typedef enum EntryPrepareMode
 	/* Delete the existing tuple, but we don't need to reclaim space */
 	EntryPrepareMode_Delete = 2
 } EntryPrepareMode;
-
 
 /*
  * Form a tuple for entry tree.
@@ -652,6 +659,45 @@ entryIsEnoughSpace(RumBtree btree, Buffer buf, OffsetNumber off)
 }
 
 
+static void
+entryReplaceTuple(Relation index, Page page, OffsetNumber off,
+				  IndexTuple replacement)
+{
+	Size replacementSize = IndexTupleSize(replacement);
+	Size oldSize = ItemIdGetLength(PageGetItemId(page, off));
+
+	if (MAXALIGN(replacementSize) <= MAXALIGN(oldSize))
+	{
+		if (!PageIndexTupleOverwrite(page, off, RumPageItem(replacement),
+									 replacementSize))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("failed to overwrite item in index page in \"%s\"",
+							RelationGetRelationName(index)),
+					 errdetail("Entry offset: %u", (unsigned int) off)));
+		}
+	}
+	else
+	{
+		bool overwrite = true;
+		bool isHeap = false;
+
+		PageIndexTupleDeleteNoCompact(page, off);
+
+		if (PageAddItem(page, RumPageItem(replacement), replacementSize,
+						off, overwrite, isHeap) != off)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("failed to add item in index page in \"%s\"",
+							RelationGetRelationName(index)),
+					 errdetail("Entry offset: %u", (unsigned int) off)));
+		}
+	}
+}
+
+
 /*
  * Delete tuple on leaf page if tuples existed and we
  * should update it, update old child blkno to new right page
@@ -689,19 +735,7 @@ entryPreparePage(RumBtree btree, Page page, OffsetNumber off,
 			}
 			else
 			{
-				IndexTuple itup = (IndexTuple) PageGetItem(page, currentItemId);
-				if (MAXALIGN(IndexTupleSize(itup)) >= MAXALIGN(IndexTupleSize(
-																   btree->entry)))
-				{
-					*doReplace = true;
-				}
-				else
-				{
-					/* Since we're just about to add PageAddItem - skip the compact on this delete */
-					btree->isDelete = true;
-					PageIndexTupleDeleteNoCompact(page, off);
-					*needsOverwrite = true;
-				}
+				*doReplace = true;
 			}
 		}
 		else
@@ -751,12 +785,7 @@ entryPlaceToPage(RumBtree btree, Page page, OffsetNumber off,
 	if (doReplace)
 	{
 		Assert(!needsOverwrite);
-		if (!PageIndexTupleOverwrite(page, off, RumPageItem(btree->entry), IndexTupleSize(
-										 btree->entry)))
-		{
-			elog(ERROR, "failed to replace index tuple in tree in \"%s\" offset %d",
-				 RelationGetRelationName(btree->index), off);
-		}
+		entryReplaceTuple(btree->index, page, off, btree->entry);
 	}
 	else
 	{
@@ -985,6 +1014,457 @@ rumEntryFillBtreeForIncompleteSplit(RumBtree btree, RumBtreeStack *stack, Buffer
 
 
 /*
+ * Builds sorted and unique-ified array of table block numbers from index
+ * tuple TIDs whose line pointers are marked LP_DEAD.  Also adds the table
+ * blocks from incoming posting list just in case it isn't among the LP_DEAD-related
+ * table blocks.
+ *
+ * See _bt_deadblocks for btree implementation.
+ */
+static BlockNumber *
+rumGetDeadBlocks(RumBtree btree, Page page,
+				 OffsetNumber *deletable, int ndeletable,
+				 const RumItem *pending, uint32 npending,
+				 int *nblocks)
+{
+	int ntids = 0;
+	BlockNumber *tidblocks;
+
+	tidblocks = palloc(sizeof(BlockNumber) * (MaxTIDsPerRumPage + npending));
+
+	/*
+	 * Collect all table block numbers from the LP_DEAD index tuples.
+	 */
+	for (int i = 0; i < ndeletable; i++)
+	{
+		ItemPointerData *tids;
+		OffsetNumber off = deletable[i];
+		IndexTuple itup = (IndexTuple) PageGetItem(page, PageGetItemId(page, off));
+		int nPostings = RumGetNPosting(itup);
+		OffsetNumber attnum = rumtuple_get_attrnum(btree->rumstate, itup);
+
+		tids = palloc(sizeof(ItemPointerData) * nPostings);
+		rumReadTuplePointers(btree->rumstate, attnum, itup, tids);
+
+		for (int j = 0; j < nPostings; j++)
+		{
+			tidblocks[ntids++] = ItemPointerGetBlockNumber(&tids[j]);
+		}
+
+		pfree(tids);
+	}
+
+	/*
+	 * Collect all table block numbers from the incoming posting list.
+	 */
+	for (uint32 i = 0; i < npending; i++)
+	{
+		tidblocks[ntids++] = ItemPointerGetBlockNumber(&pending[i].iptr);
+	}
+
+	qsort(tidblocks, ntids, sizeof(BlockNumber), _entrypage_blk_cmp);
+	*nblocks = qunique(tidblocks, ntids, sizeof(BlockNumber),
+					   _entrypage_blk_cmp);
+
+	return tidblocks;
+}
+
+
+/*
+ * Deletes or Updates item(s) from a RUM leaf page during single-page cleanup.
+ *
+ * See _bt_delitems_delete for equivalent btree implementation.
+ */
+static void
+rumEntryPageItemsModify(RumBtree btree, Buffer buffer,
+						OffsetNumber *deletable, int ndeletable,
+						OffsetNumber *updatedOffsets, IndexTuple *updatable,
+						int nupdatable)
+{
+	/* Shouldn't be called unless there's something to do */
+	Assert(ndeletable > 0 || nupdatable > 0);
+
+	/*
+	 * We could potentially optimize amount of WAL generated by only logging the specific changes made to the page,
+	 * rather than the whole page, to reduce WAL volume.
+	 * We can also consider using GENERIC_XLOG_FULL_IMAGE to log the entire page image if needed.
+	 */
+	GenericXLogState *state = GenericXLogStart(btree->index);
+	Page newPage = GenericXLogRegisterBuffer(state, buffer, 0);
+
+	for (int i = 0; i < nupdatable; i++)
+	{
+		entryReplaceTuple(btree->index, newPage, updatedOffsets[i], updatable[i]);
+	}
+
+	if (ndeletable > 0)
+	{
+		PageIndexMultiDelete(newPage, deletable, ndeletable);
+	}
+
+	GenericXLogFinish(state);
+}
+
+
+/*
+ * Try to delete item(s) during single-page cleanup.
+ *
+ * nbtree interface to table_index_delete_tuples().  Deletes a subset of index
+ * tuples from caller's deltids array: those whose TIDs are found safe to
+ * delete by the tableam (or already marked LP_DEAD in index, and so already
+ * known to be deletable by our simple index deletion caller).
+ *
+ * Simple index deletion caller only includes TIDs from index tuples marked
+ * LP_DEAD, as well as extra TIDs it found on the same leaf page that can be
+ * included without increasing the total number of distinct table blocks for
+ * the deletion operation as a whole.
+ *
+ * See _bt_delitems_delete_check for btree implementation.
+ */
+static void
+rumEntryPageDeleteCheck(RumBtree btree,
+						Relation heapRel,
+						RumBtreeStack *stack,
+						TM_IndexDeleteOp *delstate,
+						HTAB *addedTids)
+{
+	Buffer buffer = stack->buffer;
+	Page page = BufferGetPage(buffer);
+	OffsetNumber maxoff = PageGetMaxOffsetNumber(page);
+	OffsetNumber deletable[MaxIndexTuplesPerPage];
+	OffsetNumber updatedOffsets[MaxIndexTuplesPerPage];
+	IndexTuple updatable[MaxIndexTuplesPerPage];
+	int ndeletable = 0;
+	int nupdatable = 0;
+	TransactionId latestRemovedXid;
+
+	latestRemovedXid = table_index_delete_tuples(heapRel, delstate);
+
+	for (OffsetNumber off = FirstOffsetNumber; off <= maxoff; off = OffsetNumberNext(off))
+	{
+		ItemId itemId;
+		IndexTuple itup;
+		OffsetNumber attnum;
+		RumItem *items = NULL;
+		int npostings;
+		int nlive = 0;
+		RumNullCategory category;
+		Datum key;
+
+		/* Do not remove the high key and the replacement target key from the page */
+		bool keepKey = off == maxoff || (btree->isDelete && off == stack->off);
+
+		itemId = PageGetItemId(page, off);
+		itup = (IndexTuple) PageGetItem(page, itemId);
+
+		if (RumIsPostingTree(itup))
+		{
+			continue;
+		}
+
+		if (RumIndexEntryIsDead(itemId) && !keepKey)
+		{
+			deletable[ndeletable++] = off;
+			continue;
+		}
+
+		npostings = RumGetNPosting(itup);
+		attnum = rumtuple_get_attrnum(btree->rumstate, itup);
+		if (!RumIndexEntryIsDead(itemId))
+		{
+			items = palloc(sizeof(RumItem) * npostings);
+			rumReadTuple(btree->rumstate, attnum, itup, items,
+						 false /* copyAddInfo */);
+
+			for (int i = 0; i < npostings; i++)
+			{
+				TM_IndexDelete *entry;
+
+				entry = hash_search(addedTids, &items[i].iptr,
+									HASH_FIND, NULL);
+
+				if (entry != NULL &&
+					delstate->status[entry->id].knowndeletable)
+				{
+					continue;
+				}
+
+				items[nlive++] = items[i];
+			}
+		}
+
+		if (nlive == 0 && !keepKey)
+		{
+			deletable[ndeletable++] = off;
+		}
+		else if (nlive < npostings)
+		{
+			key = rumtuple_get_key(btree->rumstate, itup, &category);
+
+			updatedOffsets[nupdatable] = off;
+			updatable[nupdatable] =
+				RumFormTuple(btree->rumstate, attnum, key, category,
+							 items, nlive, true /* errorTooBig */);
+			nupdatable++;
+		}
+
+		if (items)
+		{
+			pfree(items);
+		}
+	}
+
+	bool pageChanged = ndeletable > 0 || nupdatable > 0;
+
+	if (pageChanged &&
+		XLogStandbyInfoActive() && RelationNeedsWAL(btree->index))
+	{
+		RumLogReusePageWithHorizon(btree->index, buffer, latestRemovedXid);
+	}
+
+	if (pageChanged)
+	{
+		rumEntryPageItemsModify(btree, buffer, deletable, ndeletable, updatedOffsets,
+								updatable, nupdatable);
+	}
+
+	for (int i = 0; i < nupdatable; i++)
+	{
+		pfree(updatable[i]);
+	}
+}
+
+
+/*
+ * Scan over all items to see which ones need to be deleted according to
+ * LP_DEAD flags.
+ *
+ * The rightmost key must survive as the page boundary, just as in vacuum.
+ * The replacement target must also survive so the caller can re-read it.
+ * Their posting lists can still be pruned, including to zero postings.
+ *
+ * See _bt_simpledel_pass for equivalent btree implementation.
+ */
+static void
+rumCleanupEntryPageSimplePass(Relation heapRel, RumBtree btree, Buffer buffer,
+							  RumBtreeStack *stack,
+							  const RumItem *pending, uint32 npending)
+{
+	Page page = BufferGetPage(buffer);
+	OffsetNumber maxoff = PageGetMaxOffsetNumber(page);
+
+	OffsetNumber deletable[MaxIndexTuplesPerPage];
+	int nDeletable = 0;
+	int ntids = 0;
+
+	/*
+	 * Collect all LP_DEAD items
+	 */
+	for (OffsetNumber off = FirstOffsetNumber; off <= maxoff; off = OffsetNumberNext(off))
+	{
+		ItemId itemId = PageGetItemId(page, off);
+
+		if (!RumIndexEntryIsDead(itemId))
+		{
+			continue;
+		}
+
+		/*
+		 * We should never see LP_DEAD on posting tree pointers.
+		 */
+		IndexTuple itup = (IndexTuple) PageGetItem(page, itemId);
+		Assert(!RumIsPostingTree(itup));
+
+		deletable[nDeletable++] = off;
+		ntids += RumGetNPosting(itup);
+	}
+
+	/* TODO: Consider making incremental progress, instead of returning early. */
+	if (ntids == 0 || ntids > MaxTIDsPerRumPage)
+	{
+		return;
+	}
+
+	/* Simple pass cleanup requires at least one deletable entry on this page. */
+	if (nDeletable > 0)
+	{
+		BlockNumber *deadblocks;
+		int ndeadblocks;
+		HASHCTL ctl = { 0 };
+		HTAB *addedTids;
+		TM_IndexDeleteOp delstate;
+
+		/* get all the heap blocks for the LP_DEAD entries */
+		deadblocks = rumGetDeadBlocks(btree, page, deletable, nDeletable,
+									  pending, npending,
+									  &ndeadblocks);
+
+		ctl.keysize = sizeof(ItemPointerData);
+		ctl.entrysize = sizeof(TM_IndexDelete);
+		ctl.hcxt = CurrentMemoryContext;
+		addedTids = hash_create("addedTids", MaxIndexTuplesPerPage, &ctl, HASH_ELEM |
+								HASH_BLOBS | HASH_CONTEXT);
+
+		/* create the table_am request */
+		rumProbeBegin(btree->index, &delstate,
+					  BufferGetBlockNumber(buffer), false /* bottomup */,
+					  0 /* bottomupfreespace */,
+					  MaxTIDsPerRumPage + npending);
+
+		/* collect all TIDs that are LP_DEAD or whose heapblock is listed in deadblocks */
+		for (OffsetNumber off = FirstOffsetNumber; off <= maxoff; off = OffsetNumberNext(
+				 off))
+		{
+			ItemId itemId = PageGetItemId(page, off);
+			IndexTuple itup = (IndexTuple) PageGetItem(page, itemId);
+
+			if (RumIsPostingTree(itup))
+			{
+				continue;
+			}
+
+			int nPostings = RumGetNPosting(itup);
+
+			if (nPostings == 0)
+			{
+				continue;
+			}
+
+			RumItem *items = palloc(nPostings * sizeof(RumItem));
+			OffsetNumber attnum = rumtuple_get_attrnum(btree->rumstate, itup);
+			rumReadTuple(btree->rumstate, attnum, itup, items, false /* copyAddInfo */);
+			for (int i = 0; i < nPostings; i++)
+			{
+				BlockNumber block = ItemPointerGetBlockNumber(&items[i].iptr);
+
+				/* Skip TIDs that are not in deadblocks */
+				if (bsearch(&block, deadblocks, ndeadblocks, sizeof(BlockNumber),
+							_entrypage_blk_cmp) == NULL)
+				{
+					continue;
+				}
+
+				/* NOTE: unlike btree simple pass, rumbtree supports multi-key, so a TID can appear in multiple index entries
+				 * Since the table_am request requires unique TIDs, we use a hash table to avoid adding duplicates.
+				 */
+				rumProbeAddTid(&delstate, addedTids, items[i].iptr, off,
+							   RumIndexEntryIsDead(itemId));
+			}
+			pfree(items);
+		}
+
+		for (uint32 i = 0; i < npending; i++)
+		{
+			rumProbeAddTid(&delstate, addedTids, pending[i].iptr, stack->off,
+						   false /* knownDeletable */);
+		}
+
+		pfree(deadblocks);
+
+		/* Physically delete LP_DEAD tuples (plus any delete-safe extra TIDs) */
+		rumEntryPageDeleteCheck(btree, heapRel, stack, &delstate,
+								addedTids);
+
+		hash_destroy(addedTids);
+		rumProbeCleanupFinish(&delstate);
+
+		/* Offsets shifted by the prune since we actually deleted line pointers, re-find the insert position. */
+		btree->findItem(btree, stack);
+	}
+}
+
+
+/*
+ * Initialize a heap-deletion request sized for up to `maxtids` candidate
+ * TIDs.  When `bottomup` is true the request runs in
+ * bottom-up mode (visiting only the densest promising heap blocks until
+ * `bottomupfreespace` is satisfied); when false it runs in simple mode, where
+ * every provided TID is examined.  The caller pushes candidates with
+ * rumProbeAddTid(), runs table_index_delete_tuples(), and releases the state
+ * with rumProbeCleanupFinish().
+ */
+void
+rumProbeBegin(Relation index, TM_IndexDeleteOp *delstate,
+			  BlockNumber iblknum, bool bottomup, Size bottomupfreespace,
+			  int maxtids)
+{
+	delstate->irel = index;
+	delstate->iblknum = iblknum;
+	delstate->bottomup = bottomup;
+	delstate->bottomupfreespace = bottomupfreespace;
+	delstate->ndeltids = 0;
+	delstate->deltids = palloc(maxtids * sizeof(TM_IndexDelete));
+	delstate->status = palloc(maxtids * sizeof(TM_IndexStatus));
+}
+
+
+/*
+ * Append one candidate TID to a heap-deletion request.  `idxoffnum` is the
+ * index offset the TID belongs to.  `promising` marks it as worth ranking
+ * (bottom-up mode only); `knownDeletable` marks a TID already known dead (e.g.
+ * from an LP_DEAD entry).
+ */
+void
+rumProbeAddTid(TM_IndexDeleteOp *delstate, HTAB *addedTids, ItemPointerData tid,
+			   OffsetNumber idxoffnum, bool knownDeletable)
+{
+	TM_IndexDelete *deltid;
+	TM_IndexStatus *status;
+	TM_IndexDelete *entry;
+	bool found;
+
+	entry = hash_search(addedTids, &tid, HASH_ENTER, &found);
+
+	if (found)
+	{
+		status = &delstate->status[entry->id];
+		status->knowndeletable |= knownDeletable;
+		return;
+	}
+
+	entry->id = delstate->ndeltids;
+	deltid = &delstate->deltids[entry->id];
+	status = &delstate->status[entry->id];
+
+	deltid->tid = tid;
+	deltid->id = entry->id;
+	status->idxoffnum = idxoffnum;
+	status->knowndeletable = knownDeletable;
+	status->promising = false; /* unused for simple pass */
+	status->freespace = 0; /* unused for simple pass */
+
+	delstate->ndeltids++;
+}
+
+
+/*
+ * Release the per-call heap-deletion state.
+ */
+void
+rumProbeCleanupFinish(TM_IndexDeleteOp *delstate)
+{
+	pfree(delstate->deltids);
+	pfree(delstate->status);
+}
+
+
+/*
+ * Try to reclaim space on an entry page.
+ */
+static void
+rumEntryCleanupPage(Relation heapRel, RumBtree btree, RumBtreeStack *stack,
+					const RumItem *pending, uint32 npending)
+{
+	/* Simple pass to reclaim space on the entry page */
+	rumCleanupEntryPageSimplePass(heapRel, btree, stack->buffer, stack,
+								  pending, npending);
+
+	/* TODO: Perform a second pass to remove more entries similar to bottom-up index deletion pass in btree.
+	 */
+}
+
+
+/*
  * Set up RumBtree for entry page access
  *
  * Note: during WAL recovery, there may be no valid data in rumstate
@@ -1010,6 +1490,7 @@ rumPrepareEntryScan(RumBtree btree, OffsetNumber attnum,
 	btree->splitPage = entrySplitPage;
 	btree->fillRoot = rumEntryFillRoot;
 	btree->fillBtreeForIncompleteSplit = rumEntryFillBtreeForIncompleteSplit;
+	btree->cleanupPage = rumEntryCleanupPage;
 
 	btree->isData = false;
 	btree->searchMode = false;
@@ -1019,4 +1500,26 @@ rumPrepareEntryScan(RumBtree btree, OffsetNumber attnum,
 	btree->entryKey = key;
 	btree->entryCategory = category;
 	btree->isDelete = false;
+}
+
+
+/*
+ * qsort comparison function for entry page block numbers
+ */
+static inline int
+_entrypage_blk_cmp(const void *arg1, const void *arg2)
+{
+	BlockNumber b1 = *((BlockNumber *) arg1);
+	BlockNumber b2 = *((BlockNumber *) arg2);
+
+	if (b1 < b2)
+	{
+		return -1;
+	}
+	else if (b1 > b2)
+	{
+		return 1;
+	}
+
+	return 0;
 }

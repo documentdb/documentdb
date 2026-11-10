@@ -158,6 +158,7 @@ typedef struct RumLeader
 typedef struct
 {
 	RumState rumstate;
+	Relation heapRel;
 	double indtuples;
 	RumStatsData buildStats;
 	MemoryContext tmpCtx;
@@ -233,19 +234,21 @@ static RumTuple * _rum_build_tuple(OffsetNumber attrnum, unsigned char category,
  * items[] must be in sorted order with no duplicates.
  */
 static IndexTuple
-addItemPointersToLeafTuple(RumState *rumstate,
+addItemPointersToLeafTuple(RumBtree btree, RumBtreeStack *stack,
 						   IndexTuple old,
 						   RumItem *items, uint32 nitem,
-						   RumStatsData *buildStats)
+						   RumStatsData *buildStats,
+						   Relation heapRel)
 {
+	RumState *rumstate = btree->rumstate;
 	OffsetNumber attnum;
 	Datum key;
 	RumNullCategory category;
 	IndexTuple res;
 	RumItem *newItems,
 			*oldItems;
-	int oldNPosting,
-		newNPosting;
+	int oldNPosting;
+	uint32 newNPosting;
 
 	Assert(!RumIsPostingTree(old));
 
@@ -267,6 +270,51 @@ addItemPointersToLeafTuple(RumState *rumstate,
 	/* try to build tuple with room for all the items */
 	res = RumFormTuple(rumstate, attnum, key, category,
 					   newItems, newNPosting, false);
+
+	if ((RumEnableInsertTimePostingListReclaim || RumEnableInsertTimeDeletion) &&
+		!rumstate->isBuild)
+	{
+		bool shouldCleanup = false;
+
+		if (RumEnableInsertTimePostingListReclaim && !res)
+		{
+			/* Try to reclaim space from dead TIDs in the posting list */
+			shouldCleanup = true;
+		}
+		else if (RumEnableInsertTimeDeletion && res)
+		{
+			btree->entry = res;
+			shouldCleanup = !btree->isEnoughSpace(btree, stack->buffer, stack->off);
+			btree->entry = NULL;
+		}
+
+		if (shouldCleanup && IsBufferCleanupOK(stack->buffer))
+		{
+			uint32 originalCount = newNPosting;
+
+			Assert(heapRel != NULL);
+			btree->cleanupPage(heapRel, btree, stack, items, nitem);
+
+			/* Need to re-read the Page after cleanup. */
+			Page page = BufferGetPage(stack->buffer);
+			old = (IndexTuple) PageGetItem(page, PageGetItemId(page, stack->off));
+			key = rumtuple_get_key(rumstate, old, &category);
+			oldNPosting = RumGetNPosting(old);
+			rumReadTuple(rumstate, attnum, old, oldItems, false);
+			newNPosting = rumMergeRumItems(rumstate, attnum, newItems,
+										   items, nitem, oldItems, oldNPosting);
+
+			if (newNPosting < originalCount)
+			{
+				if (res)
+				{
+					pfree(res);
+				}
+				res = RumFormTuple(rumstate, attnum, key, category,
+								   newItems, newNPosting, false);
+			}
+		}
+	}
 
 	if (!res)
 	{
@@ -302,6 +350,8 @@ addItemPointersToLeafTuple(RumState *rumstate,
 		res = RumFormTuple(rumstate, attnum, key, category, NULL, 0, true);
 		RumSetPostingTree(res, postingRoot);
 	}
+
+	pfree(newItems);
 	pfree(oldItems);
 
 	return res;
@@ -317,14 +367,30 @@ addItemPointersToLeafTuple(RumState *rumstate,
  * but working from slightly different input.
  */
 static IndexTuple
-buildFreshLeafTuple(RumState *rumstate,
+buildFreshLeafTuple(RumBtree btree, RumBtreeStack *stack,
 					OffsetNumber attnum, Datum key, RumNullCategory category,
-					RumItem *items, uint32 nitem, RumStatsData *buildStats)
+					RumItem *items, uint32 nitem, RumStatsData *buildStats,
+					Relation heapRel)
 {
+	RumState *rumstate = btree->rumstate;
 	IndexTuple res = NULL;
 
 	/* try to build a posting list tuple with all the items */
 	res = RumFormTuple(rumstate, attnum, key, category, items, nitem, false);
+
+	/* try to clean up before inserting into the leaf tuple in case page doesnt have enough space */
+	if (RumEnableInsertTimeDeletion && res && !rumstate->isBuild)
+	{
+		btree->entry = res;
+		if (!btree->isEnoughSpace(btree, stack->buffer, stack->off) &&
+			IsBufferCleanupOK(stack->buffer))
+		{
+			Assert(heapRel != NULL);
+			btree->cleanupPage(heapRel, btree, stack, items, nitem);
+		}
+		btree->entry = NULL;
+	}
+
 
 	if (!res)
 	{
@@ -406,7 +472,7 @@ void
 rumEntryInsert(RumState *rumstate,
 			   OffsetNumber attnum, Datum key, RumNullCategory category,
 			   RumItem *items, uint32 nitem,
-			   RumStatsData *buildStats)
+			   RumStatsData *buildStats, Relation heapRel)
 {
 	RumBtreeData btree;
 	RumBtreeStack *stack;
@@ -414,7 +480,6 @@ rumEntryInsert(RumState *rumstate,
 	Page page;
 
 	rumPrepareEntryScan(&btree, attnum, key, category, rumstate);
-
 	stack = rumFindLeafPage(&btree, NULL, false);
 	page = BufferGetPage(stack->buffer);
 
@@ -450,10 +515,10 @@ rumEntryInsert(RumState *rumstate,
 									   BufferGetBlockNumber(stack->buffer));
 
 		/* modify an existing leaf entry */
-		itup = addItemPointersToLeafTuple(rumstate, itup,
-										  items, nitem, buildStats);
-
 		btree.isDelete = true;
+		itup = addItemPointersToLeafTuple(&btree, stack, itup,
+										  items, nitem, buildStats,
+										  heapRel);
 	}
 	else
 	{
@@ -461,8 +526,9 @@ rumEntryInsert(RumState *rumstate,
 									   BufferGetBlockNumber(stack->buffer));
 
 		/* no match, so construct a new leaf entry */
-		itup = buildFreshLeafTuple(rumstate, attnum, key, category,
-								   items, nitem, buildStats);
+		itup = buildFreshLeafTuple(&btree, stack, attnum, key, category,
+								   items, nitem, buildStats,
+								   heapRel);
 
 		/*
 		 * nEntries counts leaf tuples, so increment it only when we make a
@@ -594,7 +660,8 @@ rumBuildCallback(Relation index, ItemPointer tid, Datum *values,
 			/* there could be many entries, so be willing to abort here */
 			CHECK_FOR_INTERRUPTS();
 			rumEntryInsert(&buildstate->rumstate, attnum, key, category,
-						   list, nlist, &buildstate->buildStats);
+						   list, nlist, &buildstate->buildStats,
+						   buildstate->heapRel);
 		}
 
 		MemoryContextReset(buildstate->tmpCtx);
@@ -771,6 +838,7 @@ rumbuild(Relation heap, Relation index, struct IndexInfo *indexInfo)
 #endif
 
 	initRumState(&buildstate.rumstate, index);
+	buildstate.heapRel = heap;
 	buildstate.rumstate.isBuild = true;
 	buildstate.indtuples = 0;
 	buildstate.bs_opClassMetadata = 0;
@@ -974,7 +1042,8 @@ rumbuild(Relation heap, Relation index, struct IndexInfo *indexInfo)
 			/* there could be many entries, so be willing to abort here */
 			CHECK_FOR_INTERRUPTS();
 			rumEntryInsert(&buildstate.rumstate, attnum, key, category,
-						   list, nlist, &buildstate.buildStats);
+						   list, nlist, &buildstate.buildStats,
+						   buildstate.heapRel);
 		}
 		MemoryContextSwitchTo(oldCtx);
 	}
@@ -1071,6 +1140,7 @@ static void
 rumHeapTupleInsert(RumState *rumstate, OffsetNumber attnum,
 				   Datum value, bool isNull,
 				   ItemPointer item,
+				   Relation heapRel,
 				   Datum outerAddInfo,
 				   bool outerAddInfoIsNull,
 				   uint64_t *opClassMetadata)
@@ -1120,7 +1190,7 @@ rumHeapTupleInsert(RumState *rumstate, OffsetNumber attnum,
 		/* there could be many entries, so be willing to abort here */
 		CHECK_FOR_INTERRUPTS();
 		rumEntryInsert(rumstate, attnum, entries[i], categories[i],
-					   &insert_item, 1, NULL);
+					   &insert_item, 1, NULL, heapRel);
 	}
 }
 
@@ -1168,6 +1238,7 @@ ruminsert(Relation index, Datum *values, bool *isnull,
 	{
 		rumHeapTupleInsert(rumstate, (OffsetNumber) (i + 1),
 						   values[i], isnull[i], ht_ctid,
+						   heapRel,
 						   outerAddInfo, outerAddInfoIsNull,
 						   &opClassMetadata);
 	}
@@ -2094,7 +2165,8 @@ _rum_merge_index_core(double reltuples, RumBuildState *state)
 
 			rumEntryInsert(&state->rumstate,
 						   buffer->attnum, buffer->key, buffer->category,
-						   buffer->items, buffer->nitems, &state->buildStats);
+						   buffer->items, buffer->nitems, &state->buildStats,
+						   state->heapRel);
 
 			MemoryContextSwitchTo(oldCtx);
 			MemoryContextReset(state->tmpCtx);
@@ -2125,7 +2197,8 @@ _rum_merge_index_core(double reltuples, RumBuildState *state)
 
 			rumEntryInsert(&state->rumstate,
 						   buffer->attnum, buffer->key, buffer->category,
-						   buffer->items, buffer->nfrozen, &state->buildStats);
+						   buffer->items, buffer->nfrozen, &state->buildStats,
+						   state->heapRel);
 
 			MemoryContextSwitchTo(oldCtx);
 			MemoryContextReset(state->tmpCtx);
@@ -2152,7 +2225,8 @@ _rum_merge_index_core(double reltuples, RumBuildState *state)
 
 		rumEntryInsert(&state->rumstate,
 					   buffer->attnum, buffer->key, buffer->category,
-					   buffer->items, buffer->nitems, &state->buildStats);
+					   buffer->items, buffer->nitems, &state->buildStats,
+					   state->heapRel);
 
 		/* discard the existing data */
 		RumBufferReset(buffer);
@@ -2548,6 +2622,7 @@ RMGR_FUNC_EXPORT(void, documentdb_rum_parallel_build_main, dsm_segment * seg, sh
 
 	/* initialize the RUM build state */
 	initRumState(&buildstate.rumstate, indexRel);
+	buildstate.heapRel = heapRel;
 	buildstate.indtuples = 0;
 	buildstate.bs_reltuples = 0;
 	buildstate.bs_opClassMetadata = 0;
