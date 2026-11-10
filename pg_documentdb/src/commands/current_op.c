@@ -632,7 +632,8 @@ WorkerGetBaseActivities(void)
 						   " EXTRACT(epoch FROM now() - pa.state_change)::bigint AS state_change_since, "
 						   " pa.groupid AS shard_id, "
 						   " pa.backend_type AS backend_type, "
-						   " pa.leader_pid::bigint AS leaderPid "
+						   " pa.leader_pid::bigint AS leaderPid, "
+						   " index_progress.pid IS NOT NULL AS has_index_build_progress "
 						   " FROM (");
 
 	appendStringInfoString(queryInfo, DistributedOperationsQuery);
@@ -651,6 +652,7 @@ WorkerGetBaseActivities(void)
 
 	appendStringInfo(queryInfo,
 					 " ) e2 ON true "
+					 " LEFT JOIN pg_stat_progress_create_index index_progress ON index_progress.pid = pa.pid "
 					 " WHERE (NOT query LIKE '%%%s.current_op%%') ",
 					 ApiToApiInternalSchemaName);
 
@@ -848,6 +850,14 @@ WorkerGetBaseActivities(void)
 		if (!isNull)
 		{
 			activity->leaderPid = DatumGetInt64(resultDatum);
+		}
+
+		resultDatum = SPI_getbinval(SPI_tuptable->vals[0],
+									SPI_tuptable->tupdesc, 14,
+									&isNull);
+		if (!isNull)
+		{
+			activity->processedBuildIndexStatProgress = DatumGetBool(resultDatum);
 		}
 
 		spiContext = MemoryContextSwitchTo(priorMemoryContext);
@@ -1660,6 +1670,7 @@ WriteIndexBuildProgressAndGetMessage(SingleWorkerActivity *activity,
 	/* NULLIF(blocks_total) ensures that "Progress" is NULL if blocks_total is 0 so we don't get div by zero errors and row_get_bson skips the field. */
 	appendStringInfoString(str,
 						   "WITH c1 AS (SELECT phase, command LIKE '%%CONCURRENTLY%%' AS concurrent, blocks_done, blocks_total, (blocks_done * 100.0 / NULLIF(blocks_total, 0)) AS \"Progress\", "
+						   " tuples_done, tuples_total, "
 						   " tuples_done AS \"terms_done\", tuples_total AS \"terms_total\", "
 						   " (tuples_done * 100.0 / NULLIF(tuples_total, 0)) AS \"terms_progress\", ");
 
@@ -1670,7 +1681,7 @@ WriteIndexBuildProgressAndGetMessage(SingleWorkerActivity *activity,
 							   " (" SINGLE_NODE_ID_STR
 							   " + current_locker_pid)::int8 AS \"Waiting on op_prefix\""
 							   " FROM pg_stat_progress_create_index WHERE ("
-							   SINGLE_NODE_ID_STR " + current_locker_pid)::int8 = $1), ");
+							   SINGLE_NODE_ID_STR " + pid)::int8 = $1), ");
 	}
 	else
 	{
